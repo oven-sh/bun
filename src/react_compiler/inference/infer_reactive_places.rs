@@ -57,9 +57,7 @@ pub(crate) fn infer_reactive_places(
         crate::hir::dominator::compute_post_dominator_tree(func, env.next_block_id().0, false)?;
     let frontiers = post_dominator_frontiers(func, &post_dominators)?;
 
-    // Not in upstream, which reads only the tests in the frontier of a block. A block that can
-    // throw into a handler is a branch with no test. In a function that has one, a branch that
-    // runs under a reactive one decides reactively whatever its own test is.
+    // Not in upstream: a block that can throw into a handler is a branch with no test.
     let throws_are_branches = env.config.caught_throws_are_branches;
     let mut is_control_inherited = false;
     let mut has_skipped_control = false;
@@ -246,13 +244,11 @@ pub(crate) fn infer_reactive_places(
     Ok(())
 }
 
-/// Not in upstream. Indexed by `BlockId.0`: the handler of the innermost `try` block that the block
-/// is in, or `NO_HANDLER`.
+/// Not in upstream. Indexed by `BlockId.0`: the handler of the innermost `try` block around, or `NO_HANDLER`.
 fn enclosing_handlers(func: &HirFunction, block_count: usize) -> Vec<u32> {
     const UNKNOWN: u32 = u32::MAX;
     let mut enclosing = vec![UNKNOWN; block_count];
-    // A statement names the blocks that follow it ahead of the jumps to them from inside it, so
-    // the first answer for a block is that of the statement.
+    // A statement names its blocks ahead of any jump to them from inside it, so the first answer stands.
     for (block_id, block) in &func.body.blocks {
         let outer = enclosing[block_id.0 as usize].min(NO_HANDLER);
         if let Terminal::Try { block, handler, .. } = &block.terminal {
@@ -280,8 +276,7 @@ struct ReactivityMap {
     round: u32,
     /// Indexed by `IdentifierId.0`: `REACTIVE`, or the last round that has found it not to be.
     reactive: Vec<u32>,
-    /// Indexed by `BlockId.0`: `REACTIVE` for a block where what is reactive decides which block
-    /// runs next, or the last round that has found it not to be one.
+    /// Indexed by `BlockId.0`: `REACTIVE` if what is reactive decides what runs next, or the last round that read it.
     deciders: Vec<u32>,
     /// The handlers of the `try` statements in which a block throws with a reactive operand.
     reactive_handlers: Vec<BlockId>,
@@ -373,8 +368,7 @@ impl ReactivityMap {
         }
     }
 
-    /// A block that throws into `handler` has a reactive operand. What a `catch` clause binds is
-    /// reactive for that `try` statement and for each one around it.
+    /// What a `catch` clause binds is reactive for the `try` statement of `handler` and for each one around it.
     fn mark_reactive_throw(&mut self, func: &HirFunction, handler: BlockId) {
         if self.reactive_handlers.contains(&handler) {
             return;
@@ -401,8 +395,7 @@ impl ReactivityMap {
         self.has_changed_what_was_read = true;
     }
 
-    /// Whether a block in the post-dominator frontier of this one is a decider: the blocks from
-    /// which control may or may not reach this one.
+    /// Whether a block in the post-dominator frontier of this one is a decider.
     #[inline]
     fn has_reactive_control(
         &mut self,

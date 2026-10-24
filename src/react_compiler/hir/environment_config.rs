@@ -103,11 +103,9 @@ pub struct EnvironmentConfig {
     /// A tag can make something new of the same template each time. So a tagged template is a source of reactivity, and
     /// no scope that it is in is kept, unless the signature of the tag says that it is pure. To upstream it is a call.
     pub tagged_templates_are_always_called: bool,
-    /// A block that can throw into a `catch` with a reactive operand decides which block runs next, as the test of an
-    /// `if` does, and what the `catch` clause binds is then reactive. To upstream only a test decides.
+    /// A throw into a `catch` with a reactive operand is a branch, and what is caught is reactive. Not so upstream.
     pub caught_throws_are_branches: bool,
-    /// In a function that has a `catch`, a branch that runs under a reactive branch decides reactively, whatever its
-    /// own test is. Upstream reads only the tests that a block depends on directly.
+    /// In a function that has a `catch`, a branch under a reactive branch is reactive too. Upstream reads one level.
     pub reactive_control_is_inherited: bool,
     /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
     /// is `React`, wherever that comes from.

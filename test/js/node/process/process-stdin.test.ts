@@ -676,12 +676,10 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
   // Stopping unregisters a fired one-shot poll without a syscall, which leaves
   // its disarmed registration in the kernel. Cancelling the stream must still
   // take it out. The reader polls a dup of fd 0, and epoll keeps a registration
-  // for as long as the file is open, which fd 0 keeps it. The dup of the next
-  // reader gets the same number once the first is closed, and would hit EEXIST.
-  test.concurrent(
-    "a reader cancelled at the highwater backstop leaves no registration for the next reader",
-    async () => {
-      const { second } = await run(`
+  // for as long as the file is open, which it is through fd 0. The dup of the
+  // next reader gets the same number once the first is closed, and would hit EEXIST.
+  test.concurrent("a reader cancelled at the highwater backstop frees its fd for the next reader", async () => {
+    const { second } = await run(`
       const { getEventLoopStats } = require("bun:internal-for-testing");
       const { fstatSync } = require("node:fs");
       const stdin = fstatSync(0);
@@ -703,15 +701,18 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
         while (getEventLoopStats().loopActive) await new Promise(resolve => setImmediate(resolve));
         await reader.cancel();
         // The reader closes its dup on the thread pool.
-        while (hasDup()) await new Promise(resolve => setImmediate(resolve));
+        const deadline = performance.now() + 2000;
+        while (hasDup()) {
+          if (performance.now() > deadline) throw new Error("the cancelled reader still holds a descriptor on stdin");
+          await new Promise(resolve => setImmediate(resolve));
+        }
         const next = await Bun.file(0).stream().getReader().read();
         process.stdout.write(JSON.stringify({ second: (next.value?.length ?? 0) > 0 }));
         process.exit(0);
       })();
     `);
-      expect(second).toBe(true);
-    },
-  );
+    expect(second).toBe(true);
+  });
 
   test.concurrent("reading resumes after the highwater backstop", async () => {
     // Stop reading long enough for the backstop to engage, then drain to EOF

@@ -3077,21 +3077,44 @@ describe.skipIf(isWindows)("Bun.file().stream() readers that share a stdio fd", 
     expect(await run(script, waitThenWrite)).toEqual({ output: everyByteOnce, stderr: "", exitCode: 0 });
   });
 
+  // Counts the descriptors of the child that are open on the file behind its fd 0.
+  const descriptors = `
+    const { closeSync, fstatSync, openSync } = require("node:fs");
+    const stdin = fstatSync(0);
+    function descriptors() {
+      let count = 0;
+      for (let fd = 0; fd < 64; fd++) {
+        try {
+          const { dev, ino } = fstatSync(fd);
+          if (dev === stdin.dev && ino === stdin.ino) count++;
+        } catch {}
+      }
+      return count;
+    }
+  `;
+
   // With no descriptor left for a dup, the reader polls the stdio fd itself.
   test.concurrent("a stream still reads stdin at the descriptor limit", async () => {
     const script = `
       ${text}
-      const { openSync } = require("node:fs");
+      ${descriptors}
+      const held = [];
       try {
-        for (;;) openSync("/dev/null", "r");
+        for (;;) held.push(openSync("/dev/null", "r"));
       } catch (error) {
         if (error.code !== "EMFILE") throw error;
       }
-      const started = [text(Bun.file(0).stream())];
+      const started = [text(Bun.file(0).stream(), () => console.log("descriptors on stdin: " + descriptors()))];
+      // The stream is open by now. The leak check of a sanitizer build needs a descriptor when the child exits.
+      held.forEach(fd => closeSync(fd));
       ${report}
     `;
     const cmd = ["sh", "-c", 'ulimit -n 64 && exec "$0" -e "$1"', bunExe(), script];
-    expect(await run(script, waitThenWrite, { cmd })).toEqual({ output: everyByteOnce, stderr: "", exitCode: 0 });
+    expect(await run(script, waitThenWrite, { cmd })).toEqual({
+      output: "ready\ndescriptors on stdin: 1\n" + JSON.stringify({ text: "hello world\n", errors: [] }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // Each reader that polls holds one dup and closes it. A regular file is read
@@ -3106,26 +3129,18 @@ describe.skipIf(isWindows)("Bun.file().stream() readers that share a stdio fd", 
         bunExe(),
         "-e",
         `
-        const { fstatSync } = require("node:fs");
-        const stdin = fstatSync(0);
-        // How many descriptors of this process are open on the file behind fd 0.
-        function descriptors() {
-          let count = 0;
-          for (let fd = 0; fd < 64; fd++) {
-            try {
-              const { dev, ino } = fstatSync(fd);
-              if (dev === stdin.dev && ino === stdin.ino) count++;
-            } catch {}
-          }
-          return count;
-        }
+        ${descriptors}
         const first = Bun.file(0).stream().getReader();
         const alone = descriptors();
         const second = Bun.file(0).stream().getReader();
         const shared = descriptors();
         await Promise.all([first.cancel(), second.cancel()]);
         // A reader closes its descriptor on the thread pool.
-        while (descriptors() > 1) await new Promise(resolve => setImmediate(resolve));
+        const deadline = performance.now() + 2000;
+        while (descriptors() > 1) {
+          if (performance.now() > deadline) throw new Error(descriptors() + " descriptors are still open on stdin");
+          await new Promise(resolve => setImmediate(resolve));
+        }
         const third = Bun.file(0).stream().getReader();
         const sequential = descriptors();
         await third.cancel();

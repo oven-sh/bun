@@ -372,6 +372,10 @@ impl TokenList {
                     v.to_css(dest)?;
                     has_whitespace = false;
                 }
+                TokenOrValue::RawInteger(number) => {
+                    number.to_css(dest)?;
+                    has_whitespace = false;
+                }
                 TokenOrValue::Token(token) => match token {
                     Token::Delim(d) => {
                         if *d == b'+' as u32 || *d == b'-' as u32 {
@@ -434,10 +438,10 @@ impl TokenList {
 
     pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
         for token_or_value in self.v.iter() {
-            if let TokenOrValue::Token(token) = token_or_value {
-                token.to_css(dest)?;
-            } else {
-                return Err(dest.add_fmt_error());
+            match token_or_value {
+                TokenOrValue::Token(token) => token.to_css(dest)?,
+                TokenOrValue::RawInteger(number) => number.to_css(dest)?,
+                _ => return Err(dest.add_fmt_error()),
             }
         }
         Ok(())
@@ -527,7 +531,11 @@ impl TokenList {
                             location: state.source_location(),
                         });
                     }
-                    tokens.push(TokenOrValue::Token(*token));
+                    let token = *token;
+                    tokens.push(match input.long_integer_text() {
+                        Some(text) => TokenOrValue::RawInteger(RawInteger(text)),
+                        None => TokenOrValue::Token(token),
+                    });
                 }
             }
         }
@@ -690,8 +698,18 @@ impl TokenList {
                     last_is_whitespace = false;
                     continue;
                 }
+                Token::Number(_) | Token::Percentage { .. } => {
+                    if let Some(text) = input.long_integer_text() {
+                        tokens.push(TokenOrValue::RawInteger(RawInteger(text)));
+                        last_is_delim = false;
+                        last_is_whitespace = false;
+                        continue;
+                    }
+                }
                 Token::Dimension(_) => {
-                    let value = if let Ok(length) = LengthValue::try_from_token(&tok) {
+                    let value = if let Some(text) = input.long_integer_text() {
+                        TokenOrValue::RawInteger(RawInteger(text))
+                    } else if let Ok(length) = LengthValue::try_from_token(&tok) {
                         TokenOrValue::Length(length)
                     } else if let Ok(angle) = Angle::try_from_token(&tok) {
                         TokenOrValue::Angle(angle)
@@ -1316,6 +1334,24 @@ impl Function {
     }
 }
 
+/// The source text of an integer token: a number, a percentage or a dimension.
+#[derive(Clone, Copy, CssEql, CssHash)]
+pub struct RawInteger(&'static [u8]);
+
+impl RawInteger {
+    fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
+        dest.write_bytes(self.0)
+    }
+}
+
+impl<'bump> DeepClone<'bump> for RawInteger {
+    #[inline]
+    fn deep_clone(&self, _bump: &'bump Arena) -> Self {
+        // Borrows the parser source, as the slices of `Token` do.
+        *self
+    }
+}
+
 /// A raw CSS token, or a parsed value.
 #[derive(CssEql, CssHash, DeepClone)]
 pub enum TokenOrValue {
@@ -1345,6 +1381,8 @@ pub enum TokenOrValue {
     DashedIdent(DashedIdent),
     /// An animation name.
     AnimationName(AnimationName),
+    /// An integer of more than 6 digits, which prints as written. See `Parser::long_integer_text`.
+    RawInteger(RawInteger),
 }
 
 impl TokenOrValue {
@@ -1391,6 +1429,7 @@ impl Clone for TokenOrValue {
             TokenOrValue::Resolution(v) => TokenOrValue::Resolution(*v),
             TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(*v),
             TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(*v),
+            TokenOrValue::RawInteger(v) => TokenOrValue::RawInteger(*v),
         }
     }
 }

@@ -19,9 +19,12 @@ const cases: [css: string, expected: string][] = [
   // property (token list path), and an unparsed/invalid declaration.
   ["a { rotate: 99999999999999999999999999999999999999999999999999rad }", "a{rotate:3.40282e38rad}"],
   ["a { ro: 1.3157e308rad }", "a{ro:3.40282e38rad}"],
+  ["a { rotate: 0 2e32rad }", "a{rotate:0 2e+32rad}"],
+  // The fuzzer wrote that angle as an integer of 68 digits. A token list
+  // prints such a token as written, so it does not reach `Angle::to_css`.
   [
     "a { rotate: 0.0000000000000000000000000000000000000\t00000000000000000000000000000000000200000000000000000000000000000001rad }",
-    "a{rotate:0 2e+32rad}",
+    "a{rotate:0 00000000000000000000000000000000000200000000000000000000000000000001rad}",
   ],
   // Other paths that serialize an Angle: transform functions and filters.
   ["a { transform: rotate(3.3e33rad) }", "a{transform:rotate(3.3e+33rad)}"],

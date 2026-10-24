@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -2230,6 +2230,132 @@ describe("css tests", () => {
         },
       );
     }
+  });
+
+  describe("integers of more than 6 digits", () => {
+    // A typed value is an f32. An f32 holds every integer below 2^24, and the printer writes all of its digits.
+    minify_test(".a{flex-grow:1000001}.b{flex-grow:1000000}", ".a{flex-grow:1000001}.b{flex-grow:1000000}");
+    minify_test(".foo{flex-grow:9999999}", ".foo{flex-grow:9999999}");
+    minify_test(".foo{flex-grow:16777215}", ".foo{flex-grow:16777215}");
+    minify_test(".foo{aspect-ratio:1234567/7654321}", ".foo{aspect-ratio:1234567/7654321}");
+    minify_test(".foo{line-height:1234567.0}", ".foo{line-height:1234567}");
+    minify_test(".foo{width:1234567px;margin-left:-1234567px}", ".foo{width:1234567px;margin-left:-1234567px}");
+    minify_test(".foo{transition-duration:1234567s}", ".foo{transition-duration:1234567s}");
+    minify_test(
+      ".foo{transform:scale(1234567) translate(1234567px)}",
+      ".foo{transform:scale(1234567)translate(1234567px)}",
+    );
+    minify_test(".foo{height:calc(1234567px + 1px)}", ".foo{height:1234568px}");
+    minify_test(
+      "@media (min-width:1234567px) and (min-aspect-ratio:1234567/1){.foo{color:red}}",
+      "@media (width>=1234567px) and (aspect-ratio>=1234567){.foo{color:red}}",
+    );
+
+    // From 2^24 up an f32 does not tell an integer from the next one (67108900 is stored as
+    // 67108896), so the 6 digit output stays.
+    minify_test(".foo{flex-grow:16777216}", ".foo{flex-grow:16777200}");
+    minify_test(".foo{width:67108900px}", ".foo{width:67108900px}");
+    // A number that the printer converts keeps 6 digits too. As an f32, 131072.01 * 100 is
+    // 13107202, 9000000000 / 1000 is 8999999, 1 / (1 / 14300000) is 14300001 and 17454.41rad is
+    // 1000064deg.
+    minify_test(".foo{width:13107201%}", ".foo{width:13107200%}");
+    minify_test(".foo{transition-duration:9000000000ms}", ".foo{transition-duration:9000000s}");
+    minify_test(".foo{width:calc(min(100%,10px)/14300000)}", ".foo{width:calc(min(100%,10px)/14300000)}");
+    minify_test(".foo{rotate:17454.41rad}", ".foo{rotate:1000060deg}");
+
+    // A property with no typed entry, a custom property, a var() fallback and the arguments of an
+    // unknown function are token lists. An integer token of more than 6 digits prints as written.
+    const asWritten = [
+      ".a{z-index:2147483647}.b{z-index:2147483646}",
+      ".foo{z-index:1000001}",
+      ".foo{z-index:-2147483648}",
+      ":root{--build-id:20261023;--id:1234567}",
+      ":root{--n:3000000001}",
+      ":root{--w:16777217px;--p:1234567%;--t:1234567ms}",
+      ".foo{width:var(--w,12345678px)}",
+      ".foo{grid-template-columns:repeat(1234567,1fr)}",
+      ".foo:-x-level(+2147483647 16777217 -0 1.0){color:red}",
+      // Two integers with the same f32 are two values, and the rules do not merge.
+      ".a{--id:20261023}.b{--id:20261024}",
+      // WPT css/cssom/serialize-custom-props.html, "Serializing Integers Never Uses Scinot".
+      ":root{--one:11111111;--two:111111111111;--three:1111111111111111111111111}",
+      ".foo{z-index:var(--three,111111111111)}",
+      ":root{--a:1000000000000000000000;--b:1000000000000000000000000;--c:100000000000000000000000000000000000000}",
+    ];
+    for (const css of asWritten) minify_test(css, css);
+    minify_test(".a{z-index:2147483647}.b{z-index:2147483647}", ".a,.b{z-index:2147483647}");
+    // The limit is 6 digits: below it the value prints, and a sign, a leading zero or the case of a
+    // unit show which of the two happened.
+    minify_test(":root{--a:+999999;--b:+1000000}", ":root{--a:999999;--b:+1000000}");
+    minify_test(":root{--a:0999999;--b:01000000}", ":root{--a:999999;--b:01000000}");
+    minify_test(":root{--a:999999PX;--b:1000000PX}", ":root{--a:999999px;--b:1000000PX}");
+    // A unit written with an escape prints from the value, as before. The digits are an f32 integer.
+    minify_test("a{--x:1234567\\a\n;color:red}", "a{--x:1234567\\a ;color:red}");
+    minify_test("a{--x:1234567\\70 x}", "a{--x:1234567px}");
+    minify_test("a:-x-level(1234567\\a\n){color:red}", "a:-x-level(1234567\\a ){color:red}");
+
+    test("the output of a second pass is the same", () => {
+      const again = (css: string) => minify_test_with_options(minify_test_with_options(css, ""), "");
+      expect(asWritten.map(again)).toEqual(asWritten);
+    });
+
+    cssTest(
+      indoc`
+        .a { z-index: 2147483647 }
+        .b { --build-id: 20261023; flex-grow: 1000001 }
+      `,
+      indoc`
+        .a {
+          z-index: 2147483647;
+        }
+
+        .b {
+          --build-id: 20261023;
+          flex-grow: 1000001;
+        }
+      `,
+    );
+
+    test("bun build and Bun.build", async () => {
+      using dir = tempDir("css-long-integers", {
+        "a.css": "a{z-index:2147483647;flex-grow:1000001}b{z-index:2147483646;--build-id:20261023}",
+      });
+      const build = async (outdir: string, ...flags: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "a.css", "--outdir=" + outdir, ...flags],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+        return await Bun.file(join(String(dir), outdir, "a.css")).text();
+      };
+      const [minified, plain, api] = await Promise.all([
+        build("min", "--minify"),
+        build("plain"),
+        Bun.build({ entrypoints: [join(String(dir), "a.css")], minify: true }),
+      ]);
+
+      const expected = "a{z-index:2147483647;flex-grow:1000001}b{z-index:2147483646;--build-id:20261023}\n";
+      expect(minified).toBe(expected);
+      expect(plain).toBe(
+        indoc`
+          /* a.css */
+          a {
+            z-index: 2147483647;
+            flex-grow: 1000001;
+          }
+
+          b {
+            z-index: 2147483646;
+            --build-id: 20261023;
+          }
+        ` + "\n",
+      );
+      expect(await api.outputs[0].text()).toBe(expected);
+    });
   });
 
   describe("padding", () => {

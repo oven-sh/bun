@@ -26,9 +26,10 @@
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::{self, E, Expr, Loc, Log, Source};
+use bun_ast::{self, E, Expr, G, Loc, Log, Source};
 use bun_collections::HashMap;
-use bun_core::{self, StackCheck};
+use bun_collections::hashbrown::HashTable;
+use bun_core::{self, StackCheck, strings};
 
 /// Tracks how a table or array came to exist, which decides whether later
 /// syntax may extend it. See "Table" and "Array of Tables" in the spec.
@@ -79,6 +80,49 @@ type PResult<T> = Result<T, PErr>;
 struct KeySeg<'a> {
     text: &'a [u8],
     pos: usize,
+}
+
+/// Up to this many keys in one table, a key is found by scanning the table's
+/// properties; beyond it, through the table's index in `Parser::spilled`.
+const LINEAR_KEY_LIMIT: usize = 64;
+
+/// The keys of a table that holds more than `LINEAR_KEY_LIMIT` keys.
+struct SpilledTable {
+    /// The table's `E::Object` address, as in `Parser::meta`.
+    table: usize,
+    keys: HashTable<SpilledKey>,
+}
+
+impl SpilledTable {
+    #[inline]
+    fn hash(table: usize) -> u64 {
+        bun_wyhash::auto_hash(&table)
+    }
+}
+
+/// One key of a `SpilledTable`.
+#[derive(Copy, Clone)]
+struct SpilledKey {
+    /// `SpilledKey::hash` of the table and the key's UTF-8 text.
+    hash: u32,
+    /// The key's position in the table's `properties`.
+    index: u32,
+}
+
+impl SpilledKey {
+    /// The low 32 bits of wyhash, seeded with the table's address so that a
+    /// document cannot be prepared to make its keys collide. A match is
+    /// always confirmed on the key text.
+    #[inline]
+    fn hash(table: usize, key: &[u8]) -> u32 {
+        bun_wyhash::hash_with_seed(table as u64, key) as u32
+    }
+
+    /// `hashbrown` takes its tag from the top bits, so it gets the hash widened.
+    #[inline]
+    fn table_hash(hash: u32) -> u64 {
+        (u64::from(hash) << 32) | u64::from(hash)
+    }
 }
 
 // ── tokens ──────────────────────────────────────────────────────────────────
@@ -242,7 +286,7 @@ impl TOML {
             bump,
             stack_check: StackCheck::init(),
             meta: HashMap::default(),
-            keys: HashMap::default(),
+            spilled: HashTable::new(),
             block: 0,
         };
         match parser.parse_root() {
@@ -1701,14 +1745,10 @@ struct Parser<'a, 'log> {
     stack_check: StackCheck,
     /// Keyed by `E::Object::as_ptr()` / `E::Array::as_ptr()` addresses.
     meta: HashMap<usize, Meta>,
-    /// `(table address, key text)` → the key's value, for every key
-    /// `insert_key` has added. Duplicate checks and dotted/header navigation
-    /// look up here rather than scanning the table's property list, which
-    /// made a table with n keys cost O(n²). Key text is always valid UTF-8
-    /// (the document is validated up front and escapes decode to UTF-8), so
-    /// byte equality is key equality whether the stored key EString ended up
-    /// 8-bit or UTF-16.
-    keys: HashMap<(usize, &'a [u8]), Expr>,
+    /// An index of the keys of each table that holds more than
+    /// `LINEAR_KEY_LIMIT` keys. `append_key` is the only append to a table,
+    /// so no key is missing.
+    spilled: HashTable<SpilledTable>,
     /// Current definition block: bumped per table header and per inline table.
     block: u32,
 }
@@ -1782,12 +1822,12 @@ impl<'a, 'log> Parser<'a, 'log> {
         let mut cur: *mut E::Object = root;
         for (i, seg) in path.iter().enumerate() {
             let last = i + 1 == path.len();
-            match self.get_key(cur, seg.text) {
+            match self.find_key(cur, seg.text) {
                 None => {
                     if last && is_aot {
                         let array = self.new_array(seg.pos, Kind::AotArray);
                         let elem = self.append_aot_elem(array.1, seg.pos)?;
-                        self.insert_key(cur, *seg, array.0)?;
+                        self.append_key(cur, *seg, array.0);
                         cur = elem;
                     } else {
                         let kind = if last {
@@ -1796,7 +1836,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                             Kind::HeaderImplicit
                         };
                         let (expr, ptr) = self.new_table(seg.pos, kind);
-                        self.insert_key(cur, *seg, expr)?;
+                        self.append_key(cur, *seg, expr);
                         cur = ptr;
                     }
                 }
@@ -1929,10 +1969,10 @@ impl<'a, 'log> Parser<'a, 'log> {
     ) -> PResult<()> {
         let mut cur = table;
         for seg in &path[..path.len() - 1] {
-            match self.get_key(cur, seg.text) {
+            match self.find_key(cur, seg.text) {
                 None => {
                     let (expr, ptr) = self.new_table(seg.pos, Kind::Dotted);
-                    self.insert_key(cur, *seg, expr)?;
+                    self.append_key(cur, *seg, expr);
                     cur = ptr;
                 }
                 Some(found) => {
@@ -2105,28 +2145,141 @@ impl<'a, 'log> Parser<'a, 'log> {
         Ok(ptr)
     }
 
-    /// The value stored under `key` in `table`, if any.
-    fn get_key(&self, table: *mut E::Object, key: &'a [u8]) -> Option<Expr> {
-        self.keys.get(&(table as usize, key)).copied()
+    /// The value `table` holds under `key` (UTF-8), if any.
+    #[inline]
+    fn find_key(&self, table: *mut E::Object, key: &[u8]) -> Option<Expr> {
+        // SAFETY: `table` points at a live E::Object in the AST store, created
+        // earlier in this parse; the store lives in `self.bump`.
+        let obj: &E::Object = unsafe { &*table };
+        if obj.properties.len() <= LINEAR_KEY_LIMIT {
+            // `as_property` compares UTF-8 bytes correctly against both 8-bit
+            // and UTF-16 stored keys.
+            return obj.as_property(key).map(|q| q.expr);
+        }
+        self.find_spilled_key(table, &obj.properties, key)
     }
 
-    fn insert_key(&mut self, obj: *mut E::Object, seg: KeySeg<'a>, value: Expr) -> PResult<()> {
-        let slot = self.keys.get_or_put((obj as usize, seg.text))?;
-        if slot.found_existing {
+    #[inline(never)]
+    fn find_spilled_key(
+        &self,
+        table: *mut E::Object,
+        properties: &[G::Property],
+        key: &[u8],
+    ) -> Option<Expr> {
+        let table = table as usize;
+        let hash = SpilledKey::hash(table, key);
+        let found = self
+            .spilled
+            .find(SpilledTable::hash(table), |spilled| spilled.table == table)
+            .expect("a table past the limit has an index")
+            .keys
+            .find(SpilledKey::table_hash(hash), |spilled| {
+                spilled.hash == hash
+                    && stored_key(&properties[spilled.index as usize]).eql_bytes(key)
+            })?;
+        properties[found.index as usize].value
+    }
+
+    // Out of line: inlined into `parse_keyval`, it makes a small table about
+    // 5% slower to parse.
+    #[inline(never)]
+    fn insert_key(&mut self, table: *mut E::Object, seg: KeySeg<'a>, value: Expr) -> PResult<()> {
+        if self.find_key(table, seg.text).is_some() {
             return Err(self
                 .scanner
                 .err_keyed(seg.pos, "Cannot redefine key", seg.text, ""));
         }
-        *slot.value_ptr = value;
+        self.append_key(table, seg, value);
+        Ok(())
+    }
 
+    /// Appends a key that `find_key` has just reported absent from `table`.
+    #[inline(always)]
+    fn append_key(&mut self, table: *mut E::Object, seg: KeySeg<'a>, value: Expr) {
         let key_loc = loc_of(seg.pos);
         let key_expr = if seg.text.is_ascii() {
             Expr::init(E::String::init(seg.text), key_loc)
         } else {
             Expr::init(E::String::init_re_encode_utf8(seg.text, self.bump), key_loc)
         };
-        // SAFETY: `obj` points at a live E::Object in the AST store.
-        unsafe { (*obj).append_property(key_expr, value) };
-        Ok(())
+        // SAFETY: `table` points at a live E::Object in the AST store.
+        let obj: &mut E::Object = unsafe { &mut *table };
+        obj.append_property(key_expr, value);
+        let len = obj.properties.len();
+        if len > LINEAR_KEY_LIMIT {
+            self.spill_key(table, seg.text, len - 1);
+        }
+    }
+
+    /// Indexes the key that `append_key` has just stored at `index`. When that
+    /// key is the one that takes `table` past `LINEAR_KEY_LIMIT`, the table
+    /// gets its index, with the keys before it.
+    #[inline(never)]
+    fn spill_key(&mut self, table: *mut E::Object, key: &[u8], index: usize) {
+        if index == LINEAR_KEY_LIMIT {
+            self.spill_table(table);
+        }
+        let table = table as usize;
+        let hash = SpilledKey::hash(table, key);
+        self.spilled
+            .find_mut(SpilledTable::hash(table), |spilled| spilled.table == table)
+            .expect("a table past the limit has an index")
+            .keys
+            .insert_unique(
+                SpilledKey::table_hash(hash),
+                SpilledKey {
+                    hash,
+                    // A document is shorter than 2 GiB, so a table has fewer keys.
+                    index: index as u32,
+                },
+                |other| SpilledKey::table_hash(other.hash),
+            );
+    }
+
+    /// Indexes the first `LINEAR_KEY_LIMIT` keys of `table`.
+    #[cold]
+    fn spill_table(&mut self, table: *mut E::Object) {
+        // SAFETY: `table` points at a live E::Object in the AST store.
+        let obj: &E::Object = unsafe { &*table };
+        let table = table as usize;
+        let mut keys = HashTable::with_capacity(LINEAR_KEY_LIMIT + 1);
+        // A non-ASCII key is stored as UTF-16, and `find_key` hashes the
+        // UTF-8 spelling.
+        let mut utf8 = Vec::new();
+        for (index, property) in obj.properties[..LINEAR_KEY_LIMIT].iter().enumerate() {
+            let key = stored_key(property);
+            let hash = if key.is_utf8() {
+                SpilledKey::hash(table, key.slice8())
+            } else {
+                utf8.clear();
+                strings::to_utf8_append_to_list(&mut utf8, key.slice16());
+                SpilledKey::hash(table, &utf8)
+            };
+            keys.insert_unique(
+                SpilledKey::table_hash(hash),
+                SpilledKey {
+                    hash,
+                    index: index as u32,
+                },
+                |other| SpilledKey::table_hash(other.hash),
+            );
+        }
+        self.spilled.insert_unique(
+            SpilledTable::hash(table),
+            SpilledTable { table, keys },
+            |other| SpilledTable::hash(other.table),
+        );
+    }
+}
+
+/// The key of a property that `Parser::append_key` stored.
+#[inline]
+fn stored_key(property: &G::Property) -> &E::String {
+    match &property.key {
+        Some(Expr {
+            data: bun_ast::expr::Data::EString(key),
+            ..
+        }) => key,
+        _ => unreachable!("a TOML table's keys are strings"),
     }
 }

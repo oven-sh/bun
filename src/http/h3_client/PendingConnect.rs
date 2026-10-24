@@ -11,6 +11,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
+use bun_ptr::RefPtr;
 use bun_threading::Guarded;
 use bun_uws as uws;
 use bun_uws::quic;
@@ -19,22 +20,11 @@ use super::ClientSession;
 use super::client_session::session_mut;
 
 pub struct PendingConnect {
-    // INTRUSIVE: intrusive-refcounted (ref_/deref) ClientSession; one ref held
-    // from `register` until `on_dns_resolved` runs.
-    session: *mut ClientSession,
+    session: RefPtr<ClientSession>,
     // FFI: C handle owned until exactly one of resolved()/cancel() consumes it.
     pc: *mut quic::PendingConnect,
     // BACKREF: the uws event loop (lives as long as the HTTP thread).
     loop_ptr: *mut uws::Loop,
-}
-
-impl Drop for PendingConnect {
-    fn drop(&mut self) {
-        // Invariant: a constructed PendingConnect holds exactly one ref on `session`
-        // (taken in `register`); release it here.
-        // SAFETY: ref taken in `register`; session is live until this drops it.
-        unsafe { ClientSession::deref(self.session) };
-    }
 }
 
 impl PendingConnect {
@@ -57,12 +47,9 @@ impl PendingConnect {
         pc: *mut quic::PendingConnect,
         l: *mut uws::Loop,
     ) {
-        // Caller passes a live intrusive-refcounted ClientSession; PendingConnect
-        // holds one ref from construction until Drop. `session_mut` centralises
-        // the backref upgrade (same invariant as the other call sites below).
-        session_mut(session).ref_();
         let self_ = Box::new(PendingConnect {
-            session,
+            // SAFETY: caller passes a live intrusive-refcounted ClientSession.
+            session: unsafe { RefPtr::init_ref(session) },
             pc,
             loop_ptr: l,
         });
@@ -82,10 +69,10 @@ impl PendingConnect {
     /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`
     /// and must not be used after this call (it is freed here).
     pub unsafe fn on_dns_resolved(this: *mut PendingConnect) {
-        // SAFETY: `this` was heap-allocated in `register`; reclaim it so the Box drops at
-        // end of scope — `Drop` derefs `session` and the allocation is freed.
+        // SAFETY: `this` was heap-allocated in `register`; reclaim it so the Box
+        // (and its `session` ref) drops at end of scope.
         let this = unsafe { bun_core::heap::take(this) };
-        let session = this.session;
+        let session = this.session.as_ptr();
 
         // session is kept alive by the ref `this` holds for the duration of this
         // fn — `session_mut` centralises the backref upgrade.

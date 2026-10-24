@@ -9,12 +9,12 @@ use crate::shell::yield_::Yield;
 use crate::shell::{EnvStr, ExitCode};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum AssignCtx {
+pub(crate) enum AssignCtx {
     Cmd,
     Shell,
 }
 
-pub struct Assigns {
+pub(crate) struct Assigns {
     pub(crate) base: Base,
     /// Points into the AST arena, which outlives every state node — `RawSlice`
     /// invariant.
@@ -24,7 +24,7 @@ pub struct Assigns {
 }
 
 #[derive(Default)]
-pub enum AssignsState {
+pub(crate) enum AssignsState {
     #[default]
     Idle,
     Expanding {
@@ -72,7 +72,7 @@ impl Assigns {
                         continue;
                     }
                     let atom: *const ast::Atom = &raw const assigns[idx as usize].value;
-                    let child = Expansion::init(interp, shell, atom, this);
+                    let child = Expansion::init(interp, shell, atom, this, true);
                     return Expansion::start(interp, child);
                 }
                 AssignsState::Done => {
@@ -139,8 +139,7 @@ impl Assigns {
         Yield::Next(this)
     }
 
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
         log!("Assigns {} deinit", this);
-        interp.as_assigns_mut(this).base.end_scope();
     }
 }

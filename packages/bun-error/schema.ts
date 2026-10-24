@@ -16,7 +16,7 @@ export interface StackFramePosition {
   line: number;
   /** 1-based; -1 when the frame has no source position */
   column: number;
-  // Only set on frames built client-side (runtime-error.ts, source-map remapping in index.tsx).
+  // Only set on frames built client-side (runtime-error.ts).
   source_offset?: number;
   line_start?: number;
   line_stop?: number;

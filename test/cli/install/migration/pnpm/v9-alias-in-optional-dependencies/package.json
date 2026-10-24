@@ -1,0 +1,7 @@
+{
+  "name": "v9-alias-in-optional-dependencies",
+  "version": "1.0.0",
+  "dependencies": {
+    "one-dep": "^1.0.0"
+  }
+}

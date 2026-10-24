@@ -298,12 +298,12 @@ impl ShellTouchTask {
                             break 'out;
                         }
                         Err(e) => {
-                            this.err = Some(e.with_path(filepath.as_bytes()));
+                            this.err = Some(e.with_path(&this.filepath));
                             break 'out;
                         }
                     }
                 }
-                this.err = Some(err.with_path(filepath.as_bytes()));
+                this.err = Some(err.with_path(&this.filepath));
             }
         }
         // Worker→main bounce-back is posted by `shell_task_trampoline` after

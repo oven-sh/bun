@@ -70,6 +70,15 @@ public:
     void dispatchEvent(Event&) final;
     void dispatchCloseEvent(Event&);
 
+    enum class ErrorDelivery : uint8_t {
+        Dropped, // terminate() was called or the thread has gone: as for 'message', nobody is told
+        Taken, // an 'error' listener was registered and received the event
+        Untaken, // nobody listens: the error is the uncaught error of this object's owner
+    };
+    // An error the worker thread reported. At most once per worker, so dispatchEvent() (every
+    // message) does not carry the listener test.
+    [[nodiscard]] ErrorDelivery dispatchErrorEvent(const String& message, JSC::JSValue error);
+
     const String& name() const { return m_name; }
     // Both identifiers are process-unique; threadId is derived from the worker's.
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_contextProxy->workerContextIdentifier(); }

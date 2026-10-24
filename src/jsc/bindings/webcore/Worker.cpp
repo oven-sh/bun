@@ -141,6 +141,23 @@ void Worker::dispatchCloseEvent(Event& event)
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
+Worker::ErrorDelivery Worker::dispatchErrorEvent(const String& message, JSC::JSValue error)
+{
+    if (wasTerminated())
+        return ErrorDelivery::Dropped;
+    auto* context = scriptExecutionContext();
+    if (!context || context->isJSExecutionForbidden())
+        return ErrorDelivery::Dropped;
+    if (!hasEventListeners(eventNames().errorEvent))
+        return ErrorDelivery::Untaken;
+    ErrorEvent::Init init;
+    init.message = message;
+    init.error = error;
+    init.cancelable = true;
+    EventTargetWithInlineData::dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    return ErrorDelivery::Taken;
+}
+
 // ---- Worker-thread side: hooks the native thread object calls, and the script-facing functions that
 //      run inside a worker (parentPort.postMessage, workerData, receiveMessageOnPort, ...).
 
@@ -204,8 +221,10 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
-    globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
+    auto& scope = globalObject->globalEventScope.get();
+    auto seenInWorker = scope.hasEventListeners(eventNames().errorEvent) ? WorkerMessagingProxy::SeenInWorker::Yes : WorkerMessagingProxy::SeenInWorker::No;
+    scope.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    proxy->postErrorToWorkerObject(*globalObject, messageStr, error, seenInWorker);
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);

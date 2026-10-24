@@ -618,7 +618,17 @@ declare module "bun" {
   type WorkerType = "classic" | "module";
 
   interface AbstractWorker {
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ServiceWorker/error_event) */
+    /**
+     * Fires when an uncaught error ends the worker. `event.message` is the error as the worker
+     * prints it, and `event.error` is `null`.
+     *
+     * If the event fires and no `"error"` listener receives it, Bun reports the error as an
+     * uncaught error of the thread that created the worker: that thread's
+     * `process.on("uncaughtException")` listeners, or print and exit code 1. An `"error"`
+     * listener on the worker's own global scope also takes the error.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/API/ServiceWorker/error_event)
+     */
     onerror: ((this: AbstractWorker, ev: ErrorEvent) => any) | null;
     addEventListener<K extends keyof AbstractWorkerEventMap>(
       type: K,

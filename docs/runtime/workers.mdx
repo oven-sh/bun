@@ -127,6 +127,22 @@ A top-level `await` in a statically imported module counts too. Static imports a
 
 [`node:worker_threads`](https://nodejs.org/api/worker_threads.html) differs here, in Bun as in Node.js: `parentPort` keeps messages queued until a `"message"` listener is attached (and again whenever the last one is removed), so a worker that runs `await init()` before `parentPort.on("message", ...)` still receives everything in order.
 
+### `"error"`
+
+Bun emits the `"error"` event on the `Worker` object when an uncaught error ends the worker: an uncaught exception, an unhandled promise rejection, or a script that fails to load. `event.message` holds the error as the worker prints it. `event.error` is `null`.
+
+```ts index.ts icon="/icons/typescript.svg"
+const worker = new Worker(new URL("worker.ts", import.meta.url).href);
+
+worker.addEventListener("error", event => {
+  console.error(event.message);
+});
+```
+
+Register an `"error"` listener on every `Worker`. If the event fires and no listener receives it, Bun reports the error as an uncaught error of the thread that created the worker: Bun calls that thread's `process.on("uncaughtException")` listeners, or prints the error and exits with code 1. If that thread is itself a worker, the report repeats one level up.
+
+A listener takes the error whether or not it calls `event.preventDefault()`. An `"error"` listener on the worker's own global scope (`self.addEventListener("error", ...)` or `self.onerror`) also takes it. Bun drops an error that arrives after `worker.terminate()`.
+
 ## Messages with `postMessage`
 
 To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage). Bun serializes messages with the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).

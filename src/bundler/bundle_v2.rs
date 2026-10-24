@@ -1922,6 +1922,39 @@ pub mod bv2_impl {
         false
     }
 
+    /// What a failed lookup for an import record does to the build.
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    enum ResolveFailure {
+        /// An error: the build fails.
+        Fatal,
+        /// A warning: the `require.resolve()` of a package name stays in the output as written.
+        Kept,
+        /// Nothing: the code around the import handles the failure.
+        Tolerated,
+    }
+
+    /// Shared by `run_resolver` and `resolve_import_records`.
+    #[cold]
+    fn warn_kept_require_resolve(
+        log: &mut bun_ast::Log,
+        source: Option<&bun_ast::Source>,
+        range: bun_ast::Range,
+        specifier: &[u8],
+    ) {
+        log.add_resolve_warning_with_notes(
+            source,
+            range,
+            Box::new([bun_ast::range_data(
+                None,
+                bun_ast::Range::NONE,
+                "This require.resolve() call stays in the output as written. Mark the path as external or wrap the call in try/catch to remove this warning.",
+            )]),
+            format_args!("Could not resolve: \"{}\"", bstr::BStr::new(specifier)),
+            specifier,
+            ImportKind::RequireResolve,
+        );
+    }
+
     // Unified with the canonical definitions at the parent module level (this
     // avoids two distinct nominal `BundleV2`/`PendingImport`/`BakeOptions` types
     // that previously caused widespread "expected `BundleV2`, found `BundleV2`"
@@ -2074,6 +2107,33 @@ pub mod bv2_impl {
             // SAFETY: `transpiler.log` is set from a live `*mut Log` in `init` and
             // outlives `BundleV2`.
             self.transpiler.log_mut()
+        }
+
+        #[inline]
+        fn resolve_failure(
+            &self,
+            flags: bun_ast::ImportRecordFlags,
+            kind: ImportKind,
+            specifier: &[u8],
+            target: options::Target,
+        ) -> ResolveFailure {
+            let opts = &self.transpiler.options;
+            if flags.contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                || opts.ignore_module_resolution_errors
+            {
+                return ResolveFailure::Tolerated;
+            }
+            // A browser build has no `require`. `hmr.requireResolve(id)` of the dev format returns `id`.
+            let output_can_resolve =
+                target.is_server_side() && opts.output_format != options::Format::InternalBakeDev;
+            if kind == ImportKind::RequireResolve
+                && is_package_path(specifier)
+                && output_can_resolve
+                && matches!(opts.allow_unresolved, options::AllowUnresolved::All)
+            {
+                return ResolveFailure::Kept;
+            }
+            ResolveFailure::Fatal
         }
     }
 
@@ -2813,7 +2873,7 @@ pub mod bv2_impl {
                             }
                         }
 
-                        let handles_import_errors;
+                        let flags;
                         // reshaped for borrowck — `log_for_resolution_failures` borrows
                         // `&mut self`; the returned log is backed by either a DevServer-owned slot or
                         // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
@@ -2832,9 +2892,7 @@ pub mod bv2_impl {
                                     [import_record.importer_source_index as usize]
                                     .as_mut_slice()
                                     [import_record.import_record_index as usize];
-                            handles_import_errors = record
-                                .flags
-                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                            flags = record.flags;
 
                             // Disable failing packages from being printed.
                             // This may cause broken code to write.
@@ -2845,6 +2903,12 @@ pub mod bv2_impl {
                                 .flags
                                 .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
                         }
+                        let failure = self.resolve_failure(
+                            flags,
+                            import_record.kind,
+                            &import_record.specifier,
+                            target,
+                        );
                         let source: Option<&bun_ast::Source> = Some(
                             &self.graph.input_files.items_source()
                                 [import_record.importer_source_index as usize],
@@ -2854,9 +2918,14 @@ pub mod bv2_impl {
                             let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
                             let path_to_use = &import_record.specifier;
 
-                            if !handles_import_errors
-                                && !self.transpiler.options.ignore_module_resolution_errors
-                            {
+                            if failure == ResolveFailure::Kept {
+                                warn_kept_require_resolve(
+                                    log,
+                                    source,
+                                    import_record.range,
+                                    path_to_use,
+                                );
+                            } else if failure == ResolveFailure::Fatal {
                                 if is_package_path(&import_record.specifier) {
                                     if target == Target::Browser
                                         && options::is_node_builtin(path_to_use)
@@ -2908,8 +2977,7 @@ pub mod bv2_impl {
                                 err,
                                 &import_record.specifier,
                                 import_record.kind,
-                                !handles_import_errors
-                                    && !self.transpiler.options.ignore_module_resolution_errors,
+                                failure != ResolveFailure::Tolerated,
                             );
                         }
                         return;
@@ -7024,15 +7092,24 @@ pub mod bv2_impl {
                             import_record
                                 .flags
                                 .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+                            let failure = self.resolve_failure(
+                                import_record.flags,
+                                import_record.kind,
+                                import_record.path.text,
+                                ctx.target,
+                            );
 
                             if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
 
-                                if !import_record
-                                    .flags
-                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                                    && !self.transpiler.options.ignore_module_resolution_errors
-                                {
+                                if failure == ResolveFailure::Kept {
+                                    warn_kept_require_resolve(
+                                        log,
+                                        Some(source),
+                                        import_record.range,
+                                        import_record.path.text,
+                                    );
+                                } else if failure == ResolveFailure::Fatal {
                                     last_error = Some(err.into());
                                     if is_package_path(import_record.path.text) {
                                         if ctx.target == Target::Browser
@@ -7134,10 +7211,7 @@ pub mod bv2_impl {
                                     }
                                 }
                             } else {
-                                let report = !import_record
-                                    .flags
-                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                                    && !self.transpiler.options.ignore_module_resolution_errors;
+                                let report = failure != ResolveFailure::Tolerated;
                                 let ours = log_unhandled_resolve_error(
                                     log,
                                     Some(source),

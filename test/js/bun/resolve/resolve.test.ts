@@ -259,6 +259,22 @@ it("file url in require.resolve resolves", async () => {
   expect(stdout.toString("utf8")).toBe(`${dir}${sep}index.js\n`);
 });
 
+it("require.resolve of a concatenated string resolves the whole specifier", async () => {
+  using dir = tempDir("require-resolve-concat", {
+    "index.cjs": `console.log(require.resolve("./tar" + "get.cjs") === require.resolve("./target.cjs"));`,
+    "target.cjs": "module.exports = 1;",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+});
+
 it("file url with special characters in require resolves", async () => {
   const filename = "🅱️ndex.js";
   await using dir = tempDir("file url", {

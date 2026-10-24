@@ -303,6 +303,64 @@ describe("bundler", () => {
     },
   });
 
+  // An import that every onResolve callback declines goes to the built-in resolver.
+  itBundled("plugin/ResolveDeclinedRequireResolveUnresolvedIsKept", {
+    files: {
+      "index.js": /* js */ `
+        exports.find = () => require.resolve("does-not-exist");
+        console.log("runs");
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    plugins(builder) {
+      builder.onResolve({ filter: /^does-not-exist$/ }, () => undefined);
+    },
+    onAfterApiBundle(build) {
+      const [log] = build.logs as ResolveMessage[];
+      expect({
+        success: build.success,
+        logs: build.logs.length,
+        name: log.name,
+        level: `${log.level}`,
+        message: log.message,
+        specifier: log.specifier,
+        importKind: `${log.importKind}`,
+      }).toEqual({
+        success: true,
+        logs: 1,
+        name: "ResolveMessage",
+        level: "warn",
+        message: 'Could not resolve: "does-not-exist"',
+        specifier: "does-not-exist",
+        importKind: "require-resolve",
+      });
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('require.resolve("does-not-exist")');
+    },
+    run: { stdout: "runs" },
+  });
+  itBundled("plugin/ResolveDeclinedUnresolvedStillErrors", {
+    files: {
+      "index.js": /* js */ `
+        exports.load = () => require("does-not-exist");
+        exports.malformed = () => require.resolve("data:text/javascript;base64");
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    plugins(builder) {
+      builder.onResolve({ filter: /^(does-not-exist$|data:)/ }, () => undefined);
+    },
+    bundleErrors: {
+      "/index.js": [
+        `Could not resolve: "does-not-exist". Maybe you need to "bun install"?`,
+        `Could not resolve data URL: "data:text/javascript;base64"`,
+      ],
+    },
+  });
+
   //
   itBundled("plugin/ResolvePrefix", ({ root }) => {
     let onResolveCount = 0;

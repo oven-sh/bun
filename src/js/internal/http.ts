@@ -336,13 +336,25 @@ const kWritableFinished = Symbol("kWritableFinished");
 const kEndCallbacks = Symbol("kEndCallbacks");
 const kFlushError = Symbol("kFlushError");
 
+function rethrowUncaught(err) {
+  throw err;
+}
+
 // Deliver end() callbacks, mirroring Writable: null on successful finish,
 // otherwise the error that prevented all data from being flushed.
 function flushEndCallbacks(msg, err) {
   const callbacks = msg[kEndCallbacks];
   if (callbacks === null) return;
   msg[kEndCallbacks] = null;
-  for (let i = 0; i < callbacks.length; i++) callbacks[i](err);
+  for (let i = 0; i < callbacks.length; i++) {
+    try {
+      callbacks[i](err);
+    } catch (e) {
+      // An uncaught exception, as in Node.js. There it also skips the other
+      // callbacks and 'finish', which leaves the connection stuck on this message.
+      process.nextTick(rethrowUncaught, e);
+    }
+  }
 }
 
 function getEndCallbackError(msg) {
@@ -358,8 +370,7 @@ function queueEndCallback(msg, callback) {
     process.nextTick(callback, msg[kFlushError]);
     return;
   }
-  msg[kEndCallbacks] ??= [];
-  msg[kEndCallbacks].push(callback);
+  $arrayPush((msg[kEndCallbacks] ??= []), callback);
 }
 
 function onFinish(outmsg, err?) {
@@ -370,12 +381,8 @@ function onFinish(outmsg, err?) {
   }
 
   outmsg[kWritableFinished] = true;
-  try {
-    flushEndCallbacks(outmsg, null);
-  } finally {
-    // Not in Node.js: after a callback that throws, the connection still has to move on to its next message.
-    outmsg.emit("finish");
-  }
+  flushEndCallbacks(outmsg, null);
+  outmsg.emit("finish");
 }
 
 function hasServerResponseFinished(self, chunk, callback, fromEnd) {
@@ -632,6 +639,7 @@ export {
   parseProxyUrl,
   queueEndCallback,
   redactInvalidProxyUrl,
+  rethrowUncaught,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,

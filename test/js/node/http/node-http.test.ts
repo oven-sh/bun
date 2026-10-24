@@ -7923,7 +7923,7 @@ it("a listener can cancel Readable.toWeb(req) and end the response in the same t
   expect(exitCode).toBe(0);
 });
 
-// Node.js v26.12.1 skips 'finish' after such a callback, which leaves the connection stuck on that response.
+// Node.js v26.12.1 skips the other callbacks and 'finish' after such a callback, which leaves the connection stuck on that response.
 it.concurrent.each(["in the handler", "after the handler"])(
   "an end() callback that throws is an uncaught exception, and the connection serves its next request (end() %s)",
   async when => {
@@ -7939,19 +7939,25 @@ it.concurrent.each(["in the handler", "after the handler"])(
         const server = http.createServer((req, res) => {
           res.on("finish", () => events.push("finish " + req.url));
           res.on("close", () => events.push("close " + req.url));
-          const end = () =>
+          const end = () => {
             res.end("ok", () => {
               events.push("end callback " + req.url);
               if (req.url === "/first") throw new Error("from the end() callback");
             });
+            res.end(() => events.push("second end callback " + req.url));
+          };
           if (${JSON.stringify(when)} === "in the handler") end();
           else setImmediate(end);
         });
         server.listen(0, "127.0.0.1", () => {
           const client = net.connect(server.address().port, "127.0.0.1");
+          let received = "";
           let responses = 0;
           client.on("data", chunk => {
-            responses += chunk.toString("latin1").split("HTTP/1.1 200 OK").length - 1;
+            received += chunk.toString("latin1");
+            const complete = received.split("\\r\\n\\r\\nok").length - 1;
+            if (complete === responses) return;
+            responses = complete;
             if (responses === 1) client.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
           });
           client.on("close", () => {
@@ -7972,10 +7978,12 @@ it.concurrent.each(["in the handler", "after the handler"])(
         responses: 2,
         events: [
           "end callback /first",
+          "second end callback /first",
           "finish /first",
           "uncaughtException: from the end() callback",
           "close /first",
           "end callback /second",
+          "second end callback /second",
           "finish /second",
           "close /second",
         ],
@@ -7985,3 +7993,38 @@ it.concurrent.each(["in the handler", "after the handler"])(
     expect(exitCode).toBe(0);
   },
 );
+
+// Not in Node.js, where a response without assignSocket() sends nothing: here it answers through the request's handle.
+it("a ServerResponse made by the handler for its request closes after 'finish'", async () => {
+  const { promise, resolve } = Promise.withResolvers<string[]>();
+  const events: string[] = [];
+  await using server = http.createServer(req => {
+    const res = new http.ServerResponse(req);
+    res.on("finish", () => events.push("finish"));
+    res.on("close", () => resolve([...events, "close"]));
+    res.end("hello", (err?: Error | null) => void events.push(`end callback: ${err}`));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+  expect(await response.text()).toBe("hello");
+  expect(await promise).toEqual(["end callback: null", "finish", "close"]);
+});
+
+// Node.js calls neither callback here: a write that never completes holds both back.
+it("a socket from emit('connection') that closes with a write in flight fails write() and end() callbacks by name", async () => {
+  const socket = new Duplex({ read() {}, write() {} });
+  const { promise, resolve } = Promise.withResolvers<string[]>();
+  const messages: string[] = [];
+  const server = http.createServer((req, res) => {
+    res.on("close", () => resolve(messages));
+    res.write(Buffer.alloc(socket.writableHighWaterMark, "a"), err => void messages.push(`write: ${err?.message}`));
+    res.end("tail", (err?: Error | null) => void messages.push(`end: ${err?.message}`));
+    socket.destroy();
+  });
+  server.emit("connection", socket);
+  socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  expect(await promise).toEqual([
+    "write: Cannot call write after a stream was destroyed",
+    "end: Cannot call end after a stream was destroyed",
+  ]);
+});

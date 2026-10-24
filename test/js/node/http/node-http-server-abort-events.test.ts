@@ -351,6 +351,36 @@ describe("a late end() or write() answers its callback like Node.js", () => {
         'write("", cb)': destroyed,
       },
     },
+    // Whether end() has a last chunk to write follows the framing of the head, as in Node's _storeHeader().
+    ...Object.fromEntries(
+      (
+        [
+          ["Transfer-Encoding: identity", res => res.setHeader("Transfer-Encoding", "identity"), finishes],
+          ["Transfer-Encoding removed", res => res.removeHeader("Transfer-Encoding"), finishes],
+          [
+            "Transfer-Encoding: chunked beside a Content-Length",
+            res => res.setHeader("Transfer-Encoding", "chunked").setHeader("Content-Length", 2),
+            dropped,
+          ],
+        ] as [string, (res: ServerResponse) => void, Observed][]
+      ).map(([framing, frame, end]) => [
+        `unfinished, the client closed the connection, ${framing}`,
+        {
+          reach: overConnection(true, (req, res, run) => {
+            whenConnectionClosed(req, res, run);
+            frame(res);
+            res.write("ok");
+          }),
+          expected: {
+            "end(cb)": end,
+            'end("", cb)': end,
+            "end(chunk, cb)": dropped,
+            "write(chunk, cb)": destroyed,
+            'write("", cb)': destroyed,
+          },
+        },
+      ]),
+    ),
     "unfinished, destroyed before it got a socket": {
       async reach(call) {
         const res = new ServerResponse(new IncomingMessage(null as any));
@@ -542,6 +572,53 @@ describe("res.destroy() defers 'close'", () => {
       "req.close",
     ]);
   });
+
+  // The response keeps its socket until 'finish', whether or not the handler has returned by then.
+  test.concurrent.each(["in the handler", "after the handler"])(
+    "req.socket.destroy(err) after end() %s: the end() callback gets the error and there is no 'finish'",
+    async when => {
+      const error = new Error("destroyed by the handler");
+      const { events } = await serveAndRecord((req, res, events) => {
+        const { socket } = req;
+        socket.on("error", () => {});
+        const end = () => {
+          res.end("hello", (err?: Error | null) => {
+            events.push(`end callback (the error: ${err === error}, its socket: ${res.socket === socket})`);
+          });
+          socket.destroy(error);
+        };
+        if (when === "in the handler") end();
+        else setImmediate(end);
+      });
+      expect(events).toEqual([
+        "listener returned",
+        "end callback (the error: true, its socket: true)",
+        "req.aborted",
+        "res.close (closed: true)",
+        "req.close",
+      ]);
+    },
+  );
+
+  // By then the server has moved on from a response that ended in the handler: it still has to close.
+  test.concurrent.each(["req.socket", "res"] as const)(
+    "%s.destroy(err) between the handler and 'finish': the end() callback gets the error and the response closes",
+    async target => {
+      const error = new Error("destroyed on a tick");
+      const { events } = await serveAndRecord((req, res, events) => {
+        req.socket.on("error", () => {});
+        process.nextTick(() => (target === "res" ? res : req.socket).destroy(error));
+        res.end("hello", (err?: Error | null) => void events.push(`end callback (the error: ${err === error})`));
+      });
+      expect(events).toEqual([
+        "listener returned",
+        "end callback (the error: true)",
+        "req.aborted",
+        "res.close (closed: true)",
+        "req.close",
+      ]);
+    },
+  );
 
   // Once the response has finished it no longer has a socket, so (like Node)
   // destroy() leaves the kept-alive connection alone and only defers 'close'.

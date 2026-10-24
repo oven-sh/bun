@@ -58,6 +58,7 @@ const {
   getEndCallbackError,
   queueEndCallback,
   onFinish,
+  rethrowUncaught,
   NodeHTTPBodyReadState,
   drainMicrotasks,
   setServerCustomOptions,
@@ -463,10 +464,6 @@ Server.prototype[kIncomingMessage] = undefined;
 Server.prototype[kServerResponse] = undefined;
 
 Server.prototype[kConnectionsCheckingInterval] = undefined;
-
-function rethrowUncaught(err) {
-  throw err;
-}
 
 // Like Node.js's setupConnectionsTracking: each 'listening' event replaces
 // the connections-checking interval timer (used by the headers/request
@@ -1132,6 +1129,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // between the 'request' emit and here drains the tick queue.
           http_res[kDetachedFrom] = socket;
           http_res.detachSocket(socket);
+          // Node's response keeps its socket until resOnFinish: onFinish() and the end() callbacks still read it.
+          http_res.socket = socket;
           if (socket[kPipelinedResponses] !== undefined) {
             advanceResponsePipeline(server, socket);
           }
@@ -1923,15 +1922,7 @@ function getNodeHTTPServerSocket() {
         this.prependOnceListener("close", emitCloseNT.bind(undefined, message));
       }
 
-      if (req && !req.destroyed && !req[kHandle]?.upgraded) {
-        // At this point the socket is already destroyed; let's avoid UAF
-        req[kHandle] = undefined;
-        if (req.listenerCount("error") > 0) {
-          req.destroy(new ConnResetException("aborted"));
-        } else {
-          req.destroy();
-        }
-      }
+      if (!req?.[kHandle]?.upgraded) abortRequest(req);
 
       // Pipelined responses (and their requests) that were still queued behind
       // the in-flight response are aborted, like Node.js's socketOnClose
@@ -2712,7 +2703,7 @@ function emitResponseFinish() {
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
   if (detachedFrom !== undefined) {
-    this[kDetachedFrom] = undefined;
+    this.socket = null;
     return;
   }
   if (socket != null) this.detachSocket(socket);
@@ -2885,6 +2876,18 @@ function lastPipelinedResponse(socket) {
 // in-flight one, abort them and their requests, like Node.js's socketOnClose
 // (abortIncoming). Runs from the native socket's close path and from the
 // http1 fallback's socket 'close' listener.
+// Node.js's abortIncoming, for one request.
+function abortRequest(req) {
+  if (!req || req.destroyed) return;
+  // At this point the socket is already destroyed; let's avoid UAF
+  req[kHandle] = undefined;
+  if (req.listenerCount("error") > 0) {
+    req.destroy(new ConnResetException("aborted"));
+  } else {
+    req.destroy();
+  }
+}
+
 function abortQueuedPipelinedResponses(socket, error = $ERR_STREAM_DESTROYED("write")) {
   const pipelined = socket[kPipelinedResponses];
   const pipelinedLength = pipelined ? pipelined.length : 0;
@@ -2896,14 +2899,7 @@ function abortQueuedPipelinedResponses(socket, error = $ERR_STREAM_DESTROYED("wr
       if (queuedRes[kPipelinedQueuedState] === undefined) continue;
       const queuedReq = queuedRes.req;
       failQueuedPipelinedCallbacks(queuedRes, queuedRes[kPipelinedQueuedState], error);
-      if (queuedReq && !queuedReq.destroyed) {
-        queuedReq[kHandle] = undefined;
-        if (queuedReq.listenerCount("error") > 0) {
-          queuedReq.destroy(new ConnResetException("aborted"));
-        } else {
-          queuedReq.destroy();
-        }
-      }
+      abortRequest(queuedReq);
       if (!queuedRes.destroyed) {
         queuedRes.destroy();
       } else if (!queuedRes._closed) {
@@ -3598,9 +3594,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       !chunk &&
       !droppedChunk &&
       headerState === NodeHTTPHeaderState.sent &&
-      (!this._hasBody || !this.useChunkedEncodingByDefault || this.hasHeader("content-length"))
+      !(this._hasBody && willBeChunked(this))
     ) {
-      process.nextTick(onFinish, this);
+      process.nextTick(finishResponse, this);
     }
     this.finished = true;
     process.nextTick(markResponseEndedNT, this);
@@ -3687,7 +3683,19 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 // 'finish' waits a tick: the dispatcher sets kDetachedFrom after a sync handler returns, and 'finish' reads it.
 function queueResponseFinished(res) {
   res._callPendingCallbacks();
-  process.nextTick(onFinish, res);
+  process.nextTick(finishResponse, res);
+}
+
+function finishResponse(res) {
+  onFinish(res);
+  if (res.writableFinished) return;
+  // No 'finish': the 'close' of its socket ends the response, and #onClose does not find one that the dispatcher detached.
+  res[kDetachedFrom]?.prependOnceListener("close", abortDetachedResponse.bind(undefined, res));
+}
+
+function abortDetachedResponse(res) {
+  abortRequest(res.req);
+  emitCloseNT(res);
 }
 
 function flushPendingFinish(this: any) {
@@ -4080,8 +4088,7 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   if (handle && this[kPipelinedQueuedState] === undefined) {
     handle.abort();
   }
-  // Node's response keeps its socket until resOnFinish, so an end() callback can still destroy the connection.
-  const socket = this[kSocket] ?? this[kDetachedFrom];
+  const socket = this[kSocket];
   if (socket) {
     socket.destroy(err);
   } else {
@@ -4096,9 +4103,8 @@ ServerResponse.prototype.emit = function (event) {
       // The connection died mid-drain: like Node.js, the callbacks get the error, then the response closes without 'finish'.
       this[kPendingFinish] = false;
       this._closed = true;
-      const err = getEndCallbackError(this);
-      failPendingWriteCallbacks(this, err);
-      process.nextTick(failResponseFlushThenClose, this, err);
+      failPendingWriteCallbacks(this, this[kSocket]?.errored ?? this[kErrored]);
+      process.nextTick(failResponseFlushThenClose, this);
       return false;
     }
     callCloseCallback(this);
@@ -4109,12 +4115,9 @@ ServerResponse.prototype.emit = function (event) {
   return Stream.prototype.emit.$apply(this, arguments);
 };
 
-function failResponseFlushThenClose(res, err) {
-  try {
-    onFinish(res, err);
-  } finally {
-    res.emit("close");
-  }
+function failResponseFlushThenClose(res) {
+  onFinish(res, getEndCallbackError(res));
+  res.emit("close");
 }
 
 ServerResponse.prototype.flushHeaders = function () {

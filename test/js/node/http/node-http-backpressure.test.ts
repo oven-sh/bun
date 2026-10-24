@@ -1405,7 +1405,14 @@ describe("backpressure", () => {
           "-e",
           `const { readFileSync } = require("node:fs");
           const events = [];
-          process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
+          const last = ["close first", "close second", "uncaughtException: from the end() callback"];
+          function record(event) {
+            events.push(event);
+            if (!last.every(event => events.includes(event))) return;
+            console.log(JSON.stringify(events));
+            process.exit(0);
+          }
+          process.on("uncaughtException", err => record("uncaughtException: " + err.message));
           const options = {
             allowHTTP1: true,
             cert: readFileSync(${JSON.stringify(path.join(keysDir, "agent1-cert.pem"))}),
@@ -1413,13 +1420,7 @@ describe("backpressure", () => {
           };
           const server = require("node:http2").createSecureServer(options, (req, res) => {
             const name = req.url.slice(1);
-            res.on("close", () => {
-              events.push("close " + name);
-              if (events.includes("close first") && events.includes("close second")) {
-                console.log(JSON.stringify(events));
-                process.exit(0);
-              }
-            });
+            res.on("close", () => record("close " + name));
             if (name === "second") {
               res.end("second");
               const socket = req.socket;
@@ -1469,10 +1470,10 @@ describe("backpressure", () => {
         );
         expect(await exited).toEqual([0, null]);
         const events: string[] = JSON.parse(stdout.slice(stdout.indexOf("\n") + 1));
-        expect({ sent: events.slice(0, 3), first: events.slice(3, 5), closed: events.slice(5).sort() }).toEqual({
+        expect({ sent: events.slice(0, 3), first: events.slice(3, 5), rest: events.slice(5).sort() }).toEqual({
           sent: ["finish sent", "uncaughtException: from 'finish'", "close sent"],
-          first: ["end callback first", "uncaughtException: from the end() callback"],
-          closed: ["close first", "close second"],
+          first: ["end callback first", "close first"],
+          rest: ["close second", "uncaughtException: from the end() callback"],
         });
       } finally {
         child.kill();

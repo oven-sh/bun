@@ -1,7 +1,7 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks, getEndCallbackError } = require("internal/http");
+const { STATUS_CODES, kPendingCallbacks, getEndCallbackError, rethrowUncaught } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 
@@ -11,14 +11,12 @@ const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 const kHttp1MessageOpen = Symbol("http1MessageOpen");
 const reportError = globalThis.reportError;
 
-function rethrowUncaught(err) {
-  throw err;
-}
-
 // Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
-function failPendingWriteCallbacks(res, err) {
+function failPendingWriteCallbacks(res, err?) {
   const callbacks = res[kPendingCallbacks];
+  if (callbacks.length === 0) return;
   res[kPendingCallbacks] = [];
+  err ??= res.socket?.errored ?? res.errored ?? $ERR_STREAM_DESTROYED("write");
   for (let i = 0; i < callbacks.length; i++) {
     try {
       callbacks[i](err);
@@ -513,9 +511,11 @@ function connectionListenerHTTP1(server, socket, options) {
       }
     };
     handle.onflushed = function (err) {
-      // The socket closed before the last write called back.
-      if (err === undefined) err = getEndCallbackError(res);
-      if (err) failPendingWriteCallbacks(res, err);
+      if (err !== null) {
+        failPendingWriteCallbacks(res, err);
+        // The socket closed before the last write called back.
+        err ??= getEndCallbackError(res);
+      }
       finishDrainedResponse(res, err);
     };
     res[kHttp1ResponseHandle] = handle;
@@ -706,9 +706,7 @@ function connectionListenerHTTP1(server, socket, options) {
     connections.delete(socket);
     const inflight = socket._httpMessage;
     // The write callbacks that still wait fail, before the response's 'close', as in Node.
-    inflight?.[kHttp1ResponseHandle]?.socketEnded(() =>
-      failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write")),
-    );
+    inflight?.[kHttp1ResponseHandle]?.socketEnded(() => failPendingWriteCallbacks(inflight));
     // Like the native socket's close path (Node's socketOnClose ->
     // abortIncoming): abort the in-flight request, then the responses (and
     // requests) still queued behind it, so they all emit 'close'. The

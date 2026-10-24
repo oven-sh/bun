@@ -14,8 +14,6 @@ pub(crate) struct HotUpdateContext<'a> {
     /// Used to reduce calls to the IncrementalGraph hash table.
     /// First half is for client graph, second half for server.
     pub resolved_index_cache: &'a mut [CachedFileIndex],
-    /// Used to tell if the server should replace or append import records.
-    pub server_seen_bit_set: DynamicBitSet,
     pub gts: &'a mut GraphTraceState,
 }
 
@@ -262,9 +260,8 @@ pub(super) fn finalize_bundle(
 
     let mut resolved_index_cache = vec![CachedFileIndex::NONE; input_file_sources.len() * 2];
 
-    // Note: ctx fields `server_seen_bit_set`/`gts` are seeded with
-    // placeholders and assigned AFTER Pass 1 (receive_chunk grows `bundled_files`, so the trace bitsets
-    // must be sized post-Pass-1). Seed with empty placeholders; real init below.
+    // Note: ctx field `gts` is seeded with a placeholder and assigned AFTER Pass 1
+    // (receive_chunk grows `bundled_files`, so the trace bitsets must be sized post-Pass-1).
     let mut gts_storage = GraphTraceState {
         server_bits: DynamicBitSet::default(),
         client_bits: DynamicBitSet::default(),
@@ -276,7 +273,6 @@ pub(super) fn finalize_bundle(
         loaders: input_file_loaders,
         server_to_client_bitset: scb_bitset,
         resolved_index_cache: &mut resolved_index_cache,
-        server_seen_bit_set: DynamicBitSet::default(), // assigned below
         gts: &mut gts_storage,
     };
 
@@ -587,9 +583,13 @@ pub(super) fn finalize_bundle(
     } else {
         0
     })?;
-    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
 
     dev.incremental_result.had_adjusted_edges = false;
+
+    for i in 0..dev.incremental_result.client_components_removed.len() {
+        let file = dev.incremental_result.client_components_removed[i];
+        dev.server_graph.drop_ssr_output_imports(file);
+    }
 
     dev.prepare_and_log_resolution_failures()?;
     dev.report_html_routes_without_html()?;
@@ -615,15 +615,19 @@ pub(super) fn finalize_bundle(
             continue;
         }
         match targets[part_range.source_index.get() as usize].bake_graph() {
-            bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
-                &mut ctx,
-                incremental_graph::ProcessMode::Normal,
-                part_range.source_index,
-            )?,
+            graph @ (bake::Graph::Server | bake::Graph::Ssr) => {
+                dev.server_graph.process_chunk_dependencies(
+                    &mut ctx,
+                    incremental_graph::ProcessMode::Normal,
+                    part_range.source_index,
+                    graph == bake::Graph::Ssr,
+                )?
+            }
             bake::Graph::Client => dev.client_graph.process_chunk_dependencies(
                 &mut ctx,
                 incremental_graph::ProcessMode::Normal,
                 part_range.source_index,
+                false,
             )?,
         }
     }
@@ -633,6 +637,7 @@ pub(super) fn finalize_bundle(
             &mut ctx,
             incremental_graph::ProcessMode::Normal,
             index,
+            false,
         )?;
     }
     for chunk in css_chunks_mut.iter() {
@@ -641,6 +646,7 @@ pub(super) fn finalize_bundle(
             &mut ctx,
             incremental_graph::ProcessMode::Css,
             entry_index,
+            false,
         )?;
     }
 

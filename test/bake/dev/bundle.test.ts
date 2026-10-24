@@ -992,6 +992,128 @@ for (const [first, second] of [
     },
   });
 }
+// That record has one list of imports for two outputs, and the two can import different files: `#cond` is
+// cond-rsc.ts in the server graph, cond-ssr.ts in the SSR graph and cond-client.ts in the browser.
+{
+  const framework = { ...minimalFramework, serverComponents: separateSSRGraph };
+  const perGraph = (rsc: string, ssr: string) => ({
+    "react-server": rsc,
+    "browser": "./cond-client.ts",
+    "default": ssr,
+  });
+  const which = (name: string) => `export const which = "${name}";`;
+  const shared = (specifier: string) => `
+    import { which } from "${specifier}";
+    export const shared = () => which;
+  `;
+  const page = (imports: string) => `
+    ${imports}
+    export default function (req, meta) {
+      return Response.json({ shared: shared(), styles: meta.styles.length });
+    }
+  `;
+  const files = {
+    "package.json": JSON.stringify({
+      imports: {
+        "#cond": perGraph("./cond-rsc.ts", "./cond-ssr.ts"),
+        "#both": perGraph("./both.ts", "./both.ts"),
+        "#server-only": perGraph("./both.ts", "./cond-ssr.ts"),
+      },
+    }),
+    "cond-rsc.ts": which("rsc"),
+    "cond-ssr.ts": which("ssr"),
+    "cond-client.ts": which("client"),
+    "both.ts": which("both"),
+    "shared.ts": shared("#cond"),
+    "routes/index.ts": page(`import { shared } from "../shared"; import "../Comp";`),
+    "Comp.ts": `"use client"; import "./shared"; export const marker = 1;`,
+  };
+  // The answer of `route` while `file` has a syntax error: 500 if the page depends on the file.
+  const statusWhileBroken = async (dev: Dev, file: string, route = "/") => {
+    const source = dev.read(file);
+    await dev.write(file, `export const which = ;`, { errors: null });
+    const { status } = await dev.fetch(route);
+    await dev.write(file, source, { dedent: false });
+    return status;
+  };
+  devTest("a page depends on the imports of both outputs of a file in the server and SSR graphs", {
+    framework,
+    files,
+    async test(dev) {
+      await dev.fetch("/").equals({ shared: "rsc", styles: 0 });
+      expect({
+        rsc: await statusWhileBroken(dev, "cond-rsc.ts"),
+        ssr: await statusWhileBroken(dev, "cond-ssr.ts"),
+      }).toEqual({ rsc: 500, ssr: 500 });
+      // One bundle prints both outputs again.
+      await dev.write("shared.ts", shared("#cond") + "// saved");
+      expect({
+        rsc: await statusWhileBroken(dev, "cond-rsc.ts"),
+        ssr: await statusWhileBroken(dev, "cond-ssr.ts"),
+      }).toEqual({ rsc: 500, ssr: 500 });
+    },
+  });
+  devTest("a page gets the stylesheets that both outputs of a file in the server and SSR graphs reach", {
+    framework,
+    files: {
+      ...files,
+      "cond-rsc.ts": `import "./rsc.css"; ${which("rsc")}`,
+      "cond-ssr.ts": `import "./ssr.css"; ${which("ssr")}`,
+      "rsc.css": `body { color: red; }`,
+      "ssr.css": `body { background: blue; }`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals({ shared: "rsc", styles: 2 });
+    },
+  });
+  // The second route bundles shared.ts for its graph alone. Nothing is saved.
+  for (const [first, second, importOfFirst] of [
+    ["/", "/other", "cond-rsc.ts"],
+    ["/other", "/", "cond-ssr.ts"],
+  ]) {
+    devTest(`the page ${first} keeps its imports when ${second} bundles shared.ts for its own graph`, {
+      framework,
+      files: {
+        ...files,
+        "routes/index.ts": page(`import { shared } from "../shared";`),
+        "routes/other.ts": page(`import { shared } from "../shared" with { bunBakeGraph: "ssr" };`),
+      },
+      async test(dev) {
+        await dev.fetch(first).equals({ shared: first === "/" ? "rsc" : "ssr", styles: 0 });
+        await dev.fetch(second).equals({ shared: second === "/" ? "rsc" : "ssr", styles: 0 });
+        expect(await statusWhileBroken(dev, importOfFirst, first)).toBe(500);
+      },
+    });
+  }
+  devTest("a page depends on an import until both outputs of a file drop it", {
+    framework,
+    // A route that reaches a failed file answers 500, with no second bundle of the route.
+    env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+    files: { ...files, "shared.ts": shared("#both") },
+    async test(dev) {
+      await dev.fetch("/").equals({ shared: "both", styles: 0 });
+      // The SSR output drops both.ts. The server output keeps it.
+      await dev.write("shared.ts", shared("#server-only"));
+      expect(await statusWhileBroken(dev, "both.ts")).toBe(500);
+      await dev.write("shared.ts", shared("#cond"));
+      expect(await statusWhileBroken(dev, "both.ts")).toBe(200);
+    },
+  });
+  devTest("a page stops depending on the imports of a file that is no longer a client component", {
+    framework,
+    env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+    files: {
+      ...files,
+      "Comp.ts": `"use client"; import "./both"; export const marker = 1;`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals({ shared: "rsc", styles: 0 });
+      expect(await statusWhileBroken(dev, "both.ts")).toBe(500);
+      await dev.write("Comp.ts", `export const marker = 2;`);
+      expect(await statusWhileBroken(dev, "both.ts")).toBe(200);
+    },
+  });
+}
 devTest("importing html file", {
   files: {
     "index.html": emptyHtmlFile({

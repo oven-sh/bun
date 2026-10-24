@@ -54,8 +54,11 @@ pub(crate) type EdgeIndex = bun_core::GenericIndex<u32, EdgeMarker>;
 /// nodes; each file stores the first import and dependency (`EdgeLists`).
 #[derive(Copy, Clone)]
 pub(crate) struct Edge<const SIDE: bake::Side> {
-    /// The file with the import statement.
-    pub(crate) dependency: FileIndex<SIDE>,
+    /// The file with the import statement, in the low 30 bits. The server graph keeps one
+    /// record and one import list for the server output and the SSR output of a file. There,
+    /// the two high bits are the outputs that have this import (`Edge::SERVER_OUTPUT`,
+    /// `Edge::SSR_OUTPUT`).
+    dependency_and_outputs: u32,
     /// The file the import statement references.
     pub(crate) imported: FileIndex<SIDE>,
     /// Next edge in the "imports" linked list for the `dependency` file.
@@ -65,6 +68,21 @@ pub(crate) struct Edge<const SIDE: bake::Side> {
     /// Previous edge in the "dependencies" linked list for the `imported` file.
     /// Enables O(1) removal from the middle of the list.
     pub(crate) prev_dependency: Option<EdgeIndex>,
+}
+
+impl<const SIDE: bake::Side> Edge<SIDE> {
+    const SERVER_OUTPUT: u32 = 1 << 30;
+    const SSR_OUTPUT: u32 = 1 << 31;
+    const OUTPUTS: u32 = Self::SERVER_OUTPUT | Self::SSR_OUTPUT;
+
+    /// The file with the import statement.
+    #[inline]
+    pub(crate) fn dependency(&self) -> FileIndex<SIDE> {
+        FileIndex::init(match SIDE {
+            Side::Client => self.dependency_and_outputs,
+            Side::Server => self.dependency_and_outputs & !Self::OUTPUTS,
+        })
+    }
 }
 
 /// Heads of one file's two edge linked lists.
@@ -518,6 +536,40 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
+    /// `output` of the importing file no longer has the import of `edge_index`. Frees the
+    /// edge, unless the other output of that file has the import. Returns whether the edge
+    /// stays in the import list.
+    fn drop_import(&mut self, edge_index: EdgeIndex, output: u32) -> bool {
+        if matches!(SIDE, Side::Server) {
+            let edge = &mut self.edges[edge_index.get() as usize];
+            edge.dependency_and_outputs &= !output;
+            if edge.dependency_and_outputs & Edge::<SIDE>::OUTPUTS != 0 {
+                return true;
+            }
+        }
+        self.dev_incremental_result().had_adjusted_edges = true;
+        self.disconnect_edge_from_dependency_list(edge_index);
+        self.free_edge(edge_index);
+        false
+    }
+
+    /// A file that stops being a client component boundary has no SSR output any more. The
+    /// imports that only that output had go with it.
+    pub(crate) fn drop_ssr_output_imports(&mut self, file_index: FileIndex<SIDE>) {
+        let mut kept: Option<EdgeIndex> = None;
+        let mut it = self.edge_lists[file_index.get() as usize]
+            .first_import
+            .take();
+        while let Some(edge_index) = it {
+            it = self.edges[edge_index.get() as usize].next_import;
+            if self.drop_import(edge_index, Edge::<SIDE>::SSR_OUTPUT) {
+                self.edges[edge_index.get() as usize].next_import = kept;
+                kept = Some(edge_index);
+            }
+        }
+        self.edge_lists[file_index.get() as usize].first_import = kept;
+    }
+
     fn disconnect_and_delete_file(
         &mut self,
         directory_watchers: &mut super::DirectoryWatchStore,
@@ -531,7 +583,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         while let Some(edge_index) = it {
             let dep = self.edges[edge_index.get() as usize];
             it = dep.next_import;
-            debug_assert_eq!(dep.dependency.get(), file_index.get());
+            debug_assert_eq!(dep.dependency().get(), file_index.get());
             self.disconnect_edge_from_dependency_list(edge_index);
             self.free_edge(edge_index);
         }
@@ -813,22 +865,28 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ctx: &mut HotUpdateContext<'_>,
         mode: ProcessMode,
         bundle_graph_index: impl Into<bun_ast::Index>,
+        is_ssr_graph: bool,
     ) -> Result<(), crate::Error> {
         let bundle_graph_index: bun_ast::Index = bundle_graph_index.into();
         let file_index: FileIndex<SIDE> = ctx
             .get_cached_index(SIDE, bundle_graph_index)
             .unwrap::<SIDE>()
             .expect("unresolved index"); // do not process for failed chunks
+        let output = match SIDE {
+            Side::Client => 0,
+            Side::Server if is_ssr_graph => Edge::<SIDE>::SSR_OUTPUT,
+            Side::Server => Edge::<SIDE>::SERVER_OUTPUT,
+        };
 
         // Build a map from the existing import list. Later, entries that
-        // were not marked as `.seen = true` will be freed.
+        // were not marked as `.seen = true` lose `output`.
         let mut quick_lookup: ArrayHashMap<FileIndex<SIDE>, TempLookup> = ArrayHashMap::default();
         {
             let mut it = self.edge_lists[file_index.get() as usize].first_import;
             while let Some(edge_index) = it {
                 let dep = self.edges[edge_index.get() as usize];
                 it = dep.next_import;
-                debug_assert_eq!(dep.dependency.get(), file_index.get());
+                debug_assert_eq!(dep.dependency().get(), file_index.get());
                 quick_lookup.put_no_clobber(
                     dep.imported,
                     TempLookup {
@@ -845,15 +903,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // A new import linked list is constructed from scratch.
         let mut new_imports: Option<EdgeIndex> = None;
-
-        if mode == ProcessMode::Normal && matches!(SIDE, Side::Server) {
-            if ctx.server_seen_bit_set.is_set(file_index.get() as usize) {
-                self.edge_lists[file_index.get() as usize].first_import = new_imports;
-                return Ok(());
-            }
-            // RSC+SSR dual-index dispatch (`ctx.scbs.getSSRIndex`) is
-            // intentionally not implemented.
-        }
 
         match mode {
             ProcessMode::Normal => self.process_chunk_import_records(
@@ -876,12 +925,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // see a stale reference.
         self.edge_lists[file_index.get() as usize].first_import = None;
 
-        // '.seen = false' means an import was removed and should be freed.
+        // '.seen = false' means `output` no longer has the import.
         for val in &quick_lookup.values()[0..quick_lookup_values_to_care_len] {
-            if !val.seen {
-                self.dev_incremental_result().had_adjusted_edges = true;
-                self.disconnect_edge_from_dependency_list(val.edge_index);
-                self.free_edge(val.edge_index);
+            if !val.seen && self.drop_import(val.edge_index, output) {
+                self.edges[val.edge_index.get() as usize].next_import = new_imports;
+                new_imports = Some(val.edge_index);
+            }
+        }
+        if matches!(SIDE, Side::Server) {
+            for val in quick_lookup.values() {
+                if val.seen {
+                    self.edges[val.edge_index.get() as usize].dependency_and_outputs |= output;
+                }
             }
         }
 
@@ -1051,12 +1106,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         } else {
             // A new edge is needed to represent the dependency and import.
             let first_dep = self.edge_lists[imported_file_index.get() as usize].first_dep;
+            debug_assert!(file_index.get() & Edge::<SIDE>::OUTPUTS == 0);
             let edge = self.new_edge(Edge {
                 next_import: *new_imports,
                 next_dependency: first_dep,
                 prev_dependency: None,
                 imported: imported_file_index,
-                dependency: file_index,
+                dependency_and_outputs: file_index.get(),
             })?;
             if let Some(dep) = first_dep {
                 self.edges[dep.get() as usize].prev_dependency = Some(edge);
@@ -1213,7 +1269,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         while let Some(dep_index) = it {
             let edge = self.edges[dep_index.get() as usize];
             it = edge.next_dependency;
-            self.trace_dependencies(edge.dependency, gts, goal, file_index)?;
+            self.trace_dependencies(edge.dependency(), gts, goal, file_index)?;
         }
         Ok(())
     }
@@ -1626,7 +1682,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         while let Some(edge_index) = it {
             let dep = self.edges[edge_index.get() as usize];
             it = dep.next_import;
-            debug_assert_eq!(dep.dependency.get(), index.get());
+            debug_assert_eq!(dep.dependency().get(), index.get());
             self.disconnect_edge_from_dependency_list(edge_index);
             self.free_edge(edge_index);
         }
@@ -1637,8 +1693,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             let dep = self.edges[edge_index.get() as usize];
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
-            let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
-            let file = &self.bundled_files.values()[dep.dependency.get() as usize];
+            let key = &self.bundled_files.keys()[dep.dependency().get() as usize];
+            let file = &self.bundled_files.values()[dep.dependency().get() as usize];
             let loader = file
                 .html_route_bundle_index
                 .is_some()
@@ -1722,7 +1778,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         let mut it = self.edge_lists[index].first_dep;
                         while let Some(edge_index) = it {
                             let entry = self.edges[edge_index.get() as usize];
-                            let dep = entry.dependency;
+                            let dep = entry.dependency();
                             self.stale_files.set(dep.get() as usize);
                             if matches!(
                                 self.bundled_files.values()[dep.get() as usize].content,
@@ -1740,7 +1796,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         let mut it = self.edge_lists[index].first_dep;
                         while let Some(edge_index) = it {
                             let entry = self.edges[edge_index.get() as usize];
-                            let dep = entry.dependency;
+                            let dep = entry.dependency();
                             self.stale_files.set(dep.get() as usize);
                             let k = bun_ptr::RawSlice::new(
                                 &*self.bundled_files.keys()[dep.get() as usize],

@@ -43,13 +43,7 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
-const {
-  kForeignListener,
-  kHandleClosed,
-  kLastBytesSent,
-  kSNIContexts,
-  kWriteQueueSize,
-} = require("internal/net/symbols");
+const { kForeignListener, kHandleClosed, kLastBytesSent, kSNIContexts } = require("internal/net/symbols");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kInternalSocketData,
@@ -1547,9 +1541,10 @@ function detachFromHttp(socket, req) {
   socket.removeListener("resume", nativeSocketOnResume);
   socket.removeListener("data", noopOnData);
   delete socket._onTimeout;
-  delete socket[kWriteQueueSize];
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
+  // The handle's bytesWritten no longer counts the responses.
+  socket[kLastBytesSent] = 0;
   delete socket._final;
   delete socket._destroy;
   const server = socket.server;
@@ -2233,11 +2228,6 @@ function onSocketTimeoutTimerExpired(this: any) {
   NetSocket.prototype._onTimeout.$call(socket);
 }
 
-// uWS holds what the kernel didn't take, and the handle of the response that has the connection counts it.
-function responseWriteQueueSize(this: any) {
-  return this[kHandle]?.response?.bufferedAmount ?? 0;
-}
-
 let NetSocket;
 let TLSSocket;
 let assignablePeerAddress;
@@ -2298,7 +2288,6 @@ function nativeConnectionListener(server: Server, socket) {
   socket.prependListener = socketPrependListener;
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
-  socket[kWriteQueueSize] = responseWriteQueueSize;
   socket._final = nativeSocketFinal;
   socket._destroy = nativeSocketDestroy;
   socket._paused = false;

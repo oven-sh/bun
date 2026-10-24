@@ -95,6 +95,8 @@ function socket<SSL extends boolean>(ssl: SSL) {
         unref: { rustName: "js_unref" },
         upgradeTLS: { ...method, args: { options: b.any } },
         write,
+        /** Node's `handle.writeQueueSize`, for the `_handle` of a `net.Socket`. */
+        writeQueueSize: { getter: b.f64, enumerable: false },
       }),
       "@@dispose": { ...write, rustName: "end", length: 0 },
       writeBuffered: { ...writeBuffered, privateSymbol: "write" },
@@ -125,7 +127,6 @@ export const releaseHeldFlight = b.fn({ args: { socket: SocketHandle } });
 export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandle, inHandshake: b.bool } });
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
-export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
 export const getBytesRead = b.fn({ args: { socket: SocketHandle }, returns: b.f64 });
 
 // `bun:internal-for-testing`

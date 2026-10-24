@@ -3211,6 +3211,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.total_bytes_written() as f64
     }
 
+    pub(crate) fn get_write_queue_size(&self) -> f64 {
+        self.write_queue_size() as f64
+    }
+
     /// In-place TCP→TLS upgrade. The underlying `us_socket_t` is
     /// `adoptTLS`'d into the per-VM TLS group with a fresh (or
     /// SecureContext-shared) `SSL_CTX*`. Returns `[raw, tls]` — two
@@ -3859,14 +3863,6 @@ pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {
         SocketHandle::Tcp(this) => this.socket.get().is_transport(),
         SocketHandle::Tls(this) => this.socket.get().is_transport(),
         SocketHandle::Ignored(_) => false,
-    }
-}
-
-pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
-    match socket {
-        SocketHandle::Tcp(this) => this.buffered_data_for_node_net.get().len(),
-        SocketHandle::Tls(this) => this.buffered_data_for_node_net.get().len(),
-        SocketHandle::Ignored(_) => 0,
     }
 }
 

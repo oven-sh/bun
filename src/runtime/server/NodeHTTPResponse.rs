@@ -674,6 +674,7 @@ impl NodeHTTPResponse {
         result
     }
 
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_bufferedAmount", no_catch)]
     pub(crate) fn get_buffered_amount(&self) -> u64 {
         let flags = self.flags.get();
         if flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::SOCKET_CLOSED) {

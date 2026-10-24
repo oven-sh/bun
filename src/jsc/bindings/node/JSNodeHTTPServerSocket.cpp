@@ -17,6 +17,7 @@ extern "C" void Bun__NodeHTTPResponse_grantConnection(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
 extern "C" size_t Bun__NodeHTTPResponse_bytesWritten(void* zigResponse);
+extern "C" uint64_t Bun__NodeHTTPResponse_bufferedAmount(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_updateParked(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
@@ -948,6 +949,16 @@ extern "C" uint64_t Bun__NodeHTTPServerSocket__responseBytesWritten(us_socket_t*
     auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
     auto* res = serverSocket ? serverSocket->currentResponse() : nullptr;
     return res ? Bun__NodeHTTPResponse_bytesWritten(res->wrapped()) : 0;
+}
+
+extern "C" uint64_t Bun__NodeHTTPServerSocket__writeQueueSize(us_socket_t* socket, bool ssl)
+{
+    auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
+    auto* res = serverSocket ? serverSocket->currentResponse() : nullptr;
+    uint64_t buffered = ssl ? reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->getBufferedAmount() : reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->getBufferedAmount();
+    // The response adds the tail that it still sends from the caller's buffer, and says 0 once it is complete.
+    uint64_t ofResponse = res ? Bun__NodeHTTPResponse_bufferedAmount(res->wrapped()) : 0;
+    return (ofResponse > buffered ? ofResponse : buffered) + us_socket_ssl_spill_pending(socket);
 }
 
 extern "C" bool Bun__NodeHTTPServerSocket__hasUnsentBytes(us_socket_t* socket, bool ssl)

@@ -777,11 +777,12 @@ describe("node:http server timeout enforcement", () => {
         if (how === "res.write(big) and res.end()") res.end();
       }
 
-      async function readALittleEvery60s(res: http.ServerResponse, client: net.Socket) {
+      async function readALittleEvery60s(writer: http.ServerResponse | net.Socket, client: net.Socket) {
+        const socket: any = writer instanceof net.Socket ? writer : writer.socket;
         for (let i = 0; i < 4; i++) {
-          const queued = res.writableLength;
+          const queued = socket._handle?.writeQueueSize;
           client.resume();
-          while (queued > 0 && res.writableLength >= queued && !client.closed) await turnOfTheLoop();
+          while (queued > 0 && socket._handle?.writeQueueSize >= queued && !client.closed) await turnOfTheLoop();
           client.pause();
           jest.advanceTimersByTime(60_000);
         }
@@ -804,6 +805,25 @@ describe("node:http server timeout enforcement", () => {
         },
       );
 
+      test("server.timeout doesn't cut res.end(big) while the peer takes the last of it", async () => {
+        let timeouts = 0;
+        const received = await exchange("server.timeout", get, async (req, res, client) => {
+          req.socket.on("timeout", () => timeouts++);
+          sendBig("res.end(big)", req, res, client);
+          // Over TLS the last records then wait outside of the response's own queue.
+          const oneChunk = () => void client.pause();
+          client.on("data", oneChunk);
+          while (res.writableLength > 0 && !client.closed) {
+            client.resume();
+            await turnOfTheLoop();
+          }
+          client.off("data", oneChunk);
+          jest.advanceTimersByTime(60_000);
+          await readALittleEvery60s(res, client);
+        });
+        expect({ timeouts, bodies: bodyLengths(received) }).toEqual({ timeouts: 0, bodies: [big.length] });
+      });
+
       test("server.timeout doesn't cut the second big response of a connection either", async () => {
         let second: http.ServerResponse | undefined;
         const received = await exchange("server.timeout", getKeepAlive, async (req, res, client) => {
@@ -822,6 +842,40 @@ describe("node:http server timeout enforcement", () => {
         expect(bodyLengths(received)).toEqual([big.length, big.length]);
       });
 
+      test("an 'upgrade' socket's big write gets no 'timeout' after a big response on the same connection", async () => {
+        let timeouts = 0;
+        let tunnel: net.Socket | undefined;
+        const received = await exchange("server.timeout", getKeepAlive, async (req, res, client) => {
+          const server: http.Server = (req.socket as any).server;
+          sendBig("res.end(big)", req, res, client);
+          await readALittleEvery60s(res, client);
+          await next(res, "finish", client);
+          server.once("upgrade", (req, socket) => {
+            client.pause();
+            socket.on("timeout", () => timeouts++);
+            socket.end(Buffer.concat([Buffer.from("HTTP/1.1 200 OK\r\nUpgrade: x\r\n\r\n"), big]));
+            tunnel = socket;
+          });
+          client.write("GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+          await next(server, "upgrade", client);
+          if (tunnel) await readALittleEvery60s(tunnel, client);
+        });
+        expect({ timeouts, bodies: bodyLengths(received) }).toEqual({ timeouts: 0, bodies: [big.length, big.length] });
+      });
+
+      test("req.socket._handle.writeQueueSize is what the kernel hasn't taken of the response", async () => {
+        let sizes;
+        await exchange("", get, async (req, res, client) => {
+          sendBig("res.end(big)", req, res, client);
+          sizes = { handle: (req.socket as any)._handle.writeQueueSize, response: res.writableLength };
+          client.resume();
+        });
+        expect(sizes!.response).toBeGreaterThan(0);
+        // Over TLS it also counts the sealed records that wait for the kernel.
+        if (scheme === "https") expect(sizes!.handle).toBeGreaterThanOrEqual(sizes!.response);
+        else expect(sizes!.handle).toBe(sizes!.response);
+      });
+
       test("server.timeout cuts an idle connection 60 s after the last byte of a big response went out", async () => {
         let cut;
         await exchange("server.timeout", getKeepAlive, async (req, res, client) => {
@@ -835,13 +889,15 @@ describe("node:http server timeout enforcement", () => {
         expect(cut).toEqual({ early: false, onTime: true });
       });
 
-      // An added chunk can push a few more bytes into the kernel's buffers, and each time that earns the peer another 60 s.
+      // The first look finds what the kernel took at once. An added chunk can push in a few more bytes, and each time that earns the peer another 60 s.
       test.each([
         ["res.end(big)", 2],
         ["res.write(big), and more every 60 s", 9],
       ] as const)("server.timeout cuts %s when the peer reads nothing", async (how, atMost) => {
         let periods = 0;
+        let timeouts = 0;
         await exchange("server.timeout", get, async (req, res, client) => {
+          req.socket.on("timeout", () => timeouts++);
           sendBig(how, req, res, client);
           while (!req.socket.destroyed && periods <= atMost) {
             jest.advanceTimersByTime(60_000);
@@ -851,8 +907,24 @@ describe("node:http server timeout enforcement", () => {
           req.socket.destroy();
           client.resume();
         });
+        expect(timeouts).toBe(1);
+        expect(periods).toBeGreaterThanOrEqual(2);
         expect(periods).toBeLessThanOrEqual(atMost);
       });
+    });
+
+    // Like Node's test-http-keep-alive-large-write.js where no queue forms.
+    test("socket._onTimeout() with nothing queued emits 'timeout', and the handle's writeQueueSize is 0", async () => {
+      const sizes: unknown[] = [];
+      await exchange("", getKeepAlive, async (req, res, client) => {
+        (req.socket as any).server.on("timeout", (socket: any) => sizes.push(socket._handle.writeQueueSize));
+        sizes.push((req.socket as any)._handle.writeQueueSize);
+        res.end("END");
+        await next(client, "data", client);
+        (req.socket as any)._onTimeout();
+        req.socket.destroy();
+      });
+      expect(sizes).toEqual([0, 0]);
     });
   });
 

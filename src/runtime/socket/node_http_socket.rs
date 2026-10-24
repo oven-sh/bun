@@ -64,6 +64,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// The bytes that the kernel hasn't taken yet, sealed TLS records too. uWS and the response that has the connection hold them while uWS owns it.
+    pub(crate) fn write_queue_size(&self) -> u64 {
+        let socket = self.socket.get();
+        match socket.socket {
+            uws::InternalSocket::UwsHttp(s) => Bun__NodeHTTPServerSocket__writeQueueSize(s, SSL),
+            _ => {
+                self.buffered_data_for_node_net.get().len() as u64
+                    + u64::from(socket.ssl_spill_len())
+            }
+        }
+    }
+
     /// uWS has let go of `s`, which is open, and has destructed its ext: nothing here may ask the `UwsHttp` transport. `unsent` is what uWS accepted and the kernel hasn't taken.
     fn leave_http(
         this: ThisPtr<Self>,
@@ -127,6 +139,7 @@ pub(crate) struct WebSocketUpgrade<'a> {
 unsafe extern "C" {
     safe fn Bun__NodeHTTPServerSocket__bytesRead(s: *mut us_socket_t, ssl: bool) -> u64;
     safe fn Bun__NodeHTTPServerSocket__responseBytesWritten(s: *mut us_socket_t, ssl: bool) -> u64;
+    safe fn Bun__NodeHTTPServerSocket__writeQueueSize(s: *mut us_socket_t, ssl: bool) -> u64;
     safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
     fn Bun__NodeHTTPSocket__adoptIntoWebSocket(
         ssl: bool,

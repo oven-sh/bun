@@ -346,10 +346,15 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         if let InternalSocket::UwsHttp(s) = self.socket {
             return uws_http::Bun__NodeHTTPServerSocket__hasUnsentBytes(sock(s), IS_SSL);
         }
+        self.ssl_spill_len() > 0
+    }
+
+    /// How many bytes of sealed TLS records wait in user space for the kernel.
+    pub fn ssl_spill_len(&self) -> u32 {
         on_socket!(self.socket;
             connected s => s.ssl_spill_pending(),
-            transport _t => false,
-            else => false,
+            transport _t => 0,
+            else => 0,
         )
     }
 

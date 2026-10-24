@@ -22,8 +22,6 @@ export default {
   // tls.Server's addContext() map of hostname to SecureContext. https.Server adds the entries to its own listener.
   kSNIContexts: Symbol("kSNIContexts"),
   kVerifyError: Symbol("kVerifyError"),
-  // net.Socket.prototype method: the bytes that the kernel hasn't taken yet. node:http replaces it on a connection that uWS writes to.
-  kWriteQueueSize: Symbol("kWriteQueueSize"),
   // net.Socket.prototype method behind the client-side `new tls.TLSSocket(socket)`.
   kUpgradeClientTLS: Symbol("kUpgradeClientTLS"),
   // True on a client-side `new tls.TLSSocket(socket)`. The TLSSocket constructor sets it.

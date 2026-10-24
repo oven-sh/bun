@@ -4426,6 +4426,55 @@ describe("setTimeout() with a queued write", () => {
     expect(pair.socket.writableLength).toBeGreaterThan(0);
   });
 
+  it("finds the size of the queue in _handle.writeQueueSize, like Node", async () => {
+    using pair = await connectToPausedPeer();
+    const handle = (pair.socket as any)._handle;
+    const idle = handle.writeQueueSize;
+    writeUntilQueued(pair.socket);
+    expect({ idle, queued: handle.writeQueueSize > 0 }).toEqual({ idle: 0, queued: true });
+  });
+
+  // Windows takes a send whole, whatever the size of the send buffer, so nothing is left to send there.
+  it.skipIf(isWindows)("doesn't fire on a TLS socket whose peer takes the last records of the write", async () => {
+    const server = createTLSServer(tlsCert);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const accepted = once(server, "secureConnection") as Promise<[Socket]>;
+    const peer = tlsConnect({
+      port: (server.address() as any).port,
+      host: "127.0.0.1",
+      ca: tlsCert.cert,
+      servername: "localhost",
+    });
+    const [socket] = await accepted;
+    try {
+      const { setSocketOptions } = require("bun:internal-for-testing");
+      setSocketOptions(socket, 1, 65536);
+      setSocketOptions(peer, 2, 65536);
+      peer.on("data", () => void peer.pause());
+      let timeouts = 0;
+      let written = false;
+      socket.on("timeout", () => timeouts++);
+      socket.write(Buffer.alloc(2 << 20, "x"), () => void (written = true));
+      const handle = (socket as any)._handle;
+      const sent = () => handle.bytesWritten - handle.writeQueueSize;
+      let looks = 0;
+      while (!written) {
+        const before = sent();
+        while (!written && sent() <= before) {
+          peer.resume();
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        // What the timer does when it fires.
+        if (!written) ((socket as any)._onTimeout(), looks++);
+      }
+      expect({ timeouts, looked: looks > 0 }).toEqual({ timeouts: 0, looked: true });
+    } finally {
+      peer.destroy();
+      socket.destroy();
+      server.close();
+    }
+  });
+
   it("restarts the timer when the write completes", async () => {
     using pair = await connectToPausedPeer();
     const { socket, peer } = pair;

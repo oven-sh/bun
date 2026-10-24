@@ -59,7 +59,6 @@ const {
   kStandaloneWrap,
   kUpgradeClientTLS,
   kVerifyError,
-  kWriteQueueSize,
 } = require("internal/net/symbols");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
 const AsyncContextFrame = require("internal/async_context_frame");
@@ -291,7 +290,6 @@ const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkSer
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
 const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
 const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
-const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 const getBytesRead = $bindgen("socket_body.bind.ts", "getBytesRead");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
@@ -1812,10 +1810,6 @@ Socket.prototype.address = function address() {
   };
 };
 
-Socket.prototype[kWriteQueueSize] = function () {
-  return getBufferedAmount(this._handle);
-};
-
 Socket.prototype._onTimeout = function () {
   // if there is pending data, write is in progress
   // so we suppress the timeout
@@ -1827,7 +1821,7 @@ Socket.prototype._onTimeout = function () {
   const handle = this._handle;
   if (handle) {
     // A write queue that the kernel took bytes of since the last look is still draining, so wait another period. Its size doesn't tell: a node:http response can add to it.
-    const writeQueueSize = this[kWriteQueueSize]();
+    const { writeQueueSize } = handle;
     const sent = handle.bytesWritten - writeQueueSize;
     if (writeQueueSize !== 0 && sent > this[kLastBytesSent]) {
       this[kLastBytesSent] = sent;

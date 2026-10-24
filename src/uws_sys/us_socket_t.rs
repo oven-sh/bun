@@ -447,8 +447,8 @@ impl us_socket_t {
         c::us_socket_rejected_send_error(self)
     }
 
-    pub(crate) fn ssl_spill_pending(&self) -> bool {
-        c::us_socket_ssl_spill_pending(self) > 0
+    pub(crate) fn ssl_spill_pending(&self) -> u32 {
+        c::us_socket_ssl_spill_pending(self)
     }
 
     pub(crate) fn queued_input(&self) -> QueuedInput {

@@ -3768,33 +3768,13 @@ pub fn process_fetch_log(
 
     match log.msgs.len() {
         0 => {
-            let msg = if err == crate::CrateError::UnexpectedPendingResolution {
-                bun_ast::Msg {
-                    data: bun_ast::range_data(
-                        None,
-                        bun_ast::Range::NONE,
-                        format!(
-                            "Unexpected pending import in \"{specifier}\". To automatically \
-                             install npm packages with Bun, please use an import statement \
-                             instead of require() or dynamic import().\nThis error can also \
-                             happen if dependencies import packages which are not referenced \
-                             anywhere. Worst case, run `bun install` and opt-out of the \
-                             node_modules folder until we come up with a better way to handle \
-                             this error."
-                        )
-                        .into_bytes(),
-                    ),
-                    ..Default::default()
-                }
-            } else {
-                bun_ast::Msg {
-                    data: bun_ast::range_data(
-                        None,
-                        bun_ast::Range::NONE,
-                        format!("{} while building {specifier}", err.name()).into_bytes(),
-                    ),
-                    ..Default::default()
-                }
+            let msg = bun_ast::Msg {
+                data: bun_ast::range_data(
+                    None,
+                    bun_ast::Range::NONE,
+                    format!("{} while building {specifier}", err.name()).into_bytes(),
+                ),
+                ..Default::default()
             };
             take(BuildMessage::create(global_this, msg))
         }
@@ -4685,20 +4665,13 @@ impl VirtualMachine {
     /// `PackageManager` is exactly that struct, just type-erased at a lower
     /// tier.
     ///
-    /// Panics when the lazy init fails (unreadable top-level dir). Production
-    /// callers (AsyncModule's pending-task machinery) only run after a pending
-    /// dependency was enqueued, which requires a previously successful
-    /// `get_package_manager`, so the init error is surfaced as a resolve
-    /// failure in `Resolver::load_node_modules` long before reaching here.
-    /// The one caller outside that machinery is the `bun:internal-for-testing`
-    /// `parseLockfile` binding (`install_jsc/install_binding.rs`), which may
-    /// lazy-init here and accepts the panic on its test-only surface.
+    /// Panics when the lazy init fails; only the test-only `parseLockfile` binding calls this.
     #[inline]
     pub fn package_manager(&mut self) -> &mut bun_install::PackageManager {
         let pm = self
             .transpiler
             .get_package_manager()
-            .expect("package manager init already succeeded when the pending task was enqueued");
+            .expect("package manager init failed");
         // SAFETY: `bun_resolver::package_json::PackageManager` is an opaque
         // forward-decl of `bun_install::PackageManager`; the pointer was
         // produced by `PackageManager::init_with_runtime` (the install crate)
@@ -5185,9 +5158,7 @@ impl VirtualMachine {
             .get()
             .expect("source_code_printer not initialized");
 
-        // Note: the §Dispatch shim takes path/loader/module_type/printer/
-        // promise_ptr bundled as `TranspileExtra` behind `args.extra` (see
-        // ModuleLoader.rs `TranspileArgs`).
+        // The §Dispatch shim takes these bundled as `TranspileExtra` behind `args.extra`.
         let mut extra = ModuleLoader::TranspileExtra {
             // SAFETY: `lr.path` borrows from `specifier_clone` (and the VM's
             // resolver caches), both of which outlive the synchronous
@@ -5202,8 +5173,6 @@ impl VirtualMachine {
             }),
             module_type,
             source_code_printer: printer.as_ptr(),
-            // `fetchWithoutOnLoadPlugins` forbids the async path.
-            promise_ptr: core::ptr::null_mut(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,

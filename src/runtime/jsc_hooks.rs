@@ -2132,9 +2132,6 @@ fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
         crate::Error::Core(e) => (*e).into(),
         crate::Error::Sys(e) => (*e).into(),
         crate::Error::Alloc(e) => (*e).into(),
-        crate::Error::UnexpectedPendingResolution => {
-            bun_jsc::CrateError::UnexpectedPendingResolution
-        }
         crate::Error::ModuleNotFound => bun_jsc::CrateError::ModuleNotFound,
         crate::Error::WriteFailed => bun_jsc::CrateError::WriteFailed,
         crate::Error::JSError | crate::Error::Js(_) => bun_jsc::CrateError::JSError,
@@ -2275,9 +2272,7 @@ fn transpile_source_code_of_any_provenance(
 
             // ── Arena take/give-back ────────────────────────────────────────
             // Reuse the per-VM arena when free; allocate a
-            // fresh boxed one otherwise. `give_back_arena` is cleared on the
-            // ParseError / AsyncModule paths (which hand the arena to the
-            // async queue or leak it intentionally for the caller to inspect).
+            // fresh boxed one otherwise.
             // SAFETY: per fn contract.
             let arena: Box<bun_alloc::Arena> =
                 unsafe { (*jsc_vm).module_loader.transpile_source_code_arena.take() }
@@ -2299,10 +2294,7 @@ fn transpile_source_code_of_any_provenance(
                     if !give_back {
                         // When `give_back_arena == false`, ownership is held past
                         // `process_fetch_log` so log spans pointing into the
-                        // arena stay valid. (The AsyncModule path never reaches
-                        // here: its enqueue site defuses this guard via
-                        // `ScopeGuard::into_inner` and hands the `Box<Arena>`
-                        // to the queue.) The ParseError path that flips
+                        // arena stay valid. The ParseError path that flips
                         // `give_back=false` is LIVE: the caller
                         // (`Bun__transpileFile` → `process_fetch_log`, spec
                         // :1112-1114) reads `log` entries whose spans point
@@ -2368,11 +2360,8 @@ fn transpile_source_code_of_any_provenance(
             );
             // Per-transpile `AstAlloc` state spilling into the transpile
             // arena. Declared after `arena_guard` so it drops before the
-            // guard can reset that heap. Small `AstVec`s live in the state's
-            // inline chunk, not the arena, so the pending-imports path must
-            // consume this scope via `take_state()` and ship the box with the
-            // arena.
-            let ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
+            // guard can reset that heap.
+            let _ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
             // ── Watcher package_json lookup ─────────────────────────────────
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
@@ -2479,7 +2468,7 @@ fn transpile_source_code_of_any_provenance(
             // The deferred fd close is independent of `give_back_arena`
             // and must fire on every exit path: parse failure, JSON early
             // return, `disable_transpilying`, already_bundled, empty `.cjs`,
-            // cache-hit, AsyncModule, the wasm recurse, and the print error.
+            // cache-hit, the wasm recurse, and the print error.
             // Note: reshaped for borrowck — capture raw pointers so the
             // guard does not alias the parser's `file_fd_ptr` /
             // `maybe_watch_file` borrows. **All** later access to
@@ -2579,8 +2568,7 @@ fn transpile_source_code_of_any_provenance(
                 // does not deduplicate — leaks one path-len buffer per
                 // `Bun.inspect(new Error)` (inspect-error-leak.test.js). The
                 // borrowed path bytes outlive `parse_result` in that branch,
-                // so reuse them directly. The intern is a
-                // workaround for the async-module queue path only.
+                // so reuse them directly.
                 let parse_path = if disable_transpilying {
                     bun_paths::fs::Path {
                         pretty: path.pretty,
@@ -2594,6 +2582,7 @@ fn transpile_source_code_of_any_provenance(
                     // instead of `FilenameStore::append_slice` directly — see
                     // that fn's doc for the leak this closes
                     // (require-cache.test.ts "don't leak file paths").
+                    // A `BuildMessage` keeps the log's `Location.file`, which borrows this path.
                     let text: &'static [u8] = intern_transpile_path(path.text);
                     let pretty: &'static [u8] =
                         if core::ptr::eq(path.pretty.as_ptr(), path.text.as_ptr())
@@ -2765,7 +2754,7 @@ fn transpile_source_code_of_any_provenance(
                     return Err(crate::Error::ParseError);
                 }
 
-                // Set before the early returns below (cache hit, `// @bun`, async queue):
+                // Set before the early returns below (cache hit, `// @bun`):
                 // every later module load is gated on this flag.
                 if is_main && !disable_transpilying {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3010,49 +2999,6 @@ fn transpile_source_code_of_any_provenance(
                         &(*jsc_vm).origin,
                         options::ImportPathFormat::AbsolutePath,
                     )?;
-                }
-
-                // Pending imports → AsyncModule queue.
-                if parse_result.pending_imports.len() > 0 {
-                    // SAFETY: per fn contract — `extra` is live for the call.
-                    let promise_ptr = unsafe { &*extra }.promise_ptr;
-                    if promise_ptr.is_null() {
-                        return Err(crate::Error::UnexpectedPendingResolution);
-                    }
-
-                    if parse_result.source.contents_is_recycled {
-                        // this shared buffer is about to become owned by the AsyncModule struct
-                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                        let fs_cache = unsafe { &mut (*jsc_vm).transpiler.resolver.caches.fs };
-                        let buf = core::ptr::from_mut(fs_cache.shared_buffer()).cast_const();
-                        // `parse_result.source.contents` borrows the detached buffer's bytes;
-                        // ownership moves to the AsyncModule via the arena/parse_result, so the
-                        // swapped-out backing storage must not be freed here.
-                        let _ = core::mem::ManuallyDrop::new(fs_cache.reset_shared_buffer(buf));
-                    }
-
-                    // Hand `arena` ownership to the queue (defuse the give-back guard).
-                    let (_, arena, _, _) = scopeguard::ScopeGuard::into_inner(arena_guard);
-                    // Hand the `AstAlloc` state to the queue too: the queued
-                    // AST's small `AstVec`s live in its inline bump chunk.
-                    let ast_alloc_state = ast_alloc_scope.take_state();
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    unsafe {
-                        (*jsc_vm).modules.enqueue(
-                            global_object,
-                            bun_jsc::async_module::InitOpts {
-                                parse_result,
-                                path: *path,
-                                promise_ptr: Some(promise_ptr),
-                                specifier,
-                                referrer,
-                                arena,
-                                ast_alloc_state,
-                                is_static: is_input_static(jsc_vm, args),
-                            },
-                        );
-                    }
-                    return Err(crate::Error::AsyncModule);
                 }
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
@@ -4433,7 +4379,6 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     });
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
-    let mut promise: *mut JSInternalPromise = ptr::null_mut();
     let mut extra = TranspileExtra {
         // SAFETY: `TranspileExtra::path` is typed `'static` (cross-crate
         // struct); the borrow actually lives only for this synchronous call
@@ -4444,12 +4389,6 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         loader: synchronous_loader,
         module_type,
         source_code_printer: printer_ptr,
-        // Resolving a package asynchronously is the global object's loader's only.
-        promise_ptr: if allow_promise && module_loader.is_empty() {
-            &raw mut promise
-        } else {
-            ptr::null_mut()
-        },
     };
     let args = TranspileArgs {
         specifier: lr.specifier,
@@ -4465,11 +4404,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     match transpile_source_code_inner(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
-            promise.cast::<c_void>()
-        }
-        Err(crate::Error::AsyncModule) => {
-            debug_assert!(!promise.is_null());
-            promise.cast::<c_void>()
+            ptr::null_mut()
         }
         Err(err) => {
             if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
@@ -4588,7 +4523,6 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         loader,
         module_type: ModuleType::Unknown,
         source_code_printer: printer_ptr,
-        promise_ptr: ptr::null_mut(), // null forbids async resolution
     };
     let args = TranspileArgs {
         specifier,

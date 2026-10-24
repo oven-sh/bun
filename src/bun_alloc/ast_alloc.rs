@@ -273,22 +273,6 @@ impl ScopedAstAlloc {
             prev: swap_state(Some(state)),
         }
     }
-
-    /// Uninstall the scope's state and return it **without** bulk-freeing it,
-    /// restoring the previous occupant exactly as `drop` would. For callers
-    /// that hand the parsed AST to an async consumer: small `AstVec`s live in
-    /// the state's inline chunk, so the returned box must be kept alive until
-    /// the consumer is done with the AST.
-    #[inline]
-    pub fn take_state(self) -> Option<Box<AstAllocState>> {
-        let mut this = core::mem::ManuallyDrop::new(self);
-        let installed = swap_state(this.prev.take());
-        debug_assert!(
-            installed.is_some(),
-            "ScopedAstAlloc state was uninstalled by someone else"
-        );
-        installed
-    }
 }
 impl Drop for ScopedAstAlloc {
     #[inline]

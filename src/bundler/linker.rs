@@ -316,8 +316,6 @@ impl Linker {
 
         let source_dir = file_path.source_dir();
 
-        let is_deferred = !result.pending_imports.is_empty();
-
         match result.loader {
             options::Loader::Jsx
             | options::Loader::Js
@@ -325,21 +323,15 @@ impl Linker {
             | options::Loader::Tsx => {
                 // Iterate by index, take field-disjoint
                 // borrows (`&result.source` + `&mut result.ast.*`) where
-                // needed, and hoist `is_pending_import` (which borrows the
-                // whole `result`) before any `ast` mut borrow.
+                // needed.
                 let len = result.ast.import_records.as_slice().len();
                 for record_i in 0..len {
-                    let record_index = u32::try_from(record_i).expect("int cast");
-
-                    let skip_deferred =
-                        IS_BUN && is_deferred && !result.is_pending_import(record_index);
-
                     // Field-split borrow: `source` ⟂ `ast`.
                     let source = &result.source;
                     let ast = &mut result.ast;
                     let import_record = &mut ast.import_records.as_mut_slice()[record_i];
 
-                    if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) || skip_deferred {
+                    if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) {
                         continue;
                     }
 

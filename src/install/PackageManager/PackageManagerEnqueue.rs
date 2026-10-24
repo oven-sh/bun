@@ -2307,8 +2307,7 @@ fn bind_row_without_manifest(
                             return Ok(());
                         }
 
-                        let task =
-                            enqueue_git_commit(this, commit_id, clone_id, alias, url, committish);
+                        let task = enqueue_git_commit(this, commit_id, clone_id, alias, committish);
                         this.enqueue_git_task(task);
                         return Ok(());
                     }
@@ -2896,7 +2895,6 @@ fn enqueue_git_commit(
     task_id: Task::Id,
     clone_id: Task::Id,
     name: &[u8],
-    url: &[u8],
     committish: &[u8],
 ) -> NonNull<Task::Task<'static>> {
     let value = Task::Task {
@@ -2907,7 +2905,6 @@ fn enqueue_git_commit(
             git_commit: ManuallyDrop::new(crate::package_manager_task::GitCommitRequest {
                 clone_id,
                 name: stored_string(name),
-                url: stored_string(url),
                 committish: stored_string(committish),
             }),
         },
@@ -4860,10 +4857,5 @@ impl PackageManager {
                 ),
             );
         }
-    }
-
-    #[inline]
-    pub fn enqueue_dependency_list(&mut self, dependencies_list: Lockfile::DependencySlice) {
-        enqueue_dependency_list(self, dependencies_list)
     }
 }

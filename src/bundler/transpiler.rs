@@ -733,7 +733,7 @@ impl<'a> Transpiler<'a> {
 // ══════════════════════════════════════════════════════════════════════════
 // `ParseResult` / `AlreadyBundled` / `ParseOptions` + `Transpiler::parse*`
 // — used by `ModuleLoader::transpile_source_code` (jsc_hooks.rs) and
-// `AsyncModule` / `JSTranspiler`. The body of
+// `JSTranspiler`. The body of
 // `parse_maybe_return_file_only_allow_shared_buffer` does the source-load
 // step (virtual / client-entry / `node:` fallback) and dispatches to the
 // per-loader transpile branches.
@@ -775,25 +775,12 @@ impl AlreadyBundled {
 
 /// Output of the transpiler's parse step: the parsed AST plus its source and
 /// loader metadata.
-// lifetime-free — `runtime_transpiler_cache` is a raw pointer
-// so `AsyncModule.parse_result` / `JSTranspiler`
-// can store this by value without threading a borrow lifetime.
 pub struct ParseResult<'a> {
     pub source: bun_ast::Source,
     pub loader: options::Loader,
     pub ast: bun_ast::Ast<'a>,
     pub already_bundled: AlreadyBundled,
     pub empty: bool,
-    // `PendingResolution` does not yet
-    // derive `MultiArrayElement` (lives in `bun_resolver`, derive macro is in
-    // `bun_collections_macros` — orphan rules forbid impl-ing it here), so the
-    // SoA `len()`/column accessors aren't reachable. Use AoS `Vec` for now;
-    // `is_pending_import` only scans `import_record_id`, so the layout
-    // difference is observable only as a SoA→AoS perf delta.
-    // Once the `MultiArrayElement` derive lands upstream in `bun_resolver`,
-    // this can switch back to `MultiArrayList<PendingResolution>`.
-    pub pending_imports: Vec<resolver::PendingResolution>,
-
     /// SAFETY: erased — bundler stores it
     /// and hands it back to the runtime side; never dereferenced here.
     pub(crate) runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
@@ -810,29 +797,6 @@ pub struct ParseResult<'a> {
 }
 
 impl<'a> ParseResult<'a> {
-    /// `ParseResult` is value-copied (e.g.
-    /// `AsyncModule.resumeLoadingModule` reads/writes `this.parse_result` by
-    /// value). `Default` lets the Rust port `mem::take` it across that
-    /// boundary; see `AsyncModule::resume_loading_module`.
-    pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
-        ParseResult {
-            source: Default::default(),
-            // `options::Loader` has no `Default`.
-            // `File` is the resolver's neutral fallback
-            // (BundleEnums.rs:353), and `Default` here exists only for
-            // `mem::take` in `AsyncModule::resume_loading_module`.
-            loader: options::Loader::File,
-            ast: bun_ast::Ast::empty_in(arena),
-            already_bundled: Default::default(),
-            empty: true,
-            pending_imports: Default::default(),
-            runtime_transpiler_cache: None,
-            source_contents_backing: Default::default(),
-        }
-    }
-}
-
-impl<'a> ParseResult<'a> {
     #[inline]
     fn empty_with(
         arena: &'a bun_alloc::Arena,
@@ -846,18 +810,9 @@ impl<'a> ParseResult<'a> {
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: AlreadyBundled::None,
             empty: true,
-            pending_imports: Default::default(),
             runtime_transpiler_cache: None,
             source_contents_backing,
         }
-    }
-
-    pub(crate) fn is_pending_import(&self, id: u32) -> bool {
-        // AoS scan (see field comment); SoA column iteration restored
-        // when `PendingResolution: MultiArrayElement` lands.
-        self.pending_imports
-            .iter()
-            .any(|p| p.import_record_id == id)
     }
 }
 
@@ -1612,7 +1567,6 @@ impl<'a> Transpiler<'a> {
                         loader,
                         runtime_transpiler_cache: rtc_ptr,
                         already_bundled: AlreadyBundled::None,
-                        pending_imports: Default::default(),
                         empty: false,
                         source_contents_backing: source_backing,
                     },
@@ -1622,7 +1576,6 @@ impl<'a> Transpiler<'a> {
                         source: source.clone(),
                         loader,
                         already_bundled: AlreadyBundled::None,
-                        pending_imports: Default::default(),
                         empty: false,
                         source_contents_backing: source_backing,
                     },
@@ -1696,7 +1649,6 @@ impl<'a> Transpiler<'a> {
                         },
                         source: source.clone(),
                         loader,
-                        pending_imports: Default::default(),
                         runtime_transpiler_cache: None,
                         empty: false,
                         source_contents_backing: source_backing,
@@ -2016,7 +1968,6 @@ fn parse_data_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
         runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
@@ -2056,7 +2007,6 @@ fn parse_text_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
         runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
@@ -2112,7 +2062,6 @@ fn parse_md_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
         runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
@@ -2148,7 +2097,6 @@ fn parse_wasm_loader<'a>(
             source: source.clone(),
             loader,
             already_bundled: AlreadyBundled::None,
-            pending_imports: Default::default(),
             runtime_transpiler_cache: None,
             empty: false,
             source_contents_backing: source_backing,
@@ -2172,7 +2120,7 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
 // ══════════════════════════════════════════════════════════════════════════
 // `Transpiler::print` / `print_with_source_map` — final step of
 // `ModuleLoader::transpile_source_code` (jsc_hooks.rs spec :525-539); the
-// dispatch shim that `RuntimeTranspilerStore` / `AsyncModule` link against.
+// dispatch shim that `RuntimeTranspilerStore` links against.
 //
 // `format` is a runtime arg rather than a const generic —
 // `bun_js_printer::Format` doesn't derive `ConstParamTy` (and can't be added
@@ -2206,12 +2154,10 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
     }
 }
 
-/// Re-export so `bun_bundler::PrintFormat::EsmAscii` (AsyncModule.rs:1018)
-/// resolves once `lib.rs` `pub use transpiler::*` lands.
 pub use js_printer::Format as PrintFormat;
 
 // PERF: this whole `print*` chain was generic over `W: WriterTrait`, but every
-// call site in the tree (jsc_hooks.rs, RuntimeTranspilerStore.rs, AsyncModule.rs,
+// call site in the tree (jsc_hooks.rs, RuntimeTranspilerStore.rs,
 // JSTranspiler.rs, and the in-crate `transform()` path) passes the same concrete
 // `&mut BufferPrinter`. Leaving the public entry points generic forced each
 // downstream crate (bun_runtime / bun_jsc / bun_install / bun_bundler) to stamp
@@ -2490,9 +2436,7 @@ impl<'a> Transpiler<'a> {
     }
 
     // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` — see `print`
-    // above. This is the hot entry from jsc_hooks.rs / RuntimeTranspilerStore.rs
-    // / AsyncModule.rs; keeping it non-generic collapses the four cross-crate
-    // copies of `print_expr<…>` (244 KB → ~61 KB).
+    // above.
     /// `print_arena` is the same per-call arena that built `result.ast` —
     /// see [`Self::print`].
     #[inline(never)]

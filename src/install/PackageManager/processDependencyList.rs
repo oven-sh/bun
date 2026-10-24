@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use core::cmp::Ordering;
 
 use bun_collections::index_sort;
@@ -615,13 +614,9 @@ impl PackageManager {
             return true;
         };
         let install_peer = self.look_ahead.in_peer_pass;
-        if let Err(err) = run_tasks::resolve_waiters_of_appended_package(
-            self,
-            task_id,
-            &package,
-            install_peer,
-            &Cell::new(false),
-        ) {
+        if let Err(err) =
+            run_tasks::resolve_waiters_of_appended_package(self, task_id, &package, install_peer)
+        {
             let dependency = self.lockfile.buffers.dependencies[row as usize].clone();
             enqueue::add_dependency_error(self, &dependency, err);
         }
@@ -635,7 +630,6 @@ impl PackageManager {
     pub(crate) fn process_dependency_list_item(
         &mut self,
         item: &TaskCallbackContext,
-        any_root: Option<&Cell<bool>>,
         install_peer: bool,
     ) -> Result<(), crate::Error> {
         match *item {
@@ -666,12 +660,6 @@ impl PackageManager {
                         install_peer,
                         from_command: false,
                     })?;
-                }
-                if is_root
-                    && let Some(any_root) = any_root
-                    && self.lockfile.buffers.resolutions[dependency_id as usize] != resolution
-                {
-                    any_root.set(true);
                 }
             }
             // A linker's `run_tasks` starts this checkout. Here it would be dropped.

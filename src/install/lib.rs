@@ -1072,16 +1072,3 @@ const _: () = assert!(core::mem::size_of::<TaskCallbackContext>() == 32);
 // The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
 // 2.
-
-#[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub enum PackageManifestError {
-    PackageManifestHTTP400,
-    PackageManifestHTTP401,
-    PackageManifestHTTP402,
-    PackageManifestHTTP403,
-    PackageManifestHTTP404,
-    PackageManifestHTTP4xx,
-    PackageManifestHTTP5xx,
-}
-
-bun_core::impl_tag_error!(PackageManifestError);

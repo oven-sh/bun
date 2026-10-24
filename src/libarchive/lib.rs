@@ -453,9 +453,35 @@ pub mod lib {
             // `Entry` has interior mutability so `&Entry -> *mut Entry` is sound.
             unsafe { archive_write_header(self.as_mut_ptr(), entry.as_mut_ptr()) }
         }
+        /// Returns the count that the entry took, or a negative status. A count below `data.len()`
+        /// means that the entry has no room for the rest.
         pub fn write_data(&self, data: &[u8]) -> isize {
+            let written = self.write_data_once(data);
+            if written < data.len() as isize {
+                return self.write_data_rest(data, written);
+            }
+            written
+        }
+        /// libarchive takes at most `INT_MAX` bytes per call.
+        fn write_data_once(&self, data: &[u8]) -> isize {
             // SAFETY: self valid; data readable for data.len().
             unsafe { archive_write_data(self.as_mut_ptr(), data.as_ptr().cast(), data.len()) }
+        }
+        /// The calls after the first. Only a failure, a full entry or `data` above `INT_MAX` bytes
+        /// gets here.
+        #[cold]
+        #[inline(never)]
+        fn write_data_rest(&self, data: &[u8], first: isize) -> isize {
+            let mut written = first;
+            let mut total = first;
+            while written > 0 && (total as usize) < data.len() {
+                written = self.write_data_once(&data[total as usize..]);
+                if written < 0 {
+                    return written;
+                }
+                total += written;
+            }
+            total
         }
         pub fn write_finish_entry(&self) -> Result {
             // SAFETY: self valid.

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
+import { totalmem } from "node:os";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -1442,6 +1443,46 @@ describe("Bun.Archive", () => {
       const count = await archive.extract(String(dir));
       expect(count).toBeGreaterThanOrEqual(500);
     });
+
+    // libarchive takes at most INT_MAX bytes per write call, so no smaller entry needs a second call. The child
+    // writes to the last 2048 bytes of its source only and reads the tar through blob(), which does not copy, so it
+    // holds one copy of the 2 GiB. MIMALLOC_PURGE_DELAY=0 gives back the buffers that the growing tar leaves behind:
+    // the child peaks at 2.6 GiB and not at 4.6 GiB (3.1 GiB in a debug ASAN build, in 3 to 4 seconds). So this one
+    // test skips on a small machine and carries its own ceiling.
+    test.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 8 * 1024 ** 3)(
+      "writes every byte of an entry larger than 2 GiB",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const size = 2 ** 31 + 1024;
+            const data = new Uint8Array(size);
+            const tail = Uint8Array.from({ length: 2048 }, (_, i) => 1 + (i % 255));
+            data.set(tail, size - tail.length);
+            const tar = await new Bun.Archive({ "big.bin": data }).blob();
+            const header = await tar.slice(0, 512).bytes();
+            const written = await tar.slice(512 + size - tail.length, 512 + size).bytes();
+            console.log(JSON.stringify({
+              tarSize: tar.size,
+              entrySize: parseInt(new TextDecoder().decode(header.subarray(124, 135)), 8),
+              firstWrongByteOfTail: tail.findIndex((byte, i) => written[i] !== byte),
+            }));`,
+          ],
+          env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: { tarSize: 2147491840, entrySize: 2 ** 31 + 1024, firstWrongByteOfTail: -1 },
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+      30_000,
+    );
   });
 
   describe("special characters", () => {

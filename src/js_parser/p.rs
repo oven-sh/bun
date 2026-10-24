@@ -8381,10 +8381,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         b"Dependencies to `import.meta.hot.accept` must be statically analyzable module specifiers matching direct imports.";
 
     /// The signatures for `import.meta.hot.accept` are:
-    /// `accept()`                   - self accept
-    /// `accept(Function)`           - self accept
-    /// `accept(string, Function)`   - accepting another module
-    /// `accept(string[], Function)` - accepting multiple modules
+    /// `accept()`                    - self accept
+    /// `accept(Function)`            - self accept
+    /// `accept(string, Function?)`   - accepting another module
+    /// `accept(string[], Function?)` - accepting multiple modules
     ///
     /// The strings that can be passed in the first argument must be module
     /// specifiers that were imported. We enforce that they line up exactly

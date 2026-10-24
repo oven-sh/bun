@@ -127,6 +127,21 @@ import.meta.hot.accept("./foo", newModule => {
 
 Indicates that a dependency's module can be accepted. When the dependency is updated, Bun calls the callback with the new module.
 
+The callback is optional, for one dependency and for an array of them. Without a callback, Bun only patches this module's `import` statements of the dependency, which must be an ES module:
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import { count } from "./foo";
+
+export function getCount() {
+  // Returns the new value after foo.ts updates.
+  return count;
+}
+
+import.meta.hot.accept("./foo");
+```
+
+Bun does not evaluate `index.ts` again. A value that `index.ts` computed from `foo.ts` while it loaded, or got from `require()` or `import()`, stays the old one. Pass a callback to update such a value. When every module that imports `foo.ts` only reads its imports, call `import.meta.hot.accept()` in `foo.ts` instead.
+
 ### With multiple dependencies
 
 ```ts title="index.ts" icon="/icons/typescript.svg"

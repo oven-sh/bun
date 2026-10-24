@@ -5,6 +5,7 @@ use bun_collections::array_hash_map::StringContext;
 
 use crate::base::Ref;
 use crate::e::String as EString;
+use crate::nodes::{StoreRef, StoreSlice, StoreStr};
 
 /// This is for TypeScript "enum" and "namespace" blocks. Each block can
 /// potentially be instantiated multiple times. The exported members of each
@@ -146,154 +147,93 @@ impl Data {
 }
 
 // ── TypeScript::Metadata ───────────────────────────────────────────────────
-// Decorator-metadata type tag attached to `G.Property` / `G.FnArg` / `G.Fn`.
-// Data-only; the parser-state predicates that depend on `P` stay in
-// `bun_js_parser::typescript`.
 
-#[derive(Clone, Default)]
+/// A type annotation, as far as `emitDecoratorMetadata` tells types apart. Every other type is `MObject`.
+#[derive(Clone, Copy, Default)]
 pub enum Metadata {
+    /// There is no annotation.
     #[default]
     MNone,
 
     MNever,
     MUnknown,
     MAny,
+    /// `void`, `asserts x`
     MVoid,
     MNull,
     MUndefined,
     MFunction,
-    MArray,
+    MTuple,
+    /// `boolean`, `true`, `x is T`
     MBoolean,
     MString,
     MObject,
     MNumber,
     MBigint,
     MSymbol,
-    MPromise,
-    MIdentifier(Ref),
-    // A heap `Vec` is used here because `Metadata` is lifetime-free.
-    // Decorator metadata is rare and the lists are tiny.
-    MDot(Vec<Ref>),
+    /// `T[]`
+    MArray(StoreRef<Metadata>),
+    /// `A.B<T>`
+    MReference(StoreRef<TypeReference>),
+    MUnion(StoreSlice<Metadata>),
+    MIntersection(StoreSlice<Metadata>),
+    /// `A extends B ? C : D` is `[C, D]`.
+    MConditional(StoreSlice<Metadata>),
+    MParenthesized(StoreRef<Metadata>),
+    /// `readonly T`
+    MReadonly(StoreRef<Metadata>),
+}
+
+pub struct TypeReference {
+    /// `A.B` is `[A, B]`.
+    pub name: StoreSlice<TypeReferenceName>,
+    /// `MNone` if there are no type arguments.
+    pub first_type_argument: Metadata,
+}
+
+#[derive(Clone, Copy)]
+pub struct TypeReferenceName {
+    pub text: StoreStr,
+    pub loc: Loc,
 }
 
 impl Metadata {
-    pub const DEFAULT: Self = Metadata::MNone;
-
-    // the logic in finish_union, merge_union, finish_intersection and merge_intersection is
-    // translated from:
-    // https://github.com/microsoft/TypeScript/blob/e0a324b0503be479f2b33fd2e17c6e86c94d1297/src/compiler/transformers/typeSerializer.ts#L402
-
-    /// Return the final union type if possible, or return None to continue merging.
-    ///
-    /// If the current type is MNever, MNull, or MUndefined assign the current type
-    /// to MNone and return None to ensure it's always replaced by the next type.
-    /// `load_name`: closure form of `p.load_name_from_ref` to avoid coupling Metadata to P.
-    pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(&mut self, load_name: F) -> Option<Self> {
-        let current = self;
-        match current {
-            Metadata::MIdentifier(r) => {
-                if load_name(*r) == b"Object" {
-                    return Some(Metadata::MObject);
-                }
-                None
-            }
-
-            Metadata::MUnknown | Metadata::MAny | Metadata::MObject => Some(Metadata::MObject),
-
-            Metadata::MNever | Metadata::MNull | Metadata::MUndefined => {
-                *current = Metadata::MNone;
-                None
-            }
-
-            _ => None,
+    /// `SkipTypeParentheses`
+    pub fn skip_parentheses(mut self) -> Metadata {
+        while let Metadata::MParenthesized(inner) = self {
+            self = *inner;
         }
+        self
     }
 
-    pub fn merge_union(&mut self, left: Self) {
-        let result = self;
-        if !matches!(left, Metadata::MNone) {
-            if core::mem::discriminant(result) != core::mem::discriminant(&left) {
-                *result = match result {
-                    Metadata::MNever | Metadata::MUndefined | Metadata::MNull => left,
-
-                    _ => Metadata::MObject,
-                };
-            } else {
-                // Reshaped for borrowck — copy Ref out before reassigning *result
-                if let Metadata::MIdentifier(r) = result {
-                    let r = *r;
-                    if let Metadata::MIdentifier(l) = left {
-                        if !r.eql(l) {
-                            *result = Metadata::MObject;
-                        }
-                    }
-                }
-            }
-        } else {
-            // always take the next value if left is MNone
+    /// `GetRestParameterElementType`
+    pub fn rest_parameter_element_type(self) -> Metadata {
+        match self {
+            Metadata::MArray(element) => *element,
+            Metadata::MReference(reference) => reference.first_type_argument,
+            _ => Metadata::MNone,
         }
     }
+}
 
-    /// Return the final intersection type if possible, or return None to continue merging.
-    ///
-    /// If the current type is MUnknown, MNull, or MUndefined assign the current type
-    /// to MNone and return None to ensure it's always replaced by the next type.
-    pub fn finish_intersection<'b, F: Fn(Ref) -> &'b [u8]>(
-        &mut self,
-        load_name: F,
-    ) -> Option<Self> {
-        let current = self;
-        match current {
-            Metadata::MIdentifier(r) => {
-                if load_name(*r) == b"Object" {
-                    return Some(Metadata::MObject);
-                }
-                None
-            }
+/// What `serializeTypeReferenceNode` emits for each group of TypeScript's `TypeReferenceSerializationKind`.
+#[derive(Clone, Copy)]
+pub enum TypeReferenceKind {
+    /// The name may or may not be a value when the code runs.
+    Unknown,
+    /// The name is a class, or a variable that can be constructed.
+    TypeWithConstructSignatureAndValue,
+    VoidNullableOrNeverType,
+    /// `Number` for `NumberLikeType`
+    Global(&'static [u8]),
+}
 
-            // ensure MNever is the final type
-            Metadata::MNever => Some(Metadata::MNever),
-
-            Metadata::MAny | Metadata::MObject => Some(Metadata::MObject),
-
-            Metadata::MUnknown | Metadata::MNull | Metadata::MUndefined => {
-                *current = Metadata::MNone;
-                None
-            }
-
-            _ => None,
-        }
-    }
-
-    pub fn merge_intersection(&mut self, left: Self) {
-        let result = self;
-        if !matches!(left, Metadata::MNone) {
-            if core::mem::discriminant(result) != core::mem::discriminant(&left) {
-                *result = match result {
-                    Metadata::MUnknown | Metadata::MUndefined | Metadata::MNull => left,
-
-                    // ensure MNever is the final type
-                    Metadata::MNever => Metadata::MNever,
-
-                    _ => Metadata::MObject,
-                };
-            } else {
-                // Reshaped for borrowck — copy Ref out before reassigning *result
-                if let Metadata::MIdentifier(r) = result {
-                    let r = *r;
-                    if let Metadata::MIdentifier(l) = left {
-                        if !r.eql(l) {
-                            *result = Metadata::MObject;
-                        }
-                    }
-                }
-            }
-        } else {
-            // make sure intersection of only MUnknown serializes to "undefined"
-            // instead of "Object"
-            if matches!(result, Metadata::MUnknown) {
-                *result = Metadata::MUndefined;
-            }
-        }
-    }
+/// The type checker's answer for one type reference.
+#[derive(Clone, Copy)]
+pub struct CheckedTypeReference {
+    /// Of the first identifier of its name.
+    pub loc: Loc,
+    pub kind: TypeReferenceKind,
+    /// The metadata keeps the import that declares the first identifier.
+    pub keeps_import: bool,
 }

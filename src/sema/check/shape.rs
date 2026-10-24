@@ -3211,7 +3211,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isConstructorType`
-    fn is_constructor_type(&mut self, ty: TypeId) -> bool {
+    pub(super) fn is_constructor_type(&mut self, ty: TypeId) -> bool {
         if !self.signatures(ty, true).is_empty() {
             return true;
         }

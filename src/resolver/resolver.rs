@@ -1627,13 +1627,18 @@ impl<'a> Resolver<'a> {
             if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
-                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
+                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata(),
                 );
                 result.flags.set_experimental_decorators(
-                    result.flags.experimental_decorators() || tsconfig.experimental_decorators,
+                    result.flags.experimental_decorators() || tsconfig.experimental_decorators(),
                 );
-                if let Some(v) = tsconfig.use_define_for_class_fields {
-                    result.flags.set_use_define_for_class_fields(v);
+                if primary {
+                    result
+                        .flags
+                        .set_use_define_for_class_fields(tsconfig.use_define_for_class_fields());
+                    result
+                        .flags
+                        .set_strict_null_checks(tsconfig.strict_null_checks());
                 }
             }
 
@@ -6645,11 +6650,20 @@ impl<'a> Resolver<'a> {
                 let parent_config = unsafe { &mut *parent_config_ptr };
                 // SAFETY: see loop-wide note above.
                 let mc = unsafe { &mut *merged_config };
-                mc.emit_decorator_metadata =
-                    mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
-                if let Some(v) = parent_config.use_define_for_class_fields {
-                    mc.use_define_for_class_fields = Some(v);
-                }
+                mc.emit_decorator_metadata = parent_config
+                    .emit_decorator_metadata
+                    .or(mc.emit_decorator_metadata);
+                mc.experimental_decorators = parent_config
+                    .experimental_decorators
+                    .or(mc.experimental_decorators);
+                mc.use_define_for_class_fields = parent_config
+                    .use_define_for_class_fields
+                    .or(mc.use_define_for_class_fields);
+                mc.target_has_class_fields = parent_config
+                    .target_has_class_fields
+                    .or(mc.target_has_class_fields);
+                mc.strict = parent_config.strict.or(mc.strict);
+                mc.strict_null_checks = parent_config.strict_null_checks.or(mc.strict_null_checks);
                 if !parent_config.base_url.is_empty() {
                     mc.base_url = core::mem::take(&mut parent_config.base_url);
                 }

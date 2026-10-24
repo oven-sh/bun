@@ -919,6 +919,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = p.load_name_from_ref(private.ref_);
                 let result = p.find_symbol(e_.index.loc, name).expect("unreachable");
                 private.ref_ = result.r#ref;
+                p.private_name_uses += 1;
 
                 // Unlike regular identifiers, there are no unbound private identifiers
                 let kind: js_ast::symbol::Kind =
@@ -1968,6 +1969,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     e_.can_be_unwrapped_if_unused = dot.call_can_be_unwrapped_if_unused;
                 }
             }
+            Data::ESuper(_) if p.super_shim.is_symbol() => {
+                if p.is_in_constructor_parameters() {
+                    p.super_shim = Ref::NONE;
+                } else {
+                    e_.target = p.use_ref(p.super_shim, e_.target.loc);
+                }
+            }
             _ => {}
         }
 
@@ -2856,6 +2864,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 == 0
         {
             e_.class_name = None;
+        }
+
+        if TYPESCRIPT {
+            p.declare_class_expr_temps(expr.loc);
         }
     }
 }

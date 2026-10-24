@@ -57,3 +57,15 @@ Running `bun init` in a new directory generates this `tsconfig.json` for you. (T
 ```sh
 bun init
 ```
+
+## `compilerOptions` that change how code runs
+
+Bun compiles one file at a time and doesn't check types to run it. These options decide what it compiles a class to, as they do for `tsc`.
+
+| Option                    | Effect                                                                                                                                                                                                           |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `experimentalDecorators`  | Decorators are TypeScript's older kind, not the standard ones.                                                                                                                                                   |
+| `emitDecoratorMetadata`   | With `experimentalDecorators`, a decorated member gets `design:type`, `design:paramtypes` and `design:returntype` for `Reflect.getMetadata`.                                                                     |
+| `useDefineForClassFields` | If `false`, `x = 1` in a class becomes `this.x = 1` in the constructor. That calls a setter from a base class or from a decorator, where a field would hide it. A field without an initializer adds no property. |
+| `target`                  | Older than `ES2022`, it makes `false` the default of `useDefineForClassFields`. Bun doesn't compile syntax for older engines.                                                                                    |
+| `strictNullChecks`        | If `true`, the `design:type` of `string \| null` is `Object`. If `false`, it's `String`. The default is the value of `strict`, or else `true`.                                                                   |

@@ -713,7 +713,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ImportEqualsEliminationTest", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import a = foo.a
@@ -744,12 +743,28 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
+  itBundled("ts/ImportEqualsEliminationRunsTheRestOnce", {
+    files: {
+      "/entry.ts": /* ts */ `
+        namespace foo {
+          export const a = 1;
+          export const b = 2;
+        }
+        import used = foo.a;
+        import unused = foo.b;
+        console.log(used);
+      `,
+    },
+    run: {
+      stdout: "1",
+    },
+  });
   itBundled("ts/ImportEqualsTreeShakingFalse", {
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
         import used = foo.used
-        import unused_keep = foo.unused
+        import unused_drop = foo.unused
         export { used }
       `,
     },
@@ -759,7 +774,6 @@ describe("bundler", () => {
     external: ["pkg"],
   });
   itBundled("ts/ImportEqualsTreeShakingTrue", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -774,7 +788,6 @@ describe("bundler", () => {
     bundling: false,
   });
   itBundled("ts/ImportEqualsBundle", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'

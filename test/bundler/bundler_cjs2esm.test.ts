@@ -2393,8 +2393,28 @@ describe("bundler", () => {
       stdout: '{"zeta":1,"alpha":2} object 1',
     },
   });
-  // `emitDecoratorMetadata` passes the import itself to `Reflect.metadata`.
+  // `emitDecoratorMetadata` passes the import itself to `Reflect.metadata` if it's a function.
   itBundled("cjs2esm/DefaultImportHeldByDecoratorMetadata", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import Lib from "./lib.cjs";
+        const seen: any[] = [];
+        (Reflect as any).metadata = (key: string, value: any) => () => { seen.push(value); };
+        function dec(..._args: any[]) {}
+        class A {
+          @dec prop: Lib;
+        }
+        console.log(seen[0] === Object, Lib.x, Lib.sum());
+      `,
+      "/tsconfig.json": /* json */ `
+        { "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }
+      `,
+      ...objectOperationTargets,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: { stdout: "true 1 3" },
+  });
+  itBundled("cjs2esm/DefaultImportOfFunctionHeldByDecoratorMetadata", {
     files: {
       "/entry.ts": /* ts */ `
         import Lib from "./lib.cjs";
@@ -2410,7 +2430,12 @@ describe("bundler", () => {
       "/tsconfig.json": /* json */ `
         { "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }
       `,
-      ...objectOperationTargets,
+      "/lib.cjs": /* js */ `
+        module.exports = function () {};
+        module.exports.x = 1;
+        module.exports.y = 2;
+        module.exports.sum = function () { return module.exports.x + module.exports.y; };
+      `,
     },
     cjs2esm: { unhandled: ["/lib.cjs"] },
     run: { stdout: "65 67" },

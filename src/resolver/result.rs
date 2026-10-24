@@ -133,9 +133,10 @@ bitflags::bitflags! {
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
+        const STRICT_NULL_CHECKS = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
-        /// tsconfig `"useDefineForClassFields": false` was set explicitly.
+        /// tsconfig's effective `"useDefineForClassFields"` is `false`.
         const SET_SEMANTICS_FOR_CLASS_FIELDS = 1 << 7;
     }
 }
@@ -206,7 +207,15 @@ impl ResultFlags {
     pub(crate) fn set_experimental_decorators(&mut self, v: bool) {
         self.set(Self::EXPERIMENTAL_DECORATORS, v)
     }
-    /// Effective `useDefineForClassFields`; `false` only when tsconfig set it to `false`.
+    #[inline]
+    pub fn strict_null_checks(self) -> bool {
+        self.contains(Self::STRICT_NULL_CHECKS)
+    }
+    #[inline]
+    pub(crate) fn set_strict_null_checks(&mut self, v: bool) {
+        self.set(Self::STRICT_NULL_CHECKS, v)
+    }
+    /// Effective `useDefineForClassFields`.
     #[inline]
     pub fn use_define_for_class_fields(self) -> bool {
         !self.contains(Self::SET_SEMANTICS_FOR_CLASS_FIELDS)

@@ -1,4 +1,10 @@
+import { bunEnv, bunExe, tempDir } from "harness";
 import "reflect-metadata";
+import { endChildren, longLimit, spawn } from "../../cli/children";
+import { canCompareWithTypeScript, differencesFromTypeScript } from "./decorator-differential";
+import { cases } from "./decorator-metadata-cases";
+
+afterAll(endChildren);
 
 describe("decorator metadata", () => {
   test("type serialization", () => {
@@ -226,10 +232,10 @@ describe("decorator metadata", () => {
     expect(received[24]).toBe(Object);
     expect(received[25]).toBe(void 0);
     expect(received[26]).toBe(void 0);
-    expect(received[27]).toBe(String);
-    expect(received[28]).toBe(String);
-    expect(received[29]).toBe(String);
-    expect(received[30]).toBe(String);
+    expect(received[27]).toBe(Object);
+    expect(received[28]).toBe(Object);
+    expect(received[29]).toBe(Object);
+    expect(received[30]).toBe(Object);
     expect(received[31]).toBe(Object);
     expect(received[32]).toBe(Object);
     expect(received[33]).toBe(String);
@@ -238,10 +244,10 @@ describe("decorator metadata", () => {
     expect(received[36]).toBe(Object);
     expect(received[37]).toBe(String);
     expect(received[38]).toBe(String);
-    expect(received[39]).toBe(String);
-    expect(received[40]).toBe(String);
-    expect(received[41]).toBe(String);
-    expect(received[42]).toBe(String);
+    expect(received[39]).toBe(Object);
+    expect(received[40]).toBe(Object);
+    expect(received[41]).toBe(Object);
+    expect(received[42]).toBe(Object);
     expect(received[43]).toBe(Object);
     expect(received[44]).toBe(Object);
     expect(received[45]).toBe(Object);
@@ -256,10 +262,10 @@ describe("decorator metadata", () => {
     expect(received[54]).toBe(Object);
     expect(received[55]).toBe(Swag);
     expect(received[56]).toBe(Swag);
-    expect(received[57]).toBe(Swag);
-    expect(received[58]).toBe(Swag);
-    expect(received[59]).toBe(Swag);
-    expect(received[60]).toBe(Swag);
+    expect(received[57]).toBe(Object);
+    expect(received[58]).toBe(Object);
+    expect(received[59]).toBe(Object);
+    expect(received[60]).toBe(Object);
     expect(received[61]).toBe(Object);
     expect(received[62]).toBe(Object);
     expect(received[63]).toBe(Object);
@@ -268,10 +274,10 @@ describe("decorator metadata", () => {
     expect(received[66]).toBe(Object);
     expect(received[67]).toBe(void 0);
     expect(received[68]).toBe(void 0);
-    expect(received[69]).toBe(Swag);
-    expect(received[70]).toBe(Swag);
-    expect(received[71]).toBe(Swag);
-    expect(received[72]).toBe(Swag);
+    expect(received[69]).toBe(Object);
+    expect(received[70]).toBe(Object);
+    expect(received[71]).toBe(Object);
+    expect(received[72]).toBe(Object);
     expect(received[73]).toBe(Object);
     expect(received[74]).toBe(Object);
     expect(received[75]).toBe(Swag);
@@ -544,3 +550,44 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:returntype", A.prototype, "method4")).toBeUndefined();
   });
 });
+
+// Bun compiles one file at a time, so TypeScript gets each file as a whole program.
+describe.concurrent.each([true, false])("same metadata as TypeScript, strictNullChecks: %p", strictNullChecks => {
+  test.skipIf(!canCompareWithTypeScript)(
+    "every case",
+    async () => {
+      expect(await differencesFromTypeScript(cases, { strictNullChecks })).toEqual([]);
+    },
+    longLimit,
+  );
+});
+
+test.concurrent(
+  "a type that takes more stack to resolve than a thread of the bundler has",
+  async () => {
+    const aliases = Array.from({ length: 20_000 }, (_, i) => `type T${i + 1} = T${i};`).join("\n");
+    using dir = tempDir("decorator-metadata-stack", {
+      "tsconfig.json": `{ "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }`,
+      "index.ts": `
+      (Reflect as any).metadata = (key: string, value: any) => () => console.log(value.name);
+      const d: any = () => {};
+      type T0 = string;
+      ${aliases}
+      class A { @d x: T20000; @d y: T0${Buffer.alloc(40_000, "[]").toString()}; }
+    `,
+    });
+    await using build = spawn({
+      timeout: longLimit,
+      cmd: [bunExe(), "build", "index.ts", "--outfile=out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: "", exitCode: 0 });
+    await using proc = spawn({ cmd: [bunExe(), "out.js"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "String\nArray\n", stderr: "", exitCode: 0 });
+  },
+  longLimit,
+);

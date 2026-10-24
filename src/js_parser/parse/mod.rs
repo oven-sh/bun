@@ -25,7 +25,7 @@ use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
     FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
-    StmtList, TypeParameterFlag,
+    StmtList, TypeNameDeclaration, TypeParameterFlag,
 };
 use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
@@ -214,7 +214,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let property_scope_index = p.scopes_in_order.len();
             if opts.allow_ts_decorators {
                 opts.ts_decorators = p.parse_type_script_decorators()?;
-                opts.has_class_decorators = class_opts.ts_decorators.len() > 0;
                 has_decorators = has_decorators || opts.ts_decorators.len() > 0;
             }
 
@@ -291,6 +290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
             inner_class_ref: js_ast::Ref::NONE,
+            decorators_use_private_name: false,
         })
     }
 
@@ -727,6 +727,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name.as_mut().unwrap().ref_ = p
                     .declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
                     .expect("unreachable");
+            } else {
+                p.declare_type_name(name_text, TypeNameDeclaration::Other);
             }
         }
 

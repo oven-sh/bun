@@ -4188,6 +4188,7 @@ impl ResolveMode {
 pub struct ResolveFunctionResult<'r> {
     pub path: &'r [u8],
     pub(crate) query_string: &'r [u8],
+    is_external: bool,
 }
 
 /// Per-thread `BufferPrinter` used when printing transpiled module source.
@@ -5517,6 +5518,7 @@ impl VirtualMachine {
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
         ret.path = result_path.text;
+        ret.is_external = result.flags.is_external();
         if self.finds_entry_points_by_path
             && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(ret.path)
         {
@@ -5735,6 +5737,7 @@ impl VirtualMachine {
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
+        jsc_vm.transpiler.resolver.node_module_error = None;
         let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
@@ -5743,7 +5746,36 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
-        if let Err(err) = resolve_result {
+        if resolve_result.is_ok()
+            && mode.is_esm()
+            && !result.is_external
+            && jsc_vm.transpiler.resolver.node_module_error.is_none()
+            && bun_paths::is_absolute(result.path)
+            // Inline entries do not infer their module kind from a package scope.
+            && !jsc_vm
+                .module_loader
+                .eval_source
+                .as_ref()
+                .is_some_and(|source| source.path.text == result.path)
+        {
+            jsc_vm.transpiler.resolver.node_module_error = jsc_vm
+                .transpiler
+                .resolver
+                .node_package_scope_error(result.path, true);
+        }
+        if let Some(error) = jsc_vm.transpiler.resolver.node_module_error.take() {
+            if resolve_result.is_err() || error.is_fatal() {
+                return Ok(Err(crate::ResolveMessage::from_node_module_error(
+                    global,
+                    &error,
+                    mode.is_esm(),
+                    specifier_utf8.slice(),
+                    source_utf8.slice(),
+                )));
+            }
+        }
+        if let Err(err_) = resolve_result {
+            let err = err_;
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
             let resolve_msg_index = log

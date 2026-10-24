@@ -75,6 +75,12 @@ type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 
 pub struct PackageJSON {
+    pub(crate) node_only: bool,
+    pub(crate) node_override: Option<Box<PackageJSON>>,
+    pub node_error: Option<PackageConfigError>,
+    pub(crate) node_json_errors: [Option<Box<[u16]>>; 2],
+    pub(crate) node_exports: bool,
+    pub(crate) node_imports: bool,
     pub name: Box<[u8]>,
     pub source: bun_ast::Source<'static>,
     /// Owns the file bytes that `source.contents` (and the
@@ -140,6 +146,12 @@ pub struct PackageJSON {
 impl Default for PackageJSON {
     fn default() -> Self {
         PackageJSON {
+            node_only: false,
+            node_override: None,
+            node_error: None,
+            node_json_errors: [None, None],
+            node_exports: false,
+            node_imports: false,
             name: Box::default(),
             source: bun_ast::Source::default(),
             source_contents: Box::default(),
@@ -158,6 +170,12 @@ impl Default for PackageJSON {
             imports: None,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+pub enum PackageConfigError {
+    Invalid,
+    Read(bun_errno::SystemErrno),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -207,6 +225,94 @@ impl PackageJSON {
                 .filter(move |row| row.key.slice() == name)
                 .filter_map(move |row| Some((row.value.as_str()?, group.behavior)))
         })
+    }
+
+    pub fn has_bun_metadata(&self) -> bool {
+        !self.node_only
+    }
+
+    pub fn for_node(&self) -> &Self {
+        self.node_override.as_deref().unwrap_or(self)
+    }
+
+    fn from_node_fields(
+        path: &'static [u8],
+        contents: &[u8],
+        fields: Option<bun_parsers::node_package_json::NodePackageJson>,
+    ) -> Self {
+        let mut pkg = Self {
+            node_only: true,
+            source: bun_ast::Source::init_path_string_owned(path, contents.to_vec()),
+            node_error: fields.is_none().then_some(PackageConfigError::Invalid),
+            ..Default::default()
+        };
+        if let Some(fields) = fields {
+            pkg.apply_node_fields(path, contents, fields);
+        }
+        pkg
+    }
+
+    fn apply_node_fields(
+        &mut self,
+        path: &'static [u8],
+        contents: &[u8],
+        fields: bun_parsers::node_package_json::NodePackageJson,
+    ) {
+        let pkg = self;
+        pkg.node_json_errors = fields.json_errors;
+        pkg.name = Box::default();
+        pkg.module_type = ModuleType::Unknown;
+        pkg.main_fields.swap_remove(b"main");
+        pkg.exports = None;
+        pkg.imports = None;
+        pkg.node_exports = false;
+        pkg.node_imports = false;
+        for (field, range) in fields.fields.into_iter().enumerate() {
+            let Some(range) = range else { continue };
+            let raw = &contents[range];
+            let map_source = (field >= 3)
+                .then(|| bun_parsers::node_package_json::map_json_source(raw))
+                .flatten();
+            let source = bun_ast::Source::init_path_string_owned(
+                path,
+                map_source.as_deref().unwrap_or(raw).to_vec(),
+            );
+            let mut log = bun_ast::Log::default();
+            let parsed = json_parser::ParsedJson::parse_json(&source, &mut log);
+            if field >= 3 {
+                let map = match parsed {
+                    Ok(parsed) => ExportsMap::parse(&source, &mut log, parsed.root),
+                    Err(_) => Some(ExportsMap {
+                        root: Entry {
+                            data: EntryData::InvalidJson,
+                        },
+                    }),
+                };
+                if field == 3 {
+                    pkg.exports = map;
+                    pkg.node_exports = true;
+                } else {
+                    pkg.imports = map;
+                    pkg.node_imports = true;
+                }
+            } else if let Ok(parsed) = parsed {
+                if let Some(value) = parsed.root.as_utf8_string_literal() {
+                    match field {
+                        0 => pkg.name = Box::from(value),
+                        1 if !value.is_empty() => {
+                            pkg.main_fields.put(b"main", Box::from(value)).expect("oom");
+                        }
+                        2 => {
+                            pkg.module_type = ModuleType::LIST
+                                .get(value)
+                                .copied()
+                                .unwrap_or(ModuleType::Unknown)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     /// Normalize path separators to forward slashes for glob matching
@@ -441,6 +547,23 @@ impl PackageJSON {
         ) {
             Ok(e) => e,
             Err(err) => {
+                if r.validate_package_config
+                    && let crate::Error::Sys(errno) = err
+                {
+                    if !matches!(
+                        errno,
+                        bun_errno::SystemErrno::ENOENT
+                            | bun_errno::SystemErrno::ENOTDIR
+                            | bun_errno::SystemErrno::EISDIR
+                    ) {
+                        return Some(PackageJSON {
+                            node_only: true,
+                            source: bun_ast::Source::init_path_string(package_json_path, b""),
+                            node_error: Some(PackageConfigError::Read(errno)),
+                            ..Default::default()
+                        });
+                    }
+                }
                 if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
                     r_log.add_error_fmt(
                         None,
@@ -494,9 +617,39 @@ impl PackageJSON {
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
-        let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
+        let node_fields = bun_parsers::node_package_json::NodePackageJson::parse(&entry_contents);
+        let node_error = node_fields
+            .as_ref()
+            .err()
+            .map(|_| PackageConfigError::Invalid);
+        let node_exports = node_fields
+            .as_ref()
+            .is_ok_and(|fields| fields.fields[3].is_some());
+        let node_imports = node_fields
+            .as_ref()
+            .is_ok_and(|fields| fields.fields[4].is_some());
+        let node_json_errors = node_fields
+            .as_ref()
+            .ok()
+            .map(|fields| fields.json_errors.clone())
+            .unwrap_or_default();
+
+        // Runtime resolution reports cached Node errors only when the scope is used.
+        let mut deferred_log = bun_ast::Log::default();
+        let parse_log = if r.validate_package_config {
+            &mut deferred_log
+        } else {
+            &mut *r_log
+        };
+        let parsed_json = match r.caches.json.parse_package_json(parse_log, &json_source) {
             Ok(Some(v)) => v,
-            Ok(None) => return None,
+            Ok(None) => {
+                return Some(Self::from_node_fields(
+                    package_json_path,
+                    &entry_contents,
+                    node_fields.ok(),
+                ));
+            }
             Err(err) => {
                 if cfg!(debug_assertions) {
                     Output::print_error(format_args!(
@@ -505,19 +658,30 @@ impl PackageJSON {
                         bstr::BStr::new(err.name())
                     ));
                 }
-                return None;
+                return Some(Self::from_node_fields(
+                    package_json_path,
+                    &entry_contents,
+                    node_fields.ok(),
+                ));
             }
         };
         let json: js_ast::Expr = parsed_json.root;
 
         if !json.is_object() {
-            // Invalid package.json in node_modules is noisy.
-            // Let's just ignore it.
-            // (allocator.free dropped — entry.contents owned by `entry`)
-            return None;
+            return Some(Self::from_node_fields(
+                package_json_path,
+                &entry_contents,
+                None,
+            ));
         }
 
         let mut package_json = PackageJSON {
+            node_only: false,
+            node_override: None,
+            node_error,
+            node_json_errors,
+            node_exports,
+            node_imports,
             name: Box::default(),
             version: Box::default(),
             // Reshaped for borrowck — `json_source` stays a local until the
@@ -1047,6 +1211,16 @@ impl PackageJSON {
         }
         let _ = (include_scripts, package_id);
 
+        if let Ok(fields) = node_fields {
+            if fields.needs_recovery {
+                package_json.node_override = Some(Box::new(Self::from_node_fields(
+                    package_json_path,
+                    &entry_contents,
+                    Some(fields),
+                )));
+            }
+        }
+
         // Reshaped for borrowck — assign source last (see struct init above).
         // `bun_ast::Source` isn't `Clone`; reconstruct from its (all-Copy/Clone) fields.
         package_json.source = bun_ast::Source {
@@ -1181,13 +1355,22 @@ impl<'a> Visitor<'a> {
             },
             js_ast::E::JsonValue::Object(e_obj) => self.visit_object(e_obj.get()),
             js_ast::E::JsonValue::Array(e_array) => self.visit_array(e_array.get(), &vloc),
-            js_ast::E::JsonValue::Boolean(_) => {
+            js_ast::E::JsonValue::Boolean(b) => {
                 let loc = vloc.resolve(&self.source.contents);
-                self.invalid(js_lexer::range_of_identifier(self.source, loc))
+                self.invalid(
+                    js_lexer::range_of_identifier(self.source, loc),
+                    if *b {
+                        b"true".to_vec()
+                    } else {
+                        b"false".to_vec()
+                    },
+                )
             }
-            js_ast::E::JsonValue::Number(_) => {
+            js_ast::E::JsonValue::Number(n) => {
                 let loc = vloc.resolve(&self.source.contents);
-                self.invalid(bun_ast::Range { loc, len: 1 })
+                let mut buffer = [0; 124];
+                let rendered = bun_core::fmt::FormatDouble::dtoa(&mut buffer, n.value()).to_vec();
+                self.invalid(bun_ast::Range { loc, len: 1 }, rendered)
             }
         }
     }
@@ -1197,6 +1380,7 @@ impl<'a> Visitor<'a> {
         let mut map_data: EntryDataMapList = Vec::with_capacity(rows.len());
         let mut expansion_keys: Vec<MapEntry> = Vec::with_capacity(rows.len());
         let mut is_conditional_sugar = false;
+        let mut warned_mixed_keys = false;
         for (i, prop) in rows.iter().enumerate() {
             let key: Box<[u8]> = Box::from(prop.key.slice());
             let key_range: bun_ast::Range = self.source.range_of_string(prop.key_loc);
@@ -1206,7 +1390,7 @@ impl<'a> Visitor<'a> {
             let cur_is_conditional_sugar = !strings::starts_with_char(&key, b'.');
             if i == 0 {
                 is_conditional_sugar = cur_is_conditional_sugar;
-            } else if is_conditional_sugar != cur_is_conditional_sugar {
+            } else if is_conditional_sugar != cur_is_conditional_sugar && !warned_mixed_keys {
                 let prev = &map_data[i - 1];
                 self.log
                     .add_range_warning_fmt_with_note(
@@ -1222,9 +1406,7 @@ impl<'a> Visitor<'a> {
                         ),
                         prev.key_range,
                     );
-                return Entry {
-                    data: EntryData::Invalid,
-                };
+                warned_mixed_keys = true;
             }
 
             let value = self.visit_value(
@@ -1300,18 +1482,18 @@ impl<'a> Visitor<'a> {
                 ..bun_ast::Range::NONE
             },
         };
-        self.invalid(first_token)
+        self.invalid(first_token, Vec::new())
     }
 
     #[cold]
-    fn invalid(&mut self, first_token: bun_ast::Range) -> Entry {
+    fn invalid(&mut self, first_token: bun_ast::Range, rendered: Vec<u8>) -> Entry {
         self.log.add_range_warning(
             Some(self.source),
             first_token,
             b"This value must be a string, an object, an array, or null",
         );
         Entry {
-            data: EntryData::Invalid,
+            data: EntryData::Invalid(rendered.into_boxed_slice()),
         }
     }
 
@@ -1323,7 +1505,7 @@ impl<'a> Visitor<'a> {
             b"This value is nested too deeply",
         );
         Entry {
-            data: EntryData::Invalid,
+            data: EntryData::Invalid(Box::default()),
         }
     }
 }
@@ -1346,7 +1528,9 @@ impl Entry {
 
 #[derive(Clone)]
 pub enum EntryData {
-    Invalid,
+    InvalidJson,
+    /// Invalid target primitive, rendered for Node's error message.
+    Invalid(Box<[u8]>),
     Null,
     String(Box<[u8]>), // owned copy
     Array(Box<[Entry]>),
@@ -1410,6 +1594,7 @@ impl Entry {
 pub type ConditionsMap = StringArrayHashMap<()>;
 
 pub(crate) struct ESModule<'a> {
+    pub(crate) validate_package_config: bool,
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
     /// `resolve_target` uses bigger stack frames than the JSON parser, so it can overflow on a target that parsed.
@@ -1422,6 +1607,24 @@ pub struct Resolution {
     // The source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
     // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
     pub(crate) path: Box<[u8]>,
+    /// Context for Node-shaped error messages when `status` is a failure.
+    pub(crate) detail: Option<Box<ResolutionDetail>>,
+}
+
+/// Context captured where the failing package key and target are still in scope.
+#[derive(Clone)]
+pub(crate) enum ResolutionDetail {
+    /// The offending map key and target value. `bare_string_target` is
+    /// Node's `relError`: a non-empty target converted to a string not starting with "./"
+    /// (which for `exports` appends `; targets must start with "./"`).
+    InvalidTarget {
+        key: Option<Box<[u8]>>,
+        target: Option<Box<[u8]>>,
+        bare_string_target: bool,
+    },
+    /// The package config shape itself is invalid; `message` is Node's
+    /// trailing explanation.
+    ConfigMessage { message: Box<[u8]> },
 }
 
 impl Default for Resolution {
@@ -1429,6 +1632,7 @@ impl Default for Resolution {
         Resolution {
             status: Status::Undefined,
             path: Box::default(),
+            detail: None,
         }
     }
 }
@@ -1645,6 +1849,9 @@ use bun_core::strings::{replace, replacement_size};
 
 const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
 
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/resolve.js#L569-L573
+pub const NODE_MIXED_KEYS_MESSAGE: &[u8] = b"\"exports\" cannot contain some keys starting with '.' and some not. The exports object must either be an object of package subpath keys or an object of main entry condition name keys only.";
+
 struct ModuleBufs {
     resolved_path_buf_percent: PathBuffer,
     resolve_target_buf: PathBuffer,
@@ -1706,7 +1913,7 @@ impl<'a> ESModule<'a> {
     pub(crate) fn resolve_imports(&mut self, specifier: &[u8], imports: &Entry) -> Resolution {
         if !matches!(imports.data, EntryData::Map(_)) {
             return Resolution {
-                status: Status::InvalidPackageConfiguration,
+                status: Status::PackageImportNotDefined,
                 ..Default::default()
             };
         }
@@ -1751,6 +1958,7 @@ impl<'a> ESModule<'a> {
             return Resolution {
                 status: Status::InvalidModuleSpecifier,
                 path: result.path,
+                detail: None,
             };
         }
 
@@ -1767,6 +1975,7 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     status: Status::InvalidModuleSpecifier,
                     path: result.path,
+                    detail: None,
                 };
             }
         };
@@ -1778,6 +1987,7 @@ impl<'a> ESModule<'a> {
             return Resolution {
                 status: Status::UnsupportedDirectoryImport,
                 path: result.path,
+                detail: None,
             };
         }
 
@@ -1792,15 +2002,22 @@ impl<'a> ESModule<'a> {
         subpath: &[u8],
         exports: &Entry,
     ) -> Resolution {
-        if matches!(exports.data, EntryData::Invalid) {
-            if let Some(logs) = self.debug_logs.as_deref_mut() {
-                logs.add_note(b"Invalid package configuration".to_vec());
+        if let EntryData::Map(object) = &exports.data {
+            if let Some(first) = object.list.first() {
+                if object
+                    .list
+                    .iter()
+                    .any(|entry| entry.key.starts_with(b".") != first.key.starts_with(b"."))
+                {
+                    return Resolution {
+                        status: Status::InvalidPackageConfiguration,
+                        detail: Some(Box::new(ResolutionDetail::ConfigMessage {
+                            message: Box::from(NODE_MIXED_KEYS_MESSAGE),
+                        })),
+                        ..Default::default()
+                    };
+                }
             }
-
-            return Resolution {
-                status: Status::InvalidPackageConfiguration,
-                ..Default::default()
-            };
         }
 
         if subpath == b"." {
@@ -1813,9 +2030,10 @@ impl<'a> ESModule<'a> {
 
             if let Some(main_export) = main_export {
                 if !matches!(main_export.data, EntryData::Null) {
-                    let result = self.resolve_target::<false>(package_url, main_export, b"", false);
+                    let result =
+                        self.resolve_target::<false>(package_url, main_export, b"", false, false);
                     if result.status != Status::Null && result.status != Status::Undefined {
-                        return result;
+                        return Self::attach_failure_key(result, b".");
                     }
                 }
             }
@@ -1867,7 +2085,9 @@ impl<'a> ESModule<'a> {
                     log.add_note_fmt(format_args!("Found \"{}\"", bstr::BStr::new(match_key)));
                 }
 
-                return self.resolve_target::<false>(package_url, target, b"", is_imports);
+                let result =
+                    self.resolve_target::<false>(package_url, target, b"", is_imports, false);
+                return Self::attach_failure_key(result, match_key);
             }
         }
 
@@ -1903,12 +2123,14 @@ impl<'a> ESModule<'a> {
                                     bstr::BStr::new(subpath)
                                 ));
                             }
-                            return self.resolve_target::<true>(
+                            let result = self.resolve_target::<true>(
                                 package_url,
                                 target,
                                 subpath,
                                 is_imports,
+                                false,
                             );
+                            return Self::attach_failure_key(result, &expansion.key);
                         }
                     }
                 } else {
@@ -1924,8 +2146,16 @@ impl<'a> ESModule<'a> {
                                 bstr::BStr::new(subpath)
                             ));
                         }
-                        let mut result =
-                            self.resolve_target::<false>(package_url, target, subpath, is_imports);
+                        let mut result = Self::attach_failure_key(
+                            self.resolve_target::<false>(
+                                package_url,
+                                target,
+                                subpath,
+                                is_imports,
+                                false,
+                            ),
+                            &expansion.key,
+                        );
                         if result.status == Status::Exact
                             || result.status == Status::ExactEndsWithStar
                         {
@@ -1958,12 +2188,35 @@ impl<'a> ESModule<'a> {
         }
     }
 
+    /// Fills the failing `exports`/`imports` map key into a failure
+    /// `Resolution` so Node-shaped messages can name it.
+    fn attach_failure_key(mut result: Resolution, key: &[u8]) -> Resolution {
+        match result.status {
+            Status::InvalidPackageTarget => match result.detail.as_deref_mut() {
+                Some(ResolutionDetail::InvalidTarget { key: k @ None, .. }) => {
+                    *k = Some(Box::<[u8]>::from(key));
+                }
+                None => {
+                    result.detail = Some(Box::new(ResolutionDetail::InvalidTarget {
+                        key: Some(Box::<[u8]>::from(key)),
+                        target: None,
+                        bare_string_target: false,
+                    }));
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        result
+    }
+
     fn resolve_target<const PATTERN: bool>(
         &mut self,
         package_url: &[u8],
         target: &Entry,
         subpath: &[u8],
         internal: bool,
+        in_array: bool,
     ) -> Resolution {
         if !self.stack_check.is_safe_to_recurse() {
             if let Some(logs) = self.debug_logs.as_deref_mut() {
@@ -2017,6 +2270,7 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path: Box::<[u8]>::from(subpath),
                                 status: Status::InvalidModuleSpecifier,
+                                detail: None,
                             };
                         }
                     };
@@ -2033,6 +2287,7 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
+                        detail: None,
                     };
                 }
 
@@ -2051,6 +2306,7 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(str),
                             status: Status::InvalidModuleSpecifier,
+                            detail: None,
                         };
                     }
                 }
@@ -2074,6 +2330,7 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(subpath),
                             status: Status::InvalidModuleSpecifier,
+                            detail: None,
                         };
                     }
                 }
@@ -2090,6 +2347,15 @@ impl<'a> ESModule<'a> {
                     if internal
                         && !strings::has_prefix(str, b"../")
                         && !strings::has_prefix(str, b"/")
+                        && (!self.validate_package_config
+                            || (!in_array
+                                && str.starts_with(b"bun:")
+                                && bun_resolve_builtins::Alias::has(
+                                    str,
+                                    bun_ast::Target::Bun,
+                                    Default::default(),
+                                ))
+                            || bun_url::whatwg::Parsed::from_utf8(str).is_none())
                     {
                         if PATTERN {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
@@ -2109,6 +2375,7 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path: Box::<[u8]>::from(result),
                                 status: Status::PackageResolve,
+                                detail: None,
                             };
                         } else {
                             // Latent Windows bug (#30839): this branch runs when an
@@ -2136,6 +2403,7 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path,
                                 status: Status::PackageResolve,
+                                detail: None,
                             };
                         }
                     }
@@ -2143,6 +2411,11 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
+                        detail: Some(Box::new(ResolutionDetail::InvalidTarget {
+                            key: None,
+                            target: Some(Box::<[u8]>::from(str)),
+                            bare_string_target: !str.is_empty(),
+                        })),
                     };
                 }
 
@@ -2160,6 +2433,11 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
+                        detail: Some(Box::new(ResolutionDetail::InvalidTarget {
+                            key: None,
+                            target: Some(Box::<[u8]>::from(str)),
+                            bare_string_target: false,
+                        })),
                     };
                 }
 
@@ -2183,6 +2461,7 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidModuleSpecifier,
+                        detail: None,
                     };
                 }
 
@@ -2213,6 +2492,7 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(result),
                             status: Status::InvalidModuleSpecifier,
+                            detail: None,
                         };
                     }
 
@@ -2221,6 +2501,7 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(result),
                         status: Status::ExactEndsWithStar,
+                        detail: None,
                     };
                 } else {
                     let parts2 = [package_url, str, subpath];
@@ -2240,10 +2521,24 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path,
                         status: Status::Exact,
+                        detail: None,
                     };
                 }
             }
             EntryData::Map(object) => {
+                if self.validate_package_config
+                    && object.list.iter().any(|entry| is_array_index(&entry.key))
+                {
+                    return Resolution {
+                        status: Status::InvalidPackageConfiguration,
+                        detail: Some(Box::new(ResolutionDetail::ConfigMessage {
+                            message: Box::from(
+                                b"\"exports\" cannot contain numeric property keys.".as_slice(),
+                            ),
+                        })),
+                        ..Default::default()
+                    };
+                }
                 for entry in object.list.iter() {
                     let key: &[u8] = &entry.key;
                     if self.conditions.contains_key(key) {
@@ -2259,6 +2554,7 @@ impl<'a> ESModule<'a> {
                             &entry.value,
                             subpath,
                             internal,
+                            in_array,
                         );
                         if result.status.is_undefined() {
                             continue;
@@ -2282,6 +2578,7 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     path: Box::default(),
                     status: Status::UndefinedNoConditionsMatch,
+                    detail: None,
                 };
             }
             EntryData::Array(array) => {
@@ -2296,10 +2593,11 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::default(),
                         status: Status::Null,
+                        detail: None,
                     };
                 }
 
-                let mut last_exception = Status::Undefined;
+                let mut last_exception = Resolution::default();
 
                 for target_value in array.iter() {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
@@ -2308,11 +2606,13 @@ impl<'a> ESModule<'a> {
                         target_value,
                         subpath,
                         internal,
+                        true,
                     );
                     if result.status == Status::InvalidPackageTarget
                         || result.status == Status::Null
                     {
-                        last_exception = result.status;
+                        last_exception = result;
+                        continue;
                     }
 
                     if result.status.is_undefined() {
@@ -2322,9 +2622,17 @@ impl<'a> ESModule<'a> {
                     return result;
                 }
 
+                return last_exception;
+            }
+            EntryData::Invalid(rendered) => {
                 return Resolution {
-                    path: Box::default(),
-                    status: last_exception,
+                    status: Status::InvalidPackageTarget,
+                    detail: Some(Box::new(ResolutionDetail::InvalidTarget {
+                        key: None,
+                        target: Some(rendered.clone()),
+                        bare_string_target: !rendered.is_empty(),
+                    })),
+                    ..Default::default()
                 };
             }
             EntryData::Null => {
@@ -2338,6 +2646,7 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     path: Box::default(),
                     status: Status::Null,
+                    detail: None,
                 };
             }
             _ => {}
@@ -2355,6 +2664,22 @@ impl<'a> ESModule<'a> {
             ..Default::default()
         }
     }
+}
+
+fn is_array_index(key: &[u8]) -> bool {
+    let Some(number) = std::str::from_utf8(key)
+        .ok()
+        .and_then(|key| key.parse::<f64>().ok())
+    else {
+        return false;
+    };
+    // Node's predicate also rejects canonical fractional keys.
+    // https://github.com/nodejs/node/blob/v24.21.0/lib/internal/modules/esm/resolve.js#L463-L466
+    if !(0.0..f64::from(u32::MAX)).contains(&number) {
+        return false;
+    }
+    let mut buffer = [0; 124];
+    bun_core::fmt::FormatDouble::dtoa(&mut buffer, number) == key
 }
 
 fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {

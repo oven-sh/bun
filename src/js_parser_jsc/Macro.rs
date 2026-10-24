@@ -1169,24 +1169,7 @@ fn expr_from_blob(
         );
 
     if is_text_like {
-        let mut output = bun_core::MutableString::init_empty();
-        bun_core::quote_for_json(bytes, &mut output, true)?;
-        let owned = output.to_owned_slice();
-        // strip the surrounding quotes; copy into the bump arena so the
-        // `E.String` data outlives `owned`.
-        let unquoted: &[u8] = if owned.len() >= 2 {
-            &owned[1..owned.len() - 1]
-        } else {
-            &owned[..]
-        };
-        let data = Str::new(bump.alloc_slice_copy(unquoted));
-        return Ok(Expr::init(
-            E::String {
-                data,
-                ..Default::default()
-            },
-            loc,
-        ));
+        return Ok(Expr::init(blob_text(bytes, bump), loc));
     }
 
     // Fallback: base64 data URL.
@@ -1211,4 +1194,20 @@ fn expr_from_blob(
         },
         loc,
     ))
+}
+
+/// The string `blob.text()` returns for `bytes`.
+fn blob_text(bytes: &[u8], bump: &bun_alloc::Arena) -> E::EString {
+    let (bom, text) = strings::BOM::detect_and_split(bytes);
+    if bom == Some(strings::BOM::Utf16Le) {
+        let (units, _) = text.as_chunks::<2>();
+        return E::EString::init_utf16(
+            bump.alloc_slice_fill_iter(units.iter().map(|unit| u16::from_le_bytes(*unit))),
+        );
+    }
+    if strings::first_non_ascii(text).is_none() {
+        return E::EString::init(bump.alloc_slice_copy(text));
+    }
+    // Not ASCII: `init_re_encode_utf8` stores UTF-16 in `bump`, as the lexer does for a literal.
+    E::EString::init_re_encode_utf8(text, bump)
 }

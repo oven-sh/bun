@@ -117,9 +117,10 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         /* A TLS socket may have *deferred* that: us_internal_ssl_close with
          * code==0 sends close_notify and, on WANT_READ, waits for the peer's
          * reply. Callers (e.g. Listener.deinit) free the embedding storage
-         * next, which would leave s->group dangling. */
+         * next, which would leave s->group dangling. Not a reset: like the
+         * FIN a TCP socket just got, it leaves what the kernel holds to the peer. */
         if (!us_socket_is_closed(s)) {
-            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, 0);
         }
     }
     group->iterator = 0;

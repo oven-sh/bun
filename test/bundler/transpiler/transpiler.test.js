@@ -192,19 +192,22 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = ({f: y}).f", "x = y");
       ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C");
     });
-    it("bails out or strips `this` when the index is a call/assignment target", () => {
+    it("bails out when the index is a call/assignment target", () => {
       // `[obj.m][0]()` calls through a Reference into the temporary array,
-      // so `this` is the array; inlining to `obj.m()` would bind `this` to
-      // `obj`. Match the sibling folds and emit `(0, obj.m)()`.
-      ts.expectPrintedMin_("x = [obj.m][0]()", "x = (0, obj.m)()");
-      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = (0, obj[m])()");
+      // so `this` is the array. `obj.m()` passes `obj`, and `(0, obj.m)()`
+      // and `y()` pass nothing.
+      ts.expectPrintedMin_("x = [obj.m][0]()", "x = [obj.m][0]()");
+      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = [obj[m]][0]()");
       ts.expectPrintedMin_("x = [obj.m][0]", "x = obj.m");
-      ts.expectPrintedMin_("x = [y][0]()", "x = y()");
-      ts.expectPrintedMin_("x = [() => y][0]()", "x = (() => y)()");
+      ts.expectPrintedMin_("x = [y][0]()", "x = [y][0]()");
+      ts.expectPrintedMin_("x = [() => y][0]()", "x = [() => y][0]()");
+      ts.expectPrintedMin_("x = [a, b][1]()", "x = [a, b][1]()");
+      // `new` passes no `this`.
+      ts.expectPrintedMin_("x = new [C][0]()", "x = new C");
 
       // A tagged template passes `this` like a call.
-      ts.expectPrintedMin_("x = [obj.m][0]`t`", "x = (0, obj.m)`t`");
-      ts.expectPrintedMin_("x = [y][0]`t`", "x = y`t`");
+      ts.expectPrintedMin_("x = [obj.m][0]`t`", "x = [obj.m][0]`t`");
+      ts.expectPrintedMin_("x = [y][0]`t`", "x = [y][0]`t`");
       ts.expectPrintedMin_("x = ({ f: g }).f()", "x = { f: g }.f()");
       ts.expectPrintedMin_("x = ({ f: g }).f`t`", "x = { f: g }.f`t`");
       ts.expectPrintedMin_('x = ({ f: g })["f"]`t`', "x = { f: g }.f`t`");
@@ -4830,11 +4833,15 @@ console.log(foo, array);
         tag: "o.f`t`",
         call: "o.f()",
         objectTag: "({ f: o.f }).f`t`",
+        arrayTag: "[o.f][0]`t`",
+        arrayCall: "[o.f][0]()",
+        arrayOfIdentifierCall: "[unbound][0]()",
         viaConst: "(() => { const t = o.f; return t`t`; })()",
         commaTag: "(0, o.f)`t`",
         commaCall: "(0, o.f)()",
       };
       const expected = { tag: "o", call: "o", objectTag: "object", viaConst: "undefined" };
+      expected.arrayTag = expected.arrayCall = expected.arrayOfIdentifierCall = "array";
       expected.commaTag = expected.commaCall = "undefined";
       for (const [name, wrap] of Object.entries(wrappersAroundOperand)) {
         rows[name + "Tag"] = wrap("o.f") + "`t`";
@@ -4845,8 +4852,10 @@ console.log(foo, array);
       // A module is strict code, so an unbound `this` is undefined.
       const source = `
         const o = { f() { return this; } };
+        const unbound = o.f;
         const id = x => x;
-        const show = v => (v === undefined ? "undefined" : v === o ? "o" : v === globalThis ? "globalThis" : typeof v);
+        const show = v =>
+          v === undefined ? "undefined" : v === o ? "o" : v === globalThis ? "globalThis" : Array.isArray(v) ? "array" : typeof v;
         console.log(JSON.stringify({ ${Object.entries(rows)
           .map(([name, expr]) => `${name}: show(${expr})`)
           .join(", ")} }));

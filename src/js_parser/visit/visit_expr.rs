@@ -1107,7 +1107,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                         }
-                    } else if let Some(array) = target.data.as_e_array() {
+                    } else if !in_.is_callee_or_tag()
+                        && let Some(array) = target.data.as_e_array()
+                    {
+                        // A call or a tagged template on `[x][0]` passes the array as `this`.
                         let int: usize = number.value() as usize;
                         // [x][0] -> x
                         // ['a', 'b', 'c'][1] -> 'b'
@@ -1127,8 +1130,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                             if inlined.can_be_inlined_from_property_access() {
-                                // "[obj.m][0]()" => "(0, obj.m)()"
-                                *e = inlined.unwrapped_by_fold(in_.is_callee_or_tag(), expr.loc);
+                                *e = inlined;
                                 return;
                             }
                         }

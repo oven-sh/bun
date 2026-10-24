@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -71,6 +71,123 @@ beforeAll(async () => {
 }, 300_000);
 
 describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
+  it("module filename URLs use module.filename independently of the load path", async () => {
+    const cases = [
+      { expected: "" },
+      { filename: null, expected: "" },
+      { filename: 42, expected: "" },
+      { filename: "", expected: "file:///" },
+      {
+        filename: "C:\\native # % é\\addon.node",
+        expected: "file:///C:/native%20%23%20%25%20%C3%A9/addon.node",
+      },
+      {
+        filename: "\\\\SERVER\\share\\native # % é\\addon.node",
+        expected: "file:////SERVER/share/native%20%23%20%25%20%C3%A9/addon.node",
+      },
+      {
+        filename: "\\\\?\\C:\\native # % é\\addon.node",
+        expected: "file:////%3F/C:/native%20%23%20%25%20%C3%A9/addon.node",
+      },
+      {
+        filename: "\\\\?\\UNC\\SERVER\\share\\native # % é\\addon.node",
+        expected: "file:////%3F/UNC/SERVER/share/native%20%23%20%25%20%C3%A9/addon.node",
+      },
+      { filename: "file:///C:/native%20addon.node", expected: "file:///file:///C:/native%2520addon.node" },
+    ];
+    using dir = tempDir("native-addon-filename", {
+      "load.cjs": `
+        const assert = require("node:assert/strict");
+        const addonPath = process.argv[2];
+        let copyIndex = 0;
+        // The fixture installs a native cleanup hook, which requires a distinct image per load.
+        const copyAddon = () => {
+          const target = require("node:path").join(__dirname, "addon-" + copyIndex++ + ".node");
+          require("node:fs").copyFileSync(addonPath, target);
+          return target;
+        };
+        for (const entry of ${JSON.stringify(cases)}) {
+          const module = { exports: {} };
+          if (Object.hasOwn(entry, "filename")) module.filename = entry.filename;
+          process.dlopen(module, copyAddon());
+          assert.equal(module.exports.test_napi_module_filename(), entry.expected);
+        }
+        // Node holds its non-recursive addon-load mutex while reading this getter.
+        // Keep the reentrancy regression on Bun; both runtimes check filename values above.
+        // https://github.com/nodejs/node/blob/v26.2.0/src/node_binding.cc#L477-L522
+        if (process.versions.bun) {
+          const nested = { exports: {}, filename: "C:/inner.node" };
+          let calls = 0;
+          const outer = {
+            exports: {},
+            get filename() {
+              calls++;
+              process.dlopen(nested, copyAddon());
+              return "C:/outer.node";
+            },
+          };
+          process.dlopen(outer, copyAddon());
+          assert.equal(calls, 1);
+          assert.equal(outer.exports.test_napi_module_filename(), "file:///C:/outer.node");
+          assert.equal(nested.exports.test_napi_module_filename(), "file:///C:/inner.node");
+        }
+        console.log("ok");
+      `,
+    });
+    for (const executable of [bunExe(), await nodeExeMatchingAbi()]) {
+      await using proc = spawn({
+        cmd: [executable, join(dir, "load.cjs"), join(__dirname, "napi-app/build/Debug/napitests.node")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    }
+  });
+
+  it.each(["require", "direct"])("module URLs identify native addons loaded from long paths with %s", async mode => {
+    await using dir = tempDir("native-addon-url", {
+      "load.cjs": `
+        const assert = require("node:assert/strict");
+        const { toNamespacedPath } = require("node:path");
+        const { fileURLToPath } = require("node:url");
+        const filename = process.argv[2];
+        let addon;
+        if (process.argv[3] === "require") {
+          addon = require(filename);
+        } else {
+          const module = { exports: {}, filename };
+          process.dlopen(module, toNamespacedPath(filename));
+          addon = module.exports;
+        }
+        assert.equal(fileURLToPath(addon.test_napi_module_filename()), filename);
+        console.log("ok");
+      `,
+    });
+    const addonDir = join(
+      dir,
+      Buffer.alloc(100, "x").toString(),
+      Buffer.alloc(100, "y").toString(),
+      Buffer.alloc(100, "z").toString(),
+      "native # % é",
+    );
+    mkdirSync(addonDir, { recursive: true });
+    const addonPath = join(addonDir, "addon.node");
+    expect(addonPath.length).toBeGreaterThan(260);
+    copyFileSync(join(__dirname, "napi-app/build/Debug/napitests.node"), addonPath);
+    for (const executable of [bunExe(), await nodeExeMatchingAbi()]) {
+      await using proc = spawn({
+        cmd: [executable, join(dir, "load.cjs"), addonPath, mode],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    }
+  });
+
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {
@@ -126,7 +243,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             });
 
             const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
-            const build = spawnSync({
+            await using build = spawn({
               cmd: [
                 bunExe(),
                 "build",
@@ -140,30 +257,36 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stdout: "inherit",
               stderr: "inherit",
             });
-            expect(build.success).toBeTrue();
+            expect(await build.exited).toBe(0);
             // Since #29587 each extracted `.node` persists at a content-hashed
             // path shared across runs (pre-#29587 it was unlinked per load,
             // see #19550), so a second run must not extract new copies.
             await using tmpdir = tempDir("napi-compile-extract-" + format, {});
             const runEnv = { ...bunEnv, BUN_TMPDIR: String(tmpdir), TMPDIR: String(tmpdir) };
-            const runSelf = () =>
-              spawnSync({
-                cmd: [exe, "self"],
+            const runSelf = async () => {
+              await using child = spawn({
+                cmd: [exe, "self", "--assert-embedded"],
                 env: runEnv,
                 stdin: "inherit",
-                stderr: "inherit",
+                stderr: "pipe",
                 stdout: "pipe",
               });
-            const result = runSelf();
-            const stdout = result.stdout.toString().trim();
-            expect(stdout).toBe("hello world!");
-            expect(result.success).toBeTrue();
+              const [stdout, stderr, exitCode] = await Promise.all([
+                child.stdout.text(),
+                child.stderr.text(),
+                child.exited,
+              ]);
+              expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+                stdout: "hello world!",
+                stderr: "",
+                exitCode: 0,
+              });
+            };
+            await runSelf();
             const extractedCount = () => readdirSync(String(tmpdir)).filter(f => f.endsWith(".node")).length;
             const count = extractedCount();
             expect(count).toBeGreaterThan(0);
-            const again = runSelf();
-            expect(again.stdout.toString().trim()).toBe("hello world!");
-            expect(again.success).toBeTrue();
+            await runSelf();
             expect(extractedCount()).toBe(count);
           },
           // CI runs tests under bun-profile (~700 MB on linux with ThinLTO

@@ -11,8 +11,10 @@ export function main() {
 }
 
 // This function is bound when constructing instances of CommonJSModule
+// Keep its implementation name distinct from static builtin require() imports.
 $visibility = "Private";
-export function require(this: JSCommonJSModule, _id: string) {
+$overriddenName = "require";
+export function requireFunction(this: JSCommonJSModule, _id: string) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
   return $overridableRequire.$apply(this, arguments);
 }
@@ -200,7 +202,13 @@ export function internalRequire(id: string, parent: JSCommonJSModule, requireMap
   const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined);
   // Resolving the name has thrown in an executable that refuses native addons.
   if (CAN_LOAD_CODE_AT_RUN_TIME) {
-    process.dlopen(module, filename);
+    // Windows needs the namespaced disk path for addon activation contexts.
+    // Embedded keys must reach dlopen unchanged so it can extract the addon.
+    const nativePath =
+      process.platform === "win32" && !filename.startsWith("B:/~BUN/")
+        ? require("node:path").toNamespacedPath(filename)
+        : filename;
+    process.dlopen(module, nativePath);
   }
   $requireMap.$set(id, module);
   if (requireMap !== $requireMap) requireMap.$set(id, module);

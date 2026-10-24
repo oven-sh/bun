@@ -1,9 +1,14 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, RwLock};
 
+use crate::mutex::{Condition, Mutex};
+use crate::shape::StructShape;
+
 /// What a slot can hold. These are exactly the values that may cross agents:
-/// primitives and other shared structs. Objects, functions and symbols are not shareable.
+/// primitives, other blocks (a shared struct or a shared array) and the sync primitives.
+/// Objects, functions and symbols are not shareable.
 #[derive(Clone, Debug)]
 pub enum Value {
     Undefined,
@@ -15,6 +20,8 @@ pub enum Value {
     /// A BigInt in its decimal form.
     BigInt(Arc<str>),
     Struct(Arc<SharedBlock>),
+    Mutex(Arc<Mutex>),
+    Condition(Arc<Condition>),
 }
 
 // A slot is one u64. Numbers are stored as their f64 bits (NaN canonicalized to QNAN);
@@ -28,6 +35,8 @@ const TAG_SPECIAL: u64 = 1; // datum: 0 undefined, 1 null, 2 false, 3 true
 const TAG_STRING: u64 = 2;
 const TAG_BIGINT: u64 = 3;
 const TAG_STRUCT: u64 = 4;
+const TAG_MUTEX: u64 = 5;
+const TAG_CONDITION: u64 = 6;
 
 fn boxed(tag: u64, datum: u64) -> u64 {
     debug_assert!(datum <= DATUM_MASK);
@@ -83,11 +92,32 @@ fn bigints() -> &'static Interner<Arc<str>, str> {
     T.get_or_init(Interner::new)
 }
 
-/// A fixed-length block of atomic slots. Other blocks it refers to are kept alive for as
+/// The address a slot stores for `a`.
+fn pointer_datum<T>(a: &Arc<T>) -> u64 {
+    let ptr = Arc::as_ptr(a) as usize as u64;
+    assert!(ptr <= DATUM_MASK, "pointer does not fit in 48 bits");
+    ptr
+}
+
+/// # Safety
+/// `datum` came from [`pointer_datum`] of an `Arc<T>` that some block still keeps alive.
+unsafe fn arc_from_datum<T>(datum: u64) -> Arc<T> {
+    let ptr = datum as usize as *const T;
+    // SAFETY: the caller guarantees the allocation is live, so taking a new strong count is sound.
+    unsafe {
+        Arc::increment_strong_count(ptr);
+        Arc::from_raw(ptr)
+    }
+}
+
+/// A fixed-length block of atomic slots. Whatever it refers to is kept alive for as
 /// long as it lives, so a slot may hold a bare pointer without a per-slot refcount.
 pub struct SharedBlock {
     slots: Box<[AtomicU64]>,
-    children: StdMutex<Vec<Arc<SharedBlock>>>,
+    /// Present for a shared struct: what its slots are called.
+    shape: Option<Arc<StructShape>>,
+    /// Address and owner of every object a slot has ever held.
+    kept: StdMutex<Vec<(usize, Arc<dyn Any + Send + Sync>)>>,
 }
 
 impl std::fmt::Debug for SharedBlock {
@@ -99,11 +129,34 @@ impl std::fmt::Debug for SharedBlock {
 impl SharedBlock {
     /// Creates a block whose slots all start as `undefined`.
     pub fn new(len: usize) -> Arc<Self> {
+        Self::build(len, None)
+    }
+
+    /// Creates a block for a shared struct, one slot for each field of `shape`.
+    pub fn with_shape(shape: Arc<StructShape>) -> Arc<Self> {
+        Self::build(shape.len(), Some(shape))
+    }
+
+    fn build(len: usize, shape: Option<Arc<StructShape>>) -> Arc<Self> {
         let undefined = boxed(TAG_SPECIAL, 0);
         Arc::new(Self {
             slots: (0..len).map(|_| AtomicU64::new(undefined)).collect(),
-            children: StdMutex::new(Vec::new()),
+            shape,
+            kept: StdMutex::new(Vec::new()),
         })
+    }
+
+    /// The field names, if this block is a shared struct and not a shared array.
+    pub fn shape(&self) -> Option<&Arc<StructShape>> {
+        self.shape.as_ref()
+    }
+
+    fn keep<T: Send + Sync + 'static>(&self, a: &Arc<T>) {
+        let addr = Arc::as_ptr(a) as usize;
+        let mut kept = self.kept.lock().unwrap();
+        if !kept.iter().any(|(p, _)| *p == addr) {
+            kept.push((addr, a.clone() as Arc<dyn Any + Send + Sync>));
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -130,13 +183,16 @@ impl SharedBlock {
             Value::String(s) => boxed(TAG_STRING, strings().intern(s.clone(), s.clone())),
             Value::BigInt(s) => boxed(TAG_BIGINT, bigints().intern(s.clone(), s.clone())),
             Value::Struct(b) => {
-                let ptr = Arc::as_ptr(b) as usize as u64;
-                assert!(ptr <= DATUM_MASK, "block pointer does not fit in 48 bits");
-                let mut children = self.children.lock().unwrap();
-                if !children.iter().any(|c| Arc::ptr_eq(c, b)) {
-                    children.push(b.clone());
-                }
-                boxed(TAG_STRUCT, ptr)
+                self.keep(b);
+                boxed(TAG_STRUCT, pointer_datum(b))
+            }
+            Value::Mutex(m) => {
+                self.keep(m);
+                boxed(TAG_MUTEX, pointer_datum(m))
+            }
+            Value::Condition(c) => {
+                self.keep(c);
+                boxed(TAG_CONDITION, pointer_datum(c))
             }
         }
     }
@@ -155,16 +211,12 @@ impl SharedBlock {
             },
             TAG_STRING => Value::String(strings().get(datum)),
             TAG_BIGINT => Value::BigInt(bigints().get(datum)),
-            TAG_STRUCT => {
-                let ptr = datum as usize as *const SharedBlock;
-                // SAFETY: `ptr` came from `Arc::as_ptr` of a block held in some block's
-                // `children`. Children are only ever appended, so that Arc outlives every
-                // slot that names it, and the block owning this slot outlives `&self`.
-                unsafe {
-                    Arc::increment_strong_count(ptr);
-                    Value::Struct(Arc::from_raw(ptr))
-                }
-            }
+            // SAFETY: each datum came from `pointer_datum` of an Arc held in some block's
+            // `kept`. That list is only ever appended to, so the Arc outlives every slot that
+            // names it, and the block owning this slot outlives `&self`.
+            TAG_STRUCT => Value::Struct(unsafe { arc_from_datum(datum) }),
+            TAG_MUTEX => Value::Mutex(unsafe { arc_from_datum(datum) }),
+            TAG_CONDITION => Value::Condition(unsafe { arc_from_datum(datum) }),
             _ => Value::Undefined,
         }
     }
@@ -266,6 +318,28 @@ mod tests {
     }
 
     #[test]
+    fn sync_primitives_can_be_stored() {
+        let b = SharedBlock::new(2);
+        let (m, c) = (Mutex::new(), Condition::new());
+        b.store(0, &Value::Mutex(m.clone()));
+        b.store(1, &Value::Condition(c.clone()));
+        assert!(matches!(b.load(0), Value::Mutex(got) if Arc::ptr_eq(&got, &m)));
+        assert!(matches!(b.load(1), Value::Condition(got) if Arc::ptr_eq(&got, &c)));
+        drop((m, c));
+        // The block still owns both.
+        assert!(matches!(b.load(0), Value::Mutex(got) if !got.is_locked()));
+    }
+
+    #[test]
+    fn shape_marks_a_struct_block() {
+        let shape = StructShape::new(vec![vec![u16::from(b'a')]]).unwrap();
+        let b = SharedBlock::with_shape(shape);
+        assert_eq!(b.len(), 1);
+        assert!(b.shape().is_some());
+        assert!(SharedBlock::new(1).shape().is_none());
+    }
+
+    #[test]
     fn exchange_and_compare_exchange() {
         let b = SharedBlock::new(1);
         b.store(0, &Value::Number(1.0));
@@ -290,8 +364,11 @@ mod tests {
                             let Value::Number(cur) = b.load(0) else {
                                 panic!()
                             };
-                            let seen =
-                                b.compare_exchange(0, &Value::Number(cur), &Value::Number(cur + 1.0));
+                            let seen = b.compare_exchange(
+                                0,
+                                &Value::Number(cur),
+                                &Value::Number(cur + 1.0),
+                            );
                             if matches!(seen, Value::Number(n) if n == cur) {
                                 break;
                             }

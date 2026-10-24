@@ -31,6 +31,29 @@ impl Abort for Never {
     }
 }
 
+/// The wait a script asks for with a number of milliseconds: `None` is forever (`undefined`,
+/// `NaN` and `Infinity`), and a negative number is no wait at all.
+pub fn timeout_from_millis(ms: f64) -> Option<Duration> {
+    if ms.is_nan() {
+        return None;
+    }
+    if ms <= 0.0 {
+        return Some(Duration::ZERO);
+    }
+    // Too long to represent is forever too.
+    Duration::try_from_secs_f64(ms / 1000.0).ok()
+}
+
+/// How many waiters a script asks to wake: `None` is all of them (`undefined`, `Infinity`).
+pub fn notify_count(count: Option<f64>) -> Option<u64> {
+    let count = count?;
+    if count == f64::INFINITY {
+        return None;
+    }
+    // NaN and anything below one wake nobody; a huge count saturates.
+    Some(if count >= 1.0 { count as u64 } else { 0 })
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum LockError {
     /// The timeout elapsed first.
@@ -47,6 +70,7 @@ pub enum WaitOutcome {
 }
 
 /// A non-recursive lock that other agents can hold a reference to.
+#[derive(Debug)]
 pub struct Mutex {
     /// Id of the owning thread, or 0 when unlocked. Ids are never 0.
     owner: AtomicU64,
@@ -134,12 +158,14 @@ impl Mutex {
 }
 
 /// A condition variable. Waiting releases a [`Mutex`] and takes it again before returning.
+#[derive(Debug)]
 pub struct Condition {
     /// Count of notifications handed out; a waiter sleeps until it changes.
     seq: StdMutex<Waiters>,
     wake: Condvar,
 }
 
+#[derive(Debug)]
 struct Waiters {
     /// Waiters currently asleep.
     waiting: u64,
@@ -160,12 +186,7 @@ impl Condition {
 
     /// Releases `mutex`, waits for a notification, and relocks `mutex`.
     /// The caller must hold `mutex`. The relock happens even when the wait times out or is aborted.
-    pub fn wait(
-        &self,
-        mutex: &Mutex,
-        timeout: Option<Duration>,
-        abort: &dyn Abort,
-    ) -> WaitOutcome {
+    pub fn wait(&self, mutex: &Mutex, timeout: Option<Duration>, abort: &dyn Abort) -> WaitOutcome {
         let deadline = timeout.map(|t| Instant::now() + t);
         let mut w = self.seq.lock().unwrap();
         w.waiting += 1;
@@ -235,11 +256,30 @@ mod tests {
     }
 
     #[test]
+    fn script_arguments_become_timeouts_and_counts() {
+        assert_eq!(timeout_from_millis(f64::NAN), None);
+        assert_eq!(timeout_from_millis(f64::INFINITY), None);
+        assert_eq!(timeout_from_millis(1e300), None);
+        assert_eq!(timeout_from_millis(-5.0), Some(Duration::ZERO));
+        assert_eq!(
+            timeout_from_millis(1500.0),
+            Some(Duration::from_millis(1500))
+        );
+        assert_eq!(notify_count(None), None);
+        assert_eq!(notify_count(Some(f64::INFINITY)), None);
+        assert_eq!(notify_count(Some(f64::NAN)), Some(0));
+        assert_eq!(notify_count(Some(-1.0)), Some(0));
+        assert_eq!(notify_count(Some(2.9)), Some(2));
+    }
+
+    #[test]
     fn lock_can_be_aborted() {
         let m = Mutex::new();
         m.lock(None, &Never).unwrap();
         let m2 = m.clone();
-        let r = std::thread::spawn(move || m2.lock(None, &|| true)).join().unwrap();
+        let r = std::thread::spawn(move || m2.lock(None, &|| true))
+            .join()
+            .unwrap();
         assert_eq!(r, Err(LockError::Aborted));
     }
 

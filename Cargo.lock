@@ -1528,6 +1528,7 @@ dependencies = [
  "bun_semver",
  "bun_semver_jsc",
  "bun_sha_hmac",
+ "bun_shared_struct_jsc",
  "bun_shell_parser",
  "bun_simdutf_sys",
  "bun_sourcemap",
@@ -1696,6 +1697,16 @@ dependencies = [
 [[package]]
 name = "bun_shared_struct"
 version = "0.0.0"
+
+[[package]]
+name = "bun_shared_struct_jsc"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_jsc",
+ "bun_ptr",
+ "bun_shared_struct",
+]
 
 [[package]]
 name = "bun_shell_parser"

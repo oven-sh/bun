@@ -1,0 +1,16 @@
+[package]
+name = "bun_shared_struct_jsc"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+bun_jsc.workspace = true
+bun_ptr.workspace = true
+bun_shared_struct.workspace = true

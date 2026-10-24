@@ -255,10 +255,18 @@ pub struct MixedPatterns {
 }
 
 impl ExactEntries {
-    #[inline]
+    #[inline(always)]
     fn contains(&self, path: &[u8]) -> bool {
-        let has = |key: &[u8]| self.keys.contains_key(&StringHashMapUnownedKey::init(key));
-        (self.has_paths && has(path)) || (self.has_names && has(bun_paths::basename(path)))
+        (self.has_paths && self.has_key(path)) || (self.has_names && self.has_name_of(path))
+    }
+
+    #[inline(always)]
+    fn has_key(&self, key: &[u8]) -> bool {
+        self.keys.contains_key(&StringHashMapUnownedKey::init(key))
+    }
+
+    fn has_name_of(&self, path: &[u8]) -> bool {
+        self.has_key(bun_paths::basename(path))
     }
 }
 
@@ -266,6 +274,7 @@ fn is_glob(entry: &[u8]) -> bool {
     strings::contains_any(entry, b"*?[{") || glob::has_extglob_prefix(entry)
 }
 
+#[inline(always)]
 fn any_glob_matches(globs: &[glob::Prepared<Box<[u8]>>], path: &[u8]) -> bool {
     if globs.is_empty() {
         return false;
@@ -274,9 +283,12 @@ fn any_glob_matches(globs: &[glob::Prepared<Box<[u8]>>], path: &[u8]) -> bool {
     let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
         return true;
     };
-    globs
-        .iter()
-        .any(|pattern| pattern.r#match(&normalized_path).matches())
+    for pattern in globs {
+        if pattern.r#match(&normalized_path).matches() {
+            return true;
+        }
+    }
+    false
 }
 
 impl SideEffects {

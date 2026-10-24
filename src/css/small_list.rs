@@ -80,12 +80,19 @@ pub(crate) mod fallbacks_gated {
         T: super::ImageFallback,
     {
         use css::css_values::color::ColorFallbackKind;
+        use css::css_values::image::Image;
         // Determine what vendor prefixes and color fallbacks are needed.
+        // Unlike lightningcss, an unprefixed layer is rewritten by its own need, not by the union.
         let mut prefixes = css::VendorPrefix::default();
+        let mut unprefixed_needs = css::VendorPrefix::default();
         let mut fallbacks = ColorFallbackKind::default();
         let mut res: Vec<SmallList<T, 1>> = Vec::new();
         for item in this.slice() {
-            prefixes.insert(item.get_image().get_necessary_prefixes(targets));
+            let need = item.get_image().get_necessary_prefixes(targets);
+            prefixes.insert(need);
+            if need.contains(css::VendorPrefix::NONE) {
+                unprefixed_needs.insert(need);
+            }
             fallbacks.insert(item.get_necessary_fallbacks(targets));
         }
 
@@ -124,30 +131,41 @@ pub(crate) mod fallbacks_gated {
             }
         }
 
-        #[inline]
+        // A list seldom needs a prefixed declaration, so this stays out of line.
+        #[inline(never)]
         fn prefix_helper<T: ImageFallback>(
-            prefix: &'static str,
-            pfs: css::VendorPrefix,
+            prefix: css::VendorPrefix,
             pfi: &SmallList<T, 1>,
             r: &mut Vec<SmallList<T, 1>>,
             alloc: &bun_alloc::Arena,
+            targets: &css::targets::Targets,
         ) {
-            if pfs.contains(css::VendorPrefix::from_name_str(prefix)) {
-                let mut images = SmallList::<T, 1>::init_capacity(pfi.len());
-                for i in 0..pfi.len() {
-                    let in_ = pfi.at(i);
-                    let image = in_
-                        .get_image()
-                        .get_prefixed(alloc, css::VendorPrefix::from_name_str(prefix));
-                    images.append(in_.with_image(alloc, image));
-                }
-                r.push(images);
+            let mut images = SmallList::<T, 1>::init_capacity(pfi.len());
+            for i in 0..pfi.len() {
+                let in_ = pfi.at(i);
+                let image = in_.get_image();
+                // A gradient with an author prefix takes this one too: the prefixed syntaxes match.
+                let rewrite = image.get_necessary_prefixes(targets).contains(prefix)
+                    || (matches!(image, Image::Gradient(_)) && image.has_vendor_prefix());
+                let image = if rewrite {
+                    image.get_prefixed(alloc, prefix)
+                } else {
+                    image.deep_clone(alloc)
+                };
+                images.append(in_.with_image(alloc, image));
             }
+            r.push(images);
         }
 
-        prefix_helper("webkit", prefixes, prefix_images, &mut res, arena);
-        prefix_helper("moz", prefixes, prefix_images, &mut res, arena);
-        prefix_helper("o", prefixes, prefix_images, &mut res, arena);
+        for prefix in [
+            css::VendorPrefix::WEBKIT,
+            css::VendorPrefix::MOZ,
+            css::VendorPrefix::O,
+        ] {
+            if unprefixed_needs.contains(prefix) {
+                prefix_helper(prefix, prefix_images, &mut res, arena, targets);
+            }
+        }
 
         if prefixes.contains(css::VendorPrefix::NONE) {
             if let Some(r) = rgb {
@@ -172,12 +190,9 @@ pub(crate) mod fallbacks_gated {
                     drop(old);
                 }
             }
-        } else if let Some(the_last) = res.pop() {
-            // Prefixed property with no unprefixed version.
-            // Replace self with the last prefixed version so that it doesn't
-            // get duplicated when the caller pushes the original value.
-            let old = core::mem::replace(this, the_last);
-            drop(old);
+        } else if let Some(r) = rgb {
+            // Every layer has an author prefix, and prefixed properties only support RGB.
+            *this = r;
         }
         res
     }

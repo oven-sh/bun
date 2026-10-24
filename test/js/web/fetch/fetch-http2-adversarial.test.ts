@@ -855,6 +855,47 @@ describe.concurrent("an HTTP/2 response header block is refused when it has", ()
   });
 });
 
+test("a header block of nothing but HPACK table size updates counts as an empty one", async () => {
+  // x-a: 1 enters the dynamic table, as index 62 (0xbe).
+  const insert = Buffer.concat([Buffer.from([0x40, 3]), Buffer.from("x-a"), Buffer.from([1]), Buffer.from("1")]);
+  const fromTheTable = Buffer.concat([hpackStatus200, Buffer.from([0xbe])]);
+  const responses = [
+    (id: number) => [frame(1, 0x5, id, Buffer.concat([hpackStatus200, insert]))],
+    (id: number) => [
+      frame(1, 0x4, id, fromTheTable),
+      frame(0, 0, id, Buffer.from("body")),
+      // As trailers it ends the response. To 0, which empties the table, and back to 4096.
+      frame(1, 0x5, id, Buffer.from("203fe11f", "hex")),
+    ],
+    // As a response it lacks the :status, which is the stream's problem. To 4096, which changes nothing.
+    (id: number) => [frame(1, 0x5, id, Buffer.from("3fe11f", "hex"))],
+    (id: number) => [frame(1, 0x5, id, hpackStatus200)],
+    (id: number) => [frame(1, 0x5, id, fromTheTable)],
+  ];
+  await withAdversarialServer(
+    { onStream: (socket, id) => socket.write(Buffer.concat(responses[(id - 1) / 2](id))) },
+    async (url, state) => {
+      const results: unknown[] = [];
+      for (const _ of responses) {
+        results.push(
+          await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false } }).then(
+            async res => [res.status, res.headers.get("x-a"), await res.text()],
+            e => e.code,
+          ),
+        );
+      }
+      expect(results).toEqual([
+        [200, "1", ""],
+        [200, "1", "body"],
+        "HTTP2ProtocolError",
+        [200, null, ""],
+        "HTTP2CompressionError",
+      ]);
+      expect(state.connections).toBe(1);
+    },
+  );
+});
+
 describe.concurrent("SETTINGS_HEADER_TABLE_SIZE from an HTTP/2 server", () => {
   test.each([
     ["is not followed above 4096", setting(1, 65536), ""],

@@ -57,8 +57,10 @@ void Bun__Hpack__setEncoderMaxCapacity(BunHpack *hpack, uint32_t maxCapacity);
 void Bun__Hpack__encode(BunHpack *hpack, const char *name, size_t nameLength, const char *value, size_t valueLength, bool addToTable);
 const char *Bun__Hpack__block(const BunHpack *hpack, size_t *length);
 void Bun__Hpack__clearBlock(BunHpack *hpack);
+/* Returns 0 for a field, BUN_HPACK_END_OF_BLOCK, or the error code to close the connection with. */
 int Bun__Hpack__decode(BunHpack *hpack, const unsigned char *block, size_t blockLength, size_t *position, BunHpackField *field);
 }
+static constexpr int BUN_HPACK_END_OF_BLOCK = -1;
 
 namespace uWS {
 
@@ -1511,9 +1513,11 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     if (buf.size() < (size_t) limit + 64) buf.resize((size_t) limit + 64);
     list.clear();
     size_t used = 0, decoded = 0, fields = 0, position = 0;
-    while (position < length) {
+    for (;;) {
         BunHpackField field = {};
-        if (int error = Bun__Hpack__decode(hpack, block, length, &position, &field)) return connectionError((http2::ErrorCode) error);
+        int result = Bun__Hpack__decode(hpack, block, length, &position, &field);
+        if (result == BUN_HPACK_END_OF_BLOCK) break;
+        if (result != 0) return connectionError((http2::ErrorCode) result);
         size_t size = (size_t) field.nameLength + field.valueLength + http2::DECODED_FIELD_OVERHEAD;
         decoded += size;
         fields++;

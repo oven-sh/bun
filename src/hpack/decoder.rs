@@ -66,10 +66,27 @@ impl Decoder {
 
     /// The field at `*pos`, 0 at first, of a whole header block. `None` at its end. An error is fatal to the connection.
     pub fn next(&mut self, block: &[u8], pos: &mut usize) -> Option<Result<Field<'_>>> {
+        if *pos == 0
+            && let Err(error) = self.size_updates(block, pos)
+        {
+            return Some(Err(error));
+        }
         if *pos >= block.len() {
             return None;
         }
         Some(self.decode_field(block, pos))
+    }
+
+    /// The dynamic table size updates (§6.3) that a block may begin with.
+    fn size_updates(&mut self, src: &[u8], pos: &mut usize) -> Result<()> {
+        while src.get(*pos).is_some_and(|first| first & 0xe0 == 0x20) {
+            let capacity = integer::decode(src, pos, 5).ok_or(Error::Invalid)?;
+            if capacity > self.max_capacity {
+                return Err(Error::Invalid);
+            }
+            self.set_capacity(capacity);
+        }
+        Ok(())
     }
 
     fn decode_field(&mut self, src: &[u8], field_pos: &mut usize) -> Result<Field<'_>> {
@@ -77,20 +94,7 @@ impl Decoder {
 
         self.storage.clear_scratch();
         let mut pos = *field_pos;
-        let mut first = *src.get(pos).ok_or(Invalid)?;
-
-        while first & 0xe0 == 0x20 {
-            // §4.2: only at the beginning of a block.
-            if *field_pos != 0 {
-                return Err(Invalid);
-            }
-            let capacity = integer::decode(src, &mut pos, 5).ok_or(Invalid)?;
-            if capacity > self.max_capacity {
-                return Err(Invalid);
-            }
-            self.set_capacity(capacity);
-            first = *src.get(pos).ok_or(Invalid)?;
-        }
+        let first = *src.get(pos).ok_or(Invalid)?;
 
         if first & 0x80 != 0 {
             let index = integer::decode(src, &mut pos, 7).ok_or(Invalid)?;
@@ -100,6 +104,8 @@ impl Decoder {
 
         let (indexing, prefix_bits) = match first {
             0x40.. => (Indexing::Add, 6),
+            // §4.2: a size update after a field.
+            0x20.. => return Err(Invalid),
             0x10.. => (Indexing::Never, 4),
             _ => (Indexing::Skip, 4),
         };

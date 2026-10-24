@@ -1075,6 +1075,32 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     s0.close();
   });
 
+  test("a header block of nothing but HPACK table size updates counts as an empty one", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const end = F.END_HEADERS | F.END_STREAM;
+    // x-a: 1 enters the dynamic table, as index 62 (0xbe).
+    const insert = Buffer.concat([Buffer.from([0x40, 3]), Buffer.from("x-a"), Buffer.from([1]), Buffer.from("1")]);
+    const fromTheTable = Buffer.concat([hpackLiteral(baseHeaders("/headers")), Buffer.from([0xbe])]);
+    try {
+      raw.write(
+        frame(T.HEADERS, F.END_HEADERS, 1, Buffer.concat([hpackLiteral(baseHeaders("/echo", "POST")), insert])),
+      );
+      raw.write(frame(T.DATA, 0, 1, Buffer.from("body")));
+      raw.write(frame(T.HEADERS, end, 3, fromTheTable));
+      expect(JSON.parse((await raw.body(3)).toString()).headers["x-a"]).toBe("1");
+      // As trailers it ends the request. To 0, which empties the table, and back to 4096.
+      raw.write(frame(T.HEADERS, end, 1, Buffer.from("203fe11f", "hex")));
+      expect((await raw.body(1)).toString()).toBe("body");
+      // As a request it lacks the pseudo-headers, which is the stream's problem. To 4096, which changes nothing.
+      raw.write(frame(T.HEADERS, end, 5, Buffer.from("3fe11f", "hex")));
+      expect(await raw.rst(5)).toBe(1);
+      // The trailers did empty the table.
+      raw.write(frame(T.HEADERS, end, 7, fromTheTable));
+      expect((await raw.goaway()).code).toBe(9);
+    } finally {
+      raw.close();
+    }
+  });
   test("peer SETTINGS_HEADER_TABLE_SIZE below the default: a field still enters the table the first time it is sent", async () => {
     const raw = await RawH2.connect(fx.port, secure, { settings: setting(1, 2048) });
     await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);

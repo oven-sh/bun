@@ -1462,6 +1462,10 @@ impl Connection {
                     || (http_scheme && !origin_form && !(asterisk_form && saw_options))
             };
         }
+        // §8.3.2 (nghttp2_http_on_response_headers): a response has a :status.
+        if !self.is_server && push_parent.is_none() && !is_trailer {
+            malformed |= (seen_pseudo & pseudo::STATUS) == 0;
+        }
         if push_parent.is_none() && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
                 s.recv_host = saw_host;

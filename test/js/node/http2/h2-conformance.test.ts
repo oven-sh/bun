@@ -2851,6 +2851,115 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
+  // x-a: 1 enters the dynamic table, as index 62 (0xbe).
+  const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-a"), hpackLiteral("1")]);
+  // To 0, which empties the table, and back to 4096.
+  const emptyTheTable = Buffer.from("203fe11f", "hex");
+  // To 4096, which changes nothing.
+  const sizeUpdate = Buffer.from("3fe11f", "hex");
+
+  test("a server takes a header block of nothing but table size updates for an empty one", async () => {
+    const srv = http2.createServer();
+    const ended: unknown[] = [];
+    srv.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      stream.on("end", () => {
+        ended.push([headers[":method"], headers["x-a"]]);
+        stream.respond({ ":status": 200 }, { endStream: true });
+      });
+      stream.resume();
+    });
+    srv.on("sessionError", () => {});
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST", insert));
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", Buffer.from([0xbe])));
+      expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
+      // As trailers it ends the request.
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, emptyTheTable);
+      expect((await c.waitFor(headersOrGoaway(1))).type).toBe(FrameType.HEADERS);
+      expect(ended).toEqual([
+        ["GET", "1"],
+        ["POST", "1"],
+      ]);
+      // As a request it lacks the pseudo-headers, which is the stream's problem.
+      c.sendFrame(FrameType.HEADERS, 0x5, 5, sizeUpdate);
+      const reset = await c.waitFor(
+        f => (f.type === FrameType.RST_STREAM && f.streamId === 5) || f.type === FrameType.GOAWAY,
+      );
+      expect(reset.type).toBe(FrameType.RST_STREAM);
+      expect(reset.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+      // The trailers did empty the table.
+      c.sendFrame(FrameType.HEADERS, 0x5, 7, requestHeaderBlock("GET", Buffer.from([0xbe])));
+      const answer = await c.waitFor(headersOrGoaway(7));
+      expect(answer.type).toBe(FrameType.GOAWAY);
+      expect(goawayErrorCode(answer)).toBe(ErrorCode.COMPRESSION_ERROR);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("a client takes a header block of nothing but table size updates for an empty one", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const sessionErrors: unknown[] = [];
+    client.on("error", error => sessionErrors.push(error.code));
+    const request = async (respond: (id: number) => void) => {
+      const req = client.request({ ":path": "/" });
+      const events: unknown[] = [];
+      req.on("response", headers => events.push(["response", headers[":status"], headers["x-a"]]));
+      req.on("trailers", trailers => events.push(["trailers", Object.keys(trailers)]));
+      req.on("error", error => events.push(["error", error.code]));
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      req.on("close", resolve);
+      req.resume();
+      req.end();
+      const { streamId } = await raw.waitFor(f => f.type === FrameType.HEADERS && !answered.has(f.streamId));
+      answered.add(streamId);
+      respond(streamId);
+      await closed;
+      return events;
+    };
+    const answered = new Set<number>();
+    const status200 = Buffer.from([0x88]);
+    try {
+      await once(client, "connect");
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      expect(
+        await request(id => {
+          raw.sendFrame(FrameType.HEADERS, 0x4, id, Buffer.concat([status200, insert]));
+          raw.sendFrame(FrameType.HEADERS, 0x5, id, emptyTheTable);
+        }),
+      ).toEqual([
+        ["response", 200, "1"],
+        ["trailers", []],
+      ]);
+      // A response has a :status (RFC 9113 §8.3.2).
+      for (const block of [sizeUpdate, Buffer.alloc(0), literal("x-b", "2")]) {
+        let streamId = 0;
+        const events = await request(id => raw.sendFrame(FrameType.HEADERS, 0x5, (streamId = id), block));
+        expect(events).toEqual([["error", "ERR_HTTP2_STREAM_ERROR"]]);
+        const reset = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === streamId);
+        expect(reset.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+      }
+      expect(await request(id => raw.sendFrame(FrameType.HEADERS, 0x5, id, status200))).toEqual([
+        ["response", 200, undefined],
+      ]);
+      expect(sessionErrors).toEqual([]);
+      // The trailers did empty the table.
+      await request(id => raw.sendFrame(FrameType.HEADERS, 0x5, id, Buffer.concat([status200, Buffer.from([0xbe])])));
+      expect(goawayErrorCode(await raw.waitFor(f => f.type === FrameType.GOAWAY))).toBe(ErrorCode.COMPRESSION_ERROR);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
   test("a server's encoder follows the client's SETTINGS_HEADER_TABLE_SIZE", async () => {
     const { srv, port } = await listen();
     const c = await RawH2.connect(port);
@@ -2941,7 +3050,6 @@ describe("HPACK (RFC 7541)", () => {
       c.sendEmptySettings();
       await c.waitFor(isSettings);
       // Not acknowledged yet, so this peer's encoder still goes by 4096: it adds an entry and uses it.
-      const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-a"), hpackLiteral("1")]);
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET", insert));
       c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", Buffer.from([0xbe])));
       expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);

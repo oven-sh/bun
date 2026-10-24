@@ -153,6 +153,23 @@ mod tests {
     }
 
     #[test]
+    fn a_block_of_nothing_but_size_updates() {
+        let mut decoder = Decoder::new();
+        let insert = hex("4003782d610131");
+        assert!(decode(&mut decoder, &insert).is_ok());
+        assert_eq!(decoder.table_size(), 36);
+
+        let (block, mut pos) = (hex("20 3fe11f"), 0);
+        assert!(decoder.next(&block, &mut pos).is_none());
+        assert_eq!(pos, block.len());
+        assert_eq!(decoder.table_size(), 0);
+
+        // The second update counts too: there is room again.
+        assert!(decode(&mut decoder, &insert).is_ok());
+        assert_eq!(decoder.table_size(), 36);
+    }
+
+    #[test]
     fn malformed_blocks() {
         for block in [
             "80",                // index 0
@@ -161,8 +178,11 @@ mod tests {
             "0003782d61",        // no value
             "000001 61",         // empty name
             "822182",            // size update after a field
+            "82210161",          // the same, where 21 0161 could pass for a literal
+            "8220",              // size update after a field, at the end
+            "3fe21f",            // nothing but a size update to 4097
+            "203f",              // a size update, then one that is cut off
             "3fe21f82",          // size update to 4097
-            "20",                // nothing but a size update
             "0f",                // integer cut off
             "7fffffffff10",      // integer over 32 bits
             "000161 0261",       // string cut off

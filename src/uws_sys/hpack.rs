@@ -9,6 +9,9 @@ use crate::thunk::c_slice;
 /// How much room `block` keeps between header blocks.
 const KEEP_BLOCK_CAPACITY: usize = 1024;
 
+/// `BUN_HPACK_END_OF_BLOCK`.
+const END_OF_BLOCK: c_int = -1;
+
 /// RFC 9113 §7.
 const COMPRESSION_ERROR: c_int = 0x9;
 const ENHANCE_YOUR_CALM: c_int = 0xb;
@@ -85,7 +88,7 @@ extern "C" fn Bun__Hpack__clearBlock(this: &mut Hpack) {
     this.block.shrink_to(KEEP_BLOCK_CAPACITY);
 }
 
-/// Returns 0, or the error code to close the connection with. See [`Decoder::next`] for `block` and `position`.
+/// [`Decoder::next`]. Returns 0, [`END_OF_BLOCK`], or the error code to close the connection with.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Hpack__decode(
     this: &mut Hpack,
@@ -107,7 +110,8 @@ unsafe extern "C" fn Bun__Hpack__decode(
             };
             0
         }
+        None => END_OF_BLOCK,
         Some(Err(Error::TooLarge)) => ENHANCE_YOUR_CALM,
-        Some(Err(Error::Invalid)) | None => COMPRESSION_ERROR,
+        Some(Err(Error::Invalid)) => COMPRESSION_ERROR,
     }
 }

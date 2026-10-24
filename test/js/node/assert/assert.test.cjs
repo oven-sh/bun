@@ -1,4 +1,5 @@
 const assert = require("assert");
+const crypto = require("node:crypto");
 const { bunEnv, bunExe } = require("harness");
 
 test("assert from require as a function does not throw", () => assert(true));
@@ -62,7 +63,7 @@ describe("assert.partialDeepStrictEqual", () => {
     assert.partialDeepStrictEqual(oa, ob);
   });
 
-  test("a circular actual still fails against a non-circular expected", () => {
+  test("a circular actual fails against a non-circular expected that it does not contain", () => {
     const circularArr = [];
     circularArr.push(circularArr);
     expect(() => assert.partialDeepStrictEqual(circularArr, [[1]])).toThrow(assert.AssertionError);
@@ -91,6 +92,298 @@ describe("assert.partialDeepStrictEqual", () => {
 
     const arr = [[]];
     assert.partialDeepStrictEqual([arr], arr);
+  });
+
+  // One maker per object arm of the native comparator.
+  const arms = Object.entries({
+    "plain object": () => ({}),
+    "array": () => [],
+    "Map": () => new Map(),
+    "Set": () => new Set(),
+    "Error": () => new Error("x"),
+    "Date": () => new Date(0),
+    "RegExp": () => /x/,
+    "boxed primitive": () => new Number(1),
+    "typed array": () => new Uint8Array(2),
+    "DataView": () => new DataView(new ArrayBuffer(2)),
+    "ArrayBuffer": () => new ArrayBuffer(2),
+    "URL": () => new URL("http://x/"),
+    "KeyObject": () => crypto.createSecretKey(Buffer.alloc(16)),
+  });
+
+  // A Node.js process that has not yet thrown inside a deep-equality walk compares these by content.
+  describe("a reference back into actual against a finite expected", () => {
+    const cyclic = make => {
+      const value = make();
+      value.v = 1;
+      value.self = value;
+      return value;
+    };
+    const finite = (make, leaf) => {
+      const value = make();
+      value.self = make();
+      if (leaf !== undefined) value.self.v = leaf;
+      return value;
+    };
+
+    test.each(arms)("%s: passes when expected matches under the back-reference", (_, make) => {
+      assert.partialDeepStrictEqual(cyclic(make), finite(make, 1));
+    });
+
+    test.each(arms)("%s: passes when expected has nothing to compare under the back-reference", (_, make) => {
+      assert.partialDeepStrictEqual(cyclic(make), finite(make));
+    });
+
+    test.each(arms)("%s: throws when expected differs under the back-reference", (_, make) => {
+      expect(() => assert.partialDeepStrictEqual(cyclic(make), finite(make, 2))).toThrow(assert.AssertionError);
+    });
+
+    test.each(arms)("%s: a cycle only in expected throws", (_, make) => {
+      const actual = finite(make);
+      actual.self.self = make();
+      const expected = make();
+      expected.self = expected;
+      expect(() => assert.partialDeepStrictEqual(actual, expected)).toThrow(assert.AssertionError);
+    });
+
+    test.each(arms)("%s: two values that cycle together pass", (_, make) => {
+      assert.partialDeepStrictEqual(cyclic(make), cyclic(make));
+    });
+
+    test.each([
+      [
+        "an array element",
+        () => {
+          const actual = [1];
+          actual.push(actual);
+          return [actual, [[1]]];
+        },
+      ],
+      [
+        "a Map value",
+        () => {
+          const actual = new Map([["k", 1]]);
+          actual.set("self", actual);
+          return [actual, new Map([["self", new Map([["k", 1]])]])];
+        },
+      ],
+      [
+        "a Map key",
+        () => {
+          const actual = new Map();
+          actual.set(actual, 1);
+          return [actual, new Map([[new Map(), 1]])];
+        },
+      ],
+      [
+        "a Set member",
+        () => {
+          const actual = new Set([1]);
+          actual.add(actual);
+          return [actual, new Set([new Set([1])])];
+        },
+      ],
+      [
+        "an Error cause",
+        () => {
+          const actual = new Error("x");
+          actual.cause = actual;
+          return [actual, new Error("x", { cause: new Error("x") })];
+        },
+      ],
+    ])("passes when the back-reference is %s", (_, make) => {
+      const [actual, expected] = make();
+      assert.partialDeepStrictEqual(actual, expected);
+    });
+
+    test("a tree whose children point at their parent matches a finite pattern", () => {
+      const parent = { name: "p", children: [] };
+      parent.children.push({ name: "c", parent });
+      assert.partialDeepStrictEqual(parent, { children: [{ name: "c", parent: { name: "p" } }] });
+      expect(() => assert.partialDeepStrictEqual(parent, { children: [{ name: "c", parent: { name: "q" } }] })).toThrow(
+        assert.AssertionError,
+      );
+    });
+
+    test("expected is followed to its end, however many times actual comes round", () => {
+      const actual = { a: 1 };
+      actual.self = actual;
+      const nested = leaf => {
+        let expected = leaf;
+        for (let i = 0; i < 100; i++) expected = { self: expected };
+        return expected;
+      };
+      assert.partialDeepStrictEqual(actual, nested({ a: 1 }));
+      expect(() => assert.partialDeepStrictEqual(actual, nested({ a: 2 }))).toThrow(assert.AssertionError);
+    });
+
+    test("a getter under the back-reference is read once", () => {
+      let reads = 0;
+      const make = value => {
+        const actual = {
+          get a() {
+            reads++;
+            return value;
+          },
+        };
+        actual.self = actual;
+        return actual;
+      };
+      assert.partialDeepStrictEqual(make(1), { self: { a: 1 } });
+      expect(reads).toBe(1);
+      expect(() => assert.partialDeepStrictEqual(make(2), { self: { a: 1 } })).toThrow(assert.AssertionError);
+    });
+
+    // Node.js 24 and later gives this shape a different verdict once any deep-equality walk in the thread has thrown
+    // (lib/internal/util/comparisons.js, detectCycles). Bun keeps no state between calls.
+    test("the verdict does not depend on earlier comparisons", () => {
+      const compare = () => {
+        const actual = { a: 1 };
+        actual.self = actual;
+        assert.partialDeepStrictEqual(actual, { self: { a: 1 } });
+      };
+      compare();
+      const a = {};
+      a.a = a;
+      const b = {};
+      b.a = b;
+      assert.deepStrictEqual(a, b);
+      compare();
+    });
+  });
+
+  // A new Node.js process also passes this, and reads the getter once. Node.js 24 and 26 throw ERR_ASSERTION on it
+  // once a deep-equality walk has thrown in the thread.
+  test("a call that passes without a back-reference does not look under it", () => {
+    let reads = 0;
+    const actual = {
+      get probe() {
+        reads++;
+        return 1;
+      },
+    };
+    actual.items = [actual, { probe: 1 }];
+    assert.partialDeepStrictEqual(actual, { items: [{ probe: 1 }] });
+    expect(reads).toBe(0);
+  });
+
+  // Node.js 24 and 26 throw ERR_ASSERTION on every row here, before and after a walk has thrown in the thread.
+  describe("a reference back into actual where the contents do not decide", () => {
+    const loop = make => {
+      const value = make();
+      value.loop = value;
+      return value;
+    };
+    // Thrown as it is when the values are not equal, so that no message is rendered from them.
+    const notEqual = new Error("not equal");
+    const thrownBy = (actual, expected) => {
+      try {
+        assert.partialDeepStrictEqual(actual, expected, notEqual);
+      } catch (error) {
+        return error;
+      }
+    };
+
+    // `self` is a back-reference in actual only. `loop` holds a value that refers to itself on both sides.
+    test.each(arms)("%s: throws when expected comes round elsewhere in the call", (_, make) => {
+      const actual = make();
+      actual.v = 1;
+      actual.self = actual;
+      actual.loop = loop(make);
+      const expected = make();
+      expected.self = make();
+      expected.self.v = 1;
+      expected.loop = loop(make);
+      expect(thrownBy(actual, expected)).toBe(notEqual);
+    });
+
+    test("contents under a back-reference throw once a pair has come round", () => {
+      const list = [1];
+      list.push(list);
+      const set = new Set([1]);
+      set.add(set);
+      const map = new Map([["k", 1]]);
+      map.set("self", map);
+      const actual = { loop: loop(() => ({})), list, set, map };
+      const patterns = [
+        { list: [[1]] },
+        { set: new Set([new Set([1])]) },
+        { map: new Map([["self", new Map([["k", 1]])]]) },
+      ];
+      for (const pattern of patterns) expect(thrownBy(actual, { loop: loop(() => ({})), ...pattern })).toBe(notEqual);
+    });
+
+    test("a pair that comes round settles the call even when a later candidate matches", () => {
+      const pattern = loop(() => ({}));
+      const actual = { v: 1, list: [loop(() => ({})), pattern] };
+      actual.self = actual;
+      expect(thrownBy(actual, { self: { v: 1 }, list: [pattern] })).toBe(notEqual);
+    });
+
+    test("cycles of different lengths throw and end without a stack overflow", () => {
+      const ring = length => {
+        const nodes = Array.from({ length }, () => ({}));
+        nodes.forEach((node, i) => (node.next = nodes[(i + 1) % length]));
+        return nodes[0];
+      };
+      expect(thrownBy(ring(1), ring(2))).toBe(notEqual);
+      expect(thrownBy(ring(2), ring(1))).toBe(notEqual);
+      expect(thrownBy(ring(80), ring(81))).toBe(notEqual);
+      expect(thrownBy(ring(81), ring(80))).toBe(notEqual);
+    });
+
+    test.each([
+      [
+        "a getter of actual under the back-reference",
+        () => {
+          const actual = {
+            get boom() {
+              throw new Error("boom");
+            },
+          };
+          actual.self = actual;
+          return [actual, { self: { boom: 1 } }];
+        },
+      ],
+      [
+        "a getter of actual after the back-reference",
+        () => {
+          const actual = { a: 1 };
+          actual.self = actual;
+          Object.defineProperty(actual, "boom", {
+            enumerable: true,
+            get() {
+              throw new Error("boom");
+            },
+          });
+          return [actual, { self: { a: 1 }, boom: 1 }];
+        },
+      ],
+      [
+        "a getter of expected under the back-reference",
+        () => {
+          const actual = { a: 1 };
+          actual.self = actual;
+          const under = {
+            get a() {
+              throw new Error("boom");
+            },
+          };
+          return [actual, { self: under }];
+        },
+      ],
+    ])("an error thrown by %s does not replace the verdict", (_, make) => {
+      const [actual, expected] = make();
+      expect(thrownBy(actual, expected)).toBe(notEqual);
+    });
+
+    test("an expected nested deeper than the native stack does not replace the verdict", () => {
+      const actual = {};
+      actual.self = actual;
+      let expected = {};
+      for (let i = 0; i < 100_000; i++) expected = { self: expected };
+      expect(thrownBy(actual, expected)).toBe(notEqual);
+    });
   });
 });
 

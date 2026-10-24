@@ -14,6 +14,7 @@
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <cmath>
+#include <wtf/Scope.h>
 #include "JSEventTarget.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "_NativeModule.h"
@@ -266,19 +267,26 @@ static bool partialBufferContentsEquiv(JSC::JSGlobalObject* globalObject, JSC::T
 extern "C" bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::JSGlobalObject*);
 
 // assert.partialDeepStrictEqual (node's kPartial mode), fully native. `expected` must be
-// recursively contained in `actual`; cycles are accepted only when both sides revisit together.
+// recursively contained in `actual`; withCycleGuard has the rule for cycles.
 // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 namespace PartialDeepEqual {
 
 struct CycleState {
     WTF::Vector<JSC::JSCell*, 8> actualSeen;
     WTF::Vector<JSC::JSCell*, 8> expectedSeen;
+    // A pair was settled as not equal only because its `actual` cell was already on the path.
+    bool rejectedBackReference { false };
+    // On for the second walk, which compares such a pair again. Off once an `expected` cell comes round.
+    bool byContent { false };
 };
 
 static bool compareBranch(JSC::JSGlobalObject*, JSC::MarkedArgumentBuffer&, CycleState&, JSC::ThrowScope&, JSValue actual, JSValue expected);
 
-// Both-sides cycle guard: a cycle is accepted only when actual and expected
-// each cycle back on their own side together.
+// Keeps the path to the pair being compared and settles a pair with a cell that is already on it: both cells on
+// their paths is equal, one is not equal. node 24 and later has such a rule (handleCycles) only after a walk has
+// thrown in the thread, and compares the pair again before that (detectCycles,
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L1061-L1070). This keeps no state
+// between calls: the host function walks a second time when the rule rejected a back-reference in `actual`.
 template<typename Body>
 static bool withCycleGuard(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Body body)
 {
@@ -286,10 +294,16 @@ static bool withCycleGuard(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumen
     JSC::JSCell* expectedCell = expected.asCell();
     const bool hadActual = cycles.actualSeen.contains(actualCell);
     const bool hadExpected = cycles.expectedSeen.contains(expectedCell);
-    if (hadActual && hadExpected)
-        return true;
-    if (hadActual || hadExpected)
+    if (hadExpected) {
+        if (!cycles.byContent)
+            return hadActual;
+        cycles.byContent = false;
         return false;
+    }
+    if (hadActual && !cycles.byContent) {
+        cycles.rejectedBackReference = true;
+        return false;
+    }
     cycles.actualSeen.append(actualCell);
     cycles.expectedSeen.append(expectedCell);
     const bool result = body(globalObject, gcBuffer, cycles, scope, actual, expected);
@@ -402,12 +416,16 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     JSC::JSMap* actualMap = uncheckedDowncast<JSC::JSMap>(actual.asCell());
     JSC::JSMap* expectedMap = uncheckedDowncast<JSC::JSMap>(expected.asCell());
 
-    // Materialized lazily, rooted in gcBuffer (keys then values, pairwise).
+    // Materialized lazily, rooted in gcBuffer (keys then values, pairwise) until this returns.
     bool materialized = false;
     size_t entriesStart = 0;
     size_t entryCount = 0;
     WTF::Vector<bool, 8> usedIndices;
     JSC::MarkedArgumentBuffer usedIdentityKeys;
+    auto releaseEntries = WTF::makeScopeExit([&] {
+        if (materialized)
+            gcBuffer.shrink(entriesStart);
+    });
 
     auto materialize = [&]() -> bool {
         if (materialized)
@@ -523,7 +541,11 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     JSC::JSSet* actualSet = uncheckedDowncast<JSC::JSSet>(actual.asCell());
     JSC::JSSet* expectedSet = uncheckedDowncast<JSC::JSSet>(expected.asCell());
 
+    // Rooted in gcBuffer until this returns.
     const size_t itemsStart = gcBuffer.size();
+    auto releaseItems = WTF::makeScopeExit([&] {
+        gcBuffer.shrink(itemsStart);
+    });
     size_t itemCount = 0;
     {
         auto iter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), actualSet, JSC::IterationKind::Keys);
@@ -859,6 +881,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
     PartialDeepEqual::CycleState cycles;
     bool result = PartialDeepEqual::compareBranch(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
+    if (!result && cycles.rejectedBackReference) {
+        // This walk can only turn the verdict into a pass. The first verdict stands when `expected` comes round,
+        // and when the walk throws: node also drops a walk that throws and answers with its rule for cycles.
+        cycles.byContent = true;
+        result = PartialDeepEqual::compareBranch(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
+        if (scope.exception()) [[unlikely]] {
+            TRY_CLEAR_EXCEPTION(scope, {});
+            result = false;
+        }
+        result = result && cycles.byContent;
+    }
     return JSValue::encode(jsBoolean(result));
 }
 

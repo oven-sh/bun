@@ -299,9 +299,7 @@ impl Gradient {
 pub struct LinearGradient {
     /// The vendor prefixes for the gradient.
     pub(crate) vendor_prefix: VendorPrefix,
-    /// The direction of the gradient, as written. A prefixed gradient uses the
-    /// css3-images-20110217 syntax: a keyword names the side the gradient starts from,
-    /// `0deg` points right with positive angles counter-clockwise, and the default is `top`.
+    /// The direction as written. With a prefix, it is in the css3-images-20110217 syntax.
     pub(crate) direction: LineDirection,
     /// The color stops and transition hints for the gradient.
     pub(crate) items: Vec<GradientItem<LengthPercentage>>,
@@ -325,8 +323,7 @@ impl LinearGradient {
         })
     }
 
-    /// Returns a copy of the gradient with the given vendor prefix. The direction is
-    /// rewritten when the copy moves between the standard and the prefixed syntax.
+    /// Returns a copy under `prefix`, with the direction in the syntax of that prefix.
     fn with_prefix(&self, bump: &Arena, prefix: VendorPrefix) -> LinearGradient {
         let mut copy = self.deep_clone(bump);
         let was_prefixed = self.vendor_prefix != VendorPrefix::NONE;
@@ -343,8 +340,7 @@ impl LinearGradient {
     }
 
     fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
-        // We can omit the default direction of the syntax: `to bottom` or `180deg`, or the
-        // prefixed `top`.
+        // We can omit the default direction: `to bottom` or `180deg`, or `top` with a prefix.
         if self.direction.is_default(is_prefixed) {
             // todo_stuff.depth
             serialize_items::<LengthPercentage>(&self.items, dest)?;
@@ -994,8 +990,7 @@ impl LineDirection {
         }
     }
 
-    /// Rewrites a direction of the standard syntax in the prefixed syntax, or the reverse.
-    /// A keyword becomes the opposite side. An angle `a` becomes `90deg - a`.
+    /// Converts between the standard and the prefixed syntax: the opposite side, or `90deg - a`.
     fn to_other_syntax(&self) -> LineDirection {
         fn opposite_horizontal(side: HorizontalPositionKeyword) -> HorizontalPositionKeyword {
             match side {
@@ -1013,8 +1008,7 @@ impl LineDirection {
             LineDirection::Angle(angle) => {
                 // Reduce the angle first: `90 - a` is not exact in an f32 when `a` is large.
                 let degrees = (90.0 - angle.to_degrees().rem_euclid(360.0)).rem_euclid(360.0);
-                // Keep three decimals. Without the rounding, float noise shows in a small
-                // result: the standard `89.9deg` would print as `.0999985deg`.
+                // Three decimals hide float noise: `89.9deg` would print as `.0999985deg`.
                 let degrees = (degrees * 1000.0).round() / 1000.0;
                 // The standard `90.0004deg` is `359.9996deg` here, which rounds to `360deg`.
                 LineDirection::Angle(Angle::Deg(if degrees == 360.0 { 0.0 } else { degrees }))

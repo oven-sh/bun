@@ -16,6 +16,7 @@ extern "C" void Bun__removeDevServerSourceProvider(void* bun_vm, DevServerSource
 class DevServerSourceProvider final : public JSC::StringSourceProvider {
 public:
     static Ref<DevServerSourceProvider> create(
+        JSC::JSGlobalObject* globalObject,
         const String& source,
         const char* sourceMapJSONPtr,
         size_t sourceMapJSONLength,
@@ -24,16 +25,13 @@ public:
         const TextPosition& startPosition,
         JSC::SourceProviderSourceType sourceType)
     {
-        return adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
-    }
-
-    // Stack traces then remap through this provider. It takes the place of the provider that had the same URL.
-    void registerSourceMap(JSC::JSGlobalObject* globalObject)
-    {
-        ASSERT(!m_bunVM);
-        m_bunVM = uncheckedDowncast<::Zig::GlobalObject>(globalObject)->bunVM();
-        m_specifier = Bun::toString(sourceURL());
-        Bun__addDevServerSourceProvider(m_bunVM, this, &m_specifier);
+        auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
+        auto* zigGlobalObject = uncheckedDowncast<::Zig::GlobalObject>(globalObject);
+        auto specifier = Bun::toString(provider->sourceURL());
+        provider->m_bunVM = zigGlobalObject->bunVM();
+        provider->m_specifier = specifier;
+        Bun__addDevServerSourceProvider(provider->m_bunVM, provider.ptr(), &specifier);
+        return provider;
     }
 
     MiCString sourceMapJSON() const
@@ -69,7 +67,7 @@ private:
     }
 
     MiString m_sourceMapJSON;
-    // The Rust VirtualMachine, captured by registerSourceMap. Not the GC-allocated
+    // The Rust VirtualMachine, captured at creation. Not the GC-allocated
     // Zig::GlobalObject: this destructor runs from JSC sweep, by which point
     // the global object cell may already have been swept.
     void* m_bunVM { nullptr };

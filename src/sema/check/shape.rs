@@ -2582,16 +2582,21 @@ impl<'p, 's> Checker<'p, 's> {
         if is_private || prop.flags.contains(PropFlags::ACCESSOR) {
             return false;
         }
+        !self.is_method_symbol(prop)
+    }
+
+    /// `prop.Flags&SymbolFlagsMethod != 0`
+    fn is_method_symbol(&mut self, prop: &Prop) -> bool {
         if !prop.flags.contains(PropFlags::METHOD) {
-            return true;
+            return false;
         }
         let PropSource::Intersected(_, parts) = &prop.source else {
-            return false;
+            return true;
         };
         // `createUnionOrIntersectionProperty`: instantiations of one member that have the same type
         // count as that member. Any other property that several members of an intersection have is
         // never a method.
-        !parts.split_first().is_some_and(|(single, others)| {
+        parts.split_first().is_some_and(|(single, others)| {
             others.iter().all(|other| {
                 other.source == single.source && self.compare_properties(single, other)
             })
@@ -5327,8 +5332,8 @@ impl<'p, 's> Checker<'p, 's> {
         flags.set(PropFlags::READONLY, readonly);
         if is_same_symbol {
             // A method stays a method, and an accessor stays an accessor.
-            flags |= prop.flags & (PropFlags::METHOD | PropFlags::ACCESSOR);
-            if self.is_function_symbol_property(prop) {
+            flags |= prop.flags & PropFlags::ACCESSOR;
+            if self.is_method_symbol(prop) || self.is_function_symbol_property(prop) {
                 flags |= PropFlags::METHOD;
             }
             let is_resolved_on_demand = matches!(

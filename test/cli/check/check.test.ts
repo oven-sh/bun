@@ -17326,6 +17326,35 @@ export const keyword = 1;
       expect(exitCode).toBe(1);
     });
 
+    // `createUnionOrIntersectionProperty` never creates a method. The expected output is tsc's.
+    test("a method that several members of an intersection declare is a property in a spread or a rest", async () => {
+      using dir = project({
+        "a.ts": `interface A { m(): number; a: 1 }
+interface B { m(): string; b: 2 }
+declare class C { m(): null }
+interface Box<T> { m(): T }
+declare const ab: A & B;
+declare const ac: A & C;
+declare const same: Box<number> & Box<number> & { z: 1 };
+declare const other: Box<number> & Box<string>;
+{ const spread = { ...ab }; const _: never = spread; }
+{ const { a, ...rest } = ab; const _: never = rest; }
+{ const spread = { ...ac }; const _: never = spread; }
+{ const spread = { ...same }; const _: never = spread; }
+{ const spread = { ...other }; const _: never = spread; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        `a.ts(9,35): error TS2322: Type '{ m: (() => number) & (() => string); a: 1; b: 2; }' is not assignable to type 'never'.`,
+        `a.ts(10,36): error TS2322: Type '{ m: (() => number) & (() => string); b: 2; }' is not assignable to type 'never'.`,
+        `a.ts(11,35): error TS2322: Type '{ m: (() => number) & (() => null); a: 1; }' is not assignable to type 'never'.`,
+        `a.ts(12,37): error TS2322: Type '{ m(): number; z: 1; }' is not assignable to type 'never'.`,
+        `a.ts(13,38): error TS2322: Type '{ m: (() => number) & (() => string); }' is not assignable to type 'never'.`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2775 only for the CommonJS-exported assertion functions that tsc rejects", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,

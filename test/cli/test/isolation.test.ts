@@ -118,8 +118,10 @@ describe.concurrent("bun test --isolate", () => {
     using dir = tempDir("isolate-posix-tz", {
       "a-tz.test.ts": `
         import { test, expect } from "bun:test";
+        const start = new Date(0).getTimezoneOffset();
         process.env.TZ = "Asia/Tokyo";
-        test("the write applies to this file", () => {
+        test("the run starts on its TZ, and the write applies to this file", () => {
+          expect(start).toBe(-180);
           expect(new Date(0).getTimezoneOffset()).toBe(-540);
         });
       `,
@@ -137,8 +139,12 @@ describe.concurrent("bun test --isolate", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // A TZ that is not a time zone leaves the zone to the host, and the zone a file sets must not stay in its place.
-  test("with --isolate, the zone of the host is put back when the TZ of the run is not a time zone", async () => {
+  // A TZ that is empty or not a time zone leaves the zone to the host, and the zone a file sets must not stay in its
+  // place. process.env.TZ is undefined for an empty TZ.
+  test.each([
+    ["Not/AZone", "Not/AZone"],
+    ["", undefined],
+  ])("with --isolate, the zone of the host is put back when the TZ of the run is %j", async (tz, seen) => {
     using dir = tempDir("isolate-host-tz", {
       "a-tz.test.ts": `
         import { test, expect } from "bun:test";
@@ -153,13 +159,13 @@ describe.concurrent("bun test --isolate", () => {
         import { test, expect } from "bun:test";
         import { join } from "node:path";
         test("Date is back on the zone of the host", async () => {
-          expect(process.env.TZ).toBe("Not/AZone");
+          expect(process.env.TZ).toBe(${JSON.stringify(seen)});
           expect(new Date(0).getTimezoneOffset()).toBe(await Bun.file(join(import.meta.dir, "host.json")).json());
         });
       `,
     });
     const files = ["./a-tz.test.ts", "./b-tz.test.ts"];
-    const result = await runTests(String(dir), ["--isolate"], files, { ...bunEnv, TZ: "Not/AZone" });
+    const result = await runTests(String(dir), ["--isolate"], files, { ...bunEnv, TZ: tz });
     expect(normalizeBunSnapshot(result.stderr, dir)).toContain("2 pass");
     expect(result.exitCode).toBe(0);
   });

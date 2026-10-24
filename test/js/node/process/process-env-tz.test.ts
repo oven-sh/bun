@@ -1,6 +1,6 @@
 // TZ takes more than a zone name: the C library also reads ":name" and a POSIX value such as "MSK-3".
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 
 // getTimezoneOffset() for 09:00 local time on 15 January and on 15 July 2026, and the zone that Intl reports.
 type Zone = [january: number, july: number, timeZone: string];
@@ -37,9 +37,10 @@ const exact: [value: string, zone: Zone][] = [
   ["UTC0", [0, 0, "UTC"]],
   // ICU reads "GMT+3" as three hours east. In TZ it is a POSIX value, three hours west: date(1) and Node on Linux agree.
   ["GMT+3", [180, 180, "Etc/GMT+3"]],
-  // The C library reads a name after ":", and the same zones again under "posix/".
+  // The C library reads a name after ":", and the same zones again under "posix/" and "right/".
   [":Europe/Moscow", [-180, -180, "Europe/Moscow"]],
   ["posix/Europe/Moscow", [-180, -180, "Europe/Moscow"]],
+  ["right/Europe/Moscow", [-180, -180, "Europe/Moscow"]],
 ];
 
 describe.concurrent("TZ at the start of the process", () => {
@@ -74,6 +75,35 @@ describe.concurrent("TZ at the start of the process", () => {
       exitCode: 0,
     });
   });
+
+  test("bun repl reads a POSIX value", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      cmd: ["repl", "-e", `${probe} console.log(JSON.stringify(zone()));`],
+      env: { TZ: "MSK-3" },
+    });
+    expect({ zone: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      zone: [-180, -180, "Etc/GMT-3"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A start leaves a value that is not a zone to the host. On Linux the host is the ICU of Bun, which gives back the
+  // TZ of the environment, and JavaScriptCore finds a zone name in any case. date(1) and Node give UTC for this value.
+  test.skipIf(!isLinux)("a value that is not a zone is for the host at a start, and UTC when assigned", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      env: { TZ: "europe/paris" },
+      script: `${probe}
+        const start = zone();
+        process.env.TZ = process.env.TZ;
+        console.log(JSON.stringify({ start, assigned: zone() }));`,
+    });
+    expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      result: { start: [-60, -120, "Europe/Paris"], assigned: [0, 0, "UTC"] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("process.env.TZ = value", () => {
@@ -85,30 +115,45 @@ describe("process.env.TZ = value", () => {
       ["XYZ+0", [0, 0, "UTC"]],
       ["XYZ-0:00:00", [0, 0, "UTC"]],
       ["<-03>3", [180, 180, "Etc/GMT+3"]],
+      // "GMT" in any case is a name as any other here. ICU reads the sign after it the other way.
+      ["gmt+3", [180, 180, "Etc/GMT+3"]],
+      ["GMT-3", [-180, -180, "Etc/GMT-3"]],
     ];
-    // A zone name that looks like a POSIX value is the zone of the name. Not on macOS: the system ICU takes the name
-    // there, and JavaScriptCore then has no zone for it.
-    if (!isMacOS) posixEdges.push(["EST5EDT", [300, 240, "America/New_York"]]);
-    // Only the C library reads what follows `std offset` in a POSIX value, and the tzfile at a path. It reads the
-    // environment and not an assignment, so those values give the zone of the host. No zone has a name for 7:15,
-    // 15 or 13 hours from UTC.
+    // A name that ICU has a zone for is the zone of the name, also one that starts as a POSIX value ("EST5EDT").
+    // date(1) and Node give UTC for "CST".
+    const icuNames: [value: string, zone: Zone][] = [["CST", [360, 300, "America/Chicago"]]];
+    // On macOS 15 the row is [0, 0, "UTC"]: the system ICU takes the name, and JavaScriptCore has no zone for it.
+    if (!isMacOS || isMacOSVersionAtLeast(26)) icuNames.push(["EST5EDT", [300, 240, "America/New_York"]]);
+    // Only the C library reads the tzfile at a path, and what follows `std offset` in a POSIX value. It reads the
+    // environment and not an assignment, so those values give the zone of the host. So does a value with no zone
+    // name: 7:15, 13, 15 or 24 hours from UTC. POSIX has two digits for the hours: "XYZ-003" is "XYZ-00", then "3".
+    // Node gives UTC for "", and the zone of the value for "XYZ-15", "XYZ+13", "XYZ-24", "GMT+13" and a path.
     const forHost = [
       "XYZ-7:15XYS,M3.5.0,M10.5.0/3",
       "XYZ-7:15",
       "<+1030>-10:30",
       "XYZ-15",
       "XYZ+13",
+      "XYZ-24",
+      "XYZ-003",
       "XYZ-3x",
+      "GMT+5:30",
+      "GMT+13",
       "/usr/share/zoneinfo/Asia/Kolkata",
+      ":/usr/share/zoneinfo/Asia/Kolkata",
       "",
     ];
-    // As in Node, a value that is not a time zone is UTC.
+    // Not a zone name and not a POSIX value: UTC. Node writes the C environment and ICU reads the zone again
+    // (https://github.com/nodejs/node/blob/v26.3.0/src/node_env_var.cc#L78-L105). That is UTC for these values too,
+    // but not for "XYZ-25" (24 hours east) and "XYZ-3:60" (the zone of /etc/localtime).
     const notAZone = [
       "Not/AZone",
       "undefined",
       "europe/paris",
       ":",
       "posix/",
+      // A file name follows "posix/", and not a POSIX value.
+      "posix/MSK-3",
       "XYZ",
       "AB-3",
       "<XY>-3",
@@ -128,7 +173,7 @@ describe("process.env.TZ = value", () => {
         };
         console.log(JSON.stringify({
           host,
-          exact: ${JSON.stringify([...exact, ...posixEdges].map(([value]) => value))}.map(after),
+          exact: ${JSON.stringify([...exact, ...posixEdges, ...icuNames].map(([value]) => value))}.map(after),
           // One more character than the runtime setter used to take.
           longName: after("America/Argentina/ComodRivadavia").slice(0, 2),
           forHost: ${JSON.stringify(forHost)}.map(after),
@@ -141,7 +186,7 @@ describe("process.env.TZ = value", () => {
     expect({ result, stderr, exitCode }).toEqual({
       result: {
         host,
-        exact: [...exact, ...posixEdges].map(([, zone]) => zone),
+        exact: [...exact, ...posixEdges, ...icuNames].map(([, zone]) => zone),
         longName: [180, 180],
         forHost: forHost.map(() => host),
         notAZone: notAZone.map(() => [0, 0, "UTC"]),

@@ -48,6 +48,9 @@ using namespace WebCore;
 
 void invalidateLiveDateInstanceCaches(JSC::VM& vm)
 {
+    // The walk stops every allocator of the heap. No Date has a local time to drop before one has computed it.
+    if (!vm.dateCache.takeMayHaveCachedLocalGregorianDateTime())
+        return;
     JSC::HeapIterationScope iterationScope(vm.heap);
     vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
         static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell))->invalidateCachedLocalGregorianDateTime();
@@ -139,8 +142,6 @@ static String zoneIDForWholeHoursWest(int32_t secondsWest)
     int32_t hoursWest = secondsWest / 3600;
     if (secondsWest % 3600 || hoursWest < -14 || hoursWest > 12)
         return String();
-    if (!hoursWest)
-        return "UTC"_s;
     return makeString("Etc/GMT"_s, hoursWest > 0 ? '+' : '-', static_cast<unsigned>(std::abs(hoursWest)));
 }
 
@@ -151,7 +152,7 @@ static bool isPosixOffsetFromGMT(StringView value)
     if (value.length() <= gmt.length() || !startsWithLettersIgnoringASCIICase(value, gmt))
         return false;
     char16_t next = value[gmt.length()];
-    return next == '+' || next == '-' || isASCIIDigit(next);
+    return next == '+' || next == '-';
 }
 
 static bool hasProcessTimeZone()
@@ -169,25 +170,28 @@ void applyTimeZoneFromEnv(JSC::VM& vm, const String& value, TimeZoneWriter write
     // Only the C library can read the tzfile at a path, and what follows `std offset` in a POSIX value.
     bool isForHost = value.isEmpty() || name.startsWith('/');
     if (!isForHost) {
-        for (auto prefix : { "posix/"_s, "right/"_s }) {
-            if (name.startsWith(prefix)) {
-                name = name.substring(prefix.length());
+        // "posix/" and "right/" are directories of tzfiles: a file name follows them, and not a POSIX value.
+        bool isFileName = false;
+        for (auto directory : { "posix/"_s, "right/"_s }) {
+            if (name.startsWith(directory)) {
+                name = name.substring(directory.length());
+                isFileName = true;
                 break;
             }
         }
         if (!name.isEmpty() && !isPosixOffsetFromGMT(name) && setProcessTimeZone(vm, name))
             return;
-        if (auto standard = parsePosixStandardTime(name)) {
+        if (auto standard = isFileName ? std::nullopt : parsePosixStandardTime(name)) {
             String zoneID = standard->isWholeValue ? zoneIDForWholeHoursWest(standard->secondsWest) : String();
             if (!zoneID.isNull() && setProcessTimeZone(vm, zoneID))
                 return;
             isForHost = true;
         }
     }
-    // As in Node, an assigned value that is not a time zone is UTC.
+    // Node gives UTC for an assigned name that no zone has: https://github.com/nodejs/node/blob/v26.3.0/src/node_env_var.cc#L78-L105
     if (!isForHost && writer == TimeZoneWriter::Assignment && setProcessTimeZone(vm, "UTC"_s))
         return;
-    // At a start no zone is set yet, and a reset of the date caches would walk the heap for nothing.
+    // A start has no zone to give back, and the restore of `bun test --isolate` has one only when a file set it.
     if (writer == TimeZoneWriter::Start && !hasProcessTimeZone())
         return;
     clearProcessTimeZone(vm);

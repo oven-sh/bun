@@ -11,6 +11,9 @@ use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{Host, is_relative, is_same_path, join};
 use bun_sema::util::SharedSort;
 
+/// The extension that has the name of the HTML loader.
+const HTML: &[u8] = b".html";
+
 /// Finds the pages that the files of one program import.
 pub(crate) struct Pages<'a, 's> {
     host: &'a dyn Host,
@@ -57,7 +60,7 @@ impl<'a, 's> Pages<'a, 's> {
             host,
             files,
             rules,
-            has_other_page_extensions: of_pages.any(|it| !it.0.eq_ignore_ascii_case(b".html")),
+            has_other_page_extensions: of_pages.any(|it| !it.0.eq_ignore_ascii_case(HTML)),
         }
     }
 
@@ -106,8 +109,8 @@ impl<'a, 's> Pages<'a, 's> {
     /// True if `path` has the extension of a page. Read as `Path::loader` reads it: a file named `.html` has one.
     fn has_page_extension(&self, path: &[u8]) -> bool {
         // Nearly every specifier ends otherwise, which a byte or two show.
-        let end = path.len().checked_sub(5).map(|start| &path[start..]);
-        let ends_in_html = end.is_some_and(|end| end.eq_ignore_ascii_case(b".html"));
+        let end = path.len().checked_sub(HTML.len());
+        let ends_in_html = end.is_some_and(|end| path[end..].eq_ignore_ascii_case(HTML));
         let loader = |extension| Loader::of_extension(extension, self.rules.loaders);
         (ends_in_html || self.has_other_page_extensions)
             && loader(PathName::init(path).ext) == Some(Loader::Html)

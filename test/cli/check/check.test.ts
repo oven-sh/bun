@@ -24222,6 +24222,7 @@ describe.concurrent("--check", () => {
         external: "./index.html",
         errors: ["main.ts(1,14) TS2322"],
       },
+      // A bundle holds this page, and does not name an installed script to the check. The check reads the page too.
       "a page whose script is in node_modules": {
         files: {
           "index.html": page("./node_modules/lib/index.ts"),

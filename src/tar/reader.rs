@@ -163,6 +163,15 @@ const FFLAGS_LIMIT: i64 = 512;
 const ENTRY_LIMIT: i64 = 0x0fff_ffff_ffff_ffff;
 const PAX_BODY_LIMIT: i64 = 1024 * 1024 * 1024;
 const PAX_LINE_LIMIT: i64 = 99_999_999;
+const NUMBER_LIMIT: i64 = 64;
+const TIME_LIMIT: i64 = 128;
+const SYMLINK_TYPE_LIMIT: i64 = 16;
+const CHARSET_LIMIT: i64 = 64;
+const XATTR_NAME_LIMIT: usize = 128;
+const SPARSE_VERSION_LIMIT: i64 = 10;
+const SPARSE_MAP_LINE_LIMIT: usize = 100;
+const LIBARCHIVE_XATTR: &[u8] = b"LIBARCHIVE.xattr.";
+const SCHILY_XATTR: &[u8] = b"SCHILY.xattr.";
 /// Longer than every key that is matched in full.
 const KEY_CAPACITY: usize = 32;
 
@@ -333,7 +342,7 @@ pub struct Reader {
     sparse_map_left: i64,
     sparse_map_entries: i64,
     sparse_map_offset: i64,
-    line: [u8; 100],
+    line: [u8; SPARSE_MAP_LINE_LIMIT],
     line_len: usize,
 
     // Never reset, so a header that leaves one out inherits it from an earlier entry.
@@ -390,7 +399,7 @@ impl Reader {
             sparse_map_left: 0,
             sparse_map_entries: 0,
             sparse_map_offset: 0,
-            line: [0; 100],
+            line: [0; SPARSE_MAP_LINE_LIMIT],
             line_len: 0,
             format: Format::Old,
             typeflag: 0,
@@ -687,7 +696,8 @@ impl Reader {
             }
 
             State::SparseMapLine(field) => {
-                let limit = usize::try_from(self.sparse_map_left.min(100)).unwrap_or(0);
+                let limit = self.sparse_map_left.min(SPARSE_MAP_LINE_LIMIT as i64);
+                let limit = usize::try_from(limit).unwrap_or(0);
                 for &c in input {
                     *used = used.saturating_add(1);
                     if self.line_len >= limit {
@@ -998,13 +1008,13 @@ impl Reader {
         use Value::{Collect as Take, Skip};
 
         let number = |which: Number| -> Result<Value> {
-            if length > 64 {
+            if length > NUMBER_LIMIT {
                 return Err(Error::MalformedPaxAttribute);
             }
             Ok(Take(Collect::Number(which)))
         };
         let time = |is_mtime: bool| -> Result<Value> {
-            if length > 128 {
+            if length > TIME_LIMIT {
                 return Err(Error::MalformedPaxAttribute);
             }
             Ok(Take(Collect::Time(is_mtime)))
@@ -1054,12 +1064,12 @@ impl Reader {
         } else if is(b"LIBARCHIVE.creationtime") || is(b"atime") || is(b"ctime") {
             time(false)?
         } else if is(b"LIBARCHIVE.symlinktype") {
-            if length < 16 {
+            if length < SYMLINK_TYPE_LIMIT {
                 Take(Collect::SymlinkType)
             } else {
                 Skip(Status::Warn)
             }
-        } else if (key.starts_with(b"LIBARCHIVE.xattr.") && self.pax_key_len > 17)
+        } else if (key.starts_with(LIBARCHIVE_XATTR) && self.pax_key_len > LIBARCHIVE_XATTR.len())
             || is(b"RHT.security.selinux")
         {
             warn_unless(length <= XATTR_LIMIT)
@@ -1076,8 +1086,9 @@ impl Reader {
             warn_unless(length < FFLAGS_LIMIT)
         } else if is(b"SCHILY.realsize") {
             number(Number::SchilyRealSize)?
-        } else if key.starts_with(b"SCHILY.xattr.") && self.pax_key_len > 13 {
-            warn_unless(length < XATTR_LIMIT && self.pax_key_len.saturating_sub(13) <= 128)
+        } else if key.starts_with(SCHILY_XATTR) && self.pax_key_len > SCHILY_XATTR.len() {
+            let name_len = self.pax_key_len.saturating_sub(SCHILY_XATTR.len());
+            warn_unless(length < XATTR_LIMIT && name_len <= XATTR_NAME_LIMIT)
         } else if is(b"SUN.holesdata") {
             if length < SPARSE_MAP_LIMIT {
                 Take(Collect::HolesData)
@@ -1093,7 +1104,7 @@ impl Reader {
                 Take(Collect::Text(Text::UserName))
             }
         } else if is(b"hdrcharset") {
-            if length < 64 {
+            if length < CHARSET_LIMIT {
                 Take(Collect::HeaderCharset)
             } else {
                 Skip(Status::Warn)
@@ -1248,8 +1259,8 @@ impl Reader {
                 self.gnu_sparse_size = value;
                 self.size_fields |= size_field::GNU_SPARSE_SIZE;
             }
-            Number::SparseMajor if value <= 10 => self.sparse_major = value,
-            Number::SparseMinor if value <= 10 => self.sparse_minor = value,
+            Number::SparseMajor if value <= SPARSE_VERSION_LIMIT => self.sparse_major = value,
+            Number::SparseMinor if value <= SPARSE_VERSION_LIMIT => self.sparse_minor = value,
             Number::SparseMajor | Number::SparseMinor | Number::Unused => {}
             Number::SparseRealSize => {
                 self.gnu_sparse_real_size = value;

@@ -8,6 +8,9 @@ use tables::{COMBINING_CLASSES, COMPOSING_BLOCKS, COMPOSITIONS};
 /// More combining marks than this on one character make the name count as unconvertible.
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_string.c#L2903
 const MAX_MARKS: usize = 10;
+/// The combining class that is exempt from the rule that classes rise.
+// https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_string.c#L3018
+const ABOVE_LEFT: u8 = 228;
 
 mod hangul {
     pub(super) const S_BASE: u32 = 0xAC00;
@@ -112,7 +115,7 @@ impl Marks {
                 return Some(());
             };
             let class = combining_class(c);
-            if self.last_class >= class && self.last_class != 228 && class != 228 {
+            if self.last_class >= class && self.last_class != ABOVE_LEFT && class != ABOVE_LEFT {
                 self.stopper = Some(class);
                 return Some(());
             }

@@ -14,15 +14,23 @@ mod flag {
 }
 
 const RAW_DEFLATE: core::ffi::c_int = -15;
+/// The two identification bytes, and the compression method, which is always DEFLATE.
+const MAGIC: [u8; 3] = [0x1f, 0x8b, 8];
+const FLAGS: usize = MAGIC.len();
+const FIXED_HEADER_SIZE: usize = 10;
+/// The length of the extra field, and the CRC-16 of the header.
+const SHORT_SIZE: usize = 2;
+/// The CRC-32 and the size.
+const TRAILER_SIZE: usize = 8;
 
-fn fixed_header_flags(fixed: &[u8; 10]) -> Option<u8> {
-    let flags = fixed[3];
-    (fixed.starts_with(&[0x1f, 0x8b, 8]) && flags & flag::RESERVED == 0).then_some(flags)
+fn fixed_header_flags(fixed: &[u8; FIXED_HEADER_SIZE]) -> Option<u8> {
+    let flags = fixed[FLAGS];
+    (fixed.starts_with(&MAGIC) && flags & flag::RESERVED == 0).then_some(flags)
 }
 
 /// Whether `data` starts like a gzip header. The optional fields are not looked at.
 pub(crate) fn starts_like_header(data: &[u8]) -> bool {
-    data.first_chunk::<10>()
+    data.first_chunk::<FIXED_HEADER_SIZE>()
         .is_some_and(|fixed| fixed_header_flags(fixed).is_some())
 }
 
@@ -69,7 +77,7 @@ pub struct Decoder {
     state: State,
     inflate: InflateDecoder,
     flags: u8,
-    small: [u8; 10],
+    small: [u8; FIXED_HEADER_SIZE],
     small_len: usize,
     /// How much of the current header is behind us.
     header_len: usize,
@@ -86,7 +94,7 @@ impl Decoder {
             state: State::Fixed,
             inflate: InflateDecoder::new(RAW_DEFLATE).map_err(|_| Error::Alloc(AllocError))?,
             flags: 0,
-            small: [0; 10],
+            small: [0; FIXED_HEADER_SIZE],
             small_len: 0,
             header_len: 0,
             header_spilled: false,
@@ -188,7 +196,7 @@ impl Decoder {
             State::Done => Ok(Some(Progress::Done)),
 
             State::Fixed => {
-                if !self.gather(10, input, used) {
+                if !self.gather(FIXED_HEADER_SIZE, input, used) {
                     return Ok(starved(self));
                 }
                 let Some(flags) = fixed_header_flags(&self.small) else {
@@ -200,7 +208,7 @@ impl Decoder {
                 Ok(None)
             }
             State::ExtraLength => {
-                if !self.gather(2, input, used) {
+                if !self.gather(SHORT_SIZE, input, used) {
                     return Ok(starved(self));
                 }
                 self.state = State::Extra(u16::from_le_bytes([self.small[0], self.small[1]]));
@@ -249,7 +257,7 @@ impl Decoder {
                 Ok(None)
             }
             State::HeaderCrc => {
-                if !self.gather(2, input, used) {
+                if !self.gather(SHORT_SIZE, input, used) {
                     return Ok(starved(self));
                 }
                 self.next_header_field(Field::Body);
@@ -287,7 +295,7 @@ impl Decoder {
                 }
             }
             State::Trailer => {
-                if !self.gather(8, input, used) {
+                if !self.gather(TRAILER_SIZE, input, used) {
                     if eof {
                         return Err(Error::TruncatedGzip);
                     }
@@ -332,7 +340,8 @@ impl<O: crate::writer::Output> Encoder<O> {
             1 => 4,
             _ => 0,
         };
-        buffer.extend_from_slice(&[0x1f, 0x8b, 8, 0, 0, 0, 0, 0, extra_flags, OS_UNKNOWN]);
+        buffer.extend_from_slice(&MAGIC);
+        buffer.extend_from_slice(&[0, 0, 0, 0, 0, extra_flags, OS_UNKNOWN]);
         Ok(Self {
             out,
             deflate: bun_zlib::DeflateEncoder::new(i32::from(level), RAW_DEFLATE, 8, 0)
@@ -376,7 +385,7 @@ impl<O: crate::writer::Output> Encoder<O> {
     pub fn finish(mut self) -> Result<O> {
         self.drive(&[], true)?;
         self.out.write(&self.buffer)?;
-        let mut trailer = [0u8; 8];
+        let mut trailer = [0u8; TRAILER_SIZE];
         trailer[..4].copy_from_slice(&self.crc.to_le_bytes());
         trailer[4..].copy_from_slice(&self.size.to_le_bytes());
         self.out.write(&trailer)?;

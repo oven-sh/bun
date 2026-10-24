@@ -60,6 +60,11 @@ const RECORD_SIZE: u64 = 10240;
 /// The last time that fits in eleven octal digits, which still gets a pax record.
 const USTAR_MTIME_MAX: i64 = (1 << 33) - 1;
 const USTAR_SIZE_END: u64 = 1 << 33;
+const MODE_DIGITS: usize = 6;
+const SIZE_DIGITS: usize = 11;
+const MTIME_DIGITS: usize = 11;
+/// As many as always fit in an `i64`.
+const MAX_OCTAL_DIGITS: usize = (i64::BITS / 3) as usize;
 /// A NUL and a space follow them.
 const CHECKSUM_DIGITS: Range<usize> = CHECKSUM.start..CHECKSUM.start + 6;
 static ZEROS: [u8; 1024] = [0; 1024];
@@ -259,7 +264,7 @@ fn byte_at(path: &[u8], index: usize) -> u8 {
 /// A stand-in for readers that do not know pax. `insert` becomes the last directory.
 fn ustar_entry_name(src: &[u8], insert: Option<&[u8]>) -> Vec<u8> {
     let insert_length = insert.map_or(0, |name| name.len().saturating_add(2));
-    if src.len() < 100 && insert.is_none() {
+    if src.len() < NAME.len() && insert.is_none() {
         return src.to_vec();
     }
 
@@ -285,7 +290,7 @@ fn ustar_entry_name(src: &[u8], insert: Option<&[u8]>) -> Vec<u8> {
         return dest;
     }
 
-    let mut suffix_length = if need_slash { 97usize } else { 98 };
+    let mut suffix_length = NAME.len() - 2 - usize::from(need_slash);
     let mut filename = filename_end.saturating_sub(1);
     while filename > 0 && byte_at(src, filename) != b'/' {
         filename = filename.saturating_sub(1);
@@ -308,7 +313,7 @@ fn ustar_entry_name(src: &[u8], insert: Option<&[u8]>) -> Vec<u8> {
         }
         end
     };
-    let prefix_end = directory_end(0, 154);
+    let prefix_end = directory_end(0, PREFIX.len() - 1);
     let suffix_end = directory_end(prefix_end, prefix_end.saturating_add(suffix_length));
 
     dest.extend_from_slice(src.get(..suffix_end).unwrap_or_default());
@@ -386,7 +391,7 @@ fn format_number(value: i64, field: &mut [u8], digits: usize, strict: bool) {
     }
     if value >= 0 {
         for width in digits..=field.len() {
-            if width >= 21 || value < 1i64 << width.saturating_mul(3) {
+            if width >= MAX_OCTAL_DIGITS || value < 1i64 << width.saturating_mul(3) {
                 return format_octal(value, field.get_mut(..width).unwrap_or_default());
             }
         }
@@ -428,19 +433,19 @@ fn format_header(fields: &Fields<'_>) -> Block {
     format_number(
         i64::from(fields.perm & 0o7777),
         &mut h[MODE],
-        6,
+        MODE_DIGITS,
         fields.strict,
     );
     format_number(
         i64::try_from(fields.size).unwrap_or(i64::MAX),
         &mut h[SIZE],
-        11,
+        SIZE_DIGITS,
         fields.strict,
     );
     format_number(
         fields.mtime,
-        &mut h[MTIME.start..MTIME.end - 1],
-        11,
+        &mut h[MTIME.start..MTIME.start + MTIME_DIGITS],
+        MTIME_DIGITS,
         fields.strict,
     );
     h[TYPEFLAG] = fields.typeflag;

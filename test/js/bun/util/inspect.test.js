@@ -1,4 +1,3 @@
-import { ptr, toArrayBuffer } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import {
   bunEnv,
@@ -288,13 +287,25 @@ it("BigIntArray", () => {
   }
 });
 
-it("TypedArray over memory that is not aligned for its elements", () => {
-  const view = new DataView(new ArrayBuffer(24));
-  const address = ptr(view);
-  const offset = address % 8 === 0 ? 1 : 0;
-  view.setFloat64(offset, 1.5, true);
-  view.setFloat64(offset + 8, -2, true);
-  expect(Bun.inspect(new Float64Array(toArrayBuffer(address + offset, 0, 16)))).toBe("Float64Array(2) [ 1.5, -2 ]");
+// Runs in a subprocess because this used to panic.
+it("TypedArray over memory that is not aligned for its elements", async () => {
+  const script = `
+    const { ptr, toArrayBuffer } = require("bun:ffi");
+    const view = new DataView(new ArrayBuffer(24));
+    const address = ptr(view);
+    const offset = address % 8 === 0 ? 1 : 0;
+    view.setFloat64(offset, 1.5, true);
+    view.setFloat64(offset + 8, -2, true);
+    console.log(new Float64Array(toArrayBuffer(address + offset, 0, 16)));
+    console.log(view.byteLength); // the memory is alive until here
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "Float64Array(2) [ 1.5, -2 ]\n24\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 for (let TypedArray of [Float32Array, Float64Array]) {
@@ -1446,6 +1457,30 @@ it("a native object that refers to itself more than once", () => {
   decoder.first = decoder;
   decoder.second = decoder;
   expect(Bun.inspect(decoder)).toStartWith("TextDecoder {\n  first: [Circular],\n  second: [Circular],\n");
+});
+
+it("a Map or Set whose size is not a number", () => {
+  const set = new Set([1]);
+  Object.defineProperty(set, "size", { value: Symbol("size") });
+  expect(Bun.inspect(set)).toBe("Set {}");
+  const map = new Map([[1, 2]]);
+  Object.defineProperty(map, "size", { value: Symbol("size") });
+  expect(Bun.inspect(map)).toBe("Map {}");
+});
+
+it("a Map key that throws while it is printed", () => {
+  const key = {
+    [Bun.inspect.custom]() {
+      throw new Error("from the key");
+    },
+  };
+  expect(() => Bun.inspect(new Map([[key, {}]]))).toThrow("from the key");
+});
+
+it("a FormData whose toJSON is not callable", () => {
+  const formData = new FormData();
+  Object.defineProperty(formData, "toJSON", { value: 42 });
+  expect(Bun.inspect(formData)).toStartWith("FormData {\n  toJSON: 42,\n");
 });
 
 // Runs in a subprocess because a native stack overflow would kill the test runner.

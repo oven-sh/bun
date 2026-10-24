@@ -470,6 +470,11 @@ Headers {
 `);
 });
 
+test("a Map key that throws while it is printed", () => {
+  const key = new Proxy({ a: 1n }, {});
+  expect(() => expect(new Map([[key, {}]])).toEqual(1)).toThrow("JSON.stringify cannot serialize BigInt");
+});
+
 test("asymmetric matchers", () => {
   expect([
     expect.any(Number),

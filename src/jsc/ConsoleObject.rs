@@ -2736,12 +2736,14 @@ pub mod formatter {
 
     const INDENTATION_BUF: [u8; 64] = [b' '; 64];
 
-    /// How many levels of indent to write: `pretty_format` stops at 32. A macro so that it only
-    /// reads the two fields, which a live `WrappedWriter` does not borrow.
+    const PRETTY_FORMAT_MAX_INDENT: u32 = 32;
+
+    /// How many levels of indent to write. A macro so that it only reads the two fields, which a
+    /// live `WrappedWriter` does not borrow.
     macro_rules! indent_width {
         ($formatter:expr) => {
             if $formatter.pretty_format {
-                $formatter.indent.min(32)
+                $formatter.indent.min(PRETTY_FORMAT_MAX_INDENT)
             } else {
                 $formatter.indent
             }
@@ -4758,20 +4760,21 @@ pub mod formatter {
             self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event)
         }
 
+        /// The `size` of a `Map` or `Set`, which a subclass or an own property can replace.
+        fn collection_size(&self, value: JSValue) -> JsResult<i32> {
+            match value.get(self.global_this, "size")? {
+                Some(size) if size.is_number() => size.coerce_to_i32(self.global_this),
+                _ => Ok(0),
+            }
+        }
+
         #[inline(never)]
         fn print_map_like<const C: bool, const _UNUSED: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let length_value = value
-                .get(self.global_this, "size")?
-                .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = if length_value.is_number() {
-                length_value.coerce_to_i32(self.global_this)?
-            } else {
-                0
-            };
+            let length = self.collection_size(value)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -4920,14 +4923,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let length_value = value
-                .get(self.global_this, "size")?
-                .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-            let length = if length_value.is_number() {
-                length_value.coerce_to_i32(self.global_this)?
-            } else {
-                0
-            };
+            let length = self.collection_size(value)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -5792,10 +5788,10 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            let array_buffer = value.as_array_buffer(self.global_this).unwrap();
-            let slice = array_buffer.byte_slice();
             let is_buffer = js_type == jsc::JSType::Uint8Array
                 && value.get_class_name(self.global_this)?.eq_ascii(b"Buffer");
+            let array_buffer = value.as_array_buffer(self.global_this).unwrap();
+            let slice = array_buffer.byte_slice();
             let on_its_own_lines = self.indent == 0 && (is_buffer || !slice.is_empty());
             let mut writer = WrappedWriter {
                 ctx: writer_,

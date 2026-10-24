@@ -1657,6 +1657,42 @@ describe("a body made from an S3 file", () => {
     });
   }
 
+  test.concurrent(
+    "Bun.inspect() prints no size for the object, the size of a slice, and sends no request",
+    async () => {
+      const object = await store(payload);
+      const firstLine = (subject: Request | Response) => Bun.inspect(subject).split("\n")[0];
+      expect({
+        object: [firstLine(toRequest(object.file())), firstLine(await toResponse(object.file()))],
+        slice: [
+          firstLine(toRequest(object.file().slice(10, 30))),
+          firstLine(await toResponse(object.file().slice(10, 30))),
+        ],
+        ranges: object.ranges(),
+      }).toEqual({
+        object: ["Request {", "Response {"],
+        slice: ["Request (20 bytes) {", "Response (20 bytes) {"],
+        ranges: [],
+      });
+    },
+  );
+
+  // GET sends none of the object for a Response whose body is an S3 blob. A slice knows its size, and HEAD has to agree with GET.
+  test.concurrent("Bun.serve: HEAD for a slice of an S3 file reports the length that GET sends", async () => {
+    const object = await store(payload);
+    await using app = Bun.serve({
+      port: 0,
+      fetch: () => toResponse(object.file().slice(10, 30)),
+    });
+    const head = await fetch(app.url, { method: "HEAD" });
+    const rangesForHead = object.ranges();
+    const get = await fetch(app.url);
+    expect({ head: head.headers.get("content-length"), rangesForHead }).toEqual({
+      head: get.headers.get("content-length"),
+      rangesForHead: [],
+    });
+  });
+
   test.concurrent("new Request(request) downloads the whole object", async () => {
     const object = await store(payload);
     const request = toRequest(object.file());

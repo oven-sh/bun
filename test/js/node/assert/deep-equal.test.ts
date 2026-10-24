@@ -66,6 +66,51 @@ function withHiddenProperty<T extends object>(object: T, key: PropertyKey, value
   return Object.defineProperty(object, key, { value, writable: true, configurable: true });
 }
 
+function aggregate(...messages: string[]) {
+  return new AggregateError(
+    messages.map(message => new Error(message)),
+    "agg",
+  );
+}
+
+/** On an AggregateError this keeps `errors` non-enumerable. On any other error it adds an enumerable property. */
+function withErrors<T extends Error>(error: T, errors: unknown): T {
+  return Object.assign(error, { errors });
+}
+
+function withoutErrors<T extends Error>(error: T): T {
+  Reflect.deleteProperty(error, "errors");
+  return error;
+}
+
+class ErrorsFromPrototype extends Error {
+  declare values: unknown;
+  constructor(values: unknown) {
+    super("x");
+    withHiddenProperty(this, "values", values);
+  }
+  get errors() {
+    return this.values;
+  }
+}
+
+function selfAggregate() {
+  const error = new AggregateError([], "x");
+  error.errors.push(error);
+  return error;
+}
+
+const inheritedUndefinedErrors = Object.create(Error.prototype, { errors: { value: undefined, enumerable: true } });
+function withInheritedUndefinedErrors() {
+  return Object.setPrototypeOf(new Error("x"), inheritedUndefinedErrors);
+}
+
+class InheritedErrorsGetter extends Error {}
+Object.defineProperty(InheritedErrorsGetter.prototype, "errors", { get: () => [1], enumerable: true });
+
+class InheritedErrors extends Error {}
+Object.defineProperty(InheritedErrors.prototype, "errors", { value: [1], enumerable: true });
+
 function withOwnConstructor(prototype: object | null, constructor: unknown) {
   return Object.create(prototype, { constructor: { value: constructor } });
 }
@@ -728,6 +773,287 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  {
+    name: "AggregateErrors whose inner AggregateErrors differ",
+    a: () => new AggregateError([aggregate("x")], "agg"),
+    b: () => new AggregateError([aggregate("y")], "agg"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "AggregateErrors whose errors differ in a nested cause",
+    a: () => new AggregateError([new Error("x", { cause: 1 })], "agg"),
+    b: () => new AggregateError([new Error("x", { cause: 2 })], "agg"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error without errors and one with hidden errors",
+    a: () => new Error("x"),
+    b: () => withHiddenProperty(new Error("x"), "errors", [1]),
+    strict: false,
+    loose: false,
+  },
+  // Unlike `cause`, Node does not tell a missing `errors` from an undefined one.
+  {
+    name: "an error with hidden undefined errors and one without",
+    a: () => withHiddenProperty(new Error("x"), "errors", undefined),
+    b: () => new Error("x"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "an AggregateError without errors and one with them",
+    a: () => withoutErrors(aggregate("x")),
+    b: () => aggregate("x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an AggregateError with errors and one without them",
+    a: () => aggregate("x"),
+    b: () => withoutErrors(aggregate("x")),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two AggregateErrors without errors",
+    a: () => withoutErrors(aggregate("x")),
+    b: () => withoutErrors(aggregate("y")),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "AggregateErrors with undefined errors and without errors",
+    a: () => withErrors(aggregate("x"), undefined),
+    b: () => withoutErrors(aggregate("x")),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "AggregateErrors with errors reassigned to different arrays",
+    a: () => withErrors(aggregate("x"), [1]),
+    b: () => withErrors(aggregate("x"), [2]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "AggregateErrors with errors reassigned to equal arrays",
+    a: () => withErrors(aggregate("x"), [1]),
+    b: () => withErrors(aggregate("y"), [1]),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with different errors from a prototype getter",
+    a: () => new ErrorsFromPrototype([1]),
+    b: () => new ErrorsFromPrototype([2]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "errors with equal errors from a prototype getter",
+    a: () => new ErrorsFromPrototype([1]),
+    b: () => new ErrorsFromPrototype([1]),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with equal own enumerable errors",
+    a: () => withErrors(new Error("x"), [{ path: "a" }]),
+    b: () => withErrors(new Error("x"), [{ path: "a" }]),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with different own enumerable errors",
+    a: () => withErrors(new Error("x"), [{ path: "a" }]),
+    b: () => withErrors(new Error("x"), [{ path: "b" }]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "hidden errors and equal enumerable errors",
+    a: () => withHiddenProperty(new Error("x"), "errors", [1]),
+    b: () => withErrors(new Error("x"), [1]),
+    strict: false,
+    loose: false,
+  },
+  // Legacy deepEqual walks the enumerable properties of an Error as Bun.deepEquals does: a hidden
+  // or inherited property can match an enumerable one. Node wants each key own and enumerable on both sides.
+  {
+    name: "enumerable errors and equal hidden errors",
+    a: () => withErrors(new Error("x"), [1]),
+    b: () => withHiddenProperty(new Error("x"), "errors", [1]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "hidden errors with enumerable foo, and enumerable errors with hidden foo",
+    a: () => Object.assign(withHiddenProperty(new Error("x"), "errors", [1]), { foo: 1 }),
+    b: () => withHiddenProperty(withErrors(new Error("x"), [2]), "foo", 1),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "enumerable errors with hidden foo, and hidden errors with enumerable foo",
+    a: () => withHiddenProperty(withErrors(new Error("x"), [1]), "foo", 1),
+    b: () => Object.assign(withHiddenProperty(new Error("x"), "errors", [1]), { foo: 1 }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "enumerable foo with hidden bar, and hidden foo with enumerable bar",
+    a: () => withHiddenProperty(Object.assign(new Error("x"), { foo: 1 }), "bar", 1),
+    b: () => Object.assign(withHiddenProperty(new Error("x"), "foo", 1), { bar: 1 }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with inherited undefined errors and one with an own property",
+    a: withInheritedUndefinedErrors,
+    b: () => Object.assign(new Error("x"), { foo: 1 }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with inherited undefined errors and one without errors",
+    a: withInheritedUndefinedErrors,
+    b: () => new Error("x"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with an inherited errors getter and different own keys",
+    a: () => Object.assign(new InheritedErrorsGetter("x"), { a: 1 }),
+    b: () => Object.assign(new InheritedErrorsGetter("x"), { a: 1, b: 2 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "errors with an inherited errors getter and the same own keys",
+    a: () => Object.assign(new InheritedErrorsGetter("x"), { a: 1 }),
+    b: () => Object.assign(new InheritedErrorsGetter("x"), { a: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "hidden errors and equal inherited enumerable errors",
+    a: () => withHiddenProperty(new Error("x"), "errors", [1]),
+    b: () => new InheritedErrors("x"),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "inherited enumerable errors and equal hidden errors",
+    a: () => new InheritedErrors("x"),
+    b: () => withHiddenProperty(new Error("x"), "errors", [1]),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "two AggregateErrors that hold themselves",
+    a: selfAggregate,
+    b: selfAggregate,
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "an AggregateError that holds itself and a finite copy",
+    a: selfAggregate,
+    b: () => new AggregateError([new AggregateError([], "x")], "x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "objects holding AggregateErrors with different errors",
+    a: () => ({ key: aggregate("x") }),
+    b: () => ({ key: aggregate("y") }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "arrays holding AggregateErrors with different errors",
+    a: () => [aggregate("x")],
+    b: () => [aggregate("y")],
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "maps keyed by AggregateErrors with different errors",
+    a: () => new Map([[aggregate("x"), 1]]),
+    b: () => new Map([[aggregate("y"), 1]]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "maps holding AggregateErrors with different errors",
+    a: () => new Map([[1, aggregate("x")]]),
+    b: () => new Map([[1, aggregate("y")]]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "sets holding AggregateErrors with different errors",
+    a: () => new Set([aggregate("x")]),
+    b: () => new Set([aggregate("y")]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "errors caused by AggregateErrors with different errors",
+    a: () => new Error("x", { cause: aggregate("x") }),
+    b: () => new Error("x", { cause: aggregate("y") }),
+    strict: false,
+    loose: false,
+  },
+  // Legacy deepEqual compares the values inside `errors` with the rules of Bun.deepEquals, not with Node's `==`.
+  {
+    name: "AggregateErrors with errors [1] and ['1']",
+    a: () => new AggregateError([1], "agg"),
+    b: () => new AggregateError(["1"], "agg"),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "AggregateErrors with errors [null] and [undefined]",
+    a: () => new AggregateError([null], "agg"),
+    b: () => new AggregateError([undefined], "agg"),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "AggregateErrors with errors [{ a: 1 }] and [{ a: '1' }]",
+    a: () => new AggregateError([{ a: 1 }], "agg"),
+    b: () => new AggregateError([{ a: "1" }], "agg"),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "AggregateErrors whose errors have causes 1 and '1'",
+    a: () => new AggregateError([new Error("x", { cause: 1 })], "agg"),
+    b: () => new AggregateError([new Error("x", { cause: "1" })], "agg"),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "AggregateErrors with errors [undefined] and []",
+    a: () => new AggregateError([undefined], "agg"),
+    b: () => new AggregateError([], "agg"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
 
   // Map and Set.
   {
@@ -1077,6 +1403,11 @@ describe("util.isDeepStrictEqual", () => {
       ["Map value", () => new Map([["k", new Foo(1)]]), () => new Map([["k", new Bar(1)]])],
       ["Set element", () => new Set([new Foo(1)]), () => new Set([new Bar(1)])],
       ["Error cause", () => new Error("e", { cause: new Foo(1) }), () => new Error("e", { cause: new Bar(1) })],
+      [
+        "AggregateError errors",
+        () => new AggregateError([new Foo(1)], "m"),
+        () => new AggregateError([new Bar(1)], "m"),
+      ],
     ])("propagates through %s", (_name, makeA, makeB) => {
       expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
       expect(util.isDeepStrictEqual(makeA(), makeB(), true as any)).toBe(true);
@@ -1097,6 +1428,204 @@ describe("util.isDeepStrictEqual", () => {
     test("does not leak into assert.deepStrictEqual", () => {
       expect(() => assert.deepStrictEqual(new Foo(42), new Bar(42))).toThrow();
     });
+  });
+});
+
+// Each log below is the order in which Node v26.3.0 reads `errors`.
+describe("the errors of an Error", () => {
+  function withErrorsGetter(error: Error, side: string, log: string[], enumerable: boolean) {
+    return Object.defineProperty(error, "errors", { get: () => (log.push(side), [1]), enumerable, configurable: true });
+  }
+
+  // A getter that replaces itself with an own value property when it is read.
+  function withReplacedErrorsGetter(
+    side: string,
+    log: string[],
+    getter: { enumerable: boolean },
+    replacement: { value: unknown; enumerable: boolean },
+  ) {
+    return Object.defineProperty(new Error("x"), "errors", {
+      get(this: Error) {
+        log.push(side);
+        Object.defineProperty(this, "errors", { ...replacement, writable: true, configurable: true });
+        return [1];
+      },
+      enumerable: getter.enumerable,
+      configurable: true,
+    });
+  }
+
+  // The second function of each entry passes when the operands differ. A failed assertion would read
+  // the enumerable getters once more to build its message.
+  describe.each([
+    [
+      "util.isDeepStrictEqual",
+      (a: unknown, b: unknown) => expect(util.isDeepStrictEqual(a, b)).toBe(true),
+      (a: unknown, b: unknown) => expect(util.isDeepStrictEqual(a, b)).toBe(false),
+      false,
+    ],
+    ["assert.deepStrictEqual", assert.deepStrictEqual, assert.notDeepStrictEqual, false],
+    ["assert.deepEqual", assert.deepEqual, assert.notDeepEqual, true],
+  ] as const)("%s", (_name, equal, notEqual, legacy) => {
+    // Legacy deepEqual walks the enumerable properties of an Error as Bun.deepEquals does, so it
+    // differs from Node when `errors` is enumerable on one side only, or inherited.
+    const testWithLegacyBug = legacy ? test.failing : test;
+
+    test("reads hidden errors once per side", () => {
+      const log: string[] = [];
+      equal(
+        withErrorsGetter(new Error("x"), "actual", log, false),
+        withErrorsGetter(new Error("x"), "expected", log, false),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("reads own enumerable errors once per side", () => {
+      const log: string[] = [];
+      equal(
+        withErrorsGetter(new Error("x"), "actual", log, true),
+        withErrorsGetter(new Error("x"), "expected", log, true),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    testWithLegacyBug("reads inherited enumerable errors once per side", () => {
+      const log: string[] = [];
+      class Inherited extends Error {
+        declare side: string;
+      }
+      Object.defineProperty(Inherited.prototype, "errors", {
+        get(this: Inherited) {
+          log.push(this.side);
+          return [1];
+        },
+        enumerable: true,
+        configurable: true,
+      });
+      equal(
+        withHiddenProperty(new Inherited("x"), "side", "actual"),
+        withHiddenProperty(new Inherited("x"), "side", "expected"),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    testWithLegacyBug("rejects enumerable errors on the expected error only, and reads neither", () => {
+      const log: string[] = [];
+      notEqual(
+        withErrorsGetter(new Error("x"), "actual", log, false),
+        withErrorsGetter(new Error("x"), "expected", log, true),
+      );
+      expect(log).toEqual([]);
+    });
+
+    testWithLegacyBug("rejects enumerable errors on the actual error only, after it reads both", () => {
+      const log: string[] = [];
+      notEqual(
+        withErrorsGetter(new Error("x"), "actual", log, true),
+        withErrorsGetter(new Error("x"), "expected", log, false),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    // Node decides whether to read `errors` before the getters run, and counts the keys after.
+    test("accepts getters that both become own enumerable values, on each call", () => {
+      const log: string[] = [];
+      const actual = withReplacedErrorsGetter("actual", log, { enumerable: false }, { value: [1], enumerable: true });
+      const expected = withReplacedErrorsGetter(
+        "expected",
+        log,
+        { enumerable: false },
+        { value: [1], enumerable: true },
+      );
+      equal(actual, expected);
+      equal(actual, expected);
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    testWithLegacyBug("rejects a getter that becomes an own enumerable value on the actual error only", () => {
+      const log: string[] = [];
+      notEqual(
+        withReplacedErrorsGetter("actual", log, { enumerable: false }, { value: [1], enumerable: true }),
+        withReplacedErrorsGetter("expected", log, { enumerable: false }, { value: [1], enumerable: false }),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("rejects a getter that becomes an own enumerable value on the expected error only", () => {
+      const log: string[] = [];
+      notEqual(
+        withReplacedErrorsGetter("actual", log, { enumerable: false }, { value: [1], enumerable: false }),
+        withReplacedErrorsGetter("expected", log, { enumerable: false }, { value: [1], enumerable: true }),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("accepts an enumerable getter on the actual error that becomes a hidden value", () => {
+      const log: string[] = [];
+      equal(
+        withReplacedErrorsGetter("actual", log, { enumerable: true }, { value: [1], enumerable: false }),
+        withReplacedErrorsGetter("expected", log, { enumerable: false }, { value: [1], enumerable: false }),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("rejects getters that become different own enumerable values", () => {
+      const log: string[] = [];
+      notEqual(
+        withReplacedErrorsGetter("actual", log, { enumerable: false }, { value: [1], enumerable: true }),
+        withReplacedErrorsGetter("expected", log, { enumerable: false }, { value: [2], enumerable: true }),
+      );
+      expect(log).toEqual(["actual", "expected"]);
+    });
+
+    test("does not read errors when the messages differ", () => {
+      const log: string[] = [];
+      notEqual(
+        withErrorsGetter(new Error("x"), "actual", log, false),
+        withErrorsGetter(new Error("y"), "expected", log, false),
+      );
+      expect(log).toEqual([]);
+    });
+
+    test("throws what an errors getter throws", () => {
+      const thrown = new RangeError("from the getter");
+      const throwing = () =>
+        Object.defineProperty(new Error("x"), "errors", {
+          get() {
+            throw thrown;
+          },
+          configurable: true,
+        });
+      expect(caught(() => equal(throwing(), throwing()))).toBe(thrown);
+      expect(caught(() => notEqual(throwing(), throwing()))).toBe(thrown);
+    });
+  });
+
+  test("util.isDeepStrictEqual compares errors when it skips prototypes", () => {
+    expect(util.isDeepStrictEqual(aggregate("x"), aggregate("y"), true as any)).toBe(false);
+    expect(util.isDeepStrictEqual(aggregate("x"), aggregate("x"), true as any)).toBe(true);
+  });
+
+  test("assert.throws compares the errors of a cause in its validation object", () => {
+    const thrower = () => {
+      throw new Error("x", { cause: aggregate("x") });
+    };
+    assert.throws(thrower, { cause: aggregate("x") });
+    expect(caught(() => assert.throws(thrower, { cause: aggregate("y") }))?.code).toBe("ERR_ASSERTION");
+  });
+
+  test("assert.deepEqual does not call a replaced Bun.deepEquals", () => {
+    const bun = Bun as { deepEquals: unknown };
+    const original = bun.deepEquals;
+    let calls = 0;
+    bun.deepEquals = () => (calls++, false);
+    try {
+      assert.deepEqual({ a: 1 }, { a: 1 });
+      assert.notDeepEqual({ a: 1 }, { a: 2 });
+    } finally {
+      bun.deepEquals = original;
+    }
+    expect(calls).toBe(0);
   });
 });
 

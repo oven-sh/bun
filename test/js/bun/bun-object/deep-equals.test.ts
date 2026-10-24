@@ -59,6 +59,29 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(foo, baz)).toBe(false);
   });
 
+  // node:assert and node:util compare `errors` on their own entry points (test/js/node/assert/deep-equal.test.ts).
+  it("does not read the errors of an AggregateError", () => {
+    let reads = 0;
+    const make = (message: string) =>
+      Object.defineProperty(new AggregateError([], "m"), "errors", {
+        get: () => (reads++, [new TypeError(message)]),
+        configurable: true,
+      });
+    expect(
+      deepEquals(new AggregateError([new TypeError("a")], "m"), new AggregateError([new TypeError("b")], "m")),
+    ).toBe(true);
+    expect(deepEquals(make("a"), make("b"))).toBe(true);
+    // The fourth argument is not in the public types.
+    const withSkipPrototype = Bun.deepEquals as (
+      a: unknown,
+      b: unknown,
+      strict?: boolean,
+      skipPrototype?: boolean,
+    ) => boolean;
+    expect(withSkipPrototype(make("a"), make("b"), strict, true)).toBe(true);
+    expect(reads).toBe(0);
+  });
+
   describe("global object", () => {
     let contexts: [vm.Context, vm.Context];
 

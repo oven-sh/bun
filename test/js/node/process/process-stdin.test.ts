@@ -593,14 +593,17 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
 
   // Each step waits for `marker` on the child's stdout (if any), then writes `input`.
   // With `end: false` stdin stays open, so the child has to exit by itself.
-  // With `shellPipe` the child's stdin is an anonymous pipe that `cat` writes to, not a socket.
+  // With `shellPipe` the child's stdin is an anonymous pipe, not a socket. The writer is not `cat`:
+  // busybox `cat` uses sendfile(), which locks the pipe while it waits for input and stalls the reader.
   async function run(
     script: string,
     steps: [marker: string | null, input: string][],
     { end = true, shellPipe = false } = {},
   ) {
     await using proc = Bun.spawn({
-      cmd: shellPipe ? ["sh", "-c", 'cat | "$0" -e "$1"', bunExe(), script] : [bunExe(), "-e", script],
+      cmd: shellPipe
+        ? ["sh", "-c", '"$0" -e "$2" | "$0" -e "$1"', bunExe(), script, "process.stdin.pipe(process.stdout)"]
+        : [bunExe(), "-e", script],
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

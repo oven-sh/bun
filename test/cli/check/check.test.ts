@@ -24509,6 +24509,36 @@ describe.concurrent("--check", () => {
       expect([followedIn(checked.stderr), checked.exitCode]).toEqual([bundled, 1]);
     });
 
+    // A bundle gives a file that two imports name the loader of the first. The name of the file does not decide.
+    test("the check of a bundle follows a file under two `type`s as the bundle loads it", async () => {
+      const twice = (first: string, second: string) =>
+        server(
+          `import a from "./page.tmpl" with { type: "${first}" };\n` +
+            `import b from "./page.tmpl" with { type: "${second}" };`,
+          ["a", "b"],
+        );
+      using dir = project({
+        "tmpl.d.ts": pattern("*.tmpl"),
+        "page.tmpl": page("./main.ts"),
+        "main.ts": wrong,
+        "text-first.ts": twice("text", "html"),
+        "page-first.ts": twice("html", "text"),
+      });
+      const entries = ["text-first.ts", "page-first.ts"];
+      const bundle = (entry: string, outdir: string, flags: string[] = []) =>
+        run(String(dir), ["build", ...flags, "--target=bun", entry, "--outdir", `${outdir}-${entry}`]);
+      const [built, checked] = await Promise.all([
+        Promise.all(entries.map(entry => bundle(entry, "out"))),
+        Promise.all(entries.map(entry => bundle(entry, "checked", ["--check"]))),
+      ]);
+      expect(built.map(it => it.exitCode)).toEqual([0, 0]);
+      const hasPage = entries.map(entry => existsSync(join(String(dir), `out-${entry}`, "page.html")));
+      expect(hasPage).toContain(true);
+      expect(checked.map(it => [errorsOf(`${it.stdout}\n${it.stderr}`), it.exitCode])).toEqual(
+        hasPage.map(has => (has ? [["main.ts(1,14) TS2322"], 1] : [[], 0])),
+      );
+    });
+
     // JavaScript is read for what it imports, also where its errors are not reported.
     test("a page and a template that JavaScript imports", async () => {
       using dir = project({

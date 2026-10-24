@@ -862,7 +862,7 @@ pub trait ListedProjects: Sync {
 pub struct PageRules<'a> {
     /// The loader of each extension, as `--loader` sets it (`bun_ast::Loader::of_extension`).
     pub loaders: &'a bun_ast::LoaderHashTable,
-    /// The files that have the name of a page and that a bundle loads in another way. In the checker's format.
+    /// The files that an import asks for as a page and that a bundle loads in another way. In the checker's format.
     pub not_pages: &'a [Vec<u8>],
 }
 

@@ -1156,18 +1156,13 @@ for (let credentials of allCredentials) {
             }),
           );
         });
-        it("should error with invalid endpoint", async () => {
+        // Local server only: sent to Amazon S3 by the R2 group, it got no answer in about 1 CI build of 150 (#46609).
+        it.skipIf(credentials.service !== "s3-server")("should error with a bucket in another region", async () => {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
               try {
-                const s3file =
-                  credentials.service === "s3-server"
-                    ? // The bucket is in another region than the endpoint.
-                      fn("s3://buntest-us-west-1/credentials-test", s3Options)
-                    : fn("s3://bucket/credentials-test", {
-                        ...s3Options, // credentials and endpoint dont match
-                        endpoint: "s3.us-west-1.amazonaws.com",
-                      });
+                // The bucket is in another region than the endpoint.
+                const s3file = fn("s3://buntest-us-west-1/credentials-test", s3Options);
                 await s3file.write("Hello Bun!");
                 expect.unreachable();
               } catch (e: any) {

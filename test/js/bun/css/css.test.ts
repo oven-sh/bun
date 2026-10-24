@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
+  attrTest,
   cssTest,
   cssTestTodo,
   indoc,
@@ -132,6 +133,95 @@ describe("css tests", () => {
     // here and is left as written.
     minify_test(":root{--a: rgb(4.7% 13.3% 22% / var(--alpha))}", ":root{--a:rgb(12 34 56/var(--alpha))}");
     minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12,34,56,var(--alpha))}");
+  });
+
+  describe("star hack", () => {
+    // `*property: value` is the IE 6/7 star hack. A browser drops it. It is
+    // kept as written, like an unknown property.
+    minify_test(".clearfix { *zoom: 1 }", ".clearfix{*zoom:1}");
+    minify_test(
+      ".a { display: inline-block; *display: inline; *zoom: 1; color: red }",
+      ".a{display:inline-block;*display:inline;*zoom:1;color:red}",
+    );
+    minify_test(".a { *zoom : 1 ; }", ".a{*zoom:1}");
+    minify_test(".a { *zoom: 1 !important }", ".a{*zoom:1!important}");
+    minify_test(".a { *margin-right: .3em }", ".a{*margin-right:.3em}");
+    minify_test(
+      ".a { *zoom: expression(this.runtimeStyle.zoom='1') }",
+      '.a{*zoom:expression(this.runtimeStyle.zoom="1")}',
+    );
+    cssTest(".a{*zoom:1;color:red}", ".a {\n  *zoom: 1;\n  color: red;\n}\n");
+
+    // Style rules, keyframe blocks, `@page`, `@viewport` and a style
+    // attribute take it.
+    minify_test(".a { color: red; .b { *zoom: 1 } }", ".a{color:red;& .b{*zoom:1}}");
+    minify_test("@media screen { .a { *zoom: 1 } }", "@media screen{.a{*zoom:1}}");
+    minify_test(
+      "@keyframes k { from { *zoom: 1; top: 1px } to { top: 2px } }",
+      "@keyframes k{0%{*zoom:1;top:1px}to{top:2px}}",
+    );
+    minify_test("@page { *zoom: 1; margin: 1px }", "@page{*zoom:1;margin:1px}");
+    minify_test("@page { @top-left { *zoom: 1; margin: 1px } }", "@page{@top-left{*zoom:1;margin:1px}}");
+    minify_test("@viewport { *zoom: 1; width: 1px }", "@viewport{*zoom:1;width:1px}");
+    test("style attribute", () => {
+      expect(attrTest("*zoom: 1; color: red", "", true)).toBe("*zoom:1;color:red");
+      expect(attrTest("color: red; *zoom: 1 !important", "", false)).toBe("color: red; *zoom: 1 !important");
+    });
+
+    // It is not `zoom`: neither declaration replaces the other.
+    minify_test(".a { zoom: 1; *zoom: 2; zoom: 3 }", ".a{zoom:1;*zoom:2;zoom:3}");
+    minify_test(".a { zoom: 1 } .b { color: red } .a { *zoom: 2 }", ".a{zoom:1}.b{color:red}.a{*zoom:2}");
+    minify_test(
+      ".a { zoom: 1 } .b { color: red } .a { *zoom: 2 !important }",
+      ".a{zoom:1}.b{color:red}.a{*zoom:2!important}",
+    );
+    minify_test(
+      ".a { zoom: 1 !important } .b { color: red } .a { *zoom: 2 }",
+      ".a{zoom:1!important}.b{color:red}.a{*zoom:2}",
+    );
+    minify_test(
+      ".a { float: left } .b { color: red } .a { *display: inline !important }",
+      ".a{float:left}.b{color:red}.a{*display:inline!important}",
+    );
+    minify_test(
+      ".a { *zoom: 1 } .b { color: red } .a { *display: inline }",
+      ".a{*zoom:1}.b{color:red}.a{*display:inline}",
+    );
+    // A rule that holds a star hack is never taken for a duplicate.
+    minify_test(".a { *zoom: 1 } .b { color: red } .a { *zoom: 2 }", ".a{*zoom:1}.b{color:red}.a{*zoom:2}");
+
+    // Like `_width`, it is printed ahead of a property that a shorthand
+    // handler holds.
+    minify_test(".a { width: 1px; *width: 2px; height: 3px }", ".a{*width:2px;width:1px;height:3px}");
+    minify_test(".a { width: 1px; _width: 2px; height: 3px }", ".a{_width:2px;width:1px;height:3px}");
+
+    // The name is printed as written. The identifier `\*zoom` is not the hack
+    // and keeps its escape.
+    minify_test(".a { *zo\\6Fm: 1 }", ".a{*zo\\6Fm:1}");
+    minify_test(".a { \\*zoom: 1 }", ".a{\\*zoom:1}");
+
+    // A nested rule that starts with `*` is a rule.
+    minify_test(".a { *:hover { color: red } }", ".a{& :hover{color:red}}");
+    minify_test(".a { * { color: red } }", ".a{& *{color:red}}");
+
+    // `@font-face` is unchanged: it keeps `_src` and drops `*src`.
+    minify_test("@font-face { font-family: x; *src: url(a.woff) }", "@font-face{font-family:x}");
+    minify_test("@font-face { font-family: x; _src: url(a.woff) }", "@font-face{font-family:x;_src:url(a.woff)}");
+
+    for (const [source, error] of [
+      [".a { * zoom: 1 }", "Unexpected end of input"],
+      [".a { *--x: 1 }", "Unexpected end of input"],
+      [".a { *zoom 1 }", "Unexpected end of input"],
+      [".a { *zoom: 1 { color: red } }", "Unexpected token: zoom"],
+      [".a { *zoom: 1 !ie }", "Unexpected end of input"],
+      ["*zoom: 1; .a { color: red }", "Unexpected token: zoom"],
+      ["@media screen { *zoom: 1; .a { color: red } }", "Unexpected token: zoom"],
+      ["@property --x { syntax: '*'; inherits: false; *zoom: 1 }", "Unexpected token: *"],
+    ]) {
+      test(`ERROR: ${source}`, () => {
+        expect(() => minify_test_with_options(source, "")).toThrow(`parsing failed: ${error}`);
+      });
+    }
   });
 
   describe("pseudo-class edge case", () => {

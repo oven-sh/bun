@@ -2315,4 +2315,155 @@ c {
       "/across-files-url.css",
     ],
   });
+  // The IE 6/7 star hack. Old third-party stylesheets have it, and a browser
+  // reads past it without an error.
+  const starHack = {
+    "/entry.css": /* css */ `
+      @import "./clearfix.css";
+      .inline-block { display: inline-block; *display: inline; *zoom: 1 }
+    `,
+    "/clearfix.css": /* css */ `.clearfix { *zoom: 1 }`,
+  };
+  itBundled("css/StarHack", {
+    files: starHack,
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* clearfix.css */
+        .clearfix {
+          *zoom: 1;
+        }
+
+        /* entry.css */
+        .inline-block {
+          display: inline-block;
+          *display: inline;
+          *zoom: 1;
+        }
+      `);
+    },
+  });
+  itBundled("css/StarHackMinified", {
+    files: starHack,
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(".clearfix{*zoom:1}.inline-block{display:inline-block;*display:inline;*zoom:1}\n");
+    },
+  });
+  // `*zoom` is not `zoom`: the composed class can set `zoom` in another file.
+  itBundled("css/StarHackIsNotThePropertyItNames", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./styles.module.css"
+        console.log(styles)
+      `,
+      "/styles.module.css": /* css */ `.button { *zoom: 1; composes: other from "./other.module.css" }`,
+      "/other.module.css": /* css */ `.other { zoom: 1 }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(`
+        /* other.module.css */
+        .other_NlEjJA {
+          zoom: 1;
+        }
+
+        /* styles.module.css */
+        .button_-MSaAA {
+          *zoom: 1;
+        }
+      `);
+    },
+  });
+  // A `url()` in the value is an import, as in the value of `_background`.
+  itBundled("css/StarHackURL", {
+    files: {
+      "/entry.css": /* css */ `.a { background-image: url(./a.png); *background-image: url(./b.png) }`,
+      "/a.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      "/b.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0b]),
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        .a {
+          *background-image: url("data:image/png;base64,iVBORw0KGgs=");
+          background-image: url("data:image/png;base64,iVBORw0KGgo=");
+        }
+      `);
+    },
+  });
+  itBundled("css/StarHackURLMissingFile", {
+    files: {
+      "/entry.css": /* css */ `.a { *background: url(./missing.png) }`,
+    },
+    bundleErrors: {
+      "/entry.css": ['Could not resolve: "./missing.png"'],
+    },
+  });
+  // `!ie` makes the declaration an error, and the keyframe block that holds
+  // it is dropped. Its `url()` is not an import.
+  itBundled("css/StarHackDiscardedURL", {
+    files: {
+      "/entry.css": /* css */ `
+        @keyframes k {
+          from { *background: url(./missing.png) !ie; top: 1px }
+          to { top: 2px }
+        }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* entry.css */
+        @keyframes k {
+          to {
+            top: 2px;
+          }
+        }
+      `);
+    },
+  });
+  // Text that is not CSS is still an error.
+  itBundled("css/InvalidCSSIsStillAnError", {
+    files: {
+      "/missing-colon.css": `.a { color red; width: 1px }`,
+      "/bang-ie.css": `.a { color: red; color: blue !ie }`,
+      "/bang-typo.css": `.a { color: red !imporant }`,
+      "/stray-brace.css": `.a { color: red }} .b { color: blue }`,
+      "/bad-selector.css": `.a:{ color: red } .b { color: blue }`,
+      "/late-import.css": `.a { color: red } @import "./ok.css";`,
+      "/star-space.css": `.a { * zoom: 1 }`,
+      "/star-no-colon.css": `.a { *zoom 1 }`,
+      "/star-bang-ie.css": `.a { *zoom: 1 !ie }`,
+      "/ok.css": `.ok { color: red }`,
+    },
+    entryPoints: [
+      "/missing-colon.css",
+      "/bang-ie.css",
+      "/bang-typo.css",
+      "/stray-brace.css",
+      "/bad-selector.css",
+      "/late-import.css",
+      "/star-space.css",
+      "/star-no-colon.css",
+      "/star-bang-ie.css",
+    ],
+    outdir: "/out",
+    bundleErrors: {
+      "/missing-colon.css": ["Unexpected token: red"],
+      "/bang-ie.css": ["Unexpected token: !"],
+      "/bang-typo.css": ["Unexpected token: !"],
+      "/stray-brace.css": ["Invalid selector. Empty selector is not allowed"],
+      "/bad-selector.css": ["Unexpected end of input"],
+      "/late-import.css": ["@import rules must come before any other rules except @charset and @layer"],
+      "/star-space.css": ["Unexpected end of input"],
+      "/star-no-colon.css": ["Unexpected end of input"],
+      "/star-bang-ie.css": ["Unexpected end of input"],
+    },
+  });
 });

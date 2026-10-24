@@ -271,10 +271,7 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
-/// `child.stdin.destroy()` in `node:child_process`. Node closes the pipe at once and libuv fails
-/// the write still queued on it with ECANCELED. Returns the promise of the parked write. With no
-/// write parked it returns the error for bytes that `write()` acknowledged and the pipe did not
-/// take, or `undefined`.
+/// `child.stdin.destroy()`: returns the parked write's promise, or the error of acknowledged bytes the pipe refused.
 pub(crate) fn destroy(cx: &mut JsScope<'_>, sink: JsLocal<'_>) -> JsResult<JSValue> {
     use bun_sys_jsc::ErrorJsc;
 
@@ -289,8 +286,7 @@ pub(crate) fn destroy(cx: &mut JsScope<'_>, sink: JsLocal<'_>) -> JsResult<JSVal
         let _guard = RefPtr::init_ref(this);
         let mut lost = None;
         if !(*this).is_held_back() {
-            // The writer acknowledges a small write from its buffer: those bytes get one send.
-            // `end` returns the error only when no parked write takes it.
+            // The writer acknowledged these bytes from its buffer: they get one send.
             if let sys::Result::Err(err) = (*this).end(None) {
                 lost = Some(err);
             }
@@ -329,8 +325,7 @@ impl FileSink {
         {
             writer.is_backed_up() && writer.has_pending_data()
         }
-        // One uv_write is in flight at a time. libuv counts it in the stream's write queue only
-        // when the kernel did not take it whole, and later writes wait behind it.
+        // Writes wait behind the one uv_write in flight, which libuv queues when the kernel does not take it whole.
         #[cfg(windows)]
         {
             writer.is_backed_up()
@@ -338,15 +333,11 @@ impl FileSink {
         }
     }
 
-    /// Closes the writer undrained. The caller settles the pending write, which fails with `errno`.
-    ///
-    /// # Safety
-    /// `this` must be the canonical live `*mut FileSink` (see
-    /// [`on_attached_process_exit`](Self::on_attached_process_exit)) and the caller holds a ref
-    /// across the call: `close` re-enters `on_close`, which releases the keep-alive ref.
+    /// Closes the writer undrained and latches `errno` for the pending write, which the caller settles.
     unsafe fn abort(this: *mut FileSink, errno: sys::Errno) {
-        // SAFETY: caller contract. `IOWriter::close` does not call into JS directly; the `on_close`
-        // re-entry goes through the writer's `*mut FileSink` backref, not this `JsCell` borrow.
+        // SAFETY: the caller passes the canonical live `*mut FileSink` and holds a ref across the
+        // call, because `close` re-enters `on_close`, which releases the keep-alive ref. That
+        // re-entry goes through the writer's backref, not this `JsCell` borrow.
         unsafe {
             (*this).done.set(true);
             (*this).writer.with_mut(|w| w.close());

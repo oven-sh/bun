@@ -39,7 +39,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
-  /** Set once destroy() has found writes parked on the sink: null, then the error the first of them was called back with. */
+  /** null once destroy() has found writes parked on the sink, then the error the first of them was called back with. */
   [kCanceledWrite]?: Error | null;
 };
 type FD = number;
@@ -620,8 +620,7 @@ function newCanceledWriteError(): Error {
   return new ErrnoException(ecanceled, "write");
 }
 
-// destroySinkStream has the sink fail the writes it had parked with ECANCELED. As in node, the first is called back
-// with `write ECANCELED` and those queued behind it with the stream's error.
+// As in node: the first write destroy() canceled gets `write ECANCELED`, those queued behind it the stream's error.
 function canceledWriteError(stream: FSStream, err: any) {
   const canceled = stream[kCanceledWrite];
   if (canceled === undefined || err?.code !== "ECANCELED") return err;
@@ -861,8 +860,7 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
 
 let destroyFileSink: ((sink: FileSink) => Promise<unknown> | Error | undefined) | undefined;
 
-// child.stdin: destroy() closes the pipe now, as node's net.Socket does. The sink drops the bytes the pipe has not
-// taken and fails the writes that wait for it with ECANCELED.
+// child.stdin: destroy() closes the pipe now and cancels the writes that wait for it, as node's net.Socket does.
 function destroySinkStream(this: FSStream, err: Error | null, cb: (err?: Error | null) => void) {
   const state = this._writableState!;
   if (state.finished) {
@@ -879,7 +877,7 @@ function destroySinkStream(this: FSStream, err: Error | null, cb: (err?: Error |
     const afterWrites = emitCloseNextTick.bind(undefined, this);
     outcome.$then(afterWrites, afterWrites);
   } else {
-    // write() had acknowledged bytes that did not reach the pipe. No callback is left to tell: the stream keeps the error.
+    // write() acknowledged bytes the pipe did not take. No callback is left to tell: the stream keeps the error.
     if (outcome !== undefined) state.errored ??= outcome.code === "ECANCELED" ? newCanceledWriteError() : outcome;
     // Two ticks, where it was before this _destroy: after a queued 'finish', and for a listener added one tick late.
     process.nextTick(emitCloseNextTick, this);

@@ -2495,13 +2495,29 @@ impl PathTemplate {
     /// Max output path length. A `PathBuffer` also needs room for a `.map` or `.jsc` suffix and the NUL.
     pub(crate) const MAX_OUTPUT_PATH_LEN: usize = bun_paths::MAX_PATH_BYTES - 1 - ".map".len();
 
-    /// Logs an error and returns `false` when `output_path` exceeds `MAX_OUTPUT_PATH_LEN`.
+    /// Logs an error and returns `false` when `output_path` exceeds `MAX_OUTPUT_PATH_LEN`, or when `opened`, the
+    /// part of it that the build hands to the file system, has a NUL byte: a syscall would stop reading there.
     pub(crate) fn check_output_path(
         &self,
         log: &mut bun_ast::Log,
         input: &[u8],
         output_path: &[u8],
+        opened: &[u8],
     ) -> bool {
+        if strings::contains_char(opened, 0) {
+            log.add_range_error_fmt_with_note(
+                None,
+                bun_ast::Range::NONE,
+                format_args!(
+                    "Output path for {} contains a null byte: {}",
+                    bun_core::fmt::quote(input),
+                    bun_core::fmt::quote(output_path),
+                ),
+                format_args!("naming template is {}", bun_core::fmt::quote(&self.data)),
+                bun_ast::Range::NONE,
+            );
+            return false;
+        }
         if output_path.len() <= Self::MAX_OUTPUT_PATH_LEN {
             return true;
         }

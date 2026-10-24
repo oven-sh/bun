@@ -946,6 +946,29 @@ test("reports an empty entry point the same way with more than 8 entry points", 
   expect(nine).toEqual(two);
 });
 
+// A string in bunfig.toml can have a NUL byte, which no argument can. A syscall reads a path only up to its first NUL
+// byte, so the root directory that `bun build` takes from this entry point was "sub", and a debug build aborted.
+test.concurrent("an entry point from bunfig.toml with a NUL byte in its directory is an error", async () => {
+  using dir = tempDir("build-bunfig-nul-entry", {
+    "bunfig.toml": String.raw`[bundle]` + "\n" + String.raw`entryPoints = ["sub\u0000tail/entry.ts"]` + "\n",
+    "sub/entry.ts": `console.log("entry");`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--outdir=out"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, out: fs.existsSync(join(String(dir), "out")) }).toEqual({
+    stdout: "",
+    stderr: 'error: root directory "sub\\u0000tail" contains a null byte\n',
+    exitCode: 1,
+    out: false,
+  });
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });

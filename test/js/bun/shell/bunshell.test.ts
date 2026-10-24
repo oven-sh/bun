@@ -1923,7 +1923,6 @@ booga"
           .runAsTest("set is the value");
       });
 
-
       // sh reads the `A` of the same command. Bun's shell does not, for $A too.
       test("an assignment before a command is not read by a later one, like $NAME", async () => {
         const printB = "console.log(process.env.B)";

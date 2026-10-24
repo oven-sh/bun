@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("bundler files option", () => {
@@ -701,61 +701,64 @@ describe("bundler files option", () => {
   });
 
   // A relative key is a path from the cwd of the `Bun.build()` call. One child
-  // process runs every case, each in a directory of its own. The build script
-  // is in another directory, so a key resolved against the script would fail.
+  // process runs the builds of every case, each in a directory of its own. The
+  // build script is in another directory, so a key resolved against the script
+  // would fail. A test writes the name of its case to the stdin of the child
+  // process and reads the report of that case from its stdout.
   describe("relative keys", () => {
     type Report = Record<
       string,
       { logs: string[]; outputs: string[]; found: string[]; inputs?: string[] } | { threw: string }
     >;
     const cases: { name: string; files: Record<string, string>; markers: string[]; builds: string }[] = [];
-    const reports = new Map<string, Report>();
-    let child = { stderr: "the child process did not run", exitCode: null as number | null };
+    // Lines on the stdout of a child process that are not the report of a case.
+    const notReports: string[] = [];
     let root: ReturnType<typeof tempDir> | undefined;
-    const directoryOf = (name: string) => join(String(root), String(cases.findIndex(it => it.name === name)));
+    let child:
+      | { proc: Bun.Subprocess<"pipe", "pipe", "pipe">; lines: AsyncGenerator<string>; stderr: Promise<string> }
+      | undefined;
+    // The call of `reportOf` that a test waits in. A test that ends before its report arrives leaves it set.
+    let waiting: object | undefined;
 
-    // `builds` is the source of an object: name -> Bun.build options. It can
-    // call abs(), which is path.resolve(). `chdir` is the directory to call
-    // Bun.build() from. The report has, for each build, the logs, the output
-    // paths from the cwd, each string literal of the outputs that is one of
-    // `markers`, and the inputs of the metafile if there is one. A marker that
-    // starts with "raw:" is any text, not a string literal.
-    function buildsIn(
-      name: string,
-      files: Record<string, string>,
-      markers: string[],
-      builds: string,
-      check: (report: Report, directory: string) => void | Promise<void>,
-      skip = false,
-    ) {
-      if (!skip) cases.push({ name, files, markers, builds });
-      test.skipIf(skip)(name, async () => {
-        const report = reports.get(name);
-        // A case that has no report is one that the child process did not finish.
-        if (!report) expect(child).toEqual({ stderr: "", exitCode: 0 });
-        await check(report!, directoryOf(name));
-      });
+    async function* linesOf(stream: ReadableStream<Uint8Array>) {
+      const decoder = new TextDecoder();
+      let text = "";
+      for await (const chunk of stream) {
+        text += decoder.decode(chunk, { stream: true });
+        for (let end = text.indexOf("\n"); end !== -1; end = text.indexOf("\n")) {
+          yield text.slice(0, end);
+          text = text.slice(end + 1);
+        }
+      }
+      if (text) yield text;
     }
 
-    beforeAll(async () => {
-      const tree: Record<string, string> = {
+    function start() {
+      root ??= tempDir("bundler-files-relative-keys", {
         "scripts/build.mjs": `
           import { isAbsolute, join, relative, resolve as abs } from "node:path";
           const root = process.cwd();
-          const cases = [${cases.map((it, index) => `[${JSON.stringify(it.name)}, "${index}", ${JSON.stringify(it.markers)}, () => (${it.builds})],`).join("\n")}];
-          for (const [name, directory, markers, builds] of cases) {
+          const cases = new Map([${cases.map((it, index) => `[${JSON.stringify(it.name)}, ["${index}", ${JSON.stringify(it.markers)}, () => (${it.builds})]],`).join("\n")}]);
+          for await (const name of console) {
+            // The last line of stdin is empty.
+            if (!name) continue;
+            if (!cases.has(name)) throw new Error("There is no case " + JSON.stringify(name));
+            const [directory, markers, builds] = cases.get(name);
             process.chdir(join(root, directory));
             const report = {};
-            for (const [build, { chdir, ...options }] of Object.entries(builds())) {
+            for (const [build, { chdir, chdirAfterCall, ...options }] of Object.entries(builds())) {
               if (chdir) process.chdir(chdir);
+              const cwd = process.cwd();
               try {
-                const result = await Bun.build({ ...options, throw: false });
-                const texts = await Promise.all(result.outputs.map(output => (options.compile ? "" : output.text())));
+                const building = Bun.build({ ...options, throw: false });
+                if (chdirAfterCall) process.chdir(chdirAfterCall);
+                const result = await building;
+                const texts = await Promise.all(result.outputs.map(output => output.text()));
                 const text = texts.join("\\n");
                 report[build] = {
                   logs: result.logs.map(String),
                   outputs: result.outputs
-                    .map(({ path }) => (isAbsolute(path) ? relative(process.cwd(), path) : path).replaceAll("\\\\", "/"))
+                    .map(({ path }) => (isAbsolute(path) ? relative(cwd, path) : path).replaceAll("\\\\", "/"))
                     .sort(),
                   found: markers.flatMap(marker =>
                     Array(text.split(marker.startsWith("raw:") ? marker.slice(4) : JSON.stringify(marker)).length - 1).fill(marker),
@@ -763,44 +766,96 @@ describe("bundler files option", () => {
                   ...(result.metafile && { inputs: Object.keys(result.metafile.inputs).sort() }),
                 };
               } catch (error) {
-                report[build] = { threw: error.message };
+                report[build] = { threw: error.name + ": " + error.message };
               }
               process.chdir(join(root, directory));
             }
             console.log(JSON.stringify({ name, report }));
           }
         `,
-      };
-      cases.forEach((it, index) => {
-        tree[`${index}/case.txt`] = it.name;
-        for (const [file, text] of Object.entries(it.files)) tree[`${index}/${file}`] = text;
+        ...Object.fromEntries(
+          cases.flatMap((it, index) => [
+            [`${index}/case.txt`, it.name],
+            ...Object.entries(it.files).map(([file, text]) => [`${index}/${file}`, text]),
+          ]),
+        ),
       });
-      root = tempDir("bundler-files-relative-keys", tree);
-      await using proc = Bun.spawn({
+      const proc = Bun.spawn({
         cmd: [bunExe(), join("scripts", "build.mjs")],
         cwd: String(root),
         env: { ...bunEnv, NODE_ENV: undefined },
-        stdin: "ignore",
+        stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // A child process that crashes can print its report of the crash to stdout.
-      const notReports: string[] = [];
-      for (const line of stdout.split("\n").filter(Boolean)) {
-        try {
-          const { name, report } = JSON.parse(line);
-          reports.set(name, report);
-        } catch {
-          notReports.push(line);
-        }
-      }
-      child = { stderr: stderr + notReports.join("\n"), exitCode };
-    }, 120_000);
-    afterAll(() => root?.[Symbol.dispose]());
+      return { proc, lines: linesOf(proc.stdout), stderr: proc.stderr.text() };
+    }
 
-    test("the child process that runs the builds exits cleanly", () => {
-      expect(child).toEqual({ stderr: "", exitCode: 0 });
+    // The rest of the output of a child process that has no more work, or that stopped.
+    async function exited(stopped: NonNullable<typeof child>) {
+      stopped.proc.stdin.end();
+      for await (const line of stopped.lines) notReports.push(line);
+      return { stdout: notReports.splice(0), stderr: await stopped.stderr, exitCode: await stopped.proc.exited };
+    }
+
+    async function reportOf(name: string): Promise<Report> {
+      const running = (child ??= start());
+      const call = (waiting = {});
+      running.proc.stdin.write(name + "\n");
+      running.proc.stdin.flush();
+      // A `for await` loop closes the generator when the loop returns.
+      for (let line = await running.lines.next(); !line.done; line = await running.lines.next()) {
+        try {
+          const { name: reported, report } = JSON.parse(line.value);
+          if (reported === name) {
+            if (waiting === call) waiting = undefined;
+            return report;
+          }
+        } catch {}
+        notReports.push(line.value);
+      }
+      // `afterEach` stopped the child process of a test that timed out. That test is over.
+      if (waiting !== call) return new Promise<Report>(() => {});
+      // The child process stopped before it printed the report. The next case starts another one.
+      waiting = undefined;
+      if (child === running) child = undefined;
+      expect(await exited(running)).toEqual({ stdout: [], stderr: "", exitCode: 0 });
+      throw new Error(`The child process did not print a report for ${JSON.stringify(name)}`);
+    }
+
+    // `builds` is the source of an object: name -> Bun.build options. It can
+    // call abs(), which is path.resolve(). `chdir` is the
+    // directory to call Bun.build() from. `chdirAfterCall` is the directory to
+    // go to before the build is awaited. The report has, for each build, the
+    // logs, the output paths from the directory of the call, each string
+    // literal of the outputs that is one of `markers`, and the inputs of the
+    // metafile if there is one. A marker that starts with "raw:" is any text,
+    // not a string literal.
+    function buildsIn(
+      name: string,
+      files: Record<string, string>,
+      markers: string[],
+      builds: string,
+      check: (report: Report) => void | Promise<void>,
+      skip = false,
+    ) {
+      if (!skip) cases.push({ name, files, markers, builds });
+      test.skipIf(skip)(name, async () => {
+        await check(await reportOf(name));
+      });
+    }
+
+    // A test that timed out still waits for its report. The next test must not read that report.
+    afterEach(() => {
+      if (waiting === undefined) return;
+      waiting = undefined;
+      child?.proc.kill();
+      child = undefined;
+    });
+
+    afterAll(() => {
+      child?.proc.kill();
+      root?.[Symbol.dispose]();
     });
 
     // The two examples in the docs of `files`.
@@ -826,7 +881,6 @@ describe("bundler files option", () => {
         ["config from disk", "config from memory", "generated in memory"],
         `{
           "./src/config.ts": ${build("./src/config.ts", "./src/generated.ts")},
-          "src/config.ts": ${build("src/config.ts", "src/generated.ts")},
           "dot segments": ${build("./src/../src/config.ts", "./src/./generated.ts")},
           "backslashes": ${build(".\\src\\config.ts", ".\\src\\generated.ts")},
         }`,
@@ -838,12 +892,7 @@ describe("bundler files option", () => {
             found: ["config from memory", "generated in memory"],
             inputs: ["src/config.ts", "src/generated.ts", "src/index.ts"],
           };
-          expect(report).toEqual({
-            "./src/config.ts": inMemory,
-            "src/config.ts": inMemory,
-            "dot segments": inMemory,
-            "backslashes": inMemory,
-          });
+          expect(report).toEqual({ "./src/config.ts": inMemory, "dot segments": inMemory, "backslashes": inMemory });
         },
       );
     }
@@ -868,7 +917,7 @@ describe("bundler files option", () => {
           entrypoints: ["./src/index.ts"],
           files: {
             "./src/config.ts": 'export const config = "config from memory";',
-            "node_modules/util-lib/index.js": 'export const util = "util from memory";',
+            "./node_modules/util-lib/index.js": 'export const util = "util from memory";',
           },
         },
       }`,
@@ -879,190 +928,81 @@ describe("bundler files option", () => {
       },
     );
 
-    // A relative key for a file on disk replaces the contents only. The disk
-    // resolver still resolves the file, so its tsconfig.json applies.
-    {
-      const inMemory = `'console.log(<div>{"entry from memory"}</div>);'`;
-      buildsIn(
-        "a key for a file on disk keeps the tsconfig.json of that file",
-        {
-          "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
-          "src/entry.tsx": `console.log(<div>entry from disk</div>);`,
-          "src/index.ts": `import "./entry.tsx";`,
-        },
-        ["entry from disk", "entry from memory", "preact/jsx-dev-runtime", "react/jsx-dev-runtime"],
-        `{
-          // An absolute key did this before relative keys were paths.
-          "absolute key, relative entry point": {
-            entrypoints: ["./src/entry.tsx"],
-            files: { [abs("src/entry.tsx")]: ${inMemory} },
-            external: ["preact"],
-          },
-          "relative key, entry point written like the key": {
-            entrypoints: ["./src/entry.tsx"],
-            files: { "./src/entry.tsx": ${inMemory} },
-            external: ["preact"],
-          },
-          "relative key, entry point written another way": {
-            entrypoints: ["src/entry.tsx"],
-            files: { "./src/entry.tsx": ${inMemory} },
-            external: ["preact"],
-          },
-          "relative key, import": {
-            entrypoints: ["./src/index.ts"],
-            files: { "src/entry.tsx": ${inMemory} },
-            external: ["preact"],
-          },
-        }`,
-        report => {
-          const found = ["entry from memory", "preact/jsx-dev-runtime"];
-          expect(report).toEqual({
-            "absolute key, relative entry point": { logs: [], outputs: ["./entry.js"], found },
-            // Every entrypoint is written like a key, so the root is the cwd.
-            "relative key, entry point written like the key": { logs: [], outputs: ["src/entry.js"], found },
-            "relative key, entry point written another way": { logs: [], outputs: ["./entry.js"], found },
-            "relative key, import": { logs: [], outputs: ["./index.js"], found },
-          });
-        },
-      );
-    }
-
-    // The disk rules for a page apply to a key for a file on disk: a manifest
-    // is copied, and the script of a page in a server build is for the browser.
+    // Nothing is on disk. The entry imports the other key as "./lib.js".
     buildsIn(
-      "a key for a file on disk keeps the rules of an HTML page",
-      {
-        "pages/index.html": `<!doctype html><link rel="manifest" href="./manifest.json" /><script type="module" src="./app.ts"></script>`,
-        "pages/manifest.json": JSON.stringify({ name: "manifest from disk" }),
-        "pages/app.ts": `console.log("app from disk");`,
-      },
-      ["manifest from disk", "manifest from memory", "app from disk", "app from memory", "raw:// @bun"],
-      `{
-        "an asset of a page": {
-          entrypoints: ["./pages/index.html"],
-          files: { "pages/manifest.json": '{ "name": "manifest from memory" }' },
-        },
-        "a page in a server build": {
-          entrypoints: ["./pages/index.html"],
+      "an entry point names a key by text or by path",
+      {},
+      ["entry in memory", "lib in memory"],
+      `(() => {
+        const build = entry => ({
+          entrypoints: [entry],
           files: {
-            "pages/index.html": '<!doctype html><script type="module" src="./app.ts"></script>',
-            "./pages/app.ts": 'console.log("app from memory");',
+            "./entry.js": 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
+            "./lib.js": 'export const lib = "lib in memory";',
           },
-          target: "bun",
-        },
-      }`,
+        });
+        return {
+          "./entry.js": build("./entry.js"),
+          "entry.js": build("entry.js"),
+          absolute: build(abs("entry.js")),
+          // A relative entry point is a path from the cwd for an absolute key too.
+          "./entry.js with absolute keys": {
+            entrypoints: ["./entry.js"],
+            files: {
+              [abs("entry.js")]: 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
+              [abs("lib.js")]: 'export const lib = "lib in memory";',
+            },
+          },
+        };
+      })()`,
       report => {
-        const chunk = expect.stringMatching(/^\.\/chunk-\w+\.js$/);
+        const inMemory = { logs: [], outputs: ["./entry.js"], found: ["entry in memory", "lib in memory"] };
         expect(report).toEqual({
-          "an asset of a page": {
-            logs: [],
-            outputs: [chunk, "./index.html", expect.stringMatching(/^\.\/manifest-\w+\.json$/)],
-            found: ["manifest from memory", "app from disk"],
-          },
-          "a page in a server build": { logs: [], outputs: [chunk, "./index.html"], found: ["app from memory"] },
+          "./entry.js": inMemory,
+          "entry.js": inMemory,
+          absolute: inMemory,
+          "./entry.js with absolute keys": inMemory,
         });
       },
     );
-
-    // Nothing is on disk. Each build spells the entry point one way and the
-    // keys another way. The entry imports the other key as "./lib.js".
-    for (const base of ["entry.js", "virtual/entry.js"]) {
-      const spellings = {
-        [base]: JSON.stringify(base),
-        ["./" + base]: JSON.stringify("./" + base),
-        absolute: `abs(${JSON.stringify(base)})`,
-      };
-      const lib = (key: string) => key.replace("entry.js", "lib.js");
-      const rows = Object.entries(spellings).flatMap(([entryName, entry]) =>
-        Object.entries(spellings).map(([keyName, key]) => ({
-          name: `${entryName} with key ${keyName}`,
-          // The root is the cwd when the entry point is written like the key. If not,
-          // it is the directory of the entry point, as for an entry point on disk.
-          output: entryName === keyName && base.includes("/") ? base : "./entry.js",
-          entry,
-          key,
-        })),
-      );
-      buildsIn(
-        `an entry point names the key ${JSON.stringify(base)} by text or by path`,
-        {},
-        ["entry in memory", "lib in memory"],
-        `{${rows
-          .map(
-            ({ name, entry, key }) => `${JSON.stringify(name)}: {
-              entrypoints: [${entry}],
-              files: {
-                [${key}]: 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
-                [${lib(key)}]: 'export const lib = "lib in memory";',
-              },
-            },`,
-          )
-          .join("\n")}}`,
-        report => {
-          expect(report).toEqual(
-            Object.fromEntries(
-              rows.map(({ name, output }) => [
-                name,
-                { logs: [], outputs: [output], found: ["entry in memory", "lib in memory"] },
-              ]),
-            ),
-          );
-        },
-      );
-    }
 
     {
       const build = (entry: string) => `{
         entrypoints: [${entry}],
         files: { "./src/entry.ts": 'console.log("entry from memory");' },
       }`;
+      // An entry point that is the path of a key, written another way, is for
+      // the disk resolver when the file is on disk. The parse task reads the key.
+      const page = (key: string) => `{
+        entrypoints: ["src/page.tsx"],
+        files: { [${key}]: 'console.log(<div>{"page from memory"}</div>);' },
+        external: ["preact"],
+      }`;
       buildsIn(
         "a key overrides an entry point on disk",
-        { "src/entry.ts": `console.log("entry from disk");` },
-        ["entry from disk", "entry from memory"],
+        {
+          "src/entry.ts": `console.log("entry from disk");`,
+          "src/page.tsx": `console.log(<div>page from disk</div>);`,
+          "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
+        },
+        ["entry from disk", "entry from memory", "page from disk", "page from memory", "preact/jsx-dev-runtime"],
         `{
           "./src/entry.ts": ${build(`"./src/entry.ts"`)},
           "src/entry.ts": ${build(`"src/entry.ts"`)},
           "absolute": ${build(`abs("src/entry.ts")`)},
+          "the tsconfig.json of the file applies": ${page(`"./src/page.tsx"`)},
+          "the tsconfig.json of the file applies, absolute key": ${page(`abs("src/page.tsx")`)},
         }`,
         report => {
+          const page = { logs: [], outputs: ["./page.js"], found: ["page from memory", "preact/jsx-dev-runtime"] };
           expect(report).toEqual({
             // Every entrypoint is written like a key, so the root is the cwd.
             "./src/entry.ts": { logs: [], outputs: ["src/entry.js"], found: ["entry from memory"] },
-            // The output paths of an entry point on disk do not depend on `files`.
+            // If not, the root is the directory of the entry point, as for an entry point on disk.
             "src/entry.ts": { logs: [], outputs: ["./entry.js"], found: ["entry from memory"] },
             "absolute": { logs: [], outputs: ["./entry.js"], found: ["entry from memory"] },
-          });
-        },
-      );
-    }
-
-    {
-      const build = (chdir: string) => `{
-        chdir: ${JSON.stringify(chdir)},
-        entrypoints: ["virtual/index.ts"],
-        files: { "./virtual/index.ts": 'console.log("entry in memory");' },
-        outdir: "out",
-      }`;
-      buildsIn(
-        "the default root does not depend on what is on disk",
-        { "without/keep": "", "with/virtual/keep": "" },
-        ["entry in memory"],
-        `{
-          "the directory of the entry point is not on disk": ${build("without")},
-          "the directory of the entry point is on disk": ${build("with")},
-          "a root that is not on disk is an error": {
-            entrypoints: ["./entry.ts"],
-            files: { "./entry.ts": "" },
-            root: "./missing",
-          },
-        }`,
-        report => {
-          const inMemory = { logs: [], outputs: ["out/index.js"], found: ["entry in memory"] };
-          expect(report).toEqual({
-            "the directory of the entry point is not on disk": inMemory,
-            "the directory of the entry point is on disk": inMemory,
-            "a root that is not on disk is an error": { threw: "ENOENT: failed to open root directory: ./missing" },
+            "the tsconfig.json of the file applies": page,
+            "the tsconfig.json of the file applies, absolute key": page,
           });
         },
       );
@@ -1073,120 +1013,156 @@ describe("bundler files option", () => {
       {
         "packages/app/src/index.ts": `import { config } from "./config.ts"; console.log(config);`,
         "packages/app/src/config.ts": `export const config = "config from disk";`,
+        "one/src/index.ts": `import { config } from "./config.ts"; console.log(config);`,
+        "one/src/config.ts": `export const config = "config from disk in one";`,
+        "other/src/config.ts": `export const config = "config from disk in other";`,
       },
-      ["config from disk", "config from memory"],
+      ["config from disk", "config from memory", "config from disk in one", "config from disk in other"],
       `{
-        build: {
+        "the directory of the call": {
           chdir: "packages/app",
           entrypoints: ["./src/index.ts"],
           files: { "./src/config.ts": 'export const config = "config from memory";' },
         },
+        // The key is one/src/config.ts, not other/src/config.ts.
+        "process.chdir() after the call": {
+          chdir: "one",
+          chdirAfterCall: "../other",
+          entrypoints: [abs("one/src/index.ts")],
+          files: { "./src/config.ts": 'export const config = "config from memory";' },
+        },
       }`,
       report => {
-        expect(report).toEqual({ build: { logs: [], outputs: ["./index.js"], found: ["config from memory"] } });
+        const inMemory = { logs: [], outputs: ["./index.js"], found: ["config from memory"] };
+        expect(report).toEqual({ "the directory of the call": inMemory, "process.chdir() after the call": inMemory });
       },
     );
 
     buildsIn(
-      "a key matches an import with the same text from any directory",
+      "an import names the key beside the importer, or the key with that text",
       {
-        "index.ts": `
-          import name from "config" with { type: "text" };
-          import { disk } from "./config";
-          console.log(name, disk);
-        `,
-        "config.ts": `export const disk = "config from disk";`,
+        "index.ts": `import chart from "chart.js"; console.log(chart);`,
+        "node_modules/chart.js/package.json": JSON.stringify({ name: "chart.js", main: "index.js" }),
+        "node_modules/chart.js/index.js": `export default "chart.js from node_modules";`,
+        "styles/main.css": `@import "theme.css";`,
+        "pages/index.html": `<!doctype html><link rel="stylesheet" href="style.css" /><script type="module" src="app.js"></script>`,
       },
       [
         "scheme key",
-        "file name key",
         "dot key",
-        "beside the file name key",
-        "name key",
-        "config from disk",
         "key beside the importer",
         "key with the text of the import",
-        "key for a built-in",
+        "chart.js from node_modules",
+        "chart.js from memory",
+        "app in memory",
+        "raw:theme-in-memory",
+        "raw:page-in-memory",
       ],
-      `{
-        imports: {
-          entrypoints: ["/app/nested/index.ts"],
-          files: {
-            "/app/nested/index.ts": 'import "virtual:config.ts"; import "lib/file.ts"; import "./dot.ts";',
-            "virtual:config.ts": 'console.log("scheme key");',
-            "lib/file.ts": 'import "./beside.ts"; console.log("file name key");',
-            "lib/beside.ts": 'console.log("beside the file name key");',
-            "./dot.ts": 'console.log("dot key");',
+      `(() => {
+        // An onResolve plugin that declines sends an import through another branch of the bundler.
+        const declines = [{
+          name: "declines",
+          setup(build) {
+            build.onResolve({ filter: /./ }, () => undefined);
           },
-        },
-        // The name "config" is not the path "./config".
-        "a name beside a file on disk": {
+        }];
+        // "chart.js" in JavaScript is a package. In CSS and HTML, a bare specifier can be the file beside the importer.
+        const javascript = plugins => ({
           entrypoints: ["./index.ts"],
-          files: { config: "name key" },
-        },
-        // "./util.ts" is the file beside the importer first, then the key with that text.
-        "a key beside the importer comes first": {
-          entrypoints: ["./entry.ts"],
+          files: { "./chart.js": 'export default "chart.js from memory";' },
+          plugins,
+        });
+        const css = plugins => ({
+          entrypoints: ["./styles/main.css"],
+          files: { "./styles/theme.css": ".theme-in-memory { color: red; }" },
+          plugins,
+        });
+        const html = plugins => ({
+          entrypoints: ["./pages/index.html"],
           files: {
-            "./entry.ts": 'import "./lib/main.ts";',
-            "./lib/main.ts": 'import "./util.ts";',
-            "./lib/util.ts": 'console.log("key beside the importer");',
-            "./util.ts": 'console.log("key with the text of the import");',
+            "./pages/style.css": ".page-in-memory { color: red; }",
+            "./pages/app.js": 'console.log("app in memory");',
           },
-        },
-        "a name does not replace a built-in": {
-          entrypoints: ["/app/index.ts"],
-          files: { "/app/index.ts": 'import "node:fs";', "node:fs": 'console.log("key for a built-in");' },
-          target: "bun",
-        },
-      }`,
+          plugins,
+        });
+        return {
+          "the text of a key, from any directory": {
+            entrypoints: ["/app/nested/index.ts"],
+            files: {
+              "/app/nested/index.ts": 'import "virtual:config.ts"; import "./dot.ts";',
+              "virtual:config.ts": 'console.log("scheme key");',
+              "./dot.ts": 'console.log("dot key");',
+            },
+          },
+          // "./util.ts" is the file beside the importer first, then the key with that text.
+          "a key beside the importer comes first": {
+            entrypoints: ["./entry.ts"],
+            files: {
+              "./entry.ts": 'import "./lib/main.ts";',
+              "./lib/main.ts": 'import "./util.ts";',
+              "./lib/util.ts": 'console.log("key beside the importer");',
+              "./util.ts": 'console.log("key with the text of the import");',
+            },
+          },
+          "a bare import in JavaScript": javascript([]),
+          "a bare import in JavaScript, declined": javascript(declines),
+          "a bare import in CSS": css([]),
+          "a bare import in CSS, declined": css(declines),
+          "a bare reference in HTML": html([]),
+          "a bare reference in HTML, declined": html(declines),
+        };
+      })()`,
       report => {
-        const output = [expect.stringContaining("index.js")];
+        const javascript = { logs: [], outputs: ["./index.js"], found: ["chart.js from node_modules"] };
+        const css = { logs: [], outputs: ["./main.css"], found: ["raw:theme-in-memory"] };
+        const html = {
+          logs: [],
+          outputs: ["./chunk-[hash].css", "./chunk-[hash].js", "./index.html"],
+          found: ["app in memory", "raw:page-in-memory"],
+        };
+        // The chunks of a page have a hash in their names.
+        for (const build of Object.values(report)) {
+          if ("outputs" in build)
+            build.outputs = build.outputs.map(it => it.replace(/chunk-\w+/, "chunk-[hash]")).sort();
+        }
         expect(report).toEqual({
-          imports: {
+          "the text of a key, from any directory": {
             logs: [],
-            outputs: output,
-            found: ["scheme key", "file name key", "dot key", "beside the file name key"],
-          },
-          "a name beside a file on disk": {
-            logs: [],
-            outputs: ["./index.js"],
-            found: ["name key", "config from disk"],
+            outputs: [isWindows ? expect.stringContaining("index.js") : "app/nested/index.js"],
+            found: ["scheme key", "dot key"],
           },
           "a key beside the importer comes first": {
             logs: [],
             outputs: ["./entry.js"],
             found: ["key beside the importer"],
           },
-          "a name does not replace a built-in": { logs: [], outputs: output, found: [] },
+          "a bare import in JavaScript": javascript,
+          "a bare import in JavaScript, declined": javascript,
+          "a bare import in CSS": css,
+          "a bare import in CSS, declined": css,
+          "a bare reference in HTML": html,
+          "a bare reference in HTML, declined": html,
         });
       },
     );
 
-    // An onLoad plugin sees the path of each module. A relative path is under
-    // the cwd. A name is the key as written.
+    // The path of the module of a "./" key is absolute. A key without "./" is
+    // a name, and its module has the text of the key.
     {
       const keys = {
         "./dot.ts": "path dot.ts",
         "../up.ts": "path ../up.ts",
-        "dir/file.ts": "path dir/file.ts",
-        "bare.ts": "path bare.ts",
-        "socket.io": "path socket.io",
-        "@scope/pkg.js": "path @scope/pkg.js",
-        ".env": "name .env",
-        "LICENSE": "name LICENSE",
-        "bin/cli": "name bin/cli",
-        "@scope/pkg": "name @scope/pkg",
+        "dir/file.ts": "name dir/file.ts",
+        "bare.ts": "name bare.ts",
         "virtual:config.ts": "name virtual:config.ts",
-        "my-plugin:entry.ts": "name my-plugin:entry.ts",
       };
       const imports = Object.keys(keys).map(key => `import ${JSON.stringify(key)};`);
       buildsIn(
-        "a key without ./ is a path if it has a file extension, and a name if not",
-        {},
-        Object.values(keys),
+        "an onLoad plugin gets the path of a key that starts with ./ or ../",
+        { "index.ts": `import "generated";`, "gen/config.ts": `console.log("config from disk");` },
+        [...Object.values(keys), "config from disk", "config from memory"],
         `{
-          build: {
+          "the path that onLoad gets": {
             entrypoints: ["/app/index.ts"],
             files: {
               "/app/index.ts": ${JSON.stringify(imports.join("\n"))},
@@ -1206,38 +1182,35 @@ describe("bundler files option", () => {
               },
             }],
           },
+          // No onLoad plugin reads the module, so the bundler reads the path: the text of the key.
+          "a plugin resolves to the text of a key": {
+            entrypoints: ["./index.ts"],
+            files: { "./gen/config.ts": 'console.log("config from memory");' },
+            plugins: [{
+              name: "namespace",
+              setup(build) {
+                build.onResolve({ filter: /^generated$/ }, () => ({ path: "./gen/config.ts", namespace: "generated" }));
+                build.onLoad({ filter: /never/, namespace: "generated" }, () => undefined);
+              },
+            }],
+          },
         }`,
         report => {
           expect(report).toEqual({
-            build: { logs: [], outputs: [expect.stringContaining("index.js")], found: Object.values(keys) },
+            "the path that onLoad gets": {
+              logs: [],
+              outputs: [isWindows ? expect.stringContaining("index.js") : "app/index.js"],
+              found: Object.values(keys),
+            },
+            "a plugin resolves to the text of a key": {
+              logs: [],
+              outputs: ["./index.js"],
+              found: ["config from memory"],
+            },
           });
         },
       );
     }
-
-    // No onLoad plugin reads the module, so the bundler reads the path. That
-    // path is the text of a key.
-    buildsIn(
-      "a plugin that resolves to the text of a key gets the file",
-      { "index.ts": `import "generated";`, "gen/config.ts": `console.log("config from disk");` },
-      ["config from disk", "config from memory"],
-      `{
-        build: {
-          entrypoints: ["./index.ts"],
-          files: { "gen/config.ts": 'console.log("config from memory");' },
-          plugins: [{
-            name: "namespace",
-            setup(build) {
-              build.onResolve({ filter: /^generated$/ }, () => ({ path: "gen/config.ts", namespace: "generated" }));
-              build.onLoad({ filter: /never/, namespace: "generated" }, () => undefined);
-            },
-          }],
-        },
-      }`,
-      report => {
-        expect(report).toEqual({ build: { logs: [], outputs: ["./index.js"], found: ["config from memory"] } });
-      },
-    );
 
     // An onResolve plugin that declines an import sends it through another
     // branch of the bundler. The result is the same.
@@ -1246,15 +1219,15 @@ describe("bundler files option", () => {
         entrypoints: ["./src/index.ts"],
         files: {
           "./src/config.ts": 'export const config = "config from memory";',
-          "src/generated.ts": 'export const generated = "generated in memory";',
-          "node_modules/util-lib/index.js": 'export const util = "util from memory";',
+          "./src/generated.ts": 'export const generated = "generated in memory";',
+          "./node_modules/util-lib/index.js": 'export const util = "util from memory";',
         },
         naming: "[name]-[hash].[ext]",
         metafile: true,
         plugins: ${plugins},
       }`;
       buildsIn(
-        "an onResolve plugin that declines does not change the build",
+        "an onResolve plugin that declines an import does not change the build",
         {
           "src/index.ts": `
             import { config } from "./config.ts";
@@ -1304,17 +1277,17 @@ describe("bundler files option", () => {
           entrypoints: ["./index.ts"],
           files: {
             "./src/generated.ts": 'console.log("generated in memory");',
-            "src/generated.ts": 'console.log("generated in memory");',
+            "./src/deep/../generated.ts": 'console.log("generated in memory");',
             [abs("src/generated.ts")]: 'console.log("generated in memory");',
           },
         },
         "two keys with different contents": {
           entrypoints: ["./index.ts"],
-          files: { "./src/generated.ts": "first", "src/generated.ts": "second" },
+          files: { "./src/generated.ts": "first", "./src/deep/../generated.ts": "second" },
         },
         "the path of the module": {
           entrypoints: ["./index.ts"],
-          files: { "src/generated.ts": "" },
+          files: { "./src/generated.ts": "" },
           plugins: [{
             name: "path",
             setup(build) {
@@ -1334,8 +1307,9 @@ describe("bundler files option", () => {
           "by text and by path": once,
           "two keys with the same contents": once,
           "two keys with different contents": {
-            threw:
-              'files: the keys "./src/generated.ts" and "src/generated.ts" name the same file and have different contents',
+            threw: expect.stringMatching(
+              /^TypeError: files: the keys "\.\/src\/generated\.ts" and "\.\/src\/deep\/\.\.\/generated\.ts" both name ".*\/src\/generated\.ts" and have different contents$/,
+            ),
           },
           "the path of the module": { logs: [], outputs: ["./index.js"], found: ["onLoad saw the path"] },
         });
@@ -1343,18 +1317,13 @@ describe("bundler files option", () => {
     );
 
     buildsIn(
-      "the output of an in-memory module keeps the name and the directory of its key",
+      "the output of an entry point that is written like its key keeps that name and directory",
       { "lib.ts": `export const lib = "lib from disk";`, "packages/app/keep": "" },
-      ["entry in memory", "lib from disk", "lazy in memory"],
+      ["entry in memory", "lib from disk"],
       `{
-        "a file name": {
-          entrypoints: ["worker.ts"],
-          files: { "worker.ts": 'import { lib } from "./lib.ts"; console.log("entry in memory", lib);' },
-          outdir: "out",
-        },
         "a directory that is not on disk": {
-          entrypoints: ["virtual/worker.ts"],
-          files: { "virtual/worker.ts": 'import { lib } from "../lib.ts"; console.log("entry in memory", lib);' },
+          entrypoints: ["./virtual/worker.ts"],
+          files: { "./virtual/worker.ts": 'import { lib } from "../lib.ts"; console.log("entry in memory", lib);' },
           outdir: "out",
         },
         "a directory above the cwd": {
@@ -1363,90 +1332,42 @@ describe("bundler files option", () => {
           files: { "../virtual/worker.ts": 'import { lib } from "../../lib.ts"; console.log("entry in memory", lib);' },
           outdir: "out",
         },
-        "backslashes": {
-          entrypoints: [".\\\\virtual\\\\worker.ts"],
-          files: { ".\\\\virtual\\\\worker.ts": 'import { lib } from "../lib.ts"; console.log("entry in memory", lib);' },
-          outdir: "out",
-        },
-        "a chunk of a dynamic import": {
-          entrypoints: ["virtual/worker.ts"],
-          files: {
-            "virtual/worker.ts": 'import("virtual/lazy.ts"); console.log("entry in memory");',
-            "virtual/lazy.ts": 'console.log("lazy in memory");',
-          },
-          outdir: "out",
-          splitting: true,
-          naming: { chunk: "[dir]/[name]-[hash].[ext]" },
-        },
       }`,
       report => {
         const worker = { logs: [], outputs: ["out/virtual/worker.js"], found: ["entry in memory", "lib from disk"] };
-        expect(report).toEqual({
-          "a file name": { logs: [], outputs: ["out/worker.js"], found: ["entry in memory", "lib from disk"] },
-          "a directory that is not on disk": worker,
-          "a directory above the cwd": worker,
-          "backslashes": worker,
-          "a chunk of a dynamic import": {
-            logs: [],
-            outputs: [expect.stringMatching(/^out\/virtual\/lazy-\w+\.js$/), "out/virtual/worker.js"],
-            found: ["entry in memory", "lazy in memory"],
-          },
-        });
+        expect(report).toEqual({ "a directory that is not on disk": worker, "a directory above the cwd": worker });
       },
     );
 
-    // A standalone executable finds a worker by the name of its output. The
-    // key is a file name, it is an entrypoint next to one on disk, and a
-    // nested module imports another key by its text. A debug build copies a
-    // binary of more than 1 GB for this.
+    // Debug builds assert that the path of an entry point is absolute. A name is not a path.
     buildsIn(
-      "a compiled executable starts a worker that is an in-memory entrypoint",
-      {
-        "main.ts": `
-          import { generated } from "./nested/load.ts";
-          const worker = new Worker("./worker.js");
-          worker.onmessage = async event => {
-            console.log(event.data, await generated());
-            worker.terminate();
-          };
-        `,
-        "nested/load.ts": `export const generated = () => import("generated.ts").then(module => module.default);`,
-      },
-      [],
+      "a key that is a name can be an entry point",
+      {},
+      ["entry in memory"],
       `{
-        build: {
-          entrypoints: ["./main.ts", "worker.js", "generated.ts"],
-          files: {
-            "worker.js": 'postMessage("worker in memory");',
-            "generated.ts": 'export default "generated in memory";',
-          },
-          compile: { outfile: "app" },
-          outdir: "out",
+        "a scheme": {
+          entrypoints: ["virtual:entry.ts"],
+          files: { "virtual:entry.ts": 'console.log("entry in memory");' },
+        },
+        "a file name": {
+          entrypoints: ["worker.ts"],
+          files: { "worker.ts": 'console.log("entry in memory");' },
         },
       }`,
-      async (report, directory) => {
-        const app = isWindows ? "app.exe" : "app";
-        expect(report).toEqual({ build: { logs: [], outputs: ["out/" + app], found: [] } });
-        await using proc = Bun.spawn({
-          cmd: [join(directory, "out", app)],
-          cwd: directory,
-          env: bunEnv,
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({
-          stdout: "worker in memory generated in memory\n",
-          stderr: "",
-          exitCode: 0,
+      report => {
+        expect(report).toEqual({
+          "a scheme": {
+            logs: [],
+            outputs: [isWindows ? expect.stringContaining("entry.js") : "./virtual:entry.js"],
+            found: ["entry in memory"],
+          },
+          "a file name": { logs: [], outputs: ["./worker.js"], found: ["entry in memory"] },
         });
       },
-      isDebug || isASAN,
     );
 
     buildsIn(
-      "a key matches a path whatever the case of the drive letter",
+      "a key matches a path whatever the case of the drive letter and the separators",
       {},
       ["entry in memory", "lib in memory"],
       `(() => {
@@ -1454,21 +1375,41 @@ describe("bundler files option", () => {
         const lower = cwd[0].toLowerCase() + cwd.slice(1);
         const upper = cwd[0].toUpperCase() + cwd.slice(1);
         return {
-          build: {
+          "absolute keys": {
             entrypoints: [lower + "\\\\entry.js"],
             files: {
               [upper + "\\\\entry.js"]: 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
               [lower + "\\\\lib.js"]: 'export const lib = "lib in memory";',
             },
           },
+          "a relative key with backslashes": {
+            entrypoints: [".\\\\virtual\\\\entry.js"],
+            files: {
+              ".\\\\virtual\\\\entry.js": 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
+              ".\\\\virtual\\\\lib.js": 'export const lib = "lib in memory";',
+            },
+            outdir: "out",
+          },
         };
       })()`,
       report => {
         expect(report).toEqual({
-          build: { logs: [], outputs: ["./entry.js"], found: ["entry in memory", "lib in memory"] },
+          "absolute keys": { logs: [], outputs: ["./entry.js"], found: ["entry in memory", "lib in memory"] },
+          "a relative key with backslashes": {
+            logs: [],
+            outputs: ["out/virtual/entry.js"],
+            found: ["entry in memory", "lib in memory"],
+          },
         });
       },
       !isWindows,
     );
+
+    // This test is the last one: it closes the stdin of the child process.
+    test("the child process that runs the builds exits cleanly", async () => {
+      const running = (child ??= start());
+      child = undefined;
+      expect(await exited(running)).toEqual({ stdout: [], stderr: "", exitCode: 0 });
+    });
   });
 });

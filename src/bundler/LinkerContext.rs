@@ -1964,7 +1964,11 @@ impl<'a> LinkerContext<'a> {
                         // Note: `Path::assert_pretty_is_valid` lives on the
                         // resolver-side `Path<'a>`; the logger `Path` has no
                         // such debug hook yet.
-                        debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
+                        // A name in `Bun.build`'s `files` is its own display path.
+                        debug_assert!(
+                            source.path.text.as_ptr() != source.path.pretty.as_ptr()
+                                || !bun_paths::is_absolute(source.path.text)
+                        );
 
                         break 'brk source.path.pretty;
                     } else {

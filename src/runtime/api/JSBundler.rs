@@ -92,9 +92,10 @@ pub(crate) mod js_bundler {
 
             if let Err(conflict) = this.put(prop.to_owned_slice(), bytes) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
-                    "files: the keys \"{}\" and \"{}\" name the same file and have different contents",
+                    "files: the keys \"{}\" and \"{}\" both name \"{}\" and have different contents",
                     bstr::BStr::new(&conflict.other),
-                    bstr::BStr::new(&conflict.key),
+                    prop,
+                    bstr::BStr::new(&conflict.path),
                 )));
             }
         }
@@ -1000,10 +1001,8 @@ pub(crate) mod js_bundler {
             }
 
             {
-                let root = config.get_optional_slice(global_this, b"root")?;
-                let is_default_root = root.is_none();
                 let path: Utf8Bytes = 'brk: {
-                    if let Some(slice) = root {
+                    if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
                         break 'brk slice;
                     }
 
@@ -1040,46 +1039,27 @@ pub(crate) mod js_bundler {
                     );
                 };
 
-                let mut rootdir_buf = bun_paths::path_buffer_pool::get();
-                let rootdir: &[u8] = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
-                    Ok(dir) => {
-                        let _close = scopeguard::guard(dir, |d| d.close());
-                        match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
-                            Ok(p) => p,
-                            Err(err) => {
-                                return Err(global_this.throw(format_args!(
-                                    "{}: failed to get full root directory path: {}",
-                                    bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(path.slice())
-                                )));
-                            }
-                        }
-                    }
+                let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
+                    Ok(d) => d,
                     Err(err) => {
-                        // The directory of an in-memory entry point does not have to be on disk.
-                        let in_memory = is_default_root
-                            && !this.files.is_empty()
-                            && (this.entry_points.keys().iter())
-                                .all(|entry_point| this.files.contains_entry_point(entry_point));
-                        let root_path = if in_memory {
-                            bun_paths::resolve_path::join_abs_string_buf_checked::<
-                                bun_paths::platform::Auto,
-                            >(
-                                bun_resolver::fs::FileSystem::get().top_level_dir(),
-                                &mut **rootdir_buf,
-                                &[path.slice()],
-                            )
-                        } else {
-                            None
-                        };
-                        let Some(root_path) = root_path else {
-                            return Err(global_this.throw(format_args!(
-                                "{}: failed to open root directory: {}",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(path.slice())
-                            )));
-                        };
-                        root_path
+                        return Err(global_this.throw(format_args!(
+                            "{}: failed to open root directory: {}",
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(path.slice())
+                        )));
+                    }
+                };
+                let _close = scopeguard::guard(dir, |d| d.close());
+
+                let mut rootdir_buf = bun_paths::path_buffer_pool::get();
+                let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
+                    Ok(p) => p,
+                    Err(err) => {
+                        return Err(global_this.throw(format_args!(
+                            "{}: failed to get full root directory path: {}",
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(path.slice())
+                        )));
                     }
                 };
                 this.rootdir.append_slice_exact(rootdir)?;

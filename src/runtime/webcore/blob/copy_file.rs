@@ -915,10 +915,10 @@ impl CopyFile {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn is_writable_append(fd: Fd) -> bool {
+    use bun_sys::O;
     bun_sys::get_fcntl_flags(fd).is_ok_and(|flags| {
         let flags = flags as i32;
-        let writable = matches!(flags & libc::O_ACCMODE, libc::O_WRONLY | libc::O_RDWR);
-        writable && flags & libc::O_APPEND != 0
+        matches!(flags & O::ACCMODE, O::WRONLY | O::RDWR) && flags & O::APPEND != 0
     })
 }
 

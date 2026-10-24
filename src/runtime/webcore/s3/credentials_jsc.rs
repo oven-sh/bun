@@ -278,8 +278,7 @@ fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
 
-/// Sets `tagging` from `opts.tagging`: a record, URL-encoded here as `k=v&k2=v2`,
-/// or that string. An absent option keeps the default. An empty one clears it.
+/// Sets `tagging` from `opts.tagging`, a record (URL-encoded here) or a string. Empty clears it.
 fn get_tagging(
     opts: JSValue,
     global: &JSGlobalObject,

@@ -1594,37 +1594,53 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            let mut needs_side_effects = true;
-            if let Some(existing) = Result::deref_package_json(result.package_json) {
+            // Only the path that `Result::path()` returns takes attributes.
+            if primary {
+                let mut needs_side_effects = true;
                 // if we don't have it here, they might put it in a sideEfffects
                 // map of the parent package.json
                 // TODO: check if webpack also does this parent lookup
-                use crate::package_json::SideEffects as PJSideEffects;
-                needs_side_effects = matches!(
-                    existing.side_effects,
-                    PJSideEffects::Unspecified | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_)
-                );
+                if let Some(existing) = Result::deref_package_json(result.package_json) {
+                    use crate::package_json::SideEffects as PJSideEffects;
+                    let nameless = existing.name.is_empty();
+                    // A nameless package.json decides only for files in its own directory.
+                    if !nameless
+                        || existing
+                            .source
+                            .path
+                            .text
+                            .strip_suffix(b"package.json")
+                            .is_some_and(|own_dir| path.text().starts_with(own_dir))
+                    {
+                        needs_side_effects = matches!(
+                            existing.side_effects,
+                            PJSideEffects::Unspecified
+                                | PJSideEffects::Glob(_)
+                                | PJSideEffects::Mixed(_)
+                        );
 
-                result.primary_side_effects_data =
-                    primary_side_effects(&existing.side_effects, path.text());
+                        result.primary_side_effects_data =
+                            primary_side_effects(&existing.side_effects, path.text());
+                    }
 
-                if existing.name.is_empty() || self.care_about_bin_folder {
-                    result.package_json = None;
+                    if nameless || self.care_about_bin_folder {
+                        result.package_json = None;
+                    }
+                }
+
+                result.package_json = result
+                    .package_json
+                    .or_else(|| dir.enclosing_package_json.map(std::ptr::from_ref));
+
+                if needs_side_effects {
+                    if let Some(package_json) = Result::deref_package_json(result.package_json) {
+                        result.primary_side_effects_data =
+                            primary_side_effects(&package_json.side_effects, path.text());
+                    }
                 }
             }
 
-            result.package_json = result
-                .package_json
-                .or_else(|| dir.enclosing_package_json.map(std::ptr::from_ref));
-
-            if needs_side_effects {
-                if let Some(package_json) = Result::deref_package_json(result.package_json) {
-                    result.primary_side_effects_data =
-                        primary_side_effects(&package_json.side_effects, path.text());
-                }
-            }
-
-            if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
+            if primary && let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,

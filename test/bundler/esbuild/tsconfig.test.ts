@@ -787,6 +787,154 @@ describe("bundler", () => {
       api.expectFile("/Users/user/project/out.js").toContain(`React.createElement`);
     },
   });
+  // An import of a package with "module" and "main" resolves to both files. The
+  // bundle holds the "module" file, so the tsconfig.json nearest to that file
+  // applies. The one next to the "main" file applies to the "main" file only.
+  // The package is outside node_modules: esbuild ignores a tsconfig.json there.
+  const modulePkg = "/Users/user/project/pkg";
+  // An element is the name of the JSX runtime that made it.
+  const jsxRuntimes = Object.fromEntries(
+    ["react", "preact", "solid-js"].flatMap(name => [
+      [
+        `/Users/user/project/node_modules/${name}/jsx-runtime.js`,
+        `export const jsx = () => "${name}"; export const jsxs = jsx; export const Fragment = "${name}";`,
+      ],
+      [
+        `/Users/user/project/node_modules/${name}/jsx-dev-runtime.js`,
+        `export const jsxDEV = () => "${name}"; export const Fragment = "${name}";`,
+      ],
+    ]),
+  );
+  const jsxModuleMainPair = {
+    [`${modulePkg}/package.json`]: `{ "name": "pkg", "version": "1.0.0", "module": "./esm/index.jsx", "main": "./cjs/index.jsx" }`,
+    [`${modulePkg}/esm/index.jsx`]: `export const X = () => <a />;`,
+    [`${modulePkg}/cjs/index.jsx`]: `exports.X = () => <a />;`,
+    [`${modulePkg}/cjs/tsconfig.json`]: `{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "solid-js" } }`,
+    ...jsxRuntimes,
+  };
+  const preactTsconfig = `{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }`;
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`tsconfig/ModuleMainPairJSX/${backend}`, {
+      backend,
+      files: {
+        "/Users/user/project/app/entry.jsx": /* jsx */ `
+          import { X } from "../pkg";
+          console.log(X());
+        `,
+        [`${modulePkg}/esm/tsconfig.json`]: preactTsconfig,
+        ...jsxModuleMainPair,
+      },
+      run: { stdout: "preact" },
+    });
+  }
+  itBundled("tsconfig/ModuleMainPairJSXModuleFileHasNoTsconfig", {
+    files: {
+      "/Users/user/project/app/entry.jsx": /* jsx */ `
+        import { X } from "../pkg";
+        console.log(X());
+      `,
+      ...jsxModuleMainPair,
+    },
+    run: { stdout: "react" },
+  });
+  itBundled("tsconfig/ModuleMainPairJSXEntryPoint", {
+    files: {
+      ...jsxModuleMainPair,
+      [`${modulePkg}/esm/index.jsx`]: `console.log(<a />);`,
+      [`${modulePkg}/esm/tsconfig.json`]: preactTsconfig,
+    },
+    entryPoints: [modulePkg],
+    run: { stdout: "preact" },
+  });
+  itBundled("tsconfig/ModuleMainPairJSXNoBundle", {
+    files: {
+      ...jsxModuleMainPair,
+      [`${modulePkg}/esm/index.jsx`]: `console.log(<a />);`,
+      [`${modulePkg}/esm/tsconfig.json`]: preactTsconfig,
+    },
+    entryPoints: [modulePkg],
+    bundling: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`from "preact/jsx-runtime"`);
+    },
+  });
+  // A require() of the package puts the "main" file in the bundle for the
+  // import too. That file has its own resolution, with its own tsconfig.json.
+  itBundled("tsconfig/ModuleMainPairJSXRequireTakesMainFile", {
+    files: {
+      "/Users/user/project/app/entry.jsx": /* jsx */ `
+        import { X } from "../pkg";
+        const viaRequire = require("../pkg");
+        console.log(X(), viaRequire.X());
+      `,
+      [`${modulePkg}/esm/tsconfig.json`]: preactTsconfig,
+      ...jsxModuleMainPair,
+    },
+    run: { stdout: "solid-js solid-js" },
+  });
+  const flagsModuleMainPair = {
+    "/Users/user/project/app/entry.ts": /* ts */ `
+      import { out } from "../pkg";
+      console.log(out);
+    `,
+    [`${modulePkg}/package.json`]: `{ "name": "pkg", "version": "1.0.0", "module": "./esm/index.ts", "main": "./cjs/index.ts" }`,
+    [`${modulePkg}/cjs/index.ts`]: `exports.out = "main file";`,
+  };
+  const decoratorsAndClassFields = {
+    files: {
+      ...flagsModuleMainPair,
+      // A standard decorator gets (value, context). A legacy one gets (target).
+      // A field that is defined does not call the setter of the base class.
+      [`${modulePkg}/esm/index.ts`]: /* ts */ `
+        const seen: unknown[] = [];
+        function dec(...args: unknown[]) {
+          seen.push(args.length);
+        }
+        class Base {
+          set x(_: number) {
+            seen.push("setter");
+          }
+        }
+        @dec
+        class A extends Base {
+          x = 1;
+        }
+        new A();
+        export const out = seen.join(",");
+      `,
+      [`${modulePkg}/cjs/tsconfig.json`]: `{ "compilerOptions": { "experimentalDecorators": true, "useDefineForClassFields": false } }`,
+    },
+    run: { stdout: "2" },
+  };
+  itBundled("tsconfig/ModuleMainPairDecoratorsAndClassFields", decoratorsAndClassFields);
+  // The import goes to the resolver after an onResolve callback returns nothing.
+  itBundled("tsconfig/ModuleMainPairDecoratorsAndClassFieldsAfterOnResolve", {
+    ...decoratorsAndClassFields,
+    plugins(build) {
+      build.onResolve({ filter: /.*/ }, () => undefined);
+    },
+  });
+  itBundled("tsconfig/ModuleMainPairDecoratorMetadata", {
+    files: {
+      ...flagsModuleMainPair,
+      [`${modulePkg}/esm/index.ts`]: /* ts */ `
+        const keys: string[] = [];
+        (Reflect as any).metadata = (key: string) => {
+          keys.push(key);
+          return () => {};
+        };
+        function dec(_target: unknown, _key: string) {}
+        class A {
+          @dec x: number = 1;
+        }
+        new A();
+        export const out = keys.join(",") || "no metadata";
+      `,
+      [`${modulePkg}/esm/tsconfig.json`]: `{ "compilerOptions": { "experimentalDecorators": true } }`,
+      [`${modulePkg}/cjs/tsconfig.json`]: `{ "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }`,
+    },
+    run: { stdout: "no metadata" },
+  });
   itBundled("tsconfig/PathsTypeOnly", {
     files: {
       "/Users/user/project/entry.ts": /* ts */ `

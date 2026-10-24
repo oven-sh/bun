@@ -59,6 +59,39 @@ describe("bundler", () => {
     },
   });
 
+  // An import of a package with "module" and "main" bundles the "module" file.
+  // Its package name comes from the package.json that encloses that file. A
+  // package.json that encloses only the "main" file does not name it.
+  itBundled("barrel/ModuleMainPairPackageNameFromModuleFile", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from './pkg';
+        console.log(a);
+      `,
+      "/pkg/package.json": JSON.stringify({ module: "./esm/index.js", main: "./cjs/index.js" }),
+      "/pkg/esm/index.js": /* js */ `
+        export { a } from './a.js';
+        export { b } from './b.js';
+      `,
+      "/pkg/esm/a.js": /* js */ `
+        console.log("a.js");
+        export const a = "a";
+      `,
+      "/pkg/esm/b.js": /* js */ `
+        console.log("b.js");
+        export const b = "b";
+      `,
+      "/pkg/cjs/package.json": JSON.stringify({ name: "pkg-cjs", version: "1.0.0" }),
+      "/pkg/cjs/index.js": /* js */ `
+        exports.a = "main file";
+        exports.b = "main file";
+      `,
+    },
+    optimizeImports: ["pkg-cjs"],
+    outdir: "/out",
+    run: { stdout: "a.js\nb.js\na" },
+  });
+
   // --- Automatic mode (sideEffects: false) ---
 
   itBundled("barrel/SkipUnusedWithSideEffectsFalse", {

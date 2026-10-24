@@ -88,6 +88,18 @@ impl<'a> PropertyHandlerContext<'a> {
 
         self.targets.should_compile_logical(feature)
     }
+
+    /// Whether `held` is the fallback for `later`: a target lacks `later`, and every target
+    /// supports `held`. A handler writes such a `held` before it holds `later`. It does not
+    /// write a `held` that a target lacks: folded into a shorthand, that value would make the
+    /// target drop the other values too.
+    pub(crate) fn is_fallback<H, L>(&self, held: &H, later: &L) -> bool
+    where
+        H: crate::generics::IsCompatible,
+        L: crate::generics::IsCompatible,
+    {
+        !self.targets.supports(later) && self.targets.supports(held)
+    }
 }
 
 // ─── heavy rule-building helpers ──────────────────────────────────────────

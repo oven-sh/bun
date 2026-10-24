@@ -1012,6 +1012,13 @@ impl<T: IsCompatible> IsCompatible for [T] {
     }
 }
 
+impl<T: IsCompatible, const N: usize> IsCompatible for [T; N] {
+    #[inline]
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+        self.as_slice().is_compatible(browsers)
+    }
+}
+
 impl<T: IsCompatible> IsCompatible for Vec<T> {
     #[inline]
     fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {

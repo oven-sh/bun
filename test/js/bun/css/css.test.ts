@@ -4631,7 +4631,6 @@ describe("css tests", () => {
       ["flex-basis: auto", "flex-basis: round(1em, 5px)"],
       ["flex: 100vh", "flex: 100dvh"],
       ["flex: 2 15px", "flex: 2 1cqw"],
-      ["-ms-flex-preferred-size: 100vh", "-ms-flex-preferred-size: 100dvh"],
     ]) {
       prefix_test(`.foo { ${earlier}; ${later} }`, `.foo { ${earlier}; ${later}; }`, older);
       // Every target has the later value: it replaces the earlier one.
@@ -4663,15 +4662,18 @@ describe("css tests", () => {
       ["gap: 100vh 2px; row-gap: 100dvh", "gap: 100vh 2px; row-gap: 100dvh"],
       ["row-gap: 100vh; gap: 100dvh", "row-gap: 100vh; gap: 100dvh"],
       ["column-gap: 2px; gap: 100dvh 2px", "column-gap: 2px; gap: 100dvh 2px"],
-      // A held value that a target lacks is no fallback. Written early, it would go into one
-      // `gap` or `flex` with the values around it, and the target would drop them too.
+      // A held value that a target lacks is no fallback: the later value replaces it, as before.
+      // So what is written early is a declaration that every target reads.
+      ["row-gap: 100dvh; gap: 100dvh", "gap: 100dvh"],
+      ["gap: 15px; gap: 1dvh; gap: 1cqw", "gap: 15px; gap: 1cqw"],
+      ["flex: 1 1 100dvh; flex: 2 1 100dvh", "flex: 2 100dvh"],
+      // Written early, that value would go into one `gap` or `flex` with the values around it,
+      // and the target would drop them too.
       ["column-gap: 8px; row-gap: 1dvh; row-gap: 2cqw; row-gap: 16px", "gap: 16px 8px"],
       ["row-gap: 8px; column-gap: 1dvh; column-gap: 2cqw; column-gap: 16px", "gap: 8px 16px"],
       ["column-gap: 1dvh; row-gap: 16px; row-gap: 2dvh", "gap: 2dvh 1dvh"],
-      ["row-gap: 100dvh; gap: 100dvh", "gap: 100dvh"],
-      ["gap: 15px; gap: 1dvh; gap: 1cqw", "gap: 15px; gap: 1cqw"],
+      ["row-gap: 1dvh; column-gap: 16px; column-gap: 2dvh", "gap: 1dvh 2dvh"],
       ["flex-grow: 1; flex-shrink: 0; flex-basis: 100dvh; flex-basis: 10cqw; flex-basis: 10px", "flex: 1 0 10px"],
-      ["flex: 1 1 100dvh; flex: 2 1 100dvh", "flex: 2 100dvh"],
       // Not covered: a longhand that comes after the value a target lacks still goes into one
       // `gap` or `flex` with it, as before.
       ["row-gap: 16px; column-gap: 1dvh", "gap: 16px 1dvh"],
@@ -4682,10 +4684,6 @@ describe("css tests", () => {
       ["align-content: center; gap: 100dvh; justify-content: center", "place-content: center; gap: 100dvh"],
       ["flex-direction: column; flex: 1 1 100dvh; flex-wrap: wrap", "flex-flow: column wrap; flex: 100dvh"],
       ["flex-direction: column; flex-basis: 100dvh; flex-wrap: wrap", "flex-flow: column wrap; flex-basis: 100dvh"],
-      [
-        "flex-direction: column; -ms-flex-preferred-size: 100dvh; flex-wrap: wrap",
-        "-ms-flex-preferred-size: 100dvh; flex-flow: column wrap",
-      ],
       // calc() is not a reason to keep the declaration before: every target has it.
       ["gap: 100vh; gap: calc(1px + 1em)", "gap: calc(1px + 1em)"],
       ["flex-basis: 100vh; flex-basis: calc(1px + 1em)", "flex-basis: calc(1px + 1em)"],
@@ -4716,6 +4714,18 @@ describe("css tests", () => {
     prefix_test(
       ".foo { flex-basis: 100vh; flex-basis: 100dvh }",
       ".foo { -ms-flex-preferred-size: 100vh; flex-basis: 100vh; -ms-flex-preferred-size: 100dvh; flex-basis: 100dvh; }",
+      { ie: 10 << 16 },
+    );
+    // Left as it was: a later -ms-flex-preferred-size replaces an earlier one. Only IE 10 reads
+    // it, and next to a held flex-basis the early write would print its line twice.
+    prefix_test(
+      ".foo { -ms-flex-preferred-size: 100vh; -ms-flex-preferred-size: 100dvh }",
+      ".foo { -ms-flex-preferred-size: 100dvh; }",
+      { ie: 10 << 16 },
+    );
+    prefix_test(
+      ".foo { flex-basis: 100vh; -ms-flex-preferred-size: 100vh; -ms-flex-preferred-size: 100dvh }",
+      ".foo { -ms-flex-preferred-size: 100dvh; -ms-flex-preferred-size: 100vh; flex-basis: 100vh; }",
       { ie: 10 << 16 },
     );
 

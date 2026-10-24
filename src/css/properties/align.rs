@@ -605,7 +605,7 @@ pub enum GapValue {
 }
 
 /// A value for the [gap](https://www.w3.org/TR/css-align-3/#gap-shorthand) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::generics::IsCompatible)]
 pub struct Gap {
     /// The row gap.
     pub(crate) row: GapValue,
@@ -1282,14 +1282,14 @@ impl AlignHandler {
                 self.justify_items = Some(val.justify.clone());
             }
             Property::RowGap(val) => {
-                if self.row_gap.is_some() && self.holds_gap_fallback(&[val], context) {
+                if self.row_gap.is_some() && context.is_fallback(&self.gaps(), val) {
                     self.flush(dest, context);
                 }
                 self.row_gap = Some(val.clone());
                 self.has_any = true;
             }
             Property::ColumnGap(val) => {
-                if self.column_gap.is_some() && self.holds_gap_fallback(&[val], context) {
+                if self.column_gap.is_some() && context.is_fallback(&self.gaps(), val) {
                     self.flush(dest, context);
                 }
                 self.column_gap = Some(val.clone());
@@ -1297,7 +1297,7 @@ impl AlignHandler {
             }
             Property::Gap(val) => {
                 if (self.row_gap.is_some() || self.column_gap.is_some())
-                    && self.holds_gap_fallback(&[&val.row, &val.column], context)
+                    && context.is_fallback(&self.gaps(), val)
                 {
                     self.flush(dest, context);
                 }
@@ -1322,17 +1322,9 @@ impl AlignHandler {
         true
     }
 
-    /// Whether the held gaps are the fallback for `later`: a target lacks a gap of `later`, and
-    /// every target supports the held ones. A held gap that a target lacks is no fallback, and
-    /// `flush` would fold it with the other gap into a declaration that the target drops.
-    fn holds_gap_fallback(
-        &self,
-        later: &[&GapValue],
-        context: &PropertyHandlerContext<'_>,
-    ) -> bool {
-        !later.iter().all(|gap| context.targets.supports(*gap))
-            && context.targets.supports(&self.row_gap)
-            && context.targets.supports(&self.column_gap)
+    /// The held gaps. `flush` writes them as one declaration.
+    fn gaps(&self) -> [&Option<GapValue>; 2] {
+        [&self.row_gap, &self.column_gap]
     }
 
     pub(crate) fn finalize(

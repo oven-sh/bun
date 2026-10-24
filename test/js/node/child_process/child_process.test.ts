@@ -1,4 +1,3 @@
-import { Readable } from "node:stream";
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
@@ -30,6 +29,7 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
+import { Readable } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
@@ -1817,7 +1817,10 @@ it("an already-open child stdin does not emit open or ready", async () => {
     child.stdin!.end("input");
     const [out, err, code] = await Promise.all([stdout, stderr, closed]);
     expect({ stdout: out, stderr: err, events, code }).toEqual({
-      stdout: "done\n", stderr: "", events: [], code: [0, null],
+      stdout: "done\n",
+      stderr: "",
+      events: [],
+      code: [0, null],
     });
   } finally {
     child.kill();

@@ -1312,3 +1312,25 @@ export function membersUnderNamesOfTheRuntime(tag: string): string[] {
   });
   return lines;
 }
+
+export const nodeVMSourceBufferStats: () => {
+  sourceBytes: number;
+  sourceMapBytes: number;
+  buffers: number;
+  entries: number;
+  metadataBytes: number;
+  hits: number;
+  misses: number;
+} = $newCppFunction("NodeVMSourceBuffer.cpp", "jsNodeVMSourceBufferStats", 0);
+
+export const nodeVMSourceBufferTest: () => {
+  collisionPreserved: boolean;
+  widthPreserved: boolean;
+  sliceCopied: boolean;
+  vmIsolated: boolean;
+  threadReleased: boolean;
+  overflowBounded: boolean;
+  released: boolean;
+  churnReleased: boolean;
+  metadataBytes: number;
+} = $newCppFunction("NodeVMSourceBuffer.cpp", "jsNodeVMSourceBufferTest", 0);

@@ -117,7 +117,6 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   
   // Use DevServerSourceProvider with the source map JSON
   auto provider = DevServerSourceProvider::create(
-    global,
     source.transferToWTFString(),
     sourceMapJSONPtr,
     sourceMapJSONLength,
@@ -133,6 +132,8 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   RETURN_IF_EXCEPTION(scope, {});
 
   RELEASE_ASSERT(result);
+  // A chunk that did not load must not take the source map of the code that runs.
+  provider->registerSourceMap(global);
   return JSC::JSValue::encode(result);
 }
 

@@ -2095,6 +2095,41 @@ devTest("recovers from an unresolved css url() and html script src longer than t
       await dev.fetch("/other").equals("other good v2");
     },
   });
+  devTest("a hot update that JSC rejects keeps the source map of the code that runs", {
+    framework: minimalFramework,
+    files: {
+      "bad.ts": `export const bad = "bad v1";`,
+      "thrower.ts": `
+        export function fail() {
+          throw new Error("from thrower");
+        }
+      `,
+      "routes/other.ts": `
+        import { bad } from "../bad";
+        export default function () {
+          return new Response("other " + bad);
+        }
+      `,
+      "routes/index.ts": `
+        import { fail } from "../thrower";
+        export default function () {
+          try {
+            fail();
+          } catch (e) {
+            return new Response(e.stack);
+          }
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/other").equals("other bad v1");
+      // The chunk of "/" loads last, so stack traces map through its source map.
+      const stack = await dev.fetch("/").text();
+      expect(stack).toContain("thrower.ts:");
+      await dev.write("bad.ts", `export const bad = /+/.source;`);
+      expect(await dev.fetch("/").text()).toBe(stack);
+    },
+  });
   // `receive_chunk` lists a client component before JSC sees its code.
   const manifestRoute = `
     import { serverManifest } from "bun:bake/server";

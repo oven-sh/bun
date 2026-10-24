@@ -5,13 +5,14 @@
 // `streams` request streams in flight at all times. Workers batch UDP I/O
 // with sendmmsg/recvmmsg and drive the lsquic timer wheel via epoll. The
 // main thread samples per-worker counters at ~10 Hz to render a live TUI,
-// then prints a final report with HdrHistogram percentiles.
+// then prints a final report with latency percentiles.
 
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <math.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -36,7 +37,6 @@
 
 _Static_assert(sizeof(lsxpack_strlen_t) == 4, "LSXPACK_MAX_STRLEN must be UINT32_MAX, as in the objects this links");
 #include <openssl/ssl.h>
-#include <hdr/hdr_histogram.h>
 
 #define H3B_VERSION "0.1.0"
 
@@ -45,6 +45,73 @@ _Static_assert(sizeof(lsxpack_strlen_t) == 4, "LSXPACK_MAX_STRLEN must be UINT32
 #define RECV_BATCH 64
 #define RECV_PKT_SZ 1500
 #define SEND_BATCH 1024
+
+// ───────────────────────── latency histogram ─────────────────────────
+
+// Microseconds up to a minute, to 3 significant figures, in the layout of HdrHistogram: 2048 slots of 1 µs, then
+// for each doubling of the range 1024 slots twice as wide. A result is an edge or the middle of a slot.
+#define HIST_MAX_US (60 * 1000 * 1000)
+#define HIST_HALF_BITS 10
+#define HIST_SLOTS (17 << HIST_HALF_BITS)
+
+struct hist {
+    uint64_t total;
+    uint64_t counts[HIST_SLOTS];
+};
+
+static struct hist *hist_new(void) { return calloc(1, sizeof(struct hist)); }
+
+static void hist_record(struct hist *h, uint64_t us) {
+    if (us > HIST_MAX_US) return;
+    int bucket = 64 - __builtin_clzll(us | 2047) - (HIST_HALF_BITS + 1);
+    h->counts[((uint64_t)bucket << HIST_HALF_BITS) + (us >> bucket)]++;
+    h->total++;
+}
+
+static void hist_add(struct hist *h, const struct hist *from) {
+    for (int i = 0; i < HIST_SLOTS; i++) h->counts[i] += from->counts[i];
+    h->total += from->total;
+}
+
+static int hist_shift(int slot) { return slot < 2048 ? 0 : (slot >> HIST_HALF_BITS) - 1; }
+static int64_t hist_lowest(int slot) {
+    return slot < 2048 ? slot : (int64_t)((slot & 1023) + 1024) << hist_shift(slot);
+}
+static int64_t hist_highest(int slot) { return hist_lowest(slot) + ((int64_t)1 << hist_shift(slot)) - 1; }
+static double hist_median(int slot) { return (double)(hist_lowest(slot) + (((int64_t)1 << hist_shift(slot)) >> 1)); }
+
+static int64_t hist_percentile(const struct hist *h, double percentile) {
+    uint64_t rank = (uint64_t)(percentile / 100 * (double)h->total + 0.5), seen = 0;
+    if (rank < 1) rank = 1;
+    if (rank > h->total) rank = h->total;
+    for (int i = 0; i < HIST_SLOTS; i++) {
+        seen += h->counts[i];
+        if (h->counts[i] && seen >= rank) return hist_highest(i);
+    }
+    return 0;
+}
+
+static int64_t hist_min(const struct hist *h) {
+    for (int i = 0; i < HIST_SLOTS; i++) if (h->counts[i]) return hist_lowest(i);
+    return 0;
+}
+
+static int64_t hist_max(const struct hist *h) { return hist_percentile(h, 100); }
+
+static double hist_mean(const struct hist *h) {
+    double sum = 0;
+    for (int i = 0; i < HIST_SLOTS; i++) sum += hist_median(i) * (double)h->counts[i];
+    return sum / (double)h->total;
+}
+
+static double hist_stddev(const struct hist *h) {
+    double mean = hist_mean(h), sum = 0;
+    for (int i = 0; i < HIST_SLOTS; i++) {
+        double deviation = hist_median(i) - mean;
+        sum += deviation * deviation * (double)h->counts[i];
+    }
+    return sqrt(sum / (double)h->total);
+}
 
 // ───────────────────────── ANSI helpers ─────────────────────────
 
@@ -149,7 +216,7 @@ struct worker {
     struct lsxpack_header xhdrs[MAX_HEADERS + 6];
     struct lsquic_http_headers req_headers;
 
-    struct hdr_histogram *hist;
+    struct hist *hist;
 
     bool blocked;
     bool stopping;
@@ -417,7 +484,7 @@ static void record_done(struct stream_ctx *sc, bool ok) {
     struct worker *w = sc->c->w;
     uint64_t lat_us = (now_ns() - sc->start_ns) / 1000;
     if (ok) {
-        hdr_record_value(w->hist, (int64_t)lat_us);
+        hist_record(w->hist, lat_us);
         atomic_fetch_add_explicit(&w->req_done, 1, memory_order_relaxed);
         int s = sc->status;
         if (s >= 200 && s < 300) atomic_fetch_add_explicit(&w->req_2xx, 1, memory_order_relaxed);
@@ -602,7 +669,7 @@ static void *worker_main(void *arg) {
     SSL_CTX_set_max_proto_version(w->ssl_ctx, TLS1_3_VERSION);
     SSL_CTX_set_session_cache_mode(w->ssl_ctx, SSL_SESS_CACHE_CLIENT);
 
-    hdr_init(1, 60 * 1000 * 1000, 3, &w->hist);
+    w->hist = hist_new();
     worker_build_headers(w);
 
     struct lsquic_engine_settings settings;
@@ -751,7 +818,7 @@ struct snapshot {
 
 struct result {
     struct snapshot snap;
-    struct hdr_histogram *hist;
+    struct hist *hist;
     double elapsed;
     bool ran;
 };
@@ -896,7 +963,7 @@ static void render_final(const struct config *cfg, const struct result *results)
         if (!results[t].ran) break;
         const struct target *tgt = &cfg->targets[t];
         const struct snapshot *s = &results[t].snap;
-        struct hdr_histogram *agg = results[t].hist;
+        struct hist *agg = results[t].hist;
         double elapsed = results[t].elapsed;
 
         double rps = elapsed > 0 ? (double)s->done / elapsed : 0;
@@ -920,15 +987,15 @@ static void render_final(const struct config *cfg, const struct result *results)
                    cfg->threads, cfg->connections, cfg->streams,
                    elapsed, s->done, s->err, rps, s->rx, s->rx_wire, s->tx, avgb, rxps,
                    s->s2, s->s3, s->s4, s->s5, s->so,
-                   s->done ? hdr_min(agg) : 0,
-                   s->done ? hdr_mean(agg) : 0.0,
-                   s->done ? hdr_stddev(agg) : 0.0,
-                   hdr_value_at_percentile(agg, 50.0),
-                   hdr_value_at_percentile(agg, 75.0),
-                   hdr_value_at_percentile(agg, 90.0),
-                   hdr_value_at_percentile(agg, 99.0),
-                   hdr_value_at_percentile(agg, 99.9),
-                   hdr_max(agg));
+                   s->done ? hist_min(agg) : 0,
+                   s->done ? hist_mean(agg) : 0.0,
+                   s->done ? hist_stddev(agg) : 0.0,
+                   hist_percentile(agg, 50.0),
+                   hist_percentile(agg, 75.0),
+                   hist_percentile(agg, 90.0),
+                   hist_percentile(agg, 99.0),
+                   hist_percentile(agg, 99.9),
+                   hist_max(agg));
             continue;
         }
 
@@ -936,7 +1003,7 @@ static void render_final(const struct config *cfg, const struct result *results)
         fmt_thousands((uint64_t)rps, rps_full, sizeof(rps_full));
         fmt_thousands(s->done, b_total, sizeof(b_total));
         human_bytes(bpr, b_bpr, sizeof(b_bpr));
-        human_latency(s->done ? (double)hdr_value_at_percentile(agg, 99.0) : 0, p99, sizeof(p99));
+        human_latency(s->done ? (double)hist_percentile(agg, 99.0) : 0, p99, sizeof(p99));
 
         if (t > 0) fputs("\n\n", f);
 
@@ -981,13 +1048,13 @@ static void render_final(const struct config *cfg, const struct result *results)
                 {"min", 0}, {"p50", 50}, {"p75", 75}, {"p90", 90},
                 {"p99", 99}, {"p99.9", 99.9}, {"max", 100},
             };
-            int64_t maxv = s->done ? hdr_max(agg) : 0;
+            int64_t maxv = s->done ? hist_max(agg) : 0;
             for (size_t i = 0; i < sizeof(rows)/sizeof(rows[0]); i++) {
                 int64_t v = 0;
                 if (s->done == 0) { /* leave at 0 */ }
-                else if (rows[i].pct == 0) v = hdr_min(agg);
-                else if (rows[i].pct == 100) v = hdr_max(agg);
-                else v = hdr_value_at_percentile(agg, rows[i].pct);
+                else if (rows[i].pct == 0) v = hist_min(agg);
+                else if (rows[i].pct == 100) v = hist_max(agg);
+                else v = hist_percentile(agg, rows[i].pct);
                 char lat[32]; human_latency((double)v, lat, sizeof(lat));
                 int barw = maxv > 0 ? (int)((double)v / (double)maxv * barmax) : 0;
                 fprintf(f, "  %s%-7s%s %s%-9s%s ", DIM, rows[i].label, RST, BLD, lat, RST);
@@ -996,8 +1063,8 @@ static void render_final(const struct config *cfg, const struct result *results)
                 fprintf(f, "%s\n", RST);
             }
             char mean[32], stdd[32];
-            human_latency(s->done ? hdr_mean(agg) : 0, mean, sizeof(mean));
-            human_latency(s->done ? hdr_stddev(agg) : 0, stdd, sizeof(stdd));
+            human_latency(s->done ? hist_mean(agg) : 0, mean, sizeof(mean));
+            human_latency(s->done ? hist_stddev(agg) : 0, stdd, sizeof(stdd));
             fprintf(f, "  %s%-7s%s %-9s %s± %s%s\n", DIM, "mean", RST, mean, DIM, stdd, RST);
 
             fprintf(f, "\n  %sStatus%s\n  ", BLD, RST);
@@ -1271,9 +1338,9 @@ int main(int argc, char **argv) {
         r->ran = true;
         r->elapsed = (double)(now_ns() - stats_start) / 1e9;
         collect(ws, nw, &r->snap);
-        hdr_init(1, 60 * 1000 * 1000, 3, &r->hist);
+        r->hist = hist_new();
         for (int i = 0; i < nw; i++) {
-            if (ws[i].hist) { hdr_add(r->hist, ws[i].hist); hdr_close(ws[i].hist); }
+            if (ws[i].hist) { hist_add(r->hist, ws[i].hist); free(ws[i].hist); }
             if (ws[i].errbuf[0])
                 fprintf(stderr, "  %s%s w%d%s %s\n", RED, cfg.targets[t].label, i, RST, ws[i].errbuf);
         }

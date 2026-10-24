@@ -634,11 +634,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::Normal => {
                             if GET_METADATA {
                                 let ident = self.lexer.identifier;
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                // The scan pass binds no symbols: it marks the name as used.
+                                let ref_ = if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+                                    self.store_name_in_ref(ident)
+                                } else {
+                                    self.find_symbol(bun_ast::Loc::EMPTY, ident)?.r#ref
+                                };
                                 **result
                                     .as_mut()
                                     .expect("infallible: GET_METADATA implies Some") =
-                                    Metadata::MIdentifier(find_result.r#ref);
+                                    Metadata::MIdentifier(ref_);
                             }
 
                             self.lexer.next()?;
@@ -904,23 +909,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let r = result
                             .as_deref_mut()
                             .expect("infallible: GET_METADATA implies Some");
-                        match r {
-                            Metadata::MIdentifier(id_ref) => {
-                                let id_ref = *id_ref;
-                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
-                                dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                dot.push(find_result.r#ref);
-                                *r = Metadata::MDot(dot);
+                        if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+                            // The scan pass prints no metadata, so it builds no `MDot`.
+                            if matches!(r, Metadata::MIdentifier(_)) {
+                                self.store_name_in_ref(ident);
                             }
-                            Metadata::MDot(dot) => {
-                                if self.lexer.is_identifier_or_keyword() {
+                        } else {
+                            match r {
+                                Metadata::MIdentifier(id_ref) => {
+                                    let id_ref = *id_ref;
+                                    let mut dot: Vec<Ref> = Vec::with_capacity(2);
+                                    dot.push(id_ref);
                                     let find_result =
                                         self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
                                     dot.push(find_result.r#ref);
+                                    *r = Metadata::MDot(dot);
                                 }
+                                Metadata::MDot(dot) => {
+                                    if self.lexer.is_identifier_or_keyword() {
+                                        let find_result =
+                                            self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                        dot.push(find_result.r#ref);
+                                    }
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
 

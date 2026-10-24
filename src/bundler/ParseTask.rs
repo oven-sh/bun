@@ -2495,6 +2495,11 @@ pub mod parse_worker {
         let mut opts = ParserOptions::init(
             crate::transpiler::to_parser_jsx_pragma(task.jsx.clone()),
             loader,
+            js_parser::TsconfigOptions {
+                experimental_decorators: task.experimental_decorators,
+                emit_decorator_metadata: task.emit_decorator_metadata,
+                use_define_for_class_fields: task.use_define_for_class_fields,
+            },
         );
         opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
@@ -2539,13 +2544,6 @@ pub mod parse_worker {
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
-        opts.use_define_for_class_fields = task.use_define_for_class_fields;
-        opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
-        // emitDecoratorMetadata implies legacy/experimental decorators, as it only
-        // makes sense with TypeScript's legacy decorator system (reflect-metadata).
-        // TC39 standard decorators have their own metadata mechanism.
-        opts.features.standard_decorators = !loader.is_typescript()
-            || !(task.experimental_decorators || task.emit_decorator_metadata);
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
         opts.features.no_macros = topts.no_macros;
         // Modeled as

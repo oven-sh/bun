@@ -12,10 +12,8 @@ use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
-#[cfg(not(windows))]
-use crate::generated_bindgen::sink::FileSinkStartOptions;
 use crate::generated_bindgen::sink::{
-    ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController,
+    ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController as js,
 };
 use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
@@ -54,6 +52,7 @@ fn high_water_mark(value: f64, min: BlobSizeType) -> BlobSizeType {
     (min as i64).max(value as i64).min(MAX_HIGH_WATER_MARK) as BlobSizeType
 }
 
+// Compat: `webcore::SinkHandle` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub(crate) use StreamResult as Result;
 pub(crate) mod result {
     pub(crate) use super::{StreamError, Writable};
@@ -143,14 +142,6 @@ impl Start {
         Start::FileSink(FileSinkOptions {
             input_path,
             ..Default::default()
-        })
-    }
-
-    /// `Bun.file(..).writer(options)`, which ignores `options` on Windows.
-    #[cfg(not(windows))]
-    pub(crate) fn file_sink_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Start> {
-        FileSinkStartOptions::from_js(global, options, |options| {
-            Ok(Start::file_sink(&options.path, options.fd))
         })
     }
 
@@ -688,7 +679,7 @@ impl PipeCell {
         done: JSValue,
         global: &JSGlobalObject,
     ) -> PipeCell {
-        js_ReadableSinkController::set_pipe(cell, stream, done);
+        js::set_pipe(cell, stream, done);
         PipeCell(::bun_jsc::strong::Optional::create(cell, global))
     }
 
@@ -699,7 +690,7 @@ impl PipeCell {
     /// The pipe is over: a controller the user still holds must not keep the stream or the promise alive.
     pub(crate) fn clear_slots(&self) {
         if let Some(cell) = self.0.get() {
-            js_ReadableSinkController::set_pipe(cell, JSValue::UNDEFINED, JSValue::UNDEFINED);
+            js::set_pipe(cell, JSValue::UNDEFINED, JSValue::UNDEFINED);
         }
     }
 
@@ -708,7 +699,7 @@ impl PipeCell {
     }
 
     pub(crate) fn stream(&self) -> Option<crate::webcore::ReadableStream> {
-        let stream = js_ReadableSinkController::pipe_stream(self.0.get()?);
+        let stream = js::pipe_stream(self.0.get()?);
         if stream.is_empty() {
             return None;
         }
@@ -718,7 +709,7 @@ impl PipeCell {
     pub(crate) fn take_stream(&self) -> Option<crate::webcore::ReadableStream> {
         let stream = self.stream();
         if let Some(cell) = self.0.get() {
-            js_ReadableSinkController::clear_pipe_stream(cell);
+            js::clear_pipe_stream(cell);
         }
         stream
     }
@@ -734,28 +725,28 @@ impl PipeCell {
 
     /// The promise the sink's owner or source awaits, until it is taken to be settled.
     pub(crate) fn done(&self) -> Option<*mut JSPromise> {
-        js_ReadableSinkController::pipe_done(self.0.get()?).as_promise()
+        js::pipe_done(self.0.get()?).as_promise()
     }
 
     pub(crate) fn set_done(&self, done: JSValue) {
         debug_assert!(self.0.has(), "no controller cell to hold the promise");
         if let Some(cell) = self.0.get() {
-            js_ReadableSinkController::set_pipe_done(cell, done);
+            js::set_pipe_done(cell, done);
         }
     }
 
     pub(crate) fn take_done(&self) -> Option<*mut JSPromise> {
-        js_ReadableSinkController::take_pipe_done(self.0.get()?).as_promise()
+        js::take_pipe_done(self.0.get()?).as_promise()
     }
 
     pub(crate) fn set_error(&self, error: JSValue) {
         if let Some(cell) = self.0.get() {
-            js_ReadableSinkController::set_fail_reason(cell, error);
+            js::set_fail_reason(cell, error);
         }
     }
 
     pub(crate) fn error(&self) -> Option<JSValue> {
-        js_ReadableSinkController::fail_reason_get_cached(self.0.get()?)
+        js::fail_reason_get_cached(self.0.get()?)
     }
 }
 
@@ -949,7 +940,7 @@ impl SourceHandle {
                 if global.has_exception() {
                     return;
                 }
-                crate::dispatch::fold(js_ReadableSinkController::on_ready(cpp, global));
+                crate::dispatch::fold(js::on_ready(cpp, global));
             }
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),

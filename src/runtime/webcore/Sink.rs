@@ -205,15 +205,12 @@ fn write_chunk<'a, T: JsSinkType>(
     let sink = unsafe { &mut *sink.as_ptr() };
     // The chunk's argument slot holds the bytes for the call, and the sink copies what it keeps.
     let written = match chunk {
-        SinkChunk::Bytes(buffer) => {
-            let written = buffer.with_bytes(&cx.heap, |bytes| {
-                (!bytes.is_empty()).then(|| sink.write_bytes(&Temporary(RawSlice::new(bytes))))
-            });
-            let Some(written) = written else {
-                return Ok(JSValue::js_number(0.0));
-            };
-            written
-        }
+        SinkChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, |bytes| {
+            if bytes.is_empty() {
+                return streams::Writable::Owned(0);
+            }
+            sink.write_bytes(&Temporary(RawSlice::new(bytes)))
+        }),
         SinkChunk::Text(text) if text.is_empty() => return Ok(JSValue::js_number(0.0)),
         SinkChunk::Text(text) if text.is_utf16() => sink.write_utf16(&Temporary(RawSlice::new(
             bytemuck::cast_slice(text.utf16()),
@@ -344,7 +341,8 @@ impl<T: JsSinkType> JSSink<T> {
         };
         // SAFETY: the object's live sink.
         let result = pending_exception_or(cx.global(), unsafe { &mut *sink.as_ptr() }.end(None));
-        // The sink is taken, so `Drop` will not do these. They happen even if the close threw.
+        // The sink is taken, so `Drop` will not do these: the subprocess first, so that it clears
+        // its weak back-pointer, then `finalize`. They happen even if the close threw.
         self.notify_subprocess();
         // SAFETY: `end` does not free the sink, and nothing uses it after this.
         unsafe { T::finalize(sink.as_ptr()) };
@@ -544,7 +542,7 @@ pub(crate) struct ReadableSinkController {
 }
 
 impl ReadableSinkController {
-    /// A new controller attached to `sink`.
+    /// A new controller attached to `sink`; it must be detached before the sink is freed.
     pub(crate) fn create<T: ControlledSink>(global: &JSGlobalObject, sink: NonNull<T>) -> JSValue {
         Self {
             sink: T::to_any_sink(sink),
@@ -594,7 +592,7 @@ impl ReadableSinkController {
     ) -> JsResult<()> {
         let this: &Self = controller.as_class_ref().expect("a ReadableSinkController");
         this.destination_closed.set(true);
-        js::on_close(controller, global, reason, true)
+        js::on_close(controller, global, reason, /* sink_closed */ true)
     }
 
     fn this_value(&self) -> JSValue {
@@ -669,10 +667,11 @@ impl ReadableSinkController {
         let reason = reason
             .or_else(|| js::fail_reason_get_cached(controller))
             .unwrap_or(JSValue::UNDEFINED);
-        js::on_close(controller, global, reason, false)
+        js::on_close(controller, global, reason, /* sink_closed */ false)
     }
 
     /// `onClose` closes a direct stream and settles its promise, so it runs even if the sink's own `end` or `close` threw, and the sink's error wins.
+    /// A termination from either is returned as it is: nothing is thrown on a VM that is stopping.
     fn detach_and_return<R>(
         &self,
         global: &JSGlobalObject,
@@ -836,7 +835,9 @@ impl ReadableSinkController {
     }
 }
 
-/// Out of line so the `assign_controller_to_stream` instantiations share one copy.
+/// Start the pump from `stream` into `controller`, whose sink is live and
+/// already holds it as its `source()`. Out of line so the
+/// `assign_controller_to_stream` instantiations share one copy.
 #[inline(never)]
 fn start_pump(global: &JSGlobalObject, stream: JSValue, controller: JSValue) -> JSValue {
     let result = js::assign_to_stream(controller, global, stream);

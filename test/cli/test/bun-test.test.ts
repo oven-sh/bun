@@ -1994,6 +1994,37 @@ describe("bun test", () => {
     const beforeEnd = " before the end of the test run";
     const oneFailed = " 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 1 file.";
 
+    // Serial: a node:test file takes over a second to load in a debug build. First: a serial test keeps the
+    // concurrent tests below out of the group of the block above.
+    const nodeTestFile = (body: string) => `
+      import { test, after } from "node:test";
+      import assert from "node:assert";
+      ${body}
+    `;
+    const nodeFails = `test("fails", () => { assert.strictEqual(1, 2); });`;
+
+    test.serial.each([
+      ["a test", `${nodeFails}\n${exits}`, whileTest("exits")],
+      ["a root after() hook", `after(() => { process.exit(0); });\n${nodeFails}`, whileHook],
+    ])("process.exit(0) in %s of a node:test file", async (_, body, when) => {
+      const { stderr, exitCode } = await runFiles({ "node.test.ts": nodeTestFile(body) }, ["./node.test.ts"]);
+      expect(stderr).toMatch(/\(fail\) fails \[[^\]]+\]\n[^]*error: The process was told to exit/);
+      expect(stderr).toContain(told(when));
+      expect(stderr).toContain(" 0 pass\n 1 fail\nRan 1 test across 1 file.");
+      expect(exitCode).toBe(1);
+    });
+
+    // The run has ended when its 'exit' listeners run. Their exit is as it was before.
+    test.serial("an 'exit' listener that calls process.exit(0) at the normal end of a failed run", async () => {
+      const listener = `process.on("exit", code => { console.log("exit listener ran with", code); process.exit(0); });`;
+      const { stdout, stderr } = await runFiles({ "node.test.ts": nodeTestFile(`${listener}\n${nodeFails}`) }, [
+        "./node.test.ts",
+      ]);
+      expect(stdout).toContain("exit listener ran with 1");
+      expect(stderr).not.toContain("was told to exit");
+      expect(stderr.match(/Ran 1 test across 1 file\./g)).toHaveLength(1);
+    });
+
     test.each([
       ["process.exit(0)", 0, 1],
       ["process.exit()", 0, 1],
@@ -2537,36 +2568,6 @@ ${fails}\ntest("exits", async () => { process.exit(0); await new Promise(() => {
       expect(stderr).toContain(" 1 pass\n 1 fail\n");
       expect(stderr.match(/Ran 2 tests across 1 file\./g)).toHaveLength(1);
       expect(exitCode).toBe(1);
-    });
-
-    // The tests below are serial: a node:test file takes over a second to load in a debug build.
-    const nodeTestFile = (body: string) => `
-      import { test, after } from "node:test";
-      import assert from "node:assert";
-      ${body}
-    `;
-    const nodeFails = `test("fails", () => { assert.strictEqual(1, 2); });`;
-
-    test.serial.each([
-      ["a test", `${nodeFails}\n${exits}`, whileTest("exits")],
-      ["a root after() hook", `after(() => { process.exit(0); });\n${nodeFails}`, whileHook],
-    ])("process.exit(0) in %s of a node:test file", async (_, body, when) => {
-      const { stderr, exitCode } = await runFiles({ "node.test.ts": nodeTestFile(body) }, ["./node.test.ts"]);
-      expect(stderr).toMatch(/\(fail\) fails \[[^\]]+\]\n[^]*error: The process was told to exit/);
-      expect(stderr).toContain(told(when));
-      expect(stderr).toContain(" 0 pass\n 1 fail\nRan 1 test across 1 file.");
-      expect(exitCode).toBe(1);
-    });
-
-    // The run has ended when its 'exit' listeners run. Their exit is as it was before.
-    test.serial("an 'exit' listener that calls process.exit(0) at the normal end of a failed run", async () => {
-      const listener = `process.on("exit", code => { console.log("exit listener ran with", code); process.exit(0); });`;
-      const { stdout, stderr } = await runFiles({ "node.test.ts": nodeTestFile(`${listener}\n${nodeFails}`) }, [
-        "./node.test.ts",
-      ]);
-      expect(stdout).toContain("exit listener ran with 1");
-      expect(stderr).not.toContain("was told to exit");
-      expect(stderr.match(/Ran 1 test across 1 file\./g)).toHaveLength(1);
     });
   });
 });

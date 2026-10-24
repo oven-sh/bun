@@ -417,6 +417,7 @@ pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
             b"default",
             b"revert",
             b"revert-layer",
+            b"revert-rule",
         ],
     )
 }

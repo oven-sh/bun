@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -4941,8 +4942,56 @@ describe("css tests", () => {
         line-height: 1.2em;
       }
     `,
-      indoc`.foo{font:italic small-caps 700 125% 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
+      // The `font` shorthand only takes the `<font-stretch-css3>` keywords, so
+      // `expanded` must not become `125%` there (parcel-bundler/lightningcss#1140).
+      indoc`.foo{font:italic small-caps 700 expanded 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
     );
+
+    // A font-stretch that reaches the shorthand from a longhand is printed as
+    // the keyword with the same computed value, or stays a longhand after the
+    // shorthand (which resets it) when no keyword matches.
+    minify_test(".foo { font: 12px foo; font-stretch: condensed }", ".foo{font:condensed 12px foo}");
+    minify_test(".foo { font: 12px foo; font-stretch: 75% }", ".foo{font:condensed 12px foo}");
+    minify_test(".foo { font: 12px foo; font-stretch: 110% }", ".foo{font:12px foo;font-stretch:110%}");
+    minify_test(".foo { font: condensed 12px/14px foo }", ".foo{font:condensed 12px/14px foo}");
+    minify_test(".foo { font-stretch: condensed }", ".foo{font-stretch:75%}");
+    cssTest(
+      `
+      .foo {
+        font-family: foo;
+        font-size: 12px;
+        font-weight: normal;
+        font-style: normal;
+        font-stretch: 110%;
+        font-variant-caps: all-small-caps;
+        line-height: normal;
+      }
+    `,
+      indoc`
+      .foo {
+        font: 12px foo;
+        font-variant-caps: all-small-caps;
+        font-stretch: 110%;
+      }
+`,
+    );
+
+    // A css-wide keyword (or the reserved `default`) on a longhand cannot be
+    // folded into the `font` shorthand: the shorthand has no slot for it, and
+    // `font: 12px inherit` is an invalid declaration that browsers drop whole.
+    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "revert-rule", "default"]) {
+      minify_test(
+        `.foo { font: italic .875rem/normal Arial, sans-serif; font-family: ${keyword} }`,
+        `.foo{font:italic .875rem Arial,sans-serif;font-family:${keyword}}`,
+      );
+      minify_test(
+        `.foo { font: 12px serif; font-family: ${keyword}, foo }`,
+        `.foo{font:12px serif;font-family:${keyword},foo}`,
+      );
+      minify_test(`.foo { font: 12px serif; font-family: "${keyword}" }`, `.foo{font:12px "${keyword}"}`);
+      minify_test(`.foo { font: 12px serif; font-family: ${keyword} foo }`, `.foo{font:12px ${keyword} foo}`);
+      minify_test(`.foo { font: 12px ${keyword} }`, `.foo{font:12px ${keyword}}`);
+    }
 
     cssTest(
       `
@@ -5008,6 +5057,14 @@ describe("css tests", () => {
     minify_test(".foo { font: normal normal 500 medium/normal Charcoal; }", ".foo{font:500 medium Charcoal}");
     minify_test(".foo { font: normal normal 400 medium Charcoal; }", ".foo{font:400 medium Charcoal}");
     minify_test(".foo { font: normal normal 500 medium/10px Charcoal; }", ".foo{font:500 medium/10px Charcoal}");
+    // The shorthand takes the css2.1 font-variant values in any position before the size.
+    minify_test(".foo { font: small-caps bold 12px serif; }", ".foo{font:small-caps 700 12px serif}");
+    minify_test(".foo { font: bold small-caps 12px serif; }", ".foo{font:small-caps 700 12px serif}");
+    minify_test(
+      ".foo { font: normal small-caps 12px serif; font-style: italic }",
+      ".foo{font:italic small-caps 12px serif}",
+    );
+    minify_test(".foo { font: all-small-caps 12px serif; }", ".foo{font:all-small-caps 12px serif}");
     minify_test(".foo { font-family: 'sans-serif'; }", '.foo{font-family:"sans-serif"}');
     minify_test(".foo { font-family: sans-serif; }", ".foo{font-family:sans-serif}");
     minify_test(".foo { font-family: 'default'; }", '.foo{font-family:"default"}');
@@ -6634,6 +6691,30 @@ describe("css tests", () => {
     minify_test(".foo { transition: width 2s ease 1s }", ".foo{transition:width 2s 1s}");
     minify_test(".foo { transition: ease-in 1s width 4s }", ".foo{transition:width 1s ease-in 4s}");
     minify_test(".foo { transition: opacity 0s .6s }", ".foo{transition:opacity 0s .6s}");
+    minify_test(".foo { transition: opacity 1s; transition-property: none }", ".foo{transition:none 1s}");
+    minify_test(".foo { transition: opacity 1s; transition-property: all }", ".foo{transition:all 1s}");
+    // `<single-transition-property>` is a <custom-ident>: a css-wide keyword or
+    // `default` is not a property name and cannot move into the shorthand.
+    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "revert-rule", "default"]) {
+      minify_test(
+        `.foo { transition: opacity 1.5s, color 1s; transition-property: ${keyword} }`,
+        `.foo{transition:opacity 1.5s,color 1s;transition-property:${keyword}}`,
+      );
+      minify_test(
+        `.foo { transition-property: ${keyword}; transition-duration: 2s }`,
+        `.foo{transition-property:${keyword};transition-duration:2s}`,
+      );
+      minify_test(
+        `.foo { transition-property: opacity, ${keyword}; transition-duration: 2s }`,
+        `.foo{transition-property:opacity,${keyword};transition-duration:2s}`,
+      );
+      minify_test(`.foo { transition: ${keyword} 2s }`, `.foo{transition:${keyword} 2s}`);
+      // parcel-bundler/lightningcss#1214
+      minify_test(
+        `.foo { transition: ${keyword}; transition-property: opacity }`,
+        `.foo{transition:${keyword};transition-property:opacity}`,
+      );
+    }
     cssTest(
       `
       .foo {
@@ -7199,6 +7280,18 @@ describe("css tests", () => {
     minify_test(".foo { animation: inherit }", ".foo{animation:inherit}");
     minify_test(".foo { animation: unset }", ".foo{animation:unset}");
     minify_test(".foo { animation-name: initial }", ".foo{animation-name:initial}");
+
+    // A quoted name that spells a css-wide keyword keeps its quotes, and the
+    // keyword without quotes is not a <keyframes-name>.
+    for (const keyword of ["inherit", "revert-layer", "revert-rule"]) {
+      minify_test(`.foo { animation-name: "${keyword}" }`, `.foo{animation-name:"${keyword}"}`);
+      minify_test(`@keyframes "${keyword}" { from { color: red } }`, `@keyframes "${keyword}"{0%{color:red}}`);
+      test(`@keyframes ${keyword} is rejected`, () => {
+        expect(() => cssInternals.minifyTestWithOptions(`@keyframes ${keyword} { from { color: red } }`, "")).toThrow(
+          `Unexpected token: ${keyword}`,
+        );
+      });
+    }
   });
 
   describe("transform", () => {
@@ -7632,8 +7725,29 @@ describe("css tests", () => {
     minify_test(".foo { color-scheme: only light; }", ".foo{color-scheme:light only}");
     minify_test(".foo { color-scheme: only dark; }", ".foo{color-scheme:dark only}");
     minify_test(".foo { color-scheme: dark light only; }", ".foo{color-scheme:light dark only}");
-    minify_test(".foo { color-scheme: foo bar light; }", ".foo{color-scheme:light}");
-    minify_test(".foo { color-scheme: only foo dark bar; }", ".foo{color-scheme:dark only}");
+    minify_test(".foo { color-scheme: light dark only; }", ".foo{color-scheme:light dark only}");
+    minify_test(".foo { color-scheme: only light dark; }", ".foo{color-scheme:light dark only}");
+    minify_test(".foo { color-scheme: only; }", ".foo{color-scheme:only}");
+    minify_test(".foo { color-scheme: LIGHT Dark; }", ".foo{color-scheme:light dark}");
+    // Identifiers other than the four keywords (custom idents, css-wide keywords)
+    // keep the declaration as written instead of collapsing it to `normal`
+    // (parcel-bundler/lightningcss#1152).
+    minify_test(".foo { color-scheme: foo bar light; }", ".foo{color-scheme:foo bar light}");
+    minify_test(".foo { color-scheme: only foo dark bar; }", ".foo{color-scheme:only foo dark bar}");
+    minify_test(".foo { color-scheme: dark foo; }", ".foo{color-scheme:dark foo}");
+    minify_test(".foo { color-scheme: normal dark; }", ".foo{color-scheme:normal dark}");
+    minify_test(".foo { color-scheme: light only dark; }", ".foo{color-scheme:light only dark}");
+    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "revert-rule", "default"]) {
+      minify_test(`.foo { color-scheme: ${keyword}; }`, `.foo{color-scheme:${keyword}}`);
+    }
+    prefix_test(
+      ".foo { color-scheme: inherit; }",
+      `.foo {
+          color-scheme: inherit;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
     prefix_test(
       ".foo { color-scheme: dark; }",
       `.foo {
@@ -7679,6 +7793,98 @@ describe("css tests", () => {
         `,
       { firefox: Some(120 << 16) },
     );
+
+    // A value with a <custom-ident> prints as written and still defines the light-dark() variables.
+    prefix_test(
+      ".foo { color-scheme: light foo; }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light foo;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: foo dark; }",
+      `.foo {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: foo dark;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: only foo DARK --bar; }",
+      `.foo {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: only foo DARK --bar;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light dark foo only; }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light dark foo only;
+        }
+
+        @media (prefers-color-scheme: dark) {
+          .foo {
+            --buncss-light: ;
+            --buncss-dark: initial;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light foo; color: light-dark(red, blue); }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light foo;
+          color: var(--buncss-light, red) var(--buncss-dark, #00f);
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light foo; }",
+      `.foo {
+          color-scheme: light foo;
+        }
+        `,
+      { firefox: Some(120 << 16) },
+    );
+    // No scheme to select, or a value that browsers reject: no variables.
+    for (const value of [
+      "foo bar",
+      "only",
+      "only foo",
+      "light normal",
+      "light only dark",
+      "only light only",
+      "light inherit",
+      "light revert-rule",
+      "light default",
+      "light 5px",
+      "light, dark",
+      "light var(--x)",
+    ]) {
+      prefix_test(
+        `.foo { color-scheme: ${value}; }`,
+        `.foo {
+          color-scheme: ${value};
+        }
+        `,
+        { chrome: Some(90 << 16) },
+      );
+    }
 
     minify_test(".foo { color: light-dark(yellow, red); }", ".foo{color:light-dark(#ff0,red)}");
     minify_test(

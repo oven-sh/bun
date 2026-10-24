@@ -302,13 +302,14 @@ const char *us_nq_hset_pairs(void *hset, size_t *len) {
 }
 void us_nq_hset_free(void *hset) { nq_hsi_discard_header_set(hset); }
 
-#define US_NQ_MAX_HEADERS 128
-int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
-                              int expected, int eos) {
-    struct lsxpack_header hdrs[US_NQ_MAX_HEADERS];
+/* Not a limit, as in Node (NgHeaders sizes its array from the count): a larger block gets a heap array. */
+#define US_NQ_STACK_HEADERS 128
+
+static inline __attribute__((always_inline)) int nq_send_headers_into(
+        lsquic_stream_t *s, const char *buf, size_t len, int expected, int eos,
+        struct lsxpack_header *hdrs) {
     int count = 0;
     size_t i = 0;
-    if (expected < 0 || expected > US_NQ_MAX_HEADERS) return -1;
     while (i < len) {
         /* The caller's pair count is authoritative: latin1 encoding of the
          * NUL-joined buffer maps U+0100-style code points onto the delimiter,
@@ -340,6 +341,25 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
     if (count != expected) return -1;
     lsquic_http_headers_t list = { count, hdrs };
     return lsquic_stream_send_headers(s, &list, eos);
+}
+
+static __attribute__((noinline, cold)) int nq_send_headers_heap(
+        lsquic_stream_t *s, const char *buf, size_t len, int expected, int eos) {
+    /* n pairs take at least 3n - 1 bytes, so a larger count can't parse. */
+    if ((size_t) expected > (len + 1) / 3) return -1;
+    struct lsxpack_header *hdrs = us_malloc((size_t) expected * sizeof(*hdrs));
+    if (!hdrs) return -1;
+    int rv = nq_send_headers_into(s, buf, len, expected, eos, hdrs);
+    us_free(hdrs);
+    return rv;
+}
+
+int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
+                              int expected, int eos) {
+    struct lsxpack_header hdrs[US_NQ_STACK_HEADERS];
+    if (expected < 0) return -1;
+    if (expected > US_NQ_STACK_HEADERS) return nq_send_headers_heap(s, buf, len, expected, eos);
+    return nq_send_headers_into(s, buf, len, expected, eos, hdrs);
 }
 
 static const struct lsquic_stream_if nq_stream_if = {

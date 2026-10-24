@@ -73,6 +73,9 @@ describe("QuicStream.destroy after the app ended the send side", () => {
 // does), not UTF-8. The send and receive halves must be exact inverses, or any
 // header value >= U+0080 comes back mojibake ("é" -> "Ã©").
 describe("HTTP/3 header encoding", () => {
+  const fields = (count: number) =>
+    Object.fromEntries(Array.from({ length: count }, (_, i) => [`x-field-${i}`, "v"])) as Record<string, string>;
+
   test("round-trips non-ASCII header values byte-for-byte", async () => {
     const VALUE = "café-ÿ";
     await using server = await listen(
@@ -162,6 +165,12 @@ describe("HTTP/3 header encoding", () => {
         "x-name": "safeĀZauthorizationĀBearer stolenĀ",
       }),
     ).toBe(false);
+    // The same in blocks that declare 128 and 129 fields: the last descriptor on the stack and the first heap array.
+    const request = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+    for (const count of [123, 124]) {
+      const spliced = await client.createBidirectionalStream();
+      expect(spliced.sendHeaders({ ...request, ...fields(count), "x-name": "a\u0100b" })).toBe(false);
+    }
 
     // A benign request on the same connection proves the guard is narrow and
     // orders the assertion below: h3 delivers it after anything the attacker
@@ -246,6 +255,143 @@ describe("HTTP/3 header encoding", () => {
     client.close();
   });
 
+  test("a block of more than 128 fields arrives intact in both directions, up to a raised maxHeaderPairs", async () => {
+    const application = { maxHeaderPairs: 300, maxHeaderLength: 100_000 };
+    let requested = Promise.withResolvers<Record<string, any>>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        application,
+        onheaders(this: any, headers: Record<string, any>) {
+          requested.resolve(headers);
+          this.sendHeaders({ ":status": "200", ...fields(Number(headers[":path"].slice(1))) }, { terminal: true });
+        },
+      },
+    );
+
+    // An endpoint keeps the limits it was created with, so not the shared one.
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      application,
+    } as SessionOptions);
+    await client.opened;
+    const exchange = async (count: number) => {
+      requested = Promise.withResolvers();
+      const answered = Promise.withResolvers<Record<string, any>>();
+      const request = { ":method": "GET", ":path": `/${count}`, ":scheme": "https", ":authority": "localhost" };
+      await client.createBidirectionalStream({
+        headers: { ...request, ...fields(count) },
+        onheaders: answered.resolve,
+      });
+      // Counts and not the blocks: a mismatch would print them.
+      const describe = (block: Record<string, any>, sent: Record<string, string>) =>
+        Bun.deepEquals({ ...block }, sent) ? "intact" : Object.keys(block).length;
+      return {
+        request: describe(await requested.promise, { ...request, ...fields(count) }),
+        response: describe(await answered.promise, { ":status": "200", ...fields(count) }),
+      };
+    };
+
+    // A request has 4 more fields and a response 1 more, so 124 and 127 end at a block's 128th field.
+    const counts = [124, 125, 127, 128];
+    const exchanged: Record<string, unknown> = {};
+    for (const count of counts) exchanged[count] = await exchange(count);
+    exchanged.over = await exchange(application.maxHeaderPairs);
+    expect(exchanged).toEqual({
+      ...Object.fromEntries(counts.map(count => [count, { request: "intact", response: "intact" }])),
+      // As in Node, the receiver drops the fields that go over the limit.
+      over: { request: application.maxHeaderPairs, response: application.maxHeaderPairs },
+    });
+    client.close();
+  });
+
+  test("interim responses, trailers and a block queued before the handshake take more than 128 fields", async () => {
+    const application = { maxHeaderPairs: 300, maxHeaderLength: 100_000 };
+    const blocks = ["request", "requestTrailers", "info", "response", "responseTrailers"] as const;
+    const seen = Object.fromEntries(blocks.map(name => [name, Promise.withResolvers<number>()]));
+    // Field lines: a name sent with several values arrives as one array.
+    const count = (name: (typeof blocks)[number]) => (block: Record<string, any>) =>
+      seen[name].resolve(Object.values(block).flat().length);
+    const values = Array.from({ length: 200 }, (_, i) => `${i}`);
+    const sent: Record<string, boolean> = {};
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        application,
+        onheaders(this: any, headers: Record<string, any>) {
+          count("request")(headers);
+          sent.info = this.sendInformationalHeaders({
+            ":status": "103",
+            link: values,
+            [Symbol.for("nodejs.http2.sensitiveHeaders")]: ["link"],
+          });
+          sent.response = this.sendHeaders({ ":status": "200" });
+          this.pendingTrailers = { "x-trailer": values };
+          this.writer.endSync();
+        },
+        ontrailers: count("requestTrailers"),
+        // pendingTrailers go out when the stream asks for trailers, and it asks only with this set.
+        onwanttrailers() {},
+      },
+    );
+
+    // An endpoint keeps the limits it was created with, so not the shared one.
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      application,
+    } as SessionOptions);
+    // No `await client.opened`: both blocks wait for the handshake.
+    const stream = await client.createBidirectionalStream({
+      oninfo: count("info"),
+      onheaders: count("response"),
+      ontrailers: count("responseTrailers"),
+    });
+    stream.closed.catch(() => {});
+    expect(stream.pending).toBe(true);
+    stream.sendHeaders({
+      ":method": "POST",
+      ":path": "/",
+      ":scheme": "https",
+      ":authority": "localhost",
+      ...fields(200),
+    });
+    stream.sendTrailers(fields(200));
+
+    // A block that doesn't arrive shows as -1 once the idle timeout closes the session.
+    const closed = client.closed.then(
+      () => -1,
+      () => -1,
+    );
+    const counts = await Promise.all(blocks.map(name => Promise.race([seen[name].promise, closed])));
+    client.close();
+    expect({ sent, counts: Object.fromEntries(blocks.map((name, i) => [name, counts[i]])) }).toEqual({
+      sent: { info: true, response: true },
+      counts: { request: 204, requestTrailers: 200, info: 201, response: 1, responseTrailers: 200 },
+    });
+  });
+
   test("reports request headers that can't be sent", async () => {
     await using server = await listen(
       async serverSession => {
@@ -263,9 +409,8 @@ describe("HTTP/3 header encoding", () => {
       },
     );
     const request = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
-    // One call sends 128 fields at most.
-    const headers: Record<string, string> = { ...request };
-    for (let i = 0; i < 128; i++) headers[`x-field-${i}`] = "v";
+    // U+0100 is a NUL in latin1, so the value splits into one field more than the block declares.
+    const headers = { ...request, "x-value": "a\u0100b" };
 
     const client = await connect(server.address!, {
       servername: "localhost",
@@ -284,6 +429,23 @@ describe("HTTP/3 header encoding", () => {
     await client.opened;
     expect(
       await client.createBidirectionalStream({ headers }).then(
+        () => "opened",
+        err => err.code,
+      ),
+    ).toBe("ERR_QUIC_OPEN_STREAM_FAILED");
+
+    // buildNgHeaderString reads an array's length once more after its loop, so this block declares 2^31 - 1 fields.
+    let pastLast = false;
+    let lengthReads = 0;
+    const overcounted = new Proxy(["a", "b"], {
+      get(target, key, receiver) {
+        if (key === "1") pastLast = true;
+        if (key === "length" && pastLast && ++lengthReads === 2) return 2 ** 31 - 5;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    expect(
+      await client.createBidirectionalStream({ headers: { ...request, "x-value": overcounted } }).then(
         () => "opened",
         err => err.code,
       ),

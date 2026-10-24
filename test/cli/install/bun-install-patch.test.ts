@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { symlinkSync } from "fs";
 import { lstat, readdir, rm } from "fs/promises";
 import {
   bunEnv,
@@ -1012,6 +1013,33 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
   });
 });
 
+test("a patch path that cannot be stat'd reports the errno", async () => {
+  using dir = tempDir("patch-stat-eloop", {
+    "package.json": JSON.stringify({
+      name: "app",
+      dependencies: { "local-pkg": "file:./local-pkg" },
+      patchedDependencies: { "local-pkg@1.0.0": "patches/loop" },
+    }),
+    "local-pkg/package.json": JSON.stringify({ name: "local-pkg", version: "1.0.0" }),
+    "local-pkg/index.js": "module.exports = 1;\n",
+    "patches/.keep": "",
+  });
+  symlinkSync("loop", join(String(dir), "patches", "loop"));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).not.toContain("installed");
+  expect(stderr).toContain("failed to stat patch file: ELOOP");
+  expect(stderr).toContain(join(String(dir), "patches", "loop"));
+  expect(exitCode).toBe(1);
+});
+
 describe.concurrent("patchedDependencies contents_hash", () => {
   // A patch that creates node_modules/is-odd/m.js; `hunk` is the @@ line.
   const patchHeader = (hunk: string) =>
@@ -1316,7 +1344,7 @@ describe("patchedDependencies path longer than the path buffer", () => {
     // The path is handed to the OS as is. POSIX rejects anything longer than
     // PATH_MAX with ENAMETOOLONG; Windows may report it as missing instead.
     if (!isWindows) {
-      expect(stderr).toContain("error: failed to read patch file: ENAMETOOLONG: ");
+      expect(stderr).toContain("error: failed to stat patch file: ENAMETOOLONG: ");
     }
     expect(stderr).toContain(`${longName}.patch`);
     expect(exitCode).toBe(1);

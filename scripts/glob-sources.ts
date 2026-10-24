@@ -44,10 +44,6 @@ const patterns = {
   nodeFallbacks: {
     paths: ["src/node-fallbacks/*.js"],
   },
-  /** `*.classes.ts` — input to generate-classes codegen */
-  zigGeneratedClasses: {
-    paths: ["src/**/*.classes.ts"],
-  },
   /** built-in modules bundled at build time */
   js: {
     paths: ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"],
@@ -62,9 +58,9 @@ const patterns = {
   },
   /** server-rendering runtime bundled into binary */
   bakeRuntime: {
-    // dev_server/mod.rs is read by bake-codegen.ts to derive the
+    // dev_server/protocol.rs is read by bake-codegen.ts to derive the
     // MessageId/IncomingMessageId const-enums in generated.ts.
-    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/mod.rs"],
+    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/protocol.rs"],
     exclude: ["src/runtime/bake/generated.ts"],
   },
   /** bindgen input */

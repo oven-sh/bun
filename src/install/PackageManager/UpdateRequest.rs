@@ -106,7 +106,8 @@ impl UpdateRequest {
             }
     }
 
-    /// `matches` compares hashes; this also the bytes, for a caller that replaces the row it finds.
+    /// `matches` only compares hashes. This also compares the bytes, for a caller that replaces the
+    /// dependency it finds.
     pub(crate) fn matches_exactly(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
         self.matches(dependency, string_buf)
             && if self.name.is_empty() {

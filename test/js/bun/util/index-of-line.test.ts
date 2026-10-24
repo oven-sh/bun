@@ -199,12 +199,20 @@ test("indexOfLine converts the offset to a number, drops the fraction and starts
   expect(["6", " 6 ", "x", "", null, true, [6], new Number(6), { valueOf: () => 6 }].map(from)).toEqual([
     11, 11, 5, 5, 5, 5, 11, 11, 11,
   ]);
-  expect(() => from(6n)).toThrow(
-    expect.objectContaining({ name: "TypeError", message: "Conversion from 'BigInt' to 'number' is not allowed." }),
-  );
   expect(() => from(Symbol())).toThrow(
     expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a number" }),
   );
+});
+
+test("indexOfLine takes the offset as a BigInt too", () => {
+  const bytes = new Uint8Array(helloWorld);
+  const from = (offset: unknown) => indexOfLine(bytes, offset as bigint);
+  expect([0n, 5n, 6n, 11n, 12n, 13n, 10n ** 9n].map(from)).toEqual([5, 5, 11, 11, -1, -1, -1]);
+  expect([Object(6n), { valueOf: () => 6n }].map(from)).toEqual([11, 11]);
+  expect([-1n, -(2n ** 70n)].map(from)).toEqual([5, 5]);
+  // Nothing wraps.
+  expect([2n ** 32n + 6n, 2n ** 63n, 2n ** 64n + 6n, 10n ** 400n].map(from)).toEqual([-1, -1, -1, -1]);
+  expect(from(-(2n ** 64n) + 6n)).toBe(5);
 });
 
 test("indexOfLine looks at the buffer before it converts the offset, and reads its bytes after", () => {

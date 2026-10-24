@@ -30,15 +30,6 @@ impl CallFrame {
         }
     }
 
-    /// Usage: `let [arg1, arg2] = call_frame.arguments_as_array::<2>();`
-    pub fn arguments_as_array<const COUNT: usize>(&self) -> [JSValue; COUNT] {
-        let slice = self.arguments();
-        let mut value: [JSValue; COUNT] = [JSValue::UNDEFINED; COUNT];
-        let n = slice.len().min(COUNT);
-        value[0..n].copy_from_slice(&slice[0..n]);
-        value
-    }
-
     /// This function protects out-of-bounds access by returning undefined
     pub fn argument(&self, i: usize) -> JSValue {
         if (self.arguments_count() as usize) > i {
@@ -57,12 +48,6 @@ impl CallFrame {
     pub fn this(&self) -> JSValue {
         // SAFETY: OFFSET_THIS_ARGUMENT is a valid slot in the JSC register file.
         unsafe { *self.as_unsafe_js_value_array().add(OFFSET_THIS_ARGUMENT) }
-    }
-
-    /// `JSValue` for the current function being called.
-    pub fn callee(&self) -> JSValue {
-        // SAFETY: OFFSET_CALLEE is a valid slot in the JSC register file.
-        unsafe { *self.as_unsafe_js_value_array().add(OFFSET_CALLEE) }
     }
 
     /// From JavaScriptCore/interpreter/CallFrame.h
@@ -126,22 +111,6 @@ impl CallFrame {
         payload as u32
     }
 
-    /// Do not use this function. Migration path:
-    /// arguments_as_array::<n>()
-    pub fn arguments_undef<const MAX: usize>(&self) -> Arguments<MAX> {
-        let slice = self.arguments();
-        debug_assert!(MAX <= 9);
-        let count = slice.len().min(MAX);
-        if count == 0 {
-            Arguments {
-                ptr: [JSValue::UNDEFINED; MAX],
-                len: 0,
-            }
-        } else {
-            Arguments::<MAX>::init_undef(count.min(MAX), slice)
-        }
-    }
-
     pub fn get_caller_src_loc(&self, global_this: &JSGlobalObject) -> CallerSrcLoc {
         let mut str = bun_core::String::default();
         let mut line: c_uint = 0;
@@ -194,34 +163,21 @@ pub struct AsBits {
     tag: i32,
 }
 
-pub struct Arguments<const MAX: usize> {
-    pub ptr: [JSValue; MAX],
-    pub len: usize,
-}
-
-impl<const MAX: usize> Arguments<MAX> {
-    #[inline]
-    pub(crate) fn init_undef(i: usize, src: &[JSValue]) -> Self {
-        let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
-        args[0..i].copy_from_slice(&src[0..i]);
-        Self { ptr: args, len: i }
-    }
-
-    #[inline]
-    pub fn slice(&self) -> &[JSValue] {
-        &self.ptr[0..self.len]
-    }
-
-    #[inline]
-    pub fn mut_(&mut self) -> &mut [JSValue] {
-        &mut self.ptr[..]
-    }
-}
-
 pub struct CallerSrcLoc {
     pub str: bun_core::String,
     pub line: c_uint,
     pub column: c_uint,
+}
+
+impl JSGlobalObject {
+    /// [`CallFrame::get_caller_src_loc`] for the frame of the host function that is running.
+    pub fn get_caller_src_loc(&self) -> CallerSrcLoc {
+        let mut str = bun_core::String::default();
+        let mut line: c_uint = 0;
+        let mut column: c_uint = 0;
+        JSC__JSGlobalObject__getCallerSrcLoc(self, &mut str, &mut line, &mut column);
+        CallerSrcLoc { str, line, column }
+    }
 }
 
 /// This is an advanced iterator struct which is used by various APIs. In
@@ -255,11 +211,6 @@ impl<'a> ArgumentsSlice<'a> {
         }
     }
 
-    #[inline]
-    pub fn len(&self) -> u16 {
-        self.remaining().len() as u16
-    }
-
     pub fn eat(&mut self) {
         if self.remaining().is_empty() {
             return;
@@ -286,6 +237,12 @@ impl<'a> ArgumentsSlice<'a> {
 unsafe extern "C" {
     safe fn Bun__CallFrame__getCallerSrcLoc(
         cf: &CallFrame,
+        global: &JSGlobalObject,
+        out_str: &mut bun_core::String,
+        out_line: &mut c_uint,
+        out_column: &mut c_uint,
+    );
+    safe fn JSC__JSGlobalObject__getCallerSrcLoc(
         global: &JSGlobalObject,
         out_str: &mut bun_core::String,
         out_line: &mut c_uint,

@@ -1,126 +1,62 @@
-//! `Bun.semver` — `{ satisfies, order }` host-function table.
+//! `Bun.semver`: `SemverObject.bind.ts`.
 
 use core::cmp::Ordering;
 
 use bun_core::strings;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{self, JsHeap};
 use bun_semver::{SlicedString, Version, query};
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(
-        global,
-        &[
-            ("satisfies", __jsc_host_satisfies, 2),
-            ("order", __jsc_host_order, 2),
-        ],
-    )
-}
-
-#[bun_jsc::host_fn]
-fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
-    if arguments.len() < 2 {
-        return Err(global.throw(format_args!("Expected two arguments")));
+pub(crate) fn order<'a>(
+    heap: &JsHeap<'a>,
+    left: &'a [u8],
+    right: &'a [u8],
+) -> bindgen::Result<'a, i32> {
+    if !strings::is_all_ascii(left) || !strings::is_all_ascii(right) {
+        return Ok(0);
     }
 
-    let left_view = arguments[0].to_js_string_view(global)?;
-    let right_view = arguments[1].to_js_string_view(global)?;
+    let left_result = Version::parse(SlicedString::init(left, left));
+    let right_result = Version::parse(SlicedString::init(right, right));
 
-    let left = left_view.to_utf8();
-    let right = right_view.to_utf8();
-
-    if !strings::is_all_ascii(left.slice()) {
-        return Ok(JSValue::js_number_from_int32(0));
-    }
-    if !strings::is_all_ascii(right.slice()) {
-        return Ok(JSValue::js_number_from_int32(0));
-    }
-
-    let left_result = Version::parse(SlicedString::init(left.slice(), left.slice()));
-    let right_result = Version::parse(SlicedString::init(right.slice(), right.slice()));
-
-    if !left_result.valid {
-        return Err(global.throw(format_args!(
-            "Invalid SemVer: {}\n",
-            bstr::BStr::new(left.slice()),
-        )));
-    }
-
-    if !right_result.valid {
-        return Err(global.throw(format_args!(
-            "Invalid SemVer: {}\n",
-            bstr::BStr::new(right.slice()),
-        )));
+    for (result, input) in [(&left_result, left), (&right_result, right)] {
+        if !result.valid {
+            return Err(heap.error(format_args!("Invalid SemVer: {}\n", bstr::BStr::new(input))));
+        }
     }
 
     let left_version = left_result.version.max();
     let right_version = right_result.version.max();
 
     Ok(
-        match left_version.order_without_build(right_version, left.slice(), right.slice()) {
-            Ordering::Equal => JSValue::js_number_from_int32(0),
-            Ordering::Greater => JSValue::js_number_from_int32(1),
-            Ordering::Less => JSValue::js_number_from_int32(-1),
+        match left_version.order_without_build(right_version, left, right) {
+            Ordering::Equal => 0,
+            Ordering::Greater => 1,
+            Ordering::Less => -1,
         },
     )
 }
 
-#[bun_jsc::host_fn]
-fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
-    if arguments.len() < 2 {
-        return Err(global.throw(format_args!("Expected two arguments")));
+pub(crate) fn satisfies<'a>(version: &'a [u8], range: &'a [u8]) -> bindgen::Result<'a, bool> {
+    if !strings::is_all_ascii(version) || !strings::is_all_ascii(range) {
+        return Ok(false);
     }
 
-    let left_view = arguments[0].to_js_string_view(global)?;
-    let right_view = arguments[1].to_js_string_view(global)?;
-
-    let left = left_view.to_utf8();
-    let right = right_view.to_utf8();
-
-    if !strings::is_all_ascii(left.slice()) {
-        return Ok(JSValue::FALSE);
-    }
-    if !strings::is_all_ascii(right.slice()) {
-        return Ok(JSValue::FALSE);
-    }
-
-    let Some(left_version) = Version::parse_exact(SlicedString::init(left.slice(), left.slice()))
-    else {
-        return Ok(JSValue::FALSE);
+    let Some(parsed_version) = Version::parse_exact(SlicedString::init(version, version)) else {
+        return Ok(false);
     };
 
-    // `Query::parse` can only fail with OOM.
-    let right_group = match query::parse(
-        right.slice(),
-        SlicedString::init(right.slice(), right.slice()),
-    ) {
-        Ok(g) => g,
-        Err(_) => return Err(global.throw_out_of_memory()),
-    };
+    let group = query::parse(range, SlicedString::init(range, range))?;
 
-    if let Some(right_version) = right_group.get_exact_version() {
-        return Ok(JSValue::js_boolean(left_version.eql(right_version)));
+    if let Some(exact_version) = group.get_exact_version() {
+        return Ok(parsed_version.eql(exact_version));
     }
 
-    Ok(JSValue::js_boolean(right_group.satisfies(
-        left_version,
-        right.slice(),
-        left.slice(),
-    )))
+    Ok(group.satisfies(parsed_version, range, version))
 }
 
 /// `bun:internal-for-testing`: `Group::intersects` on two range strings.
-#[bun_jsc::host_fn]
-pub fn intersects_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let left = frame.argument(0).to_utf8(global)?;
-    let right = frame.argument(1).to_utf8(global)?;
-    let (Ok(left_group), Ok(right_group)) = (
-        query::parse(&left, SlicedString::init(&left, &left)),
-        query::parse(&right, SlicedString::init(&right, &right)),
-    ) else {
-        return Err(global.throw_out_of_memory());
-    };
-    let intersects = left_group.intersects(&left, &right_group, &right);
-    Ok(JSValue::js_boolean(intersects))
+pub(crate) fn intersects<'a>(left: &'a [u8], right: &'a [u8]) -> bindgen::Result<'a, bool> {
+    let left_group = query::parse(left, SlicedString::init(left, left))?;
+    let right_group = query::parse(right, SlicedString::init(right, right))?;
+    Ok(left_group.intersects(left, &right_group, right))
 }

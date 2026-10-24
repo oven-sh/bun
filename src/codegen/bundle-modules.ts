@@ -15,8 +15,8 @@ import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, checkAscii, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
+import { getJS2NativeCPP } from "./generate-js2native";
+import { cap, checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
 
@@ -24,12 +24,15 @@ const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 const TYPES_DIR = process.argv[4];
+const WEBKIT_VERSION = process.argv.find(arg => arg.startsWith("--webkit-version="))?.slice("--webkit-version=".length);
 
 const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "production");
 console.time(timeString);
 
-if (!CMAKE_BUILD_ROOT || !TYPES_DIR) {
-  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR>");
+if (!CMAKE_BUILD_ROOT || !TYPES_DIR || !WEBKIT_VERSION) {
+  console.error(
+    "Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR> --webkit-version=<version>",
+  );
   process.exit(1);
 }
 
@@ -368,7 +371,7 @@ function idToPublicSpecifierOrEnumName(id: string) {
   return idToEnumName(id);
 }
 
-const { combinedSourceCode: functionsSource } = await bundleBuiltinFunctions({
+const { combinedSourceCode: functionsSource, privateNames } = await bundleBuiltinFunctions({
   typesDir: TYPES_DIR,
   requireTransformer,
 });
@@ -397,6 +400,12 @@ writeIfNotChanged(
 `,
 );
 
+// The ids replacements.ts compiles `$inherits*()` calls to, inlined into an enum in ZigGlobalObject.cpp.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "JSClasses+enum.h"),
+  jsclasses.map((name, id) => `${name} = ${id},\n`).join(""),
+);
+
 // The bundled JS sources (builtin functions + internal modules) are linked into
 // the executable as one contiguous read-only blob via `.incbin` in the generated
 // `.S` below and addressed by {offset, length}. Emitting them as C++
@@ -413,7 +422,7 @@ writeIfNotChanged(
 //
 // Layout (little-endian u32 unless noted; offsets in the index are relative to `data`):
 //   header:  magic[8] "BUNBLTNS", version, sourceStamp, moduleCount, modulesOffset,
-//            depOffsetsOffset, depsOffset, dataOffset, dataLength, 0, 0
+//            depOffsetsOffset, depsOffset, dataOffset, dataLength, engineStamp, 0
 //   modules: moduleCount × { nameOffset, nameLength, urlOffset, urlLength, codeOffset, codeLength }
 //   depOffsets: u16[moduleCount + 1], deps: u16[]  (see internalModuleDependencyTable)
 //   data:    [builtin functions combined source][\0][module 0][\0][module 1][\0]...[name\0url\0]...
@@ -421,7 +430,8 @@ writeIfNotChanged(
 //
 // A debug build's runtime reads the module sources from disk instead (BUN_DYNAMIC_JS_LOAD_PATH), but they are still
 // here so that a debug bun works as a `--compile` target like any other.
-const BUILTINS_FORMAT_VERSION = 1;
+// Bumped to 2 because bun 1.4.1 to 1.4.3 compile any version 1 section without checking engineStamp.
+const BUILTINS_FORMAT_VERSION = 2;
 const BUILTINS_HEADER_SIZE = 48;
 
 // Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for
@@ -504,7 +514,7 @@ let blobDataOffset: number;
     depsOffset,
     blobDataOffset,
     data.length,
-    0,
+    engineStamp(WEBKIT_VERSION, privateNames),
     0,
   ].forEach((v, i) => blob.writeUInt32LE(v >>> 0, 8 + i * 4));
   records.forEach((v, i) => blob.writeUInt32LE(v, modulesOffset + i * 4));
@@ -562,7 +572,8 @@ struct Header {
   uint32_t depsOffset;
   uint32_t dataOffset;
   uint32_t dataLength;
-  uint32_t reserved[2];
+  uint32_t engineStamp;
+  uint32_t reserved;
 };
 static_assert(sizeof(Header) == ${BUILTINS_HEADER_SIZE});
 
@@ -738,9 +749,6 @@ writeIfNotChanged(
 
 writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCPP());
 
-// Rust sibling: include!()'d by src/runtime/generated_js2native.rs
-writeIfNotChanged(path.join(CODEGEN_DIR, "generated_js2native.rs"), getJS2NativeRust());
-
 const generatedDTSPath = path.join(TYPES_DIR, "generated.d.ts");
 writeIfNotChanged(
   generatedDTSPath,
@@ -788,7 +796,7 @@ declare module "module" {
 }
 `;
 
-    for (const [name] of jsclasses) {
+    for (const name of jsclasses) {
       dts += `\ndeclare function $inherits${name}(value: any): value is ${name};`;
     }
 

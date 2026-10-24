@@ -1687,10 +1687,12 @@ describe("a body made from an S3 file", () => {
     const head = await fetch(app.url, { method: "HEAD" });
     const rangesForHead = object.ranges();
     const get = await fetch(app.url);
-    expect({ head: head.headers.get("content-length"), rangesForHead }).toEqual({
-      head: get.headers.get("content-length"),
-      rangesForHead: [],
-    });
+    const sent = String((await get.arrayBuffer()).byteLength);
+    expect({
+      head: head.headers.get("content-length"),
+      get: get.headers.get("content-length"),
+      rangesForHead,
+    }).toEqual({ head: sent, get: sent, rangesForHead: [] });
   });
 
   test.concurrent("new Request(request) downloads the whole object", async () => {

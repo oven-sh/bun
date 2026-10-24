@@ -148,6 +148,182 @@ describe("Bun.deepEquals strict mode", () => {
   });
 });
 
+// A DataView keeps its bytes in an internal slot and has no own properties.
+describe("Bun.deepEquals on DataViews", () => {
+  // The fourth argument is not in the public types.
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  const buffer = (...bytes: number[]) => new Uint8Array(bytes).buffer;
+  const view = (...bytes: number[]) => new DataView(buffer(...bytes));
+  class SubView extends DataView<ArrayBuffer> {}
+  const sharedView = (...bytes: number[]) => {
+    const shared = new SharedArrayBuffer(bytes.length);
+    new Uint8Array(shared).set(bytes);
+    return new DataView(shared);
+  };
+  // A view that follows the length of its resizable buffer.
+  const lengthTrackingView = (...bytes: number[]) => {
+    const resizable = new ArrayBuffer(bytes.length, { maxByteLength: 16 });
+    new Uint8Array(resizable).set(bytes);
+    return new DataView(resizable);
+  };
+  const detachedView = () => {
+    const detached = new ArrayBuffer(4);
+    const dataView = new DataView(detached);
+    detached.transfer();
+    return dataView;
+  };
+  // A fixed-length view whose end is past the end of its shrunk buffer.
+  const outOfBoundsView = (
+    View: new (buffer: ArrayBuffer, byteOffset: number, byteLength: number) => DataView = DataView,
+  ) => {
+    const resizable = new ArrayBuffer(8, { maxByteLength: 16 });
+    const dataView = new View(resizable, 0, 8);
+    resizable.resize(4);
+    return dataView;
+  };
+  const expectTypeError = (compare: () => boolean) => {
+    expect(compare).toThrow(TypeError);
+    expect(compare).toThrow(
+      new TypeError("Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer"),
+    );
+  };
+
+  type Pair = [name: string, a: () => DataView, b: () => DataView];
+
+  const differentBytes: Pair[] = [
+    ["different bytes", () => view(1, 2), () => view(3, 4)],
+    ["a different last byte", () => view(1, 2, 3), () => view(1, 2, 4)],
+    ["different lengths", () => view(1, 2), () => new DataView(new ArrayBuffer(9))],
+    ["an empty view and a view of one byte", () => view(), () => view(0)],
+    ["different windows of equal buffers", () => new DataView(buffer(9, 1, 2, 9), 1, 2), () => view(9, 1)],
+    ["different bytes in a SharedArrayBuffer", () => sharedView(1, 2), () => view(3, 4)],
+    ["different bytes under a resizable buffer", () => lengthTrackingView(1, 2), () => view(3, 4)],
+    [
+      "different bytes with an equal own property",
+      () => Object.assign(view(1, 2), { x: 1 }),
+      () => Object.assign(view(3, 4), { x: 1 }),
+    ],
+    ["different bytes in two subclass instances", () => new SubView(buffer(1, 2)), () => new SubView(buffer(3, 4))],
+  ];
+
+  const equalBytes: Pair[] = [
+    ["equal bytes", () => view(1, 2), () => view(1, 2)],
+    ["two empty views", () => view(), () => new DataView(new ArrayBuffer(2), 2)],
+    ["equal windows of different buffers", () => new DataView(buffer(9, 1, 2, 9), 1, 2), () => view(1, 2)],
+    ["equal bytes in a SharedArrayBuffer", () => sharedView(1, 2), () => view(1, 2)],
+    ["equal bytes under a resizable buffer", () => lengthTrackingView(1, 2), () => view(1, 2)],
+    [
+      "equal bytes with an equal own property",
+      () => Object.assign(view(1, 2), { x: 1 }),
+      () => Object.assign(view(1, 2), { x: 1 }),
+    ],
+    ["equal bytes in two subclass instances", () => new SubView(buffer(1, 2)), () => new SubView(buffer(1, 2))],
+  ];
+
+  describe.each([false, true])("strict: %p", strict => {
+    const equals = (a: unknown, b: unknown) => deepEquals(a, b, strict);
+
+    it.each(differentBytes)("rejects %s", (_, a, b) => {
+      expect(equals(a(), b())).toBe(false);
+      expect(equals(b(), a())).toBe(false);
+      expect(equals({ nested: [a()] }, { nested: [b()] })).toBe(false);
+      expect(equals(new Map([["key", a()]]), new Map([["key", b()]]))).toBe(false);
+      expect(equals(new Map([[a(), "value"]]), new Map([[b(), "value"]]))).toBe(false);
+      expect(equals(new Set([a()]), new Set([b()]))).toBe(false);
+    });
+
+    it.each(equalBytes)("accepts %s", (_, a, b) => {
+      expect(equals(a(), b())).toBe(true);
+      expect(equals(b(), a())).toBe(true);
+      expect(equals({ nested: [a()] }, { nested: [b()] })).toBe(true);
+    });
+
+    it("compares the windows of two views of one buffer", () => {
+      const shared = buffer(1, 2, 3);
+      expect(equals(new DataView(shared, 1), new DataView(shared, 1))).toBe(true);
+      expect(equals(new DataView(shared, 0, 2), new DataView(shared, 1, 2))).toBe(false);
+    });
+
+    // Two DataViews with different bytes used to match as keys, so the wrong values were compared.
+    it("pairs the DataView keys of a Map and the DataView members of a Set by their bytes", () => {
+      const map = (...entries: [DataView, string][]) => new Map(entries);
+      expect(equals(map([view(1), "a"], [view(2), "b"]), map([view(1), "a"], [view(2), "b"]))).toBe(true);
+      expect(equals(map([view(1), "a"], [view(2), "b"]), map([view(2), "b"], [view(1), "a"]))).toBe(true);
+      expect(equals(map([view(1), "a"], [view(2), "b"]), map([view(1), "b"], [view(2), "a"]))).toBe(false);
+      expect(equals(new Set([view(1), view(2)]), new Set([view(2), view(1)]))).toBe(true);
+      expect(equals(new Set([view(1), view(2)]), new Set([view(1), view(3)]))).toBe(false);
+    });
+
+    it("compares own properties when the bytes are equal", () => {
+      expect(equals(Object.assign(view(1, 2), { x: 1 }), view(1, 2))).toBe(false);
+      expect(equals(view(1, 2), Object.assign(view(1, 2), { x: 1 }))).toBe(false);
+      expect(equals(Object.assign(view(1, 2), { x: 1 }), Object.assign(view(1, 2), { x: 2 }))).toBe(false);
+      // An undefined property counts only in strict mode.
+      expect(equals(Object.assign(view(1, 2), { x: undefined }), view(1, 2))).toBe(!strict);
+    });
+
+    it.each([
+      ["a Uint8Array", () => new Uint8Array([1, 2])],
+      ["an ArrayBuffer", () => buffer(1, 2)],
+      ["an object literal", () => ({})],
+      ["an object that inherits from DataView.prototype", () => Object.create(DataView.prototype)],
+    ])("rejects a DataView against %s", (_, other) => {
+      expect(equals(view(1, 2), other())).toBe(false);
+      expect(equals(other(), view(1, 2))).toBe(false);
+    });
+
+    // Node.js throws this TypeError for such a view. Bun.deepEquals throws the same way for a detached ArrayBuffer.
+    it.each([
+      ["a detached", detachedView],
+      ["an out-of-bounds", () => outOfBoundsView()],
+    ])("throws a TypeError for %s view", (_, unreadable) => {
+      for (const [a, b] of [
+        [unreadable, view],
+        [view, unreadable],
+        [unreadable, unreadable],
+      ]) {
+        expectTypeError(() => equals(a(), b()));
+        expectTypeError(() => equals({ nested: a() }, { nested: b() }));
+      }
+      // One view on both sides is equal before any length is read.
+      const same = unreadable();
+      expect(equals(same, same)).toBe(true);
+      // No length is read when the other value is not a DataView.
+      expect(equals(unreadable(), new Uint8Array(0))).toBe(false);
+    });
+  });
+
+  it("only strict mode compares the class", () => {
+    expect(deepEquals(new SubView(buffer(1, 2)), view(1, 2))).toBe(true);
+    expect(deepEquals(new SubView(buffer(1, 2)), view(1, 2), true)).toBe(false);
+    expect(deepEquals(view(1, 2), new SubView(buffer(1, 2)), true)).toBe(false);
+    // The fourth argument turns the class comparison off, not the byte comparison.
+    expect(deepEquals(new SubView(buffer(1, 2)), view(1, 2), true, true)).toBe(true);
+    expect(deepEquals(new SubView(buffer(1, 2)), view(3, 4), true, true)).toBe(false);
+    expect(deepEquals(view(1, 2), {}, true, true)).toBe(false);
+  });
+
+  // Strict mode compares the class names first, readable or not, so it reads no length here.
+  it("strict mode rejects an unreadable view of another class without a TypeError", () => {
+    const unreadable = () => outOfBoundsView(SubView);
+    expect(deepEquals(unreadable(), view(), true)).toBe(false);
+    expect(deepEquals(view(), unreadable(), true)).toBe(false);
+    expectTypeError(() => deepEquals(unreadable(), unreadable(), true));
+    expectTypeError(() => deepEquals(unreadable(), view(), true, true));
+    expectTypeError(() => deepEquals(unreadable(), view()));
+  });
+
+  // A DataView of another realm has another prototype and the same class name.
+  it("strict mode gives a DataView of another realm the same class, readable or not", () => {
+    const OtherDataView: typeof DataView = vm.runInNewContext("DataView");
+    expect(Object.getPrototypeOf(new OtherDataView(buffer()))).not.toBe(DataView.prototype);
+    expect(deepEquals(new OtherDataView(buffer(1, 2)), view(1, 2), true)).toBe(true);
+    expect(deepEquals(new OtherDataView(buffer(1, 2)), view(3, 4), true)).toBe(false);
+    expectTypeError(() => deepEquals(outOfBoundsView(OtherDataView), view(), true));
+    expectTypeError(() => deepEquals(view(), outOfBoundsView(OtherDataView), true));
+  });
+});
+
 // The object fast path used to recurse into nested values while walking the
 // structure's PropertyTable; a getter on a nested object that added or removed
 // properties on the parent rehashed that table and freed the vector being

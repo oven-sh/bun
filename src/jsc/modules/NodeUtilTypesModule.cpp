@@ -693,6 +693,13 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualIsView || expectedIsView) {
         if (actualIsView != expectedIsView || actualType != expectedType)
             return false;
+        // node reads DataView.prototype.byteLength, which throws for a detached or out-of-bounds view.
+        if (actualType == JSC::DataViewType
+            && (uncheckedDowncast<JSC::JSArrayBufferView>(actual.asCell())->isOutOfBounds()
+                || uncheckedDowncast<JSC::JSArrayBufferView>(expected.asCell())->isOutOfBounds())) [[unlikely]] {
+            throwTypeError(globalObject, scope, "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer"_s);
+            return false;
+        }
         bool contents = partialBufferContentsEquiv(globalObject, scope, actual, expected);
         RETURN_IF_EXCEPTION(scope, false);
         if (!contents)

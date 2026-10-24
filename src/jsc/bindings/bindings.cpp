@@ -733,6 +733,12 @@ static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
         || hasIndexedProperties(structure->indexingType());
 }
 
+// Out of line for its one cold caller, to keep the String temporaries out of specialObjectsDequalSlow.
+static NEVER_INLINE bool haveSameClassName(JSC::JSObject* a, JSC::JSObject* b)
+{
+    return JSObject::calculatedClassName(a) == JSObject::calculatedClassName(b);
+}
+
 // node compares the non-index own properties of typed arrays as well;
 // only the node entry point (checkPrototypes) pays for this.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
@@ -1451,11 +1457,6 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         return true;
     }
     case DataViewType: {
-        if (!mode.checkPrototypes) {
-            // Bun.deepEquals / bun:test compare DataViews as plain objects; reserve the byte
-            // comparison for the node-parity instantiations.
-            break;
-        }
         if (c2Type != DataViewType) {
             return false;
         }
@@ -1464,7 +1465,15 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         // offset), then falls through to own enumerable properties.
         JSC::JSDataView* left = uncheckedDowncast<JSC::JSDataView>(c1);
         JSC::JSDataView* right = uncheckedDowncast<JSC::JSDataView>(c2);
-        if (left->isDetached() || right->isDetached()) [[unlikely]] {
+        if (left->isOutOfBounds() || right->isOutOfBounds()) [[unlikely]] {
+            // bun:test reports such a view as not equal, like the ArrayBuffer arm above.
+            if (mode.enableAsymmetricMatchers) {
+                return false;
+            }
+            // Strict Bun.deepEquals compares the class names first, as it does for readable views.
+            if (mode.isStrict && !mode.checkPrototypes && !mode.skipPrototypeIdentity && !haveSameClassName(left, right)) {
+                return false;
+            }
             // The C++ byteLength() accessor silently reports 0 for a detached
             // view; node reads the JS accessor, which throws. Keep node's
             // exact error contract.
@@ -1478,6 +1487,13 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         if (!WTF::equalSpans(std::span { static_cast<const uint8_t*>(left->vector()), byteLength },
                 std::span { static_cast<const uint8_t*>(right->vector()), byteLength }))
             return false;
+        if (!mode.checkPrototypes) {
+            // One Structure with no own property: same class, nothing left to compare. Otherwise Bun__deepEquals decides.
+            JSC::Structure* structure = left->structure();
+            if (left->structureID() == right->structureID() && !structure->hasPolyProto() && !hasExtraOwnProperties(structure))
+                return true;
+            break;
+        }
         // node compares DataView own properties via getOwnNonIndexProperties
         // (an extra integer-index key is ignored), so compare the non-index
         // keys directly instead of falling through to the full own-key walk.

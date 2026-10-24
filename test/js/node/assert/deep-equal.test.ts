@@ -829,6 +829,43 @@ const cases: Case[] = [
     loose: true,
   },
   {
+    name: "DataViews with different bytes",
+    a: () => new DataView(new Uint8Array([1, 2]).buffer),
+    b: () => new DataView(new Uint8Array([3, 4]).buffer),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "DataViews of different length",
+    a: () => new DataView(new ArrayBuffer(2)),
+    b: () => new DataView(new ArrayBuffer(3)),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a DataView and an object literal",
+    a: () => new DataView(new ArrayBuffer(2)),
+    b: () => ({}),
+    strict: false,
+    loose: false,
+  },
+  {
+    // Each DataView key must pair with the key of equal bytes, not with the first DataView key.
+    name: "two Maps with the same two DataView keys",
+    a: () =>
+      new Map([
+        [new DataView(new Uint8Array([1]).buffer), "a"],
+        [new DataView(new Uint8Array([2]).buffer), "b"],
+      ]),
+    b: () =>
+      new Map([
+        [new DataView(new Uint8Array([1]).buffer), "a"],
+        [new DataView(new Uint8Array([2]).buffer), "b"],
+      ]),
+    strict: true,
+    loose: true,
+  },
+  {
     name: "a DataView with an extra own string-named property",
     a: () => withExtraProperty(new DataView(new ArrayBuffer(2))),
     b: () => new DataView(new ArrayBuffer(2)),
@@ -1089,22 +1126,46 @@ describe("detached ArrayBuffer", () => {
     });
   }
 
-  test("deepStrictEqual throws Node's DataView TypeError on a detached view", () => {
-    const detachedView = () => {
-      const ab = new ArrayBuffer(4);
-      const dv = new DataView(ab);
-      structuredClone(ab, { transfer: [ab] });
-      return dv;
-    };
-    const error = caught(() => assert.deepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0))));
-    expect(error).toBeInstanceOf(TypeError);
-    expect(error?.message).toBe(
-      "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer",
-    );
-    expect(() => util.isDeepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0)))).toThrow(TypeError);
-    // Bun.deepEquals keeps its own-properties DataView surface: no throw.
-    expect(Bun.deepEquals(detachedView(), new DataView(new ArrayBuffer(0)), true)).toBe(true);
-  });
+  const detachedView = () => {
+    const ab = new ArrayBuffer(4);
+    const dv = new DataView(ab);
+    structuredClone(ab, { transfer: [ab] });
+    return dv;
+  };
+  // A fixed-length view whose end is past the end of its shrunk buffer.
+  const outOfBoundsView = () => {
+    const ab = new ArrayBuffer(8, { maxByteLength: 16 });
+    const dv = new DataView(ab, 0, 8);
+    ab.resize(4);
+    return dv;
+  };
+
+  for (const [label, unreadable] of [
+    ["a detached", detachedView],
+    ["an out-of-bounds", outOfBoundsView],
+  ] as const) {
+    test(`every deep comparison throws Node's DataView TypeError on ${label} view`, () => {
+      const emptyView = () => new DataView(new ArrayBuffer(0));
+      for (const compare of [
+        () => assert.deepStrictEqual(unreadable(), emptyView()),
+        () => assert.deepStrictEqual(new DataView(new ArrayBuffer(8)), unreadable()),
+        () => assert.notDeepStrictEqual(unreadable(), emptyView()),
+        () => assert.deepEqual(unreadable(), emptyView()),
+        () => assert.notDeepEqual(unreadable(), emptyView()),
+        () => assert.partialDeepStrictEqual(unreadable(), emptyView()),
+        () => assert.partialDeepStrictEqual(emptyView(), unreadable()),
+        () => util.isDeepStrictEqual(unreadable(), emptyView()),
+        () => Bun.deepEquals(unreadable(), emptyView()),
+        () => Bun.deepEquals(unreadable(), emptyView(), true),
+      ]) {
+        const error = caught(compare);
+        expect(error).toBeInstanceOf(TypeError);
+        expect(error?.message).toBe(
+          "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer",
+        );
+      }
+    });
+  }
 
   test("assert.partialDeepStrictEqual throws TypeError on a detached ArrayBuffer", () => {
     expect(() => assert.partialDeepStrictEqual(detached(), new ArrayBuffer(0))).toThrow(TypeError);

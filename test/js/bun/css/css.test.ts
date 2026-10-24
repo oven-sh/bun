@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -5475,6 +5475,72 @@ describe("css tests", () => {
     minify_test("a:lang(en) {color:red}", "a:lang(en){color:red}");
     minify_test("a:lang(en, fr) {color:red}", "a:lang(en,fr){color:red}");
     minify_test("a:lang('en') {color:red}", "a:lang(en){color:red}");
+    minify_test('a:lang("*-Latn") {color:red}', "a:lang(\\*-Latn){color:red}");
+    minify_test('a:lang(fr) {color:red} a:lang("fr") {color:blue}', "a:lang(fr){color:#00f}");
+
+    // `:lang("")` is a valid selector. The empty range has no identifier
+    // spelling, so it prints as a string. The second row of each pair checks
+    // that the output parses back to itself.
+    minify_test("a:lang('') {color:red}", 'a:lang(""){color:red}');
+    for (const [source, minified] of [
+      ['a:lang("") {color:red}', 'a:lang(""){color:red}'],
+      ['a:lang("", en) {color:red}', 'a:lang("",en){color:red}'],
+      ['a:lang(en, "") {color:red}', 'a:lang(en,""){color:red}'],
+      ['a:lang("", "") {color:red}', 'a:lang("",""){color:red}'],
+      ['a:not(:lang("")) {color:red}', 'a:not(:lang("")){color:red}'],
+      ['a:is(:lang(""), .b) {color:red}', 'a:is(:lang(""),.b){color:red}'],
+      ['a:where(:lang("")) {color:red}', 'a:where(:lang("")){color:red}'],
+      ['a:has(:lang("")) {color:red}', 'a:has(:lang("")){color:red}'],
+      ['a:nth-child(1 of :lang("")) {color:red}', 'a:nth-child(1 of :lang("")){color:red}'],
+      [':host(:lang("")) {color:red}', ':host(:lang("")){color:red}'],
+      ['::slotted(:lang("")) {color:red}', '::slotted(:lang("")){color:red}'],
+      ['.a { &:lang("") {color:red} }', '.a{&:lang(""){color:red}}'],
+      ['@scope (:lang("")) { p {color:red} }', '@scope(:lang("")){p{color:red}}'],
+      ['.a {color:red} :lang("") {color:red}', '.a,:lang(""){color:red}'],
+    ]) {
+      minify_test(source, minified);
+      minify_test(minified, minified);
+    }
+
+    cssTest('a:lang("", en) {color:red}', 'a:lang("", en) { color: red; }');
+    prefix_test(
+      'a:lang("", en) {color:red}',
+      `
+      a:-webkit-any(:lang(""), :lang(en)) {
+        color: red;
+      }
+
+      a:-moz-any(:lang(""), :lang(en)) {
+        color: red;
+      }
+
+      a:is(:lang(""), :lang(en)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+
+    test('bun build keeps the empty range of :lang("")', async () => {
+      using dir = tempDir("css-lang-empty-range", {
+        "lang.css": ':lang("") { color: red }\n:lang("", en) { color: blue }\n',
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--minify", "--target=bun", "lang.css"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(':lang(""){color:red}:lang("",en){color:#00f}');
+      expect(exitCode).toBe(0);
+    });
+
     minify_test("a:-webkit-any(.foo, .bar) {color:red}", "a:-webkit-any(.foo,.bar){color:red}");
     minify_test("a:-moz-any(.foo, .bar) {color:red}", "a:-moz-any(.foo,.bar){color:red}");
 

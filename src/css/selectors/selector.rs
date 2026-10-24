@@ -978,7 +978,12 @@ pub(crate) mod serialize {
             PseudoClass::Lang { languages } => {
                 dest.write_str(b":lang(")?;
                 dest.write_comma_separated(languages.iter(), |d, lang| {
-                    d.serialize_identifier(lang)
+                    // `:lang("")` is a valid range with no identifier spelling.
+                    if lang.is_empty() {
+                        d.serialize_string(lang)
+                    } else {
+                        d.serialize_identifier(lang)
+                    }
                 })?;
                 return dest.write_str(b")");
             }

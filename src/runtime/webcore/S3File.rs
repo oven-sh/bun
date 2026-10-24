@@ -487,8 +487,7 @@ pub(crate) fn get_presign_url_from(
                 expires = expires_ as usize;
             }
         }
-        // A tagging default stays out of a presign: it would oblige whoever
-        // uses the URL to send the header. The presign call passes it itself.
+        // A tagging default would oblige whoever uses the URL to send the header.
         credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
             s3.get_credentials(),
             S3Defaults {

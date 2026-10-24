@@ -1546,8 +1546,7 @@ impl CanonicalRequest {
         macro_rules! w {
             ($($arg:tt)*) => { core::fmt::Write::write_fmt(&mut c, format_args!($($arg)*))? };
         }
-        // A header line: the name, then the value as SigV4 CanonicalHeaders
-        // has it, with outer whitespace removed and inner runs as one space.
+        // A header line. SigV4 trims the value and collapses inner whitespace to one space.
         macro_rules! header {
             ($name:literal, $value:expr) => {{
                 w!(concat!($name, ":"));

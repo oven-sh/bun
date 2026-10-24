@@ -546,8 +546,9 @@ test.concurrent("Bun.serve: a timers/promises interval as the body is cleared wh
   expect(exitCode).toBe(0);
 });
 
-// The consumer failed, not the iterator: it refused a chunk. The iterator is closed the way
-// `for await` closes one when the loop body throws, and the body rejects with the consumer's error.
+// The consumer failed, not the iterator: it refused a chunk. Bun calls the iterator's return(), as
+// `for await` does when the loop body throws, and the body rejects with the consumer's error.
+// Unlike `for await`, Bun does not wait for return() to settle before it rejects.
 describe.concurrent("an async-iterable body whose chunk the consumer refuses", () => {
   const refused = () => Symbol("not a chunk");
   const macrotask = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -598,10 +599,238 @@ describe.concurrent("an async-iterable body whose chunk the consumer refuses", (
     );
     expect({ constructor: error?.constructor, calls }).toEqual({ constructor: expected, calls: 1 });
   });
+
+  // The consumer is told at once. return() is called, and nothing waits for what it gives back:
+  // a cleanup that never ends holds back neither the error nor the connection.
+  describe("is told while the cleanup is still pending:", () => {
+    const never = () => new Promise<never>(() => {});
+    const handWritten = (closed: { calls: number }, result: () => unknown) => ({
+      [Symbol.asyncIterator]: () => ({
+        next: async () => ({ done: false, value: refused() }),
+        return: () => (closed.calls++, result()),
+      }),
+    });
+    // Each body counts its cleanups in `closed.calls`. None of the cleanups ever ends.
+    const bodies: [name: string, make: (closed: { calls: number }) => AsyncIterable<unknown>][] = [
+      ["a return() whose promise never settles", closed => handWritten(closed, never)],
+      ["a return() whose thenable never calls back", closed => handWritten(closed, () => ({ then() {} }))],
+      [
+        "a generator whose finally never ends",
+        closed =>
+          (async function* () {
+            try {
+              yield refused();
+            } finally {
+              closed.calls++;
+              await never();
+            }
+          })(),
+      ],
+      [
+        "a generator over an iterator whose return() never settles",
+        closed =>
+          (async function* () {
+            for await (const chunk of handWritten(closed, never)) yield chunk;
+          })(),
+      ],
+      [
+        // Built-ins only. The return() of this iterator cancels its branch, and that settles
+        // only once the other branch is cancelled too.
+        "the iterator of a tee() branch whose other branch is unread",
+        closed => {
+          const source = new ReadableStream({
+            start(controller) {
+              controller.enqueue({ not: "a chunk" });
+            },
+          });
+          const iterator = source.tee()[0].values();
+          const cancelBranch = iterator.return!;
+          iterator.return = value => (closed.calls++, cancelBranch.call(iterator, value));
+          return iterator;
+        },
+      ],
+    ];
+
+    // What the consumer hears. Nothing here waits on I/O, so a consumer that heard nothing
+    // after these macrotasks waits on the cleanup.
+    async function heard(consumed: Promise<unknown>) {
+      let outcome = "nothing";
+      consumed.then(
+        () => (outcome = "a result"),
+        error => (outcome = `a ${error?.constructor?.name}`),
+      );
+      for (let turn = 0; turn < 50 && outcome === "nothing"; turn++) await macrotask();
+      return outcome;
+    }
+
+    const consumers: [name: string, consume: (response: Response) => Promise<unknown>][] = [
+      ["text()", response => response.text()],
+      ["arrayBuffer()", response => response.arrayBuffer()],
+      ["reader.read()", response => response.body!.getReader().read()],
+      [
+        "for await",
+        async response => {
+          for await (const _ of response.body!);
+        },
+      ],
+      ["pipeTo()", response => response.body!.pipeTo(new WritableStream())],
+      ["Bun.readableStreamToText()", response => Bun.readableStreamToText(response.body!)],
+    ];
+
+    describe.each(bodies)("%s:", (_, make) => {
+      test.each(consumers)("%s", async (_, consume) => {
+        const closed = { calls: 0 };
+        expect(await heard(consume(new Response(make(closed) as any)))).toBe("a TypeError");
+        expect(closed.calls).toBe(1);
+      });
+
+      // A consumer that comes back after the failure gets the same error. It does not get a
+      // clean end because the cleanup has not finished yet.
+      test("a later read(), cancel() and closed", async () => {
+        const closed = { calls: 0 };
+        const reader = new Response(make(closed) as any).body!.getReader();
+        const outcomes = [await heard(reader.read()), await heard(reader.read()), await heard(reader.cancel())];
+        outcomes.push(await heard(reader.closed));
+        expect(outcomes).toEqual(["a TypeError", "a TypeError", "a TypeError", "a TypeError"]);
+        expect(closed.calls).toBe(1);
+      });
+    });
+
+    // With idleTimeout: 0 only the failed body can close the connection. Bun.serve reports the
+    // error of a response body on stderr, not through the `error` option. A connection that stays
+    // open keeps the child alive after this test timed out, so the unref'd timer ends it.
+    test("Bun.serve closes the connection", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import net from "node:net";
+          setTimeout(() => process.exit(1), 30_000).unref();
+          const never = () => new Promise(() => {});
+          const closed = { calls: 0 };
+          const refused = () => Symbol("not a chunk");
+          const handWritten = result => ({
+            [Symbol.asyncIterator]: () => ({
+              next: async () => ({ done: false, value: refused() }),
+              return: () => (closed.calls++, result()),
+            }),
+          });
+          const bodies = {
+            "a promise that never settles": () => handWritten(never),
+            "a thenable that never calls back": () => handWritten(() => ({ then() {} })),
+            "a finally that never ends": () =>
+              (async function* () {
+                try {
+                  yield refused();
+                } finally {
+                  closed.calls++;
+                  await never();
+                }
+              })(),
+            "a generator over an iterator whose return() never settles": () =>
+              (async function* () {
+                for await (const chunk of handWritten(never)) yield chunk;
+              })(),
+            // The chunk that was accepted in the same turn is not sent either.
+            "an accepted chunk before the refused one": () => {
+              const chunks = ["accepted;", refused()];
+              return {
+                [Symbol.asyncIterator]: () => ({
+                  next: async () => ({ done: false, value: chunks.shift() }),
+                  return: () => (closed.calls++, never()),
+                }),
+              };
+            },
+          };
+          for (const [name, make] of Object.entries(bodies)) {
+            closed.calls = 0;
+            let errorOptionCalls = 0;
+            const server = Bun.serve({
+              port: 0,
+              idleTimeout: 0,
+              error: () => (errorOptionCalls++, new Response("from the error option")),
+              fetch: () => new Response(make()),
+            });
+            let bytes = 0;
+            const socket = net.connect(server.port, "127.0.0.1", () => socket.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n"));
+            socket.on("error", () => {});
+            socket.on("data", data => (bytes += data.length));
+            await new Promise(resolve => socket.on("close", resolve));
+            console.log(name + ": closed after " + bytes + " bytes, return() calls: " + closed.calls + ", error option calls: " + errorOptionCalls);
+            await server.stop(true);
+          }
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.split("\n")).toEqual([
+        "a promise that never settles: closed after 0 bytes, return() calls: 1, error option calls: 0",
+        "a thenable that never calls back: closed after 0 bytes, return() calls: 1, error option calls: 0",
+        "a finally that never ends: closed after 0 bytes, return() calls: 1, error option calls: 0",
+        "a generator over an iterator whose return() never settles: closed after 0 bytes, return() calls: 1, error option calls: 0",
+        "an accepted chunk before the refused one: closed after 0 bytes, return() calls: 1, error option calls: 0",
+        "",
+      ]);
+      expect(stderr.match(/^TypeError/gm)).toHaveLength(5);
+      expect(exitCode).toBe(0);
+    });
+  });
+});
+
+// A generator that loops over another async iterator needs more than one microtask round to run
+// its `finally`, even when that block has no `await`. Bun promises this much: return() is called
+// before the consumer is told, and the cleanup runs by itself. Bun does not promise which of the
+// cleanup and the consumer's rejection comes first, so these rows do not assert that.
+describe.concurrent("an async-iterable body whose chunk the consumer refuses runs a cleanup with no await", () => {
+  const macrotask = () => new Promise<void>(resolve => setImmediate(resolve));
+  async function* source() {
+    yield Symbol("not a chunk");
+  }
+  const wrap = (inner: AsyncIterable<unknown>, log: string[]) =>
+    (async function* () {
+      try {
+        for await (const chunk of inner) yield chunk;
+      } finally {
+        log.push("cleanup");
+      }
+    })();
+  const bodies: [name: string, make: (log: string[]) => AsyncGenerator<unknown>][] = [
+    ["around one for await", log => wrap(source(), log)],
+    ["in each of four nested generators", log => wrap(wrap(wrap(wrap(source(), log), log), log), log)],
+  ];
+  const consumers: [name: string, consume: (response: Response) => Promise<unknown>][] = [
+    ["text()", response => response.text()],
+    ["arrayBuffer()", response => response.arrayBuffer()],
+    ["reader.read()", response => response.body!.getReader().read()],
+  ];
+
+  describe.each(bodies)("%s:", (name, make) => {
+    test.each(consumers)("%s", async (_, consume) => {
+      const log: string[] = [];
+      const body = make(log);
+      const closeBody = body.return.bind(body);
+      body.return = value => (log.push("return()"), closeBody(value));
+      const error = await consume(new Response(body as any)).then(
+        () => undefined,
+        error => (log.push("told"), error),
+      );
+      await macrotask();
+      expect(error).toBeInstanceOf(TypeError);
+      expect({ first: log[0], all: log.toSorted() }).toEqual({
+        first: "return()",
+        all: [...Array(name.includes("four") ? 4 : 1).fill("cleanup"), "return()", "told"],
+      });
+    });
+  });
 });
 
 // return() can hand back something that only starts its work in then(), like a Bun.sql query.
-// Bun awaits what return() gives back, so that work runs and the body still settles.
+// Bun adopts what return() gives back the way `await` does, so that work starts. Only cancel()
+// waits for it to finish.
 describe.concurrent("an async-iterable body whose return() gives back", () => {
   const macrotask = () => new Promise<void>(resolve => setImmediate(resolve));
   const results: [name: string, make: (started: () => void) => unknown][] = [
@@ -677,6 +906,116 @@ describe.concurrent("an async-iterable body whose return() gives back", () => {
       expect(started).toBe(1);
     });
   });
+});
+
+// The body gave its last chunk, so the consumer already has everything. What the promise of a
+// return() call does after that changes nothing for the consumer.
+describe.concurrent("an async-iterable body that ends by itself", () => {
+  // A rejection nobody handles would print the error and exit with code 1.
+  test("a return() whose promise rejects is not reported", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { rmSync } from "node:fs";
+         import { tmpdir } from "node:os";
+         import { join } from "node:path";
+         const rejections = {
+           "at once": () => Promise.reject(new Error("the cleanup failed")),
+           "later": () => new Promise((_, reject) => setImmediate(() => reject(new Error("the cleanup failed")))),
+         };
+         const body = rejected => {
+           const chunks = ["chunk1;", "chunk2;"];
+           return {
+             [Symbol.asyncIterator]: () => ({
+               next: async () => (chunks.length ? { done: false, value: chunks.shift() } : { done: true, value: undefined }),
+               return: () => rejected(),
+             }),
+           };
+         };
+         const consumers = {
+           "text()": rejected => new Response(body(rejected)).text(),
+           "Bun.serve": async rejected => {
+             await using server = Bun.serve({ port: 0, fetch: () => new Response(body(rejected)) });
+             return await (await fetch(server.url)).text();
+           },
+           "Bun.write()": async rejected => {
+             const path = join(tmpdir(), "async-iterator-stream-" + process.pid + ".txt");
+             try {
+               await Bun.write(path, new Response(body(rejected)));
+               return await Bun.file(path).text();
+             } finally {
+               rmSync(path, { force: true });
+             }
+           },
+         };
+         for (const [when, rejected] of Object.entries(rejections)) {
+           for (const [name, consume] of Object.entries(consumers)) {
+             const got = await consume(rejected);
+             for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setImmediate(resolve));
+             console.log(name + ", rejects " + when + ": " + got);
+           }
+         }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split("\n")).toEqual([
+      "text(), rejects at once: chunk1;chunk2;",
+      "Bun.serve, rejects at once: chunk1;chunk2;",
+      "Bun.write(), rejects at once: chunk1;chunk2;",
+      "text(), rejects later: chunk1;chunk2;",
+      "Bun.serve, rejects later: chunk1;chunk2;",
+      "Bun.write(), rejects later: chunk1;chunk2;",
+      "",
+    ]);
+    expect(stderr).not.toContain("the cleanup failed");
+    expect(exitCode).toBe(0);
+  });
+
+  // Nothing of a finished body hangs on what return() gave back: one promise that stays pending
+  // for the life of the process does not keep the bodies that shared it. text() and arrayBuffer()
+  // reach return() from two different places in the pump.
+  test.each(["text", "arrayBuffer"])(
+    "is not kept alive by a return() whose promise stays pending: %s()",
+    async consume => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { heapStats } from "bun:jsc";
+         const pending = new Promise(() => {});
+         const body = () => {
+           const chunks = ["chunk"];
+           return {
+             [Symbol.asyncIterator]: () => ({
+               next: async () => (chunks.length ? { done: false, value: chunks.shift() } : { done: true, value: undefined }),
+               return: () => pending,
+             }),
+           };
+         };
+         let read = 0;
+         for (let i = 0; i < 100; i++) read += (await new Response(body()).${consume}()).${consume === "text" ? "length" : "byteLength"};
+         for (let turn = 0; turn < 4; turn++) await new Promise(resolve => setImmediate(resolve));
+         Bun.gc(true);
+         Bun.gc(true);
+         console.log(JSON.stringify({ read, kept: heapStats().objectTypeCounts.AsyncIteratorSourceOperation ?? 0 }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { read, kept } = JSON.parse(stdout);
+      expect(read).toBe(500);
+      // 100 without the fix. Not an exact 0: the count is taken from a live heap.
+      expect(kept).toBeLessThan(10);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // The iterator failed by itself. Like `for await`, nothing more is called on it.

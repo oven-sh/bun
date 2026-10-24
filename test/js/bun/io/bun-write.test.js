@@ -1550,6 +1550,87 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       },
     );
 
+    // The write error does not wait for what return() gives back. The iterator of a tee() branch
+    // is the built-in case: its return() settles only once the other branch is cancelled too.
+    it.skipIf(process.platform !== "linux").each([
+      [
+        "the iterator of a tee() branch whose other branch is unread",
+        () => {
+          let given = 0;
+          const source = new ReadableStream({
+            pull(controller) {
+              if (given++ < 8) controller.enqueue(Buffer.alloc(64 * 1024, "x"));
+              else controller.close();
+            },
+          });
+          const [unread, written] = source.tee();
+          return { body: written.values(), release: () => void unread.cancel().catch(() => {}) };
+        },
+      ],
+      [
+        // The body has an end: a body with no end whose write error is lost would pull for ever.
+        "an iterator whose return() never settles",
+        () => {
+          let given = 0;
+          return {
+            body: {
+              [Symbol.asyncIterator]: () => ({
+                next: async () =>
+                  given++ < 8 ? { done: false, value: Buffer.alloc(64 * 1024, "x") } : { done: true, value: undefined },
+                return: () => new Promise(() => {}),
+              }),
+            },
+            release: () => {},
+          };
+        },
+      ],
+    ])("a write that fails with ENOSPC rejects while the cleanup of %s is pending", async (_, make) => {
+      const { body, release } = make();
+      const error = await Bun.write("/dev/full", new Response(body)).then(
+        () => undefined,
+        error => error,
+      );
+      release();
+      expect(error?.code).toBe("ENOSPC");
+    });
+
+    // A chunk that the file sink cannot take fails the write on every platform.
+    it.each([
+      [
+        "the iterator of a tee() branch whose other branch is unread",
+        () => {
+          const source = new ReadableStream({
+            start(controller) {
+              controller.enqueue({ not: "a chunk" });
+            },
+          });
+          const [unread, written] = source.tee();
+          return { body: written.values(), release: () => void unread.cancel().catch(() => {}) };
+        },
+      ],
+      [
+        "an iterator whose return() never settles",
+        () => ({
+          body: {
+            [Symbol.asyncIterator]: () => ({
+              next: async () => ({ done: false, value: Symbol("not a chunk") }),
+              return: () => new Promise(() => {}),
+            }),
+          },
+          release: () => {},
+        }),
+      ],
+    ])("a chunk the file cannot take rejects while the cleanup of %s is pending", async (_, make) => {
+      using dir = tempDir("bun-write-refused-chunk", {});
+      const { body, release } = make();
+      const error = await Bun.write(join(String(dir), "out.bin"), new Response(body)).then(
+        () => undefined,
+        error => error,
+      );
+      release();
+      expect(error?.code).toBe("ERR_INVALID_ARG_TYPE");
+    });
+
     // https://github.com/oven-sh/bun/issues/31681: these wrote "[object ReadableStream]".
     it("a bare ReadableStream: res.body, a JS stream, file.write(stream)", async () => {
       using dir = tempDir("bun-write-readable-stream", {});

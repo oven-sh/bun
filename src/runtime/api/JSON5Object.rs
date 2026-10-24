@@ -133,6 +133,7 @@ impl Replacer {
     }
 }
 
+#[derive(Clone, Copy)]
 enum Key<'a> {
     Name(&'a BunString),
     Index(u32),

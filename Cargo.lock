@@ -616,6 +616,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_hpack"
+version = "0.0.0"
+dependencies = [
+ "bun_wyhash",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_http"
 version = "0.0.0"
 dependencies = [
@@ -633,6 +641,7 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_hpack",
  "bun_http_types",
  "bun_io",
  "bun_libdeflate_sys",
@@ -1491,6 +1500,7 @@ dependencies = [
  "bun_glob",
  "bun_hash",
  "bun_highway",
+ "bun_hpack",
  "bun_http",
  "bun_http_jsc",
  "bun_http_types",
@@ -1990,6 +2000,7 @@ dependencies = [
  "bun_boringssl_sys",
  "bun_core",
  "bun_errno",
+ "bun_hpack",
  "bun_http_types",
  "bun_libuv_sys",
  "bun_opaque",

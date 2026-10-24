@@ -1704,6 +1704,18 @@ describe("bundler", () => {
             return <b>ok</b>;
           }
 
+          // What is caught is a new object each time the try block throws. An element that takes the
+          // object itself, and not its message, is made again on each such render.
+          function CaughtErrorItself(props) {
+            let element = <b>ok</b>;
+            try {
+              parse(props.text);
+            } catch (error) {
+              element = <i>{error}</i>;
+            }
+            return <div>{element}</div>;
+          }
+
           // Nothing reactive decides what this try block throws, so what it catches is no dependency: the
           // element in the handler is made once.
           function CaughtByStaticTry(props) {
@@ -1901,6 +1913,7 @@ describe("bundler", () => {
           renders(ReactiveReadThatCannotThrow, { title: "a" }, { title: "b" });
           renders(CaughtValueInNestedTry, ...texts);
           renders(CaughtValueInAPattern, ...texts);
+          renders(CaughtErrorItself, ...texts);
           renders(CaughtByStaticTry, { title: "a" }, { title: "b" });
           const loading = [{ loading: true }, { loading: false }, { loading: true }, { loading: false }];
           renders(CaughtByStaticTryAfterReactiveReturn, ...loading);
@@ -1969,6 +1982,7 @@ describe("bundler", () => {
           ReactiveReadThatCannotThrow (memoized): ok, ok
           CaughtValueInNestedTry (memoized): A, B, A, B
           CaughtValueInAPattern (not compiled): cannot parse !a (not reused), ok (not reused), cannot parse !c (not reused), ok (not reused)
+          CaughtErrorItself (memoized): cannot parse !a (not reused), ok, cannot parse !c (not reused), ok
           CaughtByStaticTry (memoized): always, always
           CaughtByStaticTryAfterReactiveReturn (memoized): null, always, null, always
           CaughtByStaticTryUnderReactiveIf (memoized): always, null, always

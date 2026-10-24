@@ -1321,6 +1321,44 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
         file: await file.text(),
       }).toEqual({ original: "Linux\n", clone: "Linux\n", file: "Linux\n" });
     });
+
+    describe.skipIf(!isLinux)("a cloned procfs body", () => {
+      const bodies = () => {
+        const original = new Response(bodyOf(Bun.file("/proc/sys/kernel/ostype")));
+        return [original, original.clone()];
+      };
+
+      test.each([
+        ["arrayBuffer()", async (response: Response) => Buffer.from(await response.arrayBuffer()).toString()],
+        ["bytes()", async (response: Response) => Buffer.from(await response.bytes()).toString()],
+        ["text() of its blob()", async (response: Response) => (await response.blob()).text()],
+      ])("is read whole through %s", async (_, read) => {
+        expect(await Promise.all(bodies().map(read))).toEqual(["Linux\n", "Linux\n"]);
+      });
+
+      // The three readers below take the length of a file body from its stat. A procfs body is empty for them,
+      // as a `Bun.file()` body that nothing cloned is.
+
+      // Observed: `.body` yields no chunk. #41593 leaves the stream unsized when `st_size` is 0.
+      test.todo("is read whole through .body", async () => {
+        const chunks = await Promise.all(bodies().map(response => Array.fromAsync(response.body!)));
+        expect(chunks.map(chunk => Buffer.concat(chunk).toString())).toEqual(["Linux\n", "Linux\n"]);
+      });
+
+      // Observed: `size` is 0. blob() returns the file-backed Blob, and its `size` is the `st_size`.
+      test.todo("has its size through blob()", async () => {
+        const blobs = await Promise.all(bodies().map(response => response.blob()));
+        expect(blobs.map(blob => blob.size)).toEqual([6, 6]);
+      });
+
+      // Observed: `Content-Length: 0` and no body. #43974 reads such a file to its end.
+      test.todo("is sent whole by Bun.serve", async () => {
+        const responses = bodies();
+        await using server = Bun.serve({ port: 0, fetch: () => responses.shift()! });
+        const sent = [await fetch(server.url), await fetch(server.url)];
+        expect(await Promise.all(sent.map(response => response.text()))).toEqual(["Linux\n", "Linux\n"]);
+      });
+    });
   });
 
   // No bytes to compete for: it is duped like a regular file, and each body fails when it is read.

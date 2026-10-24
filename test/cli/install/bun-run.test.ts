@@ -1623,10 +1623,10 @@ describe.concurrent("bun run", () => {
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         const [shimDir, bunType] = stdout.trim().split("\n");
 
-        expect(stderr).not.toContain("error");
-        expect({ shimDir, bunType, exitCode }).toEqual({
+        expect({ shimDir, bunType, stderr, exitCode }).toEqual({
           shimDir: expect.stringMatching(new RegExp(`^${escapeRegExp(tmpdir)}/bun-node-${process.getuid!()}(-|$)`)),
           bunType: "object",
+          stderr: `$ ${script}\n`,
           exitCode: 0,
         });
         expect(readlinkSync(join(shimDir, "node"))).toBe(realpathSync(bunExe()));

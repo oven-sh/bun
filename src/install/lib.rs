@@ -417,7 +417,7 @@ impl RunCommand {
             // `npm_node_execpath` of child processes that run from other
             // working directories, so it is made absolute once, here.
             let mut spill = Vec::new();
-            let dir = join_abs_string_spill::<platform::Loose>(
+            let dir = join_abs_string_spill::<platform::Posix>(
                 bun_fs::FileSystem::get().top_level_dir(),
                 &mut spill,
                 &[bun_fs::RealFS::tmpdir_path(), name.as_bytes()],

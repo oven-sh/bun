@@ -870,8 +870,7 @@ impl<'a> PackageInstaller<'a> {
             }
 
             loop {
-                // The linker does not follow the links of a symlink-backend install, so the real
-                // files get their mode first. `link_rel_buf` is free until the linker runs.
+                // `link_rel_buf` is free until the linker runs.
                 if !copied_tree
                     && let Some(source) = Self::symlink_install_source(
                         manager,
@@ -1339,8 +1338,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    /// The hash of the patch file of a package that is not a workspace. `None` if the package is
-    /// not patched.
+    /// The hash of the patch file applied to a package, `None` if it is not patched.
     fn patch_contents_hash(
         lockfile: &Lockfile,
         string_buf: &[u8],
@@ -1365,9 +1363,8 @@ impl<'a> PackageInstaller<'a> {
             .patchfile_hash()
     }
 
-    /// The directory that the files of `package_id` are symlinks into, when the package was
-    /// installed with the symlink backend: its cache entry, or the folder of a `file:` dependency.
-    /// `None` when the files in `node_modules` are the real files.
+    /// The directory that the files of `package_id` in `node_modules` are symlinks into: its cache
+    /// entry, or the folder of a `file:` dependency. `None` when they are the real files.
     fn symlink_install_source<'b>(
         manager: &mut PackageManager,
         lockfile: &Lockfile,
@@ -1412,8 +1409,7 @@ impl<'a> PackageInstaller<'a> {
             }
             resolution::Tag::Folder => {
                 let folder = resolution.folder().slice(string_buf);
-                // `install_package` symlinks a package from its own folder, see
-                // `get_install_method`.
+                // `get_install_method` symlinks a package from its own folder.
                 let own_folder = if lockfile.is_workspace_tree_id(tree_id) {
                     matches!(folder, b"" | b".")
                 } else {

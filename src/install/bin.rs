@@ -859,8 +859,7 @@ pub struct Linker<'a> {
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
 
-    /// Only sets the mode of the bin targets, without creating links. For the tree that a
-    /// symlink-backend install points into, where the targets are the real files.
+    /// Only sets the mode of the bin targets, without creating links.
     pub chmod_only: bool,
 }
 
@@ -1992,12 +1991,9 @@ pub(crate) fn link_free_bins(
 }
 
 /// Sets the mode of the `bin` targets of a package in `source_dir`, the tree that a
-/// symlink-backend install points into. No links are created. `lchmod` does not reach the file
-/// behind a link, and the linker does not follow a link out of the package, so the real files get
-/// the mode here.
-///
-/// `redirected_from` is the name of the package whose `bin` field names the targets, when the
-/// native binlink optimization redirects that package's bins into this one.
+/// symlink-backend install points into, without creating links. `redirected_from` is the package
+/// whose `bin` field names the targets, when the native binlink optimization redirects its bins
+/// into this one.
 pub(crate) fn make_bins_executable(
     bin: Bin,
     source_dir: &[u8],
@@ -2030,8 +2026,7 @@ pub(crate) fn make_bins_executable(
         target_package_name: source_name,
         seen: None,
         node_modules_path: &mut node_modules_path,
-        // A different name from `target_package_name` makes the linker look for the redirected
-        // layouts (see `resolve_bin_target`).
+        // A name that differs from `target_package_name` turns on the redirect's candidate lookup.
         package_name: redirected_from.map_or(source_name, strings::StringOrTinyString::init),
         global_bin_path: ZStr::EMPTY,
         string_buf,

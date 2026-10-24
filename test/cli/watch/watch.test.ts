@@ -625,18 +625,14 @@ for (const [mode, args] of [
       using dir = tempDir("watch-node-modules-fds", {
         "main.ts": `import { x } from "dep";
 import { y } from "dep2";
-import { z } from "single.js";
-console.log("ready", x, y, z);
+console.log("ready", x, y);
 setInterval(() => {}, 1e6);
 `,
         "main.test.ts": `import { test } from "bun:test";
 import { x } from "dep";
 import { y } from "dep2";
-import { z } from "single.js";
-test("ready", () => console.log("ready", x, y, z));
+test("ready", () => console.log("ready", x, y));
 `,
-        // A module that is a file of node_modules itself, in no package.
-        "node_modules/single.js": "export const z = 3;",
         "node_modules/dep/package.json": JSON.stringify({
           name: "dep",
           type: "module",
@@ -664,7 +660,7 @@ test("ready", () => console.log("ready", x, y, z));
         stdin: "ignore",
       });
       const waiter = stdoutWaiter(watchee);
-      await waiter.waitFor("ready 1 2 3");
+      await waiter.waitFor("ready 1 2");
 
       const held = openPaths(watchee.pid);
       waiter.release();
@@ -677,22 +673,24 @@ test("ready", () => console.log("ready", x, y, z));
   );
 }
 
-// The watcher must hold nothing under a real node_modules: not a package
-// file, not its directory, and not node_modules itself. It gets that last
-// path with no separator after the name when the first read of the directory
-// is a lookup that fails. The trace names each watched path that saw an event.
+// The watcher must hold nothing under a real node_modules: not a file of a
+// package, not a file of node_modules itself, not their directories. It gets
+// the path of node_modules with no separator after the name when the first
+// read of that directory is a lookup that fails. The trace names each watched
+// path that saw an event.
 it("--hot sees no event under node_modules", async () => {
   using dir = tempDir("watch-node-modules-trace", {
     project: {
       "main.js": `try {
   require("./node_modules/not-installed.js");
 } catch {}
-console.log("run", require("dep"), require("./sentinel.js"));
+console.log("run", require("dep"), require("single.js"), require("./sentinel.js"));
 setInterval(() => {}, 1e6);
 `,
       "sentinel.js": "module.exports = 1;",
       "node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js" }),
       "node_modules/dep/index.js": `module.exports = "dep";`,
+      "node_modules/single.js": `module.exports = "single";`,
     },
   });
   const cwd = join(String(dir), "project");
@@ -708,12 +706,13 @@ setInterval(() => {}, 1e6);
     stdin: "ignore",
   }));
   const out = stdoutWaiter(proc);
-  await out.waitFor("run dep 1");
+  await out.waitFor("run dep single 1");
 
   await Bun.write(join(cwd, "node_modules", "dep", "index.js"), `module.exports = "dep";`);
+  await Bun.write(join(cwd, "node_modules", "single.js"), `module.exports = "single";`);
   await Bun.write(join(cwd, "node_modules", "added.js"), "");
   await Bun.write(join(cwd, "sentinel.js"), "module.exports = 2;");
-  await out.waitFor("run dep 2");
+  await out.waitFor("run dep single 2");
   out.release();
   proc.kill("SIGKILL");
   await proc.exited;
@@ -759,7 +758,9 @@ describe("a path that only holds the letters node_modules", () => {
   const keepAlive = "setInterval(() => {}, 1e6);\n";
 
   // A save by rename puts a new file at the path. The watcher learns of it
-  // from the watch on the directory.
+  // from the watch on the directory. Not on Windows: a rename over a watched
+  // file fails there with EPERM (#41045), and that watcher follows paths, so
+  // the watch on the directory is not what sees a save.
   const saveByRename = (file: string, content: string) => async (cwd: string) => {
     await Bun.write(join(cwd, file + ".tmp"), content);
     renameSync(join(cwd, file + ".tmp"), join(cwd, file));
@@ -844,6 +845,7 @@ describe("a path that only holds the letters node_modules", () => {
         );
       });
 
+      // Not on Windows: see `saveByRename`.
       it.skipIf(isWindows)(`${flag} reloads an import after a save by rename`, async () => {
         const source = (v: number) => `export const v = ${v};\n`;
         await reloadAfterEdit(
@@ -884,7 +886,7 @@ describe("a path that only holds the letters node_modules", () => {
     });
 
     // The test for the letters refused the watch on the directory to every
-    // user of the watcher.
+    // user of the watcher. Not on Windows: see `saveByRename`.
     it.skipIf(isWindows)("build --watch rebuilds after a save by rename", async () => {
       const source = (v: number) => `console.log("build ${v}");\n`;
       await reloadAfterEdit(
@@ -896,8 +898,10 @@ describe("a path that only holds the letters node_modules", () => {
       );
     });
 
-    // On Linux the reload that follows the rename fails at once. Only the
-    // watch on the directory sees the file come back.
+    // Linux only: there the reload that follows the rename fails at once and
+    // prints an error, which is the signal to write the file again. Only the
+    // watch on the directory sees the file come back. kqueue defers that
+    // reload and prints nothing to wait for.
     it.skipIf(!isLinux)("--hot reloads an entry file that was renamed away and written again", async () => {
       const source = (v: number) => `console.log("run ${v}");\n${keepAlive}`;
       using dir = tempDir("watch-letters", { [project]: { "main.js": source(1) } });
@@ -920,7 +924,8 @@ describe("a path that only holds the letters node_modules", () => {
     });
 
     // The resolver asks the watcher to watch a directory in which a lookup
-    // failed. The watcher holds a descriptor for each directory it watches.
+    // failed. The watcher holds a descriptor for each directory it watches,
+    // which `openPaths` can list on Linux and, with lsof, on macOS.
     it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
       "--watch watches a directory in which a lookup failed",
       async () => {

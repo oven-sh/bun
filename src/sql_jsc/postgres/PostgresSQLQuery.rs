@@ -66,7 +66,8 @@ pub struct Flags {
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
     /// A statement of begin() or savepoint() itself. It has no parameters and returns no rows. It
-    /// goes out as the unnamed statement, in one write with its Bind, and is pipelined.
+    /// goes out as the unnamed statement, which the server cannot have forgotten (26000), in one
+    /// write with its Bind, so it is pipelined.
     pub(crate) internal: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
     pub(crate) describe_first: bool,
@@ -510,7 +511,12 @@ impl PostgresSQLQuery {
             // It has no Parse of its own: the Query message is the whole request.
             s.status = StatementStatus::Parsing;
             RefPtr::new(s)
-        } else if unnamed || self.flags.get().internal {
+        } else if self.flags.get().internal {
+            let mut s = PostgresSQLStatement::default();
+            // Its Parse goes out with its Bind: nothing waits for the answer.
+            s.status = StatementStatus::Prepared;
+            RefPtr::new(s)
+        } else if unnamed {
             new_statement(None)
         } else {
             let query_str = self.query.to_utf8();

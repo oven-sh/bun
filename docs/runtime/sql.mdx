@@ -1178,7 +1178,9 @@ await sql.begin(async tx => {
 });
 ```
 
-Bun does not wait for the database to answer `BEGIN` before it calls the callback. The queries the callback starts at once go out in the same write as `BEGIN`, so the array form costs two round trips: one for `BEGIN` and the queries, one for `COMMIT`. `COMMIT` goes out once every result is read, so a result the client cannot decode still rolls the transaction back. A `BEGIN` with options, such as `sql.begin("read only", ...)`, and a distributed transaction wait for the answer to `BEGIN`: the database can refuse it.
+Bun does not wait for the database to answer `BEGIN` before it calls the callback. The queries the callback starts at once, and that the connection has already prepared, go out in the same write as `BEGIN`, so the array form then costs two round trips: one for `BEGIN` and the queries, one for `COMMIT`. The first run of a query on a connection, a query with `prepare: false`, `.simple()` and `sql.unsafe()` without parameters still wait for the answer to `BEGIN`. `COMMIT` goes out once every result is read, so a result the client cannot decode still rolls the transaction back.
+
+A `BEGIN` with options, such as `sql.begin("read only", ...)`, and the `XA START` of a distributed transaction on MySQL wait for the answer to `BEGIN`: the database can refuse it. A plain `BEGIN` is refused only when something cancels it from outside, such as `pg_cancel_backend()` or `KILL QUERY`. The queries that went out with it then run outside a transaction, each committed on its own, and `sql.begin` rejects with that error.
 
 The adapters differ in two ways:
 

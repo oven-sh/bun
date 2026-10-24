@@ -2,7 +2,7 @@
 // pipelined like any other statement. begin() does not wait for the answer to BEGIN before it calls its callback:
 // the first statements of the callback share BEGIN's write. COMMIT still goes out once every result is read.
 // A BEGIN with options, or the BEGIN of a distributed transaction, can be refused, so the callback waits for it.
-import { SQL } from "bun";
+import { SQL, randomUUIDv7 } from "bun";
 import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 import { once } from "node:events";
@@ -143,6 +143,21 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(await sql`SELECT n FROM pipelined_begin`).toEqual([]);
     // The connection is idle again: the next transaction runs.
     expect(await sql.begin(tx => [tx`SELECT count(*)::int AS c FROM pipelined_begin`])).toEqual([[{ c: 0 }]]);
+  });
+
+  test("the BEGIN of a distributed transaction is a plain BEGIN: it is pipelined too", async () => {
+    const { sql, proxy } = await connect();
+    await using _sql = sql;
+    using _proxy = proxy;
+    const name = `pipelined_${randomUUIDv7("hex")}`;
+    const run = () => sql.beginDistributed(name, tx => [tx`SELECT 9 AS n`]);
+    await run();
+    await sql.commitDistributed(name);
+    proxy.take();
+    expect(await run()).toEqual([[{ n: 9 }]]);
+    // PREPARE TRANSACTION ends it.
+    expect(proxy.take()).toEqual(["PBESBES", "PBES"]);
+    await sql.rollbackDistributed(name);
   });
 
   test("a BEGIN with options is answered before the callback runs", async () => {

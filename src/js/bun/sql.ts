@@ -112,9 +112,11 @@ class Scope implements Target {
 
   statements: TransactionCommands | null = null;
   distributed = false;
-  /// BEGIN can be refused (its options, the name of a distributed transaction): the callback waits for its answer.
-  /// Otherwise what the callback sends follows BEGIN in the same flush.
+  /// The server can refuse BEGIN for what was added to it (options, the name of an XA branch): the callback waits
+  /// for its answer. Otherwise what the callback sends follows BEGIN in the same flush.
   awaitsStart = false;
+  /// BEGIN was refused. What was handed over before the answer came may have run outside a transaction.
+  startRefusal: { error: unknown } | null = null;
   savepoints = 0;
   /// of a transaction that waits for the one before it on the reservation
   start: (() => void) | null = null;
@@ -442,6 +444,12 @@ function ownConnection(scope: Scope) {
   );
 }
 
+/// The error of the callback is the cause of `error`, unless it is that error: a lost connection rejects everything
+/// on it with one error object.
+function withCauseOf(error: unknown, failure: { error: unknown } | null) {
+  return failure !== null && failure.error !== error ? withCause(error, failure.error) : error;
+}
+
 /// A lost connection rejects everything on it with one error object, so the cause goes on a copy.
 function withCause(error: unknown, cause: unknown) {
   if (!Error.isError(error) || "cause" in error) {
@@ -455,6 +463,15 @@ function withCause(error: unknown, cause: unknown) {
 function stopWaiting(timer: ReturnType<typeof setTimeout>, resolve: () => void) {
   clearTimeout(timer);
   resolve();
+}
+
+function untilIdle(scope: Scope): Promise<void> | undefined {
+  if (isIdle(scope)) {
+    return;
+  }
+  const { promise, resolve } = Promise.withResolvers<void>();
+  scope.whenIdle = resolve;
+  return promise;
 }
 
 function idleOrTimeout(scope: Scope, ms: number): Promise<void> | undefined {
@@ -517,6 +534,24 @@ async function end(scope: Scope, commit: boolean, grace: number | undefined) {
   }
 }
 
+/// The scope takes nothing more: a statement that it has not handed over yet does not run outside a transaction.
+function refuseStart(this: Scope, error: unknown) {
+  this.startRefusal = { error };
+  shut(this);
+}
+
+/// Nothing is sent: the server refused the start, so there is no transaction to end.
+async function leaveRefused(scope: Scope) {
+  if (scope.finishing !== null) {
+    return scope.finishing.$then(undefined, noop);
+  }
+  const idle = untilIdle(scope);
+  if (idle !== undefined) {
+    await idle;
+  }
+  leave(scope);
+}
+
 async function run(scope: Scope, callback: TransactionCallback) {
   const parent = scope.parent;
   // SAVEPOINT is a statement of the scope that savepoint() was called on: it goes through that scope's gate.
@@ -526,18 +561,18 @@ async function run(scope: Scope, callback: TransactionCallback) {
       : send(scope, scope.statements!.BEGIN, dispatchOwn.bind(scope));
   // Queued now: what the callback sends follows it on the connection.
   started.execute();
+  started.$then(undefined, refuseStart.bind(scope));
   const awaited = scope.awaitsStart || !scope.accepting;
   if (awaited) {
-    try {
-      await started;
-    } catch (err) {
-      leave(scope);
-      return settle(scope, scope.reject, err);
-    }
+    await started.$then(undefined, noop);
   } else {
-    // Its answer is read after the callback, which runs in a later job as it does when BEGIN is awaited.
-    started.$then(undefined, noop);
+    // The callback runs in a later job, as it does when BEGIN is awaited. SQLite has answered by then.
     await undefined;
+  }
+  const refusedStart = scope.startRefusal;
+  if (refusedStart !== null) {
+    await leaveRefused(scope);
+    return settle(scope, scope.reject, refusedStart.error);
   }
   // close() or the loss of the connection came first
   if (!scope.accepting) {
@@ -572,6 +607,11 @@ async function run(scope: Scope, callback: TransactionCallback) {
   }
   const failure = scope.failure;
 
+  const refused = scope.startRefusal;
+  if (refused !== null) {
+    await leaveRefused(scope);
+    return settle(scope, scope.reject, withCauseOf(refused.error, failure));
+  }
   const closing = scope.finishing;
   if (closing !== null || scope.connection === null) {
     if (closing !== null) {
@@ -582,7 +622,7 @@ async function run(scope: Scope, callback: TransactionCallback) {
 
   let answer: { command?: string | null } | undefined;
   scope.awaitingAnswer = true;
-  // Handed over now: a statement made after the callback settled is refused, whatever BEGIN was answered with.
+  // Handed over now: a statement made after the callback settled is refused, whatever BEGIN is answered with.
   const ending = finish(scope, failure === null, undefined);
   if (!awaited) {
     // Its answer comes before BEGIN's is read.
@@ -590,9 +630,9 @@ async function run(scope: Scope, callback: TransactionCallback) {
     try {
       await started;
     } catch (err) {
-      // BEGIN was refused: what the callback sent was refused, or ran outside a transaction, and so does the end.
+      // The end ran outside a transaction too.
       await ending.$then(undefined, noop);
-      return settle(scope, scope.reject, err);
+      return settle(scope, scope.reject, withCauseOf(err, failure));
     }
   }
   try {
@@ -690,7 +730,7 @@ function begin(this: Client | Scope, distributed: boolean, optionsOrFn: unknown,
   const scope = new Scope(this.client, Kind.transaction, reservation, reservation && reservation.connection);
   scope.statements = statements;
   scope.distributed = distributed;
-  scope.awaitsStart = distributed || options !== undefined;
+  scope.awaitsStart = statements.BEGIN !== pool.begin;
   scope.resolve = resolve;
   scope.reject = reject;
   if (reservation === null) {

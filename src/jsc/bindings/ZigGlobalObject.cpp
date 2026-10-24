@@ -1,4 +1,5 @@
 #include "root.h"
+#include <wtf/SetForScope.h>
 
 #include "ZigGlobalObject.h"
 #include "CodeGenerationFromStrings.h"
@@ -4168,6 +4169,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false);
 #endif
 
+    bool dynamicImport = std::exchange(globalObject->m_resolvingDynamicImport, false);
+#if ENABLE(AOT)
+    dynamicImport |= vm.hasCompiledCode() && JSC::AOT::isResolvingImportCall(vm);
+#endif
+
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
         RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
@@ -4231,7 +4237,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         BunString keyZ = Bun::toString(keyString);
         BunString referrerZ = Bun::toString(referrerString);
         BunString queryZ = BunStringEmpty;
-        Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
+        Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ, dynamicImport);
         RETURN_IF_EXCEPTION(scope, {});
         if (!res.success) {
             throwException(scope, res.result.err, globalObject);
@@ -4351,7 +4357,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto referrer = JSC::Identifier::fromString(vm, sourceOriginStringHolder);
     globalObject->onLoadPlugins.isResolvingImportCall = globalObject->onLoadPlugins.hasVirtualModules();
-    JSC::Identifier key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, moduleName), referrer, nullptr, /* useImportMap */ true);
+    JSC::Identifier key;
+    {
+        SetForScope dynamicImportScope(globalObject->m_resolvingDynamicImport, true);
+        key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, moduleName), referrer, nullptr, /* useImportMap */ true);
+    }
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 

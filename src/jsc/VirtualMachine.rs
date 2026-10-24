@@ -4266,6 +4266,7 @@ pub struct PendingIpc {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ResolveMode {
     Esm,
+    DynamicImport,
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
@@ -4274,13 +4275,14 @@ pub enum ResolveMode {
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::DynamicImport)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
             Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::DynamicImport => bun_ast::ImportKind::Dynamic,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
         }
@@ -5760,7 +5762,7 @@ impl VirtualMachine {
         mode: ResolveMode,
         same_is_no_answer: bool,
     ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
-        let answer = match run_on_resolve(global, specifier, source)? {
+        let answer = match run_on_resolve(global, specifier, source, mode.import_kind())? {
             None => return Ok(None),
             Some(Err(error)) => return Ok(Some(Err(error))),
             Some(Ok(answer)) => answer,
@@ -5780,7 +5782,7 @@ impl VirtualMachine {
         drop(answer_utf8);
         let is_own = is_bare
             && (answer.eql(specifier)
-                || match run_on_resolve(global, &answer, source)? {
+                || match run_on_resolve(global, &answer, source, mode.import_kind())? {
                     None => false,
                     Some(Ok(_)) => true,
                     Some(Err(error)) => return Ok(Some(Err(error))),
@@ -8334,6 +8336,7 @@ fn run_on_resolve(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     importer: &bun_core::String,
+    kind: bun_ast::ImportKind,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let (in_file_namespace, in_another_namespace) = global.has_on_resolve();
     if !in_file_namespace && !in_another_namespace {
@@ -8369,6 +8372,7 @@ fn run_on_resolve(
             &bun_core::StringView::from_bytes(namespace),
             &bun_core::StringView::borrow_utf8(path),
             &importer,
+            kind,
         )?;
     }
     if answer.is_none() && asks_file_namespace {
@@ -8380,6 +8384,7 @@ fn run_on_resolve(
                 &specifier
             }),
             &importer,
+            kind,
         )?;
     }
     let Some(on_resolve_plugin) = answer else {

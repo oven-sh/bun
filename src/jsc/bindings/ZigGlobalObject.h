@@ -288,6 +288,8 @@ public:
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
+    // Consumed by the dynamic import's resolve, before a plugin can re-enter.
+    bool m_resolvingDynamicImport = false;
     // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
     bool hasModuleGraphs() const { return !!m_moduleGraphs; }
     // The shape of an async-context frame that names a Bun.ModuleGraph (ModuleGraph.cpp).

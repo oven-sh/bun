@@ -54,7 +54,7 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
 });
 
 // Expected bytes are from node v26.3.0.
-test.each([
+test.concurrent.each([
   ["binary", ["\u00e9", "\u00ff"], "e9ff"],
   ["latin1", ["\u00e9", "\u00ff"], "e9ff"],
   ["ascii", ["\u00e9", "\u00ff"], "e9ff"],

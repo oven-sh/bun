@@ -260,9 +260,9 @@ describe("WriteStream write(chunk, encoding)", () => {
           } catch (e) {
             thrown = e.code;
           }
-          process.stdout.write(hex("ARGUMENT " + JSON.stringify({ isTTY: process.stdout.isTTY, thrown }) + " "), "hex");
+          process.stdout.write(hex("ARGUMENT" + JSON.stringify({ isTTY: process.stdout.isTTY, thrown })), "hex");
           process.stdout.setDefaultEncoding("hex");
-          process.stdout.write(hex("DEFAULT {} "));
+          process.stdout.write(hex("DEFAULT{}"));
         `,
       ],
       env: bunEnv,
@@ -272,7 +272,7 @@ describe("WriteStream write(chunk, encoding)", () => {
         rows: 24,
         data(_t, chunk: Uint8Array) {
           output += decoder.decode(chunk, { stream: true });
-          if (output.includes("DEFAULT {}")) done.resolve();
+          if (output.includes("DEFAULT{}")) done.resolve();
         },
         exit() {
           eof.resolve();
@@ -286,9 +286,10 @@ describe("WriteStream write(chunk, encoding)", () => {
     proc.terminal?.close();
     output += decoder.decode();
 
-    // ConPTY puts VT escape sequences and CR around the payload.
+    // ConPTY puts VT escape sequences and CR around the payload. It can also draw a space between two writes as a
+    // cursor move, so the payload has no spaces.
     const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
-    const match = stripped.match(/ARGUMENT (\{[^}]*\}) DEFAULT \{\}/);
+    const match = stripped.match(/ARGUMENT(\{[^}]*\})DEFAULT\{\}/);
     if (!match) {
       throw new Error("the child did not write the decoded text; terminal output was: " + JSON.stringify(output));
     }

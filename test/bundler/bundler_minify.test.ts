@@ -3,6 +3,20 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
+  itBundled("minify/SingleUseInferredNamesLoweredBlockFunction", {
+    files: {
+      "/entry.js": `
+        if (1) {
+          var a = 1;
+          function f() {}
+        }
+        console.log(f.name);
+      `,
+    },
+    keepNames: true,
+    run: { runtime: "node", stdout: "f" },
+  });
+
   // A direct eval at the top level of a file the bundler wraps in a CommonJS
   // closure can reach that file's top-level names, so they are not renamed.
   itBundled("minify/DirectEvalKeepsTopLevelNamesOfWrappedFile", {
@@ -394,6 +408,40 @@ describe("bundler", () => {
     keepNames: true,
     target: "bun",
   });
+  for (const { label, options, preserveNames } of [
+    { label: "Default", options: {}, preserveNames: true },
+    { label: "KeepNames", options: { minifySyntax: true, keepNames: true }, preserveNames: true },
+    { label: "Minified", options: { minifySyntax: true, keepNames: false }, preserveNames: false },
+  ]) {
+    itBundled(`minify/SingleUseInferredNames${label}`, {
+      files: {
+        "/entry.js": /* js */ `
+          export {};
+          { function declared() {} console.log(JSON.stringify(declared.name)); }
+          { const arrow = () => {}; console.log(JSON.stringify(arrow.name)); }
+          { let anonymous = function() {}; console.log(JSON.stringify(anonymous.name)); }
+          { const C = class {}; console.log(JSON.stringify(C.name)); }
+          { const callback = () => 42; console.log(callback()); }
+          { const C = class { value() { return 42; } }; console.log(new C().value()); }
+        `,
+      },
+      backend: "api",
+      target: "bun",
+      minifyIdentifiers: false,
+      ...options,
+      run: {
+        runtime: "node",
+        validate({ stdout }) {
+          const result = stdout
+            .trim()
+            .split("\n")
+            .map(line => JSON.parse(line));
+          expect(result.slice(4)).toEqual([42, 42]);
+          if (preserveNames) expect(result.slice(0, 4)).toEqual(["declared", "arrow", "anonymous", "C"]);
+        },
+      },
+    });
+  }
   itBundled("minify/PrivateIdentifiersNameCollision", {
     files: {
       "/entry.js": /* js */ `

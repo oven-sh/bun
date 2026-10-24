@@ -1706,6 +1706,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
+                // A single-use lowered function can initialize its hoisted binding
+                // directly. Otherwise a later parse infers the synthetic binding's name.
+                if p.options.features.minify_keep_names {
+                    for var_decl in var_decls.iter_mut() {
+                        let Some(Expr { data: ExprData::EIdentifier(id), .. }) = var_decl.value else {
+                            continue;
+                        };
+                        if p.symbols[id.ref_.inner_index() as usize].use_count_estimate != 1 {
+                            continue;
+                        }
+                        if let Some(decl) = let_decls.iter_mut().find(|decl| {
+                            matches!(decl.binding.data, BData::BIdentifier(binding) if binding.r#ref == id.ref_)
+                        }) {
+                            var_decl.value = decl.value.take();
+                            p.ignore_usage(id.ref_);
+                        }
+                    }
+                    let_decls.retain(|decl| decl.value.is_some());
+                }
                 before.clear();
 
                 before.reserve(
@@ -1980,6 +1999,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break;
                     };
                     let id = ident_ptr.r#ref;
+
+                    // Lowered block functions use synthetic bindings. Preserve the
+                    // existing inlining for those; their name comes from the hoisted assignment.
+                    let is_lowered_block_function =
+                        p.hoisted_ref_for_sloppy_mode_block_fn.contains_key(&id);
+                    // Authored bindings supply the inferred name of anonymous
+                    // functions and classes; substituting them would erase it.
+                    if replacement.is_anonymous_named()
+                        && (!p.options.bundle || p.options.features.minify_keep_names)
+                        && !is_lowered_block_function
+                    {
+                        break;
+                    }
 
                     let symbol: &Symbol = &p.symbols[id.inner_index() as usize];
 

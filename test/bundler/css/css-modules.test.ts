@@ -1020,8 +1020,8 @@ describe("css", () => {
 
   // A name gets a key when the parser accepts it as a local name. These are
   // not accepted: a quoted CSS-wide keyword or "none", a value kept as raw
-  // tokens, a declaration of a dropped keyframe, and `animation-name:hover {}`,
-  // which is a nested rule.
+  // tokens, the value of a custom property, a declaration of a dropped
+  // keyframe, and `animation-name:hover {}`, which is a nested rule.
   itBundled("css-module/KeyframesNamesNotLocalNotExported", {
     files: {
       "/entry.js": `
@@ -1034,6 +1034,7 @@ describe("css", () => {
         .quoted { animation-name: "none", "inherit" }
         .none { animation: none 1s; animation-name: none }
         .raw { animation: fade var(--duration) linear; animation-name: var(--name) }
+        .fading { --name: fade; animation: var(--name) 1s }
         .nested { animation-name:hover { color: red } }
         @keyframes kept {
           from { animation-name: dropped; color: red !importantx }
@@ -1050,6 +1051,7 @@ describe("css", () => {
           quoted: "quoted_-MSaAA",
           none: "none_-MSaAA",
           raw: "raw_-MSaAA",
+          fading: "fading_-MSaAA",
           nested: "nested_-MSaAA",
           kept: "kept_-MSaAA"
         };
@@ -1084,6 +1086,11 @@ describe("css", () => {
         .raw_-MSaAA {
           animation: fade var(--duration) linear;
           animation-name: var(--name);
+        }
+
+        .fading_-MSaAA {
+          --name: fade;
+          animation: var(--name) 1s;
         }
 
         .nested_-MSaAA animation-name:hover {
@@ -1256,7 +1263,7 @@ test("css-module/NoBundleHashesByRelativePath", async () => {
 
 // With no link step the printer names the symbols of keyframes names itself.
 // Those names have to be the names that the linker gives in a bundle.
-test("css-module/NoBundleKeyframesNamesMatchBundle", async () => {
+test.concurrent("css-module/NoBundleKeyframesNamesMatchBundle", async () => {
   using dir = tempDir("css-module-no-bundle-names", {
     "styles.module.css": `
       .card { animation: spin 1s, "fade in" 2s }
@@ -1311,7 +1318,7 @@ test("css-module/NoBundleKeyframesNamesMatchBundle", async () => {
 // The note of the `composes` error points at the name. A name with an escape
 // is a copy, not a part of the source text, so its note points at the end of
 // the declaration list.
-test("css-module/ComposesKeyframesNameNotePointsAtTheName", async () => {
+test.concurrent("css-module/ComposesKeyframesNameNotePointsAtTheName", async () => {
   using dir = tempDir("css-module-composes-note", {
     "styles.module.css": [
       "  @keyframes spin { to { rotate: 1turn } }",

@@ -950,7 +950,18 @@ export default function Spinner() {
 }
 ```
 
-Bun scopes a name in an `animation` or `animation-name` declaration to the file in the same way, and the object has a key for it. To use keyframes from another stylesheet, pass the name through a custom property, as in `animation-name: var(--name)`.
+Bun scopes a name in an `animation` or `animation-name` declaration to the file in the same way, and the object has a key for it.
+
+To use the `@keyframes` of another CSS module, import that module and use its identifier from JavaScript, as in the example above.
+
+To use the `@keyframes` of a stylesheet that is not a CSS module, pass the name through a custom property. Bun keeps a name in the value of a custom property as written:
+
+```css title="styles.module.css" icon="file-code"
+.fading {
+  --name: fade;
+  animation: var(--name) 1s;
+}
+```
 
 ### Composition
 

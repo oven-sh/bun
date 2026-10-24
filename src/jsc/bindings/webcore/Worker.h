@@ -75,8 +75,6 @@ public:
         Taken, // an 'error' listener was registered and received the event
         Untaken, // nobody listens: the error is the uncaught error of this object's owner
     };
-    // An error the worker thread reported. At most once per worker, so dispatchEvent() (every
-    // message) does not carry the listener test.
     [[nodiscard]] ErrorDelivery dispatchErrorEvent(const String& message, JSC::JSValue error);
 
     const String& name() const { return m_name; }

@@ -454,10 +454,7 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
     }
 }
 
-// Parent thread: where an error the worker thread posted reaches the Worker object. An error that
-// no 'error' listener was given, here or on the worker's own global scope, is the uncaught error
-// of whoever owns the Worker: printed with exit code 1, or one level up when the owner is itself a
-// worker (https://html.spec.whatwg.org/multipage/webappapis.html#report-an-exception).
+// Parent thread. An 'error' that no listener took is the uncaught error of the Worker's owner.
 void WorkerMessagingProxy::deliverErrorToWorkerObject(Worker& workerObject, ScriptExecutionContext& context, const String& message, JSC::JSValue error, SeenInWorker seenInWorker)
 {
     if (workerObject.dispatchErrorEvent(message, error) != Worker::ErrorDelivery::Untaken || seenInWorker == SeenInWorker::Yes)

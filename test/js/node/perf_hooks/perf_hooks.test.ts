@@ -1,3 +1,4 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "net";
@@ -9,6 +10,24 @@ test("stubs", () => {
   expect(perf.performance.now()).toBeNumber();
   expect(perf.performance.timeOrigin).toBeNumber();
   expect(perf.performance.eventLoopUtilization()).toBeObject();
+});
+
+test("the garbage collector knows the size of a histogram", () => {
+  // 8 bytes for each bucket.
+  expect(estimateShallowMemoryUsageOf(perf.createHistogram())).toBeWithin(45056 * 8, 45056 * 8 + 1024);
+  expect(estimateShallowMemoryUsageOf(perf.createHistogram({ figures: 5 }))).toBeWithin(
+    4849664 * 8,
+    4849664 * 8 + 1024,
+  );
+  expect(estimateShallowMemoryUsageOf(perf.monitorEventLoopDelay())).toBeWithin(46080 * 8, 46080 * 8 + 1024);
+
+  // A structured clone shares the buckets.
+  const histogram = perf.createHistogram();
+  const clone = structuredClone(histogram);
+  expect(estimateShallowMemoryUsageOf(histogram) + estimateShallowMemoryUsageOf(clone)).toBeWithin(
+    45056 * 8,
+    45056 * 8 + 1024,
+  );
 });
 
 test("doesn't throw", () => {

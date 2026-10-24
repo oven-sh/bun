@@ -3428,7 +3428,7 @@ private:
             fail();
             return JSValue();
         }
-        // The subclasses and some of the methods are written in JavaScript.
+        // The classes are written in JavaScript.
         auto* globalObject = defaultGlobalObject(m_lexicalGlobalObject);
         JSValue module = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalPerfHooksHistogram);
         RETURN_IF_EXCEPTION(scope, JSValue());

@@ -635,11 +635,14 @@ describe("Histogram", () => {
 
     test("min <= mean <= max and percentile(100) === max", () => {
       for (const figures of [1, 2, 3, 4, 5]) {
-        const h = createHistogram({ figures });
-        for (let value = 3; value < 2 ** 50; value *= 7) {
+        // The more figures, the more buckets there are to look at.
+        const highest = figures > 3 ? 2 ** 22 : 2 ** 50;
+        const h = createHistogram({ figures, highest });
+        for (let value = 3; value < highest; value *= 7) {
           h.record(value);
           assert.ok(h.min <= h.mean && h.mean <= h.max, `${figures} figures, up to ${value}`);
           assert.strictEqual(h.percentile(100), h.max);
+          assert.strictEqual(h.percentiles.get(0), h.min);
         }
       }
     });
@@ -801,10 +804,14 @@ describe("Histogram", () => {
       assert.deepStrictEqual(
         [...h.percentiles],
         [
-          [0, 433919],
+          [0, 433664],
           [100, 433919],
         ],
       );
+      for (const value of [55281, 100000, 200000]) h.record(value);
+      for (const [percentile, value] of h.percentiles) {
+        assert.strictEqual(value, percentile === 0 ? h.min : h.percentile(percentile));
+      }
     });
 
     test("each read is a new Map", notInNode, () => {
@@ -989,8 +996,14 @@ describe("Histogram", () => {
           `TypeError ERR_INVALID_ARG_TYPE: The "options.figures" property must be of type number. Received type string ('3')`,
         ],
       );
+      assert.strictEqual(
+        thrown(() => createHistogram({ lowest: 10n, highest: 19n })),
+        "RangeError ERR_INVALID_ARG_VALUE: The property 'options.highest' is invalid. Received 19n",
+      );
       assert.strictEqual(createHistogram(undefined).count, 0);
       assert.strictEqual(createHistogram({ lowest: 1n, highest: 2n ** 63n - 1n }).count, 0);
+      assert.strictEqual(createHistogram.length, 0);
+      assert.strictEqual(monitorEventLoopDelay.length, 0);
     });
 
     test("createHistogram with a number and a BigInt", notInNode, () => {
@@ -1005,7 +1018,8 @@ describe("Histogram", () => {
       }
     });
 
-    // Node.js truncates these to 64 bits, and aborts if what is left is not a valid range.
+    // Node.js truncates a BigInt to 64 bits, aborts if what is left is not a valid range, and cannot compare a BigInt
+    // with a number.
     test("createHistogram with a BigInt that is out of range", notInNode, () => {
       assert.deepStrictEqual(
         [
@@ -1013,17 +1027,17 @@ describe("Histogram", () => {
           { lowest: 2n ** 63n },
           { highest: 2n ** 63n },
           { highest: 2n ** 64n + 10n },
-          { lowest: 10n, highest: 19n },
           { lowest: 10n, highest: 19 },
+          { lowest: 10, highest: 19n },
           { lowest: 2n ** 61n, highest: 2n ** 62n },
         ].map(value => thrown(() => createHistogram(value))),
         [
           'RangeError ERR_OUT_OF_RANGE: The value of "options.lowest" is out of range. It must be >= 1n && <= 9223372036854775807n. Received 0n',
           'RangeError ERR_OUT_OF_RANGE: The value of "options.lowest" is out of range. It must be >= 1n && <= 9223372036854775807n. Received 9_223_372_036_854_775_808n',
-          'RangeError ERR_OUT_OF_RANGE: The value of "options.highest" is out of range. It must be >= 2n && <= 9223372036854775807n. Received 9_223_372_036_854_775_808n',
-          'RangeError ERR_OUT_OF_RANGE: The value of "options.highest" is out of range. It must be >= 2n && <= 9223372036854775807n. Received 18_446_744_073_709_551_626n',
-          'RangeError ERR_OUT_OF_RANGE: The value of "options.highest" is out of range. It must be >= 20n && <= 9223372036854775807n. Received 19n',
+          'RangeError ERR_OUT_OF_RANGE: The value of "options.highest" is out of range. It must be <= 9223372036854775807n. Received 9_223_372_036_854_775_808n',
+          'RangeError ERR_OUT_OF_RANGE: The value of "options.highest" is out of range. It must be <= 9223372036854775807n. Received 18_446_744_073_709_551_626n',
           'RangeError ERR_OUT_OF_RANGE: The value of "options.highest" is out of range. It must be >= 20 && <= 9007199254740991. Received 19',
+          "RangeError ERR_INVALID_ARG_VALUE: The property 'options.highest' is invalid. Received 19n",
           "TypeError ERR_INVALID_ARG_VALUE: The property 'options.lowest' is too large for 3 significant figures. Received 2305843009213693952n",
         ],
       );
@@ -1180,44 +1194,48 @@ describe("Histogram", () => {
 
   describe("monitorEventLoopDelay", () => {
     /** Resolves once `h` has at least `count` samples. */
-    const samples = (h: { count: number }, count: number) =>
-      new Promise<void>(resolve => {
+    const samples = (h: { count: number }, count: number, signal: AbortSignal) =>
+      new Promise<void>((resolve, reject) => {
         const timer = setInterval(() => {
           if (h.count >= count) {
             clearInterval(timer);
             resolve();
           }
         }, 1);
+        signal.addEventListener("abort", () => {
+          clearInterval(timer);
+          reject(signal.reason);
+        });
       });
 
-    test("each call returns its own histogram", async () => {
+    test("each call returns its own histogram", async ({ signal }) => {
       const a = monitorEventLoopDelay({ resolution: 1 });
       const b = monitorEventLoopDelay({ resolution: 1 });
       assert.notStrictEqual(a, b);
       assert.strictEqual(a.enable(), true);
       assert.strictEqual(a.enable(), false);
-      await samples(a, 2);
+      await samples(a, 2, signal);
       assert.strictEqual(b.count, 0);
       assert.strictEqual(b.enable(), true);
-      await samples(b, 2);
+      await samples(b, 2, signal);
       assert.strictEqual(a.disable(), true);
       assert.strictEqual(a.disable(), false);
       assert.strictEqual(b.disable(), true);
     });
 
-    test("records the time between two samples, not how late the second was", async () => {
+    test("records the time between two samples, not how late the second was", async ({ signal }) => {
       const resolution = 20;
       const h = monitorEventLoopDelay({ resolution });
       h.enable();
-      await samples(h, 3);
+      await samples(h, 3, signal);
       h.disable();
       assert.ok(h.min > (resolution / 2) * 1e6, `min is ${h.min}`);
     });
 
-    test("enable() keeps what was recorded", async () => {
+    test("enable() keeps what was recorded", async ({ signal }) => {
       const h = monitorEventLoopDelay({ resolution: 1 });
       h.enable();
-      await samples(h, 2);
+      await samples(h, 2, signal);
       h.disable();
       const { count } = h;
       h.enable();
@@ -1227,21 +1245,21 @@ describe("Histogram", () => {
       assert.strictEqual(h.count, 0);
     });
 
-    test("the time it was disabled for is not recorded", notInNode, async () => {
+    test("the time it was disabled for is not recorded", notInNode, async ({ signal }) => {
       const h = monitorEventLoopDelay({ resolution: 1 });
       h.enable();
-      await samples(h, 1);
+      await samples(h, 1, signal);
       h.disable();
       h.reset();
       const disabledAt = performance.now();
       const other = monitorEventLoopDelay({ resolution: 50 });
       other.enable();
-      await samples(other, 2);
+      await samples(other, 2, signal);
       other.disable();
       const disabledFor = performance.now() - disabledAt;
       h.enable();
       const enabledAt = performance.now();
-      await samples(h, 1);
+      await samples(h, 1, signal);
       h.disable();
       const enabledFor = performance.now() - enabledAt;
       assert.ok(disabledFor > 50);
@@ -1296,12 +1314,17 @@ describe("Histogram", () => {
     test("through a MessagePort", async () => {
       const h = createHistogram();
       const { port1, port2 } = new MessageChannel();
-      const received = new Promise<any>(resolve => port1.once("message", resolve));
-      port2.postMessage(h);
-      const clone = await received;
-      port1.close();
-      clone.record(2n);
-      assert.strictEqual(h.max, 2);
+      try {
+        const received = new Promise<any>((resolve, reject) => {
+          port1.once("message", resolve);
+          port1.once("messageerror", reject);
+        });
+        port2.postMessage(h);
+        (await received).record(2n);
+        assert.strictEqual(h.max, 2);
+      } finally {
+        port1.close();
+      }
     });
 
     test("to a worker that records while this thread does", async () => {
@@ -1314,11 +1337,19 @@ describe("Histogram", () => {
          });`,
         { eval: true },
       );
-      const done = new Promise(resolve => worker.once("message", resolve));
-      worker.postMessage(h);
-      for (let i = 0; i < 20000; i++) h.record(1);
-      assert.strictEqual(await done, "RecordableHistogram");
-      await worker.terminate();
+      try {
+        const done = new Promise((resolve, reject) => {
+          worker.once("message", resolve);
+          worker.once("messageerror", reject);
+          worker.once("error", reject);
+          worker.once("exit", code => reject(new Error(`the worker exited with code ${code}`)));
+        });
+        worker.postMessage(h);
+        for (let i = 0; i < 20000; i++) h.record(1);
+        assert.strictEqual(await done, "RecordableHistogram");
+      } finally {
+        await worker.terminate();
+      }
       assert.deepStrictEqual([h.count, h.min, h.max, h.mean], [40000, 1, 2, 1.5]);
     });
   });

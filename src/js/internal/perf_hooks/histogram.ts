@@ -34,7 +34,6 @@ const disable = $bindgen("histogram.bind.ts", "disable");
 
 const ObjectFromEntries = Object.fromEntries;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
-const NumberIsInteger = Number.isInteger;
 const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const kInt64Max = 2n ** 63n - 1n;
 
@@ -144,10 +143,6 @@ class Histogram {
 }
 
 class RecordableHistogram extends Histogram {
-  constructor() {
-    throw $ERR_ILLEGAL_CONSTRUCTOR();
-  }
-
   record(val: number | bigint): void {
     if (!record(this, val)) validateInteger(val, "val", 1);
   }
@@ -162,10 +157,6 @@ class RecordableHistogram extends Histogram {
 }
 
 class ELDHistogram extends Histogram {
-  constructor() {
-    throw $ERR_ILLEGAL_CONSTRUCTOR();
-  }
-
   enable(): boolean {
     return enable(this);
   }
@@ -190,14 +181,11 @@ function createHistogram(
     throw $ERR_OUT_OF_RANGE("options.lowest", `>= 1n && <= ${kInt64Max}n`, lowest);
   }
   if (typeof highest !== "bigint") {
-    const min = 2 * Number(lowest);
-    // validateInteger() would raise its `max` to `min`.
-    if (min > NumberMAX_SAFE_INTEGER && NumberIsInteger(highest)) {
-      throw $ERR_OUT_OF_RANGE("options.highest", `>= ${min} && <= ${NumberMAX_SAFE_INTEGER}`, highest);
-    }
-    validateInteger(highest, "options.highest", min, NumberMAX_SAFE_INTEGER);
-  } else if (highest < 2n * BigInt(lowest) || highest > kInt64Max) {
-    throw $ERR_OUT_OF_RANGE("options.highest", `>= ${2n * BigInt(lowest)}n && <= ${kInt64Max}n`, highest);
+    validateInteger(highest, "options.highest", 2 * Number(lowest), NumberMAX_SAFE_INTEGER);
+  } else if (highest < 2n * BigInt(lowest)) {
+    throw $ERR_INVALID_ARG_VALUE_RangeError("options.highest", highest);
+  } else if (highest > kInt64Max) {
+    throw $ERR_OUT_OF_RANGE("options.highest", `<= ${kInt64Max}n`, highest);
   }
   validateInteger(figures, "options.figures", 1, 5);
 

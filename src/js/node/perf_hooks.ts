@@ -304,14 +304,12 @@ export default {
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
   eventLoopUtilization,
-  monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
+  monitorEventLoopDelay: function monitorEventLoopDelay(options: { resolution?: number } = kEmptyObject) {
     return require("internal/perf_hooks/histogram").monitorEventLoopDelay(options);
   },
-  createHistogram: function createHistogram(options?: {
-    lowest?: number | bigint;
-    highest?: number | bigint;
-    figures?: number;
-  }): import("node:perf_hooks").RecordableHistogram {
+  createHistogram: function createHistogram(
+    options: { lowest?: number | bigint; highest?: number | bigint; figures?: number } = kEmptyObject,
+  ): import("node:perf_hooks").RecordableHistogram {
     return require("internal/perf_hooks/histogram").createHistogram(options);
   },
   PerformanceResourceTiming,

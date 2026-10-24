@@ -1,8 +1,8 @@
 //! `createHistogram()` and `monitorEventLoopDelay()` of `node:perf_hooks`. The classes are in
 //! `src/js/internal/perf_hooks/histogram.ts`.
 
-use core::cell::Cell;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -14,8 +14,10 @@ use bun_threading::Guarded;
 use crate::timer::event_loop_delay_monitor;
 
 pub(crate) struct Histogram {
-    counts: Arc<Counts>,
     kind: Kind,
+    counts: RefCell<Counts>,
+    /// The bytes of the counts. The histograms that share them share this too.
+    memory_size: Arc<usize>,
 }
 
 enum Kind {
@@ -28,12 +30,14 @@ enum Kind {
     },
 }
 
-/// What a histogram and its structured clones share, on any thread.
-struct Counts {
-    memory_size: usize,
-    state: Guarded<State>,
+enum Counts {
+    /// Only this object has them, so `record()` takes no lock.
+    Own(State),
+    /// A structured clone, which can be on another thread, or a timer has them too.
+    Shared(Arc<Guarded<State>>),
 }
 
+#[derive(Clone)]
 struct State {
     histogram: bun_histogram::Histogram,
     /// When `record_delta` last ran, or 0.
@@ -42,48 +46,85 @@ struct State {
 
 /// An `ELDHistogram`, as the timer that samples the event loop sees it.
 pub(crate) struct Interval {
-    counts: Arc<Counts>,
+    state: Arc<Guarded<State>>,
     /// Never 0.
     pub(crate) resolution_ms: u32,
 }
 
-impl Counts {
-    fn new(histogram: bun_histogram::Histogram) -> Arc<Self> {
-        Arc::new(Self {
-            memory_size: size_of::<Self>() + histogram.memory_size(),
-            state: Guarded::new(State {
-                histogram,
-                previous_ns: 0,
-            }),
-        })
+impl State {
+    /// Records the time since the last call, if there was one.
+    fn record_delta(&mut self, now: Timespec) {
+        let now_ns = now.ns();
+        if self.previous_ns > 0 {
+            self.histogram
+                .record(now_ns.saturating_sub(self.previous_ns));
+        }
+        self.previous_ns = now_ns;
     }
 
-    /// Records the time since the last call, if there was one.
-    fn record_delta(&self) {
-        let now_ns = Timespec::now(TimespecMockMode::ForceRealTime).ns();
-        let mut state = self.state.lock();
-        if state.previous_ns > 0 {
-            let delta = now_ns.saturating_sub(state.previous_ns);
-            state.histogram.record(delta);
-        }
-        state.previous_ns = now_ns;
+    fn add(&mut self, other: &State) {
+        self.histogram.add(&other.histogram);
+        self.previous_ns = self.previous_ns.max(other.previous_ns);
+    }
+
+    fn add_to_itself(&mut self) {
+        let copy = self.histogram.clone();
+        self.histogram.add(&copy);
     }
 }
 
 impl Interval {
-    pub(crate) fn sample(&self) {
-        self.counts.record_delta();
+    /// Returns the time of the sample.
+    pub(crate) fn sample(&self) -> Timespec {
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
+        self.state.lock().record_delta(now);
+        now
     }
 }
 
 impl Histogram {
+    fn new(kind: Kind, counts: Counts, memory_size: Arc<usize>) -> Self {
+        Self {
+            kind,
+            counts: RefCell::new(counts),
+            memory_size,
+        }
+    }
+
     pub(crate) fn estimated_size(&self) -> usize {
-        self.counts.memory_size
+        *self.memory_size / Arc::strong_count(&self.memory_size)
+    }
+
+    /// `f` does not reach another histogram.
+    fn with<T>(&self, f: impl FnOnce(&mut State) -> T) -> T {
+        match &mut *self.counts.borrow_mut() {
+            Counts::Own(state) => f(state),
+            Counts::Shared(state) => f(&mut state.lock()),
+        }
     }
 
     fn read<T>(&self, read: impl FnOnce(&bun_histogram::Histogram) -> T) -> T {
-        read(&self.counts.state.lock().histogram)
+        self.with(|state| read(&state.histogram))
     }
+
+    fn share(&self) -> Arc<Guarded<State>> {
+        let mut counts = self.counts.borrow_mut();
+        let shared = match &*counts {
+            Counts::Own(state) => Arc::new(Guarded::new(state.clone())),
+            Counts::Shared(state) => return Arc::clone(state),
+        };
+        *counts = Counts::Shared(Arc::clone(&shared));
+        shared
+    }
+}
+
+fn new_state(histogram: bun_histogram::Histogram) -> (State, Arc<usize>) {
+    let memory_size = Arc::new(histogram.memory_size());
+    let state = State {
+        histogram,
+        previous_ns: 0,
+    };
+    (state, memory_size)
 }
 
 pub(crate) fn create_recordable<'a>(
@@ -92,25 +133,24 @@ pub(crate) fn create_recordable<'a>(
     highest: u64,
     figures: u32,
 ) -> Option<JsWrapper<'a, Histogram>> {
-    let counts = Counts::new(bun_histogram::Histogram::new(lowest, highest, figures)?);
-    let kind = Kind::Recordable;
-    Some(Histogram { counts, kind }.into_js(heap))
+    let (state, memory_size) = new_state(bun_histogram::Histogram::new(lowest, highest, figures)?);
+    Some(Histogram::new(Kind::Recordable, Counts::Own(state), memory_size).into_js(heap))
 }
 
 pub(crate) fn create_interval<'a>(heap: &JsHeap<'a>, resolution: f64) -> JsWrapper<'a, Histogram> {
     // https://github.com/nodejs/node/blob/v26.3.0/src/node_perf.cc#L298
     let histogram = bun_histogram::Histogram::new(1000, i64::MAX as u64, 3);
-    let counts = Counts::new(histogram.expect("a valid range"));
-    let interval = Rc::new(Interval {
-        counts: Arc::clone(&counts),
-        // `as` saturates.
-        resolution_ms: (resolution as u32).max(1),
-    });
+    let (state, memory_size) = new_state(histogram.expect("a valid range"));
+    let state = Arc::new(Guarded::new(state));
     let kind = Kind::Interval {
-        interval,
+        interval: Rc::new(Interval {
+            state: Arc::clone(&state),
+            // `as` saturates.
+            resolution_ms: (resolution as u32).max(1),
+        }),
         enabled: Cell::new(false),
     };
-    Histogram { counts, kind }.into_js(heap)
+    Histogram::new(kind, Counts::Shared(state), memory_size).into_js(heap)
 }
 
 pub(crate) fn is_histogram(value: JsLocal<'_>) -> bool {
@@ -246,9 +286,10 @@ pub(crate) fn percentile_big_int<'a>(
 }
 
 pub(crate) fn reset<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::Result<'a, ()> {
-    let mut state = histogram(heap, receiver)?.counts.state.lock();
-    state.histogram.reset();
-    state.previous_ns = 0;
+    histogram(heap, receiver)?.with(|state| {
+        state.histogram.reset();
+        state.previous_ns = 0;
+    });
     Ok(())
 }
 
@@ -278,7 +319,7 @@ pub(crate) fn record<'a>(
     } else {
         return Ok(false);
     };
-    this.counts.state.lock().histogram.record(value);
+    this.with(|state| state.histogram.record(value));
     Ok(true)
 }
 
@@ -286,7 +327,8 @@ pub(crate) fn record_delta<'a>(
     heap: &JsHeap<'a>,
     receiver: JsLocal<'a>,
 ) -> bindgen::Result<'a, ()> {
-    recordable(heap, receiver)?.counts.record_delta();
+    let now = Timespec::now(TimespecMockMode::ForceRealTime);
+    recordable(heap, receiver)?.with(|state| state.record_delta(now));
     Ok(())
 }
 
@@ -296,27 +338,32 @@ pub(crate) fn add<'a>(
     receiver: JsLocal<'a>,
     other: JsLocal<'a>,
 ) -> bindgen::Result<'a, bool> {
-    let this = &recordable(heap, receiver)?.counts;
+    let this = recordable(heap, receiver)?;
     if !is_recordable(other) {
         return Ok(false);
     }
-    let other = &recordable(heap, other)?.counts;
-    if Arc::ptr_eq(this, other) {
-        let mut state = this.state.lock();
-        let copy = state.histogram.clone();
-        state.histogram.add(&copy);
+    let other = recordable(heap, other)?;
+    if core::ptr::eq(this, other) {
+        this.with(State::add_to_itself);
         return Ok(true);
     }
-    // In the order of their addresses: another thread may be adding the two the other way around.
-    let (mut this, other) = if Arc::as_ptr(this) < Arc::as_ptr(other) {
-        let this = this.state.lock();
-        (this, other.state.lock())
-    } else {
-        let other = other.state.lock();
-        (this.state.lock(), other)
-    };
-    this.histogram.add(&other.histogram);
-    this.previous_ns = this.previous_ns.max(other.previous_ns);
+    match (&mut *this.counts.borrow_mut(), &*other.counts.borrow()) {
+        (Counts::Own(this), Counts::Own(other)) => this.add(other),
+        (Counts::Own(this), Counts::Shared(other)) => this.add(&other.lock()),
+        (Counts::Shared(this), Counts::Own(other)) => this.lock().add(other),
+        (Counts::Shared(this), Counts::Shared(other)) if Arc::ptr_eq(this, other) => {
+            this.lock().add_to_itself();
+        }
+        // In the order of their addresses: another thread may be adding the two the other way around.
+        (Counts::Shared(this), Counts::Shared(other)) if Arc::as_ptr(this) < Arc::as_ptr(other) => {
+            let mut this = this.lock();
+            this.add(&other.lock());
+        }
+        (Counts::Shared(this), Counts::Shared(other)) => {
+            let other = other.lock();
+            this.lock().add(&other);
+        }
+    }
     Ok(true)
 }
 
@@ -336,7 +383,7 @@ fn set_enabled<'a>(
     }
     if enable {
         // The time it was disabled for is not a delay of the event loop.
-        this.counts.state.lock().previous_ns = 0;
+        this.with(|state| state.previous_ns = 0);
         event_loop_delay_monitor::enable(interval);
     } else {
         event_loop_delay_monitor::disable(interval);
@@ -352,28 +399,31 @@ pub(crate) fn disable<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::
     set_enabled(heap, receiver, false)
 }
 
-/// The histograms in the structured clone messages that exist, on any thread.
-static IN_FLIGHT: Guarded<Vec<InFlight>> = Guarded::new(Vec::new());
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+/// The histograms in the structured clone messages that exist, on any thread, by what the message has in their place.
+static IN_FLIGHT: Guarded<BTreeMap<u64, InFlight>> = Guarded::new(BTreeMap::new());
 
 struct InFlight {
-    id: u64,
-    counts: Arc<Counts>,
+    state: Arc<Guarded<State>>,
+    memory_size: Arc<usize>,
     recordable: bool,
 }
 
-/// `histogram` is a `Histogram`. The id is what the message has in its place.
+/// `histogram` is a `Histogram`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Histogram__retainForStructuredClone(histogram: JSValue) -> u64 {
     let Some(histogram) = histogram.as_class_ref::<Histogram>() else {
         return 0;
     };
-    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    IN_FLIGHT.lock().push(InFlight {
-        id,
-        counts: Arc::clone(&histogram.counts),
+    let in_flight = InFlight {
+        state: histogram.share(),
+        memory_size: Arc::clone(&histogram.memory_size),
         recordable: matches!(histogram.kind, Kind::Recordable),
-    });
+    };
+    // Not one that bytes from elsewhere (IPC, `v8.deserialize()`) can guess.
+    let mut id = [0; 8];
+    bun_boringssl_sys::rand_bytes(&mut id);
+    let id = u64::from_ne_bytes(id);
+    IN_FLIGHT.lock().insert(id, in_flight);
     id
 }
 
@@ -383,26 +433,24 @@ pub(crate) extern "C" fn Histogram__fromStructuredClone(
     global: &JSGlobalObject,
     id: u64,
 ) -> JSValue {
-    let (counts, recordable) = {
+    let histogram = {
         let in_flight = IN_FLIGHT.lock();
-        let Some(found) = in_flight.iter().find(|in_flight| in_flight.id == id) else {
+        let Some(found) = in_flight.get(&id) else {
             return JSValue::ZERO;
         };
-        (Arc::clone(&found.counts), found.recordable)
+        let kind = if found.recordable {
+            Kind::Recordable
+        } else {
+            Kind::Plain
+        };
+        let counts = Counts::Shared(Arc::clone(&found.state));
+        Histogram::new(kind, counts, Arc::clone(&found.memory_size))
     };
-    let kind = if recordable {
-        Kind::Recordable
-    } else {
-        Kind::Plain
-    };
-    Histogram { counts, kind }.into_js_wrapper(global).to_js()
+    histogram.into_js_wrapper(global).to_js()
 }
 
 /// The message with this id is gone.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Histogram__releaseStructuredClone(id: u64) {
-    let mut in_flight = IN_FLIGHT.lock();
-    if let Some(index) = in_flight.iter().position(|in_flight| in_flight.id == id) {
-        in_flight.swap_remove(index);
-    }
+    IN_FLIGHT.lock().remove(&id);
 }

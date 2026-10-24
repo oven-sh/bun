@@ -401,9 +401,10 @@ impl EventLoopDelayMonitor {
                 return false;
             };
             if enabled.next.order(&now).is_le() {
-                interval.sample();
-                // Later than `now`: `All::drain_timers` pops every node due at or before it.
-                enabled.next = now.add_ms(i64::from(interval.resolution_ms));
+                // From the time of the sample, which is later than `now` if a timer before this one was slow: the
+                // next sample is then no sooner than the resolution. `All::drain_timers` pops every node due at
+                // or before `now`.
+                enabled.next = interval.sample().add_ms(i64::from(interval.resolution_ms));
             }
             true
         });
@@ -413,26 +414,15 @@ impl EventLoopDelayMonitor {
     /// Arms the timer for the interval that is due first.
     fn schedule(&mut self) {
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // FIRED (not linked) when called from `on_fire`.
-        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            // SAFETY: single JS thread; nothing `All::remove` touches overlaps
+        let next = self.enabled.iter().map(|enabled| enabled.next);
+        if let Some(next) = next.min_by(Timespec::order) {
+            // SAFETY: single JS thread; nothing `All::update` touches overlaps
             // `event_loop_delay`, which `self` aliases.
+            unsafe { (*Self::timer_all()).update(elt, &next) };
+        } else if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            // SAFETY: as above, for `All::remove`.
             unsafe { (*Self::timer_all()).remove(elt) };
         }
-        let Some(next) = self
-            .enabled
-            .iter()
-            .map(|enabled| enabled.next)
-            .min_by(Timespec::order)
-        else {
-            return;
-        };
-        self.event_loop_timer.next = ElTimespec {
-            sec: next.sec,
-            nsec: next.nsec,
-        };
-        // SAFETY: as above, for `All::insert`.
-        unsafe { (*Self::timer_all()).insert(elt) };
     }
 }
 

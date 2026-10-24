@@ -196,18 +196,36 @@ impl Histogram {
         } else {
             (rank as u64).max(1)
         };
+        self.slot(self.index_of_rank(rank)).highest()
+    }
+
+    /// The slot of the `rank`th lowest value, counting from 1. `rank` is at most `count`.
+    fn index_of_rank(&self, rank: u64) -> usize {
+        const BLOCK: usize = 16;
+        let occupied = self.counts.get(self.first..=self.last).unwrap_or_default();
         let mut seen = 0;
-        for (slot, n) in self.slots() {
-            seen += n;
-            if seen >= rank {
-                return slot.highest();
+        let mut index = self.first;
+        for block in occupied.chunks(BLOCK) {
+            let in_block: u64 = block.iter().sum();
+            if seen + in_block < rank {
+                seen += in_block;
+                index += block.len();
+                continue;
+            }
+            for &n in block {
+                seen += n;
+                if seen >= rank {
+                    return index;
+                }
+                index += 1;
             }
         }
-        self.max()
+        self.last
     }
 
     /// The values at 0, 50, 75, 87.5 percent and so on, halving the distance to 100 until the last slot in use is
-    /// reached, and then the value at 100.
+    /// reached, and then the value at 100. The value at 0 is the minimum, and the others are as
+    /// [`Self::value_at_percentile`] rounds them.
     pub fn percentiles(&self) -> Vec<(f64, u64)> {
         let mut percentiles = Vec::new();
         let mut target = 0.0;
@@ -218,7 +236,12 @@ impl Histogram {
             let reached = 100.0 * seen as f64 / self.count as f64;
             // `target` is rounded up to 100 after 53 steps.
             while target <= reached && target < 100.0 {
-                percentiles.push((target, slot.highest()));
+                let value = if target == 0.0 {
+                    slot.lowest
+                } else {
+                    slot.highest()
+                };
+                percentiles.push((target, value));
                 target += step;
                 step /= 2.0;
                 if seen == self.count {

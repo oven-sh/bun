@@ -5878,7 +5878,7 @@ pub mod serializer {
         writer.write_all(&value[chunk_start..])
     }
 
-    /// `is_product`: `value` is the `unit_value * 100.0` of a percentage, not always the written number.
+    /// `is_product`: `value` is the `unit_value * 100.0` of a percentage, which is not always the written number.
     pub(crate) fn write_numeric<W: WriteAll + ?Sized>(
         value: f32,
         int_value: Option<i32>,
@@ -6077,7 +6077,7 @@ impl Notation {
 
 /// Writes float with precision, or an integer below 2^24 in full. Returns `None` notation if value was not finite.
 pub fn dtoa_short(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Option<Notation>) {
-    // An f32 holds every integer below 2^24. A caller that computes `value` uses `dtoa_short_rounded`.
+    // An f32 holds every integer below 2^24. A caller that converts `value` to print it uses `dtoa_short_rounded`.
     let int = value as i32;
     if int as f32 == value && int.unsigned_abs() < 1 << f32::MANTISSA_DIGITS {
         let mut itoa_buf = bun_core::fmt::ItoaBuf::new();

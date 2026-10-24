@@ -2255,11 +2255,13 @@ describe("css tests", () => {
     // 67108896), so the 6 digit output stays.
     minify_test(".foo{flex-grow:16777216}", ".foo{flex-grow:16777200}");
     minify_test(".foo{width:67108900px}", ".foo{width:67108900px}");
-    // A number that the printer computes keeps 6 digits too. As an f32, 131072.01 * 100 is
-    // 13107202, 9000000000 / 1000 is 8999999 and 1 / (1 / 14300000) is 14300001.
+    // A number that the printer converts keeps 6 digits too. As an f32, 131072.01 * 100 is
+    // 13107202, 9000000000 / 1000 is 8999999, 1 / (1 / 14300000) is 14300001 and 17454.41rad is
+    // 1000064deg.
     minify_test(".foo{width:13107201%}", ".foo{width:13107200%}");
     minify_test(".foo{transition-duration:9000000000ms}", ".foo{transition-duration:9000000s}");
     minify_test(".foo{width:calc(min(100%,10px)/14300000)}", ".foo{width:calc(min(100%,10px)/14300000)}");
+    minify_test(".foo{rotate:17454.41rad}", ".foo{rotate:1000060deg}");
 
     // A property with no typed entry, a custom property, a var() fallback and the arguments of an
     // unknown function are token lists. An integer token of more than 6 digits prints as written.
@@ -2326,7 +2328,7 @@ describe("css tests", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         return { css: await Bun.file(join(String(dir), outdir, "a.css")).text(), stderr, exitCode };
       };
       const [minified, plain, api] = await Promise.all([

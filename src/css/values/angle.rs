@@ -78,16 +78,16 @@ impl Angle {
         let (value, unit): (f32, &'static str) = match self {
             Angle::Deg(val) => (val, "deg"),
             Angle::Grad(val) => (val, "grad"),
-            Angle::Rad(val) => 'brk: {
+            Angle::Rad(val) => {
                 let deg = self.to_degrees();
 
                 // We print 5 digits of precision by default.
                 // Switch to degrees if length is smaller than rad.
                 if css::f32_length_with_5_digits(deg) < css::f32_length_with_5_digits(val) {
-                    break 'brk (deg, "deg");
-                } else {
-                    break 'brk (val, "rad");
+                    CSSNumberFns::to_css_rounded(deg, dest)?;
+                    return dest.write_str("deg");
                 }
+                (val, "rad")
             }
             Angle::Turn(val) => (val, "turn"),
         };

@@ -37,7 +37,7 @@ impl CSSNumberFns {
         }
     }
 
-    /// `to_css` for a quotient that the printer computes. An integral one is not always the written number.
+    /// `to_css` for a value that the printer converts. An integral result is not always the written number.
     pub(crate) fn to_css_rounded(this: CSSNumber, dest: &mut Printer) -> Result<(), PrintErr> {
         if this.abs() < 1.0 {
             return Self::to_css(this, dest);

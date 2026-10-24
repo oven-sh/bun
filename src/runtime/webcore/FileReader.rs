@@ -100,6 +100,9 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
+    /// Not a FIFO and not a socket. `file_type` is a pipe for every device that can be polled.
+    #[cfg(not(windows))]
+    pub(crate) not_a_pipe: bool,
 }
 
 impl Default for OpenedFileBlob {
@@ -110,6 +113,8 @@ impl Default for OpenedFileBlob {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
+            #[cfg(not(windows))]
+            not_a_pipe: false,
         }
     }
 }
@@ -224,6 +229,7 @@ impl Lazy {
             } else {
                 FileType::File
             };
+            this.not_a_pipe = this.file_type == FileType::File;
 
             // pretend it's a non-blocking pipe if it's a TTY
             if is_nonblocking && this.file_type != FileType::Socket {
@@ -338,6 +344,9 @@ impl FileReader {
                                     .flags
                                     .set(PosixFlags::NONBLOCKING, opened.nonblocking);
                                 self.reader().flags.set(PosixFlags::POLLABLE, pollable);
+                                self.reader()
+                                    .flags
+                                    .set(PosixFlags::NOT_A_PIPE, opened.not_a_pipe);
                             }
                             #[cfg(windows)]
                             {

@@ -646,10 +646,27 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
+        let auto_close = self.auto_close.get();
         // `start()` cleared CLOSE_HANDLE, so the reader's `Drop` doesn't unregister the poll.
         #[cfg(unix)]
-        self.reader_mut().handle.close_without_closing_fd();
-        if self.auto_close.get() {
+        {
+            let reader = self.reader_mut();
+            let fd = reader.get_fd();
+            if fd != Fd::INVALID {
+                // `FileType::Pipe` is a character device too, so fstat says whether the other end waits for this close.
+                let pipe = auto_close
+                    && reader.flags.contains(ReaderFlags::POLLABLE)
+                    && sys::fstat(fd).is_ok_and(|stat| {
+                        let mode = stat.st_mode as sys::Mode;
+                        sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode)
+                    });
+                reader
+                    .handle
+                    .close_as(None, None::<fn(*mut c_void)>, auto_close, pipe);
+                return;
+            }
+        }
+        if auto_close {
             #[cfg(windows)]
             Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
             #[cfg(not(windows))]

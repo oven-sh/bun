@@ -4,6 +4,22 @@ import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows,
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
+// For the scripts that these tests run: the open descriptors that refer to
+// `target` (a path or a descriptor), found by device and inode.
+const fdsOfSource = `
+  function fdsOf(target) {
+    const { dev, ino } = typeof target === "number" ? fs.fstatSync(target) : fs.statSync(target);
+    const out = [];
+    for (let fd = 0; fd < 64; fd++) {
+      try {
+        const st = fs.fstatSync(fd);
+        if (st.dev === dev && st.ino === ino) out.push(fd);
+      } catch {}
+    }
+    return out;
+  }
+`;
+
 describe("FileSink", () => {
   const fixturesInput = [
     [["abcdefghijklmnopqrstuvwxyz"], "abcdefghijklmnopqrstuvwxyz"],
@@ -667,10 +683,11 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
 
 // Bun.file(fd).writer() dups the fd and registers the dup with the event loop.
 // When that registration fails, FileSink::setup closed the dup, but the writer
-// still held it in its poll, so tearing the sink down queued a second close of
-// the same fd number on the thread pool. By the time it ran the number usually
-// belonged to someone else (here: the /dev/null fd opened right after), and in
-// debug builds it tripped the EBADF assertion in Closer.
+// still held it in its poll, so tearing the sink down closed the same fd number
+// a second time. A sink on a socket closes its fd where it is torn down, so
+// that second close gets EBADF, which Fd::close asserts on in debug and ASAN
+// builds only. A second close that comes later closes the fd that has the
+// number by then (here: the /dev/null fd opened right after), on every build.
 //
 // Linux-only: the registration failure is provoked through epoll keying its
 // entries on (open file, fd number), so a registration whose fd number is
@@ -678,38 +695,11 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
 // lands on that number fails with EEXIST. kqueue drops the registration with
 // the fd, so this cannot be set up on macOS.
 it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the dup exactly once", async () => {
-  const fifoPath = join(tmpdirSync(), "parking.fifo");
-  mkfifo(fifoPath, 0o666);
   const src = `
     const { createSocketPair } = require("bun:internal-for-testing");
     const fs = require("node:fs");
-    const fifoPath = ${JSON.stringify(fifoPath)};
     const [sock] = createSocketPair();
-
-    function fdsOf(target) {
-      const { dev, ino } = typeof target === "number" ? fs.fstatSync(target) : fs.statSync(target);
-      const out = [];
-      for (let fd = 0; fd < 64; fd++) {
-        try {
-          const st = fs.fstatSync(fd);
-          if (st.dev === dev && st.ino === ino) out.push(fd);
-        } catch {}
-      }
-      return out;
-    }
-
-    // Park both thread-pool threads (UV_THREADPOOL_SIZE=2): each readFile opens
-    // the FIFO and blocks in read() until the write side is closed below, so a
-    // close queued on the pool by the failing writer() cannot run before we
-    // have reused its fd number. Holding the FIFO open read-write keeps the
-    // opens themselves from blocking; the loop waits for both to have opened.
-    const fifoWriter = fs.openSync(fifoPath, "r+");
-    const parked = [1, 2].map(() => fs.promises.readFile(fifoPath));
-    const parkedBy = performance.now() + 2000;
-    while (fdsOf(fifoPath).length < 3) {
-      if (performance.now() > parkedBy) throw new Error("the two readFile() calls never opened the FIFO");
-      await Bun.sleep(1);
-    }
+    ${fdsOfSource}
 
     const before = fdsOf(sock);
     const first = Bun.file(sock).writer();
@@ -729,12 +719,8 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
     }
     // The failed writer() closed n; this unrelated fd gets the number back.
     const reused = fs.openSync("/dev/null", "r");
-
-    fs.closeSync(fifoWriter);
-    const parkedBytes = (await Promise.all(parked)).map(buf => buf.length);
-    // One more round trip through the now-free pool: whatever the failed
-    // writer() queued there has run by the time this resolves.
-    await fs.promises.stat("/dev/null");
+    // A sink that the failed writer() left behind is torn down here.
+    Bun.gc(true);
 
     let reusedStillOpen = true;
     try {
@@ -742,20 +728,482 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
     } catch {
       reusedStillOpen = false;
     }
-    console.log(JSON.stringify({ code, reusedIsN: reused === n, parkedBytes, reusedStillOpen }));
+    console.log(JSON.stringify({ code, reusedIsN: reused === n, reusedStillOpen }));
     // first must outlive the check: ending or collecting it closes n as well.
     first.unref();
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
-    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    env: bunEnv,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ code: "EEXIST", reusedIsN: true, parkedBytes: [0, 0], reusedStillOpen: true }),
+    stdout: JSON.stringify({ code: "EEXIST", reusedIsN: true, reusedStillOpen: true }),
     stderr: "",
     exitCode: 0,
+  });
+});
+
+// On POSIX every pipe writer and every reader closes its descriptor through
+// PollOrFd. It queued the close(2) on the thread pool and told the owner
+// "closed" in the same call. The other end of a pipe sees that close only when
+// it runs. So, until a pool thread was free, a child waited for the end of its
+// stdin, a child that still wrote was not told that its reader was gone, and
+// the child of a terminal got no SIGHUP.
+//
+// Each script parks both threads of the pool (UV_THREADPOOL_SIZE=2), so a close
+// that waits for one of them cannot run. A row has the number of descriptors
+// that are still open where the owner reports, and whether the child exits
+// while the pool is parked.
+//
+// The rule is by the kind of the descriptor. A FIFO, a socket and the pty of
+// Bun.Terminal close in place. A file, and a device that Bun.file() opened,
+// still close on the pool: that close can block, and fstat cannot tell a pty
+// from a serial line.
+// Skipped on Windows: only the POSIX close is in place.
+describe.skipIf(isWindows)("a pipe is closed when its owner reports closed", () => {
+  async function rowsWithParkedPool({ fifos = [], env = {} }: { fifos?: string[]; env?: typeof bunEnv }, rows: string) {
+    using dir = tempDir("pipe-closed", {});
+    const parkingFifos = ["parking-1.fifo", "parking-2.fifo"];
+    for (const fifo of [...parkingFifos, ...fifos]) mkfifo(join(String(dir), fifo), 0o666);
+    const src = `
+      const fs = require("node:fs");
+      const { join } = require("node:path");
+      const dir = ${JSON.stringify(String(dir))};
+      ${fdsOfSource}
+      function fdsWhere(test) {
+        const out = [];
+        for (let fd = 0; fd < 64; fd++) {
+          try {
+            if (test(fs.fstatSync(fd))) out.push(fd);
+          } catch {}
+        }
+        return out;
+      }
+      // Returns a function that counts the descriptors that were opened after
+      // this call and are still open: pipes (FIFOs and sockets) or terminals.
+      function opened(test = st => st.isFIFO() || st.isSocket()) {
+        const before = fdsWhere(test);
+        return () => fdsWhere(test).filter(fd => !before.includes(fd)).length;
+      }
+      const isTerminal = st => st.isCharacterDevice();
+      async function until(condition, what) {
+        const deadline = performance.now() + 5000;
+        while (!condition()) {
+          if (performance.now() > deadline) throw new Error("timed out: " + what);
+          await Bun.sleep(1);
+        }
+      }
+      // Serves the file at path as the body of one response, reads the first
+      // bytes of it, calls afterFirstBytes() and drops the connection. Returns
+      // when the server has no request left: that is its report.
+      async function serveAndAbort(path, afterFirstBytes = () => {}) {
+        const server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file(path)) });
+        const controller = new AbortController();
+        const response = await fetch("http://127.0.0.1:" + server.port + "/", { signal: controller.signal });
+        const body = response.body.getReader();
+        const { value } = await body.read();
+        afterFirstBytes();
+        controller.abort();
+        await until(() => server.pendingRequests === 0, "the request is still pending");
+        server.stop(true);
+        return new TextDecoder().decode(value);
+      }
+
+      // Each readFile() opens a FIFO of its own and blocks a pool thread in
+      // read() until setFree() closes the write side of that FIFO. Holding the
+      // FIFO open read-write keeps the readFile()'s open from blocking; the
+      // loop waits for both to have opened. One FIFO for each thread: macOS
+      // reports the end to the first of two readers that wait on one FIFO and
+      // can leave the second one blocked.
+      const parking = ${JSON.stringify(parkingFifos)}.map(name => {
+        const path = join(dir, name);
+        const writer = fs.openSync(path, "r+");
+        return { path, writer, read: fs.promises.readFile(path) };
+      });
+      const parkedBy = performance.now() + 5000;
+      while (parking.some(({ path }) => fdsOf(path).length < 2)) {
+        if (performance.now() > parkedBy) throw new Error("the two readFile() calls never opened their FIFOs");
+        await Bun.sleep(1);
+      }
+      async function setFree() {
+        for (const { writer } of parking) fs.closeSync(writer);
+        await Promise.all(parking.map(({ read }) => read));
+      }
+
+      // What the first spawn and the first spawnSync open and keep is in every
+      // count's baseline. On macOS that is a kqueue, which fstat calls a FIFO.
+      await Bun.spawn({ cmd: ["true"], stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited;
+      Bun.spawnSync({ cmd: ["true"], stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+
+      const rows = {};
+      // By row: the exit of a child that waits for bun to close its end of a pipe.
+      const children = {};
+      ${rows}
+
+      // Whether each of these children has exited with the pool still parked.
+      // The deadline only ends a run in which one has not.
+      const exited = {};
+      for (const row in children) children[row] = children[row].then(() => (exited[row] = true));
+      let timer;
+      const deadline = new Promise(resolve => (timer = setTimeout(resolve, 2000)));
+      await Promise.race([Promise.all(Object.values(children)), deadline]);
+      clearTimeout(timer);
+      for (const row in children) rows[row].exitsWhileParked = exited[row] === true;
+
+      await setFree();
+      await Promise.all(Object.values(children));
+      console.log(JSON.stringify(rows));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2", ...env },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { rows: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  // cat exits when it reads the end of its stdin: that is when bun has closed
+  // its end of the pipe.
+  it("the stdin of a child process", async () => {
+    const result = await rowsWithParkedPool(
+      {},
+      `
+      const { spawn } = require("node:child_process");
+      {
+        const open = opened();
+        const child = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "inherit" });
+        children["proc.stdin.end()"] = child.exited;
+        child.stdin.write("x");
+        await child.stdin.end();
+        rows["proc.stdin.end()"] = { open: open() };
+      }
+      {
+        const open = opened();
+        const child = spawn("cat", [], { stdio: ["pipe", "ignore", "inherit"] });
+        children["child.stdin.end()"] = new Promise(resolve => child.on("exit", resolve));
+        const closed = new Promise(resolve => child.stdin.on("close", resolve));
+        child.stdin.end("x");
+        await closed;
+        rows["child.stdin.end()"] = { open: open() };
+      }
+      {
+        const open = opened();
+        const child = spawn("cat", [], { stdio: ["pipe", "ignore", "inherit"] });
+        children["child.stdin.destroy()"] = new Promise(resolve => child.on("exit", resolve));
+        const closed = new Promise(resolve => child.stdin.on("close", resolve));
+        child.stdin.destroy();
+        await closed;
+        rows["child.stdin.destroy()"] = { open: open() };
+      }
+      {
+        // Nothing reads proc.stdin: the exit of the child closes the pipe.
+        const open = opened();
+        const child = Bun.spawn({ cmd: ["true"], stdin: "pipe", stdout: "ignore", stderr: "inherit" });
+        await child.exited;
+        rows["proc.stdin of a child that has exited"] = { open: open() };
+      }
+      {
+        // The shell writes the bytes to a pipe and then closes it. Nothing
+        // reports that close but the end of the command.
+        children["$\`cat < \${bytes}\`"] = Bun.$\`cat < \${new TextEncoder().encode("x")}\`.quiet().then(() => {});
+        rows["$\`cat < \${bytes}\`"] = {};
+      }
+      `,
+    );
+    expect(result).toEqual({
+      rows: {
+        "proc.stdin.end()": { open: 0, exitsWhileParked: true },
+        "child.stdin.end()": { open: 0, exitsWhileParked: true },
+        "child.stdin.destroy()": { open: 0, exitsWhileParked: true },
+        "proc.stdin of a child that has exited": { open: 0 },
+        "$`cat < ${bytes}`": { exitsWhileParked: true },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Bytes for stdin go through a pipe that bun writes and then closes. Nothing
+  // reports that close but the exit of the child. On Linux that pipe needs
+  // BUN_FEATURE_FLAG_DISABLE_MEMFD: a memfd has none.
+  it("bytes for the stdin of a child process", async () => {
+    const result = await rowsWithParkedPool(
+      { env: { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" } },
+      `
+      const child = Bun.spawn({ cmd: ["cat"], stdin: new TextEncoder().encode("x"), stdout: "ignore", stderr: "inherit" });
+      children["Bun.spawn({ stdin: bytes })"] = child.exited;
+      rows["Bun.spawn({ stdin: bytes })"] = {};
+      `,
+    );
+    expect(result).toEqual({
+      rows: { "Bun.spawn({ stdin: bytes })": { exitsWhileParked: true } },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Here the thread that waits for the close is the one that called spawnSync.
+  it("a synchronous spawn", async () => {
+    const result = await rowsWithParkedPool(
+      { env: { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" } },
+      `
+      {
+        // The timeout only ends a run in which cat does not read the end of its stdin.
+        const open = opened();
+        const { stdout, exitCode, exitedDueToTimeout = false } = Bun.spawnSync({
+          cmd: ["cat"],
+          stdin: new TextEncoder().encode("x"),
+          stdout: "pipe",
+          stderr: "inherit",
+          timeout: 2000,
+        });
+        rows["Bun.spawnSync({ stdin: bytes })"] = { stdout: stdout.toString(), exitCode, exitedDueToTimeout, open: open() };
+      }
+      {
+        const open = opened();
+        const { stdout, stderr } = Bun.spawnSync({ cmd: ["sh", "-c", "echo out; echo err >&2"], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+        rows["Bun.spawnSync(), stdout and stderr"] = { out: stdout.toString(), err: stderr.toString(), open: open() };
+      }
+      `,
+    );
+    expect(result).toEqual({
+      rows: {
+        "Bun.spawnSync({ stdin: bytes })": { stdout: "x", exitCode: 0, exitedDueToTimeout: false, open: 0 },
+        "Bun.spawnSync(), stdout and stderr": { out: "out\n", err: "err\n", open: 0 },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // yes writes until a write fails: that is when bun has closed its end of the
+  // pipe.
+  it("the stdout and stderr of a child process", async () => {
+    const result = await rowsWithParkedPool(
+      {},
+      `
+      {
+        const open = opened();
+        const child = Bun.spawn({ cmd: ["sh", "-c", "echo out; echo err >&2"], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+        const [out, err] = await Promise.all([child.stdout.text(), child.stderr.text()]);
+        await child.exited;
+        rows["proc.stdout and proc.stderr, read to the end"] = { out, err, open: open() };
+      }
+      {
+        const open = opened();
+        const child = Bun.spawn({ cmd: ["yes"], stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+        children["reader.cancel()"] = child.exited;
+        const reader = child.stdout.getReader();
+        await reader.read();
+        await reader.cancel();
+        rows["reader.cancel()"] = { open: open() };
+      }
+      {
+        // Nothing has read this stdout, so its reader has no poll yet.
+        const open = opened();
+        const child = require("node:child_process").spawn("yes", [], { stdio: ["ignore", "pipe", "ignore"] });
+        children["child.stdout.destroy()"] = new Promise(resolve => child.on("exit", resolve));
+        child.stdout.destroy();
+        rows["child.stdout.destroy()"] = { open: open() };
+      }
+      {
+        // Nothing reads stdout or stderr, so neither reader has a poll when the child exits.
+        const open = opened();
+        const child = require("node:child_process").spawn("true");
+        await new Promise(resolve => child.on("close", resolve));
+        rows["child_process.spawn(), nothing read"] = { open: open() };
+      }
+      `,
+    );
+    expect(result).toEqual({
+      rows: {
+        "proc.stdout and proc.stderr, read to the end": { out: "out\n", err: "err\n", open: 0 },
+        "reader.cancel()": { open: 0, exitsWhileParked: true },
+        "child.stdout.destroy()": { open: 0, exitsWhileParked: true },
+        "child_process.spawn(), nothing read": { open: 0 },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a FIFO and a terminal", async () => {
+    const result = await rowsWithParkedPool(
+      { fifos: ["sink.fifo", "source.fifo", "body.fifo"] },
+      `
+      {
+        const path = join(dir, "sink.fifo");
+        const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const writer = Bun.file(path).writer();
+        writer.write("x");
+        await writer.end();
+        rows["Bun.file(fifo).writer().end()"] = { open: fdsOf(path).filter(fd => fd !== reader).length };
+        fs.closeSync(reader);
+      }
+      {
+        const path = join(dir, "source.fifo");
+        const writer = fs.openSync(path, "r+");
+        const reader = Bun.file(path).stream().getReader();
+        fs.writeSync(writer, "x");
+        await reader.read();
+        await reader.cancel();
+        rows["Bun.file(fifo).stream(), reader.cancel()"] = { open: fdsOf(path).filter(fd => fd !== writer).length };
+        fs.closeSync(writer);
+      }
+      {
+        // yes writes until the server has closed the only other descriptor of the FIFO.
+        const path = join(dir, "body.fifo");
+        const holder = fs.openSync(path, "r+");
+        const child = Bun.spawn({ cmd: ["sh", "-c", 'exec yes > "$0"', path], stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+        children["Bun.serve(), a FIFO as the body"] = child.exited;
+        await serveAndAbort(path, () => fs.closeSync(holder));
+        rows["Bun.serve(), a FIFO as the body"] = { open: fdsOf(path).length };
+      }
+      {
+        // cat gets SIGHUP when bun has closed every descriptor of its side of the terminal.
+        const open = opened(isTerminal);
+        const child = Bun.spawn({ cmd: ["cat"], terminal: { data() {} } });
+        children["terminal.close()"] = child.exited;
+        child.terminal.close();
+        rows["terminal.close()"] = { open: open() };
+      }
+      `,
+    );
+    expect(result).toEqual({
+      rows: {
+        "Bun.file(fifo).writer().end()": { open: 0 },
+        "Bun.file(fifo).stream(), reader.cancel()": { open: 0 },
+        "Bun.serve(), a FIFO as the body": { open: 0, exitsWhileParked: true },
+        "terminal.close()": { open: 0, exitsWhileParked: true },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Bun closes its own dup of a socket that the user gives to Bun.file(). The
+  // other end reads the end only when that dup was the last descriptor.
+  it("a socket that Bun.file() wraps", async () => {
+    const result = await rowsWithParkedPool(
+      {},
+      `
+      const { createSocketPair } = require("bun:internal-for-testing");
+      // What the other end reads after the bytes that were written to it.
+      function otherEndReads(fd) {
+        for (;;) {
+          try {
+            if (fs.readSync(fd, Buffer.alloc(64)) === 0) return "the end";
+          } catch (e) {
+            return e.code;
+          }
+        }
+      }
+      for (const last of [false, true]) {
+        const which = last ? ", the last descriptor" : "";
+        {
+          const [socket, otherEnd] = createSocketPair();
+          const open = opened();
+          const reader = Bun.file(socket).stream().getReader();
+          fs.writeSync(otherEnd, "x");
+          await reader.read();
+          if (last) fs.closeSync(socket);
+          await reader.cancel();
+          rows["Bun.file(socket).stream(), reader.cancel()" + which] = { open: open(), otherEnd: otherEndReads(otherEnd) };
+          if (!last) fs.closeSync(socket);
+          fs.closeSync(otherEnd);
+        }
+        {
+          const [socket, otherEnd] = createSocketPair();
+          const open = opened();
+          const writer = Bun.file(socket).writer();
+          writer.write("x");
+          if (last) fs.closeSync(socket);
+          await writer.end();
+          rows["Bun.file(socket).writer().end()" + which] = { open: open(), otherEnd: otherEndReads(otherEnd) };
+          if (!last) fs.closeSync(socket);
+          fs.closeSync(otherEnd);
+        }
+      }
+      `,
+    );
+    expect(result).toEqual({
+      rows: {
+        "Bun.file(socket).stream(), reader.cancel()": { open: 0, otherEnd: "EAGAIN" },
+        "Bun.file(socket).writer().end()": { open: 0, otherEnd: "EAGAIN" },
+        "Bun.file(socket).stream(), reader.cancel(), the last descriptor": { open: 0, otherEnd: "the end" },
+        "Bun.file(socket).writer().end(), the last descriptor": { open: 0, otherEnd: "the end" },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The other side of the rule: a tty that Bun.file() opens is a character
+  // device, and so is a serial line or an input device, whose close can block.
+  // fstat cannot tell them apart, so these descriptors are still left to the
+  // pool, and each row counts the one that waits there.
+  // Linux-only: the path of the tty is read from /proc.
+  it.skipIf(!isLinux)("a tty that Bun.file() opened still closes on the pool", async () => {
+    const result = await rowsWithParkedPool(
+      {},
+      `
+      const terminal = new Bun.Terminal({});
+      const path = fs
+        .readdirSync("/proc/self/fd")
+        .map(fd => {
+          try {
+            return fs.readlinkSync("/proc/self/fd/" + fd);
+          } catch {
+            return "";
+          }
+        })
+        .find(link => /^\\/dev\\/pts\\/\\d+$/.test(link));
+      {
+        const before = fdsOf(path).length;
+        const reader = Bun.file(path).stream().getReader();
+        terminal.write("x\\n");
+        const { value } = await reader.read();
+        await reader.cancel();
+        rows["Bun.file(tty).stream(), reader.cancel()"] = { read: new TextDecoder().decode(value), open: fdsOf(path).length - before };
+      }
+      {
+        // Ctrl-D on an empty line is the end of the input of a terminal.
+        const before = fdsOf(path).length;
+        const reader = Bun.file(path).stream().getReader();
+        terminal.write("\\x04");
+        const { done } = await reader.read();
+        rows["Bun.file(tty).stream(), read to the end"] = { done, open: fdsOf(path).length - before };
+      }
+      {
+        const before = fdsOf(path).length;
+        terminal.write("y\\n");
+        const read = await serveAndAbort(path);
+        rows["Bun.serve(), a tty as the body"] = { read, open: fdsOf(path).length - before };
+      }
+      {
+        // A new terminal: the sink has the side that bun does not make for Bun.Terminal.
+        const before = fdsOf("/dev/ptmx").length;
+        const writer = Bun.file("/dev/ptmx").writer();
+        writer.write("x");
+        await writer.end();
+        rows["Bun.file(tty).writer().end()"] = { open: fdsOf("/dev/ptmx").length - before };
+      }
+      terminal.close();
+      `,
+    );
+    expect(result).toEqual({
+      rows: {
+        "Bun.file(tty).stream(), reader.cancel()": { read: "x\n", open: 1 },
+        "Bun.file(tty).stream(), read to the end": { done: true, open: 1 },
+        "Bun.serve(), a tty as the body": { read: "y\n", open: 1 },
+        "Bun.file(tty).writer().end()": { open: 1 },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

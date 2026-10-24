@@ -63,13 +63,7 @@ test("spawn can write to stdin multiple chunks", async () => {
     remaining -= concurrency;
   }
 
-  // Pipe fds are closed on a background thread after their streams finish, so
-  // the last batch's closes may still be in flight here; wait for them to land.
-  let newMaxFD = getMaxFD();
-  for (let i = 0; i < 100 && newMaxFD !== maxFD; i++) {
-    await Bun.sleep(10);
-    newMaxFD = getMaxFD();
-  }
+  const newMaxFD = getMaxFD();
 
   // assert we didn't leak any file descriptors
   expect(newMaxFD).toBe(maxFD);

@@ -555,15 +555,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
         }
         return pids.length;
       }
-      // Some are closed on the work pool, or by a collection.
-      async function leakedFds() {
-        const deadline = performance.now() + 2000;
-        while (openFds() > baseline && performance.now() < deadline) {
-          Bun.gc(true);
-          await Bun.sleep(5);
-        }
-        return openFds() - baseline;
-      }
+      const leakedFds = () => openFds() - baseline;
     `;
 
     async function run(code: string) {

@@ -607,16 +607,16 @@ pub(crate) fn contains_control_character(name: &[u8]) -> bool {
     })
 }
 
-/// Returns true if `name` could collide with another entry's name on a case-insensitive volume.
+/// Returns true if `name` could collide with another entry's name on a case-insensitive volume,
+/// the default on macOS and Windows. Bun keeps such names apart on every platform, so that
+/// bun.lock does not depend on the volume.
 pub(crate) fn may_fold(name: &[u8]) -> bool {
     name.iter()
         .any(|byte| byte.is_ascii_uppercase() || !byte.is_ascii())
 }
 
-/// The key of the `node_modules` entry that `name` is on a case-insensitive volume: `name_hash`
-/// itself unless the name has an ASCII uppercase letter, else the hash of the name in lowercase.
-/// `React` and `react` get the same key on every platform, so that bun.lock does not depend on
-/// the volume.
+/// `name_hash`, or the hash of the name in lowercase if it has an ASCII uppercase letter. `React`
+/// and `react` get the same key.
 pub(crate) fn folded_name_hash(name: &[u8], name_hash: PackageNameHash) -> PackageNameHash {
     if !name.iter().any(u8::is_ascii_uppercase) {
         return name_hash;

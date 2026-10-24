@@ -743,9 +743,7 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 // Min-heap keyed by `LinkOrder`.
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
-/// The destinations taken in one `.bin` folder. Keyed without ASCII case: two names that differ
-/// only in case are one entry on a case-insensitive volume, so the first one linked wins on every
-/// platform.
+/// The destinations taken in one `.bin` folder, without ASCII case (see `dependency::may_fold`).
 pub(crate) type SeenBins = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<()>;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
@@ -839,8 +837,7 @@ pub struct Linker<'a> {
     /// Used to support native bin linking.
     pub target_package_name: strings::StringOrTinyString,
 
-    // Seen destination paths for this `node_modules/.bin` folder. PackageInstaller will reset it
-    // before linking each tree.
+    // Reset by PackageInstaller before each tree.
     pub seen: Option<&'a mut SeenBins>,
 
     pub node_modules_path: &'a mut AbsPath,
@@ -981,8 +978,7 @@ impl<'a> Linker<'a> {
         }
 
         if let Some(seen) = self.seen.as_deref() {
-            // Skip seen destinations for this tree, as npm's link-gently does. Unlike npm's set,
-            // the map folds ASCII case, so `TSC` is taken once `tsc` is linked on every platform.
+            // As npm's link-gently, but `TSC` is taken once `tsc` is linked, on every platform.
             // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
             if seen.contains_key(abs_dest.as_bytes()) {
                 // The name is taken, and `bunx <this package>` starts the file itself.

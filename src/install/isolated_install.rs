@@ -215,9 +215,7 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
-/// The names taken in one `node_modules` folder. Keyed without ASCII case: two names that differ
-/// only in case are one entry on a case-insensitive volume, so the first one wins on every
-/// platform.
+/// The names taken in one `node_modules` folder, without ASCII case (see `dependency::may_fold`).
 type HoistedNames = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<()>;
 
 /// Grants `node_modules/.bun/node_modules/<dep_name>` to the first dependency that asks for it.

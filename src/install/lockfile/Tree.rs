@@ -855,17 +855,15 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         self.lockfile().buffers.string_bytes.as_slice()
     }
 
-    /// Logs an error if two dependencies of `pkg_id`, the package whose list `sort_buf` holds,
-    /// have names that differ only in case. They are one folder on a case-insensitive volume,
-    /// wherever the hoister places them.
+    /// Logs an error if two dependencies of `pkg_id` (the package whose list `sort_buf` holds)
+    /// have names that differ only in case. Node looks in the package's own folder first.
     fn refuse_same_folder_names(&mut self, pkg_id: PackageID) {
         let deps = self.dependencies;
-        // Copied out, so that it does not keep `self` borrowed.
         let lockfile_ref = self.lockfile;
         let lockfile: &Lockfile = lockfile_ref.get();
         let buf = lockfile.buffers.string_bytes.as_slice();
         let pkg_name = lockfile.packages.items_name()[pkg_id as usize].slice(buf);
-        // A lowercase name is its own key, so only a name with an uppercase letter can collide.
+        // Only a name with an uppercase letter can collide.
         let Some(first) = (self.folded_buf.iter().zip(&self.sort_buf))
             .position(|(&folded, &dep_id)| folded != deps[dep_id as usize].name_hash)
         else {
@@ -879,8 +877,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             }
             for (j, &other_id) in self.sort_buf.iter().enumerate() {
                 let other = &deps[other_id as usize];
-                // Each pair is reported once. The one of the two that has no uppercase letter
-                // is not visited by the outer loop.
+                // Each pair once. A name without an uppercase letter is only ever `other`.
                 let reported_before = j < i && self.folded_buf[j] != other.name_hash;
                 if self.folded_buf[j] != folded
                     || other.name_hash == dep.name_hash
@@ -1020,8 +1017,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 #[derive(Default, Clone, Copy)]
 pub(crate) struct PlaceContext;
 
-/// The name half of a `Placed` key. Two names that differ only in case get the same key, because
-/// they are one folder on a case-insensitive volume. See `dependency::folded_name_hash`.
+/// The name half of a `Placed` key.
 pub(crate) fn folded_name_hash(dep: &Dependency, buf: &[u8]) -> PackageNameHash {
     crate::dependency::folded_name_hash(dep.name.slice(buf), dep.name_hash)
 }
@@ -1888,8 +1884,7 @@ impl Tree {
             let dep = &deps[dep_id as usize];
             let res_id = builder.resolutions[dep_id as usize];
 
-            // The row has a name that differs from this one only in case. That is one folder on a
-            // case-insensitive volume, so it is taken, whatever package it holds.
+            // A name that differs only in case takes the folder, whatever package it holds.
             if dep.name_hash != dependency.name_hash {
                 return HoistDependencyResult::DependencyLoop; // 3
             }

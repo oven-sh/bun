@@ -11,6 +11,7 @@ import {
   isLinux,
   isPosix,
   isWindows,
+  nodeExeAtLeast,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -3127,6 +3128,238 @@ describe("open/mkdir mode string validation matches node", () => {
     mkdirSync(plain);
     expect(statSync(wrapped).mode).toBe(statSync(plain).mode);
   });
+});
+
+// node rejects an empty `flag` in fs.readFileSync and fs.readFile, and an empty `mode` in writeFile and appendFile.
+// The fixture prints how each call ends. The expected text is the output of node v26.4.0 to v26.12.1.
+const emptyFlagModeFixture = join(import.meta.dir, "fs-empty-flag-mode-fixture.js");
+const emptyFlagModeExpected = `# flag '' is invalid for a path in fs.readFileSync and fs.readFile
+(path, { flag: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': fs.readFileSync, fs.readFile
+  succeeds: fs.promises.readFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': util.promisify(fs.readFile)
+(path, { encoding: 'utf8', flag: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': fs.readFileSync, fs.readFile
+  succeeds: fs.promises.readFile
+(tooLongPath, { flag: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': fs.readFile
+(path, { flag: 'bogus' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received 'bogus': fs.readFileSync, fs.readFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received 'bogus': fs.promises.readFile
+
+# flag '' is the default flag for an fd, for a FileHandle and for a callback in the options slot
+(fd, { flag: '' })
+  succeeds: fs.readFileSync, fs.readFile
+(fileHandle, { flag: '' })
+  succeeds: fs.promises.readFile, fileHandle.readFile
+(path, callback) with callback.flag = ''
+  succeeds: fs.readFile
+
+# flag '' is invalid for an fd only in the UTF-8 fast path of fs.readFileSync
+(fd, { encoding: 'utf8', flag: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': fs.readFileSync
+  succeeds: fs.readFile
+(fd, { encoding: 'utf-8', flag: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': fs.readFileSync
+  succeeds: fs.readFile
+(fd, { encoding: 'UTF8', flag: '' })
+  succeeds: fs.readFileSync, fs.readFile
+(fd, { encoding: 'utf8', buffer, flag: '' })
+  succeeds: fs.readFileSync, fs.readFile
+
+# a flag that Node.js accepts
+(path, { flag: null })
+  succeeds: fs.readFileSync, fs.readFile, fs.promises.readFile
+(path, { flag: undefined })
+  succeeds: fs.readFileSync, fs.readFile, fs.promises.readFile
+(path, { flag: 0 })
+  succeeds: fs.readFileSync, fs.readFile, fs.promises.readFile
+(path, { flag: 'r' })
+  succeeds: fs.readFileSync, fs.readFile, fs.promises.readFile
+
+# flag and a second option: an invalid encoding or signal wins, an aborted async call reports AbortError
+(path, { flag: '', encoding: 'bogus' })
+  throws TypeError ERR_INVALID_ARG_VALUE (encoding): fs.readFileSync, fs.readFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE (encoding): fs.promises.readFile
+(path, { flag: '', signal: 'x' })
+  throws TypeError ERR_INVALID_ARG_TYPE (signal): fs.readFileSync, fs.readFile
+  rejects with TypeError ERR_INVALID_ARG_TYPE (signal): fs.promises.readFile
+(path, { flag: '', signal: aborted })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': fs.readFileSync
+  calls back with AbortError: fs.readFile
+  rejects with AbortError: fs.promises.readFile
+(path, { flag: '', signal: notAborted })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received '': fs.readFileSync, fs.readFile
+  succeeds: fs.promises.readFile
+(path, { flag: 'bogus', encoding: 'bogus' })
+  throws TypeError ERR_INVALID_ARG_VALUE (encoding): fs.readFileSync, fs.readFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE (encoding): fs.promises.readFile
+(path, { flag: 'bogus', signal: 'x' })
+  throws TypeError ERR_INVALID_ARG_TYPE (signal): fs.readFileSync, fs.readFile
+  rejects with TypeError ERR_INVALID_ARG_TYPE (signal): fs.promises.readFile
+(path, { flag: 'bogus', signal: aborted })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received 'bogus': fs.readFileSync
+  calls back with AbortError: fs.readFile
+  rejects with AbortError: fs.promises.readFile
+(path, { flag: 'bogus', signal: notAborted })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received 'bogus': fs.readFileSync, fs.readFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received 'bogus': fs.promises.readFile
+
+# mode '' is invalid in writeFile and appendFile, for every target
+(path, 'x', { mode: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.promises.writeFile, fs.promises.appendFile, util.promisify(fs.writeFile), util.promisify(fs.appendFile)
+(path, buffer, { mode: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.promises.writeFile, fs.promises.appendFile
+(missingPath, 'x', { mode: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.promises.writeFile, fs.promises.appendFile
+(fd, 'x', { mode: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+(fileHandle, 'x', { mode: '' })
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.promises.writeFile, fs.promises.appendFile
+
+# mode '' is the default mode for a callback in the options slot
+(path, 'x', callback) with callback.mode = ''
+  succeeds, the file holds "x": fs.writeFile
+
+# a mode or a flag that Node.js accepts
+(path, 'x', { mode: null })
+  succeeds, the file holds "x": fs.writeFileSync, fs.writeFile, fs.promises.writeFile
+  succeeds, the file holds "oldx": fs.appendFileSync, fs.appendFile, fs.promises.appendFile
+(path, 'x', { mode: undefined })
+  succeeds, the file holds "x": fs.writeFileSync, fs.writeFile, fs.promises.writeFile
+  succeeds, the file holds "oldx": fs.appendFileSync, fs.appendFile, fs.promises.appendFile
+(path, 'x', { mode: 0o644 })
+  succeeds, the file holds "x": fs.writeFileSync, fs.writeFile, fs.promises.writeFile
+  succeeds, the file holds "oldx": fs.appendFileSync, fs.appendFile, fs.promises.appendFile
+(path, 'x', { mode: '644' })
+  succeeds, the file holds "x": fs.writeFileSync, fs.writeFile, fs.promises.writeFile
+  succeeds, the file holds "oldx": fs.appendFileSync, fs.appendFile, fs.promises.appendFile
+(path, 'x', { flag: '' })
+  succeeds, the file holds "x": fs.writeFileSync, fs.writeFile, fs.promises.writeFile
+  succeeds, the file holds "oldx": fs.appendFileSync, fs.appendFile, fs.promises.appendFile
+
+# mode and a second option: an invalid encoding or signal wins, mode wins over the data and over an abort
+(path, 'x', { mode: '', encoding: 'bogus' })
+  throws TypeError ERR_INVALID_ARG_VALUE (encoding): fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE (encoding): fs.promises.writeFile, fs.promises.appendFile
+(path, 'x', { mode: '', signal: 'x' })
+  throws TypeError ERR_INVALID_ARG_TYPE (signal): fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_TYPE (signal): fs.promises.writeFile, fs.promises.appendFile
+(path, 'x', { mode: '', signal: aborted })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.promises.writeFile, fs.promises.appendFile
+(path, 'x', { mode: '', signal: notAborted })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.promises.writeFile, fs.promises.appendFile
+(path, 123, { mode: '' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.promises.writeFile, fs.promises.appendFile
+(path, 'x', { mode: '9', encoding: 'bogus' })
+  throws TypeError ERR_INVALID_ARG_VALUE (encoding): fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE (encoding): fs.promises.writeFile, fs.promises.appendFile
+(path, 'x', { mode: '9', signal: 'x' })
+  throws TypeError ERR_INVALID_ARG_TYPE (signal): fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_TYPE (signal): fs.promises.writeFile, fs.promises.appendFile
+(path, 'x', { mode: '9', signal: aborted })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.promises.writeFile, fs.promises.appendFile
+(path, 'x', { mode: '9', signal: notAborted })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.promises.writeFile, fs.promises.appendFile
+(path, 123, { mode: '9' })
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.writeFileSync, fs.appendFileSync, fs.writeFile, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.promises.writeFile, fs.promises.appendFile
+
+# mode and flush: writeFile checks flush first and appendFile checks mode first, whatever the flag is
+(path, 'x', { mode: '', flush: 1 })
+  throws TypeError ERR_INVALID_ARG_TYPE (flush): fs.writeFileSync, fs.writeFile
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.appendFileSync, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_TYPE (flush): fs.promises.writeFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '': fs.promises.appendFile
+(path, 'x', { mode: '9', flush: 1 })
+  throws TypeError ERR_INVALID_ARG_TYPE (flush): fs.writeFileSync, fs.writeFile
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.appendFileSync, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_TYPE (flush): fs.promises.writeFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.promises.appendFile
+(path, 'x', { flag: 'a', mode: '9', flush: 1 })
+  throws TypeError ERR_INVALID_ARG_TYPE (flush): fs.writeFileSync, fs.writeFile
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.appendFileSync, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_TYPE (flush): fs.promises.writeFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.promises.appendFile
+(path, 'x', { flag: 'w', mode: '9', flush: 1 })
+  throws TypeError ERR_INVALID_ARG_TYPE (flush): fs.writeFileSync, fs.writeFile
+  throws TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.appendFileSync, fs.appendFile
+  rejects with TypeError ERR_INVALID_ARG_TYPE (flush): fs.promises.writeFile
+  rejects with TypeError ERR_INVALID_ARG_VALUE: The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received '9': fs.promises.appendFile
+
+callbacks that ran after their call threw: 0
+`;
+// Before v26.4.0 node did not parse `mode` for an fd, and it checked `mode` after the data, the abort and appendFile's flush.
+const emptyFlagModeNode = nodeExeAtLeast("26.4.0");
+
+for (const [name, runtime] of [
+  ["bun", bunExe()],
+  ["node", emptyFlagModeNode],
+] as const) {
+  it.concurrent.skipIf(!runtime)(
+    `readFile, writeFile and appendFile check flag and mode like node v26 (${name})`,
+    async () => {
+      using dir = tempDir("fs-empty-flag-mode", {});
+      await using proc = Bun.spawn({
+        cmd: [runtime!, emptyFlagModeFixture, String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: emptyFlagModeExpected, stderr: "", exitCode: 0 });
+    },
+  );
+}
+
+it.concurrent("a readFile or writeFile call that throws for its flag or its mode releases its signal", async () => {
+  using dir = tempDir("fs-empty-flag-mode-signal", { "file.txt": "old" });
+  // A signal with a listener stays alive while a call holds it. Each call here throws after it took the signal.
+  const src = `
+    const fs = require("node:fs");
+    const { heapStats } = require("bun:jsc");
+    const file = ${JSON.stringify(join(String(dir), "file.txt"))};
+    const calls = [
+      signal => fs.readFileSync(file, { flag: "", signal }),
+      signal => fs.readFile(file, { flag: "", signal }, () => {}),
+      signal => fs.writeFileSync(file, "x", { mode: "", signal }),
+      signal => fs.appendFileSync(file, "x", { mode: "", signal }),
+      signal => fs.writeFile(file, "x", { mode: "", signal }, () => {}),
+    ];
+    const count = () => heapStats().objectTypeCounts.AbortSignal ?? 0;
+    Bun.gc(true);
+    const before = count();
+    let threw = 0;
+    for (let i = 0; i < 100; i++) {
+      for (const call of calls) {
+        const signal = new AbortController().signal;
+        signal.addEventListener("abort", () => {});
+        try {
+          call(signal);
+        } catch (e) {
+          threw += e?.code === "ERR_INVALID_ARG_VALUE" ? 1 : 0;
+        }
+      }
+    }
+    Bun.gc(true);
+    process.stdout.write(JSON.stringify({ threw, alive: count() - before }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { threw, alive } = JSON.parse(stdout);
+  expect(threw).toBe(500);
+  // Without the release all 500 signals stay alive.
+  expect(alive).toBeLessThan(125);
+  expect(exitCode).toBe(0);
 });
 
 describe("writeFileSync", () => {

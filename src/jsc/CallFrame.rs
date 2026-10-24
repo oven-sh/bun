@@ -190,6 +190,8 @@ pub struct ArgumentsSlice<'a> {
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
     pub will_be_async: bool,
+    /// Set by the promise arm of an async `node:fs` binding. Node reads the `flag` of `readFile` by another rule in `fs.promises`.
+    pub from_fs_promises: bool,
     /// An errno a converter met under `will_be_async`; the binding rejects its promise with it.
     pub deferred_error: Option<Box<bun_sys::SystemError>>,
 }
@@ -207,6 +209,7 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_start: 0,
             vm,
             will_be_async: false,
+            from_fs_promises: false,
             deferred_error: None,
         }
     }

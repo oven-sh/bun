@@ -1181,7 +1181,7 @@ mod _async_tasks {
         const HAVE_ABORT_SIGNAL: bool = true;
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            args::WriteFile::from_js_with_default_flag(ctx, arguments, FileSystemFlags::A)
+            args::WriteFile::from_js_for(ctx, arguments, args::WriteFileKind::Append)
                 .map(args::AppendFile)
         }
         #[inline]
@@ -3362,6 +3362,28 @@ pub(crate) mod args {
         Ok(default)
     }
 
+    /// The one option value `JSValue::get_truthy` drops besides undefined and null.
+    fn is_empty_string(value: JSValue) -> bool {
+        value.is_string() && !value.to_boolean()
+    }
+
+    /// Node's readFileSync converts the flag of an fd only in its UTF-8 fast path: https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L613-L624
+    #[cold]
+    fn takes_utf8_fast_path(options: JSValue, global_object: &JSGlobalObject) -> JsResult<bool> {
+        let Some(encoding) = options.fast_get(global_object, bun_jsc::BuiltinName::Encoding)?
+        else {
+            return Ok(false);
+        };
+        if !encoding.is_string_literal() {
+            return Ok(false);
+        }
+        let spelling = encoding.to_js_string_view(global_object)?;
+        if !spelling.eq_ascii(b"utf8") && !spelling.eq_ascii(b"utf-8") {
+            return Ok(false);
+        }
+        Ok(options.get(global_object, "buffer")?.is_none())
+    }
+
     /// Consume the next positional argument as a Node.js fs `encoding` option.
     /// Accepts either an encoding string (`"utf8"`, `"buffer"`, ...) or an options
     /// object with an `.encoding` property. Any other value (including `undefined`
@@ -4243,9 +4265,7 @@ pub(crate) mod args {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
-                    if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
-                    }
+                    let flag_value = arg.get(ctx, "flag")?;
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4256,6 +4276,21 @@ pub(crate) mod args {
                                 b"AbortSignal",
                                 value,
                             ));
+                        }
+                    }
+                    if let Some(flag_) = flag_value {
+                        // Node checks the signal first, and an aborted async call never converts the flag: https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L449-L452
+                        let aborted = arguments.will_be_async
+                            && abort_signal.as_ref().is_some_and(|signal| signal.aborted());
+                        // `''` stays the default for fs.promises.readFile (`options.flag || 'r'`), for the `cb` that `fs.readFile(path, cb)` passes as the options, and for an fd whose flag Node does not convert.
+                        let is_default = is_empty_string(flag_)
+                            && (arguments.from_fs_promises
+                                || arg.is_callable()
+                                || (matches!(path, PathOrFileDescriptor::Fd(_))
+                                    && (arguments.will_be_async
+                                        || !takes_utf8_fast_path(arg, ctx)?)));
+                        if !aborted && !is_default {
+                            flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                         }
                     }
                 }
@@ -4290,6 +4325,12 @@ pub(crate) mod args {
         pub(crate) dirfd: FD,
         pub(crate) signal: Option<AbortSignalRef>,
     }
+    /// The `node:fs` function that `WriteFile::from_js_for` parses for. Node gives the two a different default flag and a different place for the `mode` check.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum WriteFileKind {
+        Write,
+        Append,
+    }
     impl Drop for WriteFile<'_> {
         fn drop(&mut self) {
             // Release the AbortSignal ref taken in `from_js`.
@@ -4303,12 +4344,12 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
-            Self::from_js_with_default_flag(ctx, arguments, FileSystemFlags::W)
+            Self::from_js_for(ctx, arguments, WriteFileKind::Write)
         }
-        pub(crate) fn from_js_with_default_flag(
+        pub(crate) fn from_js_for(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
-            default_flag: FileSystemFlags,
+            kind: WriteFileKind,
         ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
@@ -4321,7 +4362,10 @@ pub(crate) mod args {
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let mut encoding = Encoding::Buffer;
-            let mut flag = default_flag;
+            let mut flag = match kind {
+                WriteFileKind::Write => FileSystemFlags::W,
+                WriteFileKind::Append => FileSystemFlags::A,
+            };
             let mut mode: Mode = DEFAULT_PERMISSION;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
                 if let Some(signal) = s {
@@ -4341,9 +4385,11 @@ pub(crate) mod args {
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
-                    if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
-                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
-                    }
+                    // `fs.writeFile(path, data, cb)` passes `cb` as the options, and Node gives a function the default mode.
+                    let mode_value = match arg.get(ctx, "mode")? {
+                        Some(mode_) if is_empty_string(mode_) && arg.is_callable() => None,
+                        mode_value => mode_value,
+                    };
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
@@ -4356,6 +4402,11 @@ pub(crate) mod args {
                             ));
                         }
                     }
+                    // Node's appendFile parses the mode before writeFile checks flush: https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L3081
+                    let is_append = kind == WriteFileKind::Append;
+                    if is_append && let Some(mode_) = mode_value {
+                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
+                    }
                     if let Some(flush_) = arg.get(ctx, "flush")? {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {
                             flush = flush_ == JSValue::TRUE;
@@ -4364,6 +4415,9 @@ pub(crate) mod args {
                                 ctx.throw_invalid_argument_type_value(b"flush", b"boolean", flush_)
                             );
                         }
+                    }
+                    if !is_append && let Some(mode_) = mode_value {
+                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                 }
             }

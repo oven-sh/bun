@@ -2462,7 +2462,7 @@ impl Checker<'_, '_> {
             // of them declares is reported as missing on the right operand's type, unmodified.
             ExprKind::PrivateIdentifier(name) if !is_parenthesized(hir, left) => {
                 if !self.bound(file).private_class.contains_key(&left)
-                    && !self.enclosing_classes(file, left).is_empty()
+                    && self.enclosing_classes(file, left).next().is_some()
                 {
                     let start = hir[left].pos;
                     let is_unchecked_js = self.is_unchecked_js_suggestion(file, left, right_type);

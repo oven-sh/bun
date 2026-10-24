@@ -224,6 +224,16 @@ pub(crate) use file_local_fields;
 /// true if `instantiateSignature` created it for the call.
 pub(crate) type AssignedSignature = (Option<SigId>, bool);
 
+/// See `Checker::contextual_signature_in_check`. The signature is the same for as long as
+/// `Checker::contextual` and `Checker::inference_contexts` have these lengths.
+#[derive(Clone, Copy)]
+struct ContextualSignatureInCheck {
+    function: (FileId, crate::hir::FnId),
+    signature: Option<SigId>,
+    contextual_types: usize,
+    inference_contexts: usize,
+}
+
 pub struct Program<'s> {
     /// Owns the arenas for the program and everything computed from it.
     pub session: &'s Session,
@@ -1032,6 +1042,7 @@ impl<'s> Program<'s> {
             assigned_parameters: Vec::new(),
             assigned_unknown: Vec::new(),
             context_checking: Vec::new(),
+            contextual_signature_in_check: None,
             context_checked_here: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
@@ -1990,6 +2001,8 @@ pub struct Checker<'p, 's> {
     /// A thread that found one without the other would continue without doing its own first check. The
     /// third field is the number of parameters for which `assignParameterType` has returned.
     context_checking: Vec<((FileId, crate::hir::FnId), AssignedSignature, usize)>,
+    /// `getContextualSignature` of the innermost of them, if no inference context covers it.
+    contextual_signature_in_check: Option<ContextualSignatureInCheck>,
     /// The functions whose entry in `Program::context_checked` this checker wrote or tried to
     /// write. See `is_context_checked`.
     context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,

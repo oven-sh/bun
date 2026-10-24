@@ -322,6 +322,15 @@ pub(super) enum Found {
     ByIndex,
 }
 
+/// What `Checker::property_type` found.
+#[derive(Copy, Clone)]
+pub(super) struct FoundProperty<'p> {
+    pub(super) ty: TypeId,
+    pub(super) how: Found,
+    /// `getPropertyOfTypeEx(apparentType, name)`
+    pub(super) prop: Option<&'p Prop<'p>>,
+}
+
 /// Where `getPropertyOfTypeEx` looks up a name in a type. This is the part it computes before it uses the name.
 #[derive(Copy, Clone)]
 pub(super) enum PropertyHolder<'p> {
@@ -1813,7 +1822,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The identity mapper over the same type parameters.
-    fn identity_of(&mut self, mapper: MapperId) -> MapperId {
+    pub(super) fn identity_of(&mut self, mapper: MapperId) -> MapperId {
         let mapping = self.types().mapping(mapper);
         if mapping.iter().all(|p| p.0 == p.1) {
             return mapper;
@@ -6053,9 +6062,10 @@ impl<'p, 's> Checker<'p, 's> {
         if self.has_any_flag(ty) {
             return None;
         }
-        Some(match self.find_property(ty, ty, name, Access::Read)? {
-            (value, Found::ByIndex) => (self.optional_property(value), Found::ByIndex),
-            found => found,
+        let found = self.find_property(ty, ty, name, Access::Read)?;
+        Some(match found.how {
+            Found::ByIndex => (self.optional_property(found.ty), Found::ByIndex),
+            Found::Property => (found.ty, Found::Property),
         })
     }
 
@@ -8228,14 +8238,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// The type of `ty.name`. `None` if there's no such property.
     pub fn type_of_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         self.property_type(ty, ty, name, Access::Read)
-            .map(|found| found.0)
+            .map(|found| found.ty)
     }
 
     /// The type of `ty.name` where it's only assigned: the target of `=`, of a destructuring
     /// assignment, of `for..of`.
     pub fn write_type_of_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         self.property_type(ty, ty, name, Access::Written)
-            .map(|found| found.0)
+            .map(|found| found.ty)
     }
 
     /// `prop` or `indexInfo` of `checkPropertyAccessExpressionOrQualifiedName`: the type, and which of the two it
@@ -8246,18 +8256,16 @@ impl<'p, 's> Checker<'p, 's> {
         apparent_type: TypeId,
         name: Atom,
         access: Access,
-    ) -> Option<(TypeId, Found)> {
-        let (found, how) = self.find_property(left_type, apparent_type, name, access)?;
+    ) -> Option<FoundProperty<'p>> {
+        let mut found = self.find_property(left_type, apparent_type, name, access)?;
         // `noUncheckedIndexedAccess`: a value read through an index signature may be missing.
-        let may_be_missing = how == Found::ByIndex
+        if found.how == Found::ByIndex
             && access == Access::Read
-            && self.p.files.options.no_unchecked_indexed_access;
-        let found = if may_be_missing {
-            self.with_missing(found)
-        } else {
-            found
-        };
-        Some((found, how))
+            && self.p.files.options.no_unchecked_indexed_access
+        {
+            found.ty = self.with_missing(found.ty);
+        }
+        Some(found)
     }
 
     /// `checkPropertyAccessExpressionOrQualifiedName`: the type of the property `name` of
@@ -8269,22 +8277,24 @@ impl<'p, 's> Checker<'p, 's> {
         apparent_type: TypeId,
         name: Atom,
         access: Access,
-    ) -> Option<(TypeId, Found)> {
+    ) -> Option<FoundProperty<'p>> {
+        let found =
+            |ty: TypeId, how: Found, prop: Option<&'p Prop<'p>>| FoundProperty { ty, how, prop };
         if self.is_any(apparent_type) {
-            return Some((apparent_type, Found::Property));
+            return Some(found(apparent_type, Found::Property, None));
         }
         let skips = self.is_const_enum_object(apparent_type);
         if let Some((prop, mapper)) = self.get_property_of_type_ex(apparent_type, name, skips) {
-            let found = if access == Access::Written {
+            let ty = if access == Access::Written {
                 self.write_type_of_prop(prop, mapper)
             } else {
                 self.type_of_prop(prop, mapper)
             };
-            return Some((found, Found::Property));
+            return Some(found(ty, Found::Property, Some(prop)));
         }
         let apparent = self.reduced_apparent_type(apparent_type);
         if self.is_any(apparent) {
-            return Some((apparent, Found::Property));
+            return Some(found(apparent, Found::Property, None));
         }
         // `!ast.IsPrivateIdentifier(right)`: no index signature substitutes for the `#x` of a class. And nothing is
         // written through an index signature of a type parameter's constraint.
@@ -8297,7 +8307,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let members = self.members_for_index_infos(apparent)?;
         let info = self.applicable_index_info_for_name(&members, name)?;
-        Some((info.value, Found::ByIndex))
+        Some(found(info.value, Found::ByIndex, None))
     }
 
     /// `getRestTypeOfTupleType` of the apparent type of `ty`, if that is a tuple: the type of its
@@ -8346,14 +8356,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// type once more, which matters because the apparent type of a `T & {}` is `string`, not
     /// `String`. For a type variable's apparent type that changes nothing, but the apparent type
     /// doesn't tell what `this` is in a tuple type. `get_property_of_type_ex` gets that from the
-    /// variable, or from the intersection whose members have become one tuple type.
+    /// variable, or from the intersection whose members have become one tuple type. A reference
+    /// to a class or an interface has its `this` argument.
     #[inline(always)]
     pub(super) fn apparent_type_or_type_variable(
         &self,
         ty: TypeId,
         apparent_type: TypeId,
     ) -> TypeId {
-        if self.is_deferred(ty)
+        if self.is_deferred(ty) && !matches!(self.data(apparent_type), TypeData::Ref { .. })
             || ty != apparent_type && self.is_intersection(ty) && self.is_tuple(apparent_type)
         {
             ty

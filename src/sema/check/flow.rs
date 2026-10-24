@@ -1364,6 +1364,32 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `reference_of(e)`'s root and first step, if `e` is `a.b`, `this.b.c` and so on.
+    fn root_and_first_name(&self, file: FileId, e: ExprId) -> Option<(Root, Step)> {
+        let hir = self.hir(file);
+        let ExprKind::Dot {
+            mut obj, mut name, ..
+        } = hir[e].kind
+        else {
+            return None;
+        };
+        loop {
+            match hir[obj].kind {
+                ExprKind::Dot {
+                    obj: inner,
+                    name: first,
+                    ..
+                } => (obj, name) = (inner, first),
+                ExprKind::Ident(root) => {
+                    let root = self.root_of_identifier(file, obj, root);
+                    return Some((root, Step::from_name(name)));
+                }
+                ExprKind::This => return Some((Root::This, Step::from_name(name))),
+                _ => return None,
+            }
+        }
+    }
+
     /// Returns `e` as a walk's reference. `isNarrowableReference` gives a flow node to more than
     /// what can be narrowed. The walk for `f()["a"]` or `(o.x = v).y` still evaluates what it
     /// passes.
@@ -5360,7 +5386,7 @@ impl<'p, 's> Checker<'p, 's> {
                 break at_node(0);
             }
         };
-        for (i, (at, asserted)) in passed.into_iter().enumerate().rev() {
+        for (i, &(at, asserted)) in passed.iter().enumerate().rev() {
             // A loop whose entry is unreachable has neverType, not `unreachableNeverType`.
             if found.unsettled == NEVER_RETURNS && last_loop == Some(i) {
                 found.unsettled = at.0;
@@ -5518,7 +5544,11 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             Paths::First
         };
-        let calls = self.calls_before(file, flow, paths);
+        let known = self.flow_memo.calls_before[paths as usize][flow.idx()];
+        let calls = match self.flow_memo.is_up_to_date(file, known.unsettled) {
+            true => known,
+            false => self.calls_before(file, flow, paths),
+        };
         matches!(calls.unsettled, 0 | NEVER_RETURNS) && !calls.asserted.intersects(about)
     }
 
@@ -5628,8 +5658,16 @@ impl<'p, 's> Checker<'p, 's> {
         if root != Root::Other && self.is_never_narrowed(file, e, root, &[], declared, start) {
             return declared;
         }
+        // So does `a.b.c`. Of a path of names, `is_never_narrowed` reads only the first.
+        let dotted = self.root_and_first_name(file, e);
+        if let Some((root, first)) = &dotted
+            && self.is_never_narrowed(file, e, *root, std::slice::from_ref(first), declared, start)
+        {
+            return declared;
+        }
         let mut reference = self.reference_of(file, e);
         if root == Root::Other
+            && dotted.is_none()
             && reference.unresolved.get() == 0
             && self.is_never_narrowed(file, e, reference.root, &reference.path, declared, start)
         {
@@ -6725,6 +6763,10 @@ impl<'p, 's> Checker<'p, 's> {
         let kinds = tf::UNKNOWN | tf::NULLABLE | tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX;
         // `may_be_reduced` is true if `ty` is an intersection or has one as a member.
         if !self.may_be_reduced(ty) && !self.is_some_type_of_kind(ty, kinds) {
+            return ty;
+        }
+        // The constraint of a `this` type is its class or interface.
+        if matches!(self.data(ty), TypeData::ThisParam(_)) {
             return ty;
         }
         let strict = self.p.files.options.strict_null_checks;

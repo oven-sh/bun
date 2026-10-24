@@ -5880,6 +5880,11 @@ impl<'p, 's> Checker<'p, 's> {
         state: u8,
         source_is_primitive: bool,
     ) -> Ternary {
+        if !REPORT
+            && let Some(result) = self.function_expression_related_to(r, sd, target, td, state)
+        {
+            return result;
+        }
         let mut both = None;
         let mut result = self.properties_related_to_ex::<REPORT>(
             r,
@@ -5912,6 +5917,54 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         result
+    }
+
+    /// FOR SPEED. `object_members_related_to` for the type of a function expression and a target
+    /// with one call signature and no other member. Such a source is compared about once, and its
+    /// signature is all it has, so its members aren't resolved.
+    fn function_expression_related_to(
+        &mut self,
+        r: &mut Relater,
+        sd: &'p TypeData<'p>,
+        target: TypeId,
+        td: &'p TypeData<'p>,
+        state: u8,
+    ) -> Option<Ternary> {
+        let TypeData::Fns { decls, mapper } = sd else {
+            return None;
+        };
+        let [(file, func)] = decls[..] else {
+            return None;
+        };
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let symbol = bound.symbol_of_function(hir, func);
+        if r.relation == Relation::Identity
+            || !matches!(hir[func].kind, FnKind::Arrow | FnKind::Expr)
+            || symbol.is_some() && bound.symbol(symbol).exports.is_some()
+            || self.identity_of(*mapper) != *mapper
+            || is_mapped_kind(td)
+        {
+            return None;
+        }
+        let provisional = self.provisional_shapes.len();
+        let tm = self.members(target)?;
+        let [expected] = tm.call_signatures()[..] else {
+            return None;
+        };
+        if self.provisional_shapes.len() != provisional
+            || !tm.shape().props.is_empty()
+            || !tm.construct_signatures().is_empty()
+            || !tm.index_infos().is_empty()
+        {
+            return None;
+        }
+        let expected = match tm.mapper {
+            MapperId::IDENTITY => expected,
+            _ => *self.signatures(target, false).first()?,
+        };
+        let actual = self.sig_of_declaration(file, func);
+        let erase = r.relation == Relation::Comparable;
+        Some(self.signature_related_to::<false>(r, actual, expected, erase, false, state))
     }
 
     /// Returns the type that `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType`

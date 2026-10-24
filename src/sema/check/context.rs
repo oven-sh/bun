@@ -2244,6 +2244,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getContextualSignature`: the signature a function expression is expected to have.
     pub fn contextual_signature(&mut self, file: FileId, func: FnId) -> Option<SigId> {
+        if let Some(known) = self.contextual_signature_in_check
+            && known.function == (file, func)
+            && known.contextual_types == self.contextual.len()
+            && known.inference_contexts == self.inference_contexts.len()
+        {
+            return known.signature;
+        }
         let owner = self.takes_context(file, func)?;
         let context =
             self.apparent_type_of_contextual_type(file, owner, ContextFlags::SIGNATURE)?;

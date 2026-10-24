@@ -374,7 +374,10 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
-                let (access, _) = self.c.left_type_of_property_access(file, e, obj, chain);
+                let target = self.c.target_kind(file, e);
+                let (access, _) = self
+                    .c
+                    .left_type_of_property_access(file, e, obj, chain, target);
                 if access.any_like.is_some() {
                     return None;
                 }

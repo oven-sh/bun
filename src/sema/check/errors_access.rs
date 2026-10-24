@@ -275,7 +275,7 @@ impl<'p> Checker<'p, '_> {
             if bound.is_unchecked(e.idx()) {
                 continue;
             }
-            if self.enclosing_classes(file, e).is_empty() {
+            if self.enclosing_classes(file, e).next().is_none() {
                 self.error_at((file, pos, 0), 18016, &[]);
                 continue;
             }
@@ -621,7 +621,6 @@ impl<'p> Checker<'p, '_> {
                             chain == Chain::No
                                 && self.declaring_class(prop).is_some_and(|class| {
                                     self.enclosing_classes(file, e)
-                                        .into_iter()
                                         .any(|c| self.class_sym(file, c) == class)
                                 })
                         } else {
@@ -1107,19 +1106,38 @@ impl<'p> Checker<'p, '_> {
     }
 
     /// The classes enclosing `e`, innermost first.
-    pub(super) fn enclosing_classes(&self, file: FileId, e: ExprId) -> SmallVec<[ClassId; 4]> {
+    pub(super) fn enclosing_classes(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> impl Iterator<Item = ClassId> {
         let hir = self.hir(file);
         Self::classes_from(hir, hir.get_containing_class(hir.node(e)))
     }
 
     /// `class`, then `GetContainingClass` applied repeatedly.
-    fn classes_from(hir: &File, mut class: Node) -> SmallVec<[ClassId; 4]> {
-        let mut classes = SmallVec::new();
-        while class.is_some() {
-            classes.push(hir.class_of(class));
-            class = hir.get_containing_class(class);
+    fn classes_from(hir: &File, class: Node) -> impl Iterator<Item = ClassId> {
+        let next = |&class: &Node| Some(hir.get_containing_class(class)).filter(|it| it.is_some());
+        std::iter::successors(Some(class).filter(|it| it.is_some()), next)
+            .map(|class| hir.class_of(class))
+    }
+
+    /// FOR SPEED. The first of `enclosing_classes_of_parent`, if `parent` is an expression in the
+    /// body of one of its methods, or in function expressions there.
+    fn class_of_method_around(&self, file: FileId, parent: Parent) -> Option<Sym> {
+        let Parent::Expr(mut inside) = parent else {
+            return None;
+        };
+        loop {
+            let function = self.function_directly_around(file, inside)?;
+            match self.bound(file).fns[function.idx()].owner {
+                FnOwner::Expr(owner) => inside = owner,
+                _ => {
+                    let class = self.class_of_member_fn(file, function)?;
+                    return Some(self.class_sym(file, class));
+                }
+            }
         }
-        classes
     }
 
     /// Same as `enclosing_classes`, for a direct child of `parent`. `Parent::Expr(e)` represents `e` itself, so only
@@ -1128,7 +1146,7 @@ impl<'p> Checker<'p, '_> {
         &self,
         file: FileId,
         parent: Parent,
-    ) -> SmallVec<[ClassId; 4]> {
+    ) -> impl Iterator<Item = ClassId> {
         let hir = self.hir(file);
         let innermost = match parent {
             Parent::Expr(e) => hir.get_containing_class(hir.node(e)),
@@ -1213,9 +1231,8 @@ impl<'p> Checker<'p, '_> {
             && declared_in == file
             && self
                 .classes_enclosing_private_name(file, e)
-                .iter()
-                .skip_while(|&&class| class != lexical_class)
-                .any(|&class| class == type_class)
+                .skip_while(|&class| class != lexical_class)
+                .any(|class| class == type_class)
         {
             // Private names with the same source text get a distinct name per class.
             let atoms = &self.atoms();
@@ -1246,7 +1263,7 @@ impl<'p> Checker<'p, '_> {
         &self,
         file: FileId,
         e: ExprId,
-    ) -> SmallVec<[ClassId; 4]> {
+    ) -> impl Iterator<Item = ClassId> {
         let hir = self.hir(file);
         Self::classes_from(
             hir,
@@ -1477,14 +1494,6 @@ impl<'p> Checker<'p, '_> {
         if !flags.intersects(hidden) {
             return true;
         }
-        let classes = match at {
-            Parent::Expr(e) if e.is_some() => self.enclosing_classes(file, e),
-            _ => self.enclosing_classes_of_parent(file, at),
-        };
-        let enclosing: SmallVec<[Sym; 4]> = classes
-            .into_iter()
-            .map(|c| self.class_sym(file, c))
-            .collect();
         // For `a.b` the caller passes `getApparentType`. For a pattern it passes the destructured
         // type. If an intersection has members with a `this` type, its apparent type is a new
         // intersection without an alias, but `apparent_type` returns the original intersection.
@@ -1498,15 +1507,26 @@ impl<'p> Checker<'p, '_> {
             None => containing,
         };
         if flags.contains(Flags::PRIVATE) {
-            if declaring_class.is_some_and(|declaring| enclosing.contains(&declaring)) {
+            if declaring_class.is_some() && declaring_class == self.class_of_method_around(file, at)
+            {
                 return true;
             }
+            let mut enclosing = self.enclosing_classes_of_parent(file, at);
+            if declaring_class
+                .is_some_and(|declaring| enclosing.any(|c| self.class_sym(file, c) == declaring))
+            {
+                return true;
+            }
+            drop(enclosing);
             let class = declaring_class_or_containing_type(self);
             return self.report_inaccessible(error_node, 2341, first, &[class]);
         }
         if is_super {
             return true;
         }
+        let enclosing: SmallVec<[Sym; 4]> = (self.enclosing_classes_of_parent(file, at))
+            .map(|c| self.class_sym(file, c))
+            .collect();
         // `isClassDerivedFromDeclaringClasses`: the classes that declare the protected ones among `parts`.
         let mut declaring: Vec<Sym> = Vec::new();
         for part in &parts {

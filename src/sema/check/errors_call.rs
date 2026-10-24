@@ -651,7 +651,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             let enclosing = enclosing.get_or_insert_with(|| {
-                (self.enclosing_classes(file, e).into_iter())
+                (self.enclosing_classes(file, e))
                     .map(|c| self.class_sym(file, c))
                     .collect()
             });

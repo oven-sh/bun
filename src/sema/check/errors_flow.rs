@@ -207,11 +207,6 @@ impl Checker<'_, '_> {
             return;
         }
         let has_explicit_return = self.has_explicit_return(file, func);
-        let start = if error_node.is_some() {
-            start_of_type(hir, error_node)
-        } else {
-            self.error_range_of_fn(file, func).0
-        };
         let code = match declared {
             Some(TypeId::NEVER) => 2534,
             Some(_) if !has_explicit_return => 2355,
@@ -234,6 +229,11 @@ impl Checker<'_, '_> {
                 7030
             }
             _ => return,
+        };
+        let start = if error_node.is_some() {
+            start_of_type(hir, error_node)
+        } else {
+            self.error_range_of_fn(file, func).0
         };
         let end = if error_node.is_some() {
             self.end_of_type_node_from(file, error_node, start)

@@ -3292,6 +3292,12 @@ impl File<'_> {
     /// `node.Flags&NodeFlagsAmbient != 0`. An ambient node makes all its descendants ambient, except its own decorators
     /// and modifiers, which the parser has already parsed by the time it knows the node is ambient.
     pub fn is_ambient(&self, mut node: Node) -> bool {
+        if self.kind == FileKind::Declaration {
+            return true;
+        }
+        if !self.ambient_or_type_ranges().contain(self.start(node)) {
+            return false;
+        }
         let mut is_modifier = false;
         while node.is_some() {
             if !is_modifier && self.flags(node).contains(Flags::AMBIENT) {
@@ -3300,7 +3306,7 @@ impl File<'_> {
             is_modifier = matches!(self.data(node), NodeData::Modifier(_));
             node = self.parent(node);
         }
-        self.kind == FileKind::Declaration
+        false
     }
 
     /// `node.Flags&NodeFlagsAwaitContext != 0`, as set by the parser's first pass. Returns `Err` if it's the context of

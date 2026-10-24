@@ -514,6 +514,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         }
     }
 
+    // A `__commonJS` wrapper is not an async function: the link step fails the build for an
+    // `import` that needs an `await` in one (`validate_commonjs_imports_of_async_modules`).
+    debug_assert!(flags.wrap != WrapKind::Cjs || !stmts.inside_wrapper_prefix.has_async_dependency);
+
     // Hoist all import statements before any normal statements. ES6 imports
     // are different than CommonJS imports. All modules imported via ES6 import
     // statements are evaluated before the module doing the importing is

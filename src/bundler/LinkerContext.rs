@@ -1936,6 +1936,22 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
     (part_range, c_ptr, chunk_ptr, worker)
 }
 
+/// What replaces an `import` or `export ... from` statement in a chunk.
+#[derive(Clone, Copy)]
+pub(crate) enum ImportStmtLowering {
+    /// The statement stays as it is.
+    Keep,
+    /// Nothing.
+    Remove,
+    /// `var ns = require("path")`, for an external module.
+    RequireExternal,
+    /// `var ns = require_x()`, for a file in a `__commonJS` wrapper.
+    RequireCommonJs,
+    /// `init_x()`, the call of the imported file's `__esm` wrapper. An async wrapper returns a
+    /// promise, and the call is awaited.
+    Init { wrapper_ref: Ref, is_async: bool },
+}
+
 impl<'a> LinkerContext<'a> {
     pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
@@ -2169,22 +2185,10 @@ impl<'a> LinkerContext<'a> {
                             if parent_result_tla_keyword.len > 0 {
                                 let source = &input_files[other_source_index as usize];
                                 tla_pretty_path = source.path.pretty;
-                                let mut text = Vec::new();
-                                use std::io::Write;
-                                write!(
-                                    &mut text,
-                                    "The top-level await in {} is here:",
-                                    bstr::BStr::new(tla_pretty_path)
-                                )
-                                .expect("infallible: in-memory write");
-                                notes.push(Data {
-                                    text: text.into(),
-                                    location: bun_ast::Location::init_or_null(
-                                        Some(source),
-                                        parent_result_tla_keyword,
-                                    ),
-                                    ..Default::default()
-                                });
+                                notes.push(Self::top_level_await_note(
+                                    source,
+                                    parent_result_tla_keyword,
+                                ));
                                 break;
                             }
 
@@ -2198,31 +2202,14 @@ impl<'a> LinkerContext<'a> {
 
                             other_source_index = parent_tla_check.parent;
 
-                            let mut text = Vec::new();
-                            use std::io::Write;
-                            write!(
-                                &mut text,
-                                "The file {} imports the file {} here:",
-                                bstr::BStr::new(
-                                    &input_files[parent_source_index as usize].path.pretty
-                                ),
-                                bstr::BStr::new(
-                                    &input_files[other_source_index as usize].path.pretty
-                                ),
-                            )
-                            .unwrap();
-                            notes.push(Data {
-                                text: text.into(),
-                                location: bun_ast::Location::init_or_null(
-                                    Some(&input_files[parent_source_index as usize]),
-                                    ast_import_records[parent_source_index as usize].as_slice()
-                                        [tla_checks[parent_source_index as usize]
-                                            .import_record_index
-                                            as usize]
-                                        .range,
-                                ),
-                                ..Default::default()
-                            });
+                            notes.push(Self::import_toward_top_level_await_note(
+                                &input_files[parent_source_index as usize],
+                                &input_files[other_source_index as usize],
+                                ast_import_records[parent_source_index as usize].as_slice()
+                                    [tla_checks[parent_source_index as usize].import_record_index
+                                        as usize]
+                                    .range,
+                            ));
                         }
 
                         let source: &Source = &input_files[source_index as usize];
@@ -2249,6 +2236,71 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// Decides what `convert_stmts_for_chunk` prints in the place of an `import` or
+    /// `export ... from` statement. `namespace_ref` is the namespace symbol of the statement.
+    #[inline(always)]
+    pub(crate) fn import_stmt_lowering(
+        &self,
+        importer_exports_kind: ExportsKind,
+        importer_exports_ref: Ref,
+        namespace_ref: Ref,
+        record: &ImportRecord,
+    ) -> ImportStmtLowering {
+        // Barrel optimization: deferred import records should be dropped
+        if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
+            return ImportStmtLowering::Remove;
+        }
+        // Is this an external import?
+        if !record.source_index.is_valid() {
+            // Keep the "import" statement if import statements are supported
+            if self.options.output_format.keep_es6_import_export_syntax() {
+                return ImportStmtLowering::Keep;
+            }
+
+            // Otherwise, replace this statement with a call to "require()"
+            return ImportStmtLowering::RequireExternal;
+        }
+
+        // We don't need a call to "require()" if this is a self-import inside a
+        // CommonJS-style module, since we can just reference the exports directly.
+        if importer_exports_kind == ExportsKind::Cjs
+            && self
+                .graph
+                .symbols
+                .follow(namespace_ref)
+                .eql(importer_exports_ref)
+        {
+            return ImportStmtLowering::Remove;
+        }
+
+        let other_source_index = record.source_index.get() as usize;
+        let other_flags = self.graph.meta.items_flags()[other_source_index];
+        match other_flags.wrap {
+            WrapKind::None => ImportStmtLowering::Remove,
+            // Replace the statement with a call to "require()" since the other module is CJS-wrapped
+            WrapKind::Cjs => ImportStmtLowering::RequireCommonJs,
+            WrapKind::Esm => {
+                // Ignore this file if it's not included in the bundle. This can happen for
+                // wrapped ESM files but not for wrapped CommonJS files because we allow
+                // tree shaking inside wrapped ESM files.
+                if !self.graph.files_live.is_set(other_source_index) {
+                    return ImportStmtLowering::Remove;
+                }
+
+                let wrapper_ref = self.graph.ast.items_wrapper_ref()[other_source_index];
+                if wrapper_ref.is_empty() {
+                    return ImportStmtLowering::Remove;
+                }
+
+                // Replace the statement with a call to "init()"
+                ImportStmtLowering::Init {
+                    wrapper_ref,
+                    is_async: other_flags.is_async_or_has_async_dependency,
+                }
+            }
+        }
+    }
+
     pub(crate) fn should_remove_import_export_stmt(
         &mut self,
         stmts: &mut StmtList,
@@ -2259,107 +2311,47 @@ impl<'a> LinkerContext<'a> {
         ast: &JSAst<'_>,
     ) -> Result<bool, BunError> {
         let record = &ast.import_records[import_record_index as usize];
-        // Barrel optimization: deferred import records should be dropped
-        if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
-            return Ok(true);
-        }
-        // Is this an external import?
-        if !record.source_index.is_valid() {
-            // Keep the "import" statement if import statements are supported
-            if self.options.output_format.keep_es6_import_export_syntax() {
-                return Ok(false);
-            }
-
-            // Otherwise, replace this statement with a call to "require()"
-            stmts
-                .inside_wrapper_prefix
-                .append_non_dependency(Stmt::alloc(
-                    S::Local {
-                        decls: G::DeclList::from_slice(&[G::Decl {
-                            binding: Binding::alloc(
-                                alloc,
-                                bun_ast::b::Identifier {
-                                    r#ref: namespace_ref,
-                                },
-                                loc,
-                            ),
-                            value: Some(Expr::init(
-                                E::RequireString {
-                                    import_record_index,
-                                    ..Default::default()
-                                },
-                                loc,
-                            )),
-                        }]),
-                        ..Default::default()
-                    },
-                    record.range.loc,
-                ))
-                .expect("unreachable");
-            return Ok(true);
-        }
-
-        // We don't need a call to "require()" if this is a self-import inside a
-        // CommonJS-style module, since we can just reference the exports directly.
-        if ast.exports_kind == ExportsKind::Cjs
-            && self
-                .graph
-                .symbols
-                .follow(namespace_ref)
-                .eql(ast.exports_ref)
-        {
-            return Ok(true);
-        }
-
-        let other_flags = self.graph.meta.items_flags()[record.source_index.get() as usize];
-        match other_flags.wrap {
-            WrapKind::None => {}
-            WrapKind::Cjs => {
-                // Replace the statement with a call to "require()" since the other module is CJS-wrapped
+        let require_stmt = |stmt_loc: Loc| {
+            Stmt::alloc(
+                S::Local {
+                    decls: G::DeclList::from_slice(&[G::Decl {
+                        binding: Binding::alloc(
+                            alloc,
+                            bun_ast::b::Identifier {
+                                r#ref: namespace_ref,
+                            },
+                            loc,
+                        ),
+                        value: Some(Expr::init(
+                            E::RequireString {
+                                import_record_index,
+                                ..Default::default()
+                            },
+                            loc,
+                        )),
+                    }]),
+                    ..Default::default()
+                },
+                stmt_loc,
+            )
+        };
+        match self.import_stmt_lowering(ast.exports_kind, ast.exports_ref, namespace_ref, record) {
+            ImportStmtLowering::Keep => return Ok(false),
+            ImportStmtLowering::Remove => {}
+            ImportStmtLowering::RequireExternal => {
                 stmts
                     .inside_wrapper_prefix
-                    .append_non_dependency(Stmt::alloc(
-                        S::Local {
-                            decls: G::DeclList::from_slice(&[G::Decl {
-                                binding: Binding::alloc(
-                                    alloc,
-                                    bun_ast::b::Identifier {
-                                        r#ref: namespace_ref,
-                                    },
-                                    loc,
-                                ),
-                                value: Some(Expr::init(
-                                    E::RequireString {
-                                        import_record_index,
-                                        ..Default::default()
-                                    },
-                                    loc,
-                                )),
-                            }]),
-                            ..Default::default()
-                        },
-                        loc,
-                    ))?;
+                    .append_non_dependency(require_stmt(record.range.loc))?;
             }
-            WrapKind::Esm => {
-                // Ignore this file if it's not included in the bundle. This can happen for
-                // wrapped ESM files but not for wrapped CommonJS files because we allow
-                // tree shaking inside wrapped ESM files.
-                if !self
-                    .graph
-                    .files_live
-                    .is_set(record.source_index.get() as usize)
-                {
-                    return Ok(true);
-                }
-
-                let wrapper_ref =
-                    self.graph.ast.items_wrapper_ref()[record.source_index.get() as usize];
-                if wrapper_ref.is_empty() {
-                    return Ok(true);
-                }
-
-                // Replace the statement with a call to "init()"
+            ImportStmtLowering::RequireCommonJs => {
+                stmts
+                    .inside_wrapper_prefix
+                    .append_non_dependency(require_stmt(loc))?;
+            }
+            ImportStmtLowering::Init {
+                wrapper_ref,
+                is_async,
+            } => {
                 let init_call = Expr::init(
                     E::Call {
                         target: Expr::init_identifier(wrapper_ref, loc),
@@ -2368,7 +2360,7 @@ impl<'a> LinkerContext<'a> {
                     loc,
                 );
 
-                if other_flags.is_async_or_has_async_dependency {
+                if is_async {
                     stmts
                         .inside_wrapper_prefix
                         .append_async_dependency(init_call, self.promise_all_runtime_ref)?;
@@ -2381,6 +2373,251 @@ impl<'a> LinkerContext<'a> {
         }
 
         Ok(true)
+    }
+
+    /// Reports every `import` that would be printed as `await init_x()` inside a `__commonJS`
+    /// wrapper. That wrapper is a plain function, so the output would not parse. esbuild prints
+    /// the `await` in its `__commonJS` callback.
+    ///
+    /// Runs after tree shaking: only then is it known which files are wrapped and which
+    /// statements are printed.
+    pub(crate) fn validate_commonjs_imports_of_async_modules(&self) -> Result<(), BunError> {
+        // This format has no `__commonJS` wrapper.
+        if self.options.output_format == Format::InternalBakeDev {
+            return Ok(());
+        }
+
+        let flags = self.graph.meta.items_flags();
+        let import_records = self.graph.ast.items_import_records();
+        let exports_kinds = self.graph.ast.items_exports_kind();
+        let exports_refs = self.graph.ast.items_exports_ref();
+        let parts = self.graph.ast.items_parts();
+        // Built for the first error.
+        let mut chains: Option<Vec<(u32, u32)>> = None;
+
+        for source_index in self.graph.reachable_files.slice() {
+            let id = source_index.get() as usize;
+            if !self.graph.files_live.is_set(id) || flags[id].wrap != WrapKind::Cjs {
+                continue;
+            }
+
+            // Most CommonJS files import no async file: skip their statements.
+            if !import_records[id].as_slice().iter().any(|record| {
+                record.source_index.is_valid()
+                    && flags
+                        .get(record.source_index.get() as usize)
+                        .is_some_and(|other| other.is_async_or_has_async_dependency)
+            }) {
+                continue;
+            }
+
+            let parts_live = &self.graph.parts_live[id];
+            for (part_index, part) in parts[id].as_slice().iter().enumerate() {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
+                for stmt in part.stmts.slice() {
+                    // The statements that `convert_stmts_for_chunk` gives to
+                    // `should_remove_import_export_stmt`. It prints `export * from` without an
+                    // alias as a bare `init_x()`, so that statement needs no `await`.
+                    let (namespace_ref, import_record_index) = match stmt.data {
+                        bun_ast::StmtData::SImport(s) => (s.namespace_ref, s.import_record_index),
+                        bun_ast::StmtData::SExportFrom(s) => {
+                            (s.namespace_ref, s.import_record_index)
+                        }
+                        bun_ast::StmtData::SExportStar(s) if s.alias.is_some() => {
+                            (s.namespace_ref, s.import_record_index)
+                        }
+                        _ => continue,
+                    };
+                    let record = &import_records[id].as_slice()[import_record_index as usize];
+                    if let ImportStmtLowering::Init { is_async: true, .. } = self
+                        .import_stmt_lowering(
+                            exports_kinds[id],
+                            exports_refs[id],
+                            namespace_ref,
+                            record,
+                        )
+                    {
+                        let chains =
+                            chains.get_or_insert_with(|| self.imports_toward_top_level_await());
+                        self.report_commonjs_import_of_async_module(id, record, chains);
+                    }
+                }
+            }
+        }
+
+        match chains {
+            Some(_) => Err(BunError::BuildFailed),
+            None => Ok(()),
+        }
+    }
+
+    #[cold]
+    fn report_commonjs_import_of_async_module(
+        &self,
+        importer: usize,
+        record: &ImportRecord,
+        chains: &[(u32, u32)],
+    ) {
+        use std::io::Write;
+        let sources = self.parse_graph().input_files.items_source();
+        let tla_keywords = self.parse_graph().ast.items_top_level_await_keyword();
+        let import_records = self.graph.ast.items_import_records();
+        let importer_source = &sources[importer];
+        let imported = record.source_index.get() as usize;
+
+        // One note for each `import` on the way to the `await`, then one for the `await`.
+        let mut notes: Vec<Data> = Vec::new();
+        let mut file = imported;
+        while let Some(&(next, record_index)) = chains.get(file).filter(|next| next.0 != u32::MAX) {
+            notes.push(Self::import_toward_top_level_await_note(
+                &sources[file],
+                &sources[next as usize],
+                import_records[file].as_slice()[record_index as usize].range,
+            ));
+            file = next as usize;
+        }
+        debug_assert!(tla_keywords[file].len > 0);
+        notes.push(Self::top_level_await_note(
+            &sources[file],
+            tla_keywords[file],
+        ));
+
+        let mut hint = Vec::new();
+        write!(
+            &mut hint,
+            "CommonJS code runs synchronously and cannot wait for a top-level await. Load {} with import() inside a function instead",
+            bun_core::fmt::quote(sources[imported].path.pretty),
+        )
+        .expect("infallible: in-memory write");
+        notes.push(Data {
+            text: hint.into(),
+            ..Default::default()
+        });
+
+        if self.graph.ast.items_module_scope()[importer].contains_direct_eval {
+            let mut hint = Vec::new();
+            write!(
+                &mut hint,
+                "A direct eval makes a file without an \"export\" CommonJS. Add an \"export\" to {}, or call eval as (0, eval)(code)",
+                bun_core::fmt::quote(importer_source.path.pretty),
+            )
+            .expect("infallible: in-memory write");
+            notes.push(Data {
+                text: hint.into(),
+                ..Default::default()
+            });
+        }
+
+        let mut text = Vec::new();
+        write!(
+            &mut text,
+            "This import is not allowed because {} is bundled as CommonJS and the {} {} contains a top-level await",
+            bun_core::fmt::quote(importer_source.path.pretty),
+            if file == imported {
+                "imported file"
+            } else {
+                "transitive dependency"
+            },
+            bun_core::fmt::quote(sources[file].path.pretty),
+        )
+        .expect("infallible: in-memory write");
+
+        self.log_disjoint().add_range_error_with_notes(
+            Some(importer_source),
+            record.range,
+            text,
+            notes.into_boxed_slice(),
+        );
+    }
+
+    /// For each file, the `import` to follow on a shortest chain of static imports to a file
+    /// with a top-level await: (imported file, import record). `u32::MAX` for a file with a
+    /// top-level await and for a file with no such chain.
+    #[cold]
+    fn imports_toward_top_level_await(&self) -> Vec<(u32, u32)> {
+        let tla_keywords = self.parse_graph().ast.items_top_level_await_keyword();
+        let import_records = self.graph.ast.items_import_records();
+        let len = import_records.len();
+
+        let mut importers: Vec<Vec<(u32, u32)>> = vec![Vec::new(); len];
+        for (importer, records) in import_records.iter().enumerate() {
+            for (record_index, record) in records.as_slice().iter().enumerate() {
+                if record.kind != ImportKind::Stmt || !record.source_index.is_valid() {
+                    continue;
+                }
+                if let Some(importers) = importers.get_mut(record.source_index.get() as usize) {
+                    importers.push((importer as u32, record_index as u32));
+                }
+            }
+        }
+
+        // Breadth-first from the files with a top-level await.
+        let mut next = vec![(u32::MAX, u32::MAX); len];
+        let mut distance = vec![u32::MAX; len];
+        let mut queue: Vec<u32> = Vec::new();
+        for (file, keyword) in tla_keywords.iter().enumerate().take(len) {
+            if keyword.len > 0 {
+                distance[file] = 0;
+                queue.push(file as u32);
+            }
+        }
+        let mut head = 0;
+        while let Some(&imported) = queue.get(head) {
+            head += 1;
+            let importer_distance = distance[imported as usize] + 1;
+            for &(importer, record_index) in &importers[imported as usize] {
+                let importer = importer as usize;
+                if distance[importer] == u32::MAX {
+                    distance[importer] = importer_distance;
+                    queue.push(importer as u32);
+                    next[importer] = (imported, record_index);
+                } else if distance[importer] == importer_distance && record_index < next[importer].1
+                {
+                    // Of two imports at the same distance, the first one in the file.
+                    next[importer] = (imported, record_index);
+                }
+            }
+        }
+        next
+    }
+
+    /// The note that points at the top-level await of `source`.
+    fn top_level_await_note(source: &Source, keyword: Range) -> Data {
+        use std::io::Write;
+        let mut text = Vec::new();
+        write!(
+            &mut text,
+            "The top-level await in {} is here:",
+            bstr::BStr::new(source.path.pretty)
+        )
+        .expect("infallible: in-memory write");
+        Data {
+            text: text.into(),
+            location: bun_ast::Location::init_or_null(Some(source), keyword),
+        }
+    }
+
+    /// The note that points at an `import` on the way to a top-level await.
+    fn import_toward_top_level_await_note(
+        importer: &Source,
+        imported: &Source,
+        import: Range,
+    ) -> Data {
+        use std::io::Write;
+        let mut text = Vec::new();
+        write!(
+            &mut text,
+            "The file {} imports the file {} here:",
+            bstr::BStr::new(importer.path.pretty),
+            bstr::BStr::new(imported.path.pretty),
+        )
+        .expect("infallible: in-memory write");
+        Data {
+            text: text.into(),
+            location: bun_ast::Location::init_or_null(Some(importer), import),
+        }
     }
 
     pub(crate) fn print_code_for_file_in_chunk_js(

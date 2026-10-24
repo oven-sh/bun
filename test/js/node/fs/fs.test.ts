@@ -7960,4 +7960,3 @@ it.if(isPosix)("realpath preserves literal backslashes", async () => {
   expect(realpathSync(target)).toBe(expected);
   expect(await promises.realpath(target)).toBe(expected);
 });
-

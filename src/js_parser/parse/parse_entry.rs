@@ -1960,18 +1960,34 @@ impl<'a> Parser<'a> {
                         exports_kind = js_ast::ExportsKind::Esm;
                     }
                     // Otherwise, if they use CommonJS features its CommonJS.
-                    // If you add a 'use strict'; at the top, you probably meant CommonJS because "use strict"; does nothing in ESM.
                     else if p.symbols.as_slice()[p.require_ref.inner_index() as usize]
                         .use_count_estimate
                         > 0
                         || uses_dirname
                         || uses_filename
-                        || (!p.options.bundle
-                            // SAFETY: `module_scope` is non-null after `prepare_for_visit_pass`.
-                            && p.module_scope().strict_mode
-                                == bun_ast::StrictModeKind::ExplicitStrictMode)
                     {
                         exports_kind = js_ast::ExportsKind::Cjs;
+                    }
+                    // If you add a 'use strict'; at the top, you probably meant CommonJS because "use strict"; does nothing in ESM.
+                    // SAFETY: `module_scope` is non-null after `prepare_for_visit_pass`.
+                    else if p.module_scope().strict_mode
+                        == bun_ast::StrictModeKind::ExplicitStrictMode
+                    {
+                        exports_kind = if !p.options.bundle {
+                            js_ast::ExportsKind::Cjs
+                        } else if p.options.features.hot_module_reloading
+                            || p.unwrap_all_requires
+                            || p.has_import_meta
+                        {
+                            // The dev server's module format is made at parse time. A
+                            // package that is converted to ESM stays converted. And
+                            // `import.meta` is module syntax.
+                            js_ast::ExportsKind::Esm
+                        } else {
+                            // The linker decides from how the file is imported:
+                            // `scan_imports_and_exports`, steps 1 and 3.
+                            js_ast::ExportsKind::None
+                        };
                     } else {
                         // If unknown, we default to ESM
                         exports_kind = js_ast::ExportsKind::Esm;

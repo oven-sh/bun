@@ -150,6 +150,9 @@ bitflags::bitflags! {
         const USES_MODULE_REF = 1 << 1;
         // const USES_REQUIRE_REF = 1 << 2;
         const USES_EXPORT_KEYWORD = 1 << 2;
+        /// Step 1 of `scan_imports_and_exports` made this file CommonJS. The
+        /// parser found no module syntax in it, so it has no exports.
+        const COMMONJS_WITHOUT_EXPORTS = 1 << 3;
         const FORCE_CJS_TO_ESM = 1 << 4;
         const HAS_LAZY_EXPORT = 1 << 5;
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;

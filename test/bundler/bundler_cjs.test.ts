@@ -1,4 +1,6 @@
 import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
+import { basename } from "node:path";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -883,6 +885,7 @@ describe("bundler", () => {
         "require esm": esmRequired.top,
         "require esm, function": call(esmRequired.fn),
         "require script": globalThis.scriptRequired,
+        "require script, function": globalThis.scriptRequiredFn,
       };
       for (const row in rows) console.log(row + ": " + (rows[row] ? "strict" : "sloppy"));
     `,
@@ -892,7 +895,7 @@ describe("bundler", () => {
     "/esm-imported.mjs": strictEsm,
     "/esm-required.mjs": strictEsm,
     "/script-imported.js": `"use strict";\nglobalThis.scriptImported = ${isStrict};`,
-    "/script-required.js": `"use strict";\nglobalThis.scriptRequired = ${isStrict};`,
+    "/script-required.js": `"use strict";\nfunction fn() { return this === undefined; }\nglobalThis.scriptRequired = ${isStrict};\nglobalThis.scriptRequiredFn = fn();`,
   };
   const modeTable = [
     "entry: sloppy",
@@ -905,6 +908,7 @@ describe("bundler", () => {
     "require esm: strict",
     "require esm, function: sloppy",
     "require script: strict",
+    "require script, function: strict",
   ].join("\n");
   for (const format of ["cjs", "iife"] as const) {
     itBundled(`cjs/UseStrictModeTable_format_${format}`, {
@@ -914,6 +918,603 @@ describe("bundler", () => {
       run: { runtime: "node", stdout: modeTable },
     });
   }
+
+  // ============================================================================
+  // A file that starts with "use strict" and has no module syntax is a script.
+  // The parser leaves its kind undecided and the linker decides from how the
+  // file is loaded. require(), import() without code splitting, and a default
+  // or star import make it CommonJS, as in node and esbuild. Any other such
+  // file stays an ES module.
+  // ============================================================================
+  const strictScript = /* js */ `
+    "use strict";
+    function named() { return this === undefined; }
+    globalThis.scriptRuns = (globalThis.scriptRuns ?? 0) + 1;
+    globalThis.scriptRow = [${isStrict}, named()].join(",");
+  `;
+  const requiresScript = {
+    "/entry.mjs": /* js */ `
+      const script = require("./script.js");
+      console.log(globalThis.scriptRow, script.__esModule, JSON.stringify(script));
+    `,
+    "/script.js": strictScript,
+  };
+
+  for (const format of ["cjs", "iife", "esm"] as const) {
+    const outfile = format === "esm" ? "/out.mjs" : "/out.js";
+    itBundled(`cjs/UseStrictScriptRequired_format_${format}`, {
+      files: requiresScript,
+      target: "node",
+      format,
+      outfile,
+      onAfterBundle(api) {
+        const code = api.readFile(outfile);
+        expect(code).toContain("var require_script = __commonJS(");
+        expect(code).not.toContain("__esm(");
+      },
+      run: { runtime: "node", stdout: "true,true undefined {}" },
+    });
+  }
+
+  itBundled("cjs/UseStrictScriptRequired_commonjs_entry", {
+    files: {
+      "/entry.cjs": /* js */ `
+        require("./script.js");
+        console.log("script body,named", globalThis.scriptRow);
+      `,
+      "/script.js": strictScript,
+    },
+    backend: "cli",
+    target: "node",
+    format: "cjs",
+    run: { runtime: "node", stdout: "script body,named true,true" },
+  });
+
+  // The script is an entry point and a dependency of the other entry point.
+  // It is CommonJS in both chunks, and its own chunk still runs it.
+  for (const format of ["cjs", "esm"] as const) {
+    const extension = format === "esm" ? "mjs" : "js";
+    itBundled(`cjs/UseStrictScriptEntryPointRequiredByOtherEntryPoint_format_${format}`, {
+      files: {
+        "/other.cjs": /* js */ `
+          const script = require("./script.js");
+          console.log("other", globalThis.scriptRow, script.__esModule);
+        `,
+        "/script.js": strictScript + `console.log("script", globalThis.scriptRow);`,
+      },
+      entryPoints: ["/other.cjs", "/script.js"],
+      outdir: "/out",
+      entryNaming: `[name].${extension}`,
+      outputPaths: [`/out/other.${extension}`, `/out/script.${extension}`],
+      target: "node",
+      format,
+      onAfterBundle(api) {
+        const code = api.readFile(`/out/other.${extension}`);
+        expect(code).toContain("var require_script = __commonJS(");
+        expect(code).not.toContain("__esm(");
+      },
+      run: [
+        { file: `/out/other.${extension}`, runtime: "node", stdout: "script true,true\nother true,true undefined" },
+        { file: `/out/script.${extension}`, runtime: "node", stdout: "script true,true" },
+      ],
+    });
+  }
+
+  // bun runs these two. The `// @bun` pragma makes bun run the text as printed.
+  for (const bytecode of [false, true]) {
+    itBundled(`cjs/UseStrictScriptRequired_target_bun${bytecode ? "_bytecode" : ""}`, {
+      files: requiresScript,
+      target: "bun",
+      format: "cjs",
+      bytecode,
+      outdir: "/out",
+      outputPaths: ["/out/entry.js"],
+      run: { stdout: "true,true undefined {}" },
+    });
+  }
+
+  // With --splitting for bun, require() of an ES module loads a chunk of its own.
+  // The script is CommonJS for a require(), so it stays in the chunk of its importer.
+  itBundled("cjs/UseStrictScriptRequired_splitting_target_bun", {
+    files: requiresScript,
+    target: "bun",
+    format: "esm",
+    splitting: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir)).toEqual(["entry.js"]);
+      expect(api.readFile("/out/entry.js")).not.toContain("import.meta.require");
+    },
+    run: { file: "/out/entry.js", stdout: "true,true undefined {}" },
+  });
+
+  // Each statement of this script can be hoisted, so the parser made no wrapper
+  // symbol for it. The linker makes the symbol when it makes the file CommonJS.
+  for (const minify of [false, true]) {
+    itBundled(`cjs/UseStrictScriptRequired_declarations_only${minify ? "_minify" : ""}`, {
+      files: {
+        "/entry.cjs": /* js */ `
+          const declarations = require("./declarations.js");
+          console.log(declarations.__esModule, JSON.stringify(declarations));
+        `,
+        "/declarations.js": `"use strict";\nfunction unused() {}\nvar alsoUnused;`,
+      },
+      target: "node",
+      format: "cjs",
+      minifyWhitespace: minify,
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js");
+        if (!minify) expect(code).toContain("var require_declarations = __commonJS(");
+        expect(code).not.toContain("__INVALID__REF__");
+      },
+      run: { runtime: "node", stdout: "undefined {}" },
+    });
+  }
+
+  itBundled("cjs/UseStrictScriptRequired_typescript", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const script = require("./script.ts");
+        console.log(globalThis.scriptRow, script.__esModule, JSON.stringify(script));
+      `,
+      "/script.ts": /* ts */ `
+        "use strict";
+        function named(this: unknown): boolean { return this === undefined; }
+        (globalThis as any).scriptRow = [${isStrict}, named()].join(",");
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    run: { runtime: "node", stdout: "true,true undefined {}" },
+  });
+
+  // Without code splitting, import() is a require() that returns a promise.
+  for (const format of ["cjs", "iife", "esm"] as const) {
+    itBundled(`cjs/UseStrictScriptDynamicImport_format_${format}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          import("./script.js").then(ns => {
+            console.log(globalThis.scriptRow, Object.keys(ns).join(","), JSON.stringify(ns.default));
+          });
+        `,
+        "/script.js": strictScript,
+      },
+      target: "node",
+      format,
+      outfile: format === "esm" ? "/out.mjs" : "/out.js",
+      run: { runtime: "node", stdout: "true,true default {}" },
+    });
+  }
+
+  // With code splitting the script is the entry point of its own chunk.
+  itBundled("cjs/UseStrictScriptDynamicImport_splitting", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const ns = await import("./script.js");
+        console.log(globalThis.scriptRuns, Object.keys(ns).length);
+      `,
+      "/script.js": strictScript,
+    },
+    target: "node",
+    format: "esm",
+    splitting: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir);
+      expect(chunks).toHaveLength(2);
+      for (const chunk of chunks) expect(api.readFile("/out/" + chunk)).not.toContain("__commonJS");
+    },
+    run: { file: "/out/entry.js", stdout: "1 0" },
+  });
+
+  for (const format of ["cjs", "iife", "esm"] as const) {
+    itBundled(`cjs/UseStrictScriptDefaultAndStarImport_format_${format}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          import byDefault from "./default.js";
+          import * as byStar from "./star.js";
+          import both, * as bothStar from "./both.js";
+          console.log(JSON.stringify([byDefault, Object.keys(byStar), byStar.default, both, Object.keys(bothStar)]));
+          console.log(globalThis.scriptsRan.join(","));
+        `,
+        "/default.js": `"use strict";\n(globalThis.scriptsRan ??= []).push("default");`,
+        "/star.js": `"use strict";\n(globalThis.scriptsRan ??= []).push("star");`,
+        "/both.js": `"use strict";\n(globalThis.scriptsRan ??= []).push("both");`,
+      },
+      target: "node",
+      format,
+      outfile: format === "esm" ? "/out.mjs" : "/out.js",
+      run: { runtime: "node", stdout: `[{},["default"],{},{},["default"]]\ndefault,star,both` },
+    });
+  }
+
+  // One importer needs no wrapper and the other one does. The script is CommonJS
+  // for both, in either order, and runs once.
+  for (const [order, first, second] of [
+    ["import_first", "./imports.mjs", "./requires.cjs"],
+    ["require_first", "./requires.cjs", "./imports.mjs"],
+  ] as const) {
+    itBundled(`cjs/UseStrictScriptImportedAndRequired_${order}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          import "${first}";
+          import "${second}";
+          console.log(globalThis.scriptRuns, globalThis.scriptRow);
+        `,
+        "/imports.mjs": `import "./script.js";`,
+        "/requires.cjs": `require("./script.js");`,
+        "/script.js": strictScript,
+      },
+      target: "node",
+      format: "cjs",
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js").split("scriptRuns = ")).toHaveLength(2);
+      },
+      run: { runtime: "node", stdout: "1 true,true" },
+    });
+  }
+
+  // These loads need no CommonJS module, so the script stays an ES module with
+  // no wrapper. It runs in the mode of the chunk.
+  for (const format of ["cjs", "iife", "esm"] as const) {
+    const outfile = format === "esm" ? "/out.mjs" : "/out.js";
+    itBundled(`cjs/UseStrictScriptSideEffectImportHasNoWrapper_format_${format}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          import "./script.js";
+          export * from "./reexported.js";
+          console.log(globalThis.scriptRuns, globalThis.reexported);
+        `,
+        "/script.js": strictScript,
+        "/reexported.js": `"use strict";\nglobalThis.reexported = "ran";`,
+      },
+      target: "node",
+      format,
+      outfile,
+      onAfterBundle(api) {
+        const code = api.readFile(outfile);
+        expect(code).not.toContain("__commonJS");
+        expect(code).not.toContain("__esm(");
+      },
+      run: { runtime: "node", stdout: "1 ran" },
+    });
+
+    itBundled(`cjs/UseStrictScriptEntryPointHasNoWrapper_format_${format}`, {
+      files: {
+        "/entry.js": strictScript + `console.log(globalThis.scriptRow);`,
+      },
+      target: "node",
+      format,
+      outfile,
+      onAfterBundle(api) {
+        const code = api.readFile(outfile);
+        expect(code).not.toContain("__commonJS");
+        expect(code.startsWith('"use strict";')).toBe(format !== "esm");
+      },
+      run: { runtime: "node", stdout: "true,true" },
+    });
+  }
+
+  // The script has no exports in either kind, so a named import is an error.
+  itBundled("cjs/UseStrictScriptNamedImportIsAnError", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { missing } from "./script.js";
+        console.log(missing);
+      `,
+      "/script.js": strictScript,
+    },
+    target: "node",
+    format: "cjs",
+    bundleErrors: {
+      "/entry.mjs": [`No matching export in "script.js" for import "missing"`],
+    },
+  });
+  for (const format of ["cjs", "iife", "esm"] as const) {
+    itBundled(`cjs/UseStrictScriptNamedImportIsAnError_required_format_${format}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          import { missing } from "./script.js";
+          import "./requires.cjs";
+          console.log(missing);
+        `,
+        "/requires.cjs": `require("./script.js");`,
+        "/script.js": strictScript,
+      },
+      target: "node",
+      format,
+      bundleErrors: {
+        "/entry.mjs": [`No matching export in "script.js" for import "missing"`],
+      },
+    });
+  }
+  itBundled("cjs/UseStrictScriptStarImportOfMissingNameWarns", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./script.js";
+        console.log(ns.missing, Object.keys(ns).join(","));
+      `,
+      "/script.js": strictScript,
+    },
+    target: "node",
+    format: "cjs",
+    bundleWarnings: {
+      "/entry.mjs": [`Import "missing" will always be undefined because there is no matching export in "script.js"`],
+    },
+    run: { runtime: "node", stdout: "undefined default" },
+  });
+
+  // export * from a CommonJS file copies its exports at run time, as in esbuild.
+  // The names of the barrel are then not all known, and a missing one is undefined.
+  itBundled("cjs/UseStrictScriptBehindExportStar", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { own, missing } from "./barrel.mjs";
+        import "./requires.cjs";
+        console.log(own, missing, globalThis.scriptRuns);
+      `,
+      "/barrel.mjs": `export * from "./script.js";\nexport const own = "own";`,
+      "/requires.cjs": `require("./script.js");`,
+      "/script.js": strictScript,
+    },
+    target: "node",
+    format: "cjs",
+    run: { runtime: "node", stdout: "own undefined 1" },
+  });
+
+  // __commonJS keeps the module of a load that failed, as for each CommonJS file
+  // in a bundle: the next require() returns its module.exports. node throws again.
+  for (const format of ["cjs", "iife"] as const) {
+    itBundled(`cjs/UseStrictScriptThatThrows_format_${format}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          const results = [];
+          for (let i = 0; i < 2; i++) {
+            try {
+              results.push("ok:" + JSON.stringify(require("./throws.js")));
+            } catch (e) {
+              results.push("threw:" + e.message);
+            }
+          }
+          import("./throws.js").then(
+            ns => console.log(results.join(" | "), "| import ok:" + Object.keys(ns).join(","), globalThis.loads),
+            e => console.log(results.join(" | "), "| import threw:" + e.message, globalThis.loads),
+          );
+        `,
+        "/throws.js": `"use strict";\nglobalThis.loads = (globalThis.loads ?? 0) + 1;\nthrow new Error("boom");`,
+      },
+      target: "node",
+      format,
+      run: { runtime: "node", stdout: "threw:boom | ok:{} | import ok:default 1" },
+    });
+  }
+
+  // The directive is what makes the kind undecided. These scripts have none, so
+  // the bundler still makes them ES modules, where bun run, node and esbuild
+  // make the one that reads __dirname CommonJS.
+  itBundled("cjs/ScriptWithoutUseStrictIsEsModule", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const plain = require("./plain.js");
+        const dirname = require("./dirname.js");
+        const strictDirname = require("./strict-dirname.js");
+        console.log(plain.__esModule, dirname.__esModule, strictDirname.__esModule);
+      `,
+      "/plain.js": `globalThis.plain = true;`,
+      "/dirname.js": `globalThis.dirname = typeof __dirname;`,
+      "/strict-dirname.js": `"use strict";\nglobalThis.strictDirname = typeof __dirname;`,
+    },
+    target: "node",
+    format: "cjs",
+    run: { runtime: "node", stdout: "true true undefined" },
+  });
+
+  // import.meta is module syntax, so this file is an ES module for every importer.
+  itBundled("cjs/UseStrictScriptWithImportMetaIsEsModule", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const meta = require("./meta.js");
+        console.log(globalThis.metaUrl, meta.__esModule);
+      `,
+      "/meta.js": `"use strict";\nglobalThis.metaUrl = typeof import.meta.url;`,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.mjs");
+      expect(code).toContain("var init_meta = __esm(");
+      expect(code).not.toContain("__commonJS");
+    },
+    run: { runtime: "node", stdout: "string true" },
+  });
+
+  // In esm and iife output, a file of a package that the bundler converts from
+  // CommonJS to an ES module stays converted.
+  itBundled("cjs/UseStrictScriptOfConvertedPackageIsEsModule", {
+    files: {
+      "/entry.mjs": /* js */ `
+        let react;
+        try {
+          react = require("react");
+        } catch {}
+        console.log(globalThis.reactLoaded, react.__esModule);
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0", "main": "index.js" }`,
+      "/node_modules/react/index.js": `"use strict";\nglobalThis.reactLoaded = true;`,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.mjs");
+      expect(code).toContain("var init_react = __esm(");
+      expect(code).not.toContain("__commonJS");
+    },
+    run: { runtime: "node", stdout: "true true" },
+  });
+
+  // The dev server takes the kind of a file from the parser, so there the
+  // script is an ES module: a tuple, where a CommonJS module is a function.
+  itBundled("cjs/UseStrictScriptInDevServerFormatIsEsModule", {
+    files: requiresScript,
+    format: "internal_bake_dev",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain('"script.js": [ [], [], [], (');
+      expect(code).not.toContain('"script.js"(hmr, module, exports)');
+    },
+  });
+
+  // The metafile has the kind that the linker decided.
+  itBundled("cjs/UseStrictScriptMetafileFormat", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./imported.js";
+        require("./required.js");
+      `,
+      "/imported.js": `"use strict";\nglobalThis.imported = true;`,
+      "/required.js": `"use strict";\nglobalThis.required = true;`,
+    },
+    target: "node",
+    format: "cjs",
+    metafile: true,
+    onAfterBundle(api) {
+      const inputs: Record<string, { format?: string }> = JSON.parse(api.readFile("/metafile.json")).inputs;
+      const formats = Object.entries(inputs).map(([path, input]) => [basename(path), input.format]);
+      expect(Object.fromEntries(formats)).toEqual({
+        "entry.mjs": "esm",
+        "imported.js": "esm",
+        "required.js": "cjs",
+      });
+    },
+  });
+
+  // The script is an entry point and another entry point imports its default.
+  // It is CommonJS in both chunks, and its own chunk still runs it.
+  const defaultImportedByOtherEntryPoint = {
+    "/other.mjs": /* js */ `
+      import script from "./script.js";
+      console.log("other", JSON.stringify(script));
+    `,
+    "/script.js": strictScript + `console.log("script", globalThis.scriptRow);`,
+  };
+  for (const format of ["cjs", "esm"] as const) {
+    const extension = format === "esm" ? "mjs" : "js";
+    itBundled(`cjs/UseStrictScriptEntryPointDefaultImportedByOtherEntryPoint_format_${format}`, {
+      files: defaultImportedByOtherEntryPoint,
+      entryPoints: ["/other.mjs", "/script.js"],
+      outdir: "/out",
+      entryNaming: `[name].${extension}`,
+      outputPaths: [`/out/other.${extension}`, `/out/script.${extension}`],
+      target: "node",
+      format,
+      run: [
+        { file: `/out/other.${extension}`, runtime: "node", stdout: "script true,true\nother {}" },
+        { file: `/out/script.${extension}`, runtime: "node", stdout: "script true,true" },
+      ],
+    });
+  }
+
+  // Nothing calls the wrapper of an iife entry point (#37843), so a star or
+  // default import leaves that script an ES module. Its own chunk still runs it,
+  // and a default import of it is still an error.
+  itBundled("cjs/UseStrictScriptIifeEntryPointWithStarImport", {
+    files: {
+      "/script.js": strictScript + `console.log("script", globalThis.scriptRuns);`,
+      "/other.mjs": /* js */ `
+        import * as ns from "./script.js";
+        console.log("other", typeof ns);
+      `,
+    },
+    entryPoints: ["/script.js", "/other.mjs"],
+    outdir: "/out",
+    outputPaths: ["/out/script.js", "/out/other.js"],
+    target: "node",
+    format: "iife",
+    run: [
+      { file: "/out/script.js", runtime: "node", stdout: "script 1" },
+      { file: "/out/other.js", runtime: "node", stdout: "script 1\nother object" },
+    ],
+  });
+  itBundled("cjs/UseStrictScriptIifeEntryPointWithDefaultImport", {
+    files: defaultImportedByOtherEntryPoint,
+    entryPoints: ["/other.mjs", "/script.js"],
+    outdir: "/out",
+    target: "node",
+    format: "iife",
+    bundleErrors: {
+      "/other.mjs": [`No matching export in "script.js" for import "default"`],
+    },
+  });
+
+  // An HTML file calls no wrapper either (#42026). A script that the page loads
+  // with <script src> still runs at its tag when a module script star-imports it,
+  // and a default import of it is still an error.
+  const page = (...scripts: string[]) => `
+<!DOCTYPE html>
+<html>
+  <head>
+    ${scripts.join("\n    ")}
+  </head>
+</html>`;
+  itBundled("cjs/UseStrictScriptOfHtmlFileWithStarImport", {
+    files: {
+      "/index.html": page(
+        `<script src="./first.js"></script>`,
+        `<script src="./second.js"></script>`,
+        `<script type="module" src="./third.js"></script>`,
+      ),
+      "/first.js": `"use strict";\nconsole.log("first");`,
+      "/second.js": `console.log("second");`,
+      "/third.js": `import * as first from "./first.js";\nconsole.log("third", typeof first);`,
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const script = api.readFile("/out/index.html").match(/src="(.*\.js)"/);
+      const chunk = api.join("out/" + script![1]);
+      const { stdout, exitCode } = Bun.spawnSync({ cmd: ["node", "--input-type=module"], stdin: Bun.file(chunk) });
+      expect(stdout.toString()).toBe("first\nsecond\nthird object\n");
+      expect(exitCode).toBe(0);
+    },
+  });
+  itBundled("cjs/UseStrictScriptOfHtmlFileWithDefaultImport", {
+    files: {
+      "/index.html": page(`<script src="./first.js"></script>`, `<script type="module" src="./second.js"></script>`),
+      "/first.js": `"use strict";\nconsole.log("first");`,
+      "/second.js": `import first from "./first.js";\nconsole.log("second", first);`,
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    bundleErrors: {
+      "/second.js": [`No matching export in "first.js" for import "default"`],
+    },
+  });
+  // The page does not load this script itself, so its importer makes it CommonJS.
+  itBundled("cjs/UseStrictScriptImportedByScriptOfHtmlFile", {
+    files: {
+      "/index.html": page(`<script type="module" src="./module.js"></script>`),
+      "/module.js": /* js */ `
+        import script, * as ns from "./script.js";
+        console.log(globalThis.scriptRow, JSON.stringify(script), Object.keys(ns).join(","));
+      `,
+      "/script.js": strictScript,
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const script = api.readFile("/out/index.html").match(/src="(.*\.js)"/);
+      const chunk = api.join("out/" + script![1]);
+      const { stdout, exitCode } = Bun.spawnSync({ cmd: ["node", "--input-type=module"], stdin: Bun.file(chunk) });
+      expect(stdout.toString()).toBe("true,true {} default\n");
+      expect(exitCode).toBe(0);
+    },
+  });
 
   // Test 28: export * from an external package whose module.exports is null.
   // CJS output emits __reExport(exports, require("ext"), module.exports) with

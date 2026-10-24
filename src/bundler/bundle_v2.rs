@@ -2265,6 +2265,8 @@ pub mod bv2_impl {
                                 && import_record.kind.can_be_lazy_chunk(target_is_bun);
                             // A `require()` splits only when it targets another ES
                             // module; the flag is the linker's and printer's signal.
+                            // A file of undecided kind is CommonJS for a `require()`
+                            // (`scan_imports_and_exports`, step 1), so it does not split.
                             if was_dynamic_import && import_record.kind == ImportKind::Require {
                                 was_dynamic_import = next_source.is_valid()
                                     && next_source != import_record_list_id

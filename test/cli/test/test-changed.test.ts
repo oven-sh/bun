@@ -412,6 +412,41 @@ test("hot", () => {
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });
+
+  // --changed runs git before the tests. That must leave JSC's fault handler installed, because JSC
+  // interrupts DFG code with a fault. Lower tiers poll instead, so the worker compiles `spin` before
+  // it calls it with a step of 0: the same types, and it never returns.
+  test("worker.terminate() can interrupt a hot loop", async () => {
+    using dir = tempDir("test-changed-worker-terminate", {
+      "package.json": JSON.stringify({ name: "worker-terminate", type: "module" }),
+      "worker.js": `import { noInline, numberOfDFGCompiles } from "bun:jsc";
+import { parentPort } from "node:worker_threads";
+function spin(state) {
+  while (state.left > 0) state.left -= state.step;
+}
+noInline(spin);
+while (numberOfDFGCompiles(spin) === 0) spin({ left: 100, step: 1 });
+parentPort.postMessage("hot");
+spin({ left: 1, step: 0 });
+`,
+      "busy.test.ts": `import { test, expect } from "bun:test";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
+test("busy", async () => {
+  const worker = new Worker(new URL("./worker.js", import.meta.url));
+  expect(await once(worker, "message")).toEqual(["hot"]);
+  await worker.terminate();
+});
+`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "busy.test.ts"), "// touched\n");
+
+    // The 5s default of the child run is too short for an ASAN build to start the worker under load.
+    const { stderr, exitCode } = await runTestChanged(String(dir), [`--timeout=${isASAN ? 60_000 : 15_000}`]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // On Windows, `bun test --watch` runs as a parent watcher-manager that

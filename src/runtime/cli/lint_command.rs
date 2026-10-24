@@ -138,8 +138,9 @@ fn read_bunfig_text(
 }
 
 /// As [`read_bunfigs`], for a thread that serves `directory` as its working directory: the editor's server. It reads
-/// the files itself, so it touches nothing of the process and doesn't end it. A file that can't be read is skipped,
-/// unless `--config` names it. `Err` says why a file that's needed can't be used.
+/// the files itself, so it touches nothing of the process and doesn't end it. A relative `--config` path is relative
+/// to `directory`, not to the process's working directory, and `--cwd` doesn't apply. A file that can't be read is
+/// skipped, unless `--config` names it. `Err` says why a file that's needed can't be used.
 pub(crate) fn read_bunfigs_in(
     directory: &[u8],
     command: &[u8],

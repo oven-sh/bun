@@ -1241,6 +1241,99 @@ describe("bundler", () => {
     });
   }
 
+  // An executable reads an embedded file by the loader in its record: a text module is a string body, a
+  // database is opened, a `file` import is the bytes. Two `file` imports of same-named files with equal bytes
+  // share one embedded file, and so do a `file` import and a `sqlite` embed. A text import gets its own, so
+  // each import finds its own form whichever import comes first.
+  // Not valid UTF-8: a `file` import that reads the text module's body gets U+FFFD bytes back.
+  const sameNameNote = Buffer.from([0x62, 0x61, 0x64, 0x20, 0xff, 0xfe, 0x20, 0xc3, 0x28, 0x0a]);
+  const sameNameDatabase = Buffer.from(
+    (() => {
+      const db = new Database(":memory:");
+      db.exec("create table messages (message text)");
+      db.exec("insert into messages values ('Hello, world!')");
+      return db.serialize();
+    })(),
+  );
+  const sameNameImports = [
+    `import noteFile from "./file/note.bin" with { type: "file" };`,
+    `import noteCopy from "./copy/note.bin" with { type: "file" };`,
+    `import noteText from "./text/note.bin" with { type: "text" };`,
+    `import databaseFile from "./file/app.db" with { type: "file" };`,
+    `import database from "./sqlite/app.db" with { type: "sqlite", embed: "true" };`,
+  ];
+  for (const [name, imports, options] of [
+    ["FileFirst/cli", sameNameImports, {}],
+    ["FileFirst/api", sameNameImports, { backend: "api" }],
+    ["FileLast/cli", [...sameNameImports].reverse(), {}],
+    ["FileLast/api", [...sameNameImports].reverse(), { backend: "api" }],
+    // Without `[hash]` in the path, only the content hash tells a copy from another file.
+    ["FileFirst/NoHash", sameNameImports, { assetNaming: "[name].[ext]" }],
+  ] as const) {
+    const embeddedName = "assetNaming" in options ? "file.name" : 'file.name.replace(/-[a-z0-9]+\\./, ".")';
+    itBundled(`compile/SameNameSameBytes/${name}`, {
+      compile: true,
+      ...options,
+      files: {
+        "/entry.ts": /* js */ `
+          ${imports.join("\n")}
+          const bytes = async path => Buffer.from(await Bun.file(path).bytes());
+          console.log(JSON.stringify({
+            noteText,
+            noteFile: (await bytes(noteFile)).toString("hex"),
+            // Two file imports of the same bytes share one embedded file.
+            noteCopy: noteCopy === noteFile,
+            message: database.query("select message from messages").get().message,
+            databaseFile: Bun.CryptoHasher.hash("sha256", await bytes(databaseFile), "hex"),
+            // A text module is not a file: only the two files are listed.
+            embedded: Bun.embeddedFiles.map(file => ${embeddedName}).sort(),
+          }));
+        `,
+        "/file/note.bin": sameNameNote,
+        "/copy/note.bin": sameNameNote,
+        "/text/note.bin": sameNameNote,
+        "/file/app.db": sameNameDatabase,
+        "/sqlite/app.db": sameNameDatabase,
+      },
+      run: {
+        stdout: JSON.stringify({
+          noteText: "bad \ufffd\ufffd \ufffd(\n",
+          noteFile: sameNameNote.toString("hex"),
+          noteCopy: true,
+          message: "Hello, world!",
+          databaseFile: Bun.CryptoHasher.hash("sha256", sameNameDatabase, "hex"),
+          embedded: ["app.db", "note.bin"],
+        }),
+      },
+    });
+  }
+
+  // One file can be the image of a page and a text import of the server. The page serves the file's bytes.
+  itBundled("compile/TextImportOfPageAsset", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import index from "./index.html";
+        import note from "./note.txt";
+        using server = Bun.serve({ port: 0, routes: { "/": index } });
+        const html = await (await fetch(server.url)).text();
+        const src = html.match(/<img src="([^"]+)"/)[1];
+        const served = await (await fetch(new URL(src, server.url))).bytes();
+        console.log(JSON.stringify({ note, served: Buffer.from(served).toString("hex") }));
+      `,
+      "/index.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <body>
+            <img src="./note.txt" />
+          </body>
+        </html>
+      `,
+      "/note.txt": Buffer.from([0x62, 0x61, 0x64, 0x20, 0xff, 0xfe]),
+    },
+    run: { stdout: JSON.stringify({ note: "bad \ufffd\ufffd", served: "62616420fffe" }) },
+  });
+
   // Text modules keep their own `[name]-[hash]` path: a user `--asset-naming`
   // without `[hash]` must not make two same-named text files share one path.
   itBundled("compile/TextImportSameBasename", {

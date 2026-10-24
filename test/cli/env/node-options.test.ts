@@ -412,7 +412,7 @@ describe("NODE_OPTIONS environment variable", () => {
     symlinkSync(bunExe(), `${String(dir)}/bunx`);
     await using proc = Bun.spawn({
       cmd: [`${String(dir)}/bunx`, "add", "--help"],
-      env: { ...bunEnv, NODE_OPTIONS: "--title=from-env", BUN_INTERNAL_BUNX_INSTALL: "true" },
+      env: { ...bunEnv, NODE_OPTIONS: "--title=from-env", BUN_INTERNAL_BUNX_INSTALL: String(dir) },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

@@ -539,7 +539,7 @@ impl<'s> Server<'s> {
         };
         let options = self.features().lint.then(|| self.lint_options_of(root));
         if let Some(Err(why)) = &options {
-            worker.tell_once(why.clone(), |why| self.tell("window/logMessage", 1, why));
+            worker.tell_once(why.clone(), |why| self.show_error(why));
         }
         let all = |session: Option<&Session>| {
             let mut job = first;
@@ -585,6 +585,18 @@ impl Worker<'_, '_> {
         }
     }
 
+    /// Said when a plugin would have run, which is when the user looks for it.
+    fn say_if_refused(&mut self) {
+        let server = self.server;
+        if let Some(no_engine) = self.no_engine
+            && self.root.is_folder
+            && no_engine.refused.swap(false, Ordering::Relaxed)
+        {
+            let why = no_engine.why.to_vec();
+            self.tell_once(why, |why| server.tell("window/logMessage", 2, why));
+        }
+    }
+
     /// Lints `document`. `None`: it cannot be, which the user is told.
     fn lint(
         &mut self,
@@ -598,14 +610,7 @@ impl Worker<'_, '_> {
             let kind = if weight == Weight::Warning { 2 } else { 3 };
             self.tell_once(line, |line| server.tell("window/logMessage", kind, line));
         }
-        // Said when a plugin would have run, which is when the user looks for it.
-        if let Some(no_engine) = self.no_engine
-            && self.root.is_folder
-            && no_engine.refused.swap(false, Ordering::Relaxed)
-        {
-            let why = no_engine.why.to_vec();
-            self.tell_once(why, |why| server.tell("window/logMessage", 2, why));
-        }
+        self.say_if_refused();
         match linted {
             Ok(result) => Some(result),
             Err(Fatal(why)) => {
@@ -754,7 +759,7 @@ impl Worker<'_, '_> {
         let mut options = match server.format_options_of(self.root) {
             Ok(options) => options,
             Err(why) => {
-                self.tell_once(why, |why| server.tell("window/logMessage", 1, why));
+                self.tell_once(why, |why| server.show_error(why));
                 return None;
             }
         };
@@ -775,7 +780,9 @@ impl Worker<'_, '_> {
             options.format.push((&b"rangeEnd"[..], index(end)));
         }
         options.stdin_filepath = Some(paths::to_native(document.path.clone()));
-        match crate::fmt::format_text(&options, self.environment, document.text.clone()) {
+        let formatted = crate::fmt::format_text(&options, self.environment, document.text.clone());
+        self.say_if_refused();
+        match formatted {
             Formatted::Text(text) => Some(places.edits_to(&text, range)),
             Formatted::Unchanged => Some(Vec::new()),
             Formatted::Failed { stderr } => {
@@ -1247,7 +1254,7 @@ impl<'d> Desk<'d, '_, '_> {
 
 /// Serves a client until it says `exit` or is gone, which ends the process. `args`: what follows the command on the
 /// command line, without `--lsp`.
-pub fn serve(args: &[&[u8]], environment: &Environment, process: &Process) {
+pub fn serve<'a>(args: &'a [&'a [u8]], environment: &'a Environment<'a>, process: &'a Process<'a>) {
     let server = &Server {
         args,
         environment,

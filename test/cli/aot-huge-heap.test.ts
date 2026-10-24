@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "../aot/harness/run";
-import { withoutCrashReport } from "../aot/run-programs";
+import { withoutCoreDump, withoutCrashReport } from "../aot/run-programs";
 import { describe, test } from "../aot/supported";
 
 // --aot keeps references between objects in 32 bits, which limits each thread to 32 GB of objects. --aot-huge-heap compiles with
@@ -51,7 +51,7 @@ describe.concurrent("--aot-huge-heap", () => {
       stderr: expect.not.stringMatching(/^error\b/m),
       exitCode: 0,
     });
-    const { stdout, stderr, exitCode } = await run([join(cwd, "program")], cwd, {
+    const { stdout, stderr, exitCode } = await run(withoutCoreDump([join(cwd, "program")]), cwd, {
       ...smallHeap,
       ...withoutCrashReport,
     });

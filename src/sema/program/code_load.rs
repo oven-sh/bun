@@ -13,6 +13,8 @@ use crate::resolve::{
 
 pub struct CompileInputs<'a, 's> {
     pub entry_points: &'a [Vec<u8>],
+    /// False for a part of a program, which starts somewhere else.
+    pub has_main_module: bool,
     pub code: &'a CodeOptions,
     pub fold: &'a FoldInputs<'s>,
     pub atoms: Interner<'s>,

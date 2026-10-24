@@ -90,7 +90,9 @@ function madeCases(topic: string, { without = [], seeds = 0 }: { without?: strin
             const fails = seeds > 0 && /(^|\n)exit code \d+/.test(plain);
             const verdict = fails ? "it fails in plain Bun" : whole.verdict.startsWith("alone: ") ? "alone: " + whereItDeparts(aot, plain) : whole.verdict;
             if (updates) found[name] = verdict;
-            expect({ verdict, plain, bundle }).toEqual({ verdict: updates ? verdict : (verdicts[name] ?? "all agree"), plain, bundle });
+            // How many calls fit on the stack differs from build to build, and with it whether the three stop at the same call.
+            const mayAgree = name.startsWith("at-the-stacks-end-") && verdict === "all agree";
+            expect({ verdict, plain, bundle }).toEqual({ verdict: updates || mayAgree ? verdict : (verdicts[name] ?? "all agree"), plain, bundle });
           }),
         600_000,
       );

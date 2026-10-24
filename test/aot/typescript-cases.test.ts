@@ -166,13 +166,15 @@ async function judge(folder: string, source: string): Promise<string> {
   return "same";
 }
 
+// These spread an iterator that never ends. `bun run` fills memory with it for as long as it is let, 10 GB and more.
+const neverEnds = new Set(["conformance/es6/destructuring/iterableArrayPattern15.ts"]);
+
 const cases = unsupported
   ? []
   : readCases()
       .filter(([, source]) => !skippedDirective.test(source))
-      .filter(([name], index) =>
-        selection === "all" ? true : selection ? name.includes(selection) : index % 50 === 0,
-      );
+      .filter(([name], index) => (selection === "all" ? true : selection ? name.includes(selection) : index % 50 === 0))
+      .filter(([name]) => !neverEnds.has(name));
 
 for (let shard = 0; shard < shardCount; shard++) {
   test.skipIf(!!unsupported)(

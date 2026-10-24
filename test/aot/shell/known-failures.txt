@@ -379,7 +379,6 @@ calls/arrow-function-stored-into-another-object-than-its-this	// IR= 1 sum PropG
 calls/builtin-only-callbacks-skip-signature-entry	// IR+ ^function f\d+ "byLastDigit" \w+ role=SignatureEntrypoint
 calls/builtin-only-callbacks-skip-signature-entry	// IR+ ^function f\d+ "descending" \w+ role=SignatureEntrypoint
 calls/builtin-only-callbacks-skip-signature-entry	// IR+ ^function f\d+ "productOf" \w+ role=SignatureEntrypoint
-calls/functions-that-call-themselves-last	// IR= 0 sumTo CallDirect
 calls/functions-that-call-themselves-last	// IR= 0 summed CallDirect
 calls/functions-that-call-themselves-last	// IR= 0 swapped CallDirect
 calls/functions-that-call-themselves-last	// IR= 0 tallied : =?L[0-9]+ = NewObject |CallDirect
@@ -513,10 +512,6 @@ escape-analysis/objects-handed-from-call-to-call	// IR= 2 isWrittenBehindTheJoin
 escape-analysis/objects-handed-from-call-to-call	// IR= 2 sourceIsWrittenBehindTheJoin : =?L[0-9]+ = NewObject |CallDirect
 escape-analysis/removed-allocations	//!
 escape-analysis/required-allocations	//!
-escape-analysis/results-forwarded-by-functions	// IR= 0 readsPair NewArray|ElemGet
-escape-analysis/results-inspected-and-then-returned	// IR= 0 readsAfterWork PropGet| = New(Plain)?Object 
-escape-analysis/results-inspected-and-then-returned	// IR= 0 readsInspected PropGet| = New(Plain)?Object 
-escape-analysis/results-inspected-and-then-returned	// IR= 0 readsInspectedTwice  = New(Plain)?Object 
 escape-analysis/results-inspected-and-then-returned	// IR= 2 readsAfterWork ResultAt
 escape-analysis/results-inspected-and-then-returned	// IR= 2 readsInspected ResultAt
 escape-analysis/results-inspected-and-then-returned	// IR= 2 readsInspectedTwice ResultAt

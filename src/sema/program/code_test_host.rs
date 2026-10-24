@@ -918,6 +918,7 @@ fn with_compile_inputs<'s, R>(
     let entry_points = to_paths(build.entry_points);
     then(&CompileInputs {
         entry_points: &entry_points,
+        has_main_module: true,
         code: &build.code,
         fold: &fold,
         atoms: Interner::new_in(session),

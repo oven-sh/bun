@@ -31,7 +31,7 @@ const files = {
 const filing = ["operationAOTGetByIdAndCache", "operationAOTPutByIdAndCache"];
 const plain = ["operationAOTGetById", "operationAOTPutById"];
 
-// TODO: counts-by-string-key: 40 places are filed a second time.
+// TODO: 40 places are filed a second time.
 test.todo(
   "reads and stores by name in code that runs once fill no caches",
   async () => {

@@ -97,6 +97,7 @@ pub fn load_program<'s>(
         root_files,
         &CompileInputs {
             entry_points: &entry_paths,
+            has_main_module: !is_configured,
             code: request.code,
             fold: request.fold,
             atoms: request.atoms,

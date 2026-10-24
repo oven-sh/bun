@@ -15,6 +15,33 @@ at most 3 given "abcd": documented TypeError, got TypeError
 at most 3 given "\u0061\u0062\u0063\u0064": documented TypeError, got TypeError
 at most 3 given "日本語語": documented TypeError, got TypeError
 at most 3 given "    ": documented TypeError, got TypeError
+at most 3, in code points given "🍞🍞🍞": documented value, got value "🍞🍞🍞"
+at most 3, in code points given "a🍞b": documented value, got value "a🍞b"
+at most 3, in code points given "\ud83c\udf5e\ud83c\udf5e\ud83c\udf5e": documented value, got value "🍞🍞🍞"
+at most 3, in code points given "\ud800\ud800\ud800": documented value, got value "\ud800\ud800\ud800"
+at most 3, in code points given "\udf5e\ud83c\udf5e\ud83c": documented value, got value "\udf5e🍞\ud83c"
+at most 3, in code points given "🍞🍞🍞🍞": documented TypeError, got TypeError
+at most 3, in code points given "ab🍞c": documented TypeError, got TypeError
+at most 3, in code points given "\ud800\ud800\ud800\ud800": documented TypeError, got TypeError
+at most 3, in code points given "\udf5e\ud83c\ud83c\udf5e\ud83c": documented TypeError, got TypeError
+at least 3, in code points given "abc": documented value, got value "abc"
+at least 3, in code points given "abcd": documented value, got value "abcd"
+at least 3, in code points given "abcde": documented value, got value "abcde"
+at least 3, in code points given "🍞🍞🍞": documented value, got value "🍞🍞🍞"
+at least 3, in code points given "a🍞b": documented value, got value "a🍞b"
+at least 3, in code points given "\ud800\ud800\ud800": documented value, got value "\ud800\ud800\ud800"
+at least 3, in code points given "\udf5e\ud83c\udf5e\ud83c": documented value, got value "\udf5e🍞\ud83c"
+at least 3, in code points given "": documented TypeError, got TypeError
+at least 3, in code points given "ab": documented TypeError, got TypeError
+at least 3, in code points given "🍞": documented TypeError, got TypeError
+at least 3, in code points given "🍞🍞": documented TypeError, got TypeError
+at least 3, in code points given "a🍞": documented TypeError, got TypeError
+at least 3, in code points given "\ud83c\udf5e\ud83c\udf5e": documented TypeError, got TypeError
+at least 3 in a member given "abc": documented value, got value {"name": "abc"}
+at least 3 in a member given "🍞🍞🍞🍞": documented value, got value {"name": "🍞🍞🍞🍞"}
+at least 3 in a member given "🍞🍞": documented TypeError, got TypeError
+at least 3 in a member given "🍞🍞🍞🍞🍞": documented TypeError, got TypeError
+at least 3 in a member given "abcde": documented TypeError, got TypeError
 lower case given "a": documented value, got value "a"
 lower case given "abc": documented value, got value "abc"
 lower case given "\u0061": documented value, got value "a"

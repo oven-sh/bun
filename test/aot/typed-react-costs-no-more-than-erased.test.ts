@@ -142,10 +142,10 @@ describe.skipIf(!!unsupported)("compile/aot/typed-react-costs-no-more-than-erase
   test("the bytes of code have not risen against the erased build", () =>
     expectAtMost(seen.typed.bytesOfCode - pageOfImage, seen.erased.bytesOfCode, known.bytesOfCode));
 
-  test.todo("a turn costs no more instructions with its types than without them (known-layouts)", () =>
+  test.todo("a turn costs no more instructions with its types than without them", () =>
     expectAtMost(instructionsOf(seen.typed.turn!), instructionsOf(seen.erased.turn!), 1, whereTypesCostMost()),
   );
-  test.todo("the program is no larger with its types than without them (known-layouts)", () =>
+  test.todo("the program is no larger with its types than without them", () =>
     expectAtMost(seen.typed.bytesOfCode, seen.erased.bytesOfCode, 1),
   );
 });

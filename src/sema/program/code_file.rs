@@ -425,7 +425,10 @@ fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> 
         entry_point.key.loader == key.loader
             && is_same_path(entry_point.key.path, key.path, context.is_case_sensitive)
     });
-    match (is_entry_point, entry_points.len()) {
+    match (
+        is_entry_point && context.inputs.has_main_module,
+        entry_points.len(),
+    ) {
         (false, _) => Some(false),
         (true, 1) => Some(true),
         (true, _) => None,

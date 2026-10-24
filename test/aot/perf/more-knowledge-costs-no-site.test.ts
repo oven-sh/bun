@@ -37,7 +37,7 @@ const today: Record<string, number> = {
 // No program builds without this result today.
 const doesNotBuild = new Set(["--aot-disable=flow:ReachedFunctions"]);
 
-// TODO: more-knowledge-worse-code: hundreds of builds do not end within the time that CI gives a file on four processors.
+// TODO: hundreds of builds do not end within the time that CI gives a file on four processors.
 const skipped = isDebug || isASAN || isCI ? "hundreds of builds" : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/more-knowledge-costs-no-site.test.ts: ${skipped}`);
 

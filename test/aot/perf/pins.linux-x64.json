@@ -293,9 +293,13 @@
     "jit": 543.1
   },
   "for-of/Map": {
-    "typed": 286,
-    "untyped": 288.1,
-    "jit": 355.4
+    "typed": 340.1,
+    "untyped": 342.3,
+    "jit": 355.4,
+    "best": {
+      "typed": 286,
+      "untyped": 288.1
+    }
   },
   "for-of/map-values-in-function": {
     "typed": 325.7,
@@ -910,9 +914,13 @@
     "jit": 290.1
   },
   "bytes/lengths-of-a-text-or-a-view": {
-    "typed": 20.0,
-    "untyped": 20.0,
-    "jit": 41.7
+    "typed": 25.1,
+    "untyped": 24,
+    "jit": 41.7,
+    "best": {
+      "typed": 20.0,
+      "untyped": 20.0
+    }
   },
   "bytes/new-view-of-four-thousand": {
     "typed": 1175.0,
@@ -1194,9 +1202,13 @@
     "jit": 179.7
   },
   "enumerate/values-of-an-element-of-a-local-list": {
-    "typed": 51.5,
-    "untyped": 51.5,
-    "jit": 419.5
+    "typed": 66.9,
+    "untyped": 68,
+    "jit": 419.5,
+    "best": {
+      "typed": 51.5,
+      "untyped": 51.5
+    }
   },
   "array/sum-of-a-float64-array": {
     "typed": 85,

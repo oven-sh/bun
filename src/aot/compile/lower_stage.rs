@@ -11,7 +11,7 @@ use crate::lower::{
     DefinedObjectTypes, FileInputs, LibraryFunctions, LoweredFile, LoweringInputs, LoweringOptions,
     lower_file,
 };
-use crate::modules::{Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
+use crate::modules::{Library, LinkedProject, ModuleGraph, ModuleKind, ModuleRef, Shape};
 use crate::package_diagnostics::{PackageView, report_package_errors, report_used_versions};
 use crate::report;
 use crate::statistics::{Counters, Stage, StatisticId};
@@ -87,6 +87,32 @@ fn world_key(text: &[u8], config_path: &[u8]) -> Vec<u8> {
     }
     let end = strings::last_index_of(text, b"\"files\"");
     text[..end.unwrap_or(text.len())].to_vec()
+}
+
+fn find_files_that_reach_commonjs_files(graph: &ModuleGraph) -> FxHashSet<FileId> {
+    let mut requesters: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
+    let mut pending = Vec::new();
+    for &file in graph.record_files() {
+        if graph.kind(file) == ModuleKind::CommonJs {
+            pending.push(file);
+        }
+        let inner_modules = graph.inner_modules(file).iter();
+        let inner_modules = inner_modules.map(|&callback| ModuleRef::Inner { file, callback });
+        for module in inner_modules.chain([ModuleRef::File(file)]) {
+            for request in graph.requests_of(module) {
+                if let ModuleRef::File(target) | ModuleRef::Face(target) = request.target {
+                    requesters.entry(target).or_default().push(file);
+                }
+            }
+        }
+    }
+    let mut found = FxHashSet::default();
+    while let Some(file) = pending.pop() {
+        if found.insert(file) {
+            pending.extend(requesters.get(&file).into_iter().flatten());
+        }
+    }
+    found
 }
 
 struct ProjectToLower<'a, 'b, 's> {
@@ -269,19 +295,21 @@ impl Build<'_> {
 
     /// A typed package is checked and lowered by a program of its own: the `tsconfig.json` beside its typed files, its
     /// `lib`, its globals. Nothing of the application's configuration reaches it. Packages that say the same share one,
-    /// and so do those that have no `tsconfig.json`. Which variables a CommonJS file exports into is decided by who
-    /// requires it, so it stays in the application's program.
+    /// and so do those that have no `tsconfig.json`. What a CommonJS file exports into is decided by everybody who
+    /// uses it, so it stays in the application's program, and so does every file that leads to one.
     fn lower_worlds(&mut self, loaded: &LoadedBuild<'_, '_>, bound: &BoundProject<'_>) -> Worlds {
         let left_out = &bound.left_out;
         let application = loaded.project(ProjectId::Application);
         let (files, host) = (application.loaded.files(), application.host);
         let mut groups: BTreeMap<Vec<u8>, (Option<Vec<u8>>, Vec<FileId>)> = BTreeMap::new();
+        let reaches_commonjs_files = find_files_that_reach_commonjs_files(&bound.graph);
         for &file in files.compiled_files() {
             let Some(typed) = (files.compiled(file)).and_then(|it| it.typed_source_path) else {
                 continue;
             };
             if files.role(file) != FileRole::Checked
                 || bound.graph.shape(ModuleRef::File(file)) != Shape::EsModule
+                || reaches_commonjs_files.contains(&file)
                 || files.hir(file).check_directive == Some(false)
                 || left_out.files.binary_search(&file).is_ok()
             {

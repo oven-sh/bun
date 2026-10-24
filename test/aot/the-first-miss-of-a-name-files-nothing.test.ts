@@ -39,7 +39,7 @@ const files = {
 
 const filing = ["operationAOTGetByIdAndCache", "operationAOTPutByIdAndCache", "operationAOTInByIdAndCache"];
 
-// TODO: counts-by-string-key: a pair is filed later than this test waits for.
+// TODO: a pair is filed later than this test waits for.
 test.todo(
   "a pair of shape and name is not filed at its first miss; once it has come back a few times it is, and then asks no more",
   async () => {

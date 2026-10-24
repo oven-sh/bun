@@ -1867,6 +1867,48 @@ export class Inside extends K {
     expect(exitCode).toBe(1);
   });
 
+  // The expected output is tsc's.
+  test("a pattern finds a `private` or `protected` property in the reduced constraint of a type parameter", async () => {
+    using dir = project({
+      "a.ts": `declare class K { private k?: 1; protected q?: 1; }
+type Alias = K | ({ k: true } & K);
+type Guarded = K | ({ q: true } & K);
+interface Holder { u: Alias; g: Guarded }
+export function direct<T extends K | ({ k: true } & K)>(v: T) { const { k } = v; v.k; }
+export function alias<T extends Alias>(v: T) { const { k } = v; }
+export function guarded<T extends Guarded>(v: T) { const { q } = v; v.q; }
+export function parameter<T extends Alias>({ k }: T) {}
+export function assignment<T extends Alias>(v: T) { let z; ({ k: z } = v); }
+export function indexed<H extends Holder>(v: H["u"], w: H["g"]) { const { k } = v; const { q } = w; }
+export function plain<T extends K>(v: T) { const { k, q } = v; }
+export function inter<T extends K>(v: T & { z: 1 }) { const { k } = v; }
+export function loop<T extends Alias>(v: T[]) { for (const { k } of v) k; }
+export function nested<T extends Alias, U extends T>(v: U) { const { k } = v; }
+export class Sub extends K { m<T extends Sub | ({ q: true } & Sub)>(v: T, t: this) { const { q } = v; const { q: q2 } = t; const { k } = t; } }
+`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout.split("\n")).toEqual([
+      `a.ts(5,73): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(5,84): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(6,56): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(7,60): error TS2445: Property 'q' is protected and only accessible within class 'K' and its subclasses.`,
+      `a.ts(7,71): error TS2445: Property 'q' is protected and only accessible within class 'K' and its subclasses.`,
+      `a.ts(8,46): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(9,63): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(10,75): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(10,92): error TS2445: Property 'q' is protected and only accessible within class 'K' and its subclasses.`,
+      `a.ts(11,52): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(11,55): error TS2445: Property 'q' is protected and only accessible within class 'K' and its subclasses.`,
+      `a.ts(12,63): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(13,62): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(14,70): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+      `a.ts(15,94): error TS2446: Property 'q' is protected and only accessible through an instance of class 'Sub'. This is an instance of class 'Sub'.`,
+      `a.ts(15,132): error TS2341: Property 'k' is private and only accessible within class 'K'.`,
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   // The constituents' properties decide, not the modifiers of the one declaration they have: a mapped type's property has
   // that declaration too, without the modifiers. The expected output is tsc's.
   test("drops `readonly`, `private` and `protected` from a property shared with a mapped type in an intersection or union", async () => {

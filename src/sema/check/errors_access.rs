@@ -1411,9 +1411,9 @@ impl<'p> Checker<'p, '_> {
         let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
         // The properties of the members themselves. An intersection inside a union contributes a single property.
         let mut constituents: SmallVec<[&Prop; 4]> = SmallVec::new();
-        // `getPropertyOfType`, where the caller has the property from, looks in the reduced type. For a pattern,
-        // `containing` is the destructured type as it is.
-        let reduced = self.reduced(containing);
+        // `getPropertyOfType`, where the caller has the property from, looks in the reduced apparent type. For a
+        // pattern, `containing` is the destructured type as it is.
+        let reduced = self.reduced_apparent_type(containing);
         for &member in self.parts(reduced) {
             let member = self.apparent_type(member);
             let Some((prop, _)) = self.prop_ref(member, name) else {

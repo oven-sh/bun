@@ -1120,7 +1120,10 @@ pub mod bv2_impl {
                 pub(crate) importer_source_index: u32,
                 pub(crate) import_record_index: u32,
                 pub(crate) range: bun_ast::Range,
+                /// The graph of the importer. A failure of the import is filed under it.
                 pub(crate) original_target: Target,
+                /// The graph of the imported module, see `BundleV2::import_record_target`.
+                pub(crate) target: Target,
                 /// Set for the html file of a dev server route, see `BundleV2::requested_file_loader`.
                 pub(crate) loader: Option<Loader>,
             }
@@ -2712,8 +2715,11 @@ pub mod bv2_impl {
         pub(crate) fn run_resolver(
             &mut self,
             import_record: &jsc_api::JSBundler::MiniImportRecord,
-            target: options::Target,
         ) {
+            // The module is resolved and filed for `target`. A failure of the
+            // import is reported for the importer's graph.
+            let target = import_record.target;
+            let importer_target = import_record.original_target;
             // reshaped for borrowck — `transpiler_for_target` borrows `&mut self`, so launder
             // through a raw pointer to keep `*self` available below.
             // SAFETY: the returned `&mut Transpiler` lives for `'a` (set in `init`) and is not
@@ -2771,12 +2777,7 @@ pub mod bv2_impl {
                             ..Default::default()
                         };
                         let idx = self
-                            .enqueue_parse_task(
-                                &file_map_result,
-                                &mut tmp_source,
-                                loader,
-                                import_record.original_target,
-                            )
+                            .enqueue_parse_task(&file_map_result, &mut tmp_source, loader, target)
                             .expect("oom");
                         // SAFETY: see `value_ptr` note above.
                         unsafe { *value_ptr = idx };
@@ -2831,7 +2832,7 @@ pub mod bv2_impl {
                                 dev.track_resolution_failure(
                                     &import_record.source_file,
                                     &import_record.specifier,
-                                    target.bake_graph(),
+                                    importer_target.bake_graph(),
                                     self.graph.input_files.items_loader()
                                         [import_record.importer_source_index as usize],
                                 )
@@ -2856,7 +2857,7 @@ pub mod bv2_impl {
                         let log: &mut bun_ast::Log = unsafe {
                             bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
                                 &import_record.source_file,
-                                target.bake_graph(),
+                                importer_target.bake_graph(),
                             ))
                         };
 
@@ -2892,7 +2893,7 @@ pub mod bv2_impl {
                                 && !self.transpiler.options.ignore_module_resolution_errors
                             {
                                 if is_package_path(&import_record.specifier) {
-                                    if target == Target::Browser
+                                    if importer_target == Target::Browser
                                         && options::is_node_builtin(path_to_use)
                                     {
                                         add_error(
@@ -3027,12 +3028,7 @@ pub mod bv2_impl {
                     ..Default::default()
                 };
                 let idx = self
-                    .enqueue_parse_task(
-                        &resolve_result,
-                        &mut tmp_source,
-                        loader,
-                        import_record.original_target,
-                    )
+                    .enqueue_parse_task(&resolve_result, &mut tmp_source, loader, target)
                     .expect("oom");
                 self.path_to_source_index_map(target)
                     .put(path.text, idx)
@@ -5317,10 +5313,7 @@ pub mod bv2_impl {
                             return;
                         }
 
-                        this.run_resolver(
-                            &resolve.import_record,
-                            resolve.import_record.original_target,
-                        );
+                        this.run_resolver(&resolve.import_record);
                         this.schedule_barrel_imports_after_plugin_resolve(
                             resolve.import_record.importer_source_index,
                         );
@@ -5393,7 +5386,7 @@ pub mod bv2_impl {
                         // through `value_ptr` (no intervening map mutation).
                         let (value_ptr, found_existing) = {
                             let existing = this
-                                .path_to_source_index_map(resolve.import_record.original_target)
+                                .path_to_source_index_map(resolve.import_record.target)
                                 .get_or_put(path.text)
                                 .expect("oom");
                             (
@@ -5408,10 +5401,7 @@ pub mod bv2_impl {
                             this.free_list.push(result.namespace);
                             this.free_list.push(result.path);
                             path = this
-                                .path_with_pretty_initialized(
-                                    &path,
-                                    resolve.import_record.original_target,
-                                )
+                                .path_with_pretty_initialized(&path, resolve.import_record.target)
                                 .expect("oom");
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
@@ -5464,14 +5454,14 @@ pub mod bv2_impl {
                                 },
                                 side_effects: bun_ast::SideEffects::HasSideEffects,
                                 jsx: this
-                                    .transpiler_for_target(resolve.import_record.original_target)
+                                    .transpiler_for_target(resolve.import_record.target)
                                     .options
                                     .jsx
                                     .clone(),
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
-                                known_target: resolve.import_record.original_target,
+                                known_target: resolve.import_record.target,
                                 is_entry_point: resolve.import_record.kind
                                     == ImportKind::EntryPointBuild,
                                 ..Default::default()
@@ -6358,6 +6348,7 @@ pub mod bv2_impl {
                             import_record_index,
                             range: import_record.range,
                             original_target,
+                            target: self.import_record_target(import_record, original_target),
                             loader: None,
                         },
                     );
@@ -6404,6 +6395,7 @@ pub mod bv2_impl {
                             import_record_index: 0,
                             range: bun_ast::Range::NONE,
                             original_target: target,
+                            target,
                             loader,
                         },
                     );

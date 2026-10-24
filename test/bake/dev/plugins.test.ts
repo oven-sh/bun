@@ -1,4 +1,5 @@
 // Plugin tests concern plugins in development mode.
+import { expect } from "bun:test";
 import { devTest, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
@@ -110,6 +111,54 @@ devTest("onResolve + onLoad virtual file", {
     ]);
   },
 });
+// An import with `bunBakeGraph: "ssr"` is for the SSR graph, also when an onResolve plugin sees it.
+// `#both` resolves to both-rsc.ts in the server graph and to both-ssr.ts in the SSR graph.
+for (const [answer, onResolve] of [
+  ["declines", `() => undefined`],
+  ["answers with a path", `() => ({ path: path.join(import.meta.dirname, "shared.ts") })`],
+]) {
+  devTest(`onResolve that ${answer} keeps the graph of an import`, {
+    framework: {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: true },
+    },
+    pluginFile: `
+      import * as path from 'path';
+      export default [
+        {
+          name: 'a',
+          setup(build) {
+            const onResolve = ${onResolve};
+            globalThis.resolved = [];
+            build.onResolve({ filter: /shared/ }, (args) => {
+              globalThis.resolved.push(args.path);
+              return onResolve(args);
+            });
+          },
+        }
+      ];
+    `,
+    files: {
+      "package.json": JSON.stringify({
+        imports: { "#both": { "react-server": "./both-rsc.ts", "default": "./both-ssr.ts" } },
+      }),
+      "both-rsc.ts": `export const which = "rsc";`,
+      "both-ssr.ts": `export const which = "ssr";`,
+      "shared.ts": `export { which } from "#both";`,
+      "routes/index.ts": `
+        import { which as plain } from '../shared';
+        import { which as ssr } from '../shared' with { bunBakeGraph: "ssr" };
+
+        export default function (req, meta) {
+          return Response.json({ plain, ssr, resolved: globalThis.resolved });
+        }
+      `,
+    },
+    async test(dev) {
+      expect(await dev.fetch("/").json()).toEqual({ plain: "rsc", ssr: "ssr", resolved: ["../shared", "../shared"] });
+    },
+  });
+}
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

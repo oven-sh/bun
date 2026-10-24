@@ -603,6 +603,30 @@ export default function () {
       ).toEqual({ page: "references=object,object tokens=1", exitCode: 0 });
     });
 
+    test.concurrent.each([
+      ["declines", `() => undefined`],
+      ["answers with a path", `() => ({ path: require("node:path").join(import.meta.dirname, "shared.ts") })`],
+    ])("an onResolve plugin that %s keeps the graph of an import", async (_, onResolve) => {
+      expect(
+        await prerender(
+          {
+            ...shared,
+            "routes/index.ts": `
+              import { which as plain } from "../shared";
+              import { which as ssr } from "../shared" with { bunBakeGraph: "ssr" };
+              export default () => "plain=" + plain + " ssr=" + ssr;
+            `,
+          },
+          `{
+            name: "resolve",
+            setup(build) {
+              build.onResolve({ filter: /shared/ }, ${onResolve});
+            },
+          }`,
+        ),
+      ).toEqual({ page: "plain=rsc ssr=ssr", exitCode: 0 });
+    });
+
     // A package with a "module" and a "main" field: an import gets "main" when its graph also requires the package.
     const dualPackage = {
       "node_modules/dual/package.json": JSON.stringify({ name: "dual", main: "./main.cjs", module: "./module.mjs" }),

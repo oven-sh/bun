@@ -336,7 +336,7 @@ void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
 /* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
  * teardown — listen sockets are owned by a Listener/App that frees them in
  * finalize, closing here would be a UAF on the owner's raw pointer).
- * `thread_ends`: a TLS socket whose close would wait for the peer ends with a FIN, as at the exit of a process. Otherwise it is reset. */
+ * `thread_ends`: a TLS socket sends no close_notify and ends with a FIN, as at the exit of a process. Otherwise it sends one, and is reset if its close would wait for the peer. */
 void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners, int thread_ends) nonnull_fn_decl;
 
 /* Teardown: close_all_ex(g, 0, 1) on every group currently linked to the loop

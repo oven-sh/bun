@@ -2120,25 +2120,24 @@ describe.each([
 });
 
 it.each([
-  ["set", headers => headers.set("content-type", "text/x-mine"), "text/x-mine", "text/x-mine"],
-  ["deleted", headers => headers.delete("content-type"), null, "application/octet-stream"],
-])(
-  "transform(response) goes by the input's header list if the program %s its Content-Type",
-  async (_, edit, inHeaders, sent) => {
-    using dir = tempDir("rewriter-content-type", { "page.html": "<p>hi</p>" });
-    const transform = () => {
-      const input = new Response(Bun.file(join(String(dir), "page.html")));
-      edit(input.headers);
-      return new HTMLRewriter().transform(input);
-    };
-    await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: transform });
-    expect({
-      inHeaders: transform().headers.get("content-type"),
-      sent: (await fetch(server.url)).headers.get("content-type"),
-      ofBlob: (await transform().blob()).type,
-    }).toEqual({ inHeaders, sent, ofBlob: inHeaders ?? "text/plain;charset=utf-8" });
-  },
-);
+  ["set", headers => headers.set("content-type", "text/x-mine"), "text/x-mine"],
+  ["deleted", headers => headers.delete("content-type"), null],
+])("transform(response) goes by the input's header list if the program %s its Content-Type", async (_, edit, type) => {
+  using dir = tempDir("rewriter-content-type", { "page.html": "<p>hi</p>" });
+  const transform = () => {
+    const input = new Response(Bun.file(join(String(dir), "page.html")));
+    edit(input.headers);
+    return new HTMLRewriter().transform(input);
+  };
+  await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: transform });
+  const sent = (await fetch(server.url)).headers.get("content-type");
+  expect({
+    inHeaders: transform().headers.get("content-type"),
+    // A body without a type is sent with the default type if the rewrite was over, and with none if it is streamed.
+    sent: sent === "application/octet-stream" ? null : sent,
+    ofBlob: (await transform().blob()).type,
+  }).toEqual({ inHeaders: type, sent: type, ofBlob: type ?? "text/plain;charset=utf-8" });
+});
 
 it("#3489", async () => {
   var el;

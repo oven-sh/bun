@@ -482,7 +482,8 @@ describe.each([
     `await new Promise(resolve => process.stdin.once("data", chunk => { head = chunk.length; process.stdin.pause(); resolve(); }));`,
   ],
 ])("Bun.stdin.stream() after process.stdin's %s", (_, before) => {
-  test.concurrent.each([
+  // Not concurrent: tests above depend on how soon this process writes to their children, and these keep it busy.
+  test.each([
     ["for await", `for await (const chunk of Bun.stdin.stream()) rest += chunk.length;`],
     ["pipeTo()", `await Bun.stdin.stream().pipeTo(new WritableStream({ write(chunk) { rest += chunk.length; } }));`],
     ["tee()", `for await (const chunk of Bun.stdin.stream().tee()[0]) rest += chunk.length;`],

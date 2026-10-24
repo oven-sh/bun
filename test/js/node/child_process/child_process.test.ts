@@ -304,9 +304,9 @@ describe("fork() IPC", () => {
       const log = line => fs.writeSync(1, line + "\\n");
       const waitFor = file => { while (!fs.existsSync(file)); };
       const callback = name => err => log(name + ": " + (err && [err.message, err.code, err.errno, err.syscall].join(", ")));`;
-    const parent = (send: string) => `${shared}
+    const parent = (send: string, listensForErrors = true) => `${shared}
       const child = require("node:child_process").fork(__dirname + "/child.js");
-      child.on("error", err => log("error: " + err.code));
+      ${listensForErrors ? `child.on("error", err => log("error: " + err.code));` : ""}
       child.on("disconnect", () => log("disconnect"));
       child.on("exit", code => log("exit " + code));
       child.once("message", () => {
@@ -356,12 +356,20 @@ describe("fork() IPC", () => {
       });
     });
 
-    // Node emits 'error' for the send() without a callback.
-    it.concurrent("emits no 'error' for a send() without a callback", async () => {
-      const files = {
-        "parent.js": parent(`child.send("first"); child.send("second", callback("second")); child.send("third");`),
-        "child.js": closes,
-      };
+    const someWithoutACallback = `child.send("first"); child.send("second", callback("second")); child.send("third");`;
+
+    it.concurrent("emits 'error' for a send() without a callback, in order", async () => {
+      const files = { "parent.js": parent(someWithoutACallback), "child.js": closes };
+      expect(await run(files)).toEqual({
+        stdout: ["sent", "error: EPIPE", `second: ${EPIPE}`, "error: EPIPE", "disconnect", "exit 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Node emits it all the same, which ends the program.
+    it.concurrent("emits no 'error' for a send() without a callback if nobody listens for it", async () => {
+      const files = { "parent.js": parent(someWithoutACallback, false), "child.js": closes };
       expect(await run(files)).toEqual({
         stdout: ["sent", `second: ${EPIPE}`, "disconnect", "exit 0"],
         stderr: "",

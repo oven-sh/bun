@@ -1228,26 +1228,18 @@ impl GlobPattern {
 pub(crate) struct GlobName<'a>(&'a bun_core::ZStr);
 
 impl<'a> GlobName<'a> {
-    /// The path that `extract()` writes, with no "./", "//", "\\" or "..".
-    fn written(stored: &'a bun_core::ZStr, buf: &'a mut [u8], spill: &'a mut Vec<u8>) -> Self {
-        Self::new(stored, buf, spill, false)
+    /// The path that `extract()` writes, with no "./", "//", "\\" or "..". It is always in `buf`.
+    fn written(stored: &[u8], buf: &'a mut [u8]) -> Self {
+        Self(bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(stored, buf))
     }
 
-    /// As `written`, but a name that `is_safe_path` refuses stays as stored: a key of `files()` has no ".." that its pattern did not match.
+    /// As `written`, but `stored` itself when it needs no change or when `is_safe_path` refuses it: a key of `files()` has no ".." that its pattern did not match.
     fn listed(stored: &'a bun_core::ZStr, buf: &'a mut [u8], spill: &'a mut Vec<u8>) -> Self {
-        Self::new(stored, buf, spill, true)
-    }
-
-    /// Borrows `stored` when it needs no change. Otherwise the name goes to `buf`, or to `spill` when `buf` is too small.
-    fn new(
-        stored: &'a bun_core::ZStr,
-        buf: &'a mut [u8],
-        spill: &'a mut Vec<u8>,
-        keeps_unsafe: bool,
-    ) -> Self {
         use bun_paths::resolve_path;
         let name = stored.as_bytes();
-        if resolve_path::is_normalized_posix(name) || keeps_unsafe && !is_safe_path(name) {
+        if resolve_path::is_normalized_posix(name) || !is_safe_path(name) {
             return Self(stored);
         }
         Self(resolve_path::normalize_buf_z_spill::<
@@ -1351,8 +1343,7 @@ fn extract_to_disk_filtered(
         if raw_pathname.len() >= normalized_buf.len() {
             continue;
         }
-        let mut long_name = Vec::new();
-        let name = GlobName::written(raw_pathname_z, &mut normalized_buf[..], &mut long_name);
+        let name = GlobName::written(raw_pathname, &mut normalized_buf[..]);
         let pathname_z = name.0;
         let pathname = pathname_z.as_bytes();
 

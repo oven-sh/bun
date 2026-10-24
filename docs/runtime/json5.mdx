@@ -83,6 +83,18 @@ line 2',
 }`);
 ```
 
+#### Reviver
+
+Pass a function as the second argument to transform the result, like the `reviver` of `JSON.parse`. Bun calls the function with the key and the value of each member of the parsed value, deepest first. `this` is the object that holds the member. The member takes the value that the function returns. If the function returns `undefined`, Bun deletes the member. The function does not get the `context` argument that `JSON.parse` passes.
+
+```ts
+const data = JSON5.parse("{created: '2026-01-01', tags: ['a', 'b']}", (key, value) =>
+  key === "created" ? new Date(value) : value,
+) as { created: Date; tags: string[] };
+
+console.log(data.created instanceof Date); // true
+```
+
 #### Error Handling
 
 `Bun.JSON5.parse()` throws a `SyntaxError` if the input is invalid JSON5:
@@ -138,6 +150,33 @@ The `space` argument can be a number (number of spaces) or a string (used as the
 ```ts
 // Tab indentation
 JSON5.stringify(data, null, "\t");
+```
+
+#### Replacer
+
+The second argument works like the `replacer` of `JSON.stringify`. It is a function or an array.
+
+Bun calls a function with the key and the value of each member, and stringifies what the function returns in place of the member. `this` is the object that holds the member. If the function returns `undefined` for a property, Bun leaves the property out:
+
+```ts
+JSON5.stringify({ name: "my-app", password: "hunter2" }, (key, value) => (key === "password" ? undefined : value));
+// {name:'my-app'}
+```
+
+An array of strings and numbers names the properties to include. Bun leaves every other property out, at every depth, and writes the properties in the order of the array:
+
+```ts
+JSON5.stringify({ a: 1, b: { a: 2, c: 3 }, c: 4 }, ["b", "a"]);
+// {b:{a:2},a:1}
+```
+
+#### `toJSON5()` and `toJSON()`
+
+If an object has a `toJSON5()` method, Bun calls it with the key and stringifies what it returns in place of the object. Otherwise Bun does the same with `toJSON()`, so a `Date` becomes its ISO string. A replacer function gets the value that the method returned.
+
+```ts
+JSON5.stringify({ at: new Date(0), id: { toJSON5: () => 0xff } });
+// {at:'1970-01-01T00:00:00.000Z',id:255}
 ```
 
 #### Special Values

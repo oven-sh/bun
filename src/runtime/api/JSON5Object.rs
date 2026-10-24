@@ -2,8 +2,10 @@ use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_js_parser::lexer;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
+use bun_jsc::{
+    self as jsc, JSArrayIterator, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf,
+};
 use bun_parsers::json5;
 
 pub(crate) fn stringify<'a>(
@@ -15,17 +17,21 @@ pub(crate) fn stringify<'a>(
     let global = cx.global();
     let (value, replacer, space_value) = (value.to_js(), replacer.to_js(), space.to_js());
 
-    if value.is_undefined() || value.is_symbol() || value.is_function() {
+    let replacer = Replacer::init(global, replacer)?;
+    let mut stringifier = Stringifier::init(global, &replacer, space_value)?;
+
+    let holder = if matches!(replacer, Replacer::Function(_)) {
+        let holder = JSValue::create_empty_object(global, 1);
+        holder.put_may_be_index(global, &BunString::EMPTY, value)?;
+        holder
+    } else {
+        JSValue::UNDEFINED
+    };
+    let value = stringifier.transform(global, holder, Key::Name(&BunString::EMPTY), value)?;
+
+    if is_omitted(value) {
         return Ok(JSValue::UNDEFINED);
     }
-
-    if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
-            "JSON5.stringify does not support the replacer argument"
-        )));
-    }
-
-    let mut stringifier = Stringifier::init(global, space_value)?;
 
     if let Err(err) = stringifier.stringify_value(global, value) {
         return match err {
@@ -37,10 +43,24 @@ pub(crate) fn stringify<'a>(
     stringifier.builder.to_string(global)
 }
 
-pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
+pub(crate) fn parse<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsBytes<'a>,
+    reviver: JsLocal<'a>,
+) -> JsResult<JSValue> {
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
     // defined and not set. What throws returns without reading `input` again.
-    let global = unsafe { heap.global() };
+    let global = unsafe { cx.heap.global() };
+    let root = parse_to_value(global, input.get(&cx.heap))?;
+
+    let reviver = reviver.to_js();
+    if !reviver.is_callable() {
+        return Ok(root);
+    }
+    root.json_revive(cx.global(), reviver)
+}
+
+fn parse_to_value(global: &JSGlobalObject, input: &[u8]) -> JsResult<JSValue> {
     super::with_text_format_source(global, input, b"input.json5", |bump, log, source| {
         let root =
             match json5::JSON5Parser::parse(source, log, bump) {
@@ -69,11 +89,64 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     })
 }
 
-struct Stringifier {
+/// `undefined`, a symbol and a function have no JSON5: a property is left out, and an array item is `null`.
+fn is_omitted(value: JSValue) -> bool {
+    value.is_undefined()
+        || value.is_symbol()
+        || value.is_function()
+        || (is_proxy(value) && value.is_callable())
+}
+
+fn is_proxy(value: JSValue) -> bool {
+    value.is_cell() && value.js_type() == jsc::JSType::ProxyObject
+}
+
+enum Replacer {
+    None,
+    /// An argument of the call, so the caller's frame keeps it alive.
+    Function(JSValue),
+    /// The only properties of an object to write, in this order.
+    PropertyList(Vec<BunString>),
+}
+
+impl Replacer {
+    fn init(global: &JSGlobalObject, replacer: JSValue) -> JsResult<Replacer> {
+        if !replacer.is_object() {
+            return Ok(Replacer::None);
+        }
+        if replacer.is_callable() {
+            return Ok(Replacer::Function(replacer));
+        }
+        // `JSON.stringify` ignores any other object, and the `json5` package reads it as options.
+        if !replacer.is_array_or_proxy_of_array(global)? {
+            return Err(global.throw_type_error(format_args!(
+                "JSON5.stringify replacer must be a function or an array"
+            )));
+        }
+
+        let mut iter = replacer
+            .json_property_list(global)?
+            .array_iterator(global)?;
+        let mut names = Vec::with_capacity(iter.len as usize);
+        while let Some(name) = iter.next()? {
+            names.push(name.to_bun_string(global)?);
+        }
+        Ok(Replacer::PropertyList(names))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Key<'a> {
+    Name(&'a BunString),
+    Index(u32),
+}
+
+struct Stringifier<'a> {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
     space: Space,
+    replacer: &'a Replacer,
     // NOTE: `JSValue` keys live on the heap here, but every entry is also
     // live on the native stack via the `stringify_value` recursion chain, so the
     // conservative GC scan keeps them alive.
@@ -125,15 +198,62 @@ impl Space {
     }
 }
 
-impl Stringifier {
-    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+impl<'a> Stringifier<'a> {
+    fn init(
+        global: &JSGlobalObject,
+        replacer: &'a Replacer,
+        space_value: JSValue,
+    ) -> JsResult<Stringifier<'a>> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
             indent: 0,
             space: Space::init(global, space_value)?,
+            replacer,
             visiting: HashMap::default(),
         })
+    }
+
+    /// What to write for `holder[key]`, which is `value`: what its `toJSON5` or `toJSON` returns, and then what the
+    /// replacer function makes of that. `holder` is only read by a replacer function.
+    fn transform(
+        &self,
+        global: &JSGlobalObject,
+        holder: JSValue,
+        key: Key<'_>,
+        value: JSValue,
+    ) -> JsResult<JSValue> {
+        let to_json = if value.is_cell() {
+            jsc::cpp::JSC__JSValue__getToJSON5Method(value, global)?
+        } else {
+            JSValue::UNDEFINED
+        };
+        let replacer = match *self.replacer {
+            Replacer::Function(function) => Some(function),
+            _ => None,
+        };
+        if to_json.is_undefined() && replacer.is_none() {
+            return Ok(value);
+        }
+
+        let key = match key {
+            Key::Name(name) => name.to_js(global)?,
+            Key::Index(index) => JSValue::js_number_from_uint64(u64::from(index))
+                .to_js_string(global)?
+                .to_js(),
+        };
+        let mut value = value;
+        if !to_json.is_undefined() {
+            value = to_json.call(global, value, &[key])?;
+        }
+        if let Some(replacer) = replacer {
+            value = replacer.call(global, holder, &[key, value])?;
+        }
+        Ok(value)
+    }
+
+    fn is_pretty(&self) -> bool {
+        !matches!(self.space, Space::Minified)
     }
 
     fn stringify_value(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
@@ -204,7 +324,9 @@ impl Stringifier {
         }
         // NOTE: a scopeguard here would hold `&mut self.visiting` across the recursive
         // `&mut self` calls below, so remove manually after the call instead.
-        let result = if unwrapped.is_array() {
+        let is_array = unwrapped.is_array()
+            || (is_proxy(unwrapped) && unwrapped.is_array_or_proxy_of_array(global)?);
+        let result = if is_array {
             self.stringify_array(global, unwrapped)
         } else {
             self.stringify_object(global, unwrapped)
@@ -214,118 +336,112 @@ impl Stringifier {
         result
     }
 
-    fn stringify_array(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
-        let mut iter = value.array_iterator(global)?;
-
-        if iter.len == 0 {
-            self.builder.append_latin1(b"[]");
-            return Ok(());
-        }
+    fn stringify_array(&mut self, global: &JSGlobalObject, array: JSValue) -> StringifyResult<()> {
+        let mut iter = if is_proxy(array) {
+            JSArrayIterator::with_len(array, global, array.json_array_length(global)?)
+        } else {
+            array.array_iterator(global)?
+        };
 
         self.builder.append_lchar(b'[');
+        self.indent += 1;
 
-        match self.space {
-            Space::Minified => {
-                let mut first = true;
-                while let Some(item) = iter.next()? {
-                    if !first {
-                        self.builder.append_lchar(b',');
-                    }
-                    first = false;
-                    if item.is_undefined() || item.is_symbol() || item.is_function() {
-                        self.builder.append_latin1(b"null");
-                    } else {
-                        self.stringify_value(global, item)?;
-                    }
-                }
-            }
-            Space::Number(_) | Space::Str(_) => {
-                self.indent += 1;
-                let mut first = true;
-                while let Some(item) = iter.next()? {
-                    if !first {
-                        self.builder.append_lchar(b',');
-                    }
-                    first = false;
-                    self.newline();
-                    if item.is_undefined() || item.is_symbol() || item.is_function() {
-                        self.builder.append_latin1(b"null");
-                    } else {
-                        self.stringify_value(global, item)?;
-                    }
-                }
-                // Trailing comma
+        let mut index: u32 = 0;
+        while let Some(item) = iter.next()? {
+            if index > 0 {
                 self.builder.append_lchar(b',');
-                self.indent -= 1;
-                self.newline();
             }
+            self.newline();
+            let item = self.transform(global, array, Key::Index(index), item)?;
+            if is_omitted(item) {
+                self.builder.append_latin1(b"null");
+            } else {
+                self.stringify_value(global, item)?;
+            }
+            index += 1;
+        }
+
+        self.indent -= 1;
+        if index > 0 && self.is_pretty() {
+            // Trailing comma
+            self.builder.append_lchar(b',');
+            self.newline();
         }
 
         self.builder.append_lchar(b']');
         Ok(())
     }
 
-    fn stringify_object(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
-        let iter = jsc::JSPropertyIterator::init(
-            global,
-            value.to_object(global)?,
-            jsc::JSPropertyIteratorOptions {
-                skip_empty_name: false,
-                include_value: true,
-                ..Default::default()
-            },
-        )?;
+    fn stringify_object(
+        &mut self,
+        global: &JSGlobalObject,
+        object: JSValue,
+    ) -> StringifyResult<()> {
+        self.builder.append_lchar(b'{');
+        self.indent += 1;
 
-        if iter.len == 0 {
-            self.builder.append_latin1(b"{}");
-            return Ok(());
+        let mut first = true;
+        let replacer = self.replacer;
+        if let Replacer::PropertyList(names) = replacer {
+            for name in names {
+                let value = object.get_bun_string(global, name)?;
+                self.stringify_property(global, object, name, value, &mut first)?;
+            }
+        } else {
+            // The iterator skips a property that is gone by the time it is reached. A replacer function can delete
+            // one, and is still called for it.
+            let include_value = matches!(replacer, Replacer::None);
+            let iter = jsc::JSPropertyIterator::init(
+                global,
+                object.to_object(global)?,
+                jsc::JSPropertyIteratorOptions {
+                    skip_empty_name: false,
+                    include_value,
+                    ..Default::default()
+                },
+            )?;
+            while let Some((name, value)) = iter.next()? {
+                let value = if include_value {
+                    value
+                } else {
+                    object.get_bun_string(global, &name)?
+                };
+                self.stringify_property(global, object, &name, value, &mut first)?;
+            }
         }
 
-        self.builder.append_lchar(b'{');
-
-        match self.space {
-            Space::Minified => {
-                let mut first = true;
-                while let Some((prop_name, value)) = iter.next()? {
-                    if value.is_undefined() || value.is_symbol() || value.is_function() {
-                        continue;
-                    }
-                    if !first {
-                        self.builder.append_lchar(b',');
-                    }
-                    first = false;
-                    self.append_key(&prop_name);
-                    self.builder.append_lchar(b':');
-                    self.stringify_value(global, value)?;
-                }
-            }
-            Space::Number(_) | Space::Str(_) => {
-                self.indent += 1;
-                let mut first = true;
-                while let Some((prop_name, value)) = iter.next()? {
-                    if value.is_undefined() || value.is_symbol() || value.is_function() {
-                        continue;
-                    }
-                    if !first {
-                        self.builder.append_lchar(b',');
-                    }
-                    first = false;
-                    self.newline();
-                    self.append_key(&prop_name);
-                    self.builder.append_latin1(b": ");
-                    self.stringify_value(global, value)?;
-                }
-                self.indent -= 1;
-                if !first {
-                    // Trailing comma
-                    self.builder.append_lchar(b',');
-                    self.newline();
-                }
-            }
+        self.indent -= 1;
+        if !first && self.is_pretty() {
+            // Trailing comma
+            self.builder.append_lchar(b',');
+            self.newline();
         }
 
         self.builder.append_lchar(b'}');
         Ok(())
+    }
+
+    fn stringify_property(
+        &mut self,
+        global: &JSGlobalObject,
+        holder: JSValue,
+        name: &BunString,
+        value: JSValue,
+        first: &mut bool,
+    ) -> StringifyResult<()> {
+        let value = self.transform(global, holder, Key::Name(name), value)?;
+        if is_omitted(value) {
+            return Ok(());
+        }
+        if !*first {
+            self.builder.append_lchar(b',');
+        }
+        *first = false;
+        self.newline();
+        self.append_key(name);
+        self.builder
+            .append_latin1(if self.is_pretty() { b": " } else { b":" });
+        self.stringify_value(global, value)
     }
 
     fn append_key(&mut self, name: &BunString) {

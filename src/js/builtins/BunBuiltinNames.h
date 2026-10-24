@@ -184,6 +184,7 @@ using namespace JSC;
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
+    macro(toJSON5) \
     macro(toNamespacedPath) \
     macro(transform) \
     macro(type) \

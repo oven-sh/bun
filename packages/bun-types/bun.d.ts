@@ -2070,6 +2070,10 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The JSON5 string to parse
+     * @param reviver A function that transforms the result, like the `reviver` of `JSON.parse`. It is called for
+     *                each member of the parsed value, deepest first, with the object that holds the member as `this`.
+     *                The member takes the value it returns, and is deleted if it returns `undefined`. It does not
+     *                get the `context` argument that `JSON.parse` passes.
      * @returns A JavaScript value
      *
      * @example
@@ -2084,23 +2088,30 @@ declare module "bun" {
      *   half: .5,
      *   infinity: Infinity,
      * }`);
+     *
+     * JSON5.parse("{a: 1, b: [2, 3]}", (key, value) => (typeof value === "number" ? value * 2 : value));
+     * // { a: 2, b: [4, 6] }
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(input: string, reviver?: ((this: any, key: string, value: any) => any) | null): unknown;
 
     /**
      * Convert a JavaScript value into a JSON5 string. Object keys that are
      * valid identifiers are unquoted, strings use double quotes, `Infinity`
      * and `NaN` are represented as literals, and indented output includes
-     * trailing commas.
+     * trailing commas. A value with a `toJSON5()` method, or else a `toJSON()`
+     * method, is replaced by what that method returns.
      *
      * @category Utilities
      *
      * @param input The JavaScript value to stringify.
-     * @param replacer Not supported.
+     * @param replacer Like the `replacer` of `JSON.stringify`. A function is called for each member of the value, with
+     *                 the object that holds the member as `this`, and what it returns is stringified in the member's
+     *                 place. An array of strings and numbers names the only properties of objects to include.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
-     * @returns A JSON5 string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     * @returns A JSON5 string, or `undefined` if the input (or what a `replacer` function returns for it) is
+     *          `undefined`, a function, or a symbol.
      *
      * @example
      * ```ts
@@ -2114,9 +2125,19 @@ declare module "bun" {
      * //   a: 1,
      * //   b: 2,
      * // }
+     *
+     * console.log(JSON5.stringify({ a: 1, b: 2 }, ["a"]));
+     * // {a:1}
+     *
+     * console.log(JSON5.stringify({ a: 1, b: 2 }, (key, value) => (key === "b" ? undefined : value)));
+     * // {a:1}
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+    export function stringify(
+      input: unknown,
+      replacer?: ((this: any, key: string, value: any) => any) | (string | number)[] | null,
+      space?: string | number,
+    ): string | undefined;
   }
 
   /**

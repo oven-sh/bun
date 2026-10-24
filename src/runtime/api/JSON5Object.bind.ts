@@ -9,10 +9,12 @@ export const JSON5 = b.namespace({
         from: ["string", "buffer", "blob"],
         otherwise: "toString",
         refuse: ["undefined", "null"],
+        held: "handle",
       }),
+      reviver: b.any,
     },
     returns: b.any,
-    capability: "heap",
+    capability: "js",
     throws: true,
   },
   stringify: {

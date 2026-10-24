@@ -38,6 +38,17 @@ impl<'a> JSArrayIterator<'a> {
         })
     }
 
+    /// For a caller that read the `length` of `value` itself.
+    pub fn with_len(value: JSValue, global: &'a JSGlobalObject, len: u32) -> JSArrayIterator<'a> {
+        JSArrayIterator {
+            i: 0,
+            len,
+            array: value,
+            global,
+            fast: None,
+        }
+    }
+
     pub fn next(&mut self) -> JsResult<Option<JSValue>> {
         if !(self.i < self.len) {
             return Ok(None);

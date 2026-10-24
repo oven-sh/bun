@@ -927,7 +927,7 @@ private:
         auto *httpContextData = getSocketContextDataS(s);
 
 
-        if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
+        if ((IsNodeHttp || httpResponseData->isConnectRequest) && httpResponseData->socketData && httpContextData->onSocketDrain) {
             httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
         }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */

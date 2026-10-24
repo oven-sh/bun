@@ -353,7 +353,7 @@ impl<'s> Checker<'_, 's> {
     /// `checkDecorators` returns before it checks the decorators of a node that can't be decorated.
     fn check_decorator_expression(&mut self, file: FileId, e: ExprId) {
         if self.bound(file).rejected_decorators.contains(&e) {
-            self.never_check(self.start_of(file, e), self.end_of_expr(file, e));
+            self.never_check(file, self.start_of(file, e), self.end_of_expr(file, e));
         } else {
             self.check_expression(file, e);
         }
@@ -1406,7 +1406,7 @@ impl<'s> Checker<'_, 's> {
                         self.check_grammar_export_equals(file, s);
                     }
                 } else if e.is_some() {
-                    self.never_check(self.start_of(file, e), hir[s].loc.end);
+                    self.never_check(file, self.start_of(file, e), hir[s].loc.end);
                 }
                 if matches!(hir[s].kind, StmtKind::ExportAssign(_))
                     && matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
@@ -1559,7 +1559,7 @@ impl<'s> Checker<'_, 's> {
                     // `parseVariableDeclarationList` leaves the list empty only before `of Identifier )`.
                     StmtKind::Var(decls) if decls.is_empty() => {
                         let start = self.start_of(file, expr);
-                        self.never_check(start, start + 1);
+                        self.never_check(file, start, start + 1);
                     }
                     StmtKind::Var(_) => {
                         self.check_for_initializer(file, left, Kind::ForOfStatement);
@@ -2028,7 +2028,8 @@ impl<'s> Checker<'_, 's> {
             let value = hir[p].value;
             if is_never_checked {
                 if value.is_some() {
-                    self.never_check(self.start_of(file, value), self.end_of_expr(file, value));
+                    let (start, end) = (self.start_of(file, value), self.end_of_expr(file, value));
+                    self.never_check(file, start, end);
                 }
                 continue;
             }

@@ -214,10 +214,13 @@ impl Checker<'_, '_> {
         true
     }
 
-    /// Marks `start` to `end` as a range `checkSourceFile` never visits. Diagnostics that a pass reports there are
-    /// removed.
-    pub(super) fn never_check(&self, start: u32, end: u32) {
-        self.never_checked.borrow_mut().push((start, end));
+    /// Marks `start` to `end` of `file` as a range `checkSourceFile` never visits. Diagnostics that a pass reports
+    /// there are removed. The ranges are those of the file being checked: a query runs parts of the walk for another
+    /// file, and that marks nothing.
+    pub(super) fn never_check(&self, file: FileId, start: u32, end: u32) {
+        if self.task.file == Some(file) {
+            self.never_checked.borrow_mut().push((start, end));
+        }
     }
 
     /// `checkStrictModeWithStatement`, `checkStrictModeLabeledStatement`: 1101 1344. The binder visits every node,
@@ -322,10 +325,8 @@ impl Checker<'_, '_> {
         let required = hir.import_equals.iter().map(|import| import.expression);
         let specifiers = hir.specifier_expressions.iter().copied();
         for specifier in specifiers.chain(required.filter(|e| e.is_some())) {
-            self.never_check(
-                self.start_of(file, specifier),
-                self.end_of_expr(file, specifier),
-            );
+            let start = self.start_of(file, specifier);
+            self.never_check(file, start, self.end_of_expr(file, specifier));
         }
     }
 
@@ -341,7 +342,7 @@ impl Checker<'_, '_> {
         let mut visited = Vec::new();
         self.ranges_visited_by_queries(file, node, &mut visited);
         for (from, to) in parts_outside(range, visited) {
-            self.never_check(from, to);
+            self.never_check(file, from, to);
         }
     }
 
@@ -398,7 +399,7 @@ impl Checker<'_, '_> {
         if let StmtKind::Return(e) = hir[s].kind
             && e.is_some()
         {
-            self.never_check(self.start_of(file, e), hir[s].loc.end);
+            self.never_check(file, self.start_of(file, e), hir[s].loc.end);
         }
         None
     }

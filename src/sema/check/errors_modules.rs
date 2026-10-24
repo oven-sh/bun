@@ -1778,7 +1778,8 @@ impl Checker<'_, '_> {
             for value in options.iter().map(|it| hir[it].value) {
                 // 1453 is reported at a string.
                 if value.is_some() && self.modules_string_literal_like(file, value).is_none() {
-                    self.never_check(self.start_of(file, value), self.end_of_expr(file, value));
+                    let (start, end) = (self.start_of(file, value), self.end_of_expr(file, value));
+                    self.never_check(file, start, end);
                 }
             }
         }

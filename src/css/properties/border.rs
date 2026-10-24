@@ -442,6 +442,17 @@ impl BorderShorthand {
         self.width.is_some() && self.style.is_some() && self.color.is_some()
     }
 
+    fn is_empty(&self) -> bool {
+        self.width.is_none() && self.style.is_none() && self.color.is_none()
+    }
+
+    /// Whether this side holds exactly this width, style and color.
+    fn holds(&self, width: &BorderSideWidth, style: LineStyle, color: &CssColor) -> bool {
+        self.width.as_ref() == Some(width)
+            && self.style == Some(style)
+            && self.color.as_ref() == Some(color)
+    }
+
     /// Generic over the `P` const param so the same `BorderShorthand` data
     /// can populate any of `BorderTop`/`BorderLeft`/.../`Border`.
     fn to_border<const P: u8>(&self, arena: &Bump) -> GenericBorder<LineStyle, P> {
@@ -1259,6 +1270,90 @@ mod border_handler_body {
                 }};
             }
 
+            // A target drops `border` or a side shorthand when it lacks the width or the color.
+            macro_rules! lacks_border {
+                ($val:expr) => {
+                    !(context.targets.supports(&$val.width)
+                        && context.targets.supports(&$val.color))
+                };
+            }
+
+            // `border-top`, `border-right`, `border-bottom` and `border-left`.
+            macro_rules! set_physical_border_helper {
+                ($key:ident, $flag:ident, $val:expr) => {{
+                    if Physical != self.category {
+                        self.flush(dest, context);
+                    }
+
+                    // One test for the whole shorthand: see `flush_fallback`.
+                    if self.has_any
+                        && !self.$key.is_empty()
+                        && lacks_border!($val)
+                        && !self.$key.holds(&$val.width, $val.style, &$val.color)
+                    {
+                        self.flush_fallback(BorderProperty::$flag, true, dest, context);
+                    }
+
+                    self.$key.set_border(arena, $val);
+                    self.category = Physical;
+                    self.has_any = true;
+                }};
+            }
+
+            // `border-width`, `border-style` and `border-color`.
+            macro_rules! rect_helper {
+                ($prop:ident, $flag:ident, $val:expr) => {{
+                    if Physical != self.category {
+                        self.flush(dest, context);
+                    }
+
+                    // One test for the whole shorthand, before the first store: see
+                    // `flush_fallback`.
+                    if self.has_any
+                        && (self.border_top.$prop.is_some()
+                            || self.border_right.$prop.is_some()
+                            || self.border_bottom.$prop.is_some()
+                            || self.border_left.$prop.is_some())
+                        && !(context.targets.supports(&$val.top)
+                            && context.targets.supports(&$val.right)
+                            && context.targets.supports(&$val.bottom)
+                            && context.targets.supports(&$val.left))
+                    {
+                        let (mut holds_same, mut holds_own_fallback) = (true, false);
+                        for (held, side) in [
+                            (&self.border_top.$prop, &$val.top),
+                            (&self.border_right.$prop, &$val.right),
+                            (&self.border_bottom.$prop, &$val.bottom),
+                            (&self.border_left.$prop, &$val.left),
+                        ] {
+                            let equal = held.as_ref().map(|held| held.eql(side));
+                            holds_same &= equal == Some(true);
+                            holds_own_fallback |=
+                                equal == Some(false) && !context.targets.supports(side);
+                        }
+                        if !holds_same {
+                            self.flush_fallback(
+                                BorderProperty::$flag,
+                                !holds_own_fallback,
+                                dest,
+                                context,
+                            );
+                        }
+                    }
+
+                    self.border_top.$prop = Some($val.top.deep_clone(arena));
+                    self.border_right.$prop = Some($val.right.deep_clone(arena));
+                    self.border_bottom.$prop = Some($val.bottom.deep_clone(arena));
+                    self.border_left.$prop = Some($val.left.deep_clone(arena));
+                    self.border_block_start.$prop = None;
+                    self.border_block_end.$prop = None;
+                    self.border_inline_start.$prop = None;
+                    self.border_inline_end.$prop = None;
+                    self.category = Physical;
+                    self.has_any = true;
+                }};
+            }
+
             use PropertyCategory::{Logical, Physical};
 
             match property {
@@ -1352,10 +1447,18 @@ mod border_handler_body {
                     property_helper!(border_inline_start, style, &val.start, Logical);
                     property_helper!(border_inline_end, style, &val.end, Logical);
                 }
-                Property::BorderTop(val) => set_border_helper!(border_top, val, Physical),
-                Property::BorderBottom(val) => set_border_helper!(border_bottom, val, Physical),
-                Property::BorderLeft(val) => set_border_helper!(border_left, val, Physical),
-                Property::BorderRight(val) => set_border_helper!(border_right, val, Physical),
+                Property::BorderTop(val) => {
+                    set_physical_border_helper!(border_top, BORDER_TOP, val)
+                }
+                Property::BorderBottom(val) => {
+                    set_physical_border_helper!(border_bottom, BORDER_BOTTOM, val)
+                }
+                Property::BorderLeft(val) => {
+                    set_physical_border_helper!(border_left, BORDER_LEFT, val)
+                }
+                Property::BorderRight(val) => {
+                    set_physical_border_helper!(border_right, BORDER_RIGHT, val)
+                }
                 Property::BorderBlockStart(val) => {
                     set_border_helper!(border_block_start, val, Logical)
                 }
@@ -1374,43 +1477,29 @@ mod border_handler_body {
                     set_border_helper!(border_inline_start, val, Logical);
                     set_border_helper!(border_inline_end, val, Logical);
                 }
-                Property::BorderWidth(val) => {
-                    property_helper!(border_top, width, &val.top, Physical);
-                    property_helper!(border_right, width, &val.right, Physical);
-                    property_helper!(border_bottom, width, &val.bottom, Physical);
-                    property_helper!(border_left, width, &val.left, Physical);
-
-                    self.border_block_start.width = None;
-                    self.border_block_end.width = None;
-                    self.border_inline_start.width = None;
-                    self.border_inline_end.width = None;
-                    self.has_any = true;
-                }
-                Property::BorderStyle(val) => {
-                    property_helper!(border_top, style, &val.top, Physical);
-                    property_helper!(border_right, style, &val.right, Physical);
-                    property_helper!(border_bottom, style, &val.bottom, Physical);
-                    property_helper!(border_left, style, &val.left, Physical);
-
-                    self.border_block_start.style = None;
-                    self.border_block_end.style = None;
-                    self.border_inline_start.style = None;
-                    self.border_inline_end.style = None;
-                    self.has_any = true;
-                }
-                Property::BorderColor(val) => {
-                    property_helper!(border_top, color, &val.top, Physical);
-                    property_helper!(border_right, color, &val.right, Physical);
-                    property_helper!(border_bottom, color, &val.bottom, Physical);
-                    property_helper!(border_left, color, &val.left, Physical);
-
-                    self.border_block_start.color = None;
-                    self.border_block_end.color = None;
-                    self.border_inline_start.color = None;
-                    self.border_inline_end.color = None;
-                    self.has_any = true;
-                }
+                Property::BorderWidth(val) => rect_helper!(width, BORDER_WIDTH, val),
+                Property::BorderStyle(val) => rect_helper!(style, BORDER_STYLE, val),
+                Property::BorderColor(val) => rect_helper!(color, BORDER_COLOR, val),
                 Property::Border(val) => {
+                    // One test for the whole shorthand: see `flush_fallback`. Only the physical
+                    // sides count: the flush splits a held logical pair into its longhands, and a
+                    // target that lacks one of them takes the other.
+                    if self.has_any && lacks_border!(val) {
+                        let sides = [
+                            &self.border_top,
+                            &self.border_right,
+                            &self.border_bottom,
+                            &self.border_left,
+                        ];
+                        if sides.iter().any(|side| !side.is_empty())
+                            && !sides
+                                .iter()
+                                .all(|side| side.holds(&val.width, val.style, &val.color))
+                        {
+                            self.flush_fallback(BorderProperty::BORDER, true, dest, context);
+                        }
+                    }
+
                     self.border_top.set_border(arena, val);
                     self.border_bottom.set_border(arena, val);
                     self.border_left.set_border(arena, val);
@@ -1466,6 +1555,29 @@ mod border_handler_body {
             self.flushed_properties = BorderProperty::empty();
             self.border_image_handler.finalize(dest, context);
             self.border_radius_handler.finalize(dest, context);
+        }
+
+        /// Writes what the handler holds in front of a declaration of `properties` that a target
+        /// lacks. Unlike lightningcss, which tests a value only against the slot it replaces: a
+        /// target that lacks one value drops the whole declaration, so every held value that the
+        /// declaration replaces is its fallback.
+        ///
+        /// With `keep_generated`, no held value is the author's fallback for the later value of
+        /// its own longhand, so the later declaration keeps the color fallbacks that
+        /// `fc_fallbacks!` leaves out for a flushed property.
+        fn flush_fallback(
+            &mut self,
+            properties: BorderProperty,
+            keep_generated: bool,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
+            let flushed_properties = self.flushed_properties;
+            self.flush(dest, context);
+            if keep_generated {
+                self.flushed_properties
+                    .remove(properties.difference(flushed_properties));
+            }
         }
 
         fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {

@@ -1718,6 +1718,94 @@ describe("css tests", () => {
         chrome: 99 << 16,
       },
     );
+
+    // A target that lacks one value of a shorthand drops the whole shorthand. So what the handler
+    // holds for the sides that the shorthand sets stays in front of it.
+    describe("fallback before a border shorthand that a target lacks", () => {
+      // Chrome 87, Edge 88, Firefox 78 and Safari 14 have no dvh. Safari 16 has it.
+      const older = { chrome: 87 << 16, edge: 88 << 16, firefox: 78 << 16, safari: 14 << 16 };
+      const newer = { safari: 16 << 16 };
+
+      // [the earlier declaration, the later shorthand]. Both print as they are written.
+      for (const [earlier, later] of [
+        ["border-top-width: 2px", "border-width: 1px 1dvh"],
+        ["border-top-width: 1px", "border-width: 1px 1dvh"],
+        ["border-left-width: 2px", "border-width: 1dvh 1px"],
+        ["border-top: 1px solid red", "border-width: 1px 1dvh"],
+        ["border: 2px solid red", "border-width: 1px 1dvh"],
+        // The line in front is the earlier declaration, not a mix of its sides and the later ones.
+        ["border-width: 7px 2px", "border-width: 1px 1dvh"],
+        ["border-top-width: 2px", "border: 1dvh solid red"],
+        ["border: 2px solid red", "border: 1dvh solid red"],
+        ["border-top-width: 2px", "border-top: 1dvh solid red"],
+        ["border-top-style: dotted", "border-top: 1dvh solid red"],
+        ["border-top: 2px solid red", "border-top: 1dvh solid red"],
+        ["border: 2px solid red", "border-left: 1dvh solid red"],
+      ]) {
+        prefix_test(`.foo { ${earlier}; ${later} }`, `.foo { ${earlier}; ${later}; }`, older);
+        prefix_test(
+          `.foo { ${earlier} !important; ${later} !important }`,
+          `.foo { ${earlier} !important; ${later} !important; }`,
+          older,
+        );
+        // Two rules with one selector are merged into one.
+        prefix_test(`.foo { ${earlier} } .foo { ${later} }`, `.foo { ${earlier}; ${later}; }`, older);
+        // The same declaration twice is one declaration.
+        prefix_test(`.foo { ${later}; ${later} }`, `.foo { ${later}; }`, older);
+      }
+
+      for (const [source, expected] of [
+        // Every target has the later value: it replaces what is held, as before.
+        ["border-top-width: 2px; border-width: 1px 2px", "border-width: 1px 2px"],
+        ["border-top-width: 1dvh; border-width: 1px 2px", "border-width: 1px 2px"],
+        ["border: 2px solid red; border: 3px solid red", "border: 3px solid red"],
+        ["border-top-width: 2px; border-top: 3px solid red", "border-top: 3px solid red"],
+        // A shorthand that replaces nothing is not a reason to write the other values early.
+        ["border-color: red; border-width: 1px 1dvh", "border-width: 1px 1dvh; border-color: red"],
+        ["border-left-width: 2px; border-top: 1dvh solid red", "border-top: 1dvh solid red; border-left-width: 2px"],
+        // A logical longhand is written in front of a physical shorthand, as before.
+        ["border-block-start-width: 2px; border-width: 1px 2px", "border-block-start-width: 2px; border-width: 1px 2px"],
+        // A held logical pair is not written in front of `border`. It would be split into its
+        // longhands, and a target without dvh would take the 1px half.
+        ["border-block-width: 1px 1dvh; border: 1dvh solid red", "border: 1dvh solid red"],
+        // Chrome 87 has no display-p3. A side that differs from the later color of that side
+        // is the author's fallback for it: it replaces the generated one, as before.
+        [
+          "border-color: red green; border-color: blue color(display-p3 1 0 0)",
+          "border-color: red green; border-color: #00f color(display-p3 1 0 0)",
+        ],
+        // No held value is the fallback of its own later color: the later declaration keeps
+        // the sRGB line that is generated for it.
+        [
+          "border-top-color: red; border-color: blue color(display-p3 1 0 0)",
+          "border-top-color: red; border-color: #00f #ff0f0e; border-color: #00f color(display-p3 1 0 0)",
+        ],
+        [
+          "border-color: color(display-p3 1 0 0); border-color: blue color(display-p3 1 0 0)",
+          `border-color: #ff0f0e; border-color: color(display-p3 1 0 0);
+           border-color: #00f #ff0f0e; border-color: #00f color(display-p3 1 0 0)`,
+        ],
+        [
+          "border: 2px solid red; border: 1dvh solid color(display-p3 1 0 0)",
+          "border: 2px solid red; border: 1dvh solid #ff0f0e; border: 1dvh solid color(display-p3 1 0 0)",
+        ],
+        [
+          "border-top: 2px solid red; border-top: 1dvh solid color(display-p3 1 0 0)",
+          "border-top: 2px solid red; border-top: 1dvh solid #ff0f0e; border-top: 1dvh solid color(display-p3 1 0 0)",
+        ],
+      ]) {
+        prefix_test(`.foo { ${source} }`, `.foo { ${expected}; }`, older);
+      }
+
+      // Safari 16 has dvh: the later declaration replaces the earlier one.
+      prefix_test(".foo { border-top-width: 2px; border-width: 1px 1dvh }", ".foo { border-width: 1px 1dvh; }", newer);
+      prefix_test(".foo { border: 2px solid red; border: 1dvh solid red }", ".foo { border: 1dvh solid red; }", newer);
+      prefix_test(".foo { border-top-width: 2px; border-top: 1dvh solid red }", ".foo { border-top: 1dvh solid red; }", newer);
+
+      // No browser targets: nothing is known to lack the later value.
+      minify_test(".foo { border-top-width: 2px; border-width: 1px 1dvh }", ".foo{border-width:1px 1dvh}");
+      minify_test(".foo { border: 2px solid red; border: 1dvh solid red }", ".foo{border:1dvh solid red}");
+    });
   });
 
   describe("box-shadow", () => {
@@ -2230,6 +2318,61 @@ describe("css tests", () => {
         },
       );
     }
+
+    // A target that lacks one side of a 4-side shorthand drops the whole shorthand. So every
+    // side that the handler holds stays in front of it, not only the side with that value.
+    describe("fallback before a 4-side shorthand that a target lacks", () => {
+      // Chrome 87, Edge 88, Firefox 78 and Safari 14 have no dvh. Safari 16 has it.
+      const older = { chrome: 87 << 16, edge: 88 << 16, firefox: 78 << 16, safari: 14 << 16 };
+      const newer = { safari: 16 << 16 };
+
+      // [the earlier declarations, the later shorthand]. Both print as they are written.
+      for (const [earlier, later] of [
+        ["margin-top: 2px", "margin: 1px 1dvh"],
+        ["margin-top: 1px", "margin: 1px 1dvh"],
+        ["margin-top: 2px; margin-bottom: 3px", "margin: 1px 1dvh"],
+        ["padding-left: 3px", "padding: 1dvh 2px 2px"],
+        ["scroll-margin-bottom: 2px", "scroll-margin: 1px 1dvh"],
+        ["margin: 7px 2px", "margin: 1px 1dvh"],
+      ]) {
+        prefix_test(`.foo { ${earlier}; ${later} }`, `.foo { ${earlier}; ${later}; }`, older);
+        // Every target has the later value: it replaces what is held, as before.
+        prefix_test(`.foo { ${earlier}; ${later} }`, `.foo { ${later}; }`, newer);
+        prefix_test(
+          `.foo { ${earlier.replaceAll(";", " !important;")} !important; ${later} !important }`,
+          `.foo { ${earlier.replaceAll(";", " !important;")} !important; ${later} !important; }`,
+          older,
+        );
+        // Two rules with one selector are merged into one.
+        prefix_test(`.foo { ${earlier} } .foo { ${later} }`, `.foo { ${earlier}; ${later}; }`, older);
+      }
+
+      for (const [source, expected] of [
+        // Every target has the later value: it replaces what is held, as before.
+        ["margin-top: 2px; margin: 1px 2px", "margin: 1px 2px"],
+        ["margin-top: 1dvh; margin: 1px 2px", "margin: 1px 2px"],
+        // Nothing is held: there is nothing to write.
+        ["margin: 1px 1dvh", "margin: 1px 1dvh"],
+        // A logical longhand is written in front of a physical shorthand, as before.
+        ["margin-block-start: 2px; margin: 1px 2px", "margin-block-start: 2px; margin: 1px 2px"],
+        // The same shorthand twice stays two declarations, as before.
+        ["padding: 1px 1dvh; padding: 1px 1dvh", "padding: 1px 1dvh; padding: 1px 1dvh"],
+        // A later value that every target has replaces what is still held.
+        ["margin-top: 2px; margin: 1px 1dvh; margin: 3px", "margin-top: 2px; margin: 3px"],
+      ]) {
+        prefix_test(`.foo { ${source} }`, `.foo { ${expected}; }`, older);
+      }
+
+      // Chrome 87 and Firefox 78 have the `inset` shorthand and no dvh.
+      prefix_test(".foo { right: 2px; inset: 1dvh 1px }", ".foo { right: 2px; inset: 1dvh 1px; }", {
+        chrome: 87 << 16,
+        firefox: 78 << 16,
+      });
+
+      // No browser targets: nothing is known to lack the later value.
+      minify_test(".foo { margin-top: 2px; margin: 1px 1dvh }", ".foo{margin:1px 1dvh}");
+      minify_test(".foo { padding-left: 3px; padding: 1dvh 2px 2px }", ".foo{padding:1dvh 2px 2px}");
+    });
   });
 
   describe("padding", () => {
@@ -5303,6 +5446,71 @@ describe("css tests", () => {
         chrome: 50 << 16,
       },
     );
+
+    // A target that lacks one value of `font` drops the whole shorthand. So every longhand that
+    // the handler holds stays in front of it, not only the longhand with that value.
+    describe("fallback before a font shorthand that a target lacks", () => {
+      // Chrome 87, Edge 88, Firefox 78 and Safari 14 have no dvh. Safari 14 has no xxx-large,
+      // and Firefox 78 has no system-ui. Safari 16 has dvh.
+      const older = { chrome: 87 << 16, edge: 88 << 16, firefox: 78 << 16, safari: 14 << 16 };
+      const newer = { safari: 16 << 16 };
+      const stack =
+        "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue";
+
+      // [the earlier declarations, the later shorthand]. Both print as they are written.
+      for (const [earlier, later] of [
+        ["line-height: 2", "font: 1dvh serif"],
+        ["font-family: serif", "font: 1dvh serif"],
+        ["font-weight: 700", "font: 1dvh serif"],
+        ["font-style: italic; font-stretch: condensed", "font: 1dvh serif"],
+        ["font-size: 12px", "font: 1dvh serif"],
+        ["font: 12px serif", "font: 1dvh serif"],
+        ["line-height: 2", "font: xxx-large serif"],
+      ]) {
+        prefix_test(`.foo { ${earlier}; ${later} }`, `.foo { ${earlier}; ${later}; }`, older);
+        prefix_test(
+          `.foo { ${earlier.replaceAll(";", " !important;")} !important; ${later} !important }`,
+          `.foo { ${earlier.replaceAll(";", " !important;")} !important; ${later} !important; }`,
+          older,
+        );
+        // Two rules with one selector are merged into one.
+        prefix_test(`.foo { ${earlier} } .foo { ${later} }`, `.foo { ${earlier}; ${later}; }`, older);
+        // The same declaration twice is one declaration.
+        prefix_test(`.foo { ${later}; ${later} }`, `.foo { ${later}; }`, older);
+      }
+
+      for (const [source, expected] of [
+        // Every target has the later value: it replaces what is held, as before.
+        ["line-height: 2; font: 12px serif", "font: 12px serif"],
+        ["font-size: 1dvh; font: 12px serif", "font: 12px serif"],
+        // The family that is written early is no fallback for the family of `font`, so `font`
+        // keeps the stack that is generated for `system-ui`.
+        [
+          "font-family: system-ui; font: xxx-large system-ui",
+          `font-family: ${stack}; font: xxx-large ${stack}`,
+        ],
+        ["line-height: 2; font: xxx-large system-ui", `line-height: 2; font: xxx-large ${stack}`],
+        [
+          "font-family: system-ui; font-weight: 700; font: xxx-large system-ui",
+          `font-family: ${stack}; font-weight: 700; font: xxx-large ${stack}`,
+        ],
+        // Firefox 78 reads `system-ui` as a family name and keeps the declaration. A family
+        // alone is not a reason to write what is held.
+        ["line-height: 2; font: 12px system-ui", `font: 12px ${stack}`],
+        ["font: 12px system-ui; font: 14px system-ui", `font: 14px ${stack}`],
+        // A held family that differs from a later family that a target lacks is the author's
+        // fallback for it, as before.
+        ["font-family: Helvetica; font: 12px system-ui", "font-family: Helvetica; font: 12px system-ui"],
+      ]) {
+        prefix_test(`.foo { ${source} }`, `.foo { ${expected}; }`, older);
+      }
+
+      // Safari 16 has dvh: the later declaration replaces the earlier one.
+      prefix_test(".foo { line-height: 2; font: 1dvh serif }", ".foo { font: 1dvh serif; }", newer);
+
+      // No browser targets: nothing is known to lack the later value.
+      minify_test(".foo { line-height: 2; font: 1dvh serif }", ".foo{font:1dvh serif}");
+    });
   });
 
   describe("selectors", () => {

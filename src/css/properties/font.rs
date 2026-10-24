@@ -912,13 +912,53 @@ impl FontHandler {
             Property::FontVariantCaps(val) => property_helper!(self, variant_caps, val),
             Property::LineHeight(val) => property_helper!(self, line_height, val),
             Property::Font(val) => {
-                flush_helper!(self, family, &val.family);
-                flush_helper!(self, size, &val.size);
-                flush_helper!(self, style, &val.style);
-                flush_helper!(self, weight, &val.weight);
-                flush_helper!(self, stretch, &val.stretch);
-                flush_helper!(self, line_height, &val.line_height);
-                flush_helper!(self, variant_caps, &val.variant_caps);
+                if self.has_any {
+                    macro_rules! lacks {
+                        ($($field:ident),+) => {
+                            !($(context.targets.supports(&val.$field))&&+)
+                        };
+                    }
+                    // A generic family that a target lacks is a family name to that target, so
+                    // the target keeps the declaration.
+                    let lacked = lacks!(size, style, weight, stretch, line_height, variant_caps);
+                    if lacked || lacks!(family) {
+                        let (mut holds_same, mut holds_own_fallback) = (true, false);
+                        macro_rules! test_helper {
+                            ($($field:ident),+) => {$(
+                                let equal = self
+                                    .$field
+                                    .as_ref()
+                                    .map(|held| crate::generic::eql(held, &val.$field));
+                                holds_same &= equal == Some(true);
+                                // A held longhand that differs from a later value that a target
+                                // lacks is the author's fallback for it.
+                                holds_own_fallback |= equal == Some(false) && lacks!($field);
+                            )+};
+                        }
+                        test_helper!(
+                            family,
+                            size,
+                            style,
+                            weight,
+                            stretch,
+                            line_height,
+                            variant_caps
+                        );
+
+                        // Unlike lightningcss, which tests a value only against the longhand it
+                        // replaces: a target that lacks one value drops the whole shorthand, so
+                        // every held longhand is its fallback.
+                        if holds_own_fallback || (lacked && !holds_same) {
+                            let flushed_properties = self.flushed_properties;
+                            self.flush(dest, context);
+                            if !holds_own_fallback {
+                                // `font` keeps the `system-ui` stack that a flushed family turns
+                                // off.
+                                self.flushed_properties = flushed_properties;
+                            }
+                        }
+                    }
+                }
 
                 self.family = Some(crate::generic::deep_clone(&val.family, arena));
                 self.size = Some(val.size.clone());

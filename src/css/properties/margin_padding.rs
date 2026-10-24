@@ -685,38 +685,13 @@ impl SizeHandlerImpl {
             );
         } else if tag == spec.shorthand {
             let val = (spec.extract_shorthand)(property);
-            self.flush_helper_physical(
-                spec,
-                PhysicalSlot::Top,
-                val[0],
-                spec.shorthand_category,
-                dest,
-                context,
-            );
-            self.flush_helper_physical(
-                spec,
-                PhysicalSlot::Right,
-                val[1],
-                spec.shorthand_category,
-                dest,
-                context,
-            );
-            self.flush_helper_physical(
-                spec,
-                PhysicalSlot::Bottom,
-                val[2],
-                spec.shorthand_category,
-                dest,
-                context,
-            );
-            self.flush_helper_physical(
-                spec,
-                PhysicalSlot::Left,
-                val[3],
-                spec.shorthand_category,
-                dest,
-                context,
-            );
+            // Unlike lightningcss, which tests each side against its own slot: a target that
+            // lacks one side drops the whole shorthand, so every held side is its fallback.
+            if spec.shorthand_category != self.category
+                || (self.has_any && !val.iter().all(|side| context.targets.supports(*side)))
+            {
+                self.flush(spec, dest, context);
+            }
             self.top = Some(val[0].clone());
             self.right = Some(val[1].clone());
             self.bottom = Some(val[2].clone());

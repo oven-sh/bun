@@ -5749,21 +5749,34 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
 
 /// Whether a second Blob over `store` reads the same bytes from the start.
 /// Memory and S3 do. A path does when it names a regular file (each read
-/// opens it again); it is stat'd here if that is not yet known. A file
-/// descriptor never does: its offset, and for a pipe its bytes, are shared.
+/// opens it again). A file descriptor never does: its offset, and for a
+/// pipe its bytes, are shared.
 pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
     match Store::data_mut(store).tag() {
         store::DataTag::Bytes | store::DataTag::S3 => true,
         store::DataTag::File => {
-            if let PathOrFileDescriptor::Fd(_) = Store::data_mut(store).as_file().pathlike {
-                return false;
-            }
-            if Store::data_mut(store).as_file().seekable.is_none() {
-                resolve_file_stat(store);
-            }
-            Store::data_mut(store).as_file().seekable != Some(false)
+            let file = Store::data_mut(store).as_file_mut();
+            !file.pathlike.is_fd() && mode_for_clone(file).is_none_or(bun_sys::S::ISREG)
         }
     }
+}
+
+/// `st_mode` for a body's `clone()`. A path is stat'd once into `mode_seen_by_clone`, not through `resolve_file_stat`:
+/// the `Bun.file()` sharing the store answers from what that caches.
+fn mode_for_clone(file: &mut store::File) -> Option<bun_sys::Mode> {
+    if file.seekable.is_some() {
+        return Some(file.mode);
+    }
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return None;
+    };
+    if file.mode_seen_by_clone.is_none() {
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        if let bun_sys::Result::Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer)) {
+            file.mode_seen_by_clone = Some(stat.st_mode as bun_sys::Mode);
+        }
+    }
+    file.mode_seen_by_clone
 }
 
 /// Whether two Blobs over `store` would compete for its bytes (an fd, a pipe, a terminal). A directory or a closed fd has none: each Blob fails when read.
@@ -5776,21 +5789,7 @@ pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
     if is_fd && Store::data_mut(store).as_file().seekable.is_none() {
         resolve_file_stat(store);
     }
-    let file = Store::data_mut(store).as_file_mut();
-    let mode = if file.seekable.is_some() {
-        Some(file.mode)
-    } else if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-        // Not `resolve_file_stat`: the `Bun.file()` sharing `store` answers from what that caches.
-        if file.mode_seen_by_clone.is_none() {
-            let mut buffer = bun_paths::path_buffer_pool::get();
-            if let bun_sys::Result::Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer)) {
-                file.mode_seen_by_clone = Some(stat.st_mode as bun_sys::Mode);
-            }
-        }
-        file.mode_seen_by_clone
-    } else {
-        None
-    };
+    let mode = mode_for_clone(Store::data_mut(store).as_file_mut());
     mode.is_some_and(|mode| !bun_sys::S::ISDIR(mode) && (is_fd || !bun_sys::S::ISREG(mode)))
 }
 

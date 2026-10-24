@@ -2472,7 +2472,12 @@ fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules
 /// Formats `text` as the file `options.stdin_filepath`, with the same checks, config and ignore files as
 /// `bun fmt --stdin-filepath`. For a caller that has the text, such as the language server.
 pub fn format_text(options: &Options, environment: &Environment, text: Vec<u8>) -> Formatted {
-    let (options, loaded) = loaded(options, environment);
+    let (mut options, loaded) = loaded(options, environment);
+    // The editor wants the text, never a verdict: with these on, an already formatted document would come back
+    // empty, or as the name of standard input.
+    options.check = false;
+    options.list_different = false;
+    options.debug_check = false;
     let run = Run::new(&options, environment, None);
     let failed = |out: Outcome| Formatted::Failed { stderr: out.stderr };
     if let Err(why) = loaded {

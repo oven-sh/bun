@@ -3914,6 +3914,7 @@ pub(crate) fn loader_for_path(
 unsafe fn normalize_specifier_for_loader<'a>(
     jsc_vm: *mut VirtualMachine,
     slice_: &'a [u8],
+    preserve_path_delimiters: bool,
 ) -> (&'a [u8], &'a [u8], &'a [u8]) {
     let mut slice = slice_;
     if slice.is_empty() {
@@ -3936,7 +3937,9 @@ unsafe fn normalize_specifier_for_loader<'a>(
     }
     let specifier = slice;
     let mut query: &[u8] = b"";
-    if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
+    if !preserve_path_delimiters
+        && let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?')
+    {
         let i = i as usize;
         query = &slice[i..];
         slice = &slice[..i];
@@ -3967,10 +3970,13 @@ unsafe fn get_loader_and_virtual_source<'a>(
     virtual_source_to_use: &'a mut Option<bun_ast::Source>,
     blob_to_deinit: &mut Option<crate::webcore::Blob>,
     type_attribute_str: Option<&[u8]>,
+    preserve_path_delimiters: bool,
 ) -> crate::Result<LoaderResult<'a>> {
     let (normalized_file_path_from_specifier, specifier, query) =
         // SAFETY: per fn contract.
-        unsafe { normalize_specifier_for_loader(jsc_vm, specifier_str) };
+        unsafe {
+            normalize_specifier_for_loader(jsc_vm, specifier_str, preserve_path_delimiters)
+        };
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
@@ -4182,6 +4188,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
+    preserve_path_delimiters: bool,
     // The `JSModuleLoader` that is fetching when it is not the global object's (a
     // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
@@ -4213,6 +4220,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             &mut virtual_source_to_use,
             &mut blob_to_deinit,
             type_attribute_str,
+            preserve_path_delimiters,
         )
     } {
         Ok(lr) => lr,
@@ -4316,6 +4324,8 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             )
         };
         if !had_blob
+            // Async completion only has the filesystem specifier, not the encoded module key.
+            && !preserve_path_delimiters
             && allow_promise
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()

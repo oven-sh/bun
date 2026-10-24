@@ -96,6 +96,7 @@ fn find_path_inner(
         cur_path,
         None,
         crate::virtual_machine::ResolveMode::RequireResolve,
+        true,
     )?
     .ok())
 }

@@ -649,10 +649,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         const URL& url = sourceOrigin.url();
 
         if (specifier.startsWith("file:"_s)) {
-            // fileSystemPath() returns null if the percent-decoded path isn't valid UTF-8.
-            String path = URL(url, specifier).fileSystemPath();
-            if (!path.isNull()) {
-                specifier = WTF::move(path);
+            URL fileURL = URL(url, specifier);
+            if (fileURL.isValid()) {
+                specifier = Bun::moduleKeyFromFileURL(fileURL);
                 specifierString = jsString(vm, specifier);
                 globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
                 return;
@@ -684,7 +683,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                     globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 
                     if (relativeURL.protocolIsFile())
-                        specifier = relativeSpecifierToFileSystemPath(url, specifier);
+                        specifier = Bun::moduleKeyFromFileURL(relativeURL);
                     else
                         specifier = relativeURL.string();
 
@@ -896,7 +895,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            joinedPath = relativeSpecifierToFileSystemPath(url, path);
+            joinedPath = Bun::moduleKeyFromFileURL(URL(url, path));
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

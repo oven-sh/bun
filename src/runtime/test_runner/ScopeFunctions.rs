@@ -341,16 +341,6 @@ impl ScopeFunctions {
         let mut base = self.cfg;
         base.line_no = line_no;
         base.test_id_for_debugger = test_id_for_debugger;
-        // Use the file's default concurrent setting (determined once when entering the file)
-        // or the global concurrent flag from the runner
-        if bun_test.default_concurrent
-            || jest::Jest::runner().is_some_and(|r| r.concurrent)
-        {
-            // Only set to concurrent if still inheriting
-            if base.self_concurrent == SelfConcurrent::Inherit {
-                base.self_concurrent = SelfConcurrent::Yes;
-            }
-        }
 
         match self.mode {
             Mode::Describe => {

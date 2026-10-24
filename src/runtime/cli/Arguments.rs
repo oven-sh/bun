@@ -599,7 +599,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\""
     ),
     parse_param!("--pass-with-no-tests             Exit with code 0 when no tests are found"),
-    parse_param!("--concurrent                     Treat all tests as `test.concurrent()` tests"),
+    parse_param!(
+        "--concurrent                     Run tests concurrently, unless marked with `test.serial()` or `describe.serial()`"
+    ),
     parse_param!("--randomize                      Run tests in random order"),
     parse_param!("--seed <INT>                     Set the random seed for test randomization"),
     parse_param!("--coverage                       Generate a coverage profile"),

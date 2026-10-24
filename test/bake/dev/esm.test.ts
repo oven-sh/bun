@@ -548,7 +548,8 @@ for (const [firstReader, bunfig] of [
 }
 
 // A client component is in the client graph, and in the SSR graph when there
-// is one. Each of them resolves the imports of the component for itself.
+// is one. Without an SSR graph the server graph has the component itself, in
+// the client reference. Each graph resolves the imports of its copy.
 for (const separateSSRGraph of [true, false]) {
   devTest(
     `a client component's packages resolve for each graph that bundles it (separateSSRGraph: ${separateSSRGraph})`,
@@ -579,15 +580,15 @@ for (const separateSSRGraph of [true, false]) {
           }
         `
           : `
-          import "../island";
+          import { island } from "../island";
           export default function (req, meta) {
-            return Response.json({ clientBundles: meta.modules });
+            return Response.json({ server: island.value, clientBundles: meta.modules });
           }
         `,
       },
       async test(dev) {
         const { clientBundles, ...serverSide } = await dev.fetch("/").json();
-        expect(serverSide).toEqual(separateSSRGraph ? { ssr: platformFiles.bun } : {});
+        expect(serverSide).toEqual(separateSSRGraph ? { ssr: platformFiles.bun } : { server: platformFiles.bun });
         expect(platformFilesIn(await dev.fetch(clientBundles[0]).text())).toEqual(platformFiles.browser);
       },
     },

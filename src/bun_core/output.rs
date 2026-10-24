@@ -2648,22 +2648,19 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Synchronous reader of the process stdin. It keeps no bytes between calls:
-/// what it did not return is still in fd 0 for the next reader of it, in this
-/// process or in a child.
+/// Synchronous reader of the process stdin. It keeps no bytes, so the next reader of fd 0 finds them.
 pub struct StdinReader {
     fd: Fd,
 }
 
 impl StdinReader {
-    /// Read one byte — `Err` on I/O error *or* EOF. For input that is read one key at a time.
+    /// Read one byte — `Err` on I/O error *or* EOF.
     #[inline]
     pub fn take_byte(&mut self) -> crate::CrateResult<u8> {
         read_stdin_byte(self.fd)
     }
 
-    /// Appends one line to `out` without its LF, and takes the LF. A line of
-    /// `max` bytes or more is taken whole and reported as `StreamTooLong`.
+    /// Appends one line without its LF. A line of `max` bytes or more is taken whole, then `StreamTooLong`.
     pub fn read_line(&mut self, out: &mut Vec<u8>, max: usize) -> crate::CrateResult<()> {
         let mut line = StdinLine::begin(self.fd);
         let start = out.len();
@@ -2727,8 +2724,7 @@ fn read_stdin_byte(fd: Fd) -> crate::CrateResult<u8> {
     }
 }
 
-/// Held while a thread takes one line, so that two threads that wait for an
-/// answer at the same time (the main thread and a Worker) each get a whole line.
+/// Keeps two threads that wait for an answer (the main thread and a Worker) from sharing one typed line.
 static STDIN_LINE_LOCK: crate::Mutex<()> = crate::Mutex::new(());
 
 /// One line of stdin, from its first byte through its LF.
@@ -2762,10 +2758,7 @@ impl StdinLine {
     }
 
     fn next_byte(&mut self) -> crate::CrateResult<u8> {
-        // A console in line-input mode returns one typed line per `ReadFile`, so a
-        // block read takes nothing past the line. Console hosts before Windows
-        // Terminal 1.19 also cut a typed line to the size of the request: 254
-        // characters for a request of one byte.
+        // A line-input console returns one line per `ReadFile`, and old hosts cut it to the request size.
         #[cfg(windows)]
         if self.console == windows_stdio::ConsoleInput::Line {
             if self.chunk_pos == self.chunk_len {
@@ -2786,8 +2779,7 @@ impl StdinLine {
         while !matches!(self.next_byte(), Err(_) | Ok(b'\n')) {}
     }
 
-    /// Like `skip_rest`, but a terminal in raw mode sends a lone CR for Enter, so
-    /// there a CR ends the answer too.
+    /// Raw mode sends a lone CR for Enter, so on a terminal a CR ends the answer too.
     fn skip_rejected_answer(&mut self) {
         #[cfg(windows)]
         let cr_ends_answer = self.console == windows_stdio::ConsoleInput::Raw;
@@ -2803,8 +2795,7 @@ impl StdinLine {
     }
 }
 
-/// A reader of stdin that takes exactly what it returns. Used by `alert()`,
-/// `confirm()`, `prompt()`, `bun init`, `bun publish` and the key-driven menus.
+/// The reader of stdin for the dialogs, `bun init`, `bun publish` and the key-driven menus.
 #[inline]
 pub fn stdin_reader() -> StdinReader {
     StdinReader { fd: Fd::stdin() }

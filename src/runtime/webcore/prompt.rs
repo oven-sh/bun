@@ -179,8 +179,6 @@ pub(crate) fn prompt<'a>(
     }
 
     if input.is_empty() {
-        // 8. Let result be null if the user aborts, or otherwise the string
-        //    that the user responded with.
         return Ok(default.unwrap_or(JSValue::NULL));
     }
 

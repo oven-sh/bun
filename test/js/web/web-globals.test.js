@@ -498,34 +498,40 @@ test.concurrent("prompt() does not consume stdin past the newline (console async
   expect(exitCode).toBe(0);
 });
 
-test.concurrent.each(stdinKinds)("prompt() does not consume stdin past the newline (fs.readFileSync(0), %s)", async kind => {
-  const { stderr, exitCode } = await runWithStdin(
-    kind,
-    `import { readFileSync } from "node:fs";
-     const r = prompt("Q?");
-     const rest = readFileSync(0, "utf8");
-     console.error(JSON.stringify({ r, rest }));`,
-    "alice\nline2\nline3\n",
-  );
-  expect(JSON.parse(stderr)).toEqual({ r: "alice", rest: "line2\nline3\n" });
-  expect(exitCode).toBe(0);
-});
+test.concurrent.each(stdinKinds)(
+  "prompt() does not consume stdin past the newline (fs.readFileSync(0), %s)",
+  async kind => {
+    const { stderr, exitCode } = await runWithStdin(
+      kind,
+      `import { readFileSync } from "node:fs";
+       const r = prompt("Q?");
+       const rest = readFileSync(0, "utf8");
+       console.error(JSON.stringify({ r, rest }));`,
+      "alice\nline2\nline3\n",
+    );
+    expect(JSON.parse(stderr)).toEqual({ r: "alice", rest: "line2\nline3\n" });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.concurrent.each(stdinKinds)("prompt() does not consume stdin past the newline (stdin:'inherit' child, %s)", async kind => {
-  const { stderr, exitCode } = await runWithStdin(
-    kind,
-    `const r = prompt("parent?");
-     const child = Bun.spawnSync({
-       cmd: [process.execPath, "-e", 'console.error(JSON.stringify({ c: prompt("child?") }))'],
-       stdin: "inherit",
-       stderr: "pipe",
-     });
-     console.error(JSON.stringify({ r, child: JSON.parse(child.stderr.toString()) }));`,
-    "PARENT\nCHILD\n",
-  );
-  expect(JSON.parse(stderr)).toEqual({ r: "PARENT", child: { c: "CHILD" } });
-  expect(exitCode).toBe(0);
-});
+test.concurrent.each(stdinKinds)(
+  "prompt() does not consume stdin past the newline (stdin:'inherit' child, %s)",
+  async kind => {
+    const { stderr, exitCode } = await runWithStdin(
+      kind,
+      `const r = prompt("parent?");
+       const child = Bun.spawnSync({
+         cmd: [process.execPath, "-e", 'console.error(JSON.stringify({ c: prompt("child?") }))'],
+         stdin: "inherit",
+         stderr: "pipe",
+       });
+       console.error(JSON.stringify({ r, child: JSON.parse(child.stderr.toString()) }));`,
+      "PARENT\nCHILD\n",
+    );
+    expect(JSON.parse(stderr)).toEqual({ r: "PARENT", child: { c: "CHILD" } });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("prompt() called twice leaves remaining stdin intact", async () => {
   const { stderr, exitCode } = await runWithStdin(

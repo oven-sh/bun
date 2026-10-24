@@ -9,6 +9,7 @@ if (isMainThread) {
     const thrown = await new Promise((resolve, reject) => {
       worker.once("message", resolve);
       worker.once("error", reject);
+      worker.once("exit", exitCode => reject(new Error(`the Worker ended with exit code ${exitCode} and no message`)));
     });
     assert.deepStrictEqual(thrown, {
       "test": "Cannot use test in a Worker.",

@@ -241,6 +241,220 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
   expect(summary.urlAfterClose).toBeNull();
 }, 30_000);
 
+// The Host header is the DNS-rebinding guard of the /json endpoints and of the
+// WebSocket upgrade. fetch() and node:http cannot send two Host lines, so the
+// fixture writes each request by hand. HOST_ROWS is a JSON list of Host values,
+// where " | " separates two Host lines.
+const hostHeaderFixture = `
+import inspector from "node:inspector";
+import net from "node:net";
+
+inspector.open(0, "127.0.0.1", false);
+const { port, pathname } = new URL(inspector.url());
+
+function statusLine(path, hostLines, headers) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const socket = net.connect(Number(port), "127.0.0.1");
+  let response = "";
+  socket.setEncoding("latin1");
+  socket.on("connect", () => {
+    socket.write("GET " + path + " HTTP/1.1\\r\\n" + hostLines.map(line => "Host: " + line + "\\r\\n").join("") + headers + "\\r\\n");
+  });
+  socket.on("data", chunk => {
+    response += chunk;
+    const headEnd = response.indexOf("\\r\\n\\r\\n");
+    if (headEnd === -1) return;
+    const head = response.slice(0, headEnd + 2);
+    const status = head.slice(0, head.indexOf("\\r\\n"));
+    // A 101 has no body. Every other answer of the inspector has a Content-Length.
+    const bodyLength = status.includes(" 101 ") ? 0 : Number(/\\r\\ncontent-length: (\\d+)\\r\\n/i.exec(head)?.[1]);
+    if (response.length - headEnd - 4 >= bodyLength) {
+      resolve(status);
+      socket.destroy();
+    }
+  });
+  socket.on("error", reject);
+  // The HTTP parser answers without a Content-Length and closes.
+  socket.on("close", () => {
+    if (response.includes("\\r\\n\\r\\n")) resolve(response.slice(0, response.indexOf("\\r\\n")));
+    else reject(new Error("closed before a response: " + JSON.stringify(response)));
+  });
+  return promise;
+}
+
+const upgrade =
+  "Connection: Upgrade\\r\\nUpgrade: websocket\\r\\nSec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n";
+const answers = {};
+for (const row of JSON.parse(process.env.HOST_ROWS)) {
+  const hostLines = row.split(" | ");
+  answers[row] = {
+    list: await statusLine("/json/list", hostLines, "Connection: close\\r\\n"),
+    version: await statusLine("/json/version", hostLines, "Connection: close\\r\\n"),
+    upgrade: await statusLine(pathname, hostLines, upgrade),
+  };
+}
+console.log(JSON.stringify(answers));
+process.exit(0);
+`;
+
+test("inspector.open() answers 400 to a Host header that is not host[:port] as sent", async () => {
+  const served = { list: "HTTP/1.1 200 OK", version: "HTTP/1.1 200 OK", upgrade: "HTTP/1.1 101 Switching Protocols" };
+  const refused = {
+    list: "HTTP/1.1 400 Bad Request",
+    version: "HTTP/1.1 400 Bad Request",
+    upgrade: "HTTP/1.1 400 Bad Request",
+  };
+  const expected = {
+    "127.0.0.1": served,
+    "LOCALHOST": served,
+    "[::1]:9229": served,
+    // headers.get("Host") joins two lines with ", ". A URL parser reads what is before "@" as userinfo.
+    "tunnel.example | @localhost": refused,
+    "localhost | @localhost": refused,
+    // A URL parser decodes these to localhost and 127.0.0.1.
+    "loc%61lhost": refused,
+    "127.1": refused,
+    "0x7f.0.0.1": refused,
+  };
+
+  using dir = tempDir("inspector-host-header", {
+    "fixture.mjs": hostHeaderFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: { ...bunEnv, HOST_ROWS: JSON.stringify(Object.keys(expected)) },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual(expected);
+});
+
+// The Host check itself, with no server in front of it. The server answers many
+// of these values before the check runs, so only a direct call reaches every rule.
+test("the inspector's Host check matches the header as sent and does not parse it", async () => {
+  const boundHostname = "debug-host.example";
+  const allowed = [
+    null,
+    "",
+    "debug-host.example",
+    "DEBUG-Host.Example:9229",
+    "localhost",
+    "localhost:9229",
+    "LocalHost:1",
+    "localhost:",
+    "localhost:65535",
+    "127.0.0.1",
+    "127.0.0.1:9229",
+    "10.1.2.3:9229",
+    "255.255.255.255",
+    "[::1]",
+    "[::1]:9229",
+    "[::1]:",
+    "[0:0:0:0:0:0:0:1]:9229",
+    "[::FFFF:7F00:1]",
+    "[::ffff:127.0.0.1]:19229",
+    "[2001:db8:1:2::192.168.0.1]",
+    // The longest text of an address, 45 bytes.
+    "[ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255]:3000",
+  ];
+  const refused = [
+    // Not the bound hostname, localhost, or an IP literal.
+    "tunnel.example",
+    "tunnel.example:9229",
+    "debug-host.example.",
+    "xdebug-host.example",
+    "localhost.",
+    "foo.localhost",
+    "localhost.evil.example",
+    // More than host[:port].
+    "tunnel.example, @localhost",
+    "evil.example@localhost",
+    "evil.example:pw@localhost:9229",
+    "@localhost",
+    "localhost/evil",
+    "localhost?x",
+    "localhost#x",
+    "localhost\\x",
+    "localhost ",
+    "localhost\t",
+    " localhost",
+    "local\thost",
+    "localhost:9229 ",
+    "localhost:80:80",
+    "localhost:@evil.example",
+    "localhost,localhost",
+    ":9229",
+    ":",
+    // Text that a URL parser turns into localhost.
+    "loc%61lhost",
+    "%6c%6f%63%61%6c%68%6f%73%74",
+    "loc\xADalhost",
+    "loc\xAAlhost",
+    // Not a port.
+    "localhost:65536",
+    "localhost:99999",
+    "localhost:abc",
+    "localhost:-1",
+    "localhost:0x50",
+    "[::1]:9229x",
+    // Not a dotted quad of four decimal octets.
+    "127.1",
+    "2130706433",
+    "0x7f.0.0.1",
+    "0177.0.0.1",
+    "01.2.3.4",
+    "127.000.000.001",
+    "127.0.0.1.",
+    "1.09.0.0",
+    "256.1.1.1",
+    "10.0.2.555",
+    "1.2.3.4.5",
+    "1.2.3",
+    "10",
+    "0x7f000001",
+    "127.0.0.1 rebound-host.example",
+    // Not an IPv6 literal in brackets.
+    "::1",
+    "[::1",
+    "[::1x",
+    "::1]",
+    "[::1]x",
+    "x[::1]",
+    "[[::1]]",
+    "[]",
+    "[localhost]",
+    "[127.0.0.1]",
+    "[1::2::3]",
+    "[::1:]",
+    "[::12345]",
+    "[::1/64]",
+    "[::ffff:127.1]",
+    "[fe80::1%eth0]",
+    "[fe80::1%25eth0]",
+  ];
+
+  using dir = tempDir("inspector-host-check", {
+    "fixture.mjs": `
+      import { inspectorInternals } from "bun:internal-for-testing";
+      const hosts = ${JSON.stringify([...allowed, ...refused])};
+      console.log(JSON.stringify(hosts.filter(host => inspectorInternals.isHostAllowed(host, ${JSON.stringify(boundHostname)}))));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+  expect(JSON.parse(stdout)).toEqual(allowed);
+});
+
 // Node supports close() followed by open() again; a second open() while one is
 // active throws ERR_INSPECTOR_ALREADY_ACTIVATED.
 const reopenInspectorFixture = `

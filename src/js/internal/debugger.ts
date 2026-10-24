@@ -96,6 +96,8 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
+const { isHostAllowed } = require("internal/inspector/host");
+
 // CDP translation is only needed for node:inspector servers, so load it lazily.
 let lazyInspectorCDPAdapter: any;
 function cdpAdapterConstructor() {
@@ -834,25 +836,6 @@ function isOriginAllowed(origin: string | null): boolean {
     return true;
   }
   return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
-}
-
-function isHostAllowed(host: string | null, expectedHostname: string): boolean {
-  if (!host) {
-    return true;
-  }
-  let hostname: string;
-  try {
-    ({ hostname } = new URL(`ws://${host}`));
-  } catch {
-    return false;
-  }
-  if (hostname === expectedHostname || hostname === "localhost" || hostname === "localhost6") {
-    return true;
-  }
-  if (hostname.startsWith("[") && hostname.endsWith("]")) {
-    return true;
-  }
-  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
 }
 
 function randomId() {

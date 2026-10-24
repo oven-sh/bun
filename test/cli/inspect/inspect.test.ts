@@ -2,6 +2,7 @@ import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
+import net from "node:net";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -362,6 +363,71 @@ describe("http metadata endpoint", () => {
     const named = await fetch(endpoint, { headers: { "Host": `inspector.example:${port}` } });
     expect(await named.text()).toBe("");
     expect(named.status).toBe(400);
+  });
+
+  // fetch() cannot send two Host lines, so each request is written by hand.
+  function statusLine(port: string, path: string, hostLines: string[], headers: string): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(Number(port), "127.0.0.1");
+    let response = "";
+    socket.setEncoding("latin1");
+    socket.on("connect", () => {
+      socket.write(`GET ${path} HTTP/1.1\r\n${hostLines.map(line => `Host: ${line}\r\n`).join("")}${headers}\r\n`);
+    });
+    socket.on("data", chunk => {
+      response += chunk;
+      const headEnd = response.indexOf("\r\n\r\n");
+      if (headEnd === -1) return;
+      const head = response.slice(0, headEnd + 2);
+      const status = head.slice(0, head.indexOf("\r\n"));
+      // A 101 has no body. Every other answer of the inspector has a Content-Length.
+      const bodyLength = status.includes(" 101 ") ? 0 : Number(/\r\ncontent-length: (\d+)\r\n/i.exec(head)?.[1]);
+      if (response.length - headEnd - 4 >= bodyLength) {
+        resolve(status);
+        socket.destroy();
+      }
+    });
+    socket.on("error", reject);
+    // The HTTP parser answers without a Content-Length and closes.
+    socket.on("close", () => {
+      if (response.includes("\r\n\r\n")) resolve(response.slice(0, response.indexOf("\r\n")));
+      else reject(new Error(`closed before a response: ${JSON.stringify(response)}`));
+    });
+    return promise;
+  }
+
+  test("answers 400 to a Host header that is not host[:port] as sent", async () => {
+    const { port, pathname } = await spawnInspectee();
+    const served = { version: "HTTP/1.1 200 OK", upgrade: "HTTP/1.1 101 Switching Protocols" };
+    const refused = { version: "HTTP/1.1 400 Bad Request", upgrade: "HTTP/1.1 400 Bad Request" };
+    // " | " separates two Host lines.
+    const expected = {
+      [`127.0.0.1:${port}`]: served,
+      "LOCALHOST": served,
+      "[::1]:9229": served,
+      // headers.get("Host") joins two lines with ", ". A URL parser reads what is before "@" as userinfo.
+      "inspector.example | @localhost": refused,
+      "localhost | @localhost": refused,
+      // A URL parser decodes these to localhost and 127.0.0.1.
+      "loc%61lhost": refused,
+      "127.1": refused,
+      "0x7f.0.0.1": refused,
+    };
+
+    // "Ref-Event-Loop: 0": the client does not hold the inspectee's event loop. Without it, a client that closes
+    // right after the 101 ends the inspectee (https://github.com/oven-sh/bun/issues/45263).
+    const upgrade =
+      "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n" +
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nRef-Event-Loop: 0\r\n";
+    const answers: Record<string, typeof served> = {};
+    for (const row of Object.keys(expected)) {
+      const hostLines = row.split(" | ");
+      answers[row] = {
+        version: await statusLine(port, "/json/version", hostLines, "Connection: close\r\n"),
+        upgrade: await statusLine(port, pathname, hostLines, upgrade),
+      };
+    }
+    expect(answers).toEqual(expected);
   });
 
   test("serves /json/version only to allowed web origins", async () => {

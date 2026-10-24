@@ -335,6 +335,9 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+// The Host header gate of the inspector's HTTP server (`bun --inspect`, `inspector.open()`).
+export const inspectorInternals = require("internal/inspector/host");
+
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.

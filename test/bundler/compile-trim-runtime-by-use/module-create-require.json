@@ -1,4 +1,3 @@
 {
-  "features": [],
-  "failsToday": "The compiler follows createRequire() of node:module. It does not know that the export Module is the module itself, so it does not see what Module.createRequire() loads."
+  "features": []
 }

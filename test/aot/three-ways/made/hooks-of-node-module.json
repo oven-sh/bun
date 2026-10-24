@@ -1,6 +1,6 @@
 {
- "a-new-extension": "alone: the build fails",
- "a-plugin-of-bun": "alone: THROWS Error: A runtime plugin can't load \"/$bunfs/root/dep.js\" because it was alrea",
+ "a-new-extension": "alone: \nexit code 1: error",
+ "a-plugin-of-bun": "as the bundle",
  "a-virtual-module-of-bun": "alone: THROWS ResolveMessage: Cannot find module 'virtual:thing'",
  "an-alias-by-resolve-filename": "alone: THROWS ResolveMessage: Cannot find module '@alias/lib.js'",
  "an-alias-over-a-package-that-exists": "as the bundle",

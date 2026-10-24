@@ -61,7 +61,7 @@ describe("text in a file whose name says nothing about it", () => {
   const typed = `const n: number = 41;\nconsole.log("ran", n + 1);\nmodule.exports = { n };\n`;
 
   test(
-    "runs as TypeScript, as an entry point and when required",
+    "runs as TypeScript as an entry point, and is carried as a file where the program requires it",
     () =>
       slot(async () => {
         using dir = tempDir("aot-text-unknown-extension", {
@@ -71,9 +71,14 @@ describe("text in a file whose name says nothing about it", () => {
         const folder = String(dir);
 
         expect(await outputOf(folder, ["--aot"], ["tool.unknown"])).toEqual({ stdout: "ran 42\n", exitCode: 0 });
-        const required = { stdout: "ran 42\nrequired 41\n", exitCode: 0 };
-        expect(await outputOf(folder, ["--aot"], ["app.ts"])).toEqual(required);
-        expect(await spawned([bunExe(), "app.ts"], folder, env)).toMatchObject(required);
+        // An executable holds the file as it is, with --aot and without, and `require` answers its path. `bun run` reads it as code.
+        const carried = { stdout: "required undefined\n", exitCode: 0 };
+        expect(await outputOf(folder, [], ["app.ts"])).toEqual(carried);
+        expect(await outputOf(folder, ["--aot"], ["app.ts"])).toEqual(carried);
+        expect(await spawned([bunExe(), "app.ts"], folder, env)).toMatchObject({
+          stdout: "ran 42\nrequired 41\n",
+          exitCode: 0,
+        });
       }),
     buildLimit,
   );

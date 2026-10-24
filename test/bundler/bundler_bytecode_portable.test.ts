@@ -520,7 +520,7 @@ describe("bytecode cache portability", () => {
           "js": "7b8ce5d1861461086be174e60797d52794328828458a2086f4d49b39a3f8b28a",
           "jsc": {
             "bytes": 21177808,
-            "sha256": "bfb6f76461836c9840ee1593b3e4a46d10d690715c03dd1c507fe08f47a8ecc2",
+            "sha256": "62bc4de3ff1aba67c153ff59c0e42e4d999b90ef6b87067005bcff30cc9d5e2c",
           },
         },
         "bun build --bytecode lodash/lodash.js": {
@@ -590,8 +590,8 @@ describe("bytecode cache portability", () => {
           "sha256": "6b01942bf091814c4d2936d578e7c669b42ac0405df2e030b9466b479a9d28ae",
         },
         "vm.Script typescript.js": {
-          "bytes": 11325464,
-          "sha256": "75f120bf0955eed50bdb86ec71a75f28d9b369b384668b12c65f6ff1b9dab3c0",
+          "bytes": 11325480,
+          "sha256": "718ec7c8494edc35afc870ca29550879cdc9d1683d7c04f2bc5db4ab24566a37",
         },
         "vm.SourceTextModule acorn.mjs": {
           "bytes": 255184,

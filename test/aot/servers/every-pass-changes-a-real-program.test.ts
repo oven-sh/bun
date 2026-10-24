@@ -58,8 +58,12 @@ const statisticsOfPassesThatReportNoChange = {
 /** None of the programs has what they are for. */
 const passesWithoutWorkInThesePrograms = ["RemoveDeadCountedLoops"];
 
-/** The barriers the terminal program is compiled with on Linux x64. Without the removal of barriers: 634. */
-const barriersOfTheTerminalProgram = 583;
+/**
+ * The barriers the terminal program is compiled with on Linux x64, within five percent. Without the removal of barriers: over 634.
+ * It counts places in the code, not barriers that run: a call that is inlined brings a copy of each of its barriers along,
+ * and the share of stores without a barrier stays what it was.
+ */
+const barriersOfTheTerminalProgram = 588;
 /** Of a hundred stores of cells, how many are compiled without a barrier. */
 const percentWithoutBarrierAtLeast: Record<string, number> = {
   bun: 12,

@@ -113,8 +113,7 @@ impl PerThread {
         self.attached = true;
     }
 
-    /// For an entry point that the prerender step loads. `build_with_vm` stops the build before
-    /// `init` when one of those has no output.
+    /// Only for an entry point that `build_with_vm` checked before `init`.
     pub(crate) fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
         self.entry_points.files.values()[id.get() as usize]
             .unwrap()

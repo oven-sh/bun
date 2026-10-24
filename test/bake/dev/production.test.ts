@@ -502,7 +502,10 @@ export default function () {
      * An app with a framework that renders the text a page returns. `framework`, `router` and
      * `plugins` are spliced into its config. A plugin calls `asked(args)` to record a call.
      */
-    const appFiles = (pages: string[], { framework = "", router = "", plugins = "" } = {}) => ({
+    const appFiles = (
+      pages: string[],
+      { framework = "", router = "", plugins = "", serverEntryPoint = "./server.ts" } = {},
+    ) => ({
       "server.ts": `
         export function render(req, meta) {
           return new Response(String(meta.pageModule.default()));
@@ -518,7 +521,7 @@ export default function () {
       "app.ts": `
         import fs from "node:fs";
         import path from "node:path";
-        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", layouts: true, ${router} };
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "${serverEntryPoint}", layouts: true, ${router} };
         const shared = path.join(import.meta.dir, "shared", "page.ts");
         const asked = args =>
           fs.appendFileSync(path.join(import.meta.dir, "asked.txt"), args.kind + " " + path.basename(args.path) + "\\n");
@@ -810,18 +813,21 @@ export default function () {
       });
     });
 
-    // The build loads the output of each entry point as a module. It names every file that has none.
-    // A route file with "use client" works in the dev server, and is not supported yet in a production build.
+    // The build names every entry point that it loads and that is not a module of its side.
     test.concurrent("an entry point that is not bundled to a module of its side is reported", async () => {
       using dir = tempDir("bake-production-no-module", {
         ...appFiles(["a"], {
           framework: serverComponents,
           router: `extensions: "*", clientEntryPoint: "./client.css",`,
+          serverEntryPoint: "./server.css",
         }),
+        "server.css": `body { color: gray; }`,
         "client.css": `body { color: blue; }`,
         "routes/styles.css": `body { color: red; }`,
         "routes/client.ts": `"use client";\n${page("page-client")}`,
-        // A layout above a page, two directories up.
+        // A layout in the directory of a page, and a layout two directories above a page.
+        "routes/same/_layout.css": `body { color: teal; }`,
+        "routes/same/index.ts": page("page-same"),
         "routes/below/_layout.css": `body { color: green; }`,
         "routes/below/deep/page.ts": page("page-deep"),
       });
@@ -836,9 +842,11 @@ export default function () {
           `error: "client.css" was not bundled to a JavaScript module, so the client cannot load it`,
           `error: "routes/below/_layout.css" was not bundled to a JavaScript module, so the server cannot load it`,
           `error: "routes/client.ts" is a client component, so the server cannot load it`,
+          `error: "routes/same/_layout.css" was not bundled to a JavaScript module, so the server cannot load it`,
           `error: "routes/styles.css" was not bundled to a JavaScript module, so the server cannot load it`,
+          `error: "server.css" was not bundled to a JavaScript module, so the server cannot load it`,
           `note: "use client" is not supported yet in a route file in a production build. Put the client component in a file of its own and import it from the route file.`,
-          `note: The build loads each page, the layouts above it and the framework entry points as modules.`,
+          `note: Pages, the layouts above them and the framework entry points are loaded as modules.`,
         ],
         pages: {},
         dist: false,

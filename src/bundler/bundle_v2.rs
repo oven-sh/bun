@@ -144,8 +144,7 @@ pub struct BundleV2<'a> {
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
 
-    /// `bun build --app`: the source index each key of the `EntryPointMap` resolved to, by
-    /// key index. `Index::INVALID` for a key with no source. Empty in every other build.
+    /// `bun build --app` only: the source index of each `EntryPointMap` key, `INVALID` if none.
     pub(crate) bake_entry_point_sources: Vec<Index>,
 }
 
@@ -702,9 +701,7 @@ pub mod bv2_impl {
             }
             impl Eq for InputFile {}
 
-            /// The output file of an entry point: the chunk of the file it resolved to.
-            /// `NONE` until `BundleV2::generate_from_bake_production_cli` binds it, and
-            /// after that for an entry point with no chunk of its own.
+            /// The entry chunk output of an entry point. `NONE` before the link, or if it has none.
             pub use crate::output_file::IndexOptional as OutputFileIndexOptional;
 
             pub type EntryPointHashMap =
@@ -1119,9 +1116,7 @@ pub mod bv2_impl {
                 pub(crate) original_target: Target,
                 /// Set for the html file of a dev server route, see `BundleV2::requested_file_loader`.
                 pub(crate) loader: Option<Loader>,
-                /// `bun build --app`: the key of this entry point in the `EntryPointMap`, which
-                /// `on_resolve` binds to the file the plugins answer with. `NONE` for an import,
-                /// and for an entry point of any other build.
+                /// The `EntryPointMap` key of a `bun build --app` entry point. `NONE` otherwise.
                 pub(crate) bake_entry_point:
                     super::super::bake_types::production::OpaqueFileIdOptional,
             }
@@ -3856,8 +3851,7 @@ pub mod bv2_impl {
             self.path_to_source_index_map(target).get_path(path)
         }
 
-        /// `bun build --app`: the entry point `id` of the `EntryPointMap` is the file at
-        /// `source_index`.
+        /// `bun build --app`: key `id` of the `EntryPointMap` is the file at `source_index`.
         fn bind_bake_entry_point(
             &mut self,
             id: bake::production::OpaqueFileId,
@@ -3868,9 +3862,7 @@ pub mod bv2_impl {
             *bound = Index::source(source_index);
         }
 
-        /// `bun build --app`: an onResolve plugin passed on a key, and its file was in the graph
-        /// already, as an earlier key or as an import of one. An import becomes an entry point
-        /// here, so that the key has a chunk of its own.
+        /// Makes a file that is in the graph as an import an entry point, so its key has a chunk.
         fn promote_to_bake_entry_point(
             &mut self,
             resolved: &_resolver::Result,
@@ -3881,8 +3873,7 @@ pub mod bv2_impl {
             Some(source_index)
         }
 
-        /// `bun build --app`: gives each key of `entry_points` the output file of the chunk of
-        /// its entry point.
+        /// `bun build --app`: gives each key of `entry_points` the output file of its entry chunk.
         fn bind_bake_entry_point_outputs(
             &self,
             entry_points: &mut bake_types::production::EntryPointMap,
@@ -3896,8 +3887,7 @@ pub mod bv2_impl {
                 if self.linker.chunk_output_kind(chunk) != options::OutputKind::EntryPoint {
                     continue;
                 }
-                // `generate_chunks_in_parallel` gives the output file of a chunk the index of
-                // the chunk.
+                // The output file of chunk `i` is `output_files[i]`.
                 debug_assert!(
                     output_files[chunk_index].output_kind == options::OutputKind::EntryPoint
                 );

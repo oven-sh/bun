@@ -664,8 +664,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         return Ok(());
     }
 
-    // The prerender step loads the framework entry points, each page and the layouts above it.
-    // Each is a module on its side.
+    // Only these have to be modules: the framework entry points, each page, the layouts above it.
     let mut loaded = AutoBitSet::init_empty(entry_points.files.count())?;
     for router_type in router.types.iter() {
         loaded.set(router_type.server_file.get() as usize);
@@ -674,16 +673,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
     }
     for route in router.routes.iter() {
-        let Some(page) = route.file_page else {
-            continue;
-        };
-        loaded.set(page.get() as usize);
-        let mut above = Some(route);
-        while let Some(current) = above {
-            if let Some(layout) = current.file_layout {
-                loaded.set(layout.get() as usize);
-            }
-            above = current.parent.map(|parent| router.route_ptr(parent));
+        for file in router.page_files(route) {
+            loaded.set(file.get() as usize);
         }
     }
     let mut not_modules: usize = 0;
@@ -724,7 +715,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     }
     if not_modules > 0 {
         bun_core::note!(
-            "The build loads each page, the layouts above it and the framework entry points as modules."
+            "Pages, the layouts above them and the framework entry points are loaded as modules."
         );
     }
     if client_components > 0 {
@@ -1055,36 +1046,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         let styles = JSValue::create_empty_array(global, css_chunks_count).map_err(js_err)?;
         let file_list = JSValue::create_empty_array(global, file_count as usize).map_err(js_err)?;
 
-        next = route.parent;
-        file_count = 1;
         let mut css_file_count: u32 = 0;
-        file_list
-            .put_index(
-                global,
-                0,
-                pt.preload_bundled_module(main_file_route_index)
-                    .map_err(js_err)?,
-            )
-            .map_err(js_err)?;
-        for r#ref in pt
-            .output_file(main_file_route_index)
-            .referenced_css_chunks
-            .iter()
-        {
-            styles
-                .put_index(
-                    global,
-                    css_file_count,
-                    css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                )
-                .map_err(js_err)?;
-            css_file_count += 1;
-        }
-        if let Some(file) = route.file_layout {
+        for (file_index, file) in router.page_files(route).enumerate() {
             file_list
                 .put_index(
                     global,
-                    file_count,
+                    u32::try_from(file_index).expect("int cast"),
                     pt.preload_bundled_module(file).map_err(js_err)?,
                 )
                 .map_err(js_err)?;
@@ -1098,32 +1065,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     .map_err(js_err)?;
                 css_file_count += 1;
             }
-            file_count += 1;
-        }
-
-        while let Some(parent_index) = next {
-            let parent = router.route_ptr(parent_index);
-            if let Some(file) = parent.file_layout {
-                file_list
-                    .put_index(
-                        global,
-                        file_count,
-                        pt.preload_bundled_module(file).map_err(js_err)?,
-                    )
-                    .map_err(js_err)?;
-                for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
-                    styles
-                        .put_index(
-                            global,
-                            css_file_count,
-                            css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
-                        )
-                        .map_err(js_err)?;
-                    css_file_count += 1;
-                }
-                file_count += 1;
-            }
-            next = parent.parent;
         }
 
         // Init the items

@@ -195,6 +195,10 @@ Ran 1 test across 1 file."
 
 test("a directive in a function body is a line of that function", () => {
   using dir = tempDir("cov", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = true
+`,
     "lib.cjs": `"use strict";
 function called() {
   "use strict";
@@ -228,21 +232,20 @@ test("calls one function", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-    "lib.test.js:
-    (pass) calls one function
-    -------------|---------|---------|-------------------
-    File         | % Funcs | % Lines | Uncovered Line #s
-    -------------|---------|---------|-------------------
-    All files    |   75.00 |   81.25 |
-     lib.cjs     |   50.00 |   62.50 | 6-8
-     lib.test.js |  100.00 |  100.00 | 
-    -------------|---------|---------|-------------------
+"lib.test.js:
+(pass) calls one function
+-----------|---------|---------|-------------------
+File       | % Funcs | % Lines | Uncovered Line #s
+-----------|---------|---------|-------------------
+All files  |   50.00 |   62.50 |
+ lib.cjs   |   50.00 |   62.50 | 6-8
+-----------|---------|---------|-------------------
 
-     1 pass
-     0 fail
-     1 expect() calls
-    Ran 1 test across 1 file."
-  `);
+ 1 pass
+ 0 fail
+ 1 expect() calls
+Ran 1 test across 1 file."
+`);
   expect(result.exitCode).toBe(0);
 });
 

@@ -1,5 +1,6 @@
 use crate::fs;
-use crate::package_json::{PackageJSON, SideEffects};
+use crate::package_json::PackageJSON;
+use bun_ast::SideEffects;
 use bun_options_types::bundle_enums::ModuleType;
 
 pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
@@ -15,6 +16,7 @@ pub(crate) struct FallbackModule {
     // PackageJSONs and we hand out `&'static` borrows into it.
     pub package_json: &'static PackageJSON,
     pub code: fn() -> &'static str,
+    pub side_effects: SideEffects,
 }
 
 // This workaround exists to allow bun_core::runtime_embed_file to work.
@@ -78,10 +80,14 @@ struct FallbackSpec {
     pretty: &'static [u8],
     pkgjson_path: &'static [u8],
     code: fn() -> &'static str,
+    side_effects: SideEffects,
 }
 
 macro_rules! fallback_spec {
     ($name:literal, $code_path:literal) => {
+        fallback_spec!($name, $code_path, SideEffects::NoSideEffectsPureData)
+    };
+    ($name:literal, $code_path:literal, $side_effects:expr) => {
         FallbackSpec {
             name: $name.as_bytes(),
             index_path: ::const_format::concatcp!("/bun-vfs$$/node_modules/", $name, "/index.js")
@@ -94,6 +100,7 @@ macro_rules! fallback_spec {
             )
             .as_bytes(),
             code: create_source_code_getter!($code_path),
+            side_effects: $side_effects,
         }
     };
 }
@@ -116,7 +123,9 @@ static SPECS: [FallbackSpec; 23] = [
     fallback_spec!("querystring", "node-fallbacks/querystring.js"),
     fallback_spec!("stream", "node-fallbacks/stream.js"),
     fallback_spec!("string_decoder", "node-fallbacks/string_decoder.js"),
-    fallback_spec!("sys", "node-fallbacks/sys.js"),
+    // Keeps its side effects: it is `export * from "util"`, and the linker does not
+    // initialize a `require()`d `util` for a binding imported through a file without them.
+    fallback_spec!("sys", "node-fallbacks/sys.js", SideEffects::HasSideEffects),
     fallback_spec!("timers", "node-fallbacks/timers.js"),
     fallback_spec!("tty", "node-fallbacks/tty.js"),
     fallback_spec!("url", "node-fallbacks/url.js"),
@@ -155,7 +164,6 @@ fn init_modules() {
                     // main_fields/browser_map are never read on this code path;
                     // Default::default() fills them safely.
                     source: bun_ast::Source::init_path_string(spec.pkgjson_path, b""),
-                    side_effects: SideEffects::False,
                     ..Default::default()
                 },
                 fs::Path::init_with_namespace_virtual(spec.index_path, b"node", spec.pretty),
@@ -170,13 +178,14 @@ fn init_modules() {
     unsafe {
         *MODULES.get() = Some(modules);
         let modules_ref: &'static [FallbackEntry] = (*MODULES.get()).as_deref().unwrap();
-        for (name, pkg, path, code) in modules_ref.iter() {
+        for ((name, pkg, path, code), spec) in modules_ref.iter().zip(&SPECS) {
             m.put_assume_capacity(
                 name,
                 FallbackModule {
                     path: *path,
                     package_json: pkg,
                     code: *code,
+                    side_effects: spec.side_effects,
                 },
             );
         }

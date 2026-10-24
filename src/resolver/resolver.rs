@@ -1956,6 +1956,7 @@ impl<'a> Resolver<'a> {
                             fallback_module.package_json,
                         ));
                         result.flags.set_is_from_node_modules(true);
+                        result.primary_side_effects_data = fallback_module.side_effects;
                         return ResultUnion::Success(result);
                     }
 

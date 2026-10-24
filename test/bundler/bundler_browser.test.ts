@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestBundleAPI, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
   const nodePolyfillList = {
@@ -287,6 +287,215 @@ describe("bundler", () => {
         })),
       );
     },
+  });
+
+  // A polyfill has no side effects, so an import statement that nothing uses
+  // must not put it in the bundle. These are all the forms of that statement.
+  // The named export must exist: a name the polyfill lacks is a build error.
+  const unusedImportsOf = (name: string, namedExport: string) => /* js */ `
+    import { ${namedExport} as ${name}Named } from "node:${name}";
+    import { ${namedExport} as ${name}WithoutPrefix } from "${name}";
+    import ${name}Default from "node:${name}";
+    import * as ${name}Namespace from "node:${name}";
+    import "node:${name}";
+    import { ${namedExport} as ${name}ReExported } from "./re-export.js";
+  `;
+  const unusedPolyfillImportBuilds = {
+    cli: { backend: "cli" },
+    api: { backend: "api" },
+  } satisfies Record<string, Partial<BundlerTestInput>>;
+  // The comment that starts each module of the bundle. A test checks this list
+  // before the whole text, so a failure names the polyfills and does not print them.
+  const bundledModules = (api: BundlerTestBundleAPI) => api.readFile("/out.js").match(/^\/\/ .+$/gm);
+  for (const [build, options] of Object.entries(unusedPolyfillImportBuilds)) {
+    itBundled(`browser/UnusedNodePolyfillImport-${build}`, {
+      ...options,
+      files: {
+        // stream is the one polyfill that is CommonJS. crypto requires four other polyfills.
+        "/entry.js":
+          unusedImportsOf("events", "EventEmitter") +
+          unusedImportsOf("stream", "Readable") +
+          unusedImportsOf("crypto", "createHash") +
+          /* js */ `console.log("no polyfill");`,
+        "/re-export.js": /* js */ `
+          export { EventEmitter } from "node:events";
+          export { Readable } from "node:stream";
+          export { createHash } from "node:crypto";
+        `,
+      },
+      target: "browser",
+      run: { stdout: "no polyfill" },
+      onAfterBundle(api) {
+        expect(bundledModules(api)).toEqual(["// entry.js"]);
+        api.expectFile("out.js").toBe('// entry.js\nconsole.log("no polyfill");\n');
+      },
+    });
+    // The usual case: a package for both sides of an app. Only an export that
+    // the browser entry point does not import uses the builtins.
+    itBundled(`browser/NodePolyfillForUnusedExport-${build}`, {
+      ...options,
+      files: {
+        "/entry.js": /* js */ `
+          import { forBrowser } from "both-sides";
+          console.log(forBrowser());
+        `,
+        "/node_modules/both-sides/package.json": /* json */ `
+          { "name": "both-sides", "type": "module", "main": "./index.js" }
+        `,
+        "/node_modules/both-sides/index.js": /* js */ `
+          import * as events from "node:events";
+          import { Readable } from "stream";
+          export function forBrowser() {
+            return "for the browser";
+          }
+          export function forServer() {
+            return [new events.EventEmitter(), new Readable()];
+          }
+        `,
+      },
+      target: "browser",
+      run: { stdout: "for the browser" },
+      onAfterBundle(api) {
+        expect(bundledModules(api)).toEqual(["// node_modules/both-sides/index.js", "// entry.js"]);
+      },
+    });
+  }
+  itBundled("browser/UnusedNodePolyfillImportNextToUsedOne", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        import { EventEmitter } from "node:events";
+        const emitter = new EventEmitter();
+        emitter.on("hello", value => console.log(value));
+        emitter.emit("hello", "used events");
+      `,
+    },
+    target: "browser",
+    run: { stdout: "used events" },
+    onAfterBundle(api) {
+      expect(bundledModules(api)).toEqual(["// node:events", "// entry.js"]);
+    },
+  });
+  itBundled("browser/UnusedNodePolyfillImportWithSplitting", {
+    files: {
+      "/uses.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        const emitter = new EventEmitter();
+        emitter.on("hello", value => console.log("uses", value));
+        emitter.emit("hello", 1);
+      `,
+      "/also-uses.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        const emitter = new EventEmitter();
+        emitter.on("hello", value => console.log("also uses", value));
+        emitter.emit("hello", 2);
+      `,
+      "/unused.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        console.log("unused");
+      `,
+    },
+    entryPoints: ["/uses.js", "/also-uses.js", "/unused.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    run: [
+      { file: "/out/uses.js", stdout: "uses 1" },
+      { file: "/out/also-uses.js", stdout: "also uses 2" },
+      { file: "/out/unused.js", stdout: "unused" },
+    ],
+    onAfterBundle(api) {
+      // The polyfill is in a chunk of its own. Only its users import that chunk.
+      api.expectFile("/out/unused.js").toBe('// unused.js\nconsole.log("unused");\n');
+    },
+  });
+  // The url polyfill reads globalThis.URL when it loads. Here it has a chunk of
+  // its own, and a chunk with no side effects loads after the chunks that have
+  // some. So the polyfill sees the class that replace-url.js sets, also when
+  // the entry point imports the polyfill first.
+  itBundled("browser/UsedNodePolyfillLoadsAfterSideEffectsWithSplitting", {
+    files: {
+      "/side-effect-first.js": /* js */ `
+        import "./replace-url.js";
+        import { URL } from "node:url";
+        console.log(URL.name);
+      `,
+      "/polyfill-first.js": /* js */ `
+        import { URL } from "node:url";
+        import "./replace-url.js";
+        console.log(URL.name);
+      `,
+      "/only-polyfill.js": /* js */ `
+        import { URL } from "node:url";
+        console.log(URL.name);
+      `,
+      "/only-side-effect.js": /* js */ `
+        import "./replace-url.js";
+        console.log(globalThis.URL.name);
+      `,
+      "/replace-url.js": /* js */ `
+        globalThis.URL = class ReplacedURL {};
+      `,
+    },
+    entryPoints: ["/side-effect-first.js", "/polyfill-first.js", "/only-polyfill.js", "/only-side-effect.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    run: [
+      { file: "/out/side-effect-first.js", stdout: "ReplacedURL" },
+      { file: "/out/polyfill-first.js", stdout: "ReplacedURL" },
+      { file: "/out/only-polyfill.js", stdout: "URL" },
+    ],
+  });
+  // --ignore-dce-annotations turns the side-effect data off, for a polyfill too.
+  itBundled("browser/UnusedNodePolyfillImportIgnoreDCEAnnotations", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        console.log("polyfill kept");
+      `,
+    },
+    target: "browser",
+    ignoreDCEAnnotations: true,
+    run: { stdout: "polyfill kept" },
+    onAfterBundle(api) {
+      expect(bundledModules(api)).toEqual(["// node:events", "// entry.js"]);
+    },
+  });
+  // require() and import() are expressions. They load the polyfill when they
+  // run, so the polyfill stays in the bundle.
+  itBundled("browser/UnusedRequireAndDynamicImportKeepNodePolyfill", {
+    files: {
+      "/entry.js": /* js */ `
+        require("node:events");
+        await import("node:buffer");
+        console.log("loaded");
+      `,
+    },
+    target: "browser",
+    run: { stdout: "loaded" },
+    onAfterBundle(api) {
+      expect(bundledModules(api)).toEqual(["// node:events", "// node:buffer", "// entry.js"]);
+    },
+  });
+  // sys is `export * from "util"`, and the assert polyfill loads util with
+  // require(). sys keeps its side effects: they are what initializes that util
+  // before uses-sys.js reads a binding of it.
+  itBundled("browser/NodeSysNextToPolyfillThatRequiresUtil", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./uses-sys.js";
+        import assert from "node:assert";
+        assert.ok(true);
+      `,
+      "/uses-sys.js": /* js */ `
+        import { inspect } from "node:sys";
+        import * as sys from "node:sys";
+        console.log(inspect({ a: 1 }), sys.format("%s:%d", "b", 2));
+      `,
+    },
+    target: "browser",
+    run: { stdout: "{ a: 1 } b:2" },
   });
 
   // #4928: a package.json "browser": {"<builtin>": false} must win over the

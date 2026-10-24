@@ -280,10 +280,13 @@ describe.each(isWindows ? ["bun"] : ["bun", "system"])("package script with --sh
         "args.sh": `#!/bin/sh\nfor a in "$@"; do printf '<%s>' "$a"; done; printf '\\n'\n`,
       });
       chmodSync(join(String(dir), "args.sh"), 0o755);
+      // A row reads a name as not set until the row sets it.
+      const names = new Set(Array.from(script.matchAll(/\$\{?([A-Za-z_]\w*)/g), match => match[1]));
+      const notSet = Object.fromEntries(Array.from(names, name => [name, undefined]));
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", `--shell=${shell}`, "rows"],
         cwd: String(dir),
-        env: { ...bunEnv, HOME: "/home/user" },
+        env: { ...bunEnv, ...notSet, HOME: "/home/user" },
         stdout: "pipe",
         stderr: "ignore",
       });

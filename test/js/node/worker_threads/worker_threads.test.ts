@@ -2558,9 +2558,7 @@ describe("'online' precedes the worker's first message", () => {
 // refusal / wait paths of VM teardown; a broken build crashes or trips ASAN
 // rather than failing an assertion.
 describe("terminate with work in flight", () => {
-  // Keeps the worker running after its job completes. Without it, a job that
-  // finishes before terminate() lands lets the worker exit on its own, and
-  // terminate() then resolves that exit's code (0, as in Node) instead of 1.
+  // Ref'd timer: the worker can only exit through terminate(), so its exit code is always 1.
   const keepAlive = `setInterval(() => {}, 1e6);`;
 
   test("a transpile queued on the thread pool that starts after terminate()", async () => {

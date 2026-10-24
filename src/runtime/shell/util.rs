@@ -26,7 +26,11 @@ pub(crate) fn throw_if_body_unavailable(
     use crate::jsc::ErrorCode;
     use crate::webcore::body::Value;
 
-    body.to_blob_if_possible();
+    // An unread native stream (`blob.stream()`) goes back to its `Blob`. For a
+    // string body the call would scan the string for non-ASCII bytes again.
+    if matches!(body, Value::Locked(_)) {
+        body.to_blob_if_possible();
+    }
     let already_used = || {
         global
             .err(

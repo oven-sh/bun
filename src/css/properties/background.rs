@@ -674,8 +674,7 @@ enum Reach {
 }
 
 enum Pending {
-    /// A closed state. When `resumable`, a later image that every target reads
-    /// folds it back into the open state. Otherwise it stays as written.
+    /// A closed state. A later image that every target reads folds a resumable one back in.
     State {
         state: Box<BackgroundState>,
         resumable: bool,
@@ -715,17 +714,12 @@ impl Pending {
     }
 }
 
-/// Folds the background declarations of a block.
-///
-/// A value that not every target reads never replaces an earlier declaration.
-/// The earlier declarations wait in `pending`, in source order, until the block
-/// ends or a later value that every target reads overrides them. lightningcss
-/// keeps one buffered state instead, and loses the earlier declaration.
+/// Unlike lightningcss, a value that a target cannot read never replaces the declaration before it.
 #[derive(Default)]
 pub struct BackgroundHandler {
     /// The declarations that still fold into one another.
     open: BackgroundState,
-    /// Earlier declarations that a target may still need.
+    /// Earlier declarations that a target may still need, in source order.
     pending: Vec<Pending>,
     /// One past the index of the first resumable state in `pending`, or 0.
     first_resumable: u32,
@@ -734,9 +728,7 @@ pub struct BackgroundHandler {
     has_any: bool,
 }
 
-// Struct fields cannot be indexed by string at runtime; the
-// `initSmallListHelper` / `push` helpers are expanded into small per-field
-// macros below. A derive macro could replace them.
+// Struct fields cannot be indexed by name at runtime, so these helpers are per-field macros.
 
 macro_rules! init_small_list_helper {
     ($this:expr, $field:ident, $length:expr) => {{
@@ -868,8 +860,7 @@ impl BackgroundHandler {
                 }
                 let partial = self.open_is_partial(arena, context);
                 if partial || !self.pending.is_empty() {
-                    // Written with the held declarations, so that a later
-                    // `background` which every target reads overrides them all.
+                    // Held too, so that a later `background` can still override everything before it.
                     self.close(!partial);
                     self.pending.push(Pending::Unparsed(val.deep_clone(arena)));
                 } else {
@@ -936,8 +927,7 @@ impl BackgroundHandler {
             if self.open.is_image_only() && context.targets.browsers.is_some() {
                 self.open.images = None;
             } else {
-                // No fold into a declaration that a target ignores. Without
-                // targets a prefixed image stays as written.
+                // No fold into a declaration that a target ignores. Without targets it stays as written.
                 self.close(false);
             }
         }
@@ -1026,8 +1016,7 @@ impl BackgroundHandler {
         self.open.clips = Some((clips, clips_vp));
     }
 
-    /// Closes, writes or drops the declarations in front of a `background`
-    /// shorthand. Returns which targets read the images of the shorthand.
+    /// Closes, writes or drops what is in front of a `background`. Returns the reach of its images.
     fn before_shorthand(
         &mut self,
         images: &SmallList<Image, 1>,
@@ -1043,8 +1032,7 @@ impl BackgroundHandler {
         let same_images = !prefixed
             && matches!(&self.open.images, Some(open) if crate::generic::eql(open, images));
 
-        // `reach_behind`: the answer when an earlier declaration stays in
-        // front of the shorthand, which stops its colour fallbacks.
+        // `reach_behind`: a declaration that stays in front of the shorthand stops its colour fallbacks.
         let (every_target_reads, reach_behind) = if prefixed {
             (false, Reach::Partial)
         } else if same_images {
@@ -1123,8 +1111,7 @@ impl BackgroundHandler {
         !self.has_any || (self.pending.is_empty() && self.open.is_empty())
     }
 
-    /// Whether the colour of the open state is the manual fallback of `val`,
-    /// a later colour that a target lacks.
+    /// Whether the open colour is the manual fallback of `val`, a later colour that a target lacks.
     fn open_color_is_fallback_of(&self, val: &CssColor, context: &PropertyHandlerContext) -> bool {
         matches!(
             (&self.open.color, context.targets.browsers),
@@ -1133,9 +1120,7 @@ impl BackgroundHandler {
         )
     }
 
-    /// Asks the targets about the images of the open state, once. `flush`
-    /// writes the colour fallbacks of a first image, so every target reads it
-    /// when every target reads the lowest one.
+    /// `flush` writes the colour fallbacks of a first image, so the lowest fallback decides for it.
     fn open_is_partial(&mut self, arena: &Bump, context: &PropertyHandlerContext) -> bool {
         if self.reach == Reach::Unasked {
             self.reach = match (&self.open.images, context.targets.browsers) {
@@ -1178,10 +1163,7 @@ impl BackgroundHandler {
         }
     }
 
-    /// A `background` that every target reads overrides the declarations in
-    /// front of it. Without targets, only the resumable states: the prefixed
-    /// and the unparsed declarations stay as written. Returns false when a
-    /// declaration to drop sets a prefixed `background-clip`.
+    /// Drops what a `background` that every target reads overrides. False if that loses a prefixed clip.
     fn supersede(&mut self, context: &PropertyHandlerContext) -> bool {
         if context.targets.browsers.is_some() {
             if self.pending.iter().any(Pending::sets_prefixed_clip) {
@@ -1192,6 +1174,7 @@ impl BackgroundHandler {
             return true;
         }
 
+        // Without targets the prefixed and the unparsed declarations stay as written.
         let start = match self.first_resumable {
             0 => self.pending.len(),
             first => first as usize - 1,
@@ -1217,9 +1200,7 @@ impl BackgroundHandler {
         true
     }
 
-    /// An image that every target reads overrides the image-only declarations
-    /// in front of it. The resumable states below them fold back into the open
-    /// state, down to the first one that sets an image.
+    /// Drops the image-only declarations that a later image overrides, and folds the resumable states back in.
     fn resume(&mut self, has_targets: bool) {
         // Without targets the overridden declarations stay as written.
         let mut overridden = Vec::new();
@@ -1272,8 +1253,7 @@ impl BackgroundHandler {
         }
         self.has_any = false;
 
-        // A resumable state without an image is not the manual fallback of
-        // the shorthand after it, which still gets its generated fallbacks.
+        // A resumable state without an image is no manual fallback of the shorthand after it.
         let mut shorthand_fallbacks = self.flushed_properties.is_empty();
         let mut pending = core::mem::take(&mut self.pending);
         for entry in pending.drain(..) {

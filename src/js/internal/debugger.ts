@@ -486,7 +486,17 @@ class Debugger {
 
   #fetch(request: Request, server: WebSocketServer<Connection>): Response | undefined {
     const { method, url, headers } = request;
-    const { pathname } = new URL(url);
+    // request.url is an absolute URL only when Bun.serve built it from a usable Host (Request::ensure_url, #33072).
+    let parsed = URL.parse(url);
+    if (!parsed && url.startsWith("/") && !headers.get("Host")) {
+      parsed = URL.parse(`http://localhost${url}`);
+    }
+    if (!parsed) {
+      return new Response(null, {
+        status: 400, // Bad Request
+      });
+    }
+    const { pathname } = parsed;
 
     if (method !== "GET") {
       return new Response(null, {

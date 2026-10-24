@@ -300,6 +300,162 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.finalUrl).toBeNull();
 });
 
+// GET /json/version, GET /json/list and the WebSocket upgrade answer a request
+// that has no Host header, or an empty one, as Node does (IsAllowedHost):
+// https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket.cc#L642-L646
+// A Host that Bun.serve could not build request.url from is answered 400.
+// The rows go over a raw socket: fetch() always sends HTTP/1.1 with a Host
+// header, and the HTTP parser refuses an HTTP/1.1 request that has no Host header.
+const hostHeaderFixture = `
+import inspector from "node:inspector";
+import net from "node:net";
+
+const CRLF = "\\r\\n";
+const request = (requestLine, headers = []) => [requestLine, ...headers, "", ""].join(CRLF);
+const upgrade = [
+  "Connection: Upgrade",
+  "Upgrade: websocket",
+  "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+  "Sec-WebSocket-Version: 13",
+];
+
+let port;
+function raw(text) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const isUpgrade = text.includes("Upgrade: websocket");
+  let response = "";
+  const socket = net.connect(port, "127.0.0.1", () => socket.write(text));
+  socket.on("data", chunk => {
+    response += chunk;
+    const headerEnd = response.indexOf(CRLF + CRLF);
+    if (headerEnd === -1) return;
+    // The server keeps the socket open after an upgrade response, accepted or not.
+    const length = /^content-length: (\\d+)$/im.exec(response.slice(0, headerEnd));
+    if (isUpgrade || (length && response.length - headerEnd - 4 >= Number(length[1]))) socket.destroy();
+  });
+  socket.on("error", reject);
+  socket.on("close", () => {
+    const status = response.slice(0, response.indexOf(CRLF));
+    if (isUpgrade) return resolve(status);
+    let body = response.slice(response.indexOf(CRLF + CRLF) + 4);
+    try {
+      body = JSON.parse(body);
+    } catch {
+      // Keep a large error page out of the summary.
+      if (body.length > 200) body = "<" + body.length + " bytes>";
+    }
+    resolve({ status, body });
+  });
+  return promise;
+}
+
+inspector.open(0, "127.0.0.1", false);
+const url = inspector.url();
+const { pathname } = new URL(url);
+port = Number(new URL(url).port);
+
+const summary = {
+  url,
+  version: await raw(request("GET /json/version HTTP/1.0")),
+  list: await raw(request("GET /json/list HTTP/1.0")),
+  post: await raw(request("POST /json/version HTTP/1.0", ["Content-Length: 0"])),
+  emptyHostList: await raw(request("GET /json/list HTTP/1.1", ["Host: ", "Connection: close"])),
+  emptyHostUpgrade: await raw(request("GET " + pathname + " HTTP/1.1", ["Host: ", ...upgrade])),
+  // A target that starts with "//" is a path, with or without a Host header.
+  doubleSlash: {
+    withoutHost: await raw(request("GET //x/json/list HTTP/1.0")),
+    withHost: await raw(request("GET //x/json/list HTTP/1.1", ["Host: 127.0.0.1", "Connection: close"])),
+  },
+  // An authority-form target is not a path, with or without a Host header.
+  connect: {
+    withoutHost: await raw(request("CONNECT 1.example:443 HTTP/1.0")),
+    withHost: await raw(request("CONNECT 1.example:443 HTTP/1.1", ["Host: 127.0.0.1"])),
+  },
+  unusableHost: {},
+};
+const unusableHosts = [
+  "a b",
+  "evil.example@localhost",
+  "localhost/evil",
+  "localhost#x",
+  "localhost?x",
+  "localhost\\\\x",
+  "[::1",
+  "localhost:abc",
+];
+for (const host of unusableHosts) {
+  summary.unusableHost[host] = {
+    list: await raw(request("GET /json/list HTTP/1.1", ["Host: " + host, "Connection: close"])),
+    upgrade: await raw(request("GET " + pathname + " HTTP/1.1", ["Host: " + host, ...upgrade])),
+  };
+}
+
+console.log(JSON.stringify(summary));
+// No inspector.close(): that call can block forever, and this test is not about it.
+process.exit(0);
+`;
+
+test("inspector.open() answers a request without a Host header and refuses an unusable Host", async () => {
+  using dir = tempDir("inspector-host-header", {
+    "fixture.mjs": hostHeaderFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  const summary = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  const { host, pathname } = new URL(summary.url);
+  const version = {
+    status: "HTTP/1.1 200 OK",
+    body: { "Browser": expect.stringContaining("Bun/"), "Protocol-Version": "1.1" },
+  };
+  // Without a Host header, the target list names the address the server is bound to.
+  const list = {
+    status: "HTTP/1.1 200 OK",
+    body: [
+      expect.objectContaining({
+        webSocketDebuggerUrl: summary.url,
+        devtoolsFrontendUrl: expect.stringContaining(`ws=${host}${pathname}`),
+      }),
+    ],
+  };
+  const notFound = { status: "HTTP/1.1 404 Not Found", body: "" };
+  const badRequest = { status: "HTTP/1.1 400 Bad Request", body: "" };
+  const refused = { list: badRequest, upgrade: "HTTP/1.1 400 Bad Request" };
+  expect(summary).toEqual({
+    url: expect.stringMatching(/^ws:\/\/127\.0\.0\.1:\d+\/[0-9a-f-]{36}$/),
+    version,
+    list,
+    emptyHostList: list,
+    emptyHostUpgrade: "HTTP/1.1 101 Switching Protocols",
+    connect: { withoutHost: badRequest, withHost: badRequest },
+    // Node answers 400 to every method but GET and to every path that it does not serve.
+    // Bun answers 405 and 404, with or without a Host header.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket.cc#L555-L558
+    // https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket_server.cc#L503-L507
+    post: { status: "HTTP/1.1 405 Method Not Allowed", body: "" },
+    doubleSlash: { withoutHost: notFound, withHost: notFound },
+    unusableHost: {
+      "a b": refused,
+      "evil.example@localhost": refused,
+      "localhost/evil": refused,
+      "localhost#x": refused,
+      "localhost?x": refused,
+      "localhost\\x": refused,
+      "[::1": refused,
+      // Node serves this Host: TrimPort() cuts at the last ":" and does not check the port.
+      // https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket.cc#L161-L169
+      "localhost:abc": refused,
+    },
+  });
+});
+
 // A failed inspector.open() (port already in use) must print Node's diagnostic
 // line and RETURN so a later open() can retry on the same debugger thread.
 const failedOpenRetryFixture = `

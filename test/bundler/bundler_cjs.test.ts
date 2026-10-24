@@ -857,14 +857,16 @@ describe("bundler", () => {
   });
 
   // `export *` of a module with top-level await marks the file async too.
+  // The namespace has the names of that module. `t` is a literal, so its value
+  // does not depend on `init_async()`, which the wrapper of `c.js` does not await.
   itBundled("cjs/__toESM_dynamic_import_of_file_with_export_star_marked_async", {
     files: {
-      "/entry.js": `const ns = await import("./c.js");\nconsole.log(typeof ns.default, ns.default.a);`,
+      "/entry.js": `const ns = await import("./c.js");\nconsole.log(JSON.stringify(ns));`,
       "/c.js": `export * from "./async.js";\nexports.a = 1;\nObject.keys(exports);`,
-      "/async.js": `await 0;\nexport const t = 1;`,
+      "/async.js": `await 0;\nexport const t = 2;`,
     },
     run: {
-      stdout: "object 1",
+      stdout: `{"default":{"t":2,"a":1},"t":2,"a":1}`,
     },
   });
 

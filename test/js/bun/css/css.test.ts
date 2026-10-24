@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -15,6 +15,7 @@ import {
   ParserFlags,
   ParserOptions,
   prefix_test,
+  type Browsers,
 } from "./util";
 
 function Some(n: number): number {
@@ -3419,6 +3420,185 @@ describe("css tests", () => {
         chrome: 99 << 16,
       },
     );
+
+    describe("a value that a target cannot read", () => {
+      const defaults = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+      const std = "linear-gradient(red, green)";
+      const moz = "-moz-linear-gradient(red, green)";
+      const webkit = "-webkit-linear-gradient(red, green)";
+      const opera = "-o-linear-gradient(red, green)";
+      const legacy = "-webkit-gradient(linear, left top, left bottom, from(red), to(green))";
+
+      // Every declaration stays, in source order.
+      function stays(source: string, targets?: Browsers) {
+        if (targets) prefix_test(source, source, targets);
+        else cssTest(source, source);
+      }
+
+      for (const [name, targets] of [
+        ["default targets", defaults],
+        ["no targets", undefined],
+      ] as const) {
+        describe(`keeps the declaration before it, ${name}`, () => {
+          stays(`.a { background: red; background: ${opera}; }`, targets);
+          stays(`.a { background: ${std}; background: ${moz}; }`, targets);
+          stays(`.a { background: url("a.png"); background: ${moz}; }`, targets);
+          stays(`.a { background-image: ${std}; background-image: ${moz}; }`, targets);
+          stays(`.a { background: radial-gradient(red, green); background: -moz-radial-gradient(red, green); }`, targets);
+          stays(
+            `.a { background: repeating-linear-gradient(red, green 10px); background: -moz-repeating-linear-gradient(red, green 10px); }`,
+            targets,
+          );
+          stays(`.a { background-color: red; background: ${moz}; }`, targets);
+          stays(`.a { background: red; background-image: ${moz}; }`, targets);
+          stays(`.a { background: url("a.png"), ${std}; background: url("a.png"), ${moz}; }`, targets);
+          stays(`.a { background: ${std} !important; background: ${moz} !important; }`, targets);
+          stays(`.a { background: ${std}; background: ${webkit}; }`, targets);
+          stays(`.a { background: red url("a.png"); background-image: ${webkit}; }`, targets);
+          stays(`.a { background: red; background: ${legacy}; }`, targets);
+          stays(`.a { background: red; background: image-set(${moz} 1x); }`, targets);
+          stays(`.a { background: ${moz}; background-color: red; background: ${opera}; }`, targets);
+          stays(`.a { background: ${webkit} no-repeat; background: ${moz} no-repeat; background-repeat: repeat-x; }`, targets);
+          stays(`.a { background: ${moz} no-repeat; background-image: ${std}; }`, targets);
+          stays(
+            `.a { background: ${moz}; background-position: 1px 2px; background-size: 10px; background-attachment: fixed; background-origin: content-box; }`,
+            targets,
+          );
+          stays(`@media print { .a { background: red; background: ${opera}; } }`, targets);
+        });
+      }
+
+      describe("keeps the declaration before it, other targets", () => {
+        stays(`.a { background: ${std}; background: ${webkit}; }`, { firefox: 40 << 16, chrome: 80 << 16 });
+        stays(`.a { background: ${std}; background: ${webkit}; }`, { ie: 11 << 16 });
+        stays(`.a { background: red; background: ${legacy}; }`, { chrome: 8 << 16, firefox: (3 << 16) | (6 << 8) });
+        stays(`.a { background: image-set("a.png" 1x); background: -webkit-image-set(url("a.png") 1x); }`, {
+          chrome: 120 << 16,
+          firefox: 89 << 16,
+        });
+        stays(`.a { background: ${webkit}; background: ${moz}; background: conic-gradient(red, green); }`, {
+          chrome: 60 << 16,
+          firefox: 78 << 16,
+        });
+      });
+
+      describe("keeps an unprefixed value that a default target lacks apart", () => {
+        stays(`.a { background-color: red; background: conic-gradient(red, green); }`, defaults);
+        stays(`.a { background: conic-gradient(red, green); background-color: red; }`, defaults);
+        stays(
+          `.a { background-image: ${moz}; background-color: red; background-color: lab(50% 10 10); background-image: url("b.png"); }`,
+          defaults,
+        );
+        prefix_test(
+          `.a { background-color: #fff; background: image-set("a.png" 1x, "b.png" 2x) no-repeat; }`,
+          `.a {
+            background-color: #fff;
+            background: -webkit-image-set(url("a.png") 1x, url("b.png") 2x) no-repeat;
+            background: image-set("a.png" 1x, "b.png" 2x) no-repeat;
+          }`,
+          defaults,
+        );
+      });
+
+      describe("keeps the source order around an unparsed value", () => {
+        stays(`.a { background: ${webkit}; background: var(--x); background: ${moz}; }`, defaults);
+        stays(`.a { background: ${moz}; background: ${webkit}; background: var(--x); }`, defaults);
+        stays(`.a { background-image: ${moz}; -webkit-background-clip: var(--c); background: url("x.png"); }`, defaults);
+      });
+
+      describe("keeps a prefixed background-clip", () => {
+        stays(`.a { -webkit-background-clip: text; background-image: ${moz}; background: url("x.png"); }`, defaults);
+        stays(`.a { background: ${webkit}; -webkit-background-clip: text; }`, defaults);
+        prefix_test(
+          `.a { background: url("a.png"); background-image: ${moz}; -webkit-background-clip: text; background-image: ${std}; }`,
+          `.a { background: url("a.png"); background-image: ${std}; -webkit-background-clip: text; }`,
+          defaults,
+        );
+        prefix_test(
+          `.a { -webkit-background-clip: text; background-image: ${moz}; background-clip: text; background-image: ${std}; }`,
+          `.a { background-image: ${std}; -webkit-background-clip: text; background-clip: text; }`,
+          defaults,
+        );
+      });
+
+      describe("in other places", () => {
+        prefix_test(
+          `.a { background: red; } .a { background: ${opera}; }`,
+          `.a { background: red; background: ${opera}; }`,
+          defaults,
+        );
+        prefix_test(
+          `.a { background: red; background: ${opera}; .b & { background: ${std}; background: ${moz}; } }`,
+          `.a { background: red; background: ${opera}; } .b .a { background: ${std}; background: ${moz}; }`,
+          defaults,
+        );
+        minify_test(
+          `.a { background: red; background: ${opera}; }`,
+          ".a{background:red;background:-o-linear-gradient(red,green)}",
+        );
+      });
+
+      describe("a later value that every target reads still replaces the earlier ones", () => {
+        prefix_test(
+          `.a { background: #1e5799; background: ${moz}; background: ${webkit}; background: ${opera}; background: ${std}; }`,
+          `.a { background: ${std}; }`,
+          defaults,
+        );
+        prefix_test(
+          `.a { background: #1e5799; background: ${legacy}; background: ${webkit}; background: ${moz}; background: ${std}; }`,
+          `.a { background: ${std}; }`,
+          defaults,
+        );
+        prefix_test(
+          `.a { background: red; background-image: ${moz}; background-image: ${std}; }`,
+          `.a { background: red ${std}; }`,
+          defaults,
+        );
+        prefix_test(
+          `.a { background-color: #f5f5f5; background-image: ${moz}; background-image: ${webkit}; background-image: ${opera}; background-image: ${std}; background-repeat: repeat-x; }`,
+          `.a { background-color: #f5f5f5; background-image: ${std}; background-repeat: repeat-x; }`,
+          defaults,
+        );
+        prefix_test(
+          `.a { background: ${std}; background: ${moz}; background: linear-gradient(green, red); }`,
+          `.a { background: linear-gradient(green, red); }`,
+          defaults,
+        );
+        prefix_test(
+          `.a { background: red; background: ${moz}; background-size: var(--s); background: ${std}; }`,
+          `.a { background: ${std}; }`,
+          defaults,
+        );
+        prefix_test(
+          `.a { background: ${legacy}; background: ${webkit}; background: ${moz}; background: ${opera}; background: ${std}; }`,
+          `.a { background: ${std}; }`,
+          { chrome: 95 << 16 },
+        );
+        stays(`.a { background: ${legacy}; background: ${webkit}; background: ${moz}; background: ${opera}; }`, {
+          chrome: 95 << 16,
+        });
+        stays(`.a { background: ${legacy}; background: ${webkit}; background: ${moz}; background: ${opera}; background: ${std}; }`);
+        stays(`.a { background: red; background: var(--x); background: ${std}; }`, defaults);
+      });
+
+      describe("a value with color fallbacks that every target reads still replaces the earlier ones", () => {
+        const fallbacks = (rest: string) => `.a {
+          background: linear-gradient(#8c7166, green)${rest};
+          background: linear-gradient(color(display-p3 .532519 .445804 .40786), green)${rest};
+          background: linear-gradient(lab(50% 10 10), green)${rest};
+        }`;
+        prefix_test(
+          `.a { background-color: #336; background: linear-gradient(lab(50% 10 10), green); }`,
+          fallbacks(""),
+          defaults,
+        );
+        prefix_test(
+          `.a { background: linear-gradient(lab(50% 10 10), green); background-size: cover; }`,
+          fallbacks(" 0 0 / cover"),
+          defaults,
+        );
+      });
+    });
   });
 
   describe("flex", () => {
@@ -8345,5 +8525,31 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
     expect(exitCode).toBe(0);
+  });
+
+  describe("bun build keeps the declaration before a background value that no target reads", () => {
+    const source = ".a { background: red; background: -o-linear-gradient(red, green); }";
+    const kept = "background:red;background:-o-linear-gradient(red,green)";
+
+    test.concurrent.each([[[]], [["--minify"]], [["--target=bun"]], [["--no-bundle"]]])("bun build %j", async flags => {
+      using dir = tempDir("css-background-fallback", { "a.css": source });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "a.css", ...flags],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.replace(/\s/g, "")).toContain(kept);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("Bun.build", async () => {
+      using dir = tempDir("css-background-fallback", { "a.css": source });
+      const { outputs } = await Bun.build({ entrypoints: [join(String(dir), "a.css")] });
+      expect((await outputs[0].text()).replace(/\s/g, "")).toContain(kept);
+    });
   });
 });

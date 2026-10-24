@@ -628,6 +628,8 @@ describe("@types/bun integration test", () => {
       "Sink.bind.ts: new ArrayBufferSink()._getFd is not published",
       "Sink.bind.ts: new ArrayBufferSink().sinkId is not published",
       "Sink.bind.ts: new FileSink().close is not published",
+      // Published, and a `FileSink` does not read it.
+      "Sink.bind.ts: new FileSink().start(options?: { highWaterMark?: number | undefined; } | undefined): void: options takes FileSinkStartOptions | null | undefined, not { highWaterMark?: number | undefined; } | undefined",
       "Sink.bind.ts: new FileSink()._getFd is not published",
       "Sink.bind.ts: new FileSink().sinkId is not published",
       // Published, and no sink has ever had it.

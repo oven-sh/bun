@@ -576,9 +576,9 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     }
   });
 
-  // Native-sink output path: when cs.readable is consumed by a native JSSink
+  // Native-sink output path: when cs.readable is consumed by a native sink
   // (here HTTPResponseSink via Bun.serve), the transform arms write coder output
-  // straight to the sink's m_sinkPtr instead of wrapping each chunk in a
+  // straight to the sink instead of wrapping each chunk in a
   // JSUint8Array and enqueueing it on the readable.
   test.each(["gzip", "brotli", "zstd", "deflate"] as const)(
     "CompressionStream(%s) -> native HTTP response sink round-trips",

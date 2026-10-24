@@ -416,7 +416,7 @@ static CodecStepResult deliverAsyncOutput(JSGlobalObject* globalObject, JSTransf
     CodecStepResult step;
     step.more = more;
     if (auto* sinkController = stream->m_nativeSinkController.get()) {
-        JSValue wrote = JSValue::decode(ReadableSinkController__writeBytes(sinkController->payload(), globalObject, out, outLen));
+        JSValue wrote = sinkController->writeBytes(globalObject, std::span { out, outLen });
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         return step;

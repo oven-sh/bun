@@ -28,6 +28,11 @@ export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
+export const stringViewEcho = b.fn({ args: { text: b.string.view }, returns: b.string });
+export const stringOrObjectViewEcho = b.fn({
+  args: { text: b.string.allowStringObject.view.optional },
+  returns: b.string.optional,
+});
 export const stringLength = b.fn({ args: { text: b.string.default("absent") }, returns: b.usize });
 export const expectedByNode = b.fn({
   args: { text: b.string, data: b.bytes({ from: ["string", "buffer"] }).optional, flag: b.bool.default(false) },
@@ -334,6 +339,29 @@ export const TestReadOnly = b.class({
     "@@dispose": {},
     kind: { constant: 3 },
     hiddenKind: { constant: -1, enumerable: false, configurable: true },
+  },
+});
+
+/** `calledFromCpp` and `calledFromRust`. `BindgenTest.cpp` has the C++. */
+export const TestMemberCalls = b.class({
+  rustPath: "crate::bindgen_test::TestMemberCalls",
+  construct: {},
+  internalFields: ["note"],
+  proto: {
+    twice: { args: { n: b.i32 }, returns: b.i32, calledFromCpp: true },
+    run: { args: { n: b.i32, fail: b.bool }, returns: b.any, capability: "js", throws: true, passThis: true },
+    note: { args: { value: b.any }, returns: b.any, capability: "js", passThis: true },
+    throwFromCpp: { capability: "js", throws: true, passThis: true },
+  },
+  calledFromCpp: {
+    calls: { returns: b.u32 },
+    sum: { args: { bytes: b.span }, returns: b.u32 },
+    fail: { capability: "heap", throws: true },
+  },
+  calledFromRust: {
+    runInCpp: { args: { n: b.i32, fail: b.bool }, returns: b.any, throws: true },
+    noteInCpp: { args: { value: b.any } },
+    throwInCpp: { throws: true },
   },
 });
 

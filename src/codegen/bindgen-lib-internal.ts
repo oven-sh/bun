@@ -379,7 +379,7 @@ export abstract class Type {
 
 // ───────────────────────────── primitives ─────────────────────────────
 
-class PrimitiveType extends Type {
+export class PrimitiveType extends Type {
   readonly idlType: string;
   readonly tsType: string;
   readonly rustName: string;
@@ -730,6 +730,11 @@ export class StringType extends Type {
   get owned(): OwnedStringType {
     return new OwnedStringType(this.idlType, this.valueKinds);
   }
+  /** `bun_core::StringView<'a>` for the duration of the call, for a body that only reads the characters. It takes no reference, and a slice of another string is not copied out of it. */
+  get view(): StringViewType {
+    assert(this.valueKinds !== "any", ".view follows b.string or b.string.allowStringObject");
+    return new StringViewType(this.valueKinds);
+  }
   /** As a result: the JS string, which the body made. */
   get local(): LocalStringResultType {
     assert(this.idlType === "Bun::Bindgen::IDLStrictString", ".local follows b.string");
@@ -768,6 +773,63 @@ export class StringType extends Type {
   }
 }
 
+export class StringViewType extends Type {
+  readonly tsType = "string";
+  readonly #valueKinds: ValueKinds;
+  constructor(valueKinds: ValueKinds) {
+    super();
+    this.#valueKinds = valueKinds;
+  }
+  get idlType(): string {
+    return `Bun::Bindgen::IDLStringView<${this.valueKinds.includes("stringObject")}>`;
+  }
+  get valueKinds(): ValueKinds {
+    return this.#valueKinds;
+  }
+  get borrowsFrame(): boolean {
+    return true;
+  }
+  get borrowedByBody(): boolean {
+    return true;
+  }
+  get rustIsCopy(): boolean {
+    return false;
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternStringView";
+  }
+  rustType(): string {
+    return "bun_core::StringView<'a>";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get(heap)`;
+  }
+}
+
+/** Bytes that C++ has: `std::span<const uint8_t>` there, `&'a [u8]` in Rust. */
+export class SpanType extends Type {
+  readonly idlType = "Bun::Bindgen::IDLSpan";
+  readonly tsType = "never";
+  get borrowsFrame(): boolean {
+    return true;
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternBytes";
+  }
+  rustType(): string {
+    return "&'a [u8]";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get_optional(heap).unwrap_or_default()`;
+  }
+}
+
 export class LocalStringResultType extends ResultType {
   readonly tsType = "string";
   readonly refusal = ".local is a result";
@@ -791,6 +853,9 @@ export class OwnedStringType extends StringType {
   }
   get local(): never {
     throw new TypeError(".local follows b.string");
+  }
+  get view(): never {
+    throw new TypeError(".view borrows the string and .owned keeps it");
   }
   get loose(): never {
     throw new TypeError("write b.string.loose.owned");
@@ -816,6 +881,9 @@ export class OwnedUtf8Type extends StringType {
   }
   get owned(): never {
     throw new TypeError("already .owned");
+  }
+  get view(): never {
+    throw new TypeError(".view borrows the string and .owned keeps it");
   }
   get loose(): never {
     throw new TypeError("write b.string.loose.utf8.owned");
@@ -1365,7 +1433,10 @@ export class OptionalType extends Type {
     // `.ifPassed` does not claim `undefined`, so it goes on a type that takes it.
     if (modifier !== "ifPassed") {
       if (inner instanceof AnyType)
-        assert(modifier === "emptyStringAsNull", "b.any already accepts undefined and null");
+        assert(
+          modifier === "emptyStringAsNull" || modifier === "falsyAsNull",
+          "b.any already accepts undefined and null",
+        );
       else assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
     }
     assert(
@@ -2221,6 +2292,10 @@ export class Signature {
       );
       refuseResultType(name, type);
       assert(
+        !(type instanceof SpanType) || ("calledFromCpp" in options && options.calledFromCpp),
+        `${name}: b.span is not a JS value`,
+      );
+      assert(
         !type.borrowsHeap || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
       );
@@ -2401,6 +2476,18 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   rustName?: string;
   /** Overrides the function's `name`. Only for an `@@` key, where it defaults to `[Symbol.x]`. */
   name?: string;
+  /** Also a member function of the generated C++ class. It takes `globalObject`, then each argument as its type converts it. */
+  calledFromCpp?: boolean;
+}
+
+/** A member function of the generated C++ class that is written in C++. */
+export interface CalledFromRustField {
+  /** Each is `b.any`, `b.bool` or a number. */
+  args?: Record<string, Type>;
+  /** `b.any`, or nothing. */
+  returns?: Type;
+  /** It can throw: the Rust function also takes `global`, and returns a `JsResult`. */
+  throws?: boolean;
 }
 
 export interface GetterField {
@@ -2448,7 +2535,7 @@ export interface ConstantField {
 export type Field =
   FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | ConstantField;
 export type StaticField =
-  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name">
+  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name" | "calledFromCpp">
   | Omit<GetterField, "cache" | "writable" | "passThis">;
 
 export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
@@ -2493,6 +2580,10 @@ export interface ClassOptions {
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
   static?: Record<string, StaticField>;
+  /** What only C++ calls: written in Rust like a function of `proto`, and not a property. See `calledFromCpp` there. One that has no `capability` or `throws`, takes numbers and `b.bool` and returns one or nothing, does not take `globalObject` and returns that as it is. */
+  calledFromCpp?: Record<string, Omit<FunctionField, "invalidThis" | "privateSymbol" | "name" | "calledFromCpp">>;
+  /** What Rust calls in C++: `js_Name::x(this_value, ..)` calls `JSName::x(..)`, which the generated class declares and hand-written C++ defines. */
+  calledFromRust?: Record<string, CalledFromRustField>;
 }
 
 /** The property's name without a leading `_` or `@@`, for use in generated identifiers. */
@@ -2523,9 +2614,16 @@ export class Method extends Signature {
   readonly invalidThis: "throw" | "undefined";
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
+  readonly calledFromCpp: boolean;
   constructor(name: string, options: FunctionField, isStatic = false, sharedThis = false) {
     super(options, !isStatic && !!options.passThis);
     this.name = name;
+    this.calledFromCpp = !!options.calledFromCpp;
+    for (const arg of this.args)
+      assert(
+        !this.calledFromCpp || !(arg.type.passesValue || arg.type instanceof VariadicType),
+        `${name}: C++ has no JS value to pass for ${arg.name}`,
+      );
     this.rustName = memberRustName(options.rustName ?? snakeCase(memberIdentifier(name)));
     this.hasDefaultRustName = options.rustName === undefined;
     refuseReentrancy(name, isStatic, sharedThis, this.capability);
@@ -2536,6 +2634,26 @@ export class Method extends Signature {
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);
     this.functionName = options.name;
     assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: name is only for an @@ key`);
+  }
+}
+
+export class CalledFromRust {
+  readonly name: string;
+  readonly args: readonly { name: string; type: Type }[];
+  readonly returnsValue: boolean;
+  readonly throws: boolean;
+  constructor(name: string, options: CalledFromRustField) {
+    assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: a C++ member function is named in camelCase`);
+    this.name = name;
+    this.args = Object.entries(options.args ?? {}).map(([name, type]) => ({ name, type }));
+    for (const arg of this.args)
+      assert(
+        arg.type instanceof AnyType || arg.type instanceof PrimitiveType,
+        `${name}: ${arg.name} is b.any, b.bool or a number`,
+      );
+    assert(options.returns === undefined || options.returns instanceof AnyType, `${name}: returns b.any or nothing`);
+    this.returnsValue = options.returns !== undefined;
+    this.throws = options.throws ?? false;
   }
 }
 
@@ -2682,6 +2800,9 @@ export class ClassType extends NamedType {
   readonly staticGetters: readonly Getter[];
   readonly builtins: readonly Builtin[];
   readonly constants: readonly Constant[];
+  /** The schema's `calledFromCpp`. */
+  readonly functionsOnlyForCpp: readonly FunctionDefinition[];
+  readonly calledFromRust: readonly CalledFromRust[];
   /** The properties of the prototype and of the constructor, as written. */
   readonly protoMembers: readonly ClassMember[];
   readonly staticMembers: readonly ClassMember[];
@@ -2769,6 +2890,10 @@ export class ClassType extends NamedType {
             overloads.every(overload => overload[key] === overloads[0]?.[key]),
             `${name}: every overload gives ${key} the same value`,
           );
+        assert(
+          overloads.length === 1 || !overloads.some(overload => overload.calledFromCpp),
+          `${name}: calledFromCpp is for a function without overloads`,
+        );
         assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
         const fn = new FunctionDefinition(
           overloads.map(overload => new Method(name, resolve(overload), isStatic, this.sharedThis)),
@@ -2780,6 +2905,19 @@ export class ClassType extends NamedType {
     this.staticMembers = members(options.static ?? {}, true);
     assert(this.construct || !options.call, "call needs a constructor object: add construct");
     this.call = options.call ? (members({ call: options.call }, true)[0] as FunctionDefinition) : null;
+    this.functionsOnlyForCpp = members(
+      Object.fromEntries(
+        Object.entries(options.calledFromCpp ?? {}).map(([name, field]) => [name, { ...field, calledFromCpp: true }]),
+      ),
+      false,
+    ) as FunctionDefinition[];
+    this.calledFromRust = Object.entries(options.calledFromRust ?? {}).map(
+      ([name, field]) => new CalledFromRust(name, field),
+    );
+    for (const member of this.protoMembers)
+      if (member instanceof FunctionDefinition)
+        for (const { args } of member.signatures)
+          for (const arg of args) assert(!(arg.type instanceof SpanType), `${arg.name}: b.span is not a JS value`);
     this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
     this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
@@ -2812,6 +2950,10 @@ export class ClassType extends NamedType {
       "members' Rust functions",
     );
     assertDistinct(this.internalFields.map(snakeCase), "internal fields");
+    assertDistinct(
+      [...this.methods.filter(method => method.calledFromCpp), ...this.calledFromRust].map(member => member.name),
+      "C++ member functions",
+    );
     assert(
       !this.forBind ||
         (this.internalFieldAccessors.length === 0 && getters.every(getter => !getter.hasSetter && !getter.writable)),
@@ -2826,8 +2968,20 @@ export class ClassType extends NamedType {
   get nativeFunctions(): readonly FunctionDefinition[] {
     return [...this.functions, ...this.staticFunctions, ...(this.call ? [this.call] : [])];
   }
+  /** `method` touches no JS value, so C++ calls it with the struct and gets what it returns. */
+  isPlainCall(method: Method): boolean {
+    return (
+      this.functionsOnlyForCpp.some(fn => fn.signatures.includes(method)) &&
+      method.capability === "none" &&
+      !method.throws &&
+      !method.passThis &&
+      (method.returns instanceof UnitType || method.returns instanceof PrimitiveType) &&
+      method.args.every(arg => arg.type instanceof PrimitiveType)
+    );
+  }
+  /** What has a Rust function and takes arguments. */
   get methods(): readonly Method[] {
-    return this.nativeFunctions.flatMap(fn => fn.signatures as readonly Method[]);
+    return [...this.nativeFunctions, ...this.functionsOnlyForCpp].flatMap(fn => fn.signatures as readonly Method[]);
   }
   get cpp(): string {
     return `Bun::Bindgen::Generated::JS${this.name}`;

@@ -15,10 +15,9 @@ use crate::api::bun_subprocess::Subprocess;
 use crate::generated_bindgen::file_sink::{
     Bun__FileSink__onRejectStream, Bun__FileSink__onResolveStream,
 };
-use crate::generated_bindgen::sink::SinkStartOptions;
 use crate::webcore::jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsError, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
-use crate::webcore::sink::{ReadableSinkController, SinkId};
+use crate::webcore::sink::{ControllerSink, ReadableSinkController};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -592,12 +591,7 @@ impl FileSink {
         let (Some(cell), Some(global)) = (pipe.cell(), self.js_global()) else {
             return;
         };
-        if let streams::SourceHandle::JSController(source) = *self.source.get() {
-            if source == cell {
-                self.source.set(streams::SourceHandle::None);
-            }
-        }
-        crate::dispatch::fold(ReadableSinkController::detach_value(cell, global));
+        crate::dispatch::fold(ReadableSinkController::detach(cell, global));
     }
 
     fn has_stream_error(&self) -> bool {
@@ -1068,13 +1062,13 @@ impl FileSink {
         }
     }
 
-    /// `~JSReadableFileSinkController` with this sink still attached. `pipe` roots that cell until
+    /// A `ReadableSinkController` was collected with this sink still attached. `pipe` roots that cell until
     /// `release_pipe` detaches it, so it only dies attached in the heap's last sweep. Unlike the
     /// wrapper in [`finalize`](Self::finalize) it holds no ref: there is none to release for it.
     ///
     /// # Safety
     /// `this` is the cell's live sink; it must not be used after the call, which may free it.
-    unsafe fn controller_finalize(this: *mut FileSink) {
+    pub(crate) unsafe fn controller_finalize(this: *mut FileSink) {
         // SAFETY: caller contract; `_guard` keeps `this` live across the releases.
         unsafe {
             let _guard = RefPtr::init_ref(this);
@@ -1438,7 +1432,6 @@ pub(crate) type JSSink = crate::webcore::sink::JSSink<FileSink>;
 
 impl crate::webcore::sink::JsSinkType for FileSink {
     const NAME: &'static str = "FileSink";
-    const ID: SinkId = SinkId::File;
 
     crate::impl_js_sink_forwarders!(start_takes_context);
 
@@ -1446,15 +1439,26 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // SAFETY: same contract, forwarded.
         unsafe { Self::finalize(this) }
     }
-    unsafe fn controller_finalize(this: *mut Self) {
-        // SAFETY: same contract, forwarded.
-        unsafe { Self::controller_finalize(this) }
-    }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
         Self::end_from_js(self, cx)
     }
-    fn start_config(options: &SinkStartOptions<'_>) -> streams::Start {
-        streams::Start::file_sink(options)
+    fn pending_state_is_pending(&self) -> bool {
+        self.pending.get().state == streams::PendingState::Pending
+    }
+    fn protect_js_wrapper(&mut self, global: &JSGlobalObject, this_value: JSValue) {
+        Self::protect_js_wrapper(self, global, this_value)
+    }
+    fn update_ref(&mut self, value: bool) {
+        Self::update_ref(self, value)
+    }
+    fn get_fd(&self) -> Option<i32> {
+        Some(Self::get_fd(self))
+    }
+}
+
+impl crate::webcore::sink::ControlledSink for FileSink {
+    fn controller_sink(this: core::ptr::NonNull<Self>) -> ControllerSink {
+        ControllerSink::File(this)
     }
     /// The JS pump's source failed, or `controller.close(error)`: a piped stream rejects with `reason`.
     unsafe fn close_with_error(
@@ -1473,21 +1477,9 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         let _ = this.end(None);
         sys::Result::Ok(())
     }
-    fn source(&mut self) -> Option<&mut streams::SourceHandle> {
+    fn source(&mut self) -> &mut streams::SourceHandle {
         // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
-        Some(unsafe { self.source.get_mut() })
-    }
-    fn pending_state_is_pending(&self) -> bool {
-        self.pending.get().state == streams::PendingState::Pending
-    }
-    fn protect_js_wrapper(&mut self, global: &JSGlobalObject, this_value: JSValue) {
-        Self::protect_js_wrapper(self, global, this_value)
-    }
-    fn update_ref(&mut self, value: bool) {
-        Self::update_ref(self, value)
-    }
-    fn get_fd(&self) -> Option<i32> {
-        Some(Self::get_fd(self))
+        unsafe { self.source.get_mut() }
     }
 }
 
@@ -1718,7 +1710,7 @@ impl FileSink {
     fn detach_js_controller(&self, global_this: &JSGlobalObject) {
         if let streams::SourceHandle::JSController(cell) = *self.source.get() {
             self.source.set(streams::SourceHandle::None);
-            crate::dispatch::fold(ReadableSinkController::detach_value(cell, global_this));
+            crate::dispatch::fold(ReadableSinkController::detach(cell, global_this));
         }
     }
 }
@@ -1877,10 +1869,9 @@ impl FileSink {
     ) -> JsResult<JSValue> {
         // No +1 for the controller: `release_pipe` detaches it before this sink is freed.
         let promise_result = ReadableSinkController::assign_controller_to_stream(
+            controller,
             global_this,
             stream.value,
-            controller,
-            core::ptr::NonNull::from(&mut *self),
         );
 
         // What the stream's code threw, which need not be an Error.

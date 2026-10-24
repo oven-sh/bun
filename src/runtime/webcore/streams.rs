@@ -12,9 +12,11 @@ use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
-use crate::generated_bindgen::sink::{SinkPath, SinkStartOptions, js_ReadableSinkController};
+use crate::generated_bindgen::sink::{
+    ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController,
+};
 use crate::webcore::blob::Any as AnyBlob;
-use crate::webcore::sink::{ReadableSinkController, SinkId};
+use crate::webcore::sink::{ControllerSink, ReadableSinkController};
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // scope statics renamed with `Log` suffix so they don't collide with
@@ -94,7 +96,7 @@ impl Start {
     }
 
     /// `start(options)` of an `ArrayBufferSink`.
-    pub(crate) fn array_buffer_sink(options: &SinkStartOptions<'_>) -> Start {
+    pub(crate) fn array_buffer_sink(options: &ArrayBufferSinkStartOptions) -> Start {
         if options.as_uint8_array.is_none()
             && options.stream.is_none()
             && options.high_water_mark.is_none()
@@ -110,8 +112,11 @@ impl Start {
         }
     }
 
-    /// `start(options)` of a `FileSink`.
-    pub(crate) fn file_sink(options: &SinkStartOptions<'_>) -> Start {
+    /// `start({ path, fd })` of a `FileSink`.
+    pub(crate) fn file_sink(
+        path: &SinkPath<'_>,
+        fd: Option<bun_jsc::bindgen::JsLocal<'_>>,
+    ) -> Start {
         use bun_sys_jsc::FdJsc as _;
         let error = |errno: sys::SystemErrno| {
             Start::Err(SysError {
@@ -120,8 +125,10 @@ impl Start {
                 ..Default::default()
             })
         };
-        let input_path = match (&options.path, options.fd) {
-            (SinkPath::Path(path), _) => crate::webcore::PathOrFileDescriptor::Path(path.clone()),
+        let input_path = match (path, fd) {
+            (SinkPath::Path(path), _) => {
+                crate::webcore::PathOrFileDescriptor::Path(path.clone().into_utf8())
+            }
             (SinkPath::Other(_), _) => return error(sys::SystemErrno::EINVAL),
             (SinkPath::Missing, None) => crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
             (SinkPath::Missing, Some(fd)) => match Fd::from_js(fd.to_js()) {
@@ -135,12 +142,11 @@ impl Start {
         })
     }
 
-    /// `start(options)` of every other sink.
-    pub(crate) fn chunk_size(options: &SinkStartOptions<'_>) -> Start {
-        match options.high_water_mark {
-            Some(value) => Start::ChunkSize(high_water_mark(value, 256)),
-            None => Start::Empty,
-        }
+    /// `start({ highWaterMark })` of every other sink.
+    pub(crate) fn chunk_size(value: Option<f64>) -> Start {
+        value.map_or(Start::Empty, |value| {
+            Start::ChunkSize(high_water_mark(value, 256))
+        })
     }
 }
 
@@ -761,13 +767,7 @@ impl PipeCell {
     /// The pipe's failure value shares `failReason`: `close(error)` stores the same value there, and every other writer runs after `pull()` settled.
     pub(crate) fn set_error(&self, error: JSValue) {
         if let Some(cell) = self.0.get() {
-            if js_ReadableSinkController::fail_reason_get_cached(cell).is_none() {
-                js_ReadableSinkController::fail_reason_set_cached(
-                    cell,
-                    VirtualMachine::get().global(),
-                    error,
-                );
-            }
+            ReadableSinkController::set_fail_reason(cell, VirtualMachine::get().global(), error);
         }
     }
 
@@ -874,6 +874,25 @@ impl SourceHandle {
     #[inline]
     pub fn clear(&mut self) {
         *self = SourceHandle::None;
+    }
+
+    /// Disconnect the upstream source: JSController → detach; ByteStream → clear its SinkHandle.
+    pub(crate) fn detach(&mut self, global: &JSGlobalObject) {
+        match *self {
+            SourceHandle::JSController(value) => {
+                self.clear();
+                crate::dispatch::fold(ReadableSinkController::detach(value, global));
+            }
+            SourceHandle::ByteStream(bs) => {
+                bs.unpipe_without_deref();
+                self.clear();
+            }
+            SourceHandle::FileReader(fr) => {
+                fr.unpipe_without_deref();
+                self.clear();
+            }
+            _ => {}
+        }
     }
 
     pub fn close(&mut self, err: Option<SysError>) {
@@ -2009,11 +2028,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
 impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SSL> {
     const NAME: &'static str = Self::NAME;
-    const ID: SinkId = if SSL {
-        SinkId::HTTPSResponse
-    } else {
-        SinkId::HTTPResponse
-    };
 
     crate::impl_js_sink_forwarders!();
 
@@ -2023,6 +2037,20 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
         // scoped to this call stays valid throughout.
         unsafe { (*this).finalize() }
     }
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
+    }
+}
+
+impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritable<SSL> {
+    fn controller_sink(this: NonNull<Self>) -> ControllerSink {
+        if SSL {
+            ControllerSink::HTTPSResponse(this.cast())
+        } else {
+            ControllerSink::HTTPResponse(this.cast())
+        }
+    }
+
     unsafe fn close_with_error(
         this: *mut Self,
         _global: &JSGlobalObject,
@@ -2032,14 +2060,8 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
         unsafe { (*this).fail() };
         bun_sys::Result::Ok(())
     }
-    fn controller_created(&mut self, controller: JSValue, global: &JSGlobalObject) {
-        self.pipe = PipeCell::root(controller, global);
-    }
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
-    }
-    fn source(&mut self) -> Option<&mut SourceHandle> {
-        Some(&mut self.source)
+    fn source(&mut self) -> &mut SourceHandle {
+        &mut self.source
     }
 }
 
@@ -2467,7 +2489,6 @@ impl NetworkSink {
 
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;
-    const ID: SinkId = SinkId::Network;
 
     crate::impl_js_sink_forwarders!();
 
@@ -2479,6 +2500,16 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
             Self::release_writer_holder(this);
         }
     }
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
+    }
+}
+
+impl crate::webcore::sink::ControlledSink for NetworkSink {
+    fn controller_sink(this: NonNull<Self>) -> ControllerSink {
+        ControllerSink::Network(this)
+    }
+
     unsafe fn close_with_error(
         this: *mut Self,
         global: &JSGlobalObject,
@@ -2487,11 +2518,8 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
         Self::fail_from_js_pump(this, global, reason);
         bun_sys::Result::Ok(())
     }
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
-    }
-    fn source(&mut self) -> Option<&mut SourceHandle> {
-        Some(&mut self.source)
+    fn source(&mut self) -> &mut SourceHandle {
+        &mut self.source
     }
 }
 

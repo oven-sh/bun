@@ -101,10 +101,9 @@ describe("ArrayBufferSink", () => {
     expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
-  // The generated ${name}__doClose detached the JS wrapper (nulling m_sinkPtr)
-  // and then called __close, but never __finalize. The wrapper's destructor
-  // skips __finalize when m_sinkPtr is null, so every close() leaked the boxed
-  // ArrayBufferSink plus its Vec<u8> buffer. The repro runs off a setImmediate
+  // close() takes the sink from the JS object, whose destructor then has none to
+  // finalize, so close() itself has to free the boxed ArrayBufferSink and its
+  // Vec<u8> buffer. The repro runs off a setImmediate
   // so the allocation stack does not fall under the module-loader suppression.
   // LSAN symbolization of the leak stacks can take several seconds on its own,
   // hence the explicit per-test timeout.

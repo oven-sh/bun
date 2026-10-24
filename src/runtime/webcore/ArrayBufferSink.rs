@@ -1,18 +1,14 @@
-use crate::webcore::streams::{self, SourceHandle};
+use crate::webcore::streams;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_jsc::HostReturn as _;
 use bun_jsc::{ArrayBuffer, JSType, JSValue};
 use bun_sys as syscall;
 
-// The "ArrayBufferSink" symbol-name concatenation lives in the `JsSinkAbi`
-// impl in `Sink.rs` (see `array_buffer_sink_abi`).
-
 #[derive(Default)]
-pub struct ArrayBufferSink {
+pub(crate) struct ArrayBufferSink {
     pub(crate) bytes: Vec<u8>,
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
     pub(crate) done: bool,
-    pub(crate) source: SourceHandle,
     pub(crate) streaming: bool,
     pub(crate) as_uint8array: bool,
 }
@@ -38,8 +34,6 @@ impl ArrayBufferSink {
         }
 
         self.done = false;
-
-        self.source.start();
         Ok(())
     }
 
@@ -62,12 +56,11 @@ impl ArrayBufferSink {
         Ok(JSValue::js_number(0.0))
     }
 
-    pub fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
+    pub(crate) fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
         let len = match self.bytes.write(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
-        self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
@@ -76,7 +69,6 @@ impl ArrayBufferSink {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
-        self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
@@ -90,12 +82,10 @@ impl ArrayBufferSink {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
-        self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub(crate) fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
-        self.source.close(err);
+    pub(crate) fn end(&mut self, _err: Option<syscall::Error>) -> bun_sys::Result<()> {
         Ok(())
     }
 
@@ -117,7 +107,6 @@ impl ArrayBufferSink {
         }
 
         self.done = true;
-        self.source.close(None);
         // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
         let mut bytes = core::mem::take(&mut self.bytes);
         // Ownership transfers to JSC: the trait impl below converts the returned
@@ -143,7 +132,6 @@ impl ArrayBufferSink {
 
 impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const NAME: &'static str = "ArrayBufferSink";
-    const ID: crate::webcore::sink::SinkId = crate::webcore::sink::SinkId::ArrayBuffer;
 
     crate::impl_js_sink_forwarders!();
 
@@ -151,11 +139,6 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         // SAFETY: trait contract — `this` is the wrapper's live sink, which
         // `JSSink::constructor` allocated for it alone; nothing uses it afterwards.
         unsafe { Self::destroy(this) };
-    }
-    fn start_config(
-        options: &crate::generated_bindgen::sink::SinkStartOptions<'_>,
-    ) -> streams::Start {
-        streams::Start::array_buffer_sink(options)
     }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, cx) {
@@ -167,8 +150,5 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
             }),
             bun_sys::Result::Err(e) => bun_sys::Result::Err(e),
         }
-    }
-    fn source(&mut self) -> Option<&mut SourceHandle> {
-        Some(&mut self.source)
     }
 }

@@ -459,8 +459,9 @@ impl<'a> JsLocal<'a, BufferSource> {
     /// The bytes as they are now. A detached or out-of-bounds view is empty.
     #[inline]
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
-        let array_buffer = self.0.as_array_buffer(heap.global_object());
-        let result = f(array_buffer.as_ref().map_or(&[], ArrayBuffer::byte_slice));
+        // SAFETY: `self` holds the buffer until `f` returns, and only JavaScript moves its bytes, which takes the `&mut JsScope` that `heap` borrows.
+        let result =
+            f(unsafe { extern_types::Bun__Bindgen__bytesOfBlobOrBuffer(self.0).get(heap) });
         self.0.ensure_still_alive();
         result
     }

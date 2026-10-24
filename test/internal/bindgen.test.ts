@@ -138,6 +138,10 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.withValue.withValue).toThrow("already .withValue");
   expect(() => b.string.owned.owned).toThrow("already .owned");
   expect(() => b.string.owned.local).toThrow(".local follows b.string");
+  expect(() => b.string.owned.view).toThrow(".view borrows the string and .owned keeps it");
+  expect(() => b.string.utf8.owned.view).toThrow(".view borrows the string and .owned keeps it");
+  expect(() => b.string.loose.view).toThrow(".view follows b.string or b.string.allowStringObject");
+  expect(() => b.array(b.string.view).idlType).toThrow("an array argument cannot hold borrowed views");
   expect(() => b.i32.withValue.optional).toThrow("put .withValue last");
   expect(() => b.i32.withValue.default(0)).toThrow("put .withValue last");
   expect(() => b.i32.ifPassed.withValue).toThrow(".ifPassed has no argument to give when it is absent");
@@ -380,6 +384,33 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   );
   expect(() => b.class({ rustPath: "T", construct: {}, static: { "@@x": {} } })).toThrow(
     "@@x: an @@ key is a property of the prototype",
+  );
+  expect(() => b.class({ rustPath: "T", proto: { x: { constant: 1.5 } } })).toThrow("x: a constant is an integer");
+  // @ts-expect-error
+  expect(() => b.class({ rustPath: "T", construct: {}, static: { x: { constant: 1 } } })).toThrow(
+    "x: a constant is a property of the prototype",
+  );
+  expect(() => b.class({ rustPath: "T", proto: { x: [{ calledFromCpp: true }, { args: { a: b.i32 } }] } })).toThrow(
+    "x: calledFromCpp is for a function without overloads",
+  );
+  expect(() =>
+    b.class({ rustPath: "T", proto: { x: { args: { rest: b.any.variadic }, calledFromCpp: true } } }),
+  ).toThrow("x: C++ has no JS value to pass for rest");
+  expect(() => b.class({ rustPath: "T", proto: { x: { calledFromCpp: true } }, calledFromRust: { x: {} } })).toThrow(
+    "C++ member functions",
+  );
+  expect(() => b.class({ rustPath: "T", calledFromRust: { on_close: {} } })).toThrow(
+    "on_close: a C++ member function is named in camelCase",
+  );
+  expect(() => b.class({ rustPath: "T", calledFromRust: { x: { args: { text: b.string } } } })).toThrow(
+    "x: text is b.any, b.bool or a number",
+  );
+  expect(() => b.class({ rustPath: "T", calledFromRust: { x: { returns: b.i32 } } })).toThrow(
+    "x: returns b.any or nothing",
+  );
+  expect(() => b.fn({ args: { bytes: b.span } })).toThrow("bytes: b.span is not a JS value");
+  expect(() => b.class({ rustPath: "T", proto: { x: { args: { bytes: b.span }, calledFromCpp: true } } })).toThrow(
+    "bytes: b.span is not a JS value",
   );
   for (const refCounted of [false, true]) {
     expect(() =>
@@ -631,6 +662,28 @@ describe("strings", () => {
     expect(bindgen.utf8Optional(text)).toBe(text);
     expect(bindgen.utf8Owned(text)).toBe(text);
     expect(bindgen.stringEcho(text)).toBe(text);
+    expect(bindgen.stringViewEcho(text)).toBe(text);
+    expect(bindgen.stringOrObjectViewEcho(text)).toBe(text);
+  });
+
+  it("b.string.view reads a slice and a concatenation", () => {
+    for (const base of [Buffer.alloc(200, "0123456789").toString(), Buffer.alloc(320, "你好0123456789").toString()]) {
+      expect(bindgen.stringViewEcho(base.slice(3, 150))).toBe(base.substring(3, 150));
+      expect(bindgen.stringViewEcho(base.slice(3, 150).slice(5, 100))).toBe(base.substring(8, 103));
+      expect(bindgen.stringViewEcho(base + base.slice(1))).toBe(`${base}${base.substring(1)}`);
+    }
+  });
+
+  it("b.string.view takes what the string before it takes", () => {
+    expect(bindgen.stringOrObjectViewEcho(new String("你好"))).toBe("你好");
+    expect(bindgen.stringOrObjectViewEcho(Object.assign(new String("ab"), { toString: () => "abc" }))).toBe("abc");
+    expect(bindgen.stringOrObjectViewEcho()).toBeUndefined();
+    for (const value of [null, 1, {}, ["a"]]) {
+      expect(() => bindgen.stringOrObjectViewEcho(value as any)).toThrow("text must be a string");
+    }
+    for (const value of [undefined, null, 1, {}, new String("boxed")]) {
+      expect(() => bindgen.stringViewEcho(value as any)).toThrow("text must be a string");
+    }
   });
 
   it("replaces an unpaired surrogate", () => {
@@ -2468,7 +2521,7 @@ describe("classes", () => {
     });
 
     it("with writable: false, a native function is read-only, unless its key is a symbol", () => {
-      const { prototype } = (bindgen as any).TestReadOnly;
+      const { prototype } = bindgen.TestReadOnly;
       expect(Object.getOwnPropertyDescriptor(prototype, "answer")).toMatchObject({
         writable: false,
         enumerable: true,
@@ -2483,7 +2536,7 @@ describe("classes", () => {
     });
 
     it("a constant is a read-only number of the prototype", () => {
-      const { TestReadOnly } = bindgen as any;
+      const { TestReadOnly } = bindgen;
       expect(Object.getOwnPropertyDescriptor(TestReadOnly.prototype, "kind")).toEqual({
         value: 3,
         writable: false,
@@ -2498,6 +2551,19 @@ describe("classes", () => {
       });
       expect(new TestReadOnly().kind).toBe(3);
       expect(Object.keys(TestReadOnly.prototype)).toEqual(["answer", "kind"]);
+    });
+
+    it("C++ calls Rust and Rust calls C++ through member functions of the class", () => {
+      const { TestMemberCalls } = bindgen;
+      const object = new TestMemberCalls();
+      expect(Object.keys(TestMemberCalls.prototype)).toEqual(["twice", "run", "note", "throwFromCpp"]);
+      expect(object.twice(4)).toBe(8);
+      // twice(21) * 1000 + sum([1, 2, 3]) * 10 + sum([]) + calls()
+      expect(object.run(21, false)).toBe(42062);
+      expect(() => object.run(21, true)).toThrow(new RangeError("thrown in Rust"));
+      expect(() => object.throwFromCpp()).toThrow(new TypeError("thrown in C++"));
+      const value = {};
+      expect(object.note(value)).toBe(value);
     });
 
     it("prototypeBase is what the prototype inherits from", () => {

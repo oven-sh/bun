@@ -269,7 +269,6 @@ impl FetchRequestBodySink {
 
 impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     const NAME: &'static str = Self::NAME;
-    const ID: crate::webcore::sink::SinkId = crate::webcore::sink::SinkId::FetchRequestBody;
 
     crate::impl_js_sink_forwarders!();
 
@@ -280,7 +279,14 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, cx)
     }
-    fn source(&mut self) -> Option<&mut SourceHandle> {
-        Some(&mut self.source)
+}
+
+impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
+    fn controller_sink(this: core::ptr::NonNull<Self>) -> crate::webcore::sink::ControllerSink {
+        crate::webcore::sink::ControllerSink::FetchRequestBody(this)
+    }
+
+    fn source(&mut self) -> &mut SourceHandle {
+        &mut self.source
     }
 }

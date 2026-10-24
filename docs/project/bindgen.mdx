@@ -229,6 +229,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
 | `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
 | `b.string.owned`                                 | `bun_core::String`               | as `b.string`                                                 |
+| `b.string.view`                                  | `bun_core::StringView<'a>`       | as `b.string`                                                 |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
@@ -263,7 +264,7 @@ Only the promise calls a reaction, with the context it was given, so nothing tes
 returns: `None` if the pointer was taken back before the promise settled. No argument after it has a conversion that
 throws: nothing would release the pointer. A generic `T` is written as its instantiation.
 
-These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.emptyStringAsNull` and `.ifPassed` apply to it):
+These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.falsyAsNull`, `.emptyStringAsNull` and `.ifPassed` apply to it):
 
 - `.optional`: `undefined` means absent; `Option<T>`.
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
@@ -328,6 +329,12 @@ body that keeps it takes `b.string.owned`, which comes after `.loose` or `.allow
 it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
+
+`b.string.view`, which comes after `.allowStringObject`, is for a body that only reads the
+characters, in Latin-1 or UTF-16: a `bun_core::StringView<'a>`, which an argument of this type alone lends as a `&bun_core::String`. It takes no reference to the
+storage, and the characters of `text.slice(..)` are read where they are in `text`, where
+`b.string` makes a string of them. The frame holds the JS string, so it is for an argument, alone, in a union or
+with a modifier, and not in an array.
 
 A [class](#classes) is a type too: import it from its `.bind.ts` file. As an argument it is a `&'a` of the struct.
 The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above except `.default()`.
@@ -707,6 +714,61 @@ returns it. While the field is empty the getter calls Rust and stores the result
 `internalFields`, and fills it from its own Rust function.
 With `writable: true` any value assigned to the property replaces the cached one, without calling Rust.
 With `setter` and `passThis`, `set_tag` replaces the cached value itself, with `tag_set_cached`.
+
+### Calls between C++ and Rust
+
+Hand-written C++ that has the object calls its Rust, and Rust calls its C++, through member functions of the generated
+class. Neither side declares an `extern "C"` function.
+
+```ts
+export const ReadableSinkController = b.class({
+  proto: {
+    end: { returns: b.any, capability: "js", throws: true, calledFromCpp: true },
+  },
+  calledFromCpp: {
+    isAttached: { returns: b.bool },
+    writeBytes: { args: { bytes: b.span }, returns: b.any, capability: "js", throws: true },
+  },
+  calledFromRust: {
+    onClose: { args: { reason: b.any, sinkClosed: b.bool }, throws: true },
+  },
+});
+```
+
+`calledFromCpp: true` on a function of `proto` also makes it a member function, which calls the same Rust function. The
+class's `calledFromCpp` holds functions that are written the same way and are not properties.
+
+```cpp
+JSC::JSValue result = controller->end(globalObject);
+RETURN_IF_EXCEPTION(scope, {});
+controller->writeBytes(globalObject, view->span());
+if (controller->isAttached()) ..
+```
+
+It takes `globalObject`, then each argument as its type converts it: a `JSC::JSValue` for `b.any`, a `double` for `b.f64`,
+the generated struct for a dictionary or a union, which `Bun::convertIDLInto` fills from a JS value. What the schema
+says about a JS value is not applied: an absent `.falsyAsNull` argument is the empty value, and `0` is present. It
+returns a `JSC::JSValue`, empty if the function threw, or nothing. It has no overloads, `.withValue` or `.variadic`.
+
+`b.span` is bytes that are not in a JS object: a `std::span<const uint8_t>` that Rust gets as `&'a [u8]`. Only a function
+of the class's `calledFromCpp` takes one.
+
+A function of the class's `calledFromCpp` that has no `capability`, `throws` or `passThis`, takes numbers and `b.bool`, and
+returns one or nothing, touches no JS value. It does not take `globalObject`, and returns a `bool` or a number as it is.
+
+`calledFromRust` declares member functions that hand-written C++ defines. An argument is `b.any`, `b.bool` or a number, and
+the result is `b.any` or nothing. The function uses the object's own `globalObject()`.
+
+```cpp
+void JSReadableSinkController::onClose(JSC::JSValue reason, bool sinkClosed) { .. }
+```
+
+Rust calls it in the module `js_ReadableSinkController`, with the object first. With `throws: true` it also takes the
+global object and returns a `JsResult`.
+
+```rust
+js_ReadableSinkController::on_close(this_value, global, reason, true)?;
+```
 
 ### `refCounted`
 

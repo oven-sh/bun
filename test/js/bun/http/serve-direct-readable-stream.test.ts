@@ -1,5 +1,5 @@
 import { sleep } from "bun";
-import { heapStats } from "bun:jsc";
+import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -59,6 +59,28 @@ test("the controller of a direct stream is of one class, whichever native sink c
   expect(Object.prototype.toString.call(response)).toBe("[object ReadableSinkController]");
   expect(Object.getPrototypeOf(request)).toBe(Object.getPrototypeOf(response));
   expect([response.sinkId, request.sinkId]).toEqual([4, 7]);
+});
+
+test("a heap snapshot counts the sink with its controller until they part", async () => {
+  let attached = 0;
+  let detached = 0;
+  using server = Bun.serve({
+    port: 0,
+    fetch: () =>
+      new Response(
+        new ReadableStream({
+          type: "direct",
+          pull(controller) {
+            attached = estimateShallowMemoryUsageOf(controller);
+            controller.close();
+            detached = estimateShallowMemoryUsageOf(controller);
+          },
+        } as any),
+      ),
+  });
+  await (await fetch(server.url)).text();
+  expect(detached).toBeGreaterThan(0);
+  expect(attached).toBeGreaterThan(detached);
 });
 
 // Sentry BUN-2WJA / BUN-2WKB: JSReadable*Controller.end() ran the onClose

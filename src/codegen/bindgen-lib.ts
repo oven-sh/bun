@@ -26,6 +26,7 @@ import {
   RecordResultType,
   RefType,
   type SignatureOptions,
+  SpanType,
   StringType,
   type Type,
   UnionType,
@@ -63,6 +64,9 @@ export { class_ as class };
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
+
+/** Bytes that C++ passes to a `calledFromCpp` function that is not a property. */
+export const span = new SpanType();
 
 /** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
 export const bytes = (options: BytesOptions) => new BytesType(options);

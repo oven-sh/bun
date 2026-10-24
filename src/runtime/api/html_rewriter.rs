@@ -685,7 +685,7 @@ pub struct RewriterPipe {
     // ── allocation lifetime ──────────────────────────────────────────────
     /// Owners that may still dispatch into this allocation: the Transform
     /// cell (releases in [`Self::finalize`]), the JS-pump controller's raw
-    /// `sink` (releases via `controller_detached`), and a parked
+    /// `sink` (releases via [`Self::release_pump_ref`]), and a parked
     /// suspension's reaction/abandon task. GC sweeps cells in unspecified
     /// order within a cycle, so whichever owner releases last frees the Box.
     ref_count: Cell<u32>,
@@ -723,10 +723,9 @@ impl RewriterPipe {
 
     /// The JS-pump controller detached and can never dispatch into the pipe
     /// again: release its ref. Deferred if last: the controller keeps using
-    /// the allocation in the same frame (its `Drop`'s trailing
-    /// `controller_finalize`, `close_sink`/`end_sink` on the pointer that
-    /// `take_sink` returned).
-    fn release_pump_ref(&self) {
+    /// the allocation in the same frame (`finalize_sink`, `close_sink` or
+    /// `end_sink` on the pointer that `take_sink` returned).
+    pub(crate) fn release_pump_ref(&self) {
         if !self.pump_controller_attached.replace(false) {
             return;
         }
@@ -1153,11 +1152,9 @@ impl RewriterPipe {
             webcore::readable_stream::NativeWireResult::NotNative => {}
         }
 
-        // JS-pump fallback: `assign_to_stream` installs a JS sink wrapper that
-        // forwards to `JsSinkType for RewriterPipe`. The controller cell it
-        // creates holds `pipe` raw as its `sink` and calls
-        // `controller_detached` from wherever it detaches (including its
-        // `Drop`), so it owns a ref until `release_pump_ref`.
+        // JS-pump fallback: the controller that `assign_to_stream` creates holds
+        // `pipe` raw as its `sink`, so it owns a ref, which it gives up with
+        // `release_pump_ref` wherever it detaches (including its `Drop`).
         this.pump_controller_attached.set(true);
         this.ref_();
         let assignment_result =
@@ -1389,9 +1386,8 @@ impl RewriterPipe {
         let _pin = self.pin();
         // Detach via `detach_input_source` (not a bare `.set(None)`) so a
         // `JSController`'s `sink` is cleared before any path can free the
-        // pipe; otherwise the controller's `Drop` would later call
-        // `controller_detached`/`controller_finalize` on freed memory. The upstream
-        // already ended, so there is nothing to cancel.
+        // pipe; otherwise the controller's `Drop` would later use freed
+        // memory. The upstream already ended, so there is nothing to cancel.
         let src = self.detach_input_source(None);
 
         if self.js_pump_reaction_pending.get() {
@@ -1882,18 +1878,13 @@ impl Drop for RewriterPipe {
 
 impl crate::webcore::sink::JsSinkType for RewriterPipe {
     const NAME: &'static str = "HTMLRewriterSink";
-    const ID: crate::webcore::sink::SinkId = crate::webcore::sink::SinkId::HTMLRewriter;
 
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    // Unlike other sinks, the controller does not own the pipe: its ref is
-    // released by `controller_detached` below, and the free happens wherever
-    // the last ref drops.
+    // Unlike other sinks, the controller does not own the pipe: `take_sink`
+    // releases its ref, and the free happens wherever the last ref drops.
     unsafe fn finalize(_this: *mut Self) {}
-    fn controller_detached(&mut self) {
-        RewriterPipe::release_pump_ref(self);
-    }
     fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         RewriterPipe::write(self, data)
     }
@@ -1913,17 +1904,6 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     }
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         self.end_from_stream(err.map(StreamError::Error));
-        bun_sys::Result::Ok(())
-    }
-    unsafe fn close_with_error(
-        this: *mut Self,
-        global: &JSGlobalObject,
-        reason: JSValue,
-    ) -> bun_sys::Result<()> {
-        // SAFETY: caller contract; `end_from_stream` pins the pipe itself.
-        unsafe { &*this }.end_from_stream(Some(StreamError::JSValue(
-            jsc::strong::Optional::create(reason, global),
-        )));
         bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
@@ -1978,8 +1958,26 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     ) -> bun_sys::Result<()> {
         bun_sys::Result::Ok(())
     }
-    fn source(&mut self) -> Option<&mut SourceHandle> {
-        Some(self.input_source.get_mut())
+}
+
+impl crate::webcore::sink::ControlledSink for RewriterPipe {
+    fn controller_sink(this: NonNull<Self>) -> crate::webcore::sink::ControllerSink {
+        crate::webcore::sink::ControllerSink::HTMLRewriter(this)
+    }
+
+    unsafe fn close_with_error(
+        this: *mut Self,
+        global: &JSGlobalObject,
+        reason: JSValue,
+    ) -> bun_sys::Result<()> {
+        // SAFETY: caller contract; `end_from_stream` pins the pipe itself.
+        unsafe { &*this }.end_from_stream(Some(StreamError::JSValue(
+            jsc::strong::Optional::create(reason, global),
+        )));
+        bun_sys::Result::Ok(())
+    }
+    fn source(&mut self) -> &mut SourceHandle {
+        self.input_source.get_mut()
     }
 }
 

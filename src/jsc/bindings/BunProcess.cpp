@@ -874,6 +874,12 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
+// The 'exit' event is being emitted, or was.
+extern "C" bool Bun__Process__isExiting(Zig::GlobalObject* globalObject)
+{
+    return globalObject->hasProcessObject() && globalObject->processObject()->m_isExiting;
+}
+
 // `process.exitCode` is not undefined.
 extern "C" bool Bun__Process__hasExitCode(Zig::GlobalObject* globalObject)
 {

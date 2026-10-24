@@ -1315,6 +1315,21 @@ describe.concurrent(() => {
         ["", true, 1],
       ],
       [
+        "a job that throws keeps the assigned process.exitCode",
+        `process.exitCode = 2; process.on("exit", () => { queueMicrotask(() => { throw ${failed}; }); });`,
+        ["", true, 2],
+      ],
+      [
+        "a rejection keeps the assigned process.exitCode",
+        `process.exitCode = 2; process.on("exit", async () => { throw ${failed}; });`,
+        ["", true, 2],
+      ],
+      [
+        "a rejection keeps the process.exitCode that its listener assigned",
+        `process.on("exit", async () => { process.exitCode = 0; throw ${failed}; });`,
+        ["", true, 0],
+      ],
+      [
         "a rejection is reported after the jobs",
         `process.on("exit", () => { Promise.reject(${failed}); });
          process.on("exit", () => { Promise.resolve().then(() => out("job")); });`,
@@ -1339,6 +1354,18 @@ describe.concurrent(() => {
         `process.on("exit", async () => { out("a"); throw ${failed}; });`,
         ["a ", true, 1],
         "--unhandled-rejections=strict",
+      ],
+      [
+        "a rejection under --unhandled-rejections=strict keeps the assigned process.exitCode",
+        `process.exitCode = 2; process.on("exit", async () => { throw ${failed}; });`,
+        ["", true, 2],
+        "--unhandled-rejections=strict",
+      ],
+      [
+        "a rejection under --unhandled-rejections=throw keeps the assigned process.exitCode",
+        `process.exitCode = 2; process.on("exit", async () => { throw ${failed}; });`,
+        ["", true, 2],
+        "--unhandled-rejections=throw",
       ],
       [
         "a rejection under --unhandled-rejections=throw reaches an 'uncaughtException' listener",
@@ -1398,10 +1425,23 @@ describe.concurrent(() => {
         ["a ", true, 1],
       ],
       [
+        "a rejection that a 'beforeExit' listener made, whatever process.exitCode was",
+        `process.exitCode = 5;
+         process.on("beforeExit", () => { Promise.reject(${failed}); });
+         process.on("exit", async () => { out("a"); await null; out("b"); });`,
+        ["a ", true, 1],
+      ],
+      [
         "a listener that threw",
         `process.on("uncaughtException", (e, origin) => out(origin));
          process.on("exit", () => { out("a"); queueMicrotask(() => out("job")); throw ${failed}; });`,
         ["a uncaughtException ", false, 0],
+      ],
+      [
+        "a listener that threw, which keeps the assigned process.exitCode",
+        `process.exitCode = 2;
+         process.on("exit", () => { out("a"); queueMicrotask(() => out("job")); throw ${failed}; });`,
+        ["a ", true, 2],
       ],
     ];
 
@@ -1443,24 +1483,46 @@ describe.concurrent(() => {
       ]);
     });
 
-    // What runs a vendored node test: the file ends when its loop runs dry. `node --test` fails this file too.
-    it("a listener that rejects fails a node:test file whose loop ran dry", async () => {
+    // What runs a vendored node test: the file ends when its loop runs dry.
+    const runNodeTestFile = async listeners => {
       using dir = tempDir("process-exit-jobs-test", {
         "exit.test.js": `const { test } = require("node:test");
                          ${out}
-                         process.on("exit", async () => { out("a"); await null; out("b"); throw ${failed}; });
+                         ${listeners}
                          test("passes", () => {});`,
       });
-      expect(
-        await run([bunExe(), "test", "./exit.test.js"], {
-          cwd: String(dir),
-          env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
-        }),
-      ).toEqual({
+      return await run([bunExe(), "test", "./exit.test.js"], {
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+      });
+    };
+
+    // `node --test` fails these files too.
+    it.each([
+      ["rejects", `process.on("exit", async () => { out("a"); await null; out("b"); throw ${failed}; });`],
+      [
+        "leaves a job that throws",
+        `process.on("exit", () => { out("a"); queueMicrotask(() => { out("b"); throw ${failed}; }); });`,
+      ],
+    ])("a listener that %s fails a node:test file whose loop ran dry", async (_, listener) => {
+      expect(await runNodeTestFile(listener)).toEqual({
         stdout: expect.stringContaining("a b "),
         stderr: expect.stringContaining("error: cleanup failed"),
         exitCode: 1,
       });
+    });
+
+    // That loop ended with an error, as a fatal error ends a script: nothing follows the 'exit' listeners.
+    it("a node:test file whose last turn left a rejection reports nothing from its 'exit' listeners", async () => {
+      const { stderr, exitCode } = await runNodeTestFile(
+        `process.on("beforeExit", () => { Promise.reject(new Error("the last turn failed")); });
+         process.on("exit", async () => { throw ${failed}; });`,
+      );
+      expect({
+        lastTurn: stderr.includes("error: the last turn failed"),
+        listener: stderr.includes("cleanup failed"),
+        exitCode,
+      }).toEqual({ lastTurn: true, listener: false, exitCode: 1 });
     });
 
     // A tick never runs once 'exit' is emitted. Node runs this one before the event.

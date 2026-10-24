@@ -503,6 +503,7 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Bun__Process__isExiting(global: &JSGlobalObject) -> bool;
     safe fn Bun__Process__hasExitCode(global: &JSGlobalObject) -> bool;
     safe fn Bun__Process__discardNextTicks(global: &JSGlobalObject);
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
@@ -781,7 +782,7 @@ pub struct ExitHandler {
     /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
-    /// `on_before_exit()` returned with the loop dry and no unhandled error.
+    /// `on_before_exit()` ran to its end: the event loop is dry.
     pub loop_ran_dry: bool,
 }
 
@@ -2215,8 +2216,9 @@ impl VirtualMachine {
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
                 self.is_handling_uncaught_exception = false;
+                let exit_code = self.fatal_exit_code();
                 // SAFETY: see above.
-                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                unsafe { (hooks.process_exit)(global_object.as_ptr(), exit_code) };
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
@@ -2286,7 +2288,7 @@ impl VirtualMachine {
 
             break;
         }
-        self.exit_handler.loop_ran_dry = self.unhandled_error_counter == 0;
+        self.exit_handler.loop_ran_dry = true;
     }
 
     /// Writes each configured profile once. The sampling report is written first because
@@ -2349,8 +2351,10 @@ impl VirtualMachine {
         // listeners' promise jobs and reports what they rejected, unless a listener threw.
         // `process.exit()` and a fatal error emit it with a plain call. Not in a worker:
         // `WebWorker::shutdown` has unpublished its VM, so `terminate()` could not stop a job.
-        let ran_dry =
-            self.is_main_thread() && self.exit_handler.loop_ran_dry && !self.exit_handler.requested;
+        let ran_dry = self.is_main_thread()
+            && self.exit_handler.loop_ran_dry
+            && !self.exit_handler.requested
+            && self.unhandled_error_counter == 0;
         let uncaught_exception_epoch = self.uncaught_exception_epoch;
         {
             let _entered = ran_dry.then(|| self.enter_event_loop_scope_without_checkpoint());
@@ -2404,20 +2408,29 @@ impl VirtualMachine {
             return;
         }
         let global = self.global();
+        let unhandled_error_counter = self.unhandled_error_counter;
         Bun__Process__discardNextTicks(global);
         if self.event_loop_mut().drain_microtasks().is_err() {
             return;
         }
-        let unhandled_error_counter = self.unhandled_error_counter;
         let _ = global.handle_rejected_promises();
         if self.unhandled_error_counter != unhandled_error_counter {
-            // A fatal error in node: it exits with the assigned `process.exitCode` or with 1,
-            // and frees no environment.
+            // A fatal error in node, which frees no environment.
+            let exit_code = self.fatal_exit_code();
             let exit_handler = &mut self.as_mut().exit_handler;
             exit_handler.requested = true;
-            if !Bun__Process__hasExitCode(global) {
-                exit_handler.exit_code = 1;
-            }
+            exit_handler.exit_code = exit_code;
+        }
+    }
+
+    /// The exit code of a fatal error, as in node: 1, or the assigned `process.exitCode` once
+    /// 'exit' is being emitted.
+    pub fn fatal_exit_code(&self) -> u8 {
+        let global = self.global();
+        if Bun__Process__isExiting(global) && Bun__Process__hasExitCode(global) {
+            self.exit_handler.exit_code
+        } else {
+            1
         }
     }
 

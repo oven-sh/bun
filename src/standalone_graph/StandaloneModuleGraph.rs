@@ -1598,10 +1598,15 @@ pub(crate) fn to_bytes(
         }
 
         // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
-        if seen_paths
-            .get_or_put(module_dest_path(output_file))?
-            .found_existing
-        {
+        let seen = seen_paths.get_or_put(module_dest_path(output_file))?;
+        if seen.found_existing {
+            let kept = &mut module_files[seen.index]; // pushed when this path was first seen
+            // `require()` opens a database by the loader in its record. A `file` import of the same bytes reads either copy.
+            if matches!(output_file.loader, Loader::Sqlite | Loader::SqliteEmbedded)
+                && kept.hash.value == output_file.hash.value
+            {
+                *kept = output_file;
+            }
             continue;
         }
         if entry_point_file.is_none() && is_entry_point(output_file) {

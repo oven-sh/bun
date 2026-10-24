@@ -721,10 +721,12 @@ pub mod parse_worker {
     }
 
     /// Returns the unique key the printer replaces with the asset's final path.
+    /// `content_hash` is the `[hash]` of that path.
     fn register_embedded_asset<'b>(
         bump: &'b Bump,
         source: &Source,
         unique_key_prefix: u64,
+        content_hash: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
     ) -> &'b [u8] {
         use core::fmt::Write as _;
@@ -742,7 +744,7 @@ pub mod parse_worker {
         let unique_key = buf.into_bump_str().as_bytes();
         *unique_key_for_additional_file = FileLoaderHash {
             key: ast::StoreStr::new(unique_key),
-            content_hash: ContentHasher::run(&source.contents),
+            content_hash,
         };
         unique_key
     }
@@ -1008,10 +1010,15 @@ pub mod parse_worker {
                 // module becomes `export default require("<bunfs path>")`.
                 // Browser chunks cannot reach the embedded graph.
                 let root = if topts.compile_mode.is_executable() && topts.target.is_bun() {
+                    // The string body is not the file's bytes: a raw copy of the same bytes must get another `[hash]`.
+                    let mut content_hash = ContentHasher::default();
+                    content_hash.write(b"text");
+                    content_hash.write(&source.contents);
                     require_embedded_asset(register_embedded_asset(
                         bump,
                         source,
                         unique_key_prefix,
+                        content_hash.digest(),
                         unique_key_for_additional_file,
                     ))
                 } else {
@@ -1102,6 +1109,7 @@ pub mod parse_worker {
                         bump,
                         source,
                         unique_key_prefix,
+                        ContentHasher::run(&source.contents),
                         unique_key_for_additional_file,
                     )
                 } else {
@@ -1212,6 +1220,7 @@ pub mod parse_worker {
                     bump,
                     source,
                     unique_key_prefix,
+                    ContentHasher::run(&source.contents),
                     unique_key_for_additional_file,
                 ));
                 return Ok(JSAst::init(

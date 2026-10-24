@@ -191,7 +191,7 @@ describe.concurrent("bun fmt --lsp", () => {
     expect(capabilities.documentFormattingProvider).toBe(true);
     expect(capabilities.documentRangeFormattingProvider).toBe(true);
     expect(capabilities.workspace.workspaceFolders).toEqual({ supported: true, changeNotifications: true });
-    expect(capabilities.codeActionProvider).toBeUndefined();
+    expect(capabilities.codeActionProvider).toBe(false);
     client.notify("initialized");
     open(client, join(String(dir), "a.js"), "debugger;\n");
     expect((await format(client, join(String(dir), "a.js"))).result).toEqual([]);

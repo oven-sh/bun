@@ -488,7 +488,7 @@ pub(crate) fn post_process_js_chunk(
             }
             let mut buf = MutableString::init_empty();
             // The printer escapes string literals ASCII-only for the bun target.
-            let _ = js_printer::quote_for_json(directive, &mut buf, is_bun); // fmt::Result into Vec<u8> is infallible
+            bun_core::handle_oom(js_printer::quote_for_json(directive, &mut buf, is_bun));
             bun_core::handle_oom(buf.append_slice(if c.options.minify_whitespace {
                 b";".as_slice()
             } else {

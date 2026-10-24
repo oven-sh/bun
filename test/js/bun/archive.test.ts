@@ -1205,6 +1205,25 @@ describe("Bun.Archive", () => {
       expect(file.size).toBeLessThan(Bun.file(uncompressedPath).size);
     });
 
+    test("Bun.write compresses a gzip Archive", async () => {
+      using dir = tempDir("archive-bun-write-gzip", {});
+      const path = join(String(dir), "out.tar.gz");
+
+      await Bun.write(path, new Bun.Archive({ "a.txt": "x" }, { compress: "gzip" }));
+
+      const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+      expect([bytes[0], bytes[1]]).toEqual([0x1f, 0x8b]);
+      const files = await new Bun.Archive(bytes).files();
+      expect(await files.get("a.txt")!.text()).toBe("x");
+
+      // without compression the tar is written as is
+      const plainPath = join(String(dir), "out.tar");
+      await Bun.write(plainPath, new Bun.Archive({ "a.txt": "x" }));
+      const plain = new Uint8Array(await Bun.file(plainPath).arrayBuffer());
+      expect(plain[0]).not.toBe(0x1f);
+      expect(await (await new Bun.Archive(plain).files()).get("a.txt")!.text()).toBe("x");
+    });
+
     test("writes archive from Blob", async () => {
       using dir = tempDir("archive-write-blob-test", {});
       const archivePath = join(String(dir), "test.tar");

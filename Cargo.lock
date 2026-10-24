@@ -155,6 +155,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_archive"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_collections",
+ "bun_core",
+ "bun_errno",
+ "bun_paths",
+ "bun_sys",
+ "bun_tar",
+ "bun_wyhash",
+ "scopeguard",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_ast"
 version = "0.0.0"
 dependencies = [
@@ -720,6 +736,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
+ "bun_archive",
  "bun_ast",
  "bun_base64",
  "bun_boringssl_sys",
@@ -739,7 +756,6 @@ dependencies = [
  "bun_io",
  "bun_js_parser",
  "bun_js_printer",
- "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_options_types",
  "bun_parsers",
@@ -955,23 +971,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "bun_libarchive"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_alloc",
- "bun_collections",
- "bun_core",
- "bun_errno",
- "bun_opaque",
- "bun_paths",
- "bun_sys",
- "bun_wyhash",
- "scopeguard",
- "thiserror",
 ]
 
 [[package]]
@@ -1466,6 +1465,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
+ "bun_archive",
  "bun_ast",
  "bun_ast_jsc",
  "bun_base64",
@@ -1502,7 +1502,6 @@ dependencies = [
  "bun_js_parser_jsc",
  "bun_js_printer",
  "bun_jsc",
- "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
  "bun_lint_driver",
@@ -1850,6 +1849,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_archive",
  "bun_ast",
  "bun_bundler",
  "bun_collections",
@@ -1858,7 +1858,6 @@ dependencies = [
  "bun_errno",
  "bun_exe_format",
  "bun_http",
- "bun_libarchive",
  "bun_opaque",
  "bun_options_types",
  "bun_parsers",
@@ -1908,6 +1907,17 @@ dependencies = [
  "bun_core",
  "bun_jsc",
  "bun_sys",
+]
+
+[[package]]
+name = "bun_tar"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_zlib",
+ "itoa",
+ "thiserror",
 ]
 
 [[package]]

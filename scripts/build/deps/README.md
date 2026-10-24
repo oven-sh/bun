@@ -99,7 +99,7 @@ export const mydep: Dependency = {
   patches: ["patches/mydep/fix-something.patch"],
 
   // Optional: deps whose SOURCE must be ready before this one builds
-  // (for -I cross-dep headers). See libarchive for an example.
+  // (for -I cross-dep headers). See libspng for an example.
   fetchDeps: ["zlib"],
 
   // How to build. `direct` lists sources explicitly; emitDirect compiles
@@ -148,7 +148,7 @@ export const mydep: Dependency = {
 - **mimalloc.ts** — direct build, single unity TU compiled as C++
 - **tinycc.ts** — direct build with a build-time codegen tool
 - **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution
-- **libarchive.ts** / **cares.ts** — direct build with hand-written per-target config.h
+- **cares.ts** — direct build with hand-written per-target config.h
 - **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` (with libuv.ts) keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep

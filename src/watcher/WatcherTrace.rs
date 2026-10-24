@@ -25,10 +25,6 @@ pub(crate) fn init() {
             let mode = 0o644;
             // Silently ignore errors opening trace file
             *slot = File::openat(Fd::cwd(), trace_path, flags, mode).ok();
-            crate::watcher_impl::diag::BASE_RULE.store(
-                trace_path.ends_with(b".base"),
-                core::sync::atomic::Ordering::Relaxed,
-            );
         }
     }
 }
@@ -172,18 +168,7 @@ pub(crate) fn write_events(
         }
     }
 
-    use crate::watcher_impl::diag;
-    use core::sync::atomic::Ordering::Relaxed;
-    if writeln!(
-        writer,
-        "}},\"counters\":{{\"kevent\":{},\"fstat\":{},\"lock\":{},\"hold\":{}}}}}",
-        diag::KEVENT.load(Relaxed),
-        diag::FSTAT.load(Relaxed),
-        diag::LOCK.load(Relaxed),
-        diag::HOLD.load(Relaxed),
-    )
-    .is_err()
-    {
+    if writer.write_all(b"}}\n").is_err() {
         return;
     }
 }

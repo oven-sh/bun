@@ -3,8 +3,7 @@ use std::time::{Duration, Instant};
 use bun_core::output as Output;
 use bun_sys::Fd;
 
-use crate::watcher_impl::{Op, SizeCheck, WatchEvent, Watcher, diag};
-use core::sync::atomic::Ordering::Relaxed;
+use crate::watcher_impl::{Op, SizeCheck, WatchEvent, Watcher};
 
 pub(crate) type Platform = KEventWatcher;
 
@@ -62,7 +61,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     let mut changelist: [libc::kevent; CHANGELIST_COUNT] = bun_core::ffi::zeroed();
 
-    diag::KEVENT.fetch_add(1, Relaxed);
     let mut count = bun_sys::kevent(fd, &[], &mut changelist, None)?;
 
     // Give the events more time to coalesce
@@ -71,7 +69,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             tv_sec: 0,
             tv_nsec: 100_000,
         }; // 0.0001 seconds
-        diag::KEVENT.fetch_add(1, Relaxed);
         count += bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts))?;
     }
 
@@ -116,7 +113,6 @@ fn wait_for_writes(
     count: &mut usize,
     mut out_len: usize,
 ) -> usize {
-    diag::HOLD.fetch_add(1, Relaxed);
     let deadline = Instant::now() + SAVE_IN_PLACE_WAIT;
     while any_held(&this.watch_events[..out_len]) {
         let left = deadline.saturating_duration_since(Instant::now());
@@ -126,7 +122,6 @@ fn wait_for_writes(
         };
         // A failed call ends the wait like the deadline: the events that are read still go out.
         let free = &mut changelist[*count..];
-        diag::KEVENT.fetch_add(1, Relaxed);
         let more = bun_sys::kevent(this.platform.fd, &[], free, Some(&timeout)).unwrap_or(0);
         if more == 0 {
             for event in &mut this.watch_events[..out_len] {

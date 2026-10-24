@@ -10,6 +10,7 @@ use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
@@ -264,21 +265,34 @@ fn get_argv(
 
 /// Bun.spawn() calls this.
 pub(crate) fn spawn(
-    cx: &bun_jsc::JsThread<'_>,
-    args: JSValue,
-    secondary_args_value: Option<JSValue>,
+    cx: &mut JsScope<'_>,
+    cmd_or_options: JsLocal<'_>,
+    options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync(false, cx, args, secondary_args_value, &mut None)
+    spawn_maybe_sync(
+        false,
+        &cx.js_thread(),
+        cmd_or_options.to_js(),
+        options.to_js(),
+        &mut None,
+    )
 }
 
 /// Bun.spawnSync() calls this.
 pub(crate) fn spawn_sync(
-    cx: &bun_jsc::JsThread<'_>,
-    args: JSValue,
-    secondary_args_value: Option<JSValue>,
+    cx: &mut JsScope<'_>,
+    cmd_or_options: JsLocal<'_>,
+    options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
+    let cx = &cx.js_thread();
     let mut bun_test_deadline: Option<Timespec> = None;
-    let result = spawn_maybe_sync(true, cx, args, secondary_args_value, &mut bun_test_deadline);
+    let result = spawn_maybe_sync(
+        true,
+        cx,
+        cmd_or_options.to_js(),
+        options.to_js(),
+        &mut bun_test_deadline,
+    );
     // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
     if let Some(deadline) = bun_test_deadline
         && result.is_ok()
@@ -337,7 +351,7 @@ fn spawn_maybe_sync(
     is_sync: bool,
     cx: &bun_jsc::JsThread<'_>,
     args_: JSValue,
-    secondary_args_value: Option<JSValue>,
+    secondary_args_value: JSValue,
     bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
     if is_sync {
@@ -419,7 +433,7 @@ fn spawn_maybe_sync(
         let args_type = args.js_type();
         if args_type.is_array() {
             cmd_value = args;
-            args = secondary_args_value.unwrap_or_default();
+            args = secondary_args_value;
         } else if !args.is_object() {
             return Err(cx
                 .global()

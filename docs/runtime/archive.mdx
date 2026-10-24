@@ -58,6 +58,7 @@ File contents can be:
 
 - **Strings** - Text content
 - **Blobs** - Binary data
+- **`Bun.file()`** - The bytes of a file on disk
 - **ArrayBufferViews** (such as `Uint8Array`) - Raw bytes
 - **ArrayBuffers** - Raw binary data
 
@@ -68,10 +69,17 @@ const arrayBuffer = new ArrayBuffer(8);
 const archive = new Bun.Archive({
   "text.txt": "Plain text",
   "blob.bin": new Blob([data]),
+  "file.bin": Bun.file("./file.bin"),
   "bytes.bin": new Uint8Array([1, 2, 3, 4]),
   "buffer.bin": arrayBuffer,
 });
 ```
+
+Bun copies strings, in-memory Blobs, and buffers into the archive when `new Bun.Archive()` runs. Bun does not read a `Bun.file()` at that time. Bun reads the file off the main thread when you first use the archive, for example with `bytes()` or `Bun.write()`. The archive keeps those bytes. If Bun cannot read the file, that call rejects, and the next call reads the file again.
+
+Bun archives the bytes of the file only. Each entry is a regular file with mode `0644`, whatever the mode of the file on disk. The path has to be a regular file: a directory or a device rejects the call.
+
+`new Bun.Archive()` throws a `TypeError` for a `Bun.file()` of a file descriptor, for `Bun.stdin`, and for an S3 file. Pass `await file.bytes()` for them.
 
 ### Writing Archives to Disk
 
@@ -120,6 +128,13 @@ Create an archive from existing tar/tar.gz data:
 const tarball = await Bun.file("package.tar.gz").bytes();
 const archiveFromFile = new Bun.Archive(tarball);
 ```
+
+```ts
+// From a Bun.file(): Bun reads it off the main thread when you first use the archive
+const archiveFromLazyFile = new Bun.Archive(Bun.file("package.tar.gz"));
+```
+
+An archive made from a `Bun.file()` reads the file once and keeps those bytes, so `files()` and `extract()` see the same archive. If Bun cannot read the file, the call rejects.
 
 ```ts
 // From a fetch response
@@ -230,6 +245,8 @@ try {
 Common error scenarios:
 
 - **Corrupted/truncated archives** - `new Bun.Archive()` loads the archive data; Bun may defer errors until read/extract operations
+- **Unreadable files** - Bun reads a `Bun.file()` when you first use the archive; a missing file, a directory, or a file you cannot read rejects that call with the system error
+- **Files without a path** - `new Bun.Archive()` throws a `TypeError` for a `Bun.file()` of a file descriptor and for an S3 file
 - **Permission denied** - `extract()` throws if the target directory is not writable
 - **Disk full** - `extract()` throws if there's insufficient space
 - **Invalid paths** - Operations throw for malformed file paths
@@ -378,7 +395,7 @@ async function archiveDirectory(dir: string, compress = false): Promise<Bun.Arch
 
       if (entry.isDirectory()) {
         await walk(fullPath, archivePath);
-      } else {
+      } else if (entry.isFile()) {
         files[archivePath] = Bun.file(fullPath);
       }
     }
@@ -391,6 +408,8 @@ async function archiveDirectory(dir: string, compress = false): Promise<Bun.Arch
 const archive = await archiveDirectory("./my-project", true);
 await Bun.write("my-project.tar.gz", archive);
 ```
+
+The walk adds regular files only. It skips symbolic links and other entries that are not regular files.
 
 ## Reference
 

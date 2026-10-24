@@ -13,10 +13,14 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
+use crate::api::archive::{ArchiveOutput, OutputError};
+use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::blob::{self, Blob, FileOpener, SizeType};
 #[cfg(not(windows))]
 use crate::webcore::blob::{ClosingState, FileCloser, MkdirpTarget, Retry, mkdir_if_not_exists};
 use crate::webcore::body;
+use bun_ptr::RefPtr;
+use bun_s3_signing::S3CredentialsWithOptions;
 
 bun_output::declare_scope!(WriteFile, hidden);
 
@@ -1257,6 +1261,120 @@ impl WriteFilePromise {
             }
         }
         Ok(())
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `Bun.write(destination, archive)` for a `Bun.Archive` whose bytes the work pool has to make
+/// first: it is gzipped, or it has `Bun.file()` input that no method has read.
+pub(crate) struct WriteArchive;
+
+pub(crate) struct WriteArchiveBytes {
+    output: ArchiveOutput,
+    /// `None` until the pool ran the job.
+    store: Option<Result<RefPtr<blob::Store>, OutputError>>,
+}
+
+/// What the write needs when the bytes exist.
+pub(crate) struct WriteArchiveDestination {
+    promise: jsc::JSPromiseStrong,
+    destination: Blob,
+    mkdirp_if_not_exists: Option<bool>,
+    mode: Option<sys::Mode>,
+    /// For an S3 destination: the credentials and options as they were when `Bun.write` was called.
+    s3_options: Option<S3CredentialsWithOptions>,
+}
+
+// SAFETY: a promise handle, a Blob and S3 options: used and dropped on the JS thread only (a
+// job's `Js` half).
+unsafe impl bun_jsc::job::JsAffine for WriteArchiveDestination {}
+
+impl WriteArchive {
+    /// Takes `destination`. Returns the promise of the write.
+    pub(crate) fn start(
+        cx: &bun_jsc::JsThread<'_>,
+        output: ArchiveOutput,
+        destination: &mut Blob,
+        options: &blob::WriteFileOptions,
+    ) -> jsc::JsResult<JSValue> {
+        let global = cx.global();
+        // Reading the options runs user JS, which can detach the store from its Blob.
+        let destination_store = destination.store().cloned();
+        let s3_options = match destination_store.as_ref().map(|store| &store.data) {
+            Some(blob::store::Data::S3(s3)) => {
+                match s3.get_credentials_with_options(options.extra_options, global) {
+                    Ok(s3_options) => Some(s3_options),
+                    Err(err) => {
+                        return Ok(
+                            JSPromise::rejected_promise_with_caught_exception(global, err)?.to_js(),
+                        );
+                    }
+                }
+            }
+            _ => None,
+        };
+        let promise = jsc::JSPromiseStrong::init(global);
+        let value = promise.value();
+        bun_jsc::Job::<Self>::schedule(
+            cx,
+            WriteArchiveBytes {
+                output,
+                store: None,
+            },
+            WriteArchiveDestination {
+                promise,
+                destination: core::mem::replace(destination, Blob::init_empty(global)),
+                mkdirp_if_not_exists: options.mkdirp_if_not_exists,
+                mode: options.mode,
+                s3_options,
+            },
+        );
+        Ok(value)
+    }
+}
+
+impl bun_jsc::JobContext for WriteArchive {
+    type OffThread = WriteArchiveBytes;
+    type Js = WriteArchiveDestination;
+    fn run(
+        bytes: &mut WriteArchiveBytes,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        bytes.store = Some(bytes.output.produce());
+        Some(done)
+    }
+    fn then(
+        bytes: WriteArchiveBytes,
+        mut write: WriteArchiveDestination,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> jsc::JsResult<()> {
+        let global = cx.global();
+        let store = match bytes.store {
+            Some(Ok(store)) => store,
+            Some(Err(err)) => {
+                return write
+                    .promise
+                    .reject_with_async_stack(global, Ok(err.to_js(global)));
+            }
+            // The pool gave the job back without a run: the VM stops.
+            None => return Ok(()),
+        };
+        let mut source = Blob::init_with_store(store, global);
+        let options = blob::WriteFileOptions {
+            mkdirp_if_not_exists: write.mkdirp_if_not_exists,
+            extra_options: None,
+            mode: write.mode,
+        };
+        // The promise that `Bun.write` returned takes the outcome of this write.
+        let written = blob::write_file_with_s3_options(
+            cx,
+            &mut source,
+            &mut write.destination,
+            &options,
+            write.s3_options.take(),
+        );
+        write.promise.settle(global, written)
     }
 }
 

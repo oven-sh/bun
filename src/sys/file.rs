@@ -89,6 +89,21 @@ impl File {
         let dir = dir.as_fd();
         Self::openat(dir, path, flags, mode)
     }
+    /// Open `path` for a read on a thread that must not wait, and `fstat` it. The caller looks
+    /// at the kind of file before it reads: the open of a FIFO with no writer returns here,
+    /// and a read of one does not.
+    ///
+    /// `O_NONBLOCK` is POSIX-only. On Windows it opens the handle for overlapped I/O, and a
+    /// synchronous read of such a handle fails with EINVAL.
+    pub fn open_for_read(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, Stat)> {
+        #[cfg(unix)]
+        let flags = O::RDONLY | O::NOCTTY | O::NONBLOCK;
+        #[cfg(not(unix))]
+        let flags = O::RDONLY | O::NOCTTY;
+        let file = Self::openat(dir, path, flags, 0)?;
+        let stat = file.stat()?;
+        Ok((file, stat))
+    }
     /// `openat` against cwd, auto-creating parent
     /// directories on the first failure (mkdir -p of `dirname(path)`, then
     /// retry once).

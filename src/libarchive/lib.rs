@@ -104,6 +104,8 @@ pub mod lib {
         fn archive_write_new() -> *mut Archive;
         fn archive_write_free(a: *mut Archive) -> Result;
         fn archive_write_close(a: *mut Archive) -> Result;
+        fn archive_write_fail(a: *mut Archive) -> c_int;
+        fn archive_filter_bytes(a: *mut Archive, n: c_int) -> la_int64_t;
         fn archive_write_set_bytes_in_last_block(a: *mut Archive, bytes: c_int) -> Result;
         fn archive_set_error(a: *mut Archive, err: c_int, fmt: *const c_char, ...);
         fn archive_write_set_format_pax_restricted(a: *mut Archive) -> Result;
@@ -413,6 +415,18 @@ pub mod lib {
         pub fn write_close(&self) -> Result {
             // SAFETY: self valid.
             unsafe { archive_write_close(self.as_mut_ptr()) }
+        }
+        /// Abandon the archive. Freeing it then skips the close, which would pad an entry that
+        /// is open with zeros up to the size in its header.
+        pub fn write_fail(&self) {
+            // SAFETY: self valid.
+            unsafe { archive_write_fail(self.as_mut_ptr()) };
+        }
+        /// The bytes given to filter `n` so far. Filter 0 of a writer takes what the format
+        /// writes: the entries, before the end marker and the padding that the close adds.
+        pub fn filter_bytes(&self, n: c_int) -> i64 {
+            // SAFETY: self valid.
+            unsafe { archive_filter_bytes(self.as_mut_ptr(), n) }
         }
         /// Sets the padding unit for the last output block. The default pads it to 10 KiB, and 1
         /// disables padding.

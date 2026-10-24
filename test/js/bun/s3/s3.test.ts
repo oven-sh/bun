@@ -1633,6 +1633,55 @@ describe("Archive with S3", () => {
     await s3File.delete();
   });
 
+  it("writes an archive with Bun.file() entries to S3", async () => {
+    using dir = tempDir("s3-archive-file-entry", { "on-disk.txt": "read from disk" });
+    const entries = () => ({
+      "a.txt": "in memory",
+      "on-disk.txt": Bun.file(path.join(String(dir), "on-disk.txt")),
+    });
+    const read = async (file: S3File) => {
+      const files = await new Bun.Archive(await file.bytes()).files();
+      return Promise.all([...files].map(async ([name, entry]) => [name, await entry.text()]));
+    };
+    const want = [
+      ["a.txt", "in memory"],
+      ["on-disk.txt", "read from disk"],
+    ];
+
+    // The archive is read before the upload starts. The client has the credentials.
+    const client = new Bun.S3Client(credentials);
+    const key = randomUUIDv7() + ".tar";
+    await client.write(key, new Bun.Archive(entries()));
+    expect(await read(client.file(key))).toEqual(want);
+    await client.unlink(key);
+
+    // Here the third argument has the credentials, and gzip: the upload is what bytes() gives.
+    const s3Url = `s3://${credentials.bucket}/${randomUUIDv7()}.tar.gz`;
+    const archive = new Bun.Archive(entries(), { compress: "gzip" });
+    const options = { ...credentials } as any;
+    const written = Bun.write(s3Url, archive, options);
+    // The upload starts after the read. It uses the options as they were at the call.
+    options.accessKeyId = "changed";
+    options.secretAccessKey = "changed";
+    options.bucket = "changed";
+    options.endpoint = "http://127.0.0.1:1";
+    const bytes = await archive.bytes();
+    expect(await written).toBe(bytes.length);
+    const s3File = Bun.file(s3Url, credentials) as S3File;
+    expect(Buffer.from(await s3File.bytes()).equals(bytes)).toBe(true);
+    expect(bytes.subarray(0, 2)).toEqual(new Uint8Array([0x1f, 0x8b]));
+    expect(await read(s3File)).toEqual(want);
+    await s3File.delete();
+
+    // Options that S3 refuses reject the call, and the files are not read for them.
+    await expect(
+      Bun.write(s3Url, new Bun.Archive({ "missing.txt": Bun.file(path.join(String(dir), "missing.txt")) }), {
+        ...credentials,
+        acl: "not-an-acl",
+      } as any),
+    ).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining("acl must be one of") });
+  });
+
   it("writes archive with binary content to S3", async () => {
     const client = new Bun.S3Client(credentials);
     const binaryData = new Uint8Array([0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd, 0x80, 0x7f]);

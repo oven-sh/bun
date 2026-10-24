@@ -296,6 +296,8 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) bundled_files: ModuleTable<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
     pub(crate) stale_files: DynamicBitSetUnmanaged,
+    /// Bit set = the module is retired (see `retire_orphans`). Empty until a module is retired; a file past its length is not retired.
+    pub(crate) retired_files: DynamicBitSetUnmanaged,
     /// Parallel to `bundled_files`; the heads of each file's lists in `edges`.
     pub(crate) edge_lists: Vec<EdgeLists>,
     /// Edge storage; indices into this are `EdgeIndex`.
@@ -315,6 +317,8 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_chunk_source_maps: Vec<CurrentChunkSourceMapData>,
     /// Client side: CSS asset content-hashes referenced by the current chunk.
     pub(crate) current_css_files: Vec<u64>,
+    /// The files that lost an importer since `retire_orphans` ran.
+    pub(crate) lost_importer: Vec<FileIndex<SIDE>>,
 }
 
 /// Byte-count breakdown of an incremental graph's memory usage (graph
@@ -404,9 +408,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         graph += self.bundled_files.count()
             * (size_of::<Box<[u8]>>() + size_of::<File>() + size_of::<Option<bun_ast::Loader>>());
         graph += self.stale_files.bytes().len();
+        graph += self.retired_files.bytes().len();
         graph += self.edge_lists.capacity() * size_of::<EdgeLists>();
         graph += self.edges.capacity() * size_of::<Edge<SIDE>>();
         graph += self.edges_free_list.capacity() * size_of::<EdgeIndex>();
+        graph += self.lost_importer.capacity() * size_of::<FileIndex<SIDE>>();
         match SIDE {
             Side::Client => {
                 graph += self.current_chunk_parts.capacity() * size_of::<FileIndex<SIDE>>();
@@ -464,6 +470,36 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.stale_files.resize(aligned, are_new_files_stale)
     }
 
+    /// A module that is bundled again is not retired any more.
+    #[inline]
+    fn unretire(&mut self, index: usize) {
+        if self.retired_files.bit_length > index {
+            self.retired_files.unset(index);
+        }
+    }
+
+    fn failure_owner(file_index: FileIndex<SIDE>) -> serialized_failure::Owner {
+        match SIDE {
+            Side::Server => serialized_failure::Owner::Server(FileIndex::init(file_index.get())),
+            Side::Client => serialized_failure::Owner::Client(FileIndex::init(file_index.get())),
+        }
+    }
+
+    /// Moves the failure of a file that fails no more to `failures_removed`, so the clients drop it.
+    fn retract_failure(&mut self, file_index: FileIndex<SIDE>) {
+        self.bundled_files.values_mut()[file_index.get() as usize].failed = false;
+        let owner = serialized_failure::OwnerPacked::new(SIDE, file_index.get());
+        let (_, failure) = self
+            .dev_bundling_failures()
+            .fetch_swap_remove(&owner)
+            .unwrap_or_else(|| {
+                bun_core::Output::panic(format_args!(
+                    "Missing SerializedFailure in IncrementalGraph",
+                ))
+            });
+        self.dev_incremental_result().failures_removed.push(failure);
+    }
+
     /// `IncrementalGraph(side).freeFileContent` (client only).
     /// Frees the `source_map` + `content` of `file`, the value of slot `index`, optionally
     /// unref'ing the associated CSS asset. Leaves `content = .Unknown`.
@@ -512,6 +548,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// `next_dependency` (and vice versa). Does NOT touch the import list.
     fn disconnect_edge_from_dependency_list(&mut self, edge_index: EdgeIndex) {
         let edge = self.edges[edge_index.get() as usize];
+        // Only a file with two modules can have a module to retire.
+        if self.bundled_files.has_key_loaders() {
+            self.lost_importer.push(edge.imported);
+        }
         if let Some(prev) = edge.prev_dependency {
             self.edges[prev.get() as usize].next_dependency = edge.next_dependency;
             if let Some(next) = edge.next_dependency {
@@ -615,6 +655,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if self.stale_files.bit_length > file_index.get() as usize {
             self.stale_files.unset(file_index.get() as usize);
         }
+        self.unretire(file_index.get() as usize);
 
         *ctx.get_cached_index(SIDE, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
@@ -637,15 +678,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     );
 
                     if existing.failed {
-                        let owner =
-                            serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                        let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
-                        let kv = kv.unwrap_or_else(|| {
-                            bun_core::Output::panic(format_args!(
-                                "Missing SerializedFailure in IncrementalGraph",
-                            ))
-                        });
-                        self.dev_incremental_result().failures_removed.push(kv.1);
+                        self.retract_failure(file_index);
                     }
 
                     html_route_bundle_index = existing.html_route_bundle_index;
@@ -768,16 +801,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
 
                     if self.bundled_files.values()[file_index.get() as usize].failed {
-                        self.bundled_files.values_mut()[file_index.get() as usize].failed = false;
-                        let owner =
-                            serialized_failure::OwnerPacked::new(Side::Server, file_index.get());
-                        let kv = self.dev_bundling_failures().fetch_swap_remove(&owner);
-                        let kv = kv.unwrap_or_else(|| {
-                            bun_core::Output::panic(format_args!(
-                                "Missing failure in IncrementalGraph",
-                            ))
-                        });
-                        self.dev_incremental_result().failures_removed.push(kv.1);
+                        self.retract_failure(file_index);
                     }
                 }
 
@@ -1107,6 +1131,93 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
+    /// True if the dev server bundles the module for another reason than an import in this graph.
+    fn is_root(&mut self, index: usize) -> bool {
+        // SAFETY: see `owner()`.
+        let dev = unsafe { self.owner() };
+        let file = &self.bundled_files.values()[index];
+        match SIDE {
+            Side::Server => file.is_route || file.is_client_component_boundary,
+            Side::Client => {
+                if file.html_route_bundle_index.is_some()
+                    || file.is_hmr_root
+                    || file.is_special_framework_file
+                {
+                    return true;
+                }
+                // The server graph finds these by key: the browser copy of a route's page, and a stylesheet that a server module imports.
+                let key = self.bundled_files.key_at(index);
+                // SAFETY: this is the client graph, so `server_graph` is a disjoint sibling field.
+                let server_graph = unsafe { &(*dev).server_graph };
+                server_graph.get_file_index(key).is_some_and(|twin| {
+                    let file = server_graph.get_file_by_index(twin);
+                    file.is_route
+                        || (file.kind == FileKind::Css
+                            && server_graph.edge_lists[twin.get() as usize]
+                                .first_dep
+                                .is_some())
+                })
+            }
+        }
+    }
+
+    /// Retires each module that lost its last importer while its file has another module, as when
+    /// the `with { type }` of its import changes. A retired module is stale and has no failure.
+    pub(crate) fn retire_orphans(&mut self) -> Result<(), bun_alloc::AllocError> {
+        // SAFETY: see `owner()`.
+        let dev = unsafe { self.owner() };
+        while let Some(file_index) = self.lost_importer.pop() {
+            let index = file_index.get() as usize;
+            if self.edge_lists[index].first_dep.is_some()
+                || !self.bundled_files.path_has_other_module(index)
+                || self.is_root(index)
+            {
+                continue;
+            }
+            self.ensure_stale_bit_capacity(false)?;
+            self.stale_files.set(index);
+            if self.retired_files.bit_length <= index {
+                self.retired_files
+                    .resize(self.stale_files.bit_length, false)?;
+            }
+            self.retired_files.set(index);
+
+            if self.bundled_files.values()[index].failed {
+                self.retract_failure(file_index);
+                // This bundle can be the one that failed the module.
+                let owner = Self::failure_owner(file_index).encode();
+                self.dev_incremental_result()
+                    .failures_added
+                    .retain(|failure| failure.get_owner().encode() != owner);
+            }
+
+            if matches!(SIDE, Side::Client) {
+                let key = self.bundled_files.key_at(index);
+                // SAFETY: this is the client graph, so both are disjoint sibling fields.
+                let (server_graph, tailwind) = unsafe {
+                    (
+                        &mut (*dev).server_graph,
+                        &mut (*dev).has_tailwind_plugin_hack,
+                    )
+                };
+                // A server module that imports the stylesheet later must bundle it again: that brings this module back.
+                if let Some(twin) = server_graph.get_file_index(key)
+                    && server_graph.get_file_by_index(twin).kind == FileKind::Css
+                {
+                    server_graph.ensure_stale_bit_capacity(false)?;
+                    server_graph.stale_files.set(twin.get() as usize);
+                }
+                // The list names a stylesheet by its path: that is the module without a key loader.
+                if key.key_loader().is_none()
+                    && let Some(tailwind) = tailwind
+                {
+                    tailwind.swap_remove(&self.bundled_files.keys()[index]);
+                }
+            }
+        }
+        Ok(())
+    }
+
     // ────────────────────────────────────────────────────────────────────────
     // traceDependencies / traceImports
     // ────────────────────────────────────────────────────────────────────────
@@ -1361,6 +1472,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         self.ensure_stale_bit_capacity(true)?;
         self.stale_files.set(idx);
+        self.unretire(idx);
 
         match SIDE {
             Side::Client => {
@@ -1500,6 +1612,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         };
         self.ensure_stale_bit_capacity(true)?;
         self.stale_files.set(idx);
+        self.unretire(idx);
 
         match SIDE {
             Side::Client => {
@@ -1554,10 +1667,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             // SAFETY: sibling-field `relative_path` reads `dev.root` only.
             let owner_display_name = unsafe { (*dev).relative_path(&mut *buf, key.slice()) };
             SerializedFailure::init_from_log(
-                match SIDE {
-                    Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),
-                    Side::Client => serialized_failure::Owner::Client(FileIndex::init(idx as u32)),
-                },
+                Self::failure_owner(FileIndex::init(idx as u32)),
                 owner_display_name,
                 &log.msgs,
             )?
@@ -1680,6 +1790,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             .flat_map(|path| self.bundled_files.modules_of_path(path))
         {
             self.stale_files.set(index);
+            // A retired module comes back when it is bundled again. Only an `@import` gives it an importer before that.
+            if self.retired_files.is_set_allow_out_of_bound(index, false)
+                && self.edge_lists[index].first_dep.is_none()
+            {
+                continue;
+            }
             let key = self.bundled_files.key_at(index);
             match SIDE {
                 Side::Client => match &self.bundled_files.values()[index].content {

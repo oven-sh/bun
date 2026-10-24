@@ -662,6 +662,10 @@ pub(super) fn finalize_bundle(
         )?;
     }
 
+    // Every importer of this bundle has its edges now.
+    dev.client_graph.retire_orphans()?;
+    dev.server_graph.retire_orphans()?;
+
     // Index all failed files now that the incremental graph has been updated.
     if !dev.incremental_result.failures_removed.is_empty()
         || !dev.incremental_result.failures_added.is_empty()

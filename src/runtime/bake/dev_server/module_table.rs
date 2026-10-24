@@ -117,6 +117,20 @@ impl<V> ModuleTable<V> {
             .chain(keyed.into_iter().flatten())
     }
 
+    /// True if a slot has a key loader. Only then can two slots hold one path.
+    #[inline]
+    pub(crate) fn has_key_loaders(&self) -> bool {
+        self.keyed_count > 0
+    }
+
+    /// True if another slot holds the path of slot `index`.
+    pub(crate) fn path_has_other_module(&self, index: usize) -> bool {
+        self.has_key_loaders()
+            && self
+                .modules_of_path(&self.map.keys()[index])
+                .any(|other| other != index)
+    }
+
     /// Frees the key of a slot. The slot keeps its index, so the indices of the other slots stay valid.
     pub(crate) fn tombstone(&mut self, index: usize) {
         self.map.keys_mut()[index] = Box::default();

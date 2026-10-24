@@ -150,6 +150,10 @@ mod tests {
         let name: &[u8] = b"x-a";
         assert_eq!(values, [(name, &b"1"[..]), (name, b"2"), (name, b"3")]);
         assert_eq!(decoder.table_size(), 36);
+
+        // The name is the last thing stored.
+        let fields = decode(&mut Decoder::new(), &hex("4003782d6100 7e0131")).unwrap();
+        assert_eq!(fields[1], (name.to_vec(), b"1".to_vec(), false));
     }
 
     #[test]
@@ -215,6 +219,126 @@ mod tests {
         }
     }
 
+    /// Both tables against a plain list, while the table turns over a few times.
+    fn check_lookups(capacity: u32, period: usize, fields: usize) {
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        encoder.set_max_capacity(capacity);
+        let block = encode(&mut encoder, ":method", "GET", Indexing::Add);
+        assert!(decode(&mut decoder, &block).is_ok());
+
+        let mut check = |name: &str, value: &str, indexing, flags, prefix_bits, index: usize| {
+            let block = encode(&mut encoder, name, value, indexing);
+            let mut start = Vec::new();
+            integer::encode(&mut start, flags, prefix_bits, index as u32);
+            assert!(block.starts_with(&start), "{name}: {value}, {index}");
+            let field = (name.as_bytes().to_vec(), value.as_bytes().to_vec(), false);
+            assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
+            assert_eq!(decoder.table_size(), encoder.table_size());
+        };
+        // Oldest first.
+        type Table = std::collections::VecDeque<(String, String)>;
+        let (mut table, mut size) = (Table::new(), 0);
+        for i in 0..fields {
+            // Two fields in three have left the table by the time they come back.
+            let (name, value) = match i % 3 {
+                0 => (format!("x-{}", i % 7), format!("value {i}")),
+                _ => (format!("x-rare-{}", i % period), "again".into()),
+            };
+            // A name is taken from the oldest entry that has it.
+            let name_index = |table: &Table| {
+                let named = table.iter().position(|entry| entry.0 == name);
+                named.map_or(0, |at| 61 + table.len() - at)
+            };
+            check(&name, &value, Indexing::Add, 0x40, 6, name_index(&table));
+            size += name.len() + value.len() + 32;
+            table.push_back((name.clone(), value));
+            while size > capacity as usize {
+                let (name, value) = table.pop_front().unwrap();
+                size -= name.len() + value.len() + 32;
+            }
+            check(&name, "", Indexing::Skip, 0x00, 4, name_index(&table));
+            let (name, value) = &table[0];
+            check(name, value, Indexing::Add, 0x80, 7, 61 + table.len());
+        }
+    }
+
+    #[test]
+    fn entries_are_found_until_they_are_evicted() {
+        check_lookups(4096, 120, 150);
+        check_lookups(1024, 30, 90);
+    }
+
+    #[test]
+    fn a_field_the_size_of_the_table() {
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        encoder.set_max_capacity(100);
+        for (value_len, update_len, expected) in [(65, 2, "added"), (66, 0, "skipped")] {
+            let block = encode(&mut encoder, "x-a", &"~".repeat(value_len), Indexing::Add);
+            assert_eq!(representation(&block[update_len..]), expected);
+            assert!(decode(&mut decoder, &block).is_ok());
+            assert_eq!((encoder.table_size(), decoder.table_size()), (100, 100));
+        }
+    }
+
+    #[test]
+    fn the_static_index_follows_a_name_through_the_dynamic_table() {
+        let mut decoder = Decoder::new();
+        // accept: 1 and x-a: 1 enter the table. Their names are then taken from there.
+        let block = hex("530131 4003782d610131 7f000132 7f000132 bf 93");
+        let (mut pos, mut static_indices) = (0, Vec::new());
+        while let Some(field) = decoder.next(&block, &mut pos) {
+            static_indices.push(field.unwrap().static_index);
+        }
+        assert_eq!(static_indices, [19, 0, 19, 0, 19, 19]);
+    }
+
+    #[test]
+    fn size_updates_up_to_the_acknowledged_limit() {
+        let mut decoder = Decoder::new();
+        assert!(decode(&mut decoder, &hex("3fe11f")).is_ok());
+        assert_eq!(decode(&mut decoder, &hex("3fe21f")), Err(Error::Invalid));
+        decoder.set_max_capacity(4097);
+        assert!(decode(&mut decoder, &hex("3fe21f")).is_ok());
+        decoder.set_max_capacity(100);
+        assert!(decode(&mut decoder, &hex("3f45")).is_ok());
+        assert_eq!(decode(&mut decoder, &hex("3f46")), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn strings_are_huffman_coded_unless_that_is_longer() {
+        let mut decoder = Decoder::new();
+        for (value, coded) in [
+            ("", "00"),
+            ("a", "811f"),
+            ("~", "017e"),
+            // 8 codes of 5 bits, the shortest there are.
+            ("aaaaaaaa", "8518c6318c63"),
+        ] {
+            let block = encode(&mut Encoder::new(), "x-a", value, Indexing::Skip);
+            assert_eq!(block[block.len() - coded.len() / 2..], hex(coded));
+            let field = (b"x-a".to_vec(), value.as_bytes().to_vec(), false);
+            assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
+        }
+        // A length that does not fit the prefix.
+        let value = "a".repeat(208);
+        let block = encode(&mut Encoder::new(), "x-a", &value, Indexing::Skip);
+        assert_eq!(block[block.len() - 132..][..2], hex("ff03"));
+        let field = (b"x-a".to_vec(), value.into_bytes(), false);
+        assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
+    }
+
+    #[test]
+    fn huffman_codes_of_every_byte() {
+        let every_byte: Vec<u8> = (0..=255).collect();
+        for string in every_byte.chunks(1).chain([&every_byte[..]]) {
+            let (mut coded, mut decoded) = (Vec::new(), Vec::new());
+            huffman::encode(string, &mut coded);
+            assert_eq!(coded.len(), huffman::encoded_len(string));
+            assert_eq!(huffman::decode(&coded, &mut decoded, string.len()), Ok(()));
+            assert_eq!(decoded, string);
+        }
+    }
+
     #[test]
     fn static_table_lookups() {
         let entries: Vec<_> = (1..=static_table::LEN)
@@ -252,7 +376,9 @@ mod tests {
             "000161 0261",       // string cut off
             "000161 81ff",       // 8 bits of padding
             "000161 8100",       // padding that is not ones: "0" and 000
+            "000161 82ffff",     // 16 bits of padding
             "000161 84ffffffff", // EOS
+            "01 85fffffffc7f",   // EOS, then "a"
         ] {
             assert_eq!(
                 decode(&mut Decoder::new(), &hex(block)),
@@ -332,6 +458,15 @@ mod tests {
             encode(&mut encoder, ":method", "GET", Indexing::Add),
             hex("82")
         );
+
+        encode(&mut encoder, "x-a", "1", Indexing::Add);
+        encode(&mut encoder, "x-b", "2", Indexing::Add);
+        encoder.set_max_capacity(40);
+        assert_eq!(encoder.table_size(), 36);
+        encoder.set_max_capacity(4096);
+        let mut block = Vec::new();
+        encoder.encode_verbatim(&mut block, b"a", b"");
+        assert_eq!(block, hex("3f09 3fe11f 00 0161 00"));
     }
 
     #[test]
@@ -385,6 +520,15 @@ mod tests {
         assert_eq!(representation(&block[3..]), "added");
         let block = encode(&mut encoder, "x-a", "39", Indexing::Add);
         assert_eq!(representation(&block), "skipped");
+        // Those two pushed out 40 and 41.
+        let mut add = |value| representation(&encode(&mut encoder, "x-a", value, Indexing::Add));
+        assert_eq!(add("41"), "skipped");
+        assert_eq!(add("43"), "added");
+
+        // No room for any.
+        encoder.set_max_capacity(95);
+        let block = encode(&mut encoder, "x-a", "new", Indexing::Add);
+        assert_eq!(representation(&block[2..]), "added");
     }
 
     #[test]
@@ -404,6 +548,8 @@ mod tests {
         for (bytes, value) in [
             ("1e", Some(30)),
             ("1f00", Some(31)),
+            ("1f7f", Some(31 + 127)),
+            ("1f8001", Some(31 + 128)),
             ("1fe0ffffff0f", Some(u32::MAX)),
             ("1fe1ffffff0f", None),   // one more
             ("1f8080808010", None),   // bit 32
@@ -414,6 +560,11 @@ mod tests {
             ("", None),
         ] {
             assert_eq!(integer::decode(&hex(bytes), &mut 0, 5), value, "{bytes}");
+            if let Some(value) = value {
+                let mut out = Vec::new();
+                integer::encode(&mut out, 0, 5, value);
+                assert_eq!(out, hex(bytes));
+            }
         }
     }
 

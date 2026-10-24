@@ -4621,9 +4621,8 @@ describe.each([
     proc.stdin.end();
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
-    // 21 is an alert: a socket that its thread closes sends the close_notify ahead of the FIN.
-    const sentLast = protocol === "tls" && (kind === "worker" || kind === "teardown") ? [21] : [];
-    expect(result).toEqual({ events: ["end", "close false"], sentLast });
+    // No close_notify either way: the peer's answer would be left unread, and the kernel resets a connection that closes with unread bytes.
+    expect(result).toEqual({ events: ["end", "close false"], sentLast: [] });
     expect(exitCode).toBe(0);
   });
 });
@@ -4732,6 +4731,138 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
     server.resume();
 
     expect(await closed.promise).toEqual(expected);
+    proc.stdin.end();
+    const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A close_notify says that the stream is whole. The server queues 16 MB for a peer that isn't reading, then its thread
+// stands still while the peer reads 1 MB, so the kernel has room again when the thread ends. A TLS 1.2 record shows its
+// type to the relay: 23 is data, 21 is an alert.
+describe("a TLS connection with queued data whose thread ends", () => {
+  it.concurrent.each([
+    { server: "tls.createServer()", call: "write" },
+    { server: "tls.createServer()", call: "end" },
+    { server: "Bun.listen()", call: "end" },
+  ])("$server, $call(data): the peer gets no close_notify", async ({ server: kind, call }) => {
+    const size = 16 << 20;
+    using dir = tempDir("thread-ends-with-queued-data", {
+      "server.mjs": `
+        import tls from "node:tls";
+        import { parentPort, workerData } from "node:worker_threads";
+        const options = ${JSON.stringify(COMMON_CERT_)};
+        function leave(socket) {
+          socket.${call}(Buffer.alloc(${size}, "b"));
+          parentPort.postMessage("queued");
+          Atomics.wait(workerData.gate, 0, 0);
+          process.exit(0);
+        }
+        if (${JSON.stringify(kind)} === "Bun.listen()") {
+          const listener = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: { ...options, maxVersion: "TLSv1.2" },
+            socket: { data: leave },
+          });
+          parentPort.postMessage("port " + listener.port);
+        } else {
+          const server = tls.createServer({ ...options, maxVersion: "TLSv1.2" }, socket => socket.once("data", () => leave(socket)));
+          server.listen(0, "127.0.0.1", () => parentPort.postMessage("port " + server.address().port));
+        }
+      `,
+      "main.mjs": `
+        import { Worker } from "node:worker_threads";
+        const gate = new Int32Array(new SharedArrayBuffer(4));
+        const worker = new Worker(new URL("./server.mjs", import.meta.url), { workerData: { gate } });
+        worker.on("message", line => console.log(line));
+        worker.on("exit", () => console.log("left"));
+        process.stdin.once("data", () => {
+          Atomics.store(gate, 0, 1);
+          Atomics.notify(gate, 0);
+        });
+        process.stdin.on("end", () => process.exit(0));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const said = {
+      port: Promise.withResolvers<string>(),
+      queued: Promise.withResolvers<string>(),
+      left: Promise.withResolvers<string>(),
+    };
+    const stdout = (async () => {
+      let text = "";
+      for await (const chunk of proc.stdout) {
+        text += Buffer.from(chunk).toString();
+        for (const line of text.split("\n").slice(0, -1)) {
+          const [name, value] = line.split(" ");
+          said[name as keyof typeof said]?.resolve(value);
+        }
+      }
+      return text;
+    })();
+
+    const port = Number(await said.port.promise);
+    const upstream = Promise.withResolvers<net.Socket>();
+    const closed = Promise.withResolvers<{ events: string[]; lastRecord: number }>();
+    const madeRoom = Promise.withResolvers<void>();
+    await using relay = net.createServer(client => {
+      const events: string[] = [];
+      const fromServer: Buffer[] = [];
+      let length = 0;
+      const server = net.connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.on("data", chunk => server.write(chunk));
+      server.on("data", chunk => {
+        fromServer.push(chunk);
+        client.write(chunk);
+        if ((length += chunk.length) > 1 << 20) madeRoom.resolve();
+      });
+      server.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      server.on("end", () => events.push("end"));
+      server.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        client.end();
+        const bytes = Buffer.concat(fromServer);
+        let lastRecord = -1;
+        for (let at = 0; at + 5 <= bytes.length; at += 5 + bytes.readUInt16BE(at + 3)) lastRecord = bytes[at];
+        closed.resolve({ events, lastRecord });
+      });
+      upstream.resolve(server);
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+
+    const client = tls.connect({
+      port: (relay.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      servername: "localhost",
+      ca: COMMON_CERT_.cert,
+    });
+    let received = 0;
+    client.on("error", () => {});
+    client.on("data", chunk => void (received += chunk.length));
+    await once(client, "secureConnect");
+    const server = await upstream.promise;
+    server.pause();
+    client.write("go");
+    await said.queued.promise;
+    server.resume();
+    await madeRoom.promise;
+    proc.stdin.write("leave\n");
+    await said.left.promise;
+
+    expect(await closed.promise).toEqual({ events: ["end", "close false"], lastRecord: 23 });
+    if (!client.closed) await once(client, "close");
+    expect(received).toBeGreaterThan(0);
+    expect(received).toBeLessThan(size);
     proc.stdin.end();
     const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");

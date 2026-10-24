@@ -49,7 +49,7 @@ import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
-import { applyGlobalReplacements, define } from "./replacements";
+import { applyGlobalReplacements, assertNoDestructuredGlobalThis, define } from "./replacements";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -317,6 +317,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       throw new Error("expected one output");
     }
     let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
+    assertNoDestructuredGlobalThis(output, `${basename}.ts (${fn.name})`);
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];

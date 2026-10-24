@@ -2069,6 +2069,12 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // close() has scheduled the RST_STREAM. Once the native side has forgotten the stream, a
+  // second rstStream() with an error code would write the frame again.
+  ResetScheduled = 1 << 9, // 1000000000 = 512
+  EndedByClose = 1 << 10, // 10000000000 = 1024
+  // The server ended the stream before respond(), which then puts END_STREAM on the HEADERS frame.
+  EndedBeforeHeaders = 1 << 11, // 100000000000 = 2048
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2584,6 +2590,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
           this[kAborted] = true;
           this.emit("aborted");
         }
+        // Set first: with nothing left to write, end() calls _final() before it returns.
+        this[bunHTTP2StreamStatus] |= StreamState.EndedByClose;
         this.end();
       }
       this.rstCode = code;
@@ -2593,6 +2601,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
       } else if (this.writableFinished || code) {
+        this[bunHTTP2StreamStatus] |= StreamState.ResetScheduled;
         setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));
@@ -2682,6 +2691,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       session &&
       typeof this.#id === "number" &&
       !this[kNeverAnnounced] &&
+      (this[bunHTTP2StreamStatus] & StreamState.ResetScheduled) === 0 &&
       // A cleanly closed stream the native side already freed has nothing to send:
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
@@ -2727,13 +2737,32 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        if (this instanceof ServerHttp2Stream && !this.headersSent && (this.id & 1) === 0) {
-          // A locally-pushed (even-id) stream ended before respond() (HEAD/endStream pushes): an
-          // empty DATA frame would precede the response HEADERS on the wire. respond() forces
-          // endStream for these streams, so END_STREAM rides on the HEADERS frame and the
-          // streamEnd(7) dispatch completes this callback through markWritableDone.
-          this[bunHTTP2StreamFinal] = callback;
+        if (this instanceof ServerHttp2Stream && !this.headersSent) {
+          // An empty DATA frame would go out with no HEADERS frame before it, and the peer would
+          // answer with a connection error. Like node, send nothing and emit 'finish'.
+          this[bunHTTP2StreamStatus] = status | StreamState.EndedBeforeHeaders;
+          if (this._readableState.destroyed) {
+            // Called from _destroy(). Its markStreamClosed() completes this once the writable is
+            // marked destroyed again, so there's no 'finish'.
+            this[bunHTTP2StreamFinal] = callback;
+            return;
+          }
+          this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+          callback();
           return;
+        }
+        if ((status & StreamState.EndedByClose) !== 0) {
+          // Like node, RST_STREAM ends these streams, not END_STREAM, which would tell the peer that the body is
+          // complete: one that waits for trailers (node's onStreamTrailers returns on a closed stream), and one with
+          // a write still in flight when close() returned, unless the code is CANCEL.
+          const closed = (status & StreamState.Closed) !== 0;
+          if (this[bunHTTP2WaitForTrailers] || (closed && this.rstCode !== NGHTTP2_CANCEL)) {
+            this[bunHTTP2WaitForTrailers] = false;
+            // Called from inside close(), whose markStreamClosed() completes it.
+            if (closed) callback();
+            else this[bunHTTP2StreamFinal] = callback;
+            return;
+          }
         }
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
         // When waitForTrailers is active, writing an empty DATA frame with
@@ -3670,7 +3699,8 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NO_CONTENT ||
       statusCode === HTTP_STATUS_RESET_CONTENT ||
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
-      this.headRequest === true
+      this.headRequest === true ||
+      (this[bunHTTP2StreamStatus] & StreamState.EndedBeforeHeaders) !== 0
     ) {
       // When endStream is true the HEADERS frame itself carries END_STREAM
       // and the stream moves to HALF_CLOSED_LOCAL inside native request().
@@ -3799,6 +3829,16 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       } else {
         error_instance = error;
       }
+    }
+    if (destroy && error === NGHTTP2_NO_ERROR && stream.readable) {
+      // Like node's onStreamClose: the readable ends first, and 'end' destroys the stream.
+      stream.once("end", destroySelfOnEnd);
+      endInboundHalf(stream);
+      if (stream instanceof ServerHttp2Stream && !stream.readableDidRead && stream.readableFlowing === null)
+        stream.resume();
+      else stream.read(0);
+      if (destroy_self) self.destroy();
+      return;
     }
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
@@ -4125,7 +4165,8 @@ class ServerHttp2Session extends Http2Session {
           // stream can finish — but at half-close only when nothing is buffered: a consumer may
           // attach a tick later (e.g. a CONNECT tunnel piping once its socket connects) and
           // resuming with buffered data would silently discard it. At full close, dump as before.
-          if ((state == 7 || stream.readableLength === 0) && stream.readableFlowing === null) {
+          // After close(code) the stream is about to be destroyed, with no 'end' before that.
+          if ((state == 7 || (stream.readableLength === 0 && !stream.rstCode)) && stream.readableFlowing === null) {
             stream.resume();
           }
         }
@@ -4783,6 +4824,8 @@ class ServerHttp2Session extends Http2Session {
     }
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, this[bunHTTP2Socket]);
+    const socket = this[bunHTTP2Socket];
+    let destroysSocket = false;
     try {
       const server = this[kServer];
       if (server) {
@@ -4806,8 +4849,9 @@ class ServerHttp2Session extends Http2Session {
         this[kSessionDestroyError] = error;
       }
 
-      const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
+      // Like node's finishSessionClose, which only leaves the socket to the peer after close().
+      destroysSocket = !!error || !this.#closed;
       this.#closed = true;
       this.#connected = false;
       if (socket) {
@@ -4817,7 +4861,7 @@ class ServerHttp2Session extends Http2Session {
           // a destroy(err) after close() must still put the error GOAWAY on the wire.
           this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
         }
-        if (error) {
+        if (destroysSocket) {
           // node's finishSessionClose destroys the socket when the session dies
           // with an error (a misbehaving peer must observe the connection going
           // away) - but it still ends first and destroys a tick later, so the
@@ -4868,8 +4912,13 @@ class ServerHttp2Session extends Http2Session {
       runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    // close()/destroy() returns must still observe it), after the socket's. Only wait for that one
+    // if this call also destroys the socket: after close(), it closes when the peer does, if ever.
+    if (destroysSocket && socket && !socket.destroyed) {
+      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame));
+    } else {
+      process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    }
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
@@ -5888,6 +5937,7 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, socket);
+    let destroysSocket = false;
     try {
       if (this[kTimeout]) {
         clearTimeout(this[kTimeout]);
@@ -5911,6 +5961,8 @@ class ClientHttp2Session extends Http2Session {
         // Streams torn down by this destroy surface the same session error (node semantics).
         this[kSessionDestroyError] = error;
       }
+      // Like node's finishSessionClose, which only leaves the socket to the peer after close().
+      destroysSocket = !!error || !this.#closed;
       this.#closed = true;
       this.#connected = false;
       {
@@ -5937,7 +5989,7 @@ class ClientHttp2Session extends Http2Session {
           // a destroy(err) after close() must still put the error GOAWAY on the wire.
           this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
         }
-        if (error) {
+        if (destroysSocket) {
           // See the client session: end first, destroy a tick later (node's
           // finishSessionClose Windows-ECONNRESET avoidance).
           endThenDestroySessionSocket(socket, error);
@@ -5986,8 +6038,13 @@ class ClientHttp2Session extends Http2Session {
       runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    // close()/destroy() returns must still observe it), after the socket's. Only wait for that one
+    // if this call also destroys the socket: after close(), it closes when the peer does, if ever.
+    if (destroysSocket && socket && !socket.destroyed) {
+      socket.once("close", FunctionPrototypeBind.$call(emitSessionCloseNT, undefined, this, asyncFrame));
+    } else {
+      process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    }
   }
 
   request(headers?: HeadersObject | any[] | null, options?: ClientRequestOptions) {

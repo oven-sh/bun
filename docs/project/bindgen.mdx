@@ -603,6 +603,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `final`          | with `refCounted`: `false` lets hand-written C++ subclass `JSName`                             |
 | `overridesToJS`  | with `refCounted`: `impl JsClass` is not generated; write it by hand with `js_Name::to_js`     |
 | `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
+| `protoCaller`    | the method that [calls every native function of `proto`](#protocaller)                         |
 | `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
 | `configurable`   | `true` makes the native properties configurable                                                |
@@ -612,6 +613,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the GC                                     |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
 | `call`           | `Name(..)` without `new`, which otherwise throws. It is `fn call(..)`, with no receiver.       |
+| `callInstance`   | `instance(..)`. It is `fn call_instance(&self, ..)`, and `typeof instance` is `"function"`.    |
 | `internalFields` | JS values the object holds                                                                     |
 | `proto`          | properties of the prototype                                                                    |
 | `static`         | properties of the constructor: native functions and accessors without `cache`                  |
@@ -859,6 +861,28 @@ change once the object is created, or atomics: if the size changes, keep it in a
 `test` and `describe` are functions with properties. JavaScript only sees a function bound to the
 instance, with the class's prototype as its prototype. With `forBind: true`, members are called with
 that function as `this`, and `&self` is its `boundThis`. The prototype inherits from `Function.prototype`.
+
+### `protoCaller`
+
+Every `expect()` matcher needs the same work done before and after it. With `protoCaller: "call_matcher"`, calling a
+native function of `proto` calls `call_matcher` instead, which receives a pointer to the function:
+
+```rust
+pub(crate) fn call_matcher<'a>(
+    &self,
+    this_value: JsWrapper<'a, Self>,
+    cx: &mut JsScope<'a>,
+    callee: JsLocal<'a>,
+    arguments: &'a [JsLocal<'a>],
+    matcher: fn(JsWrapper<'a, Self>, &mut JsScope<'a>, &'a [JsLocal<'a>]) -> JsResult<JSValue>,
+) -> JsResult<JSValue> {
+    matcher(this_value, cx, arguments)
+}
+```
+
+`callee` is the JS function that was called, and `arguments` is everything it was called with. The function takes its
+own arguments out of that list, so they're all `b.any`, the last one possibly `.variadic`. It also needs
+`capability: "js"`, `throws: true` and `returns: b.any`, and can't have overloads. The class can't be `refCounted`.
 
 ## Tests
 

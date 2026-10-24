@@ -268,7 +268,7 @@ pub(crate) enum AnyGlobWalker {
 impl AnyGlobWalker {
     fn walk(&mut self) -> Result<bun_sys::Result<()>, bun_core::Error> {
         match self {
-            AnyGlobWalker::Fs(walker) => walker.walk(),
+            AnyGlobWalker::Fs(walker) => bun_glob::walk_file_system(walker),
             AnyGlobWalker::Standalone(walker) => walker.walk(),
         }
     }

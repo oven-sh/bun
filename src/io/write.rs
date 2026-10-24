@@ -225,6 +225,22 @@ impl<W: fmt::Write + ?Sized> fmt::Write for FmtAdapter<'_, W> {
     }
 }
 
+/// Invalid UTF-8 cannot enter a `fmt::Write` sink losslessly; replacement chars
+/// are the price of bridging (same output as from_utf8_lossy, without the
+/// allocation).
+#[cold]
+#[inline(never)]
+fn write_lossy(sink: &mut dyn fmt::Write, buf: &[u8]) -> fmt::Result {
+    buf.utf8_chunks().try_for_each(|chunk| {
+        sink.write_str(chunk.valid())?;
+        if chunk.invalid().is_empty() {
+            Ok(())
+        } else {
+            sink.write_str("\u{FFFD}")
+        }
+    })
+}
+
 // `W: Sized` (no `?Sized`) — together with [`AsFmt`] (the inverse adapter),
 // `?Sized` here would let rustc probe the infinite tower
 // `FmtAdapter<AsFmt<FmtAdapter<AsFmt<…>>>>` when checking `dyn Write: Write`,
@@ -235,17 +251,7 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
         // Fast path: valid UTF-8 (overwhelmingly the case for our printers).
         let r = match bun_core::str_utf8(buf) {
             Some(s) => self.inner.write_str(s),
-            // Invalid UTF-8 cannot enter a `fmt::Write` sink losslessly;
-            // replacement chars are the price of bridging (same output as
-            // from_utf8_lossy, without the allocation).
-            None => buf.utf8_chunks().try_for_each(|chunk| {
-                self.inner.write_str(chunk.valid())?;
-                if chunk.invalid().is_empty() {
-                    Ok(())
-                } else {
-                    self.inner.write_str("\u{FFFD}")
-                }
-            }),
+            None => write_lossy(self.inner, buf),
         };
         r.map_err(|_| bun_core::Error::FmtError)
     }

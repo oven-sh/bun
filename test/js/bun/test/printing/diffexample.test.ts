@@ -900,3 +900,69 @@ test("large diffs are exact rather than abandoned part-way", () => {
   expect(message.slice(-400)).toContain("\n-   49994,\n+   49995,\n    49995,\n");
   expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
 });
+
+test("prints a Response once", () => {
+  let message = "";
+  try {
+    expect({ response: new Response("") }).toEqual({ response: 1 });
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).toContain(`
+  {
+-   "response": 1,
++   "response": Response (0 KB) {
++     ok: true,
++     url: "",
++     status: 200,
++     statusText: "",
++     headers: Headers {},
++     redirected: false,
++     bodyUsed: false
++   },
+  }
+`);
+});
+
+test("prints a React 19 element as JSX, without the fiber in its _owner", () => {
+  const element = (type: string, props: object) => ({
+    $$typeof: Symbol.for("react.transitional.element"),
+    type,
+    key: null,
+    props,
+    _owner: { fiber: "not printed" },
+    _store: {},
+  });
+  let message = "";
+  try {
+    expect({ icon: element("b", { children: ["icon ", element("i", { children: "in" })] }) }).toEqual({ icon: 1 });
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).toContain(`
+  {
+-   "icon": 1,
++   "icon": <b>
++     icon 
++     <i>in</i>
++   </b>,
+  }
+`);
+});
+
+test("stops printing deeper once a value has printed 1,000,000 characters", () => {
+  // Each level has the next one three times, so printed in full it would have 3 ** 40 leaves.
+  let value: object = { leaf: true };
+  for (let level = 0; level < 40; level++) value = { left: value, right: value, list: [value] };
+  let message = "";
+  try {
+    expect(value).toEqual({});
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).toStartWith("expect(received).toEqual(expected)");
+  expect(message).toContain(`"leaf": true`);
+  expect(message).toContain(`"list": [Array],\n`);
+  expect(message).toContain(`"right": [Object],\n`);
+  expect(message.length).toBeWithin(1_000_000, 1_500_000);
+});

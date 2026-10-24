@@ -724,7 +724,9 @@ const isStaticFunction = (fn: FunctionDefinition) => (fn.signatures[0] as Method
 const methodHostFunctionName = (type: ClassType, fn: FunctionDefinition) =>
   fn === type.call
     ? `call${type.name}`
-    : `js${type.name}${isStaticFunction(fn) ? "Constructor" : "Prototype"}Function_${memberIdentifier(fn.name)}`;
+    : fn === type.callInstance
+      ? `call${type.name}Instance`
+      : `js${type.name}${isStaticFunction(fn) ? "Constructor" : "Prototype"}Function_${memberIdentifier(fn.name)}`;
 const getterHostFunctionName = (type: ClassType, getter: { name: string; isStatic?: boolean }) =>
   `js${type.name}${getter.isStatic ? "Constructor" : "Prototype"}Getter_${getter.name}`;
 const setterHostFunctionName = (type: ClassType, getter: { name: string; isStatic?: boolean }) =>
@@ -818,7 +820,13 @@ class JS${name}${type.final ? " final" : ""} : public JSC::JSDestructibleObject 
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned classIndex = ${type.classIndex};
-
+${
+  type.callInstance
+    ? `    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetCallData;
+    static JSC::CallData getCallData(JSC::JSCell*);
+`
+    : ""
+}
     DECLARE_INFO;
 ${hasFields || type.estimatedSize ? "    DECLARE_VISIT_CHILDREN;\n" : ""}    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);
 ${cppExtraMemorySize(type, "heapSnapshot") ? "    static size_t estimatedSize(JSC::JSCell*, JSC::VM&);\n" : ""}    static void destroy(JSC::JSCell*);
@@ -948,11 +956,29 @@ ${type.internalFields.map(field => `    Bun::Bindgen::analyzeInternalField(thisO
 const cppCastThisValue = (type: ClassType, value: string) =>
   `${type.forBind ? "Bun::Bindgen::boundThisAs" : "dynamicDowncast"}<${type.cpp}>(${value})`;
 
-function cppMethod(type: ClassType, fn: FunctionDefinition): string {
-  const host = methodHostFunctionName(type, fn);
-  const symbol = (method: Signature) => methodSymbolName(type, method as Method);
+/** Thunk arguments, after `this`, for a function that `protoCaller` calls. Rust reads the function's own arguments from `allArguments`. */
+const protoCallerArguments = [
+  { name: "calledFunction", type: new AnyType() },
+  { name: "allArguments", type: new VariadicType() },
+];
+const isCalledByProtoCaller = (type: ClassType, fn: FunctionDefinition) =>
+  type.protoCaller !== undefined && type.functions.includes(fn);
+
+function cppMethod(type: ClassType, declared: FunctionDefinition): string {
+  const host = methodHostFunctionName(type, declared);
+  const throughCaller = isCalledByProtoCaller(type, declared);
+  const symbol = (method: Signature) =>
+    methodSymbolName(type, (throughCaller ? Object.getPrototypeOf(method) : method) as Method);
+  const fn: FunctionDefinition = throughCaller
+    ? Object.create(declared, {
+        signatures: { value: declared.signatures.map(method => Object.create(method, { args: { value: [] } })) },
+      })
+    : declared;
+  const leadingTypes = isStaticFunction(fn)
+    ? []
+    : ["JSC::JSCell*", ...(throughCaller ? protoCallerArguments.map(({ type }) => externType(type)) : [])];
   return `
-${fn.signatures.map(method => cppExtern(symbol(method), method, isStaticFunction(fn) ? [] : ["JSC::JSCell*"])).join("\n")}
+${fn.signatures.map(method => cppExtern(symbol(method), method, leadingTypes)).join("\n")}
 static JSC_DECLARE_HOST_FUNCTION(${host});
 ${cppHostFunction(
   host,
@@ -960,16 +986,34 @@ ${cppHostFunction(
   symbol,
   isStaticFunction(fn)
     ? ""
-    : `    auto* thisObject = ${cppCastThisValue(type, "callFrame->thisValue()")};
+    : declared === type.callInstance
+      ? `    auto* thisObject = uncheckedDowncast<${type.cpp}>(callFrame->jsCallee());
+`
+      : `    auto* thisObject = ${cppCastThisValue(type, "callFrame->thisValue()")};
     if (!thisObject) [[unlikely]]
         ${
           (fn.signatures[0] as Method).invalidThis === "undefined"
             ? "return JSC::JSValue::encode(JSC::jsUndefined());"
             : `RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(globalObject, callFrame, ${asciiLiteral(type.name)}));`
         }
-`,
+${throughCaller ? "    auto allArguments = Bun::Bindgen::variadicArguments(callFrame, 0);\n" : ""}`,
+  throughCaller ? ["JSC::JSValue::encode(callFrame->jsCallee())", toExtern("allArguments")] : [],
 )}
-`;
+${
+  declared === type.callInstance
+    ? `
+JSC::CallData ${type.cpp}::getCallData(JSC::JSCell*)
+{
+    JSC::CallData callData;
+    callData.type = JSC::CallData::Type::Native;
+    callData.native.function = ${host};
+    callData.native.isBoundFunction = false;
+    callData.native.isWasm = false;
+    return callData;
+}
+`
+    : ""
+}`;
 }
 
 function cppCalledFromCpp(type: ClassType, method: Method): string {
@@ -1235,7 +1279,7 @@ void Bun::Bindgen::Generated::setup${name}ClassStructure(JSC::LazyClassStructure
 {
     JSC::VM& vm = init.vm;
     JSC::JSGlobalObject* globalObject = init.global;
-    JSC::JSObject* prototype = Bun::Bindgen::createClassPrototype(vm, globalObject, globalObject->${type.forBind ? "functionPrototype" : type.prototypeBase === "Error" ? "errorPrototype" : "objectPrototype"}(), ${type.cpp}::info(), ${span(`JS${name}PrototypeTableValues`, prototypeRows)});
+    JSC::JSObject* prototype = Bun::Bindgen::createClassPrototype(vm, globalObject, globalObject->${type.forBind || type.callInstance ? "functionPrototype" : type.prototypeBase === "Error" ? "errorPrototype" : "objectPrototype"}(), ${type.cpp}::info(), ${span(`JS${name}PrototypeTableValues`, prototypeRows)});
 ${
   privateFunctions.length > 0
     ? `    auto& names = WebCore::builtinNames(vm);
@@ -1350,17 +1394,18 @@ function cppThrowIfArgumentsMissing(signature: Signature): string {
 `;
 }
 
-/** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument. */
+/** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument, before `afterThis`. */
 function cppHostFunction(
   name: string,
   fn: FunctionDefinition,
   symbol: (signature: Signature) => string,
   takeThis = "",
+  afterThis: readonly string[] = [],
 ): string {
   const defineHostFunction = `${fn.exportName ? "BUN" : "JSC"}_DEFINE_HOST_FUNCTION(${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))`;
   if (fn.signatures[0].rejects) {
     const throwing = `${name}OrThrow`;
-    return `${cppHostFunctionBody(`static JSC::EncodedJSValue ${throwing}(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)`, throwing, fn, symbol, takeThis)}
+    return `${cppHostFunctionBody(`static JSC::EncodedJSValue ${throwing}(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)`, throwing, fn, symbol, takeThis, afterThis)}
 ${defineHostFunction}
 {
 ${cppPrologue}
@@ -1370,7 +1415,7 @@ ${cppPrologue}
     return result;
 }`;
   }
-  return cppHostFunctionBody(defineHostFunction, name, fn, symbol, takeThis);
+  return cppHostFunctionBody(defineHostFunction, name, fn, symbol, takeThis, afterThis);
 }
 
 /** The function that `define` opens. The function of each overload is `name` plus a suffix. */
@@ -1380,8 +1425,9 @@ function cppHostFunctionBody(
   fn: FunctionDefinition,
   symbol: (signature: Signature) => string,
   takeThis: string,
+  afterThis: readonly string[],
 ): string {
-  const leading = takeThis ? ["thisObject"] : cppLeadingOfFunction(fn);
+  const leading = takeThis ? ["thisObject", ...afterThis] : cppLeadingOfFunction(fn);
   if (fn.signatures.length === 1) {
     return `${define}
 {
@@ -1840,13 +1886,26 @@ ${
 
   for (const method of type.methods) {
     const isStatic = method.receiver === "static";
+    const throughCaller = type.functions.some(fn => fn.signatures.includes(method) && isCalledByProtoCaller(type, fn));
     const call = `<${rustPath}>::${method.rustName}(${[
       ...leading(method.receiver, method.passThis, method.capability),
-      ...rustArguments(method),
+      ...(throughCaller
+        ? method.args.map(({ type }, i) =>
+            type instanceof VariadicType
+              ? i === 0
+                ? "all_arguments"
+                : `all_arguments.get(${i}..).unwrap_or_default()`
+              : `all_arguments.${i === 0 ? "first()" : `get(${i})`}.copied().unwrap_or(bindgen::JsLocal::UNDEFINED)`,
+          )
+        : rustArguments(method)),
     ].join(", ")})`;
+    const args = throughCaller ? protoCallerArguments : method.args;
     thunks += rustThunk(
       methodSymbolName(type, method),
-      [...(isStatic ? [] : ["this: *mut core::ffi::c_void"]), ...rustExternParameters(method, scope)],
+      [
+        ...(isStatic ? [] : ["this: *mut core::ffi::c_void"]),
+        ...rustExternParameters({ args } as unknown as Signature, scope),
+      ],
       ...((!method.isProperty && method.returns instanceof PrimitiveType
         ? [
             method.returns.rustType(),
@@ -1854,7 +1913,12 @@ ${
           ]
         : [
             "JSValue",
-            `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope)}let result = ${infallible(call, method.throws, method.returns)};
+            `${takeThis(method.receiver, method.passThis || throughCaller)}${rustTakeArguments(args, scope)}let result = ${
+              throughCaller
+                ? // It captures nothing, so it's passed as a function pointer.
+                  `<${rustPath}>::${type.protoCaller}(${[...leading("ref", true, "js"), ...args.map(rustArgumentName)].join(", ")}, |this, cx, ${method.args.length ? "all_arguments" : "_"}| ${call})`
+                : infallible(call, method.throws, method.returns)
+            };
 bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("value", scope)})`,
           ]) as [string, string]),
     );

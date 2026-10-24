@@ -324,7 +324,8 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "CryptoHasher.bind.ts": "typeof Bun",
   "DevServer.bind.ts": null,
   "FFIObject.bind.ts": null,
-  "FakeTimers.bind.ts": 'typeof import("bun:test").jest',
+  "FakeTimers.bind.ts":
+    'Jest & Pick<Vi, "getMockedSystemTime"> & OfFlavor<"jest", Jest> & OfFlavor<"vi", Vi> & { vitestUseFakeTimers: Vi["useFakeTimers"] }',
   "FetchSession.bind.ts": "typeof Bun",
   "FetchTasklet.bind.ts": null,
   "FileSink.bind.ts": null,
@@ -386,9 +387,11 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "css_internals.bind.ts": null,
   "dns.bind.ts": "typeof Bun.dns",
   "dns_internals.bind.ts": null,
+  "environment.bind.ts": null,
   "error_jsc.bind.ts": null,
   "event_loop.bind.ts": null,
   "expect.bind.ts": null,
+  "expect_deferred.bind.ts": null,
   "fetch.bind.ts":
     '{ fetch: typeof fetch; preconnect: typeof fetch.preconnect; sessionFetch: Bun.FetchSession["fetch"] }',
   "ffi.bind.ts": null,
@@ -423,6 +426,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_http_binding.bind.ts": null,
   "node_net_binding.bind.ts": null,
   "node_os.bind.ts": null,
+  "node_process.bind.ts": null,
   "node_quic_binding.bind.ts": null,
   "node_tls_binding.bind.ts": null,
   "node_util_binding.bind.ts": null,
@@ -432,6 +436,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "parse_args.bind.ts": null,
   "patch_testing.bind.ts": null,
   "postgres.bind.ts": null,
+  "pretty_format.bind.ts": null,
   "prompt.bind.ts": "{ alert: typeof alert; confirm: typeof confirm; prompt: typeof prompt }",
   "proxy_testing.bind.ts": null,
   "quic.bind.ts": null,
@@ -439,18 +444,29 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "resolve_message.bind.ts": "{ ResolveMessage: Class<ResolveMessage>; BuildMessage: Class<BuildMessage> }",
   "resolver_jsc.bind.ts": null,
   "response.bind.ts":
-    '{ Request: Class<Omit<Request, "keepalive" | "duplex">>; Response: typeof Response & { prototype: Response } }',
+    '{ Request: Class<Omit<Request, "duplex">>; Response: typeof Response & { prototype: Response } }',
   "server.bind.ts": "{ ServerWebSocket: Class<Required<Bun.ServerWebSocket>> }",
   "server_body.bind.ts": null,
   "shell_body.bind.ts": null,
   "socket_body.bind.ts": null,
   "sourcemap.bind.ts": null,
   "subprocess.bind.ts": null,
+  "test_context.bind.ts": null,
   "udp_socket.bind.ts": null,
   "upgrade_command.bind.ts": null,
   "valkey.bind.ts": "typeof Bun",
+  "vi_utils.bind.ts": null,
+  "vi_wait.bind.ts": null,
   "virtual_machine_exports.bind.ts": null,
 };
+
+/** `jest` and `vi` each have their own function for these: `jestUseFakeTimers` and `viUseFakeTimers`. */
+const FAKE_TIMERS_TYPES = `
+type Jest = typeof import("bun:test").jest;
+type Vi = typeof import("bun:test").vi;
+type Flavored = "useFakeTimers" | "advanceTimersByTimeAsync" | "advanceTimersToNextTimerAsync" | "runAllTimersAsync" | "runOnlyPendingTimersAsync";
+type OfFlavor<Prefix extends string, T extends Record<Flavored, unknown>> = { [K in Flavored as \`\${Prefix}\${Capitalize<K>}\`]: T[K] };
+`;
 
 /**
  * Where the published types promise what the schema does not do: a call they allow has an argument
@@ -594,7 +610,9 @@ describe("@types/bun integration test", () => {
       pairs,
       `export type Published = {\n${Object.entries(PUBLISHED_AS)
         .map(([file, type]) => `  ${JSON.stringify(file)}: ${type};\n`)
-        .join("")}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (): T; prototype: T };\n`,
+        .join(
+          "",
+        )}};\nexport type Schemas = $Bindgen.Exports;\ntype Class<T> = { new (): T; prototype: T };\n${FAKE_TIMERS_TYPES}`,
     );
     const program = ts.createProgram({
       rootNames: [join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "index.d.ts"), join(dir, "Bindgen.d.ts"), pairs],
@@ -640,7 +658,7 @@ describe("@types/bun integration test", () => {
       // Published, and nothing has ever read it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
       // `keepalive` and `duplex` are declared on Request but not implemented.
-      "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
+      "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no duplex",
       // globals.d.ts does not declare these.
       "resolve_message.bind.ts: new BuildMessage().toJSON is not published",
       "resolve_message.bind.ts: new BuildMessage().column is not published",
@@ -738,6 +756,39 @@ describe("@types/bun integration test", () => {
            Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
       });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("import.meta.glob", () => {
+    // fixture/vite-client/client.d.ts also declares `ImportMeta.glob`, so it needs its own tsc program.
+    // tsc loads the declarations in `files` order.
+    test.each([
+      ["bun-types", ["bun-types.d.ts", "client.d.ts", "main.ts"]],
+      ["vite-client", ["client.d.ts", "bun-types.d.ts", "main.ts"]],
+    ])("has the type that vite/client declares when %s is loaded first", async (first, files) => {
+      const checkDir = join(TEMP_DIR, `import-meta-glob-check-${first}`);
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.files = files.map(file => `vite-client/${file}`);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await cp(join(FIXTURE_SOURCE_DIR, "vite-client"), join(checkDir, "vite-client"), { recursive: true });
+      await cp(join(FIXTURE_SOURCE_DIR, "utilities.ts"), join(checkDir, "utilities.ts"));
+      await Bun.write(join(checkDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
@@ -1087,6 +1138,53 @@ describe("@types/bun integration test", () => {
           "message": "Cannot find name 'vi'.",
         },
       ],
+    });
+  });
+
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe('"vitest" types', () => {
+    async function check(fixtureDir: string, types: string[], files: string[]) {
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.files = files.map(file => `vitest/${file}`);
+      tsconfig.compilerOptions.lib = ["ESNext", "DOM"];
+      tsconfig.compilerOptions.types = types;
+      tsconfig.compilerOptions.skipLibCheck = false;
+      await Bun.write(join(fixtureDir, "tsconfig.vitest.json"), JSON.stringify(tsconfig, null, 2));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(fixtureDir, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.vitest.json"],
+        env: bunEnv,
+        cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+    }
+
+    // Neither entry loads index.d.ts, so a project gets these types without Bun's globals.
+    test.each([
+      ["bun-types/vitest", ["api.ts", "patterns.ts", "differences.ts", "no-chai.ts"]],
+      ["bun-types/vitest-globals", ["globals.ts"]],
+    ])('%s declares the "vitest" module', async (entry, files) => {
+      expect(await check(BASE_FIXTURE_DIR, [entry], files)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
+    test("assert and should use chai's types when @types/chai is installed", async () => {
+      const fixtureDir = await createIsolatedFixture(["@types/chai"]);
+      expect(await check(fixtureDir, ["bun-types/vitest"], ["chai.ts"])).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // An ambient declaration would override the types of an installed vitest package.
+    test('"types": ["bun"] doesn\'t declare the "vitest" module', async () => {
+      const { stdout, exitCode } = await check(BASE_FIXTURE_DIR, ["bun"], ["differences.ts"]);
+      expect(stdout).toContain("error TS2307: Cannot find module 'vitest'");
+      expect(exitCode).not.toBe(0);
     });
   });
 

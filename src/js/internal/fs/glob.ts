@@ -92,13 +92,7 @@ function toPathIfFileURL(url) {
   if (url == null || typeof url === "string") {
     return url;
   }
-  if (
-    url instanceof URL ||
-    (typeof url === "object" && typeof url.href === "string" && typeof url.protocol === "string")
-  ) {
-    return Bun.fileURLToPath(url);
-  }
-  return url;
+  return require("internal/url").toPathIfFileURL(url);
 }
 
 async function getDirent(path) {

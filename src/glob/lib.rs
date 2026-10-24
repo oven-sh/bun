@@ -44,6 +44,14 @@ impl<P: AsRef<[u8]>> Prepared<P> {
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 
+/// `walker.walk()`, compiled once here. A direct call compiles another copy of the walker in the caller's crate.
+#[inline(never)]
+pub fn walk_file_system(
+    walker: &mut BunGlobWalker,
+) -> Result<bun_sys::Result<()>, bun_core::Error> {
+    walker.walk()
+}
+
 /// Returns true if `text` has an unescaped `@(`, `+(` or `!(`.
 /// The other two extglob prefixes, `?` and `*`, are glob syntax on their own.
 pub fn has_extglob_prefix(text: &[u8]) -> bool {

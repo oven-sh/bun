@@ -255,6 +255,8 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   TestReadOnly: $bindgen("bindgen_test.bind.ts", "TestReadOnly"),
   TestMemberFunctions: $bindgen("bindgen_test.bind.ts", "TestMemberFunctions"),
   TestBoundThis: $bindgen("bindgen_test.bind.ts", "TestBoundThis"),
+  TestProtoCaller: $bindgen("bindgen_test.bind.ts", "TestProtoCaller"),
+  TestCallable: $bindgen("bindgen_test.bind.ts", "TestCallable"),
   TestNonFinal: $bindgen("bindgen_test.bind.ts", "TestNonFinal"),
   TestNote: $bindgen("bindgen_test.bind.ts", "TestNote"),
   TestRefCountedNote: $bindgen("bindgen_test.bind.ts", "TestRefCountedNote"),
@@ -920,6 +922,13 @@ export const byteStreamInternals = {
 export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "InternalModuleRegistry.cpp",
   "jsInternalModulesLoadedFromBytecode",
+  0,
+);
+
+// How many times this process parsed the source of an internal module (node:fs etc.).
+export const internalModulesCompiledFromSource: () => number = $newCppFunction(
+  "InternalModuleRegistry.cpp",
+  "jsInternalModulesCompiledFromSource",
   0,
 );
 

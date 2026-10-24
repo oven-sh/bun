@@ -24,7 +24,7 @@ export const Timeout = b.class({
     _destroyed: destroyed,
     _idleStart: { getter: b.any, setter: { capability: "js" }, passThis: true },
     _idleTimeout: { setter: true, internalField: "idleTimeout" },
-    _onTimeout: { setter: true, internalField: "callback" },
+    _onTimeout: { getter: b.any, setter: { capability: "js" }, passThis: true },
     _repeat: { setter: true, internalField: "repeat" },
     close: { ...chainable, capability: "js" },
     hasRef,

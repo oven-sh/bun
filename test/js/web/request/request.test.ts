@@ -175,3 +175,36 @@ describe("RequestInit signal presence", () => {
     });
   });
 });
+
+test("keepalive is what the init says, and false without it", () => {
+  const url = "http://example.com/";
+  expect(new Request(url).keepalive).toBe(false);
+  expect(new Request(url, {}).keepalive).toBe(false);
+  expect(new Request(url, { keepalive: undefined }).keepalive).toBe(false);
+  expect(new Request(url, { keepalive: false }).keepalive).toBe(false);
+  expect(new Request(url, { keepalive: true }).keepalive).toBe(true);
+  expect(new Request(url, { keepalive: 1 as any }).keepalive).toBe(true);
+
+  const kept = new Request(url, { keepalive: true });
+  expect(kept.clone().keepalive).toBe(true);
+  expect(new Request(kept).keepalive).toBe(true);
+  expect(new Request(kept, { method: "POST" }).keepalive).toBe(true);
+  expect(new Request(kept, { keepalive: false }).keepalive).toBe(false);
+  expect(new Request(new Request(url), { keepalive: true }).keepalive).toBe(true);
+
+  expect(Object.getOwnPropertyDescriptor(Request.prototype, "keepalive")?.set).toBeUndefined();
+});
+
+test("keepalive is read once from the init", () => {
+  let reads = 0;
+  const init = {
+    method: "POST",
+    body: new ReadableStream(),
+    get keepalive() {
+      reads++;
+      return true;
+    },
+  };
+  expect(() => new Request("http://example.com/", init)).toThrow("keepalive");
+  expect(reads).toBe(1);
+});

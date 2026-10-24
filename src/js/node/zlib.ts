@@ -18,8 +18,7 @@ const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
 
-const isArrayBufferView = ArrayBuffer.isView;
-const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
+const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
 const { Transform, finished } = require("node:stream");

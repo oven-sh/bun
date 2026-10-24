@@ -7,6 +7,7 @@
 #include "ErrorCode.h"
 #include "BunString.h"
 #include "JSDOMExceptionHandling.h"
+#include "headers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -245,7 +246,7 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
         JSValue jsKey = jsNumber(percentile);
         JSValue jsValue = JSBigInt::createFrom(globalObject, value);
         RETURN_IF_EXCEPTION(scope, );
-        map->set(globalObject, jsKey, jsValue);
+        JSC__JSMap__set(map, globalObject, JSValue::encode(jsKey), JSValue::encode(jsValue));
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -266,7 +267,7 @@ void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globa
         JSValue jsKey = jsNumber(percentile);
         JSValue jsValue = JSBigInt::createFrom(globalObject, value);
         RETURN_IF_EXCEPTION(scope, );
-        map->set(globalObject, jsKey, jsValue);
+        JSC__JSMap__set(map, globalObject, JSValue::encode(jsKey), JSValue::encode(jsValue));
         RETURN_IF_EXCEPTION(scope, void());
     }
 }

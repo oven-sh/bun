@@ -943,7 +943,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGl
     return JSValue::encode(jsBoolean(true));
 }
 
-extern "C" uint64_t Bun__readOriginTimer(void*);
+extern "C" uint64_t Bun__readHRTime(void*);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -951,7 +951,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    uint64_t time = Bun__readOriginTimer(globalObject->bunVM());
+    uint64_t time = Bun__readHRTime(globalObject->bunVM());
     double seconds = static_cast<double>(time / 1000000000);
     double nanoseconds = static_cast<double>(time % 1000000000);
 
@@ -1004,7 +1004,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
-    return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
+    return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readHRTime(globalObject->bunVM()))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -4595,36 +4595,47 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
 }
 
-// This does the equivalent of
-// return require.cache.get(Bun.main)
-static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
+// `require.cache.get(Bun.main)`. Not cached, because `bun test` runs many main modules in one process.
+JSC_DEFINE_CUSTOM_GETTER(processMainModule, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName))
 {
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(processObject->globalObject());
-    auto* bun = globalObject->bunObject();
-    auto& builtinNames = Bun::builtinNames(vm);
-    JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSC::jsUndefined();
-    }
-    auto* requireMap = globalObject->requireMap();
-    JSValue mainModule = requireMap->get(globalObject, mainValue);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSC::jsUndefined();
-    }
-    return mainModule;
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessMainModule, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))
+{
+    if (auto* process = dynamicDowncast<JSObject>(JSValue::decode(thisValue)))
+        process->putDirect(JSC::getVM(globalObject), propertyName, JSValue::decode(value), 0);
+    return true;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickInDefaultRealm, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue callback = callFrame->argument(0);
+    if (!callback.isCallable())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "callback"_s, "function"_s, callback);
+
+    auto* globalObject = defaultGlobalObject(vm);
+    globalObject->processObject()->queueNextTick(globalObject, ArgList(callFrame));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
+    // Only the thread's default realm drains a tick queue (GlobalObject::drainMicrotasks), so other realms queue their ticks there.
+    if (!globalObject->isThreadLocalDefaultGlobalObject) {
+        auto* nextTickFunction = JSC::JSFunction::create(vm, globalObject, 1, "nextTick"_s, jsFunctionNextTickInDefaultRealm, ImplementationVisibility::Public);
+        this->m_nextTickFunction.set(vm, this, nextTickFunction);
+        return nextTickFunction;
+    }
+
     JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = JSNextTickQueue::create(globalObject);
@@ -5123,7 +5134,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       constructMainModuleProperty                         PropertyCallback
+  mainModule                       processMainModule                                   CustomAccessor
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback

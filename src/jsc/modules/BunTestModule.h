@@ -1,17 +1,13 @@
 
 namespace Zig {
-void generateNativeModule_BunTest(
+static void exportTestModuleObject(
     JSC::JSGlobalObject* lexicalGlobalObject,
-    JSC::Identifier moduleKey,
+    JSObject* object,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSObject* object = globalObject->lazyTestModuleObject();
-    RETURN_IF_EXCEPTION(scope, );
 
     // Export as default
     exportNames.append(vm.propertyNames->defaultKeyword);
@@ -33,6 +29,22 @@ void generateNativeModule_BunTest(
             exportValues.append(value);
         }
     }
+}
+
+void generateNativeModule_BunTest(
+    JSC::JSGlobalObject* lexicalGlobalObject,
+    JSC::Identifier moduleKey,
+    Vector<JSC::Identifier, 4>& exportNames,
+    JSC::MarkedArgumentBuffer& exportValues)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* object = globalObject->lazyTestModuleObject();
+    RETURN_IF_EXCEPTION(scope, );
+
+    RELEASE_AND_RETURN(scope, exportTestModuleObject(lexicalGlobalObject, object, exportNames, exportValues));
 }
 
 } // namespace Zig

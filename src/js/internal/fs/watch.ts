@@ -138,9 +138,9 @@ class FSWatcher extends EventEmitter {
   constructor(path, options, listener) {
     super();
 
-    if (path instanceof URL) {
-      path = Bun.fileURLToPath(path);
-    } else if (typeof path === "string" && path.startsWith("file:")) {
+    if (typeof path !== "string") {
+      path = require("internal/url").toPathIfFileURL(path);
+    } else if (path.startsWith("file:")) {
       path = Bun.fileURLToPath(path);
     }
 

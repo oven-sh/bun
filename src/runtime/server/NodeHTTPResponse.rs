@@ -1500,6 +1500,14 @@ impl NodeHTTPResponse {
             return;
         }
 
+        // Nothing has been sent yet, so send nothing, like Node. Ending the response here would write "200 OK".
+        // The caller destroys the socket next, and on_abort runs when it closes.
+        if let Some(raw_response) = self.writer()
+            && !raw_response.state().is_http_status_called()
+        {
+            return;
+        }
+
         // Re-arm the poll before marking SOCKET_CLOSED (resume_socket is a no-op
         // once that flag is set) so a paused socket's deferred EOF can fire.
         self.resume_socket();

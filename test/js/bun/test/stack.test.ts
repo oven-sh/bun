@@ -3,6 +3,16 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
+test("bun test turns off tail calls, so a function that ends in a call keeps its frame", () => {
+  function callee() {
+    return new Error().stack;
+  }
+  function caller() {
+    return callee();
+  }
+  expect(caller()).toContain("at caller");
+});
+
 test("name property is used for function calls in Error.stack", () => {
   function WRONG() {
     return new Error().stack;

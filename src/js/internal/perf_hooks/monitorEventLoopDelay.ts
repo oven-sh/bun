@@ -12,38 +12,25 @@ const cppEnableEventLoopDelay = $newCppFunction(
   "JSNodePerformanceHooksHistogramPrototype.cpp",
   "jsFunction_enableEventLoopDelay",
   2,
-) as (histogram: import("node:perf_hooks").RecordableHistogram, resolution: number) => void;
+) as (histogram: import("node:perf_hooks").RecordableHistogram, resolution: number) => boolean;
 
 const cppDisableEventLoopDelay = $newCppFunction(
   "JSNodePerformanceHooksHistogramPrototype.cpp",
   "jsFunction_disableEventLoopDelay",
   1,
-) as (histogram: import("node:perf_hooks").RecordableHistogram) => void;
+) as (histogram: import("node:perf_hooks").RecordableHistogram) => boolean;
 
 // IntervalHistogram wrapper class for event loop delay monitoring
 
 let eventLoopDelayHistogram: import("node:perf_hooks").RecordableHistogram | undefined;
-let enabled = false;
 let resolution = 10;
 
 function enable() {
-  if (enabled) {
-    return false;
-  }
-
-  enabled = true;
-  cppEnableEventLoopDelay(eventLoopDelayHistogram!, resolution);
-  return true;
+  return cppEnableEventLoopDelay(eventLoopDelayHistogram!, resolution);
 }
 
 function disable() {
-  if (!enabled) {
-    return false;
-  }
-
-  enabled = false;
-  cppDisableEventLoopDelay(eventLoopDelayHistogram!);
-  return true;
+  return cppDisableEventLoopDelay(eventLoopDelayHistogram!);
 }
 
 function monitorEventLoopDelay(options?: { resolution?: number }) {

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 test("verify we print error messages passed to done callbacks", () => {
@@ -80,7 +80,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:3)
     (fail) error done callback (async)
     43 |   });
     44 | });
@@ -111,7 +110,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, nextTick)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:5)
     (fail) error done callback (async, nextTick)
     62 | });
     63 |
@@ -139,4 +137,38 @@ test("verify we print error messages passed to done callbacks", () => {
     Ran 9 tests across 1 file.
     "
   `);
+});
+
+test("an error passed to the done callback of a concurrent test fails that test", async () => {
+  using dir = tempDir("done-callback-concurrent", {
+    "a.test.js": `
+      import { describe, test } from "bun:test";
+      describe.concurrent("concurrent", () => {
+        test("at once", done => done(new Error("at once")));
+        test("later", done => void setImmediate(() => done(new Error("later"))));
+        test("beside them", () => new Promise(resolve => setImmediate(() => setImmediate(resolve))));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({
+    lines: stderr.match(/^(\((pass|fail)\) [a-z >]+[a-z]|error: .*|# Unhandled.*)/gm)?.sort(),
+    exitCode,
+  }).toEqual({
+    lines: [
+      "(fail) concurrent > at once",
+      "(fail) concurrent > later",
+      "(pass) concurrent > beside them",
+      "error: at once",
+      "error: later",
+    ],
+    exitCode: 1,
+  });
 });

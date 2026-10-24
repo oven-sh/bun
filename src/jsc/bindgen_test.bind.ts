@@ -402,6 +402,36 @@ export const TestBoundThis = b.class({
   },
 });
 
+const calledByProtoCaller = { returns: b.any, capability: "js", throws: true } as const;
+
+/** `protoCaller`: a call returns `[this, callee, argument count, what the function returned]`. */
+export const TestProtoCaller = b.class({
+  rustPath: "crate::bindgen_test::TestProtoCaller",
+  construct: {},
+  protoCaller: "describe_call",
+  proto: {
+    /** How many calls `describe_call` made. */
+    calls: { getter: b.u32 },
+    first: { ...calledByProtoCaller, args: { first: b.any } },
+    /** How many arguments follow the first. */
+    rest: { ...calledByProtoCaller, args: { first: b.any, rest: b.any.variadic } },
+    fail: calledByProtoCaller,
+  },
+  static: {
+    second: { args: { first: b.i32, second: b.i32 }, returns: b.i32 },
+  },
+});
+
+/** `callInstance` */
+export const TestCallable = b.class({
+  rustPath: "crate::bindgen_test::TestCallable",
+  construct: { args: { value: b.i32 } },
+  callInstance: { args: { other: b.i32 }, returns: b.i32 },
+  proto: {
+    value: { getter: b.i32 },
+  },
+});
+
 /** `rustTraits`, `overridesToJS` and `final: false`. */
 export const TestNonFinal = b.class({
   rustPath: "crate::bindgen_test::TestNonFinal",

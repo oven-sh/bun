@@ -91,8 +91,11 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void
 }
 
 function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+  if (typeof p !== "string") {
+    const path = require("internal/url").toPathIfFileURL(p);
+    if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+    return path;
+  }
   return require("node:path").resolve(p);
 }
 

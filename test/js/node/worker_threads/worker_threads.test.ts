@@ -1828,6 +1828,20 @@ test("env: process.env reads in a worker module are evaluated at runtime against
 });
 
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
+  it.each(["main", "nested", "coercion", "coercion-define", "coercion-descriptor"])(
+    "preserves cached env references when %s founds a shared store",
+    async mode => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture-share-env-identity.js", mode],
+        cwd: __dirname,
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    },
+  );
+
   async function run(mode: string) {
     const proc = Bun.spawn({
       cmd: [bunExe(), "fixture-share-env-tree.js", mode],
@@ -1954,8 +1968,8 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
-  // A partial descriptor moves the entry from the shared store onto the JS object.
-  it("keeps an array-index env var readable after a partial defineProperty on the shared map", async () => {
+  // Shared maps retain Node's rejection of incomplete environment descriptors.
+  it("rejects a partial defineProperty without changing the shared array-index env var", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1963,8 +1977,11 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
         `const { Worker, SHARE_ENV } = require("worker_threads");
          new Worker("1", { eval: true, env: SHARE_ENV }).on("exit", () => {
            process.env[0] = "zero";
-           Object.defineProperty(process.env, "0", { enumerable: true });
+           let errorCode;
+           try { Object.defineProperty(process.env, "0", { enumerable: true }); }
+           catch (error) { errorCode = error.code; }
            console.log(JSON.stringify({
+             errorCode,
              byIndex: process.env[0],
              byString: process.env["0"],
              listed: Object.keys(process.env).includes("0"),
@@ -1978,6 +1995,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
       parsed: {
+        errorCode: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
         byIndex: "zero",
         byString: "zero",
         listed: true,
@@ -2082,8 +2100,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
-  // Founding a tree replaces process.env; Bun.env is reified from the same object
-  // at startup and must not be left observing the orphaned pre-swap env.
+  // Bun.env and process.env must keep observing the same shared store.
   it("keeps Bun.env pointing at process.env after founding a tree", async () => {
     const proc = Bun.spawn({
       cmd: [
@@ -2254,13 +2271,8 @@ test("process.debugPort defaults to 9229 on the main thread", async () => {
   expect(exitCode).toBe(0);
 });
 
-// Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
-// replacement were orphaned, the founder's later writes would go nowhere. child_process
-// enumerates the JS process.env (a var deleted from the map is invisible to the child),
-// so this guards the swap -- it cannot observe Windows' SetEnvironmentVariableW, which
-// has no JS-visible reader.
-
-test("the SHARE_ENV founding thread's process.env stays live after the swap", async () => {
+// child_process must inherit later writes and deletes from the founding thread.
+test("the SHARE_ENV founding thread's process.env stays live after promotion", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

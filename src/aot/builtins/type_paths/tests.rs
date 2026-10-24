@@ -171,17 +171,18 @@ fn value_paths() {
 }
 
 #[test]
-fn member_of_object_with_second_name_has_both_paths() {
+fn each_parse_has_its_own_path() {
     let values = BuiltinValuePaths::collect(Platforms::LINUX);
     let paths = values.paths();
-    let parse = BuiltinValueIndex(BuiltinId::JSONParse.to_wire());
-    let of_parse = paths.iter().filter(|path| path.value == parse);
-    let of_parse: Vec<PathParts<'_>> = of_parse.map(|path| (path.module, path.names)).collect();
-    let expected: [PathParts<'_>; 2] = [
-        (None, &["JSON", "parse"]),
-        (None, &["Bun", "JSON", "parse"]),
-    ];
-    assert_eq!(of_parse, expected);
+    let paths_of = |id: BuiltinId| -> Vec<PathParts<'_>> {
+        let value = BuiltinValueIndex(id.to_wire());
+        let of_value = paths.iter().filter(|path| path.value == value);
+        of_value.map(|path| (path.module, path.names)).collect()
+    };
+    let of_global: [PathParts<'_>; 1] = [(None, &["JSON", "parse"])];
+    let of_bun: [PathParts<'_>; 1] = [(None, &["Bun", "JSON", "parse"])];
+    assert_eq!(paths_of(BuiltinId::JSONParse), of_global);
+    assert_eq!(paths_of(BuiltinId::BunJSONParse), of_bun);
 }
 
 #[test]

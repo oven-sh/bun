@@ -136,7 +136,7 @@ static JSValue constructJSONObject(VM& vm, JSObject* bunObject)
                 scope.clearException();
                 continue;
             }
-            object->putDirect(vm, key, member, static_cast<unsigned>(PropertyAttribute::DontEnum));
+            object->putDirect(vm, key, member, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
         }
     }
     object->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "JSON"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);

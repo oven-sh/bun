@@ -18,7 +18,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if mentions_validate {
             self.report_validate_values();
         }
-        if mentions_validate || mentions(BuiltinId::JSON) {
+        if mentions_validate || mentions(BuiltinId::BunJSON) {
             self.report_exported_compiler_functions();
         }
     }
@@ -63,7 +63,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if find_validating_function(id) == Some(ValidatingFunction::Validate) {
             return Some(Code::ValidateIsNotAValue);
         }
-        if id != BuiltinId::JSON {
+        if id != BuiltinId::BunJSON {
             return None;
         }
         match self.inputs.modules.import_binding(self.file, symbol) {

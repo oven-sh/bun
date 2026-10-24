@@ -128,6 +128,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         let expected = self.file.find_callee_by_signature(call, inner);
         let mut callee = self.lower_expected_callee(site.callee, exit, expected);
+        if !hir.list_at(site.type_args).is_empty() && self.file.calls_parse_of_bun(inner) {
+            callee.function = self.builder.builtin(BuiltinId::JSONParse);
+        }
         match site.chain {
             Chain::Start => {
                 let exit = exit.expect("an optional call has the exit of its chain");

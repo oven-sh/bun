@@ -20,7 +20,18 @@ const queriesRows = {
 const classesWithBody = ["Blob", "Request", "Response"];
 
 export default b.declarations(
-  b.same("Bun.JSON", "JSON"),
+  // The compiler turns each JSON.parse<T>(text) that it sees into a parser for T. Only a call without a type reaches the function, which throws.
+  b.namespace("Bun.JSON", {
+    parse: {
+      args: { text: b.any.optional, reviver: b.any.optional },
+      returns: b.never,
+      capability: "heap",
+      throws: true,
+      uses: { text: b.inspected, reviver: b.inspected },
+      implementation: b.generic,
+    },
+  }),
+  ["stringify", "rawJSON", "isRawJSON"].flatMap(name => b.same(`Bun.JSON.${name}`, `JSON.${name}`)),
   b.fn("Bun.sql", queriesRows),
   // Both names answer the default export of bun:sql: defaultBunSQLObject in BunObject.cpp.
   b.same("Bun.postgres", "Bun.sql"),

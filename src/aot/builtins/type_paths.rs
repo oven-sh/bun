@@ -156,7 +156,7 @@ impl BuiltinValuePaths {
         paths
     }
 
-    // An object with a second name, as `Bun.JSON` is `JSON`, has its members under that name too, and a declaration file can give them signatures of their own there.
+    // An object with a second name, as `self` is `globalThis`, has its members under that name too, and a declaration file can give them signatures of their own there.
     fn add_members_under_second_names(&mut self, platform: Platforms) {
         for second_name in BuiltinId::ALL {
             let Some(object) = table::entry(second_name).same_object_as else {

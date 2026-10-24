@@ -1,4 +1,3 @@
-use bun_sema::bind::Binding;
 use bun_sema::check::aot::{
     AnythingReason, CallTarget, FunctionRef, GaveUp, ShapeKind, WrittenType,
 };
@@ -17,7 +16,6 @@ use crate::ir::generated::{
 use crate::ir::{ExpectedResultId, Primitives, TypeId, TypeTable};
 use crate::lower::positions::{self, SiteOrigin};
 use crate::lower::{CheckerTypeId, FileLowering};
-use crate::modules::ImportBinding;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ValidatingFunction {
@@ -27,7 +25,7 @@ pub(super) enum ValidatingFunction {
 
 pub(super) fn find_validating_function(builtin: BuiltinId) -> Option<ValidatingFunction> {
     match builtin {
-        BuiltinId::JSONParse => Some(ValidatingFunction::Parse),
+        BuiltinId::JSONParse | BuiltinId::BunJSONParse => Some(ValidatingFunction::Parse),
         BuiltinId::BunBundleValidate => Some(ValidatingFunction::Validate),
         _ => None,
     }
@@ -153,7 +151,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             }
             ValidatingFunction::Parse if self.hir.list_at(site.type_args).is_empty() => {
-                if self.is_imported_json(site.callee) {
+                if self.calls_parse_of_bun(site.callee) {
                     self.report_at(call, Code::TypedParseNeedsTypeArgument, &[]);
                 }
                 return None;
@@ -175,6 +173,11 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         let shape = self.queries.type_shape(ty).map(|shape| shape.kind);
         if let Ok(ShapeKind::Anything(AnythingReason::Any | AnythingReason::Unknown)) = shape {
+            // Only the two words themselves ask for no check. A name that stands for one of them may do so by an oversight.
+            let written = self.find_type_text(call, None);
+            if !matches!(written.trim_ascii(), b"any" | b"unknown") {
+                self.report_at(call, Code::ValidationTypeIsAny, &[written.as_slice()]);
+            }
             return None;
         }
         let position = self.hir[call].pos;
@@ -213,22 +216,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn is_imported_json(&self, callee: ExprId) -> bool {
+    // `parse` of the `JSON` that "bun" exports throws when it is reached: a call that has a type argument calls the parser of the engine in its place.
+    pub(in crate::lower) fn calls_parse_of_bun(&self, callee: ExprId) -> bool {
         let callee = self.skip_type_syntax(callee);
-        let Some((object, _)) = self.hir.member_key(callee) else {
-            return false;
-        };
-        let object = self.skip_type_syntax(object);
-        let ExprKind::Ident(_) = self.hir[object].kind else {
-            return false;
-        };
-        let Binding::Symbol(symbol) = self.bound.binding(object) else {
-            return false;
-        };
-        matches!(
-            self.inputs.modules.import_binding(self.file, symbol),
-            ImportBinding::Builtin(_) | ImportBinding::CapturedBuiltin { .. }
-        )
+        self.builtins.builtin_of_expression(callee) == Some(BuiltinId::BunJSONParse)
     }
 
     pub(super) fn result_type(&mut self, ty: CheckerTypeId, position: u32) -> TypeId {
@@ -340,7 +331,12 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.report_at(call, Code::ValidationTypeParameter, &[text.as_slice()]);
                 return;
             }
-            ValidationError::GaveUp(GaveUp::ErrorType) => return,
+            // The checker's own error may have been silenced (`// @ts-ignore`, `// @ts-nocheck`).
+            ValidationError::GaveUp(GaveUp::ErrorType) => {
+                let written = self.find_type_text(call, None);
+                self.report_at(call, Code::ValidationTypeIsAny, &[written.as_slice()]);
+                return;
+            }
             ValidationError::Unsupported { described } => Some(described.as_slice()),
             ValidationError::TooLarge
             | ValidationError::GaveUp(

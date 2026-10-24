@@ -1,4 +1,4 @@
-// `import { JSON } from "bun"` is the global JSON, typed so that JSON.parse<T>(text) type-checks. That call validates; every other member is the global's.
+// `import { JSON } from "bun"` is an object of its own. JSON.parse<T>(text) validates; every other member is the global's.
 // IR+ ^layout L\d+ .*name="User" .* representation=Typed
 import { JSON, JSON as Codec, type Schema } from "bun";
 interface User { id: number & Schema.Int; name: string }
@@ -15,7 +15,7 @@ console.log("Bun.JSON", shown(() => Bun.JSON.parse<User>('{"id":3,"name":"c"}'))
 console.log("with a reviver", shown(() => JSON.parse<User>('{"id":"4","name":"d"}', (key, value) => (key === "id" ? Number(value) : value))));
 console.log("invalid JSON", shown(() => JSON.parse<User>('{"id":')).split(":")[0]);
 console.log("any", shown(() => JSON.parse<any>('{"id":"5"}')), shown(() => Codec.parse<unknown>("[6]")));
-console.log("the same object", JSON === globalThis.JSON, Codec === globalThis.JSON);
+console.log("another object", JSON === globalThis.JSON, Codec === JSON, Bun.JSON === JSON, JSON.stringify === globalThis.JSON.stringify);
 console.log("other members", JSON.stringify({ a: [1] }), Codec.stringify("b"), JSON[Symbol.toStringTag], typeof JSON.parse);
 console.log("as a value", ["7", "8"].map(text => JSON.parse<number>(text)).join(), (codec => codec.stringify([9]))(JSON), [JSON].length);
 

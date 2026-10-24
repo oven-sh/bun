@@ -1,4 +1,4 @@
-// `import { JSON } from "bun"` and `Bun.JSON` are the global `JSON`, and a parse by type through them validates as one through the global name does. The installed types give the `JSON` that "bun" exports signatures of its own.
+// `import { JSON } from "bun"` and `Bun.JSON` are one object, which is not the global `JSON`, and a parse by type through them validates. The installed types give the `JSON` that "bun" exports signatures of its own.
 import { JSON as Typed } from "bun";
 
 interface User {
@@ -14,7 +14,7 @@ function attempt(label: string, run: () => unknown): void {
     console.log(label, (error as Error).constructor.name);
   }
 }
-console.log("one object", Typed === JSON, Bun.JSON === JSON);
+console.log("one object", Typed === Bun.JSON, "the global", Typed === JSON, Bun.JSON === JSON);
 attempt("global, right", () => JSON.parse<User>(text));
 attempt("global, wrong", () => JSON.parse<User>(wrong));
 attempt("imported, right", () => Typed.parse<User>(text));

@@ -77,10 +77,11 @@ case_tests! {
         assert_eq!(case.symbol("validate"), None);
         assert_unresolved(case, "validate");
     };
-    json_export_of_bun_is_global_json: PROGRAM, "import { JSON } from \"bun\"; JSON.parse(t);", |case| {
-        assert_eq!(find_member(BuiltinId::Bun, "JSON"), Some(BuiltinId::JSON));
-        assert_eq!(case.symbol_id("JSON"), Some(BuiltinId::JSON));
-        assert_builtin(case, "JSON.parse", BuiltinId::JSONParse);
+    json_export_of_bun_is_its_own_object: PROGRAM, "import { JSON } from \"bun\"; JSON.parse(t); JSON.stringify(t);", |case| {
+        assert_eq!(find_member(BuiltinId::Bun, "JSON"), Some(BuiltinId::BunJSON));
+        assert_eq!(case.symbol_id("JSON"), Some(BuiltinId::BunJSON));
+        assert_builtin(case, "JSON.parse", BuiltinId::BunJSONParse);
+        assert_builtin(case, "JSON.stringify", BuiltinId::JSONStringify);
     };
     property_naming_own_holder: PROGRAM, "Function.constructor; globalThis.globalThis;", |case| {
         assert_builtin(case, "Function.constructor", BuiltinId::Function);
@@ -483,10 +484,13 @@ fn module_export_of_other_platform_is_not_found() {
 #[test]
 fn module_export_is_location_of_module() {
     with_case(PROGRAM, "1;", |case| {
-        let json = case.atoms.intern(b"JSON");
-        let found = find_module_export(case.names, RuntimeModule::Bun, json, Platforms::LINUX);
-        assert_eq!(found, ModuleExport::Found(BuiltinId::BunJSON));
-        assert_eq!(table::canonical_id(BuiltinId::BunJSON), BuiltinId::JSON);
+        let postgres = case.atoms.intern(b"postgres");
+        let found = find_module_export(case.names, RuntimeModule::Bun, postgres, Platforms::LINUX);
+        assert_eq!(found, ModuleExport::Found(BuiltinId::BunPostgres));
+        assert_eq!(
+            table::canonical_id(BuiltinId::BunPostgres),
+            BuiltinId::Bun_sql
+        );
     });
 }
 

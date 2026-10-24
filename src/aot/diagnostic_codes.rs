@@ -106,8 +106,9 @@ diagnostic_codes! {
         JsxKeyIgnored = 100510, Warning, "\"key\" prop ignored. Must be a string, number or symbol.";
         JsxKeyAfterSpread = 100511, Warning, "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.";
         JsonFromBunIsExported = 100512, Error, "JSON from \"bun\" can't be exported. Import it in each file that uses it";
-        TypedParseCalleeIsNotResolved = 100514, Warning, "This call has the type of JSON.parse<T>(), but the compiler can't prove it calls the built-in JSON.parse. If it calls something else, the result isn't validated.";
+        TypedParseCalleeIsNotResolved = 100514, Warning, "This call has the type of JSON.parse<T>(), but the compiler can't see what it calls. If that's parse of the JSON from \"bun\", the call throws at run time. Name that JSON in this file and call JSON.parse<T>(text) on it";
         InvalidRegExpFlags = 100515, Error, "Invalid flags \"{0}\" in regular expression";
+        ValidationTypeIsAny = 100518, Error, "'{0}' is any here, so there is no type to validate against. To skip validation, write any itself";
     }
     Builtins 100700..=100749 {}
 }

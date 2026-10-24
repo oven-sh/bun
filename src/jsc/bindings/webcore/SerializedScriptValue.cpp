@@ -492,7 +492,7 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *    | RTCCertificateTag
  *    | ImageBitmapTag <originClean:uint8_t> <logicalWidth:int32_t> <logicalHeight:int32_t> <resolutionScale:double> DestinationColorSpace <byteLength:uint32_t>(<imageByteData:uint8_t>)
  *    | OffscreenCanvasTransferTag <value:uint32_t>
- *    | WasmMemoryTag <value:uint32_t>
+ *    | WasmMemoryTag <agentClusterID:StringData> <index:uint32_t> <isMemory64:int32_t>
  *    | RTCDataChannelTransferTag <identifier:uint32_t>
  *    | DOMExceptionTag <message:String> <name:String>
  *    | WebCodecsEncodedVideoChunkTag <identifier:uint32_t>
@@ -1370,6 +1370,9 @@ private:
                 write(WasmMemoryTag);
                 write(agentClusterIDFromGlobalObject(*m_lexicalGlobalObject));
                 write(index);
+                // The shared contents do not record the address type, and a memory with a maximum of zero has none.
+                // The record indexes m_wasmMemoryHandles, which never leaves the process, so CurrentVersion stays.
+                write(memory->memory().addressType().is64Bit());
                 return true;
             }
 #endif
@@ -3761,6 +3764,12 @@ private:
                 fail();
                 return JSValue();
             }
+            bool isMemory64;
+            if (!read(isMemory64)) {
+                fail();
+                return JSValue();
+            }
+            Wasm::AddressType addressType { isMemory64 };
 
             auto& vm = m_lexicalGlobalObject->vm();
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3772,11 +3781,6 @@ private:
 
             RefPtr<Wasm::Memory> memory;
             auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
-            // Memory64 is not yet serialized in WasmMemoryTag, so we only
-            // support I32 address type for structured clone. Upstream WebKit
-            // has the same limitation (it calls result->memory().addressType()
-            // on an uninitialized stub here, which happens to return I32).
-            constexpr auto addressType = Wasm::AddressType::I32;
             if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
                 if (!contents->memoryHandle()) {
                     fail();

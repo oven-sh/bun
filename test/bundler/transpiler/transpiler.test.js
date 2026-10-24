@@ -2477,6 +2477,7 @@ export default class {
         [{ eliminate: ["default"] }, `export default 42;\n${keep}`, keep],
         [{ replace: { default: ["N", 1] } }, `export default 42;\n${keep}`, `export var N = 1;\n${keep}`],
         [{ replace: { default: ["N", 1] } }, `export default class A {}\n${keep}`, `export var N = 1;\n${keep}`],
+        [{ replace: { default: ["N", 1] } }, `${keep}export default 42;`, `${keep}export var N = 1;\n`],
       ];
       const print = rows =>
         rows.map(([exports, source]) => new Bun.Transpiler({ loader: "ts", exports }).transformSync(source));

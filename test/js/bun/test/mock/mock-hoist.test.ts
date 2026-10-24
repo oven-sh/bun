@@ -952,6 +952,9 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
     [`const [fake] = "fake";`, "fake"],
     [`const undefined = String("local"), fake = undefined;`, "fake"],
     [`const local = "local"; const fake = local;`, "fake"],
+    [`class Fake { static value = "fake"; }`, "Fake"],
+    [`export class Fake { static value = "fake"; }`, "Fake"],
+    [`export default class Fake { static value = "fake"; }`, "Fake"],
   ])("stays in its place: %s", async (declaration, name) => {
     const { stderr, exitCode } = await run(file(declaration, name, `value`));
     expect(stderr).toContain(

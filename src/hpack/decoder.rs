@@ -28,6 +28,9 @@ impl Entry {
     }
 }
 
+/// The room for entries that a lower capacity leaves. No table of the default capacity needs more.
+const SPARE_ENTRIES: usize = DEFAULT_TABLE_CAPACITY as usize / ENTRY_OVERHEAD;
+
 pub struct Decoder {
     /// Oldest first.
     entries: VecDeque<Entry>,
@@ -206,6 +209,12 @@ impl Decoder {
     fn set_capacity(&mut self, capacity: u32) {
         self.capacity = capacity;
         self.evict();
+        // The connection may send no field for a long time, so what left the table is given back now.
+        self.storage.clear_scratch();
+        let keep = self.entries.len() + SPARE_ENTRIES;
+        if self.entries.capacity() / 4 > keep {
+            self.entries.shrink_to(keep);
+        }
     }
 
     fn evict(&mut self) {

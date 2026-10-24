@@ -362,6 +362,34 @@ mod tests {
     }
 
     #[test]
+    fn a_lower_capacity_gives_memory_back() {
+        let mut decoder = Decoder::new();
+        decoder.set_max_capacity(65536);
+        // 1000 entries of 64 bytes as §4.1 counts them, each with a name of its own.
+        let name = |i: u8, j: u8, k: u8| [b'a' + i, b'a' + j, b'a' + k];
+        let mut block = Vec::new();
+        for (i, j, k) in (0..1000).map(|n| (n / 100, n / 10 % 10, n % 10)) {
+            block.extend([0x40, 3]);
+            block.extend(name(i as u8, j as u8, k as u8));
+            block.push(29);
+            block.extend([b'~'; 29]);
+        }
+        assert_eq!(decode(&mut decoder, &block).unwrap().len(), 1000);
+        assert_eq!(decoder.table_size(), 64_000);
+        let before = decoder.heap_size();
+
+        decoder.set_max_capacity(1024);
+        let after = decoder.heap_size();
+        assert!(after < before / 4, "{before} {after}");
+
+        // The 16 newest are left.
+        let fields = decode(&mut decoder, &hex("be cd")).unwrap();
+        assert_eq!(fields[0].0, name(9, 9, 9));
+        assert_eq!(fields[1].0, name(9, 8, 4));
+        assert_eq!(decode(&mut decoder, &hex("ce")), Err(Error::Invalid));
+    }
+
+    #[test]
     fn static_table_lookups() {
         let entries: Vec<_> = (1..=static_table::LEN)
             .map(|index| static_table::get(index).unwrap())

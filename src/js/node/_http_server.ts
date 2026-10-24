@@ -3598,8 +3598,13 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       headerState === NodeHTTPHeaderState.sent &&
       !(this._hasBody && willBeChunked(this))
     ) {
-      // Not while a write still waits for its drain: its bytes never left, and in Node.js it has failed the socket.
-      const unsent = this[kNeedDrain] ? (this[kSocket]?.errored ?? $ERR_STREAM_DESTROYED("write")) : undefined;
+      // Not with bytes of an earlier write unsent: in Node.js that write has failed the socket.
+      // A large one still waits for its drain, a small one was left in the socket's own buffer.
+      const socket = this[kSocket];
+      const unsent =
+        this[kNeedDrain] || socket?.[kClosedWithUnsentData]
+          ? (socket?.errored ?? $ERR_STREAM_DESTROYED("write"))
+          : undefined;
       process.nextTick(finishResponse, this, unsent);
     }
     this.finished = true;

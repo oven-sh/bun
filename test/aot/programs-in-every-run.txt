@@ -324,6 +324,7 @@ copied-properties/plans-of-copies-across-young-collections
 copied-properties/records-of-one-type-copied-whatever-their-state
 copied-properties/sources-that-once-had-getters
 data-from-outside/a-counter-below-a-number-of-every-kind
+data-from-outside/a-list-that-one-arm-of-a-union-refuses-comes-back-whole
 data-from-outside/a-refused-value-under-handlers-that-look-at-the-error-and-handlers-that-do-not
 data-from-outside/an-object-from-outside-is-stored-into-its-own-field-whose-name-a-literal-has
 data-from-outside/json-parse-hostile-texts-without-a-type

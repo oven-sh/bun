@@ -1188,28 +1188,25 @@ export function pass(row: Row): Line {
 export function widen(holder: RowHolder): LineHolder {
   return holder as LineHolder;
 }
-//// schema-arguments-that-constrain-nothing.ts
-// A `Schema` alias whose argument is not one literal of the right kind constrains nothing: the value is validated against the rest of its type, and the build counts each argument it dropped.
-// STATISTIC: SchemaArgumentsDropped = 3
+//// schema-arguments-that-say-no-rule-stop-the-build.ts
+// A `Schema` alias whose argument is not one literal of the right kind says no rule. A validator without that rule would accept what the type was written to keep out, so the build stops.
 import type { Schema } from "bun";
-interface Loose {
-  unbounded: number & Schema.Min<number>;
-  negative: string & Schema.MinLength<-1>;
-  either: string & Schema.Format<"email" | "uuid">;
-  bounded: number & Schema.Min<1>;
+interface Unbounded {
+  value: number & Schema.Min<number>;
 }
-function accepts(change: Partial<Record<keyof Loose, unknown>>): string {
-  try {
-    JSON.parse<Loose>(JSON.stringify({ unbounded: -5, negative: "", either: "neither", bounded: 1, ...change }));
-    return "accepted";
-  } catch (error) {
-    if (!(error instanceof TypeError)) throw error;
-    return "rejected";
-  }
+interface Negative {
+  value: string & Schema.MinLength<-1>;
 }
-console.log("what a dropped argument would have rejected: " + accepts({}));
-console.log("the argument that stands: " + accepts({ bounded: 0 }));
-console.log("the rest of each type: " + [accepts({ unbounded: "5" }), accepts({ negative: 1 }), accepts({ either: null })].join(", "));
+interface Either {
+  value: string & Schema.Format<"email" | "uuid">;
+}
+interface Bounded {
+  value: number & Schema.Min<1>;
+}
+console.log(JSON.parse<Unbounded>('{"value":-5}').value);
+console.log(JSON.parse<Negative>('{"value":""}').value);
+console.log(JSON.parse<Either>('{"value":"neither"}').value);
+console.log(JSON.parse<Bounded>('{"value":1}').value);
 //// sql-plain-rows-in-callbacks.ts
 // The SQLite adapter of Bun.sql creates plain objects. A callback called with rows of sql<Row[]> converts a plain row that matches Row in place at its entry and runs its typed body; a row that does not match runs the untyped clone.
 import { SQL } from "bun";

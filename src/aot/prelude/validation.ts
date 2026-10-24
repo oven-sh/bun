@@ -522,6 +522,13 @@ function readToEnd(run: Run, input: any): void {
   while (input.length < unread.length) readNext(run, input, unread);
 }
 
+// An arm of a union that refuses an array has read only its beginning, and a later arm may hand that copy on as it is, at any depth.
+function readAllToEnd(run: Run): void {
+  for (const [input, unread] of run.unread!) {
+    while ((input as any[]).length < unread.length) readNext(run, input as any[], unread);
+  }
+}
+
 // Reading an object may run code of the program: getters, the traps of a proxy.
 function heldAt(run: Run, holder: any, key: any, at: number): any {
   const value = holder[key];
@@ -1184,7 +1191,10 @@ export function validateByPlan(
     if (found.length !== 0) throw errorOf(found);
   }
   const result = build(run, 0, held);
-  if (result !== run.refused) return result;
+  if (result !== run.refused) {
+    readAllToEnd(run);
+    return result;
+  }
   const found = findIssues(run, held);
   if (found.length === 0) addIssueOfRoot(run, found, held);
   throw errorOf(found);
@@ -1193,7 +1203,9 @@ export function validateByPlan(
 export function interpretNode(value: unknown, plan: string, prepared: Map<string, Prepared>): [boolean, unknown] {
   const run = createRun(plan, prepared, false);
   const result = build(run, 0, heldRoot(run, value));
-  return result === run.refused ? [false, undefined] : [true, result];
+  if (result === run.refused) return [false, undefined];
+  readAllToEnd(run);
+  return [true, result];
 }
 
 export function holdsRule(value: unknown, rule: string, prepared: Map<string, any>): boolean {

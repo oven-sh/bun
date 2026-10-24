@@ -691,7 +691,12 @@ function Component(props) {
       units => ["", `(\n    <div>\n      {bad}\n${units}\n    </div>\n  )`],
     ),
   },
-  order: { ".oxlintrc.json": rc(), "order.jsx": order },
+  order: {
+    ".oxlintrc.json": rc(),
+    "order.jsx": order,
+    "decided.jsx": decided,
+    "called-in-try.jsx": calledInTry,
+  },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
   names: {
     ".oxlintrc.json": rc(),
@@ -702,7 +707,6 @@ function Component(props) {
     "callback-of-map.jsx": callbackOfMap,
   },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
-  control: { ".oxlintrc.json": rc(), "decided.jsx": decided, "called-in-try.jsx": calledInTry },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,

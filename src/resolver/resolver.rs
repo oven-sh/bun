@@ -1747,6 +1747,42 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
+    /// Whether a symlink is on the way to the directory `dir`, without a read of any listing.
+    fn has_symlink_on_the_way(&mut self, dir: &[u8]) -> bool {
+        #[cfg(windows)]
+        let root_len = ResolvePath::windows_filesystem_root(dir).len();
+        #[cfg(not(windows))]
+        let root_len = 1;
+        let mut scratch = bun_paths::path_buffer_pool::get();
+        let mut dir = dir;
+        while dir.len() > root_len && dir.len() < scratch.len() {
+            {
+                let _unlock = self.mutex.lock_guard();
+                if let Some(info) = self.dir_cache_mut().get(dir) {
+                    return !info.abs_real_path.is_empty();
+                }
+            }
+            scratch[..dir.len()].copy_from_slice(dir);
+            scratch[dir.len()] = 0;
+            let dir_z = bun_core::ZStr::from_buf(&scratch[..], dir.len());
+            #[cfg(windows)]
+            let is_link = bun_sys::get_file_attributes(dir_z)
+                .is_some_and(|attributes| attributes.is_reparse_point);
+            #[cfg(not(windows))]
+            let is_link = bun_sys::lstat(dir_z).is_ok_and(|stat| {
+                bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == bun_sys::FileKind::SymLink
+            });
+            if is_link {
+                return true;
+            }
+            let Some(parent) = bun_paths::dirname(dir) else {
+                break;
+            };
+            dir = parent;
+        }
+        false
+    }
+
     /// The path the module loader loads the existing file `path` under, for `import.meta.resolve`.
     pub fn real_path_of_file<'b>(
         &mut self,
@@ -1778,53 +1814,33 @@ impl<'a> Resolver<'a> {
         abs_buf[abs_len] = 0;
         let abs_path = bun_core::ZStr::from_buf(&abs_buf[..], abs_len);
 
-        // Not the directory cache: a missing file must not leave a not-found entry there.
         let file_kind = kind_of(bun_sys::lstat(abs_path).ok()?);
-        if file_kind == FileKind::Directory {
+        let is_link = file_kind == FileKind::SymLink;
+        // A dangling link fails here.
+        let target_kind = if is_link {
+            kind_of(bun_sys::stat(abs_path).ok()?)
+        } else {
+            file_kind
+        };
+        if target_kind == FileKind::Directory {
             return None;
         }
-        let name = Fs::PathName::init(abs_path.as_bytes());
+        if is_link {
+            return bun_sys::realpath(abs_path, buf).ok();
+        }
 
-        // The file exists, so a directory that is cached as not found was made since.
-        let dir = self.read_dir_info_ignore_error(name.dir).or_else(|| {
-            self.bust_dir_cache(name.dir)
-                .then(|| self.read_dir_info_ignore_error(name.dir))
-                .flatten()
-        });
-
+        let dir = bun_paths::dirname(abs_path.as_bytes())?;
+        if !self.has_symlink_on_the_way(dir) {
+            let out = buf.get_mut(..abs_len)?;
+            out.copy_from_slice(abs_path.as_bytes());
+            return Some(out);
+        }
+        // The file system gives the directory. The file is not a link, so its name stays as given.
         let mut real_buf = bun_paths::path_buffer_pool::get();
-        let real: &[u8] = if file_kind == FileKind::SymLink {
-            // Not a dangling link, and not a link to a directory.
-            let target_kind = kind_of(bun_sys::stat(abs_path).ok()?);
-            if target_kind == FileKind::Directory {
-                return None;
-            }
-            // The lazy stat of the entry opens the target, and an open of a pipe can block.
-            let from_entry = (target_kind == FileKind::File)
-                .then(|| dir?.get_entry(self.generation, name.filename))
-                .flatten()
-                .filter(|query| query.entry().base() == name.filename)
-                // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy stat inside
-                // `symlink()` is serialized on the per-entry mutex.
-                .map(|query| unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) })
-                .filter(|target| !target.is_empty());
-            match from_entry {
-                Some(target) => target,
-                None => bun_sys::realpath(abs_path, &mut real_buf).ok()?,
-            }
-        } else {
-            let dir_real_path = dir?.abs_real_path;
-            if dir_real_path.is_empty() {
-                abs_path.as_bytes()
-            } else {
-                self.fs_ref()
-                    .abs_buf_checked(&[dir_real_path, name.filename], &mut real_buf[..])?
-            }
-        };
-
-        let out = buf.get_mut(..real.len())?;
-        out.copy_from_slice(real);
-        Some(out)
+        let real = bun_sys::realpath(abs_path, &mut real_buf).ok()?;
+        let name = bun_paths::basename(abs_path.as_bytes());
+        self.fs_ref()
+            .abs_buf_checked(&[bun_paths::dirname(real)?, name], &mut buf[..])
     }
 
     pub(crate) fn resolve_without_symlinks(

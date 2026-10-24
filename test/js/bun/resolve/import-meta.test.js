@@ -364,11 +364,12 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
   async function resolveAll(...flags) {
     using dir = tempDir("import-meta-resolve-symlink", {
       "real/m.mjs": "export default import.meta.url;",
+      "real2/m.mjs": "export default import.meta.url;",
       "[id].mjs": "export default import.meta.url;",
       "node_modules/local-pkg/package.json": JSON.stringify({ name: "local-pkg", main: "index.js" }),
       "node_modules/local-pkg/index.js": "module.exports = 1;",
       "main.mjs": `
-        import { mkdirSync, writeFileSync } from "node:fs";
+        import { mkdirSync, renameSync, writeFileSync } from "node:fs";
         import { fileURLToPath } from "node:url";
 
         const linked = new URL("./ldir/m.mjs", import.meta.url);
@@ -404,9 +405,16 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
         resolved.createdLate = import.meta.resolve("./ldir/late.mjs");
 
         mkdirSync(new URL("./real/sub/", import.meta.url));
-        writeFileSync(new URL("./real/sub/[x].mjs", import.meta.url), "export default import.meta.url;");
-        const inLateDirectory = [import.meta.resolve("./ldir/sub/[x].mjs"), (await import("./ldir/sub/[x].mjs")).default];
-        resolved.inLateDirectorySameAsImported = inLateDirectory[0] === inLateDirectory[1] || inLateDirectory;
+        writeFileSync(new URL("./real/sub/[x].mjs", import.meta.url), "");
+        resolved.inLateDirectory = import.meta.resolve("./ldir/sub/[x].mjs");
+
+        if (process.platform !== "win32") {
+          // The resolver now knows "cur" as a link to "real". Then "cur" becomes a link to "real2".
+          await import("./cur/m.mjs");
+          renameSync(new URL("./cur", import.meta.url), new URL("./old", import.meta.url));
+          renameSync(new URL("./next", import.meta.url), new URL("./cur", import.meta.url));
+          resolved.retargetedLink = import.meta.resolve("./cur/m.mjs");
+        }
 
         // "beforeMkdir" must not leave a trace in the resolver: a module in that directory still finds node_modules.
         mkdirSync(new URL("./gen/a/", import.meta.url), { recursive: true });
@@ -419,6 +427,8 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
     const root = String(dir);
     symlinkSync(join(root, "real"), join(root, "ldir"), "junction");
     if (!isWindows) {
+      symlinkSync("real", join(root, "cur"));
+      symlinkSync("real2", join(root, "next"));
       // A file symlink needs a privilege on Windows.
       symlinkSync(join("real", "m.mjs"), join(root, "lfile.mjs"));
       symlinkSync(join("real", "m.mjs"), join(root, "lfile.js"));
@@ -478,7 +488,8 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
         encodedBackslash: isWindows ? url("real", "m.mjs") : joined("./ldir%5Cm.mjs"),
         beforeMkdir: joined("./gen/a/x.mjs"),
         createdLate: url("real", "late.mjs"),
-        inLateDirectorySameAsImported: true,
+        inLateDirectory: url("real", "sub", "[x].mjs"),
+        retargetedLink: isWindows ? undefined : url("real2", "m.mjs"),
         packageFromLateDirectory: url("node_modules", "local-pkg", "index.js"),
       },
       stderr: "",
@@ -513,7 +524,8 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
         encodedBackslash: joined("./ldir%5Cm.mjs"),
         beforeMkdir: joined("./gen/a/x.mjs"),
         createdLate: joined("./ldir/late.mjs"),
-        inLateDirectorySameAsImported: [joined("./ldir/sub/[x].mjs"), url("ldir", "sub", "[x].mjs")],
+        inLateDirectory: joined("./ldir/sub/[x].mjs"),
+        retargetedLink: isWindows ? undefined : joined("./cur/m.mjs"),
         packageFromLateDirectory: url("node_modules", "local-pkg", "index.js"),
       },
       stderr: "",

@@ -479,7 +479,10 @@ impl WebWorker {
             if let Some(flags) = parsed {
                 // Node options were validated in JSWorker, where environment and explicit argv
                 // are distinguished. Web Workers use the effective vector as their explicit argv.
-                if let Some(invalid) = flags.invalid.filter(|_| !is_node_worker && !inherit_exec_argv) {
+                if let Some(invalid) = flags
+                    .invalid
+                    .filter(|_| !is_node_worker && !inherit_exec_argv)
+                {
                     use bun_core::WTFStringImplExt as _;
                     // SAFETY: `invalid` indexes the effective slice passed to the parser above.
                     let arg = unsafe { &**effective_exec_argv_ptr.add(invalid) }.to_owned_slice_z();

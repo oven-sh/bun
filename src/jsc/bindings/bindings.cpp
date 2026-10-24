@@ -733,6 +733,13 @@ static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
         || hasIndexedProperties(structure->indexingType());
 }
 
+// The class comparison that strict Bun__deepEquals makes once specialObjectsDequal has
+// no verdict. Out of line, for a cold path that has to decide before that point.
+static NEVER_INLINE bool haveSameClassName(JSC::JSObject* a, JSC::JSObject* b)
+{
+    return JSObject::calculatedClassName(a) == JSObject::calculatedClassName(b);
+}
+
 // node compares the non-index own properties of typed arrays as well;
 // only the node entry point (checkPrototypes) pays for this.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
@@ -1466,11 +1473,10 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             if (mode.enableAsymmetricMatchers) {
                 return false;
             }
-            // node rejects two prototypes before it reads a view, and the node modes did
-            // that before this arm. Strict Bun.deepEquals does it here, so that a view of
-            // another class is not equal and does not throw.
-            if (mode.isStrict && !mode.checkPrototypes && !mode.skipPrototypeIdentity
-                && left->getPrototypeDirect() != right->getPrototypeDirect()) {
+            // Strict Bun.deepEquals rejects two class names before it reads a view, as it
+            // does for two readable views. The node modes compared the constructors
+            // before this arm.
+            if (mode.isStrict && !mode.checkPrototypes && !mode.skipPrototypeIdentity && !haveSameClassName(left, right)) {
                 return false;
             }
             throwTypeError(globalObject, scope, "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer"_s);

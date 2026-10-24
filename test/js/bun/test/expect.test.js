@@ -1956,6 +1956,8 @@ describe("expect()", () => {
     describe.each(matchers)("%s()", matcher => {
       const equal = (/** @type {unknown} */ a, /** @type {unknown} */ b) => expect(a)[matcher](b);
       const notEqual = (/** @type {unknown} */ a, /** @type {unknown} */ b) => expect(a).not[matcher](b);
+      // A failed matcher names itself in its message. Jest throws a TypeError when it prints a DataView.
+      const failure = isBun ? matcher : undefined;
 
       test.each([
         ["different bytes", () => view(1, 2), () => view(3, 4)],
@@ -1973,7 +1975,7 @@ describe("expect()", () => {
       ])("rejects %s", (_, a, b) => {
         notEqual(a(), b());
         notEqual(b(), a());
-        expect(() => equal(a(), b())).toThrow();
+        expect(() => equal(a(), b())).toThrow(failure);
         notEqual({ nested: [a()] }, { nested: [b()] });
         notEqual(new Map([["key", a()]]), new Map([["key", b()]]));
         notEqual(new Map([[a(), "value"]]), new Map([[b(), "value"]]));
@@ -1994,7 +1996,7 @@ describe("expect()", () => {
       ])("accepts %s", (_, a, b) => {
         equal(a(), b());
         equal(b(), a());
-        expect(() => notEqual(a(), b())).toThrow();
+        expect(() => notEqual(a(), b())).toThrow(failure);
         equal({ nested: [a()] }, { nested: [b()] });
       });
 

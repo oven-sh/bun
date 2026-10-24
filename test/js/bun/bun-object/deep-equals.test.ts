@@ -303,7 +303,7 @@ describe("Bun.deepEquals on DataViews", () => {
     expect(deepEquals(view(1, 2), {}, true, true)).toBe(false);
   });
 
-  // Strict mode rejects a view of another class first, as node does, so it reads no length.
+  // Strict mode compares the class names first, readable or not, so it reads no length here.
   it("strict mode rejects an unreadable view of another class without a TypeError", () => {
     const unreadable = () => outOfBoundsView(SubView);
     expect(deepEquals(unreadable(), view(), true)).toBe(false);
@@ -311,6 +311,16 @@ describe("Bun.deepEquals on DataViews", () => {
     expectTypeError(() => deepEquals(unreadable(), unreadable(), true));
     expectTypeError(() => deepEquals(unreadable(), view(), true, true));
     expectTypeError(() => deepEquals(unreadable(), view()));
+  });
+
+  // A DataView of another realm has another prototype and the same class name.
+  it("strict mode gives a DataView of another realm the same class, readable or not", () => {
+    const OtherDataView: typeof DataView = vm.runInNewContext("DataView");
+    expect(Object.getPrototypeOf(new OtherDataView(buffer()))).not.toBe(DataView.prototype);
+    expect(deepEquals(new OtherDataView(buffer(1, 2)), view(1, 2), true)).toBe(true);
+    expect(deepEquals(new OtherDataView(buffer(1, 2)), view(3, 4), true)).toBe(false);
+    expectTypeError(() => deepEquals(outOfBoundsView(OtherDataView), view(), true));
+    expectTypeError(() => deepEquals(view(), outOfBoundsView(OtherDataView), true));
   });
 });
 

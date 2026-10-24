@@ -1196,10 +1196,16 @@ pub(crate) fn scan_imports_and_exports(
                                         == ExportsKind::Cjs
                                 {
                                     // Cross-chunk dynamic import to CJS - needs special handling in printer
+                                    let to_esm_flags = this.to_esm_flags(
+                                        source_index,
+                                        part_index,
+                                        kind,
+                                        rec_source_index.get(),
+                                    );
                                     col!(import_records_list)[id].as_mut_slice()
                                         [import_record_index as usize]
                                         .flags
-                                        .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                                        .insert(to_esm_flags);
                                     to_esm_uses += 1;
                                 } else if kind != ImportKind::Dynamic {
                                     // Static imports to external CJS modules need __toESM wrapping
@@ -1245,10 +1251,16 @@ pub(crate) fn scan_imports_and_exports(
                                         .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)))
                             && output_format != Format::InternalBakeDev
                         {
+                            let to_esm_flags = this.to_esm_flags(
+                                source_index,
+                                part_index,
+                                kind,
+                                other_source_index,
+                            );
                             col!(import_records_list)[id].as_mut_slice()
                                 [import_record_index as usize]
                                 .flags
-                                .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                                .insert(to_esm_flags);
                             to_esm_uses += 1;
                         }
 

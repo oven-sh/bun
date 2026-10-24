@@ -107,6 +107,9 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// `__toESM` gets `isNodeMode`: the importee is a data file, not a CommonJS module.
+        const TO_ESM_NODE_MODE = 1 << 19;
     }
 }
 

@@ -1143,6 +1143,9 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            // TypeScript emits "export = value;" as a trailing "module.exports = value;".
+            let mut export_equals_parts = BumpVec::<js_ast::Part>::new_in(arena);
+
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for stmt in stmts.iter() {
                 match &stmt.data {
@@ -1193,32 +1196,6 @@ impl<'a> Parser<'a> {
                         p.append_part(parts_list, sliced)?;
                     }
 
-                    js_ast::StmtData::SClass(class) => {
-                        // Move class export statements to the top of the file if we can
-                        // This automatically resolves some cyclical import issues
-                        // https://github.com/kysely-org/kysely/issues/412
-                        let should_move = !p.options.bundle && class.class.can_be_moved();
-
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        let appended = p.append_part(&mut parts, sliced)?;
-
-                        if should_move && appended {
-                            // `Part` isn't `Copy`; pop+push instead of last+truncate.
-                            before.push(parts.pop().expect("infallible: part was appended"));
-                        }
-                    }
-                    js_ast::StmtData::SExportDefault(value) => {
-                        // We move export default statements when we can
-                        // This automatically resolves some cyclical import issues in packages like luxon
-                        // https://github.com/oven-sh/bun/issues/1961
-                        let should_move = !p.options.bundle && value.can_be_moved();
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        let appended = p.append_part(&mut parts, sliced)?;
-
-                        if should_move && appended {
-                            before.push(parts.pop().expect("infallible: part was appended"));
-                        }
-                    }
                     js_ast::StmtData::SEnum(_) => {
                         // `Part` isn't `Clone`; move out the
                         // pre-visited parts instead of `appendSlice`.
@@ -1241,12 +1218,18 @@ impl<'a> Parser<'a> {
                         // Advance the shared-slice cursor past this enum's scopes.
                         p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                     }
+                    js_ast::StmtData::SExportEquals(_) => {
+                        let sliced = arena.alloc_slice_copy(&[*stmt]);
+                        p.append_part(&mut export_equals_parts, sliced)?;
+                    }
                     _ => {
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
                     }
                 }
             }
+
+            parts.append(&mut export_equals_parts);
         }
 
         visit_tracer.end();

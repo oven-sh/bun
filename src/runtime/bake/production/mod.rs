@@ -664,6 +664,54 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         return Ok(());
     }
 
+    // The output of each entry point is loaded as a module on its side.
+    let mut not_modules: usize = 0;
+    let mut client_components: usize = 0;
+    for (input, output) in entry_points.files.iter() {
+        let output = output
+            .unwrap()
+            .map(|index| &bundled_outputs_list[index.get() as usize]);
+        log!(
+            "entry point side={} src={} dest={}\n",
+            side_name(input.side),
+            BStr::new(input.abs_path()),
+            BStr::new(output.map_or(&b"none"[..], |file| &file.dest_path)),
+        );
+        let path = bun_core::fmt::quote(resolve_path::relative(cwd, input.abs_path()));
+        match output {
+            // Only a "use client" file has its entry point output on the other side.
+            Some(file) if file.side != Some(input.side) => {
+                bun_core::err_generic!(
+                    "{} is a client component, so the server cannot load it",
+                    path
+                );
+                client_components += 1;
+            }
+            Some(file) if file.loader.is_javascript_like() => {}
+            _ => {
+                bun_core::err_generic!(
+                    "{} was not bundled to a JavaScript module, so the {} cannot load it",
+                    path,
+                    side_name(input.side),
+                );
+                not_modules += 1;
+            }
+        }
+    }
+    if not_modules > 0 {
+        bun_core::note!(
+            "The build loads each route file, layout and framework entry point as a module."
+        );
+    }
+    if client_components > 0 {
+        bun_core::note!(
+            "\"use client\" is not supported yet in a route file in a production build. Put the client component in a file of its own and import it from the route file."
+        );
+    }
+    if not_modules + client_components > 0 {
+        Global::crash();
+    }
+
     bun_core::pretty_errorln!("Rendering routes");
     Output::flush();
 
@@ -681,14 +729,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
-        for (input, output) in entry_points.files.iter() {
-            log!(
-                "entry point side={} src={} output={:?}\n",
-                side_name(input.side),
-                BStr::new(input.abs_path()),
-                output.unwrap(),
-            );
-        }
         for (i, file) in bundled_outputs_list.iter().enumerate() {
             log!(
                 "src_index={:?} side={} src={} dest={}\n",
@@ -827,7 +867,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             let str = BunString::create_format(format_args!(
                 "{}{}",
                 BStr::new(public_path),
-                BStr::new(&pt.output_file(client_file).map_err(js_err)?.dest_path),
+                BStr::new(&pt.output_file(client_file).dest_path),
             ))
             .into_js(global)
             .map_err(js_err)?;
@@ -1004,7 +1044,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .map_err(js_err)?;
         for r#ref in pt
             .output_file(main_file_route_index)
-            .map_err(js_err)?
             .referenced_css_chunks
             .iter()
         {
@@ -1025,12 +1064,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     pt.preload_bundled_module(file).map_err(js_err)?,
                 )
                 .map_err(js_err)?;
-            for r#ref in pt
-                .output_file(file)
-                .map_err(js_err)?
-                .referenced_css_chunks
-                .iter()
-            {
+            for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
                 styles
                     .put_index(
                         global,
@@ -1053,12 +1087,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         pt.preload_bundled_module(file).map_err(js_err)?,
                     )
                     .map_err(js_err)?;
-                for r#ref in pt
-                    .output_file(file)
-                    .map_err(js_err)?
-                    .referenced_css_chunks
-                    .iter()
-                {
+                for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
                     styles
                         .put_index(
                             global,
@@ -1110,7 +1139,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     TypeAndFlags::new(
                         route.r#type.get(),
                         pt.output_file(main_file_route_index)
-                            .map_err(js_err)?
                             .bake_extra
                             .route
                             .is_fully_static(),

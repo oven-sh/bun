@@ -113,39 +113,24 @@ impl PerThread {
         self.attached = true;
     }
 
-    pub(crate) fn output_index(&self, id: OpaqueFileId) -> Option<OutputFileIndex> {
-        self.entry_points.files.values()[id.get() as usize].unwrap()
+    /// `build_with_vm` stops the build for an entry point with no output before `init`.
+    pub(crate) fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
+        self.entry_points.files.values()[id.get() as usize]
+            .unwrap()
+            .expect("an entry point with no output stops the build")
     }
 
     pub(crate) fn input_file(&self, id: OpaqueFileId) -> InputFile {
         self.entry_points.files.keys()[id.get() as usize]
     }
 
-    /// The entry point output of `id`. Throws when the build for its side has none: a
-    /// stylesheet has no entry point output, and a client component has its own in the
-    /// client build.
-    pub(crate) fn output_file(&self, id: OpaqueFileId) -> JsResult<&OutputFile> {
-        let input = self.input_file(id);
-        if let Some(index) = self.output_index(id) {
-            let file = &self.bundled_outputs[index.get() as usize];
-            if file.side == Some(input.side) {
-                return Ok(file);
-            }
-        }
-        Err(self.global().throw(format_args!(
-            "The {} build has no entry point output for {}",
-            side_name(input.side),
-            bun_core::fmt::quote(resolve_path::relative(
-                &self.entry_points.root,
-                input.abs_path()
-            )),
-        )))
+    pub(crate) fn output_file(&self, id: OpaqueFileId) -> &OutputFile {
+        &self.bundled_outputs[self.output_index(id).get() as usize]
     }
 
     /// The key of the module of a server entry point in `module_map`.
     fn module_key(&self, id: OpaqueFileId) -> JsResult<JSValue> {
-        let file = self.output_file(id)?;
-        bun_string_jsc::create_utf8_for_js(self.global(), &module_map_key(file))
+        bun_string_jsc::create_utf8_for_js(self.global(), &module_map_key(self.output_file(id)))
     }
 
     // Must be run at the top of the event loop

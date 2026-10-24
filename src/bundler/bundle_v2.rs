@@ -641,6 +641,30 @@ pub mod bv2_impl {
                 }
             }
 
+            /// An `OpaqueFileId` or none, in the size of one.
+            #[derive(Copy, Clone, Eq, PartialEq)]
+            pub struct OpaqueFileIdOptional(u32);
+            impl OpaqueFileIdOptional {
+                pub(crate) const NONE: Self = Self(u32::MAX);
+                #[inline]
+                pub(crate) const fn some(id: OpaqueFileId) -> Self {
+                    Self(id.0)
+                }
+                #[inline]
+                pub(crate) const fn get(self) -> Option<OpaqueFileId> {
+                    if self.0 == Self::NONE.0 {
+                        None
+                    } else {
+                        Some(OpaqueFileId(self.0))
+                    }
+                }
+            }
+            impl Default for OpaqueFileIdOptional {
+                fn default() -> Self {
+                    Self::NONE
+                }
+            }
+
             /// `EntryPointMap.InputFile`. The `Hash`/`Eq` impls below are content-based
             /// (not byte-layout) — store a
             /// `RawSlice` and let `bun_ptr` encapsulate the unsafe re-borrow.
@@ -1090,14 +1114,16 @@ pub mod bv2_impl {
                 pub(crate) namespace: Box<[u8]>,
                 pub(crate) specifier: Box<[u8]>,
                 pub(crate) importer_source_index: u32,
-                /// An entry point has no import record. For an entry point of `bun build --app`
-                /// this is the index of its key in the `EntryPointMap`, which `on_resolve` binds
-                /// to the file the plugins answer with. For any other entry point it is 0.
                 pub(crate) import_record_index: u32,
                 pub(crate) range: bun_ast::Range,
                 pub(crate) original_target: Target,
                 /// Set for the html file of a dev server route, see `BundleV2::requested_file_loader`.
                 pub(crate) loader: Option<Loader>,
+                /// `bun build --app`: the key of this entry point in the `EntryPointMap`, which
+                /// `on_resolve` binds to the file the plugins answer with. `NONE` for an import,
+                /// and for an entry point of any other build.
+                pub(crate) bake_entry_point:
+                    super::super::bake_types::production::OpaqueFileIdOptional,
             }
 
             /// Mirrors `JSBundler.Resolve.Value.success` payload.
@@ -3784,17 +3810,18 @@ pub mod bv2_impl {
             self.bake_entry_point_sources = vec![Index::INVALID; num_entry_points];
 
             for (key_index, key) in data.files.keys().iter().enumerate() {
+                let id = bake::production::OpaqueFileId::init(key_index as u32);
                 let abs_path = key.abs_path();
                 let target = match key.side {
                     bake::Side::Client => Target::Browser,
                     bake::Side::Server => self.transpiler.options.target,
                 };
 
-                if self.enqueue_entry_point_key_on_resolve_plugin_if_needed(
+                if self.enqueue_bake_entry_point_on_resolve_plugin_if_needed(
                     abs_path,
                     target,
                     None,
-                    key_index as u32,
+                    bake::production::OpaqueFileIdOptional::some(id),
                 ) {
                     continue;
                 }
@@ -3813,7 +3840,7 @@ pub mod bv2_impl {
                         None => self.source_index_of_entry_item(&resolved, target),
                     };
                 if let Some(source_index) = source_index {
-                    self.bind_bake_entry_point(key_index as u32, source_index);
+                    self.bind_bake_entry_point(id, source_index);
                 }
             }
             Ok(())
@@ -3829,20 +3856,16 @@ pub mod bv2_impl {
             self.path_to_source_index_map(target).get_path(path)
         }
 
-        /// Whether the request of an entry point came from a key of the `EntryPointMap` of
-        /// `bun build --app`. No other build has keys.
-        #[inline(always)]
-        fn is_bake_entry_point_key(&self, key_index: u32) -> bool {
-            (key_index as usize) < self.bake_entry_point_sources.len()
-        }
-
-        /// `bun build --app`: key `key_index` of the `EntryPointMap` is the file at `source_index`.
-        #[inline]
-        fn bind_bake_entry_point(&mut self, key_index: u32, source_index: IndexInt) {
-            if let Some(bound) = self.bake_entry_point_sources.get_mut(key_index as usize) {
-                debug_assert!(bound.is_invalid(), "each entry point key is bound once");
-                *bound = Index::source(source_index);
-            }
+        /// `bun build --app`: the entry point `id` of the `EntryPointMap` is the file at
+        /// `source_index`.
+        fn bind_bake_entry_point(
+            &mut self,
+            id: bake::production::OpaqueFileId,
+            source_index: IndexInt,
+        ) {
+            let bound = &mut self.bake_entry_point_sources[id.get() as usize];
+            debug_assert!(bound.is_invalid(), "each entry point is bound once");
+            *bound = Index::source(source_index);
         }
 
         /// `bun build --app`: an onResolve plugin passed on a key, and its file was in the graph
@@ -5392,13 +5415,12 @@ pub mod bv2_impl {
                                     .entry_point_original_names
                                     .put(idx, &resolve.import_record.specifier);
                             }
-                            let key_index = resolve.import_record.import_record_index;
-                            if this.is_bake_entry_point_key(key_index) {
+                            if let Some(id) = resolve.import_record.bake_entry_point.get() {
                                 let source_index = source_index.or_else(|| {
                                     this.promote_to_bake_entry_point(&resolved, target)
                                 });
                                 if let Some(source_index) = source_index {
-                                    this.bind_bake_entry_point(key_index, source_index);
+                                    this.bind_bake_entry_point(id, source_index);
                                 }
                             }
                             return;
@@ -5633,10 +5655,9 @@ pub mod bv2_impl {
                                 .graph
                                 .entry_point_original_names
                                 .put(source_index.get(), &resolve.import_record.specifier);
-                            this.bind_bake_entry_point(
-                                resolve.import_record.import_record_index,
-                                source_index.get(),
-                            );
+                            if let Some(id) = resolve.import_record.bake_entry_point.get() {
+                                this.bind_bake_entry_point(id, source_index.get());
+                            }
                         } else {
                             let source_import_records =
                                 &mut this.graph.ast.items_import_records_mut()
@@ -6449,6 +6470,7 @@ pub mod bv2_impl {
                             range: import_record.range,
                             original_target,
                             loader: None,
+                            bake_entry_point: bake::production::OpaqueFileIdOptional::NONE,
                         },
                     );
 
@@ -6467,17 +6489,22 @@ pub mod bv2_impl {
             target: options::Target,
             loader: Option<Loader>,
         ) -> bool {
-            self.enqueue_entry_point_key_on_resolve_plugin_if_needed(entry_point, target, loader, 0)
+            self.enqueue_bake_entry_point_on_resolve_plugin_if_needed(
+                entry_point,
+                target,
+                loader,
+                bake::production::OpaqueFileIdOptional::NONE,
+            )
         }
 
-        /// `key_index`: see `MiniImportRecord::import_record_index`.
+        /// `bake_entry_point`: see `MiniImportRecord::bake_entry_point`.
         #[inline(always)]
-        fn enqueue_entry_point_key_on_resolve_plugin_if_needed(
+        fn enqueue_bake_entry_point_on_resolve_plugin_if_needed(
             &mut self,
             entry_point: &[u8],
             target: options::Target,
             loader: Option<Loader>,
-            key_index: u32,
+            bake_entry_point: bake::production::OpaqueFileIdOptional,
         ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
                 let mut temp_path = Fs::Path::init(entry_point);
@@ -6503,10 +6530,11 @@ pub mod bv2_impl {
                             namespace: (&b"file"[..]).into(),
                             specifier: entry_point.into(),
                             importer_source_index: u32::MAX, // Sentinel value for entry points
-                            import_record_index: key_index,
+                            import_record_index: 0,
                             range: bun_ast::Range::NONE,
                             original_target: target,
                             loader,
+                            bake_entry_point,
                         },
                     );
 

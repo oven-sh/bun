@@ -496,24 +496,32 @@ export default function () {
     const page = (text: string) => `export default () => ${JSON.stringify(text)};`;
     const allPages = ["a", "b", "d", "e", "f", "g", "h"];
     const serverComponents = `serverComponents: { separateSSRGraph: true, serverRuntimeImportSource: "./server.ts", serverRegisterClientReferenceExport: "registerClientReference" },`;
+    const clientEntryPoint = `clientEntryPoint: "./client.ts",`;
 
-    /** An app with a framework that renders the text a page returns. `framework`, `router` and `plugins` are spliced into its config. */
+    /**
+     * An app with a framework that renders the text a page returns. `framework`, `router` and
+     * `plugins` are spliced into its config. A plugin calls `asked(args)` to record a call.
+     */
     const appFiles = (pages: string[], { framework = "", router = "", plugins = "" } = {}) => ({
       "server.ts": `
         export function render(req, meta) {
           return new Response(String(meta.pageModule.default()));
         }
         export async function prerender(meta) {
-          return { files: { "/index.html": meta.pageModule.default() } };
+          return { files: { "/index.html": meta.pageModule.default(), "/scripts.json": JSON.stringify(meta.modules) } };
         }
         export function registerClientReference(value, file, name) {
           return "client-" + name;
         }
       `,
+      "client.ts": `console.log("client");`,
       "app.ts": `
+        import fs from "node:fs";
         import path from "node:path";
         const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", layouts: true, ${router} };
         const shared = path.join(import.meta.dir, "shared", "page.ts");
+        const asked = args =>
+          fs.appendFileSync(path.join(import.meta.dir, "asked.txt"), args.kind + " " + path.basename(args.path) + "\\n");
         export default { app: { framework: { fileSystemRouterTypes: [fsr], ${framework} }, plugins: [${plugins}] } };
       `,
       "shared/page.ts": page("shared-page"),
@@ -529,6 +537,7 @@ export default function () {
       ...Object.fromEntries(pages.map(name => [`/${name}`, `page-${name}`])),
     });
 
+    /** Builds the app in `dir`. `asked` is the sorted calls of the plugin, `scripts` says for each client script of a page whether the build wrote it. */
     async function prerender(dir: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--app", "./app.ts"],
@@ -538,12 +547,20 @@ export default function () {
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const dist = path.join(dir, "dist");
       const pages: Record<string, string> = {};
-      for (const file of new Bun.Glob("**/index.html").scanSync(path.join(dir, "dist"))) {
+      const scripts: Record<string, boolean> = {};
+      for (const file of existsSync(dist) ? new Bun.Glob("**/index.html").scanSync(dist) : []) {
         const route = normalizePath(path.dirname(file));
-        pages[route === "." ? "/" : "/" + route] = await Bun.file(path.join(dir, "dist", file)).text();
+        pages[route === "." ? "/" : "/" + route] = await Bun.file(path.join(dist, file)).text();
+        for (const script of await Bun.file(path.join(dist, path.dirname(file), "scripts.json")).json()) {
+          scripts[script.replace(/[\w-]+(?=\.js$)/, "[name]")] = existsSync(path.join(dist, script));
+        }
       }
-      return { pages, exitCode, stderr };
+      const calls = await Bun.file(path.join(dir, "asked.txt"))
+        .text()
+        .catch(() => "");
+      return { pages, scripts, asked: calls.split("\n").filter(Boolean).sort(), exitCode, stderr };
     }
 
     test.concurrent("when no two routes share a file", async () => {
@@ -579,105 +596,230 @@ export default function () {
       const plugins = `{
         name: "passes",
         setup(build) {
-          build.onResolve({ filter: /[\\\\/](server|a)\\.ts$/ }, () => undefined);
+          build.onResolve({ filter: /[\\\\/](server|a)\\.ts$/ }, args => void asked(args));
         },
       }`;
       using dir = tempDir("bake-production-plugin-passes", appFiles(allPages, { plugins }));
-      const { pages, exitCode, stderr } = await prerender(String(dir));
-      expect({ pages, exitCode }, stderr).toEqual({ pages: ownPages(allPages), exitCode: 0 });
+      const { pages, asked, exitCode, stderr } = await prerender(String(dir));
+      expect({ pages, asked, exitCode }, stderr).toEqual({
+        pages: ownPages(allPages),
+        asked: ["entry-point-build a.ts", "entry-point-build server.ts"],
+        exitCode: 0,
+      });
     });
 
-    test.concurrent("when an onResolve plugin answers for four routes in reverse order", async () => {
+    test.concurrent("when an onResolve plugin answers for four routes in the reverse of the order asked", async () => {
       const plugins = `{
         name: "reverse",
         setup(build) {
-          const order = ["h", "e", "d", "b"];
-          const answered = order.map(() => Promise.withResolvers());
-          build.onResolve({ filter: /[\\\\/]routes[\\\\/][bdeh]\\.ts$/ }, async args => {
-            const turn = order.indexOf(path.basename(args.path, ".ts"));
-            if (turn > 0) await answered[turn - 1].promise;
-            answered[turn].resolve();
-            return undefined;
+          const answers = [];
+          build.onResolve({ filter: /[\\\\/]routes[\\\\/][bdeh]\\.ts$/ }, args => {
+            asked(args);
+            const answer = Promise.withResolvers();
+            answers.push(answer);
+            if (answers.length === 4) for (const last of answers.reverse()) last.resolve();
+            return answer.promise;
           });
         },
       }`;
       using dir = tempDir("bake-production-plugin-reverse", appFiles(allPages, { plugins }));
-      const { pages, exitCode, stderr } = await prerender(String(dir));
-      expect({ pages, exitCode }, stderr).toEqual({ pages: ownPages(allPages), exitCode: 0 });
+      const { pages, asked, exitCode, stderr } = await prerender(String(dir));
+      expect({ pages, asked, exitCode }, stderr).toEqual({
+        pages: ownPages(allPages),
+        asked: ["b", "d", "e", "h"].map(name => `entry-point-build ${name}.ts`),
+        exitCode: 0,
+      });
     });
 
     test.concurrent("when an onResolve plugin resolves two routes to one file", async () => {
       const plugins = `{
         name: "resolves",
         setup(build) {
-          build.onResolve({ filter: /[\\\\/]routes[\\\\/](a|e)\\.ts$/ }, () => ({ path: shared }));
+          build.onResolve({ filter: /[\\\\/]routes[\\\\/](a|e)\\.ts$/ }, args => (asked(args), { path: shared }));
         },
       }`;
       using dir = tempDir("bake-production-plugin-resolves", appFiles(allPages, { plugins }));
-      const { pages, exitCode, stderr } = await prerender(String(dir));
-      expect({ pages, exitCode }, stderr).toEqual({
+      const { pages, asked, exitCode, stderr } = await prerender(String(dir));
+      expect({ pages, asked, exitCode }, stderr).toEqual({
         pages: { ...ownPages(allPages), "/a": "shared-page", "/e": "shared-page" },
+        asked: ["entry-point-build a.ts", "entry-point-build e.ts"],
         exitCode: 0,
       });
     });
 
     // The plugin sees `b.ts` twice: as an entry point, and as the import in `a.ts`.
     // Whichever it answers first puts the file in the graph.
+    const passesOnImportedRoute = (entryPointFirst: boolean) => `{
+      name: "passes",
+      setup(build) {
+        const first = Promise.withResolvers();
+        build.onResolve({ filter: /b\\.ts$/ }, async args => {
+          asked(args);
+          if ((args.kind === "entry-point-build") === ${entryPointFirst}) first.resolve();
+          else await first.promise;
+          return undefined;
+        });
+      },
+    }`;
     test.concurrent.each([
       ["before", true],
       ["after", false],
     ])("when an onResolve plugin passes on a route %s the import of it is resolved", async (_, entryPointFirst) => {
-      const plugins = `{
-        name: "passes",
-        setup(build) {
-          const first = Promise.withResolvers();
-          build.onResolve({ filter: /b\\.ts$/ }, async args => {
-            if ((args.kind === "entry-point-build") === ${entryPointFirst}) first.resolve();
-            else await first.promise;
-            return undefined;
-          });
-        },
-      }`;
       using dir = tempDir("bake-production-plugin-import-order", {
-        ...appFiles(allPages, { plugins }),
+        ...appFiles(allPages, { plugins: passesOnImportedRoute(entryPointFirst) }),
         "routes/a.ts": `import b from "./b.ts";\nexport default () => "page-a imports " + b();`,
       });
-      const { pages, exitCode, stderr } = await prerender(String(dir));
-      expect({ pages, exitCode }, stderr).toEqual({
+      const { pages, asked, exitCode, stderr } = await prerender(String(dir));
+      expect({ pages, asked, exitCode }, stderr).toEqual({
         pages: { ...ownPages(allPages), "/a": "page-a imports page-b" },
+        asked: ["entry-point-build b.ts", "import-statement b.ts"],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each([
+      ["passes on", "undefined"],
+      ["resolves", "{ path: args.path }"],
+    ])("when an onResolve plugin %s the client entry point", async (_, answer) => {
+      const plugins = `{
+        name: "client",
+        setup(build) {
+          build.onResolve({ filter: /[\\\\/]client\\.ts$/ }, args => (asked(args), ${answer}));
+        },
+      }`;
+      using dir = tempDir("bake-production-plugin-client", appFiles(allPages, { router: clientEntryPoint, plugins }));
+      const { pages, scripts, asked, exitCode, stderr } = await prerender(String(dir));
+      expect({ pages, scripts, asked, exitCode }, stderr).toEqual({
+        pages: ownPages(allPages),
+        scripts: { "/_bun/[name].js": true },
+        asked: ["entry-point-build client.ts"],
         exitCode: 0,
       });
     });
 
     // A client component is an entry point of the build, but no route file.
-    test.concurrent("when a route imports a client component", async () => {
-      const realPages = ["a", "b", "d", "e", "h"];
-      using dir = tempDir("bake-production-client-component", {
-        ...appFiles(realPages, { framework: serverComponents }),
+    describe("with a client component", () => {
+      const clientComponent = {
         "components/Button.ts": `"use client";\nexport function Button() {}`,
         "routes/b.ts": `import { Button } from "../components/Button.ts";\nexport default () => "page-b with " + Button;`,
+      };
+
+      test.concurrent("when two route files are links to one file", async () => {
+        const realPages = ["a", "b", "d", "e", "h"];
+        using dir = tempDir("bake-production-client-component", {
+          ...appFiles(realPages, { framework: serverComponents }),
+          ...clientComponent,
+        });
+        symlinkSync(path.join("..", "shared", "page.ts"), path.join(String(dir), "routes", "f.ts"));
+        symlinkSync(path.join("..", "shared", "page.ts"), path.join(String(dir), "routes", "g.ts"));
+        const { pages, exitCode, stderr } = await prerender(String(dir));
+        expect({ pages, exitCode }, stderr).toEqual({
+          pages: {
+            ...ownPages(realPages),
+            "/b": "page-b with client-Button",
+            "/f": "shared-page",
+            "/g": "shared-page",
+          },
+          exitCode: 0,
+        });
       });
-      symlinkSync(path.join("..", "shared", "page.ts"), path.join(String(dir), "routes", "f.ts"));
-      symlinkSync(path.join("..", "shared", "page.ts"), path.join(String(dir), "routes", "g.ts"));
-      const { pages, exitCode, stderr } = await prerender(String(dir));
-      expect({ pages, exitCode }, stderr).toEqual({
-        pages: { ...ownPages(realPages), "/b": "page-b with client-Button", "/f": "shared-page", "/g": "shared-page" },
-        exitCode: 0,
+
+      test.concurrent("when an onResolve plugin passes on a route after the import of it is resolved", async () => {
+        using dir = tempDir("bake-production-client-component-plugin", {
+          ...appFiles(allPages, {
+            framework: serverComponents,
+            router: clientEntryPoint,
+            plugins: passesOnImportedRoute(false),
+          }),
+          ...clientComponent,
+          "routes/a.ts": `import b from "./b.ts";\nexport default () => "page-a imports " + b();`,
+        });
+        const { pages, scripts, asked, exitCode, stderr } = await prerender(String(dir));
+        expect({ pages, scripts, asked, exitCode }, stderr).toEqual({
+          pages: {
+            ...ownPages(allPages),
+            "/a": "page-a imports page-b with client-Button",
+            "/b": "page-b with client-Button",
+          },
+          scripts: { "/_bun/[name].js": true },
+          asked: ["entry-point-build b.ts", "import-statement b.ts"],
+          exitCode: 0,
+        });
       });
     });
 
-    // The server loads the entry point output of each route file as a module.
-    test.concurrent.each([
-      ["a stylesheet", "", `extensions: "*"`, "routes/styles.css", `body { color: red; }`],
-      ["a client component", serverComponents, "", "routes/client.ts", `"use client";\n${page("page-client")}`],
-    ])("a route file that is %s is reported", async (_, framework, router, file, contents) => {
-      using dir = tempDir("bake-production-no-server-output", {
-        ...appFiles(["a"], { framework, router }),
-        [file]: contents,
+    // The reproduction of https://github.com/oven-sh/bun/pull/39488#discussion_r3815289177
+    test("when an onResolve plugin passes on one page of a React app", async () => {
+      const reactPage = (name: string) => `export default function Page() { return <p>page:${name}</p>; }`;
+      const dir = await tempDirWithBakeDeps("bake-production-plugin-react", {
+        "src/index.tsx": `
+          const plugin = {
+            name: "passes",
+            setup(build) {
+              build.onResolve({ filter: /pages[\\\\/]index\\.tsx$/ }, () => undefined);
+            },
+          };
+          export default { app: { framework: "react", plugins: [plugin] } };
+        `,
+        "pages/about.tsx": reactPage("about"),
+        "pages/index.tsx": reactPage("index"),
+        "pages/zed.tsx": reactPage("zed"),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./src/index.tsx"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const read = async (file: string) =>
+        (
+          await Bun.file(path.join(dir, "dist", file))
+            .text()
+            .catch(() => "")
+        ).match(/page:(\w+)/)?.[1];
+      expect(
+        {
+          "/": await read("index.html"),
+          "/about": await read("about/index.html"),
+          "/zed": await read("zed/index.html"),
+          exitCode,
+        },
+        stderr,
+      ).toEqual({ "/": "index", "/about": "about", "/zed": "zed", exitCode: 0 });
+    });
+
+    // The build loads the output of each entry point as a module. It names every file that has none.
+    // A route file with "use client" works in the dev server, and is not supported yet in a production build.
+    test.concurrent("an entry point that is not bundled to a module of its side is reported", async () => {
+      using dir = tempDir("bake-production-no-module", {
+        ...appFiles(["a"], {
+          framework: serverComponents,
+          router: `extensions: "*", clientEntryPoint: "./client.css",`,
+        }),
+        "client.css": `body { color: blue; }`,
+        "routes/styles.css": `body { color: red; }`,
+        "routes/client.ts": `"use client";\n${page("page-client")}`,
       });
       const { pages, exitCode, stderr } = await prerender(String(dir));
-      expect(stderr.replace(/\\+/g, "/")).toContain(`error: The server build has no entry point output for "${file}"`);
-      expect({ pages, exitCode }).toEqual({ pages: {}, exitCode: 1 });
+      const reported = stderr
+        .replace(/\\+/g, "/")
+        .split(/\r?\n/)
+        .filter(line => /^(error|note): /.test(line))
+        .sort();
+      expect({ reported, pages, dist: existsSync(path.join(String(dir), "dist")), exitCode }, stderr).toEqual({
+        reported: [
+          `error: "client.css" was not bundled to a JavaScript module, so the client cannot load it`,
+          `error: "routes/client.ts" is a client component, so the server cannot load it`,
+          `error: "routes/styles.css" was not bundled to a JavaScript module, so the server cannot load it`,
+          `note: "use client" is not supported yet in a route file in a production build. Put the client component in a file of its own and import it from the route file.`,
+          `note: The build loads each route file, layout and framework entry point as a module.`,
+        ],
+        pages: {},
+        dist: false,
+        exitCode: 1,
+      });
     });
   });
 

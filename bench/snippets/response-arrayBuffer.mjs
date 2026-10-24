@@ -133,4 +133,25 @@ bench("new Response().arrayBuffer() (existing string, latin1)", async () => {
   return await new Response(str).arrayBuffer();
 });
 
+// A Blob body. Bun also takes an array of blob parts as a body, and reads a part that is a Blob in place.
+for (const [label, size] of [
+  ["64 KiB", 64 * 1024],
+  ["1 MiB", 1024 * 1024],
+  ["4 MiB", 4 * 1024 * 1024],
+]) {
+  const bytes = new Uint8Array(size).fill(97);
+
+  bench(`new Response(blob).arrayBuffer() (new ${label} Blob each call)`, async () => {
+    return await new Response(new Blob([bytes])).arrayBuffer();
+  });
+
+  bench(`new Response([blob]).arrayBuffer() (new ${label} Blob each call)`, async () => {
+    return await new Response([new Blob([bytes])]).arrayBuffer();
+  });
+
+  bench(`new Response([blob]).bytes() (new ${label} Blob each call)`, async () => {
+    return await new Response([new Blob([bytes])]).bytes();
+  });
+}
+
 await run();

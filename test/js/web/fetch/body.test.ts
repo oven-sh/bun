@@ -155,6 +155,87 @@ for (const { body, fn } of bodyTypes) {
           });
         }
       });
+      // Bun accepts an array of blob parts as a body. A Blob part is shared with the body, not moved out of the caller's Blob.
+      describe("array containing a Blob", () => {
+        test("the Blob still reads back its bytes after being used as a body part", async () => {
+          const blob = new Blob(["hello world"], { type: "text/plain" });
+          const actual = fn([blob] as any);
+          expect(actual.headers.get("content-type")).toBe(blob.type);
+          expect(await actual.text()).toBe("hello world");
+          expect(blob.size).toBe(11);
+          expect(await blob.text()).toBe("hello world");
+          expect(await blob.slice(6).text()).toBe("world");
+        });
+        test("the same Blob can back several bodies", async () => {
+          const blob = new Blob(["hello world"]);
+          const first = fn([blob] as any);
+          const second = fn([blob] as any);
+          expect(await Promise.all([first.text(), second.text(), blob.text()])).toEqual([
+            "hello world",
+            "hello world",
+            "hello world",
+          ]);
+        });
+        test("a File still reads back its bytes", async () => {
+          const f = new File(["file bytes"], "part.txt");
+          expect(await fn([f] as any).text()).toBe("file bytes");
+          expect(await f.text()).toBe("file bytes");
+        });
+        test("a Bun.file() keeps its name, size and bytes", async () => {
+          using dir = tempDir("body-array-bun-file", { "data.txt": "from disk" });
+          const path = join(String(dir), "data.txt");
+          const f = file(path);
+          expect(await fn([f] as any).text()).toBe("from disk");
+          expect({ name: f.name, size: f.size, text: await f.text() }).toEqual({
+            name: path,
+            size: 9,
+            text: "from disk",
+          });
+        });
+        test("a BuildArtifact stays readable", async () => {
+          using dir = tempDir("body-array-build-artifact", { "entry.js": `console.log("artifact-body-marker");` });
+          const { outputs } = await Bun.build({ entrypoints: [join(String(dir), "entry.js")] });
+          const [artifact] = outputs;
+          const expected = await artifact.text();
+          expect(expected).toContain("artifact-body-marker");
+          expect(await fn([artifact] as any).text()).toBe(expected);
+          expect(await artifact.text()).toBe(expected);
+        });
+        test("the body decodes the same after a slice of the Blob was read", async () => {
+          const blob = new Blob([new TextEncoder().encode("hello wörld")]);
+          const actual = fn([blob] as any);
+          expect(await blob.slice(0, 5).text()).toBe("hello");
+          expect(await actual.text()).toBe("hello wörld");
+          expect(await blob.text()).toBe("hello wörld");
+        });
+        // The body shares the Blob's store, so the bytes that it hands out must be a copy.
+        describe.each([
+          ["[blob]", (blob: Blob) => [blob]],
+          ["blob", (blob: Blob) => blob],
+        ])("bytes read from a body made from %s are a copy of the Blob's bytes", (_, bodyOf) => {
+          test.each([
+            ["arrayBuffer()", (body: Request | Response) => body.arrayBuffer()],
+            ["bytes()", (body: Request | Response) => body.bytes()],
+            ["Bun.readableStreamToBytes(body)", (body: Request | Response) => Bun.readableStreamToBytes(body.body!)],
+            ["new Response(body).bytes()", (body: Request | Response) => new Response(body.body).bytes()],
+          ])("%s", async (_, read) => {
+            const blob = new Blob([new Uint8Array(64).fill(65)]);
+            const result = await read(fn(bodyOf(blob) as any));
+            const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
+            expect(bytes.length).toBe(64);
+            bytes.fill(66);
+            expect(await blob.text()).toBe(Buffer.alloc(64, "A").toString());
+          });
+        });
+        // On Linux, a Blob this large that was made from one typed array is backed by a memfd.
+        test("arrayBuffer() of the body is a copy of the bytes of a Blob of 8 MiB", async () => {
+          const blob = new Blob([new Uint8Array(8 * 1024 * 1024).fill(65)]);
+          const bytes = new Uint8Array(await fn([blob] as any).arrayBuffer());
+          expect(bytes.length).toBe(blob.size);
+          bytes.fill(66);
+          expect([await blob.slice(0, 4).text(), await blob.slice(-4).text()]).toEqual(["AAAA", "AAAA"]);
+        });
+      });
       describe("FormData", () => {
         const forms = [
           {
@@ -1374,6 +1455,102 @@ describe("constructing a body from an unusable ReadableStream", () => {
     rs.getReader();
     expect(() => new Response(rs)).toThrow(TypeError);
     expect(() => new Request("http://example.com/", { method: "POST", body: rs, duplex: "half" })).toThrow(TypeError);
+  });
+});
+
+// server.fetch() extracts the body's blob parts itself, it does not go through new Request().
+describe("server.fetch() body option", () => {
+  test.each([
+    ["a Blob", (blob: Blob) => blob],
+    ["an array containing a Blob", (blob: Blob) => [blob]],
+  ])("%s is shared with the request, not moved out of the caller's Blob", async (_, body) => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(await req.text());
+      },
+    });
+    const blob = new Blob(["hello world"]);
+    const response = await server.fetch(String(server.url), { method: "POST", body: body(blob) as any });
+    expect(await response.text()).toBe("hello world");
+    expect(await blob.text()).toBe("hello world");
+  });
+
+  test("arrayBuffer() of the request is a copy of the Blob's bytes", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const bytes = new Uint8Array(await req.arrayBuffer());
+        bytes.fill(66);
+        return new Response(String(bytes.length));
+      },
+    });
+    const blob = new Blob([new Uint8Array(64).fill(65)]);
+    const response = await server.fetch(String(server.url), { method: "POST", body: blob });
+    expect(await response.text()).toBe("64");
+    expect(await blob.text()).toBe(Buffer.alloc(64, "A").toString());
+  });
+});
+
+test("fetch() with a body that is an array containing a Blob leaves the Blob intact", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      return new Response(await req.text());
+    },
+  });
+  const blob = new Blob(["hello world"]);
+  const response = await fetch(server.url, { method: "POST", body: [blob] as any });
+  expect(await response.text()).toBe("hello world");
+  expect(await blob.text()).toBe("hello world");
+});
+
+// A handler that keeps its part must answer each request with the bytes of the part.
+describe("Bun.serve handler that returns new Response([part]) for a part that it keeps", () => {
+  test.each([
+    ["a Blob", () => new Blob(["hello world"])],
+    ["a File", () => new File(["hello world"], "hello.txt")],
+    ["a Bun.file()", (dir: string) => file(join(dir, "hello.txt"))],
+  ])("%s", async (_, make) => {
+    using dir = tempDir("body-array-served", { "hello.txt": "hello world" });
+    const part = make(String(dir));
+    await using server = Bun.serve({ port: 0, fetch: () => new Response([part] as any) });
+    const responses: object[] = [];
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(server.url);
+      responses.push({
+        status: response.status,
+        length: response.headers.get("content-length"),
+        body: await response.text(),
+      });
+    }
+    const expected = { status: 200, length: "11", body: "hello world" };
+    expect(responses).toEqual([expected, expected]);
+    expect(await part.text()).toBe("hello world");
+  });
+});
+
+// The body parts are taken before the rest of the init is checked.
+describe("a call that throws after it took an array containing a Blob as its body", () => {
+  const badHeaders = { "bad name\n": "x" };
+  test.each([
+    [
+      "new Request() with a URL that is not valid",
+      (blob: Blob) => new Request("not a url", { method: "POST", body: [blob] as any }),
+    ],
+    [
+      "new Request() with a header name that is not valid",
+      (blob: Blob, url: string) => new Request(url, { method: "POST", body: [blob] as any, headers: badHeaders }),
+    ],
+    [
+      "fetch() with a header name that is not valid",
+      (blob: Blob, url: string) => fetch(url, { method: "POST", body: [blob] as any, headers: badHeaders }),
+    ],
+  ])("%s leaves the Blob intact", async (_, call) => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("not reached") });
+    const blob = new Blob(["hello world"]);
+    await expect((async () => call(blob, server.url.href))()).rejects.toBeInstanceOf(TypeError);
+    expect(await blob.text()).toBe("hello world");
   });
 });
 

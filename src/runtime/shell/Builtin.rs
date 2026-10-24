@@ -3,7 +3,9 @@
 
 use bun_collections::VecExt;
 use bun_jsc::PinnedArrayBuffer;
+use core::cell::Cell;
 use core::ffi::c_char;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::shell::ExitCode;
@@ -248,7 +250,8 @@ pub(crate) enum BuiltinIO {
     Buf(IoKind),
     ArrayBuf {
         buf: PinnedArrayBuffer,
-        i: u32,
+        /// Next write offset. `&> ${buf}` gives stdout and stderr the same cell.
+        i: Rc<Cell<u32>>,
     },
     Blob(Arc<BuiltinBlob>),
     Ignore,
@@ -352,7 +355,7 @@ impl BuiltinIO {
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
                 // JS can resize the buffer between chunks.
                 let dst_all = arraybuf.live_slice_mut();
-                let idx = *i as usize;
+                let idx = i.get() as usize;
                 let total = dst_all.len();
                 if idx >= total {
                     return Err(bun_sys::Error::from_code(
@@ -363,7 +366,7 @@ impl BuiltinIO {
                 let write_len = (total - idx).min(buf.len());
                 let dst = &mut dst_all[idx..idx + write_len];
                 dst.copy_from_slice(&buf[..write_len]);
-                *i = i.saturating_add(write_len as u32);
+                i.set(i.get().saturating_add(write_len as u32));
                 Ok(write_len)
             }
             BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
@@ -679,17 +682,21 @@ impl Builtin {
                         };
                         me.stdin = BuiltinInput::ArrayBuf { buf };
                     }
+                    let cursor = Rc::new(Cell::new(0));
                     if redirect.stdout() {
                         let Some(buf) = root() else {
                             return Some(Yield::Failed(cmd));
                         };
-                        me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 };
+                        me.stdout = BuiltinIO::ArrayBuf {
+                            buf,
+                            i: Rc::clone(&cursor),
+                        };
                     }
                     if redirect.stderr() {
                         let Some(buf) = root() else {
                             return Some(Yield::Failed(cmd));
                         };
-                        me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
+                        me.stderr = BuiltinIO::ArrayBuf { buf, i: cursor };
                     }
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)

@@ -24080,6 +24080,17 @@ describe.concurrent("--check", () => {
         loader: ":html",
         errors: ["main.ts(1,14) TS2322"],
       },
+      // A bundle does not hold this page. Its check follows the import all the same.
+      "a file of any name that is external to the bundle": {
+        files: {
+          "tmpl.d.ts": pattern("*.tmpl"),
+          "page.tmpl": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./page.tmpl" with { type: "html" };`),
+        },
+        external: "./page.tmpl",
+        errors: ["main.ts(1,14) TS2322"],
+      },
     };
     // The name alone says the same about each of these.
     const asNamed: Record<string, Fixture> = {
@@ -24123,15 +24134,7 @@ describe.concurrent("--check", () => {
         files: {
           "index.html": page("./main.ts"),
           "main.ts": wrong,
-          "server.ts": `export * as page from "./index.html" with { type: "text" };\nconsole.log("ran");\n`,
-        },
-        errors: ["main.ts(1,14) TS2322"],
-      },
-      "an import for its effects": {
-        files: {
-          "index.html": page("./main.ts"),
-          "main.ts": wrong,
-          "server.ts": `import "./index.html";\nconsole.log("ran");\n`,
+          "server.ts": `export * from "./index.html" with { type: "text" };\nconsole.log("ran");\n`,
         },
         errors: ["main.ts(1,14) TS2322"],
       },
@@ -24144,6 +24147,35 @@ describe.concurrent("--check", () => {
           "server.ts": server(`export { x } from "./x" with { type: "html" };\nimport it from "./template.tmpl";`),
         },
         errors: [],
+      },
+      // Bun runs a macro when it reads the importer. The import loads no page.
+      '`with { type: "html", type: "macro" }`': {
+        files: {
+          "tmpl.d.ts": pattern("*.tmpl"),
+          "template.tmpl": template,
+          "server.ts": server(`// @ts-ignore\nimport it from "./template.tmpl" with { type: "html", type: "macro" };`),
+        },
+        errors: [],
+        ran: "ran undefined",
+      },
+      "an import for its effects": {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": `import "./index.html";\nconsole.log("ran");\n`,
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      // A use in a type position counts like any other use of the path.
+      "a page that is imported for its type": {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts":
+            `import type it from "./index.html";\n` +
+            `export type Page = typeof it | typeof import("./index.html");\nconsole.log("ran");\n`,
+        },
+        errors: ["main.ts(1,14) TS2322"],
       },
       "a file named `.html`": {
         files: {
@@ -24182,11 +24214,12 @@ describe.concurrent("--check", () => {
         },
         errors: ["main.ts(1,14) TS2322"],
       },
-      // The attributes in a JSDoc comment are not those of the import below it.
+      // The attributes in a JSDoc comment are not those of the import below it. The error in `types.ts` shows
+      // that the comment is read.
       "a page below a JSDoc import with attributes": {
         files: {
           "tsconfig.json": withOptions({ allowJs: true, checkJs: true }),
-          "types.ts": `export type T = number;\n`,
+          "types.ts": `export type T = number;\nexport const t: T = "1";\n`,
           "index.html": page("./main.ts"),
           "main.ts": wrong,
           // TypeScript has an error for the attributes of a JSDoc import. It is not what this row is for.
@@ -24195,7 +24228,20 @@ describe.concurrent("--check", () => {
             `import it from "./index.html";\n/** @type {T} */\nexport const n = 1;\nexport { it };\n`,
           "server.ts": server(`import { it } from "./routes.js";`),
         },
-        errors: ["main.ts(1,14) TS2322"],
+        errors: ["main.ts(1,14) TS2322", "types.ts(2,14) TS2322"],
+      },
+      // Bun loads nothing for a JSDoc import, so its attributes make no page.
+      'a JSDoc import `with { type: "html" }`': {
+        files: {
+          "tsconfig.json": withOptions({ allowJs: true, checkJs: true }),
+          "tmpl.d.ts": pattern("*.tmpl"),
+          "page.tmpl": page("./main.ts"),
+          "main.ts": wrong,
+          "routes.js": `// @ts-nocheck\n/** @import { T } from "./page.tmpl" with { type: "html" } */\nexport const n = 1;\n`,
+          "server.ts": server(`import { n } from "./routes.js";`, ["n"]),
+        },
+        errors: [],
+        ran: "ran number",
       },
       // A bundle does not hold these two pages. Its check follows them like a check without a bundle.
       "a page whose import nothing reads": {
@@ -24307,18 +24353,22 @@ describe.concurrent("--check", () => {
         `{ with: { type: "html", type: name } }`,
         `{ with: { type: "html", type: "text" } }`,
         `{ with: { type: "html" }, with: { type: "text" } }`,
-        // A spread can give `type` or `with` another value than the one that is written before it.
+        // A spread or a computed key can give `type` or `with` another value than the one that is written before it.
         `{ with: { type: "html", ...{ type: "text" } } }`,
         `{ with: { type: "html" }, ...{ with: { type: "text" } } }`,
+        `{ with: { type: "html", [key]: "text" } }`,
+        `{ with: { type: "html" }, [key2]: { type: "text" } }`,
       ];
+      // One template for each call: Bun gives two imports of one file one module.
       const imports = options.map(
-        (it, at) => `// @ts-ignore\nconst it${at} = (await import("./template.tmpl", ${it})).default;\n`,
+        (it, at) => `// @ts-ignore\nconst it${at} = (await import("./template${at}.tmpl", ${it})).default;\n`,
       );
       const values = options.map((_, at) => `it${at}`);
+      const names = `const name: string = "text";\nconst key: string = "type";\nconst key2: string = "with";\n`;
       using dir = project({
         "tmpl.d.ts": pattern("*.tmpl"),
-        "template.tmpl": template,
-        "server.ts": server(`const name: string = "text";\n${imports.join("")}`, values),
+        ...Object.fromEntries(options.map((_, at) => [`template${at}.tmpl`, template])),
+        "server.ts": server(names + imports.join(""), values),
       });
       const [ran, alone, before] = await Promise.all([
         run(String(dir), ["server.ts"]),

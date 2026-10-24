@@ -167,17 +167,29 @@ impl<'a, 's> Pages<'a, 's> {
         (!sets_any(&last)).then_some(last.value)
     }
 
-    /// The loader that the `with` clause of a declaration names. Bun's parser takes the last `type` that names one.
+    /// The loader that the `with` clause of a declaration names, as Bun's parser reads it (`parse_path`).
     fn loader_named_in(&self, hir: &hir::File<'s>, clause: ExprId) -> Option<Loader> {
-        let ExprKind::Object(attributes) = hir[skip_assertions(hir, clause)].kind else {
+        let ExprKind::Object(attributes) = hir[clause].kind else {
             return None;
         };
         let attributes = attributes.iter().rev().map(|it| hir[it]);
-        let mut types = attributes.filter(|it| self.is_named(it.key, b"type"));
-        types.find_map(|it| self.loader_of(hir, it.value))
+        let types = attributes.filter(|it| self.is_named(it.key, b"type"));
+        let names = types.filter_map(|it| match hir[it.value].kind {
+            ExprKind::String(name) => Some(self.files.atoms.bytes(name)),
+            _ => None,
+        });
+        let mut last_loader = None;
+        for name in names {
+            // A macro runs as JavaScript when Bun reads the importer, whatever another `type` names.
+            if name == b"macro" {
+                return Some(Loader::Js);
+            }
+            last_loader = last_loader.or_else(|| Loader::from_string(name));
+        }
+        last_loader
     }
 
-    /// The loader whose name `value` spells out.
+    /// The loader whose name `value` spells out, where the runtime evaluates `value`.
     fn loader_of(&self, hir: &hir::File<'s>, value: ExprId) -> Option<Loader> {
         let name = match hir[skip_assertions(hir, value)].kind {
             ExprKind::String(name) => name,
@@ -195,14 +207,15 @@ impl<'a, 's> Pages<'a, 's> {
 }
 
 impl Attributes {
-    /// The `with` clause of the `import` declaration with its specifier at `specifier`. Bun reads none after `export`.
+    /// The `with` clause that Bun reads for the declaration with its specifier at `specifier`. None after `export`.
     fn of_declaration(&mut self, hir: &hir::File, specifier: u32) -> Option<ExprId> {
         let clauses = &hir.import_attributes[..];
         if clauses.is_empty() {
             return None;
         }
         let declarations = self.declarations.get_or_insert_with(|| {
-            let declarations = hir.imports.iter().filter(|it| it.stmt.is_some());
+            // Bun loads nothing for an import of types, which a JSDoc `@import` is too.
+            let declarations = (hir.imports.iter()).filter(|it| it.stmt.is_some() && !it.type_only);
             let mut ranges: Vec<(u32, u32)> = declarations
                 .map(|it| (hir[it.stmt].start, hir[it.stmt].loc.end))
                 .collect();

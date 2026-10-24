@@ -125,3 +125,22 @@ pub enum Direction {
     /// This value sets inline base direction (bidi directionality) to line-right-to-line-left.
     Rtl,
 }
+
+/// A value for the [unicode-bidi](https://drafts.csswg.org/css-writing-modes-3/#unicode-bidi) property.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty, crate::generics::CssHash,
+)]
+pub enum UnicodeBidi {
+    /// The box does not open an additional level of embedding.
+    Normal,
+    /// If the box is inline, this value creates a directional embedding by opening an additional level of embedding.
+    Embed,
+    /// On an inline box, this bidi-isolates its contents.
+    Isolate,
+    /// This value puts the box's immediate inline content in a directional override.
+    BidiOverride,
+    /// This combines the isolation behavior of isolate with the directional override behavior of bidi-override.
+    IsolateOverride,
+    /// This value behaves as isolate except that the base directionality is determined using a heuristic rather than the direction property.
+    Plaintext,
+}

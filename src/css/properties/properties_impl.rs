@@ -30,6 +30,15 @@ impl Property {
             _ => self.property_id().tag(),
         }
     }
+
+    /// Whether this is an `all` that resets the declarations before it in its block.
+    pub(crate) fn resets_block(&self) -> bool {
+        match self {
+            Property::All(..) => true,
+            Property::Unparsed(unparsed) => unparsed.resets_block(),
+            _ => false,
+        }
+    }
 }
 
 /// Ordered single-bit prefix flags. The crate-root `VendorPrefix::FIELDS` is

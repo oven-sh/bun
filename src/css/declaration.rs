@@ -98,6 +98,7 @@ impl<'bump> DeclarationBlock<'bump> {
 
         handler.finalize(context);
         important_handler.finalize(context);
+        debug_assert!(is_settled(&handler.decls) && is_settled(&important_handler.decls));
         // The old bumpalo Vecs drop implicitly on overwrite (arena reclaims
         // on reset).
         self.important_declarations =
@@ -480,6 +481,52 @@ impl<'bump> DeclarationHandler<'bump> {
             || self
                 .fallback
                 .handle_property(property, &mut self.decls, context)
+            || self.handle_all(property, context)
+    }
+
+    /// https://drafts.csswg.org/css-cascade-5/#all-shorthand
+    fn handle_all(
+        &mut self,
+        property: &css::Property,
+        context: &mut css::PropertyHandlerContext,
+    ) -> bool {
+        match property {
+            css::Property::All(keyword) => {
+                self.reset_for_all(css::Property::All(*keyword));
+                true
+            }
+            css::Property::Unparsed(unparsed)
+                if matches!(unparsed.property_id, css::PropertyId::All) =>
+            {
+                if unparsed.resets_block() {
+                    let bump = self.decls.bump();
+                    self.reset_for_all(css::Property::Unparsed(unparsed.deep_clone(bump)));
+                    return true;
+                }
+                // Browsers differ on whether any other value is valid, so it only keeps its place.
+                self.finalize(context);
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Drops what `all` resets, then writes it. Unlike lightningcss, it reads only the new tail.
+    fn reset_for_all(&mut self, all: css::Property) {
+        debug_assert!(all.resets_block());
+        let bump: &'bump Bump = self.decls.bump();
+        let previous = core::mem::replace(self, DeclarationHandler::new(bump));
+        self.decls = previous.decls;
+        let start = settled_len(&self.decls);
+        let mut kept = start;
+        for index in start..self.decls.len() {
+            if survives_all(&self.decls[index]) {
+                self.decls.swap(kept, index);
+                kept += 1;
+            }
+        }
+        self.decls.truncate(kept);
+        self.decls.push(all);
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {
@@ -502,5 +549,31 @@ impl<'bump> DeclarationHandler<'bump> {
             direction: None,
             decls: DeclarationList::new_in(bump),
         }
+    }
+}
+
+/// The index of the last resetting `all`, or 0. Everything ahead of it survived that reset.
+fn settled_len(decls: &[css::Property]) -> usize {
+    decls
+        .iter()
+        .rposition(css::Property::resets_block)
+        .unwrap_or(0)
+}
+
+/// What `reset_for_all` relies on: nothing ahead of the last resetting `all` is reset by it.
+fn is_settled(decls: &[css::Property]) -> bool {
+    decls[..settled_len(decls)].iter().all(survives_all)
+}
+
+/// Whether `all` leaves `property` alone.
+fn survives_all(property: &css::Property) -> bool {
+    match property {
+        css::Property::Custom(custom) => matches!(custom.name, CustomPropertyName::Custom(..)),
+        css::Property::Direction(..) | css::Property::UnicodeBidi(..) => true,
+        css::Property::Unparsed(unparsed) => matches!(
+            unparsed.property_id,
+            css::PropertyId::Direction | css::PropertyId::UnicodeBidi
+        ),
+        _ => false,
     }
 }

@@ -7964,6 +7964,156 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  // https://drafts.csswg.org/css-cascade-5/#all-shorthand
+  describe("all shorthand", () => {
+    minify_test(".foo { all: initial; all: initial }", ".foo{all:initial}");
+    minify_test(".foo { all: initial; all: revert }", ".foo{all:revert}");
+    minify_test(".foo { background: red; all: revert-layer }", ".foo{all:revert-layer}");
+    minify_test(
+      ".foo { background: red; all: revert-layer; background: green }",
+      ".foo{all:revert-layer;background:green}",
+    );
+    minify_test(".foo { --test: red; all: revert-layer }", ".foo{--test:red;all:revert-layer}");
+    minify_test(".foo { unicode-bidi: embed; all: revert-layer }", ".foo{unicode-bidi:embed;all:revert-layer}");
+    minify_test(".foo { direction: rtl; all: revert-layer }", ".foo{direction:rtl;all:revert-layer}");
+    minify_test(
+      ".foo { direction: rtl; all: revert-layer; direction: ltr }",
+      ".foo{direction:rtl;all:revert-layer;direction:ltr}",
+    );
+    minify_test(".foo { background: var(--foo); all: unset; }", ".foo{all:unset}");
+    minify_test(".foo { all: unset; background: var(--foo); }", ".foo{all:unset;background:var(--foo)}");
+    minify_test(".foo {--bar:currentcolor; --foo:1.1em; all:unset}", ".foo{--bar:currentcolor;--foo:1.1em;all:unset}");
+
+    // Declarations that a handler buffers until the end of the block (font,
+    // margin, border, ...) are reset by a later `all` too.
+    minify_test(".foo { font: 12px serif; all: initial }", ".foo{all:initial}");
+    minify_test(".foo { margin: 0; all: unset; color: red }", ".foo{all:unset;color:red}");
+    minify_test(
+      ".foo { border: 1px solid red; color: red; all: inherit; margin-top: 1px }",
+      ".foo{all:inherit;margin-top:1px}",
+    );
+    minify_test(".foo { color: red; all: unset } .foo { margin: 0 }", ".foo{all:unset;margin:0}");
+    minify_test(".foo { margin: 0 } .foo { all: unset }", ".foo{all:unset}");
+    cssTest(".foo { font: 12px serif; all: initial }", ".foo {\n  all: initial;\n}\n");
+    // `color` and `text-shadow` overwrite their first declaration in place when
+    // they repeat, so a repeat after `all` must not land in front of it.
+    minify_test(".foo { color: red; all: unset; color: blue }", ".foo{all:unset;color:#00f}");
+    minify_test(
+      ".foo { text-shadow: 1px 1px red; all: unset; text-shadow: 2px 2px blue }",
+      ".foo{all:unset;text-shadow:2px 2px #00f}",
+    );
+    minify_test(
+      ".foo { color: red !important; all: unset !important; color: blue !important }",
+      ".foo{all:unset!important;color:#00f!important}",
+    );
+    // A later `all` resets again. It drops the earlier `all` and what does not survive
+    // after it, and it leaves what the earlier `all` kept where it is.
+    minify_test(
+      ".foo { --x: 1; color: red; all: unset; --y: 2; margin: 0; all: initial; --z: 3 }",
+      ".foo{--x:1;--y:2;all:initial;--z:3}",
+    );
+    minify_test(
+      ".foo { --a: 1; all: unset; color: red; --b: 2; unknown: 1; --c: 3; all: initial }",
+      ".foo{--a:1;--b:2;--c:3;all:initial}",
+    );
+    minify_test(
+      ".foo { --x: 1 !important; all: unset !important; --y: 2 !important; all: initial !important }",
+      ".foo{--x:1!important;--y:2!important;all:initial!important}",
+    );
+    minify_test(".foo { --x: 1; all: var(--a); --y: 2; all: var(--b) }", ".foo{--x:1;--y:2;all:var(--b)}");
+    minify_test(
+      ".foo { direction: var(--d); all: unset; unicode-bidi: var(--u); all: initial }",
+      ".foo{direction:var(--d);unicode-bidi:var(--u);all:initial}",
+    );
+    minify_test(".foo { direction: rtl; all: unset; --x: 1; all: initial }", ".foo{direction:rtl;--x:1;all:initial}");
+    minify_test(".foo { --x: 1; all: unset; all: none; --y: 2; all: initial }", ".foo{--x:1;--y:2;all:initial}");
+    minify_test(".foo { --x: 1; all: unset } .foo { --y: 2; all: initial }", ".foo{--x:1;--y:2;all:initial}");
+    // Every block uses the same handlers, so a block after one with `all` starts clean.
+    minify_test(
+      ".a { --x: 1; --y: 2; all: unset } .b { color: blue; --z: 3 } .c { color: red; all: unset }",
+      ".a{--x:1;--y:2;all:unset}.b{color:#00f;--z:3}.c{all:unset}",
+    );
+    // An unknown property is reset like any other.
+    minify_test(".foo { unknown: 1; all: unset }", ".foo{all:unset}");
+    // `all` with a value only known at runtime still overrides what precedes it.
+    minify_test(".foo { color: red; --x: initial; all: var(--x) }", ".foo{--x:initial;all:var(--x)}");
+    minify_test(".foo { all: var(--x); color: red }", ".foo{all:var(--x);color:red}");
+    minify_test(".foo { all: var(--x); all: inherit }", ".foo{all:inherit}");
+    minify_test(".foo { color: red; all: foo(1px, var(--x)) }", ".foo{all:foo(1px,var(--x))}");
+    minify_test(".foo { color: red; all: env(--x) }", ".foo{all:env(--x)}");
+    minify_test(".foo { ALL: Initial }", ".foo{all:initial}");
+    // Browsers differ on whether any other value is valid. It keeps its place and resets nothing.
+    minify_test(".foo { color: red; all: none }", ".foo{color:red;all:none}");
+    minify_test(".foo { color: red; all: initial 0; margin: 0 }", ".foo{color:red;all:initial 0;margin:0}");
+    minify_test(".foo { margin: 0; all: none }", ".foo{margin:0;all:none}");
+    minify_test(".foo { font: 12px serif; all: revert-rule }", ".foo{font:12px serif;all:revert-rule}");
+    minify_test(
+      ".foo { font: 12px serif; all: if(style(--x:1):initial;else:unset) }",
+      ".foo{font:12px serif;all:if(style(--x:1):initial;else:unset)}",
+    );
+    minify_test(
+      ".foo { font: 12px serif; all: attr(data-x type(*)) }",
+      ".foo{font:12px serif;all:attr(data-x type(*))}",
+    );
+    minify_test(".foo { font: 12px serif; all: --f() }", ".foo{font:12px serif;all:--f()}");
+    minify_test(".foo { color: red; all: revert-rule; color: blue }", ".foo{color:red;all:revert-rule;color:#00f}");
+    minify_test(
+      ".foo { margin-top: 1px; all: revert-rule; margin: 2px }",
+      ".foo{margin-top:1px;all:revert-rule;margin:2px}",
+    );
+    minify_test(".foo { margin: 0; all: revert-rule; all: unset }", ".foo{all:unset}");
+    minify_test(
+      ".foo { font: 12px serif !important; all: revert-rule !important }",
+      ".foo{font:12px serif!important;all:revert-rule!important}",
+    );
+    // Rules only merge when the keywords are equal.
+    minify_test(".a { all: initial } .b { all: unset }", ".a{all:initial}.b{all:unset}");
+    minify_test(".a { all: initial } .b { all: initial }", ".a,.b{all:initial}");
+    // `!important` declarations live in their own cascade band.
+    minify_test(".foo { color: red !important; all: unset }", ".foo{all:unset;color:red!important}");
+    minify_test(".foo { color: red; all: unset !important }", ".foo{color:red;all:unset!important}");
+    minify_test(".foo { color: red !important; all: unset !important }", ".foo{all:unset!important}");
+    // Custom properties, `direction` and `unicode-bidi` survive in every form.
+    minify_test(".foo { --x: 1; all: unset; --x: 2 }", ".foo{--x:1;all:unset;--x:2}");
+    minify_test(".foo { --x: 1; all: unset; --y: 2 }", ".foo{--x:1;all:unset;--y:2}");
+    minify_test(
+      ".foo { direction: var(--d); unicode-bidi: var(--u); all: unset }",
+      ".foo{direction:var(--d);unicode-bidi:var(--u);all:unset}",
+    );
+    minify_test(
+      ".foo { direction: rtl; unicode-bidi: isolate; all: unset; color: red }",
+      ".foo{direction:rtl;unicode-bidi:isolate;all:unset;color:red}",
+    );
+    minify_test(
+      ".foo { direction: rtl; direction: var(--d); unicode-bidi: embed; unicode-bidi: var(--u); all: unset }",
+      ".foo{direction:rtl;direction:var(--d);unicode-bidi:embed;unicode-bidi:var(--u);all:unset}",
+    );
+    // A block without `all` keeps `direction` and `unicode-bidi` where they are.
+    minify_test(".foo { direction: ltr; color: red; direction: rtl }", ".foo{direction:ltr;color:red;direction:rtl}");
+    minify_test(
+      ".foo { unicode-bidi: isolate-override; unicode-bidi: plaintext }",
+      ".foo{unicode-bidi:isolate-override;unicode-bidi:plaintext}",
+    );
+    minify_test(".foo { unicode-bidi: Bidi-Override }", ".foo{unicode-bidi:bidi-override}");
+    // `all` has its own property id, so in `transition` it no longer compares equal to `none` or to an unknown name.
+    minify_test(
+      ".a { transition-property: none } .b { transition-property: all }",
+      ".a{transition-property:none}.b{transition-property:all}",
+    );
+    minify_test(".a { transition: 1s } .b { transition: all 1s }", ".a,.b{transition:all 1s}");
+    minify_test(".foo { transition: ALL 1s }", ".foo{transition:all 1s}");
+    // Logical properties compiled for old targets are dropped with the rest.
+    prefix_test(
+      ".foo { margin-inline-start: 1px; all: unset }",
+      indoc`
+        .foo {
+          all: unset;
+        }
+      `,
+      { safari: 8 << 16 },
+    );
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

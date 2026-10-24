@@ -1,6 +1,7 @@
 //! Extracts tar archives to disk. The format itself is `bun_tar`'s.
 #![warn(unused_must_use)]
 
+use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 #[cfg(unix)]
 use bun_core::ZStr;
@@ -13,42 +14,43 @@ use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
 pub mod error;
-pub use error::{Error, Result};
+pub use error::{Error, ReadDataError, Result};
 
 pub use bun_tar as tar;
 use bun_tar::{Dialect, Entry, Event, MemoryDecoder, Options};
 
 /// The entry's path the way the file system takes it. `buf` is scratch space for Windows.
 #[cfg(not(windows))]
-pub fn os_path<'a>(entry: &'a Entry, _buf: &'a mut Vec<OSPathChar>) -> Result<&'a [OSPathChar]> {
+pub fn os_path<'a>(
+    entry: &'a Entry,
+    _buf: &'a mut Vec<OSPathChar>,
+) -> Result<&'a [OSPathChar], AllocError> {
     Ok(entry.path())
 }
 #[cfg(windows)]
-pub fn os_path<'a>(entry: &'a Entry, buf: &'a mut Vec<OSPathChar>) -> Result<&'a [OSPathChar]> {
+pub fn os_path<'a>(
+    entry: &'a Entry,
+    buf: &'a mut Vec<OSPathChar>,
+) -> Result<&'a [OSPathChar], AllocError> {
     buf.clear();
-    bun_tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), buf)?;
+    bun_tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), buf).map_err(|_| AllocError)?;
     Ok(buf)
 }
 
 /// The entry's path as a program sees it: the name [`os_path`] gives the file, in UTF-8 on Windows.
 #[cfg(not(windows))]
-pub fn display_path(entry: &Entry) -> Result<std::borrow::Cow<'_, [u8]>> {
+pub fn display_path(entry: &Entry) -> Result<std::borrow::Cow<'_, [u8]>, AllocError> {
     Ok(entry.path().into())
 }
 #[cfg(windows)]
-pub fn display_path(entry: &Entry) -> Result<std::borrow::Cow<'_, [u8]>> {
+pub fn display_path(entry: &Entry) -> Result<std::borrow::Cow<'_, [u8]>, AllocError> {
     let mut wide = Vec::new();
     Ok(strings::to_utf8_list_with_type(Vec::new(), os_path(entry, &mut wide)?)?.into())
 }
 
-pub fn entry_kind(entry: &Entry) -> bun_sys::FileKind {
-    bun_sys::kind_from_mode(entry.filetype() as bun_sys::Mode)
-}
-
 /// A reader for an archive that is all in memory, gzipped or not. Fails for what is not one.
-pub fn open_memory(bytes: &[u8], npm: bool) -> bun_tar::Result<MemoryDecoder<'_>> {
-    let dialect = if npm { Dialect::Npm } else { Dialect::General };
-    MemoryDecoder::new(bytes, Options::for_host(dialect, true))
+pub fn open_memory(bytes: &[u8], dialect: Dialect) -> bun_tar::Result<MemoryDecoder<'_>> {
+    MemoryDecoder::new(bytes, Options::for_host(dialect))
 }
 
 /// Writes the contents of the current entry to `fd`.
@@ -56,14 +58,12 @@ pub fn read_data_into_fd(
     reader: &mut MemoryDecoder<'_>,
     fd: Fd,
     strategy: &mut lib::WriteStrategy,
-) -> core::result::Result<(), ReadDataError> {
+) -> Result<(), ReadDataError> {
     let mut writer = lib::EntryWriter::new(fd);
     loop {
-        match reader.next().map_err(ReadDataError::Archive)? {
-            Event::Data { offset, bytes } => writer
-                .write(strategy, offset, bytes)
-                .map_err(ReadDataError::Sys)?,
-            Event::EndOfEntry { size } => return writer.finish(size).map_err(ReadDataError::Sys),
+        match reader.next()? {
+            Event::Data { offset, bytes } => writer.write(strategy, offset, bytes)?,
+            Event::EndOfEntry { size } => return Ok(writer.finish(size)?),
             Event::NeedInput | Event::Entry(_) | Event::EndOfArchive => return Ok(()),
         }
     }
@@ -75,11 +75,6 @@ fn log_archive_error(path: &[OSPathChar], err: impl core::fmt::Display) {
         "extracting {}: {}",
         (bun_core::fmt::fmt_os_path(path, Default::default()), err),
     );
-}
-
-pub enum ReadDataError {
-    Archive(bun_tar::Error),
-    Sys(bun_sys::Error),
 }
 
 pub mod lib {
@@ -539,107 +534,100 @@ impl Archiver {
         };
         let _close_dir = bun_sys::CloseOnDrop::new(dir);
 
-        let mut reader = open_memory(file_buffer, false)?;
+        let mut reader = open_memory(file_buffer, Dialect::General)?;
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
-        'loop_: loop {
-            match reader.next_entry() {
-                Ok(None) => break 'loop_,
-                Err(err) => return Err(err.into()),
-                Ok(Some(entry)) => {
-                    let pathname = display_path(entry)?;
-                    let pathname_bytes: &[u8] = &pathname;
+        'loop_: while let Some(entry) = reader.next_entry()? {
+            let pathname = display_path(entry)?;
+            let pathname_bytes: &[u8] = &pathname;
 
-                    // Tokenizer semantics: `next()` skips leading
-                    // separators and returns None only when no token remains;
-                    // the rest-of-input slice also skips leading separators.
-                    // An entry's name has `/` on every platform, as in `extract_to_dir`.
-                    let mut remaining = pathname_bytes;
-                    let mut depth_i = 0usize;
-                    while depth_i < DEPTH_TO_SKIP {
-                        // skip leading separators
-                        while let [first, rest @ ..] = remaining {
-                            if *first == b'/' {
-                                remaining = rest;
-                            } else {
-                                break;
-                            }
+            // Tokenizer semantics: `next()` skips leading
+            // separators and returns None only when no token remains;
+            // the rest-of-input slice also skips leading separators.
+            // An entry's name has `/` on every platform, as in `extract_to_dir`.
+            let mut remaining = pathname_bytes;
+            let mut depth_i = 0usize;
+            while depth_i < DEPTH_TO_SKIP {
+                // skip leading separators
+                while let [first, rest @ ..] = remaining {
+                    if *first == b'/' {
+                        remaining = rest;
+                    } else {
+                        break;
+                    }
+                }
+                if remaining.is_empty() {
+                    continue 'loop_;
+                }
+                match strings::index_of_char_usize(remaining, b'/') {
+                    Some(i) => remaining = &remaining[i..],
+                    None => remaining = &remaining[remaining.len()..],
+                }
+                depth_i += 1;
+            }
+            // skip leading separators (tokenizer.rest() does this)
+            while let [first, rest @ ..] = remaining {
+                if *first == b'/' {
+                    remaining = rest;
+                } else {
+                    break;
+                }
+            }
+
+            let pathname = remaining;
+            if pathname.is_empty() || pathname.len() >= normalized_buf.len() {
+                continue 'loop_;
+            }
+            let normalized = bun_paths::resolve_path::normalize_buf_t::<
+                u8,
+                bun_paths::platform::Auto,
+            >(pathname, &mut normalized_buf[..]);
+            let normalized_len = normalized.len();
+            let pathname: &[u8] = &normalized_buf[..normalized_len];
+            if pathname.is_empty() || pathname == b"." {
+                continue 'loop_;
+            }
+            #[cfg(windows)]
+            if bun_paths::is_absolute_windows(pathname) {
+                continue 'loop_;
+            }
+            let dirname = strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
+
+            let size: usize = usize::try_from(entry.size().max(0)).unwrap();
+            let in_the_way = leaves_root(pathname)?
+                || (size > 0
+                    && match bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0) {
+                        Ok(opened) => {
+                            let _close = bun_sys::CloseOnDrop::new(opened);
+                            bun_sys::get_file_size(opened)? > 0
                         }
-                        if remaining.is_empty() {
-                            continue 'loop_;
-                        }
-                        match strings::index_of_char_usize(remaining, b'/') {
-                            Some(i) => remaining = &remaining[i..],
-                            None => remaining = &remaining[remaining.len()..],
-                        }
-                        depth_i += 1;
-                    }
-                    // skip leading separators (tokenizer.rest() does this)
-                    while let [first, rest @ ..] = remaining {
-                        if *first == b'/' {
-                            remaining = rest;
-                        } else {
-                            break;
-                        }
+                        Err(_) => false,
+                    });
+
+            if in_the_way {
+                let is_already_top_level = dirname.is_empty();
+                let path_to_use_: &[u8] = 'brk: {
+                    let __pathname: &[u8] = pathname;
+
+                    if is_already_top_level {
+                        break 'brk __pathname;
                     }
 
-                    let pathname = remaining;
-                    if pathname.is_empty() || pathname.len() >= normalized_buf.len() {
-                        continue 'loop_;
-                    }
-                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
-                        u8,
-                        bun_paths::platform::Auto,
-                    >(pathname, &mut normalized_buf[..]);
-                    let normalized_len = normalized.len();
-                    let pathname: &[u8] = &normalized_buf[..normalized_len];
-                    if pathname.is_empty() || pathname == b"." {
-                        continue 'loop_;
-                    }
-                    #[cfg(windows)]
-                    if bun_paths::is_absolute_windows(pathname) {
-                        continue 'loop_;
-                    }
-                    let dirname =
-                        strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
+                    let index = strings::index_of_char_usize(__pathname, SEP).unwrap();
+                    break 'brk &__pathname[..index];
+                };
+                let mut temp_buf = [0u8; 1024];
+                temp_buf[..path_to_use_.len()].copy_from_slice(path_to_use_);
+                let path_to_use: &[u8] = if !is_already_top_level {
+                    temp_buf[path_to_use_.len()] = SEP;
+                    &temp_buf[..path_to_use_.len() + 1]
+                } else {
+                    &temp_buf[..path_to_use_.len()]
+                };
 
-                    let size: usize = usize::try_from(entry.size().max(0)).unwrap();
-                    let in_the_way = leaves_root(pathname)?
-                        || (size > 0
-                            && match bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0) {
-                                Ok(opened) => {
-                                    let _close = bun_sys::CloseOnDrop::new(opened);
-                                    bun_sys::get_file_size(opened)? > 0
-                                }
-                                Err(_) => false,
-                            });
-
-                    if in_the_way {
-                        let is_already_top_level = dirname.is_empty();
-                        let path_to_use_: &[u8] = 'brk: {
-                            let __pathname: &[u8] = pathname;
-
-                            if is_already_top_level {
-                                break 'brk __pathname;
-                            }
-
-                            let index = strings::index_of_char_usize(__pathname, SEP).unwrap();
-                            break 'brk &__pathname[..index];
-                        };
-                        let mut temp_buf = [0u8; 1024];
-                        temp_buf[..path_to_use_.len()].copy_from_slice(path_to_use_);
-                        let path_to_use: &[u8] = if !is_already_top_level {
-                            temp_buf[path_to_use_.len()] = SEP;
-                            &temp_buf[..path_to_use_.len() + 1]
-                        } else {
-                            &temp_buf[..path_to_use_.len()]
-                        };
-
-                        let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
-                        if !overwrite_entry.found_existing {
-                            *overwrite_entry.key_ptr = Box::from(appender.append(path_to_use)?);
-                        }
-                    }
+                let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
+                if !overwrite_entry.found_existing {
+                    *overwrite_entry.key_ptr = Box::from(appender.append(path_to_use)?);
                 }
             }
         }
@@ -654,7 +642,12 @@ impl Archiver {
         appender: &mut A,
         options: ExtractOptions,
     ) -> crate::Result<u32> {
-        let mut reader = open_memory(file_buffer, options.npm)?;
+        let dialect = if options.npm {
+            Dialect::Npm
+        } else {
+            Dialect::General
+        };
+        let mut reader = open_memory(file_buffer, dialect)?;
         let mut os_path_buf: Vec<OSPathChar> = Vec::new();
         let mut count: u32 = 0;
         let dir_fd = dir;
@@ -671,349 +664,323 @@ impl Archiver {
         let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
         let mut write_strategy = lib::WriteStrategy::default();
 
-        'loop_: loop {
-            match reader.next_entry() {
-                Ok(None) => break 'loop_,
-                Err(err) => return Err(err.into()),
-                Ok(Some(entry)) => {
-                    let pathname_z = os_path(entry, &mut os_path_buf)?;
+        'loop_: while let Some(entry) = reader.next_entry()? {
+            let pathname_z = os_path(entry, &mut os_path_buf)?;
 
-                    if A::HAS_ON_FIRST_DIRECTORY_NAME {
-                        if appender.needs_first_dirname() {
-                            let root = first_path_component(pathname_z);
-                            #[cfg(windows)]
-                            {
-                                let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
-                                // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
-                                appender.on_first_directory_name(&result);
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                appender.on_first_directory_name(root);
-                            }
-                        }
-                    }
-
-                    let kind = entry_kind(entry);
-
-                    if options.npm {
-                        // - ignore entries other than files (`true` can only be returned if type is file)
-                        //   https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L419-L441
-                        if kind != bun_sys::FileKind::File {
-                            continue;
-                        }
-
-                        // TODO: .npmignore, or .gitignore if it doesn't exist
-                        // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L434
-                    }
-
-                    if options.skip_symlinks && kind == bun_sys::FileKind::SymLink {
-                        continue;
-                    }
-
-                    // strip and normalize the path
-                    let pathname_slice: &[OSPathChar] = pathname_z;
-                    let mut remaining: &[OSPathChar] = pathname_slice;
+            if A::HAS_ON_FIRST_DIRECTORY_NAME {
+                if appender.needs_first_dirname() {
+                    let root = first_path_component(pathname_z);
+                    #[cfg(windows)]
                     {
-                        let sep: OSPathChar = b'/' as OSPathChar;
-                        let mut i = 0usize;
-                        while i < options.depth_to_skip {
-                            // npm counts the empty name before a leading `/` as a component.
-                            while let [first, rest @ ..] = remaining {
-                                if *first == sep && !options.npm {
-                                    remaining = rest;
-                                } else {
-                                    break;
-                                }
-                            }
-                            if remaining.is_empty() {
-                                continue 'loop_;
-                            }
-                            match strings::index_of_scalar(remaining, sep) {
-                                Some(j) => remaining = &remaining[j + 1..],
-                                None => remaining = &remaining[remaining.len()..],
-                            }
-                            i += 1;
-                        }
-                        while let [first, rest @ ..] = remaining {
-                            if *first == sep {
-                                remaining = rest;
-                            } else {
-                                break;
-                            }
+                        let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
+                        // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
+                        appender.on_first_directory_name(&result);
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        appender.on_first_directory_name(root);
+                    }
+                }
+            }
+
+            let kind = entry.kind();
+
+            if options.npm {
+                // - ignore entries other than files (`true` can only be returned if type is file)
+                //   https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L419-L441
+                if kind != bun_sys::FileKind::File {
+                    continue;
+                }
+
+                // TODO: .npmignore, or .gitignore if it doesn't exist
+                // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L434
+            }
+
+            if options.skip_symlinks && kind == bun_sys::FileKind::SymLink {
+                continue;
+            }
+
+            // strip and normalize the path
+            let pathname_slice: &[OSPathChar] = pathname_z;
+            let mut remaining: &[OSPathChar] = pathname_slice;
+            {
+                let sep: OSPathChar = b'/' as OSPathChar;
+                let mut i = 0usize;
+                while i < options.depth_to_skip {
+                    // npm counts the empty name before a leading `/` as a component.
+                    while let [first, rest @ ..] = remaining {
+                        if *first == sep && !options.npm {
+                            remaining = rest;
+                        } else {
+                            break;
                         }
                     }
-                    let pathname: &[OSPathChar] = remaining;
-
-                    if pathname.len() >= normalized_buf.len() {
-                        if options.log {
-                            bun_core::warn!(
-                                "Skipping entry with a path longer than the maximum path length: {}\n",
-                                bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
-                                    pathname,
-                                    Default::default()
-                                )),
-                            );
-                        }
-                        continue;
+                    if remaining.is_empty() {
+                        continue 'loop_;
                     }
-
-                    let normalized = if options.npm {
-                        normalize_npm_entry_path(pathname, &mut normalized_buf[..])
+                    match strings::index_of_scalar(remaining, sep) {
+                        Some(j) => remaining = &remaining[j + 1..],
+                        None => remaining = &remaining[remaining.len()..],
+                    }
+                    i += 1;
+                }
+                while let [first, rest @ ..] = remaining {
+                    if *first == sep {
+                        remaining = rest;
                     } else {
-                        bun_paths::resolve_path::normalize_buf_t::<
-                            OSPathChar,
-                            bun_paths::platform::Auto,
-                        >(pathname, &mut normalized_buf[..])
-                    };
-                    let normalized_len = normalized.len();
-                    normalized_buf[normalized_len] = 0;
-                    // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
-                    let path: &mut [OSPathChar] = &mut normalized_buf[..normalized_len];
-                    if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
-                        continue;
+                        break;
                     }
+                }
+            }
+            let pathname: &[OSPathChar] = remaining;
 
-                    // Skip entries whose normalized path is absolute on Windows.
-                    // `openatWindows` ignores `dir_fd` for absolute inputs (drive
-                    // letter or UNC), so without this guard a tar entry could
-                    // resolve outside the extraction directory. On POSIX the
-                    // tokenize-on-'/' step already strips any leading separators,
-                    // so `normalizeBufT` cannot produce an absolute output.
-                    #[cfg(windows)]
-                    {
-                        if bun_paths::is_absolute_windows_t::<u16>(path) {
-                            continue 'loop_;
-                        }
-                    }
+            if pathname.len() >= normalized_buf.len() {
+                if options.log {
+                    bun_core::warn!(
+                        "Skipping entry with a path longer than the maximum path length: {}\n",
+                        bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
+                            pathname,
+                            Default::default()
+                        )),
+                    );
+                }
+                continue;
+            }
 
-                    #[cfg(windows)]
-                    if options.npm {
-                        // When writing files on Windows, translate the characters to their
-                        // 0xf000 higher-encoded versions.
-                        // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
-                        let mut remain: &mut [OSPathChar] = path;
-                        if strings::starts_with_windows_drive_letter_t::<OSPathChar>(remain) {
-                            // don't encode `:` from the drive letter
-                            // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
-                            remain = &mut remain[2..];
-                        }
+            let normalized = if options.npm {
+                normalize_npm_entry_path(pathname, &mut normalized_buf[..])
+            } else {
+                bun_paths::resolve_path::normalize_buf_t::<OSPathChar, bun_paths::platform::Auto>(
+                    pathname,
+                    &mut normalized_buf[..],
+                )
+            };
+            let normalized_len = normalized.len();
+            normalized_buf[normalized_len] = 0;
+            // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
+            let path: &mut [OSPathChar] = &mut normalized_buf[..normalized_len];
+            if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
+                continue;
+            }
 
-                        for ch in remain.iter_mut() {
-                            match *ch {
-                                c if c == b'|' as OSPathChar
-                                    || c == b'<' as OSPathChar
-                                    || c == b'>' as OSPathChar
-                                    || c == b'?' as OSPathChar
-                                    || c == b':' as OSPathChar =>
-                                {
-                                    *ch += 0xf000;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+            // Skip entries whose normalized path is absolute on Windows.
+            // `openatWindows` ignores `dir_fd` for absolute inputs (drive
+            // letter or UNC), so without this guard a tar entry could
+            // resolve outside the extraction directory. On POSIX the
+            // tokenize-on-'/' step already strips any leading separators,
+            // so `normalizeBufT` cannot produce an absolute output.
+            #[cfg(windows)]
+            {
+                if bun_paths::is_absolute_windows_t::<u16>(path) {
+                    continue 'loop_;
+                }
+            }
 
-                    let path_slice: &[OSPathChar] = &path[..];
+            #[cfg(windows)]
+            if options.npm {
+                // When writing files on Windows, translate the characters to their
+                // 0xf000 higher-encoded versions.
+                // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
+                let mut remain: &mut [OSPathChar] = path;
+                if strings::starts_with_windows_drive_letter_t::<OSPathChar>(remain) {
+                    // don't encode `:` from the drive letter
+                    // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
+                    remain = &mut remain[2..];
+                }
 
-                    if options.log {
-                        bun_core::prettyln!(
-                            " {}",
-                            bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
-                                path_slice,
-                                Default::default()
-                            ))
-                        );
-                    }
-
-                    count += 1;
-
-                    match kind {
-                        bun_sys::FileKind::Directory => {
-                            #[cfg(windows)]
-                            {
-                                make_path_u16(dir, path_slice)?;
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                let mode = directory_mode(entry.perm() as bun_sys::Mode);
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
-                                // so path_slice is a NUL-terminated [:0]u8.
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
-                                };
-                                match bun_sys::mkdirat_z(dir_fd, path_z, mode) {
-                                    Ok(()) => {}
-                                    Err(err) => {
-                                        // It's possible for some tarballs to return a directory twice, with and
-                                        // without `./` in the beginning. So if it already exists, continue to the
-                                        // next entry.
-                                        match err.get_errno() {
-                                            bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
-                                            _ => {}
-                                        }
-                                        let dirname = bun_paths::dirname_simple(path_slice);
-                                        if dirname.is_empty() {
-                                            return Err(err.into());
-                                        }
-                                        let _ = dir.make_path_u8(dirname);
-                                        let _ = bun_sys::mkdirat_z(dir_fd, path_z, 0o777);
-                                    }
-                                }
-                            }
-                        }
-                        bun_sys::FileKind::SymLink => {
-                            let link_target = entry.symlink().unwrap_or_default();
-                            #[cfg(unix)]
-                            {
-                                // Validate that the symlink target doesn't escape the extraction directory.
-                                // This prevents path traversal attacks where a malicious tarball creates a symlink
-                                // pointing outside (e.g., to /tmp), then writes files through that symlink.
-                                if !is_symlink_target_safe(
-                                    path_slice,
-                                    link_target,
-                                    &mut symlink_join_buf,
-                                ) {
-                                    // Skip symlinks that would escape the extraction directory
-                                    if options.log {
-                                        bun_core::warn!(
-                                            "Skipping symlink with unsafe target: {} -> {}\n",
-                                            bun_core::fmt::EscapeControlChars(
-                                                bun_core::fmt::fmt_os_path(
-                                                    path_slice,
-                                                    Default::default(),
-                                                )
-                                            ),
-                                            bun_core::fmt::escape_control_chars(link_target),
-                                        );
-                                    }
-                                    continue;
-                                }
-                                deferred_symlinks
-                                    .push(DeferredSymlink::new(path_slice, link_target));
-                            }
-                            #[cfg(not(unix))]
-                            {
-                                let _ = link_target;
-                            }
-                        }
-                        bun_sys::FileKind::File => {
-                            // first https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L65-L66
-                            // this.fmode = opts.fmode || 0o666
-                            //
-                            // then https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
-                            //
-                            // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
-                            #[cfg(not(windows))]
-                            let mode: bun_sys::Mode =
-                                ((entry.perm() & 0o777) | 0o666) as bun_sys::Mode;
-
-                            let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
-
-                            #[cfg(windows)]
-                            let file_handle_native: Fd =
-                                match bun_sys::openat_windows(dir_fd, path_slice, flags, 0) {
-                                    Ok(fd) => fd,
-                                    Err(e) => match e.get_errno() {
-                                        bun_sys::E::EPERM | bun_sys::E::ENOENT => {
-                                            // `Dirname::dirname` strips
-                                            // trailing separators.
-                                            let Some(dirname) =
-                                                bun_paths::Dirname::dirname(path_slice)
-                                            else {
-                                                return Err(e.into());
-                                            };
-                                            let _ = make_path_u16(dir, dirname);
-                                            bun_sys::openat_windows(dir_fd, path_slice, flags, 0)?
-                                        }
-                                        _ => return Err(e.into()),
-                                    },
-                                };
-
-                            #[cfg(not(windows))]
-                            let file_handle_native: Fd = {
-                                // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
-                                };
-                                match bun_sys::openat(dir_fd, path_z, flags, mode) {
-                                    Ok(fd) => fd,
-                                    Err(err) => match err.get_errno() {
-                                        bun_sys::E::EACCES
-                                        | bun_sys::E::EPERM
-                                        | bun_sys::E::ENOENT => {
-                                            let dirname = bun_paths::dirname_simple(path_slice);
-                                            if dirname.is_empty() {
-                                                return Err(err.into());
-                                            }
-                                            let _ = dir.make_path_u8(dirname);
-                                            bun_sys::openat(dir_fd, path_z, flags, mode)?
-                                        }
-                                        _ => return Err(err.into()),
-                                    },
-                                }
-                            };
-
-                            let mut output = match file_handle_native.make_lib_uv_owned() {
-                                Ok(fd) => OutputFile {
-                                    fd,
-                                    close: options.close_handles,
-                                },
-                                Err(err) => {
-                                    file_handle_native.close();
-                                    return Err(err.into());
-                                }
-                            };
-
-                            let size: usize = usize::try_from(entry.size().max(0)).unwrap();
-
-                            if size > 0 {
-                                if let Some(ctx_) = ctx.as_deref_mut() {
-                                    let h: u64 = if !ctx_.pluckers.is_empty() {
-                                        hash(slice_as_bytes(path_slice))
-                                    } else {
-                                        0u64
-                                    };
-
-                                    for plucker_ in ctx_.pluckers.iter_mut() {
-                                        if plucker_.filename_hash == h {
-                                            plucker_.contents.list.clear();
-                                            if let Err(err) =
-                                                reader.read_data(size, &mut plucker_.contents.list)
-                                            {
-                                                if options.log {
-                                                    log_archive_error(path_slice, err);
-                                                }
-                                                return Err(err.into());
-                                            }
-                                            plucker_.found = !plucker_.contents.list.is_empty();
-                                            plucker_.fd = output.fd;
-                                            output.close = false;
-                                            continue 'loop_;
-                                        }
-                                    }
-                                }
-                                if let Err(err) =
-                                    read_data_into_fd(&mut reader, output.fd, &mut write_strategy)
-                                {
-                                    if options.log {
-                                        match err {
-                                            ReadDataError::Archive(err) => {
-                                                log_archive_error(path_slice, err)
-                                            }
-                                            ReadDataError::Sys(err) => {
-                                                log_archive_error(path_slice, err)
-                                            }
-                                        }
-                                    }
-                                    return Err(crate::Error::Fail);
-                                }
-                            }
+                for ch in remain.iter_mut() {
+                    match *ch {
+                        c if c == b'|' as OSPathChar
+                            || c == b'<' as OSPathChar
+                            || c == b'>' as OSPathChar
+                            || c == b'?' as OSPathChar
+                            || c == b':' as OSPathChar =>
+                        {
+                            *ch += 0xf000;
                         }
                         _ => {}
                     }
                 }
+            }
+
+            let path_slice: &[OSPathChar] = &path[..];
+
+            if options.log {
+                bun_core::prettyln!(
+                    " {}",
+                    bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
+                        path_slice,
+                        Default::default()
+                    ))
+                );
+            }
+
+            count += 1;
+
+            match kind {
+                bun_sys::FileKind::Directory => {
+                    #[cfg(windows)]
+                    {
+                        make_path_u16(dir, path_slice)?;
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        let mode = directory_mode(entry.perm());
+                        // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
+                        // so path_slice is a NUL-terminated [:0]u8.
+                        let path_z: &ZStr =
+                            unsafe { ZStr::from_raw(path_slice.as_ptr(), path_slice.len()) };
+                        match bun_sys::mkdirat_z(dir_fd, path_z, mode) {
+                            Ok(()) => {}
+                            Err(err) => {
+                                // It's possible for some tarballs to return a directory twice, with and
+                                // without `./` in the beginning. So if it already exists, continue to the
+                                // next entry.
+                                match err.get_errno() {
+                                    bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
+                                    _ => {}
+                                }
+                                let dirname = bun_paths::dirname_simple(path_slice);
+                                if dirname.is_empty() {
+                                    return Err(err.into());
+                                }
+                                let _ = dir.make_path_u8(dirname);
+                                let _ = bun_sys::mkdirat_z(dir_fd, path_z, 0o777);
+                            }
+                        }
+                    }
+                }
+                bun_sys::FileKind::SymLink => {
+                    let link_target = entry.symlink().unwrap_or_default();
+                    #[cfg(unix)]
+                    {
+                        // Validate that the symlink target doesn't escape the extraction directory.
+                        // This prevents path traversal attacks where a malicious tarball creates a symlink
+                        // pointing outside (e.g., to /tmp), then writes files through that symlink.
+                        if !is_symlink_target_safe(path_slice, link_target, &mut symlink_join_buf) {
+                            // Skip symlinks that would escape the extraction directory
+                            if options.log {
+                                bun_core::warn!(
+                                    "Skipping symlink with unsafe target: {} -> {}\n",
+                                    bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
+                                        path_slice,
+                                        Default::default(),
+                                    )),
+                                    bun_core::fmt::escape_control_chars(link_target),
+                                );
+                            }
+                            continue;
+                        }
+                        deferred_symlinks.push(DeferredSymlink::new(path_slice, link_target));
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = link_target;
+                    }
+                }
+                bun_sys::FileKind::File => {
+                    // first https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L65-L66
+                    // this.fmode = opts.fmode || 0o666
+                    //
+                    // then https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
+                    //
+                    // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
+                    #[cfg(not(windows))]
+                    let mode: bun_sys::Mode = (entry.perm() & 0o777) | 0o666;
+
+                    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+
+                    #[cfg(windows)]
+                    let file_handle_native: Fd =
+                        match bun_sys::openat_windows(dir_fd, path_slice, flags, 0) {
+                            Ok(fd) => fd,
+                            Err(e) => match e.get_errno() {
+                                bun_sys::E::EPERM | bun_sys::E::ENOENT => {
+                                    // `Dirname::dirname` strips
+                                    // trailing separators.
+                                    let Some(dirname) = bun_paths::Dirname::dirname(path_slice)
+                                    else {
+                                        return Err(e.into());
+                                    };
+                                    let _ = make_path_u16(dir, dirname);
+                                    bun_sys::openat_windows(dir_fd, path_slice, flags, 0)?
+                                }
+                                _ => return Err(e.into()),
+                            },
+                        };
+
+                    #[cfg(not(windows))]
+                    let file_handle_native: Fd = {
+                        // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
+                        // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
+                        let path_z: &ZStr =
+                            unsafe { ZStr::from_raw(path_slice.as_ptr(), path_slice.len()) };
+                        match bun_sys::openat(dir_fd, path_z, flags, mode) {
+                            Ok(fd) => fd,
+                            Err(err) => match err.get_errno() {
+                                bun_sys::E::EACCES | bun_sys::E::EPERM | bun_sys::E::ENOENT => {
+                                    let dirname = bun_paths::dirname_simple(path_slice);
+                                    if dirname.is_empty() {
+                                        return Err(err.into());
+                                    }
+                                    let _ = dir.make_path_u8(dirname);
+                                    bun_sys::openat(dir_fd, path_z, flags, mode)?
+                                }
+                                _ => return Err(err.into()),
+                            },
+                        }
+                    };
+
+                    let mut output = match file_handle_native.make_lib_uv_owned() {
+                        Ok(fd) => OutputFile {
+                            fd,
+                            close: options.close_handles,
+                        },
+                        Err(err) => {
+                            file_handle_native.close();
+                            return Err(err.into());
+                        }
+                    };
+
+                    let size: usize = usize::try_from(entry.size().max(0)).unwrap();
+
+                    if size > 0 {
+                        if let Some(ctx_) = ctx.as_deref_mut() {
+                            let h: u64 = if !ctx_.pluckers.is_empty() {
+                                hash(slice_as_bytes(path_slice))
+                            } else {
+                                0u64
+                            };
+
+                            for plucker_ in ctx_.pluckers.iter_mut() {
+                                if plucker_.filename_hash == h {
+                                    plucker_.contents.list.clear();
+                                    if let Err(err) =
+                                        reader.read_data(size, &mut plucker_.contents.list)
+                                    {
+                                        if options.log {
+                                            log_archive_error(path_slice, err);
+                                        }
+                                        return Err(err.into());
+                                    }
+                                    plucker_.found = !plucker_.contents.list.is_empty();
+                                    plucker_.fd = output.fd;
+                                    output.close = false;
+                                    continue 'loop_;
+                                }
+                            }
+                        }
+                        if let Err(err) =
+                            read_data_into_fd(&mut reader, output.fd, &mut write_strategy)
+                        {
+                            if options.log {
+                                log_archive_error(path_slice, err);
+                            }
+                            return Err(crate::Error::Fail);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 

@@ -12,8 +12,6 @@ use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
-const FILETYPE_REGULAR: u32 = tar::reader::S_IFREG;
-
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
 pub(crate) enum Compression {
@@ -92,12 +90,12 @@ impl Archive {
 
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
-    let Ok(mut reader) = bun_archive::open_memory(data, false) else {
+    let Ok(mut reader) = bun_archive::open_memory(data, tar::Dialect::General) else {
         return 0;
     };
     let mut count: u32 = 0;
     while let Ok(Some(entry)) = reader.next_entry() {
-        if entry.filetype() == FILETYPE_REGULAR {
+        if entry.kind() == bun_sys::FileKind::File {
             count += 1;
         }
     }
@@ -228,15 +226,9 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     };
 
     let mut writer = tar::writer::Writer::new(Vec::<u8>::new(), tar::writer::Names::for_host());
-    let fail = |what: &str, err: tar::Error| {
-        global.throw_invalid_arguments(format_args!(
-            "Failed to create tarball: {}",
-            if matches!(err, tar::Error::Alloc(_)) {
-                "OutOfMemory"
-            } else {
-                what
-            }
-        ))
+    // Writing to a `Vec` fails for want of memory only.
+    let fail = |_: tar::Error| {
+        global.throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory"))
     };
 
     let now_secs: i64 = bun_core::time::milli_timestamp() / 1000;
@@ -270,18 +262,11 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
                 perm: 0o644,
                 mtime: now_secs,
             })
-            .map_err(|err| fail("ArchiveHeaderError", err))?;
-        writer
-            .data(data)
-            .map_err(|err| fail("ArchiveWriteError", err))?;
-        writer
-            .finish_entry()
-            .map_err(|err| fail("ArchiveFinishEntryError", err))?;
+            .map_err(fail)?;
+        writer.data(data).map_err(fail)?;
     }
 
-    writer
-        .finish(true)
-        .map_err(|err| fail("ArchiveCloseError", err))
+    writer.finish(true).map_err(fail)
 }
 
 fn get_entry_data<'a>(
@@ -909,10 +894,11 @@ impl FilesContext {
             tar::Error::Alloc(err) => Err(err),
             err => Ok(FilesResult::ArchiveErr(err)),
         };
-        let mut reader = match bun_archive::open_memory(self.store.shared_view(), false) {
-            Ok(reader) => reader,
-            Err(err) => return read_error(err),
-        };
+        let mut reader =
+            match bun_archive::open_memory(self.store.shared_view(), tar::Dialect::General) {
+                Ok(reader) => reader,
+                Err(err) => return read_error(err),
+            };
 
         let mut entries: FileEntryList = Vec::new();
 
@@ -922,12 +908,11 @@ impl FilesContext {
                 Ok(Some(entry)) => entry,
                 Err(err) => return read_error(err),
             };
-            if entry_ref.filetype() != FILETYPE_REGULAR {
+            if entry_ref.kind() != bun_sys::FileKind::File {
                 continue;
             }
 
-            let pathname =
-                bun_archive::display_path(entry_ref).map_err(|_| bun_alloc::AllocError)?;
+            let pathname = bun_archive::display_path(entry_ref)?;
             let pathname: &[u8] = &pathname;
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
@@ -1152,10 +1137,11 @@ fn extract_to_disk_filtered(
     glob_patterns: Option<&[GlobPattern]>,
 ) -> crate::Result<u32> {
     use bun_archive::lib;
-    let mut reader = bun_archive::open_memory(file_buffer, false).map_err(|err| match err {
-        tar::Error::Alloc(err) => crate::Error::Alloc(err),
-        _ => crate::Error::ReadError,
-    })?;
+    let mut reader =
+        bun_archive::open_memory(file_buffer, tar::Dialect::General).map_err(|err| match err {
+            tar::Error::Alloc(err) => crate::Error::Alloc(err),
+            _ => crate::Error::ReadError,
+        })?;
 
     // Open/create target directory using bun.sys
     let cwd = Fd::cwd();
@@ -1189,8 +1175,7 @@ fn extract_to_disk_filtered(
             Ok(Some(entry)) => entry,
             Err(_) => return Err(crate::Error::ReadError),
         };
-        let raw_pathname = bun_archive::display_path(entry_ref)
-            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+        let raw_pathname = bun_archive::display_path(entry_ref)?;
         let raw_pathname: &[u8] = &raw_pathname;
 
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
@@ -1216,9 +1201,7 @@ fn extract_to_disk_filtered(
             }
         }
 
-        let kind = bun_archive::entry_kind(entry_ref);
-
-        match kind {
+        match entry_ref.kind() {
             bun_sys::FileKind::Directory => {
                 match dir_fd.make_path(pathname) {
                     // Directory already exists - don't count as extracted

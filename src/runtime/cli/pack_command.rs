@@ -3084,7 +3084,7 @@ pub(crate) mod bindings {
 
         let mut entries: Vec<TarballEntry> = Vec::new();
 
-        let mut reader = bun_archive::open_memory(&tarball, false)
+        let mut reader = bun_archive::open_memory(&tarball, tar::Dialect::General)
             .map_err(|err| heap.error(format_args!("failed to read tarball: {err}")))?;
         let mut read_buf: Vec<u8> = Vec::new();
 
@@ -3096,11 +3096,11 @@ pub(crate) mod bindings {
                     return Err(heap.error(format_args!("failed to read archive header: {err}")));
                 }
             };
-            let pathname = BunString::clone_utf8(&bun_core::handle_oom(
-                bun_archive::display_path(archive_entry).map_err(|_| bun_alloc::AllocError),
-            ));
+            let pathname = BunString::clone_utf8(&bun_core::handle_oom(bun_archive::display_path(
+                archive_entry,
+            )));
 
-            let kind = bun_archive::entry_kind(archive_entry);
+            let kind = archive_entry.kind();
             let size: usize = usize::try_from(archive_entry.size()).expect("int cast");
             let mut entry = TarballEntry {
                 pathname,

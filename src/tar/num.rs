@@ -1,5 +1,4 @@
-//! Number fields. Overflow saturates instead of failing, and a field ends at the first byte that
-//! is not a digit.
+//! Number fields. Overflow saturates, and a field ends at the first byte that is not a digit.
 
 fn parse_base_n(field: &[u8], base: u8) -> i64 {
     let mut bytes = field.iter().copied().peekable();

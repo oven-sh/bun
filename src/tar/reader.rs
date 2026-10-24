@@ -1,11 +1,9 @@
 use crate::error::{Error, Result};
 use crate::header::{self, Block, gnu};
 use crate::num::{parse_decimal, parse_field, parse_pax_time};
-use bun_alloc::AllocError;
-use bun_core::{slice_to_nul, strings};
+use bun_core::{FileKind, S, kind_from_mode, slice_to_nul, strings};
 
-/// Where tar readers disagree about what counts as a file, as its name or as the end of the
-/// archive, this picks whose answer to give.
+/// Whose answer to give where tar readers disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialect {
     /// Zero blocks never end the archive, so archives that were concatenated read as one.
@@ -14,8 +12,7 @@ pub enum Dialect {
     Npm,
 }
 
-/// Decides which pax strings count as convertible. An entry with one that is not is read with
-/// less trust in its headers.
+/// Which pax strings convert. An entry with one that does not has its headers trusted less.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Charset {
     /// POSIX in the "C" locale: only ASCII converts.
@@ -28,16 +25,13 @@ pub enum Charset {
 pub struct Options {
     pub dialect: Dialect,
     pub charset: Charset,
-    /// Take an entry named `._name` for the AppleDouble metadata of the entry behind it and drop
-    /// it. macOS only.
+    /// macOS: an entry named `._name` is the AppleDouble metadata of the entry behind it, and dropped.
     pub mac_metadata: bool,
-    /// Refuse input whose first block does not look like tar.
-    pub detect: bool,
 }
 
 impl Options {
     /// What the platform this was compiled for has always done.
-    pub fn for_host(dialect: Dialect, detect: bool) -> Self {
+    pub fn for_host(dialect: Dialect) -> Self {
         Self {
             dialect,
             charset: if cfg!(windows) {
@@ -46,25 +40,8 @@ impl Options {
                 Charset::Ascii
             },
             mac_metadata: cfg!(target_os = "macos"),
-            detect,
         }
     }
-}
-
-pub const S_IFMT: u32 = 0o170000;
-pub const S_IFREG: u32 = 0o100000;
-pub const S_IFDIR: u32 = 0o040000;
-pub const S_IFLNK: u32 = 0o120000;
-pub const S_IFCHR: u32 = 0o020000;
-pub const S_IFBLK: u32 = 0o060000;
-pub const S_IFIFO: u32 = 0o010000;
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum LinkKind {
-    #[default]
-    None,
-    Hard,
-    Symbolic,
 }
 
 #[derive(Debug, Default)]
@@ -72,7 +49,7 @@ pub struct Entry {
     path: Vec<u8>,
     path_is_utf8: bool,
     link: Vec<u8>,
-    link_kind: LinkKind,
+    is_symlink: bool,
     mode: u32,
     size: i64,
     mtime: Option<i64>,
@@ -83,22 +60,23 @@ impl Entry {
     pub fn path(&self) -> &[u8] {
         &self.path
     }
-    /// The path came from a pax record that [`Charset`] could convert. Otherwise its bytes have no
-    /// known encoding.
+    /// The path is a pax record that [`Charset`] could convert. Otherwise its encoding is unknown.
     pub fn path_is_utf8(&self) -> bool {
         self.path_is_utf8
     }
     pub fn symlink(&self) -> Option<&[u8]> {
-        (self.link_kind == LinkKind::Symbolic).then_some(&self.link[..])
+        self.is_symlink.then_some(&self.link[..])
     }
-    /// One of the `S_IF*` constants, or whatever the header's mode field held for the few types
-    /// that say nothing about it.
+    /// One of `S::IF*`, or what the mode field held for the few types that say nothing about it.
     pub fn filetype(&self) -> u32 {
-        self.mode & S_IFMT
+        self.mode & S::IFMT
+    }
+    pub fn kind(&self) -> FileKind {
+        kind_from_mode(self.filetype())
     }
     /// Not masked to the permission bits: a base-256 mode field can hold more.
     pub fn perm(&self) -> u32 {
-        self.mode & !S_IFMT
+        self.mode & !S::IFMT
     }
     /// The length of the file on disk, which for a sparse entry is more than the archive stores.
     pub fn size(&self) -> i64 {
@@ -168,6 +146,7 @@ mod size_field {
     pub(super) const PAX_SIZE: u8 = 8;
 }
 
+// https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_format_tar.c#L247
 const PATHNAME_LIMIT: i64 = 1024 * 1024;
 const USER_NAME_LIMIT: i64 = 65536;
 const SPARSE_MAP_LIMIT: i64 = 8 * 1024 * 1024;
@@ -189,8 +168,7 @@ fn assign(dest: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
 }
 
 fn append(dest: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
-    dest.try_reserve(bytes.len())
-        .map_err(|_| Error::Alloc(AllocError))?;
+    dest.try_reserve(bytes.len())?;
     dest.extend_from_slice(bytes);
     Ok(())
 }
@@ -252,7 +230,6 @@ enum SparseMapField {
 
 #[derive(Debug, Clone, Copy)]
 enum State {
-    Detect,
     NextEntry,
     Header,
     Skip(i64, AfterSkip),
@@ -264,8 +241,7 @@ enum State {
     SparseMapLine(SparseMapField),
     Emit,
     Data,
-    /// Behind the end of an npm archive. The input is still read to its end so that whatever
-    /// decompresses it gets to check all of it.
+    /// Behind the end of an npm archive, which is still read to its end so that all of it is checked.
     Drain,
     Done,
     Failed(Error),
@@ -280,8 +256,7 @@ enum Step {
     EndOfArchive,
 }
 
-/// [`Event`] without the borrows. `Data` is `input[start..start + len]`, and the entry is
-/// [`Reader::entry`].
+/// [`Event`] without the borrows. `Data` is `input[start..start + len]`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Poll {
     NeedInput,
@@ -309,7 +284,6 @@ pub struct Reader {
 
     // One sequence of headers, which ends with the entry's own.
     status: Status,
-    failure: Error,
     eof_is_fatal: bool,
     seen: u32,
     pax_is_utf8: bool,
@@ -366,17 +340,12 @@ impl Reader {
     pub fn new(options: Options) -> Self {
         Self {
             options,
-            state: if options.detect {
-                State::Detect
-            } else {
-                State::NextEntry
-            },
+            state: State::NextEntry,
             block: [0; 512],
             block_len: 0,
             main_header: [0; 512],
             collected: Vec::new(),
             status: Status::Ok,
-            failure: Error::MalformedPaxAttribute,
             eof_is_fatal: false,
             seen: 0,
             pax_is_utf8: true,
@@ -426,8 +395,7 @@ impl Reader {
         self.options.dialect == Dialect::Npm
     }
 
-    /// Returns how much of `input` was consumed along with the event. `eof` says that nothing
-    /// follows `input`. An error is final: every later call returns it again.
+    /// Returns how much of `input` was consumed. `eof`: nothing follows it. An error is final.
     pub fn next<'a>(&'a mut self, input: &'a [u8], eof: bool) -> Result<(usize, Event<'a>)> {
         let (used, poll) = self.poll(input, eof)?;
         let event = match poll {
@@ -450,16 +418,14 @@ impl Reader {
         &self.entry
     }
 
-    /// Does the detection that [`Options::detect`] asks for right away, given the start of the
-    /// input and at least a block of it if there is that much. Returns how much was consumed.
+    /// Refuses input that does not start like tar, given its first block if there is that much.
     pub(crate) fn detect(&mut self, start: &[u8]) -> Result<usize> {
         let mut used = 0usize;
-        if matches!(self.state, State::Detect)
-            && let Err(error) = self.step(start, true, &mut used)
-        {
-            self.state = State::Failed(error);
-            return Err(error);
+        if self.fill_block(start, &mut used).is_none() || header::bid(&self.block) == 0 {
+            self.state = State::Failed(Error::UnrecognizedFormat);
+            return Err(Error::UnrecognizedFormat);
         }
+        // `block` stays full, so `Header` takes it from here.
         Ok(used)
     }
 
@@ -518,21 +484,6 @@ impl Reader {
         match self.state {
             State::Failed(error) => Err(error),
             State::Done => Ok(Step::EndOfArchive),
-
-            State::Detect => {
-                if self.fill_block(input, used).is_none() {
-                    if !eof {
-                        return Ok(Step::NeedInput);
-                    }
-                    return Err(Error::UnrecognizedFormat);
-                }
-                if header::bid(&self.block) == 0 {
-                    return Err(Error::UnrecognizedFormat);
-                }
-                // `block` stays full, so `Header` takes it from here.
-                self.state = State::NextEntry;
-                Ok(Step::Continue)
-            }
 
             State::NextEntry => {
                 let left = self.bytes_remaining.saturating_add(self.padding);
@@ -833,11 +784,6 @@ impl Reader {
         self.group_name_converts = true;
     }
 
-    fn fail_later(&mut self, error: Error) -> Status {
-        self.failure = error;
-        Status::Failed
-    }
-
     fn between_headers(&mut self, status: Status) {
         self.status = self.status.min(status);
         if self.seen & !(seen::VOLUME | seen::PAX_GLOBAL) != 0 {
@@ -881,8 +827,7 @@ impl Reader {
                     return Err(Error::RedundantHeader("A"));
                 }
                 self.format = Format::Pax;
-                // A Solaris ACL. Permissions come from the header's mode alone, as in GNU tar and
-                // node-tar, so neither this nor a `SCHILY.acl.*` record is read.
+                // A Solaris ACL. As in GNU tar and node-tar, permissions come from the header's mode alone.
                 self.begin_body(size, None)
             }
             b'g' => {
@@ -1074,7 +1019,7 @@ impl Reader {
                     self.sparse_major = 0;
                     self.sparse_minor = 1;
                     if length > SPARSE_MAP_LIMIT {
-                        Skip(self.fail_later(Error::SparseMapTooLarge))
+                        Skip(Status::Failed)
                     } else {
                         Take(Collect::SparseMap)
                     }
@@ -1117,7 +1062,7 @@ impl Reader {
             if length < SPARSE_MAP_LIMIT {
                 Take(Collect::HolesData)
             } else {
-                Skip(self.fail_later(Error::SparseMapTooLarge))
+                Skip(Status::Failed)
             }
         } else if is(b"gname") || is(b"uname") {
             if length > USER_NAME_LIMIT {
@@ -1195,9 +1140,6 @@ impl Reader {
         if !self.pax_link.is_empty() {
             let converts = !utf8 || self.converts(&self.pax_link);
             assign(&mut self.entry.link, slice_to_nul(&self.pax_link))?;
-            if self.entry.link_kind == LinkKind::None {
-                self.entry.link_kind = LinkKind::Hard;
-            }
             if !converts {
                 status = Status::Warn;
             }
@@ -1226,9 +1168,6 @@ impl Reader {
             }
             Collect::LongLink => {
                 assign(&mut self.entry.link, slice_to_nul(value))?;
-                if self.entry.link_kind == LinkKind::None {
-                    self.entry.link_kind = LinkKind::Hard;
-                }
                 self.state = State::Skip(body_padding, AfterSkip::BetweenHeaders(Status::Ok));
             }
             Collect::Number(which) => {
@@ -1349,12 +1288,9 @@ impl Reader {
         Ok(())
     }
 
-    /// `false` for a block that cannot be. An empty one takes its place, so the list is no longer
-    /// empty and the entry does not fall back to one block that covers all of it.
+    /// `false` for a block that cannot be. An empty one takes its place, so the list is not empty.
     fn add_sparse_block(&mut self, offset: i64, remaining: i64, hole: bool) -> Result<bool> {
-        self.sparse
-            .try_reserve(1)
-            .map_err(|_| Error::Alloc(AllocError))?;
+        self.sparse.try_reserve(1)?;
         let valid = remaining >= 0 && offset >= 0 && offset.checked_add(remaining).is_some();
         self.sparse.push(if valid {
             SparseBlock {
@@ -1533,14 +1469,9 @@ impl Reader {
         };
         match self.typeflag {
             b'1' => {
-                self.entry.link_kind = LinkKind::Hard;
-                if self.entry.link.is_empty() {
-                    assign(&mut self.entry.link, slice_to_nul(header::linkname(&h)))?;
-                }
                 if self.entry.size > 0 {
-                    self.entry.set_filetype(S_IFREG);
-                    // Only pax lets a hardlink entry carry a body. Whether a ustar archive is pax
-                    // cannot be known, so the header itself is asked how well-formed it is.
+                    self.entry.set_filetype(S::IFREG);
+                    // Only pax lets a hardlink carry a body, and a ustar header does not say whether it is pax.
                     let ignore_size = match self.format {
                         Format::Pax => false,
                         Format::Old | Format::Gnu => true,
@@ -1553,19 +1484,19 @@ impl Reader {
                 }
             }
             b'2' => {
-                self.entry.link_kind = LinkKind::Symbolic;
+                self.entry.is_symlink = true;
                 if self.entry.link.is_empty() {
                     assign(&mut self.entry.link, slice_to_nul(header::linkname(&h)))?;
                 }
-                no_body(&mut self.entry, S_IFLNK);
+                no_body(&mut self.entry, S::IFLNK);
             }
-            b'3' => no_body(&mut self.entry, S_IFCHR),
-            b'4' => no_body(&mut self.entry, S_IFBLK),
-            b'5' => no_body(&mut self.entry, S_IFDIR),
-            b'6' => no_body(&mut self.entry, S_IFIFO),
-            b'D' => self.entry.set_filetype(S_IFDIR),
+            b'3' => no_body(&mut self.entry, S::IFCHR),
+            b'4' => no_body(&mut self.entry, S::IFBLK),
+            b'5' => no_body(&mut self.entry, S::IFDIR),
+            b'6' => no_body(&mut self.entry, S::IFIFO),
+            b'D' => self.entry.set_filetype(S::IFDIR),
             b'M' => {}
-            _ => self.entry.set_filetype(S_IFREG),
+            _ => self.entry.set_filetype(S::IFREG),
         }
         self.padding = padding_for(self.bytes_remaining);
         self.after_main_header()
@@ -1573,7 +1504,7 @@ impl Reader {
 
     fn after_main_header(&mut self) -> Result<()> {
         if self.status == Status::Failed {
-            return Err(self.failure);
+            return Err(Error::SparseMapTooLarge);
         }
 
         if self.options.mac_metadata
@@ -1611,8 +1542,7 @@ impl Reader {
         self.finish_header(self.status)
     }
 
-    /// Format 1.0 keeps the map in front of the data: a count, then that many pairs of offset and
-    /// size, each a decimal number on a line of its own.
+    /// Format 1.0: a count, then pairs of offset and size, each on a line, in front of the data.
     fn on_sparse_map_line(&mut self, field: SparseMapField) -> Result<()> {
         let line_buf = self.line;
         let line = line_buf.get(..self.line_len).unwrap_or_default();
@@ -1672,16 +1602,16 @@ impl Reader {
             status == Status::Ok
         };
         if may_be_directory
-            && self.entry.filetype() == S_IFREG
+            && self.entry.filetype() == S::IFREG
             && self.entry.path.last() == Some(&b'/')
         {
-            self.entry.set_filetype(S_IFDIR);
+            self.entry.set_filetype(S::IFDIR);
             self.bytes_remaining = 0;
             self.padding = 0;
         }
 
         if self.is_npm()
-            && self.entry.filetype() == S_IFREG
+            && self.entry.filetype() == S::IFREG
             && (!(plain_file || self.typeflag == b'7') || strings::contains_char(&self.pax_path, 0))
         {
             self.entry.set_filetype(0);
@@ -1704,7 +1634,7 @@ impl Entry {
     }
 
     fn set_filetype(&mut self, filetype: u32) {
-        self.mode = (self.mode & !S_IFMT) | filetype;
+        self.mode = (self.mode & !S::IFMT) | filetype;
     }
 }
 

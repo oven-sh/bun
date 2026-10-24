@@ -513,7 +513,7 @@ impl TarballStream {
                     tar::Dialect::General
                 };
                 (*this).decoder = Some(
-                    tar::Decoder::new(tar::Options::for_host(dialect, false), gzip)
+                    tar::Decoder::new(tar::Options::for_host(dialect), gzip)
                         .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
                 );
             }
@@ -661,7 +661,7 @@ impl Extraction {
             }
         }
 
-        let kind = bun_archive::entry_kind(entry);
+        let kind = entry.kind();
 
         if self.npm_mode && kind != FileKind::File {
             // npm tarballs only contain files; like Archiver.extractToDir

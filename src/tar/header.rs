@@ -80,7 +80,7 @@ fn number_field_looks_valid(field: &[u8]) -> bool {
     if matches!(field.first(), Some(128 | 255 | 0)) {
         return true;
     }
-    let rest = field.trim_ascii_start_spaces();
+    let rest = strings::trim_leading_char(field, b' ');
     let digits = rest
         .iter()
         .position(|c| !matches!(c, b'0'..=b'7'))
@@ -88,18 +88,7 @@ fn number_field_looks_valid(field: &[u8]) -> bool {
     rest.iter().skip(digits).all(|c| matches!(c, b' ' | 0))
 }
 
-trait TrimSpaces {
-    fn trim_ascii_start_spaces(&self) -> &[u8];
-}
-impl TrimSpaces for [u8] {
-    fn trim_ascii_start_spaces(&self) -> &[u8] {
-        match strings::index_of_not_char(self, b' ') {
-            Some(n) => self.get(n as usize..).unwrap_or_default(),
-            None => &[],
-        }
-    }
-}
-
+// https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_format_tar.c#L393
 /// How sure we are that `h` starts a tar archive, in bits verified. Zero means it does not.
 pub(crate) fn bid(h: &Block) -> u32 {
     if is_null(h) {

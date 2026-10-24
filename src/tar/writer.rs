@@ -1,21 +1,17 @@
-//! Writes "restricted pax": plain ustar, with a pax header in front of the entries whose name
-//! ustar cannot hold. Only regular files, which is all Bun archives.
+//! Writes "restricted pax": ustar, plus a pax header where that falls short. Regular files only.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::header::Block;
-use bun_alloc::AllocError;
 use bun_core::{slice_to_nul, strings};
 
-/// Where the bytes go. The size of each write is part of the contract: behind a compressor it
-/// decides what the compressed bytes are.
+/// The size of each write matters: behind a compressor it decides what the compressed bytes are.
 pub trait Output {
     fn write(&mut self, bytes: &[u8]) -> Result<()>;
 }
 
 impl Output for Vec<u8> {
     fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.try_reserve(bytes.len())
-            .map_err(|_| Error::Alloc(AllocError))?;
+        self.try_reserve(bytes.len())?;
         self.extend_from_slice(bytes);
         Ok(())
     }
@@ -57,8 +53,7 @@ pub struct File<'a> {
 }
 
 const RECORD_SIZE: u64 = 10240;
-/// The last time that fits in eleven octal digits. It is written through a pax record all the
-/// same.
+/// The last time that fits in eleven octal digits, which still gets a pax record.
 const USTAR_MTIME_MAX: i64 = (1 << 33) - 1;
 const USTAR_SIZE_END: u64 = 1 << 33;
 static ZEROS: [u8; 1024] = [0; 1024];
@@ -183,15 +178,14 @@ impl<O: Output> Writer<O> {
     }
 
     /// Data that was announced and never written is made up with zeros.
-    pub fn finish_entry(&mut self) -> Result<()> {
+    fn finish_entry(&mut self) -> Result<()> {
         let zeros = self.remaining.saturating_add(self.padding);
         self.remaining = 0;
         self.padding = 0;
         self.put_zeros(zeros)
     }
 
-    /// Ends the archive. `pad_to_record` fills the last 10 KiB record up, the way tar writes to a
-    /// tape.
+    /// `pad_to_record` fills the last 10 KiB record up, the way tar writes to a tape.
     pub fn finish(mut self, pad_to_record: bool) -> Result<O> {
         self.finish_entry()?;
         self.put_zeros(1024)?;
@@ -224,8 +218,7 @@ fn add_record(pax: &mut Vec<u8>, key: &[u8], value: &[u8]) -> Result<()> {
         digits = digits.saturating_add(1);
     }
     let length = without_length.saturating_add(digits);
-    pax.try_reserve(length)
-        .map_err(|_| Error::Alloc(AllocError))?;
+    pax.try_reserve(length)?;
     pax.extend_from_slice(itoa::Buffer::new().format(length).as_bytes());
     pax.push(b' ');
     pax.extend_from_slice(key);
@@ -240,8 +233,7 @@ fn find_slash(path: &[u8], from: usize) -> Option<usize> {
     Some(from.saturating_add(strings::index_of_char_usize(tail, b'/')?))
 }
 
-/// Where to cut a name longer than 100 bytes into `prefix` and `name`: at the first `/` that
-/// leaves a name of at most 100. The prefix may not be empty.
+/// The first `/` that leaves a name of at most 100 bytes behind a prefix that is not empty.
 fn split_point(path: &[u8]) -> Option<usize> {
     let mut at = find_slash(path, path.len().saturating_sub(101))?;
     if at == 0 {
@@ -258,9 +250,7 @@ fn byte_at(path: &[u8], index: usize) -> u8 {
     path.get(index).copied().unwrap_or(0)
 }
 
-/// A stand-in for a name ustar cannot hold, for readers that do not know pax. It keeps as many
-/// of the leading directories as fit and the start of the file name. `insert` goes in as one more
-/// directory in front of the file name.
+/// A stand-in for readers that do not know pax. `insert` becomes the last directory.
 fn ustar_entry_name(src: &[u8], insert: Option<&[u8]>) -> Vec<u8> {
     let insert_length = insert.map_or(0, |name| name.len().saturating_add(2));
     if src.len() < 100 && insert.is_none() {
@@ -383,8 +373,7 @@ fn format_octal(mut value: i64, field: &mut [u8]) {
     }
 }
 
-/// `digits` is the field without its terminator and `field` all of it. A number that needs the
-/// room overwrites the terminator, and base-256 takes whatever still does not fit.
+/// A number too long for `digits` overwrites the terminator. Base-256 takes what still won't fit.
 fn format_number(value: i64, field: &mut [u8], digits: usize, strict: bool) {
     if strict {
         return format_octal(value, field.get_mut(..digits).unwrap_or_default());
@@ -408,8 +397,8 @@ fn format_number(value: i64, field: &mut [u8], digits: usize, strict: bool) {
 
 fn format_header(fields: &Fields<'_>) -> Block {
     let mut h: Block = [0; 512];
-    for (at, digits) in [(100, 6), (108, 6), (116, 6), (329, 6), (337, 6)] {
-        copy_into(&mut h, at, b"000000 ".get(..digits + 1).unwrap_or_default());
+    for at in [100, 108, 116, 329, 337] {
+        copy_into(&mut h, at, b"000000 ");
     }
     copy_into(&mut h, 124, b"00000000000 ");
     copy_into(&mut h, 136, b"00000000000 ");

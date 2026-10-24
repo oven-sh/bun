@@ -167,7 +167,7 @@ impl Context {
         let mut files: Vec<Vec<u8>> = Vec::new();
 
         let mut reader = archive_ok(
-            bun_archive::open_memory(&tarball_bytes, false),
+            bun_archive::open_memory(&tarball_bytes, tar::Dialect::General),
             "failed to read tarball",
         )?;
         let mut os_path_buf: Vec<OSPathChar> = Vec::new();
@@ -180,7 +180,7 @@ impl Context {
         while let Some(entry) = archive_ok(reader.next_entry(), "failed to read archive header")? {
             let pathname: &[OSPathChar] = bun_archive::os_path(entry, &mut os_path_buf)
                 .map_err(|_| PackError::OutOfMemory)?;
-            let kind = bun_archive::entry_kind(entry);
+            let kind = entry.kind();
 
             let size = usize::try_from(entry.size().max(0)).expect("int cast");
 

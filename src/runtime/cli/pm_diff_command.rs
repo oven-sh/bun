@@ -539,7 +539,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
         Global::exit(1);
     };
-    let mut reader = bun_archive::open_memory(bytes, false)
+    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::General)
         .map_err(|err| fail(err, "failed to read tarball"))?;
     loop {
         let Some(entry) = reader
@@ -548,7 +548,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         else {
             break;
         };
-        if bun_archive::entry_kind(entry) != bun_sys::FileKind::File {
+        if entry.kind() != bun_sys::FileKind::File {
             continue;
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;

@@ -66,4 +66,10 @@ pub enum Error {
     Alloc(#[from] bun_alloc::AllocError),
 }
 
+impl From<std::collections::TryReserveError> for Error {
+    fn from(_: std::collections::TryReserveError) -> Self {
+        Self::Alloc(bun_alloc::AllocError)
+    }
+}
+
 pub type Result<T, E = Error> = core::result::Result<T, E>;

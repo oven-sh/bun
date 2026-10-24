@@ -1,16 +1,12 @@
-//! What Windows does to a UTF-8 name on its way to UTF-16: adjacent characters that have a
-//! composed form are replaced by it.
-//!
-//! This is not NFC. Nothing is decomposed first, so U+212B ANGSTROM SIGN stays, and the data is
-//! that of Unicode 6.0. File names that exist on disk were made this way, so neither may change.
+//! What Windows does to a UTF-8 name. Not NFC: nothing is decomposed, and the data is Unicode 6.0.
 
 mod tables;
 
-use crate::error::{Error, Result};
-use bun_alloc::AllocError;
+use crate::error::Result;
 use tables::{COMBINING_CLASSES, COMPOSING_BLOCKS, COMPOSITIONS};
 
 /// More combining marks than this on one character make the name count as unconvertible.
+// https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_string.c#L2903
 const MAX_MARKS: usize = 10;
 
 mod hangul {
@@ -45,12 +41,10 @@ fn may_compose(c: u32) -> bool {
     in_ranges(&COMPOSING_BLOCKS, c >> 8, |&range| range).is_some()
 }
 
-/// UTF-8, except that a surrogate pair written as two three-byte sequences (CESU-8) is also taken.
-/// `None` for anything else.
+/// UTF-8, or CESU-8 for a surrogate pair. `None` for anything else.
 fn decode(bytes: &[u8]) -> Result<Option<Vec<u32>>> {
     let mut out = Vec::new();
-    out.try_reserve(bytes.len())
-        .map_err(|_| Error::Alloc(AllocError))?;
+    out.try_reserve(bytes.len())?;
     let mut rest = bytes;
     let continuation = |b: u8| (b & 0xc0 == 0x80).then_some(u32::from(b & 0x3f));
     let three = |a: u8, b: u8, c: u8| {
@@ -109,8 +103,7 @@ struct Marks {
 }
 
 impl Marks {
-    /// Takes marks from `chars[*read..]` for as long as the classes keep rising. `None` past
-    /// [`MAX_MARKS`].
+    /// Takes marks from `chars[*read..]` while their classes keep rising. `None` past [`MAX_MARKS`].
     fn collect(&mut self, chars: &[u32], read: &mut usize) -> Option<()> {
         loop {
             let slot = self.marks.get_mut(self.count)?;
@@ -193,8 +186,7 @@ fn compose_chars(chars: &[u32], out: &mut Vec<u32>) -> Option<()> {
                 continue;
             }
 
-            // `next` is a mark that does not combine with `current`. One behind it still may, as
-            // long as no mark in between has the same class or a higher one.
+            // A mark behind `next` may still combine, unless one in between has its class or a higher one.
             let mut marks = Marks {
                 marks: [next; MAX_MARKS],
                 count: 1,
@@ -241,15 +233,13 @@ fn compose_chars(chars: &[u32], out: &mut Vec<u32>) -> Option<()> {
     Some(())
 }
 
-/// The characters of `name`, composed. `None` if it does not convert, in which case Windows takes
-/// each byte of it for one UTF-16 unit.
+/// `None` if `name` does not convert: Windows then takes each byte for one UTF-16 unit.
 pub fn compose(name: &[u8]) -> Result<Option<Vec<u32>>> {
     let Some(chars) = decode(name)? else {
         return Ok(None);
     };
     let mut out = Vec::new();
-    out.try_reserve(chars.len())
-        .map_err(|_| Error::Alloc(AllocError))?;
+    out.try_reserve(chars.len())?;
     Ok(compose_chars(&chars, &mut out).map(|()| out))
 }
 
@@ -266,8 +256,7 @@ fn push_utf8(out: &mut Vec<u8>, c: u32) {
 /// The name an entry gets when it is written on Windows, or `None` if `name` does not convert.
 pub(crate) fn windows_name(name: &[u8]) -> Result<Option<Vec<u8>>> {
     let mut out = Vec::new();
-    out.try_reserve(name.len())
-        .map_err(|_| Error::Alloc(AllocError))?;
+    out.try_reserve(name.len())?;
     if name.is_ascii() {
         out.extend_from_slice(name);
     } else {
@@ -288,8 +277,7 @@ pub(crate) fn windows_name(name: &[u8]) -> Result<Option<Vec<u8>>> {
 
 /// Appends `name` as Windows sees it. `is_utf8` is [`crate::Entry::path_is_utf8`].
 pub fn to_utf16(name: &[u8], is_utf8: bool, out: &mut Vec<u16>) -> Result<()> {
-    out.try_reserve(name.len())
-        .map_err(|_| Error::Alloc(AllocError))?;
+    out.try_reserve(name.len())?;
     if is_utf8 && !name.is_ascii() {
         if let Some(chars) = compose(name)? {
             for c in chars {

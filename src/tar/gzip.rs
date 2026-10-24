@@ -26,8 +26,8 @@ pub(crate) fn starts_like_header(data: &[u8]) -> bool {
         .is_some_and(|fixed| fixed_header_flags(fixed).is_some())
 }
 
-/// A name or a comment has to end within this much of a header, unless the header is all in the
-/// piece of input that it starts in.
+// https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_filter_gzip.c#L120
+/// Only for a header that goes on past the piece of input it starts in.
 const SPILLED_HEADER_LIMIT: usize = 1024 * 1024;
 
 /// In the order they appear in.
@@ -132,9 +132,7 @@ impl Decoder {
         };
     }
 
-    /// Appends to `out` until it holds `limit` bytes. Returns how much of `input` was consumed.
-    /// A call that fails appends nothing, so an archive smaller than `limit` is checked in full
-    /// before any of it is seen. From then on every call returns the same error.
+    /// Fills `out` up to `limit` bytes. A call that fails appends nothing, and every later one fails too.
     pub fn decode(
         &mut self,
         input: &[u8],
@@ -176,8 +174,7 @@ impl Decoder {
         limit: usize,
         used: &mut usize,
     ) -> Result<Option<Progress>> {
-        // A header that the input ends in the middle of is not a header, so the stream ended with
-        // the member before it.
+        // A header that the input ends in the middle of is not one: the stream ended before it.
         let starved = |this: &mut Self| {
             if eof {
                 this.state = State::Done;
@@ -311,8 +308,7 @@ impl Decoder {
     }
 }
 
-/// Compresses into one gzip member with no name and no time in its header, so that the same input
-/// always gives the same bytes.
+/// One gzip member with no name and no time, so the same input always gives the same bytes.
 pub struct Encoder<O: crate::writer::Output> {
     out: O,
     deflate: bun_zlib::DeflateEncoder,
@@ -321,8 +317,8 @@ pub struct Encoder<O: crate::writer::Output> {
     size: u32,
 }
 
-/// `deflate()` is shown what is left of a buffer of this size. At level 0 that decides where a
-/// stored block ends, so it is part of what keeps the output stable.
+// https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_write_add_filter_gzip.c#L206
+/// At level 0 the room `deflate()` is shown decides where a stored block ends.
 const ENCODER_BUFFER: usize = 61440;
 const OS_UNKNOWN: u8 = 255;
 
@@ -330,9 +326,7 @@ impl<O: crate::writer::Output> Encoder<O> {
     /// `level` is 0 to 9.
     pub fn new(out: O, level: u8) -> Result<Self> {
         let mut buffer = Vec::new();
-        buffer
-            .try_reserve_exact(ENCODER_BUFFER)
-            .map_err(|_| Error::Alloc(AllocError))?;
+        buffer.try_reserve_exact(ENCODER_BUFFER)?;
         let extra_flags = match level {
             9 => 2,
             1 => 4,

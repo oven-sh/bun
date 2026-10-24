@@ -3,10 +3,18 @@
 use crate::error::{Error, Result};
 use crate::gzip::{self, Progress};
 use crate::reader::{Entry, Event, Options, Poll, Reader};
-use bun_alloc::AllocError;
 
+// https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_filter_gzip.c#L306
 const BLOCK: usize = 64 * 1024;
+// https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read.c#L578
 const MAX_LAYERS: usize = 24;
+
+/// Where a layer's next block goes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Place {
+    InsteadOfTheLast,
+    BehindTheLast,
+}
 
 struct Layer {
     gzip: gzip::Decoder,
@@ -18,8 +26,7 @@ struct Layer {
 impl Layer {
     fn new() -> Result<Self> {
         let mut out = Vec::new();
-        out.try_reserve_exact(BLOCK)
-            .map_err(|_| Error::Alloc(AllocError))?;
+        out.try_reserve_exact(BLOCK)?;
         Ok(Self {
             gzip: gzip::Decoder::new()?,
             out,
@@ -41,8 +48,7 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    /// `gzip` says whether the input is compressed. Nothing is detected, so this works however
-    /// little of the input is there yet.
+    /// Nothing is detected, so this works however little of the input is there yet.
     pub fn new(options: Options, gzip: bool) -> Result<Self> {
         let mut layers = Vec::new();
         if gzip {
@@ -63,21 +69,19 @@ impl Decoder {
         self.tar.skip_entry();
     }
 
-    /// Gives layer `index` its next block, in place of what it holds or, with `keep`, behind it.
-    /// A block is as full as the layers below can make it, and one that fails is dropped whole.
-    /// Returns how much of `input` was consumed, and `false` if there is no output for want of it.
+    /// Gives layer `index` a full block, dropped whole if it fails. `false`: no output for want of input.
     fn refill(
         &mut self,
         index: usize,
         input: &[u8],
         eof: bool,
-        keep: bool,
+        place: Place,
     ) -> Result<(usize, bool)> {
         let mut used_total = 0usize;
         let Some(layer) = self.layers.get_mut(index) else {
             return Ok((0, true));
         };
-        if !keep {
+        if place == Place::InsteadOfTheLast {
             layer.out.clear();
             layer.pos = 0;
         }
@@ -121,20 +125,24 @@ impl Decoder {
                 return Ok((used_total, has_output));
             };
             let rest = input.get(used_total..).unwrap_or_default();
-            used_total = used_total.saturating_add(self.refill_source(lower, rest, eof, false)?);
+            used_total = used_total.saturating_add(self.refill_source(
+                lower,
+                rest,
+                eof,
+                Place::InsteadOfTheLast,
+            )?);
         }
     }
 
-    /// [`Self::refill`] for a layer that another one reads. To its reader, a layer that fails has
-    /// ended: that is an error in the middle of a member, and nothing between two of them.
+    /// To its reader a layer that fails has ended: an error inside a member, nothing between two.
     fn refill_source(
         &mut self,
         index: usize,
         input: &[u8],
         eof: bool,
-        keep: bool,
+        place: Place,
     ) -> Result<usize> {
-        match self.refill(index, input, eof, keep) {
+        match self.refill(index, input, eof, place) {
             Ok((used, _)) => Ok(used),
             Err(error @ Error::Alloc(_)) => Err(error),
             Err(_) => {
@@ -146,8 +154,7 @@ impl Decoder {
         }
     }
 
-    /// Reads the first header of layer `index`, which is new. If what is there is not one, nothing
-    /// of the layer's source counts as read. Returns how much of `input` was consumed.
+    /// If layer `index`, which is new, does not start with a header, none of its source counts as read.
     fn read_first_header(&mut self, index: usize, input: &[u8]) -> Result<(usize, bool)> {
         let mut used_total = 0usize;
         let mut header_len = 0usize;
@@ -178,7 +185,12 @@ impl Decoder {
                 return Ok((used_total, false));
             };
             let rest = input.get(used_total..).unwrap_or_default();
-            used_total = used_total.saturating_add(self.refill_source(lower, rest, true, true)?);
+            used_total = used_total.saturating_add(self.refill_source(
+                lower,
+                rest,
+                true,
+                Place::BehindTheLast,
+            )?);
         }
     }
 
@@ -206,8 +218,12 @@ impl Decoder {
                 }
                 other => break other,
             }
-            let (used, ready) =
-                self.refill(top, input.get(used_total..).unwrap_or_default(), eof, false)?;
+            let (used, ready) = self.refill(
+                top,
+                input.get(used_total..).unwrap_or_default(),
+                eof,
+                Place::InsteadOfTheLast,
+            )?;
             used_total = used_total.saturating_add(used);
             if !ready {
                 break Poll::NeedInput;
@@ -239,8 +255,7 @@ pub struct MemoryDecoder<'a> {
 }
 
 impl<'a> MemoryDecoder<'a> {
-    /// Fails if `data` is not an archive, or if the first block of a gzip layer does not
-    /// decompress. So nothing that is wrong from the start gets as far as the first entry.
+    /// Fails for what is not an archive, and if the first block of a gzip layer does not decompress.
     pub fn new(data: &'a [u8], options: Options) -> Result<Self> {
         let mut this = Self {
             data,
@@ -265,7 +280,9 @@ impl<'a> MemoryDecoder<'a> {
                 return Err(Error::TooManyLayers);
             }
             let rest = data.get(this.pos..).unwrap_or_default();
-            let (used, _) = this.decoder.refill(top, rest, true, false)?;
+            let (used, _) = this
+                .decoder
+                .refill(top, rest, true, Place::InsteadOfTheLast)?;
             this.pos = this.pos.saturating_add(used);
         }
         match this.decoder.layers.last_mut() {
@@ -283,8 +300,7 @@ impl<'a> MemoryDecoder<'a> {
         self.decoder.skip_entry();
     }
 
-    /// Moves to the next entry, past whatever is left of the current one. `None` at the end of the
-    /// archive.
+    /// Skips what is left of the current entry. `None` at the end of the archive.
     pub fn next_entry(&mut self) -> Result<Option<&Entry>> {
         self.skip_entry();
         loop {
@@ -297,8 +313,7 @@ impl<'a> MemoryDecoder<'a> {
         Ok(Some(self.entry()))
     }
 
-    /// Appends the first `size` bytes of the current entry's contents to `out`, or all of them if
-    /// there are fewer. Holes read as zeros.
+    /// Appends at most `size` bytes of the current entry's contents. Holes read as zeros.
     pub fn read_data(&mut self, size: usize, out: &mut Vec<u8>) -> Result<()> {
         let start = out.len();
         let zeros_up_to = |out: &mut Vec<u8>, offset: i64| -> Result<()> {
@@ -308,8 +323,7 @@ impl<'a> MemoryDecoder<'a> {
                 return Err(Error::OutOfOrderSparse);
             }
             let zeros = offset.min(size).saturating_sub(have);
-            out.try_reserve(zeros)
-                .map_err(|_| Error::Alloc(AllocError))?;
+            out.try_reserve(zeros)?;
             out.resize(out.len().saturating_add(zeros), 0);
             Ok(())
         };
@@ -319,8 +333,7 @@ impl<'a> MemoryDecoder<'a> {
                     zeros_up_to(out, offset)?;
                     let room = size.saturating_sub(out.len().saturating_sub(start));
                     let bytes = bytes.get(..room.min(bytes.len())).unwrap_or_default();
-                    out.try_reserve(bytes.len())
-                        .map_err(|_| Error::Alloc(AllocError))?;
+                    out.try_reserve(bytes.len())?;
                     out.extend_from_slice(bytes);
                 }
                 Event::EndOfEntry { size: end } => {

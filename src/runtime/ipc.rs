@@ -1142,8 +1142,8 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
-            // SAFETY: as above — an attached owner is live.
             SendQueueOwner::Instance(i) => {
+                // SAFETY: as above — an attached owner is live.
                 unsafe { i.as_ref() }.handle_ipc_message(msg, handle, internal)
             }
         }
@@ -1467,40 +1467,50 @@ impl SendQueue {
                 log!("hit NotEnoughBytes");
                 self.incoming.with_mut(|incoming| incoming.wait());
             }
-            Err(err) => finish_decode(self, err),
+            Err(err) => finish_decode(self, &err),
         }
         self.update_socket_reading();
+    }
+
+    /// Offers the frames that wait, in their order, until the owner does not take one. `false`: a handle is being made, and its message comes before the rest.
+    fn offer_held(&self, global_this: &JSGlobalObject) -> Result<bool, IPCDecodeError> {
+        let mode = self.mode;
+        loop {
+            let offered = self.incoming.with_mut(|incoming| {
+                let frame = incoming.first_held()?;
+                Some((frame.len(), decode_ipc_message(mode, frame, global_this)))
+            });
+            let Some((len, message)) = offered else {
+                return Ok(true);
+            };
+            let message = message?;
+            let kind = kind_of(&message, global_this);
+            let has_handle = matches!(kind, Ok(Kind::Handle));
+            let delivery = kind.and_then(|kind| deliver(self, message, kind, true, global_this));
+            if delivered(delivery) == Delivery::NotTaken {
+                return Ok(true);
+            }
+            self.incoming.with_mut(|incoming| incoming.release(len));
+            if has_handle {
+                // The handle is made on the next tick, and its message is emitted then. The frames behind it follow.
+                self.drain_on_next_tick();
+                return Ok(false);
+            }
+        }
     }
 
     fn deliver_incoming(&self, global_this: &JSGlobalObject) -> Result<(), IPCDecodeError> {
         let mode = self.mode;
 
-        // The frames that wait are offered again, while the owner takes them.
+        // A read or a drain asks the owner again, so the frames that wait do not depend on one request.
         let takes = self.incoming.get().held_len() != 0
             && self.is_connected()
             && self
                 .owner
                 .get()
                 .is_some_and(|owner| owner.listeners().message);
-        while takes {
-            let offered = self.incoming.with_mut(|incoming| {
-                let frame = incoming.first_held()?;
-                Some((frame.len(), decode_ipc_message(mode, frame, global_this)))
-            });
-            let Some((len, message)) = offered else { break };
-            let message = message?;
-            let kind = kind_of(&message, global_this);
-            let has_handle = matches!(kind, Ok(Kind::Handle));
-            let delivery = kind.and_then(|kind| deliver(self, message, kind, true, global_this));
-            if delivered(delivery) == Delivery::NotTaken {
-                break;
-            }
-            self.incoming.with_mut(|incoming| incoming.release(len));
-            if has_handle {
-                // The handle is made on the next tick, and its message is emitted then. The frames behind it follow.
-                self.drain_on_next_tick();
-                return Ok(());
-            }
+        if takes && !self.offer_held(global_this)? {
+            return Ok(());
         }
 
         // Past the mark the socket is read on only for something else than a 'message'. Asked once, when it matters.
@@ -2758,7 +2768,7 @@ fn deliver(
     })
 }
 
-fn finish_decode(send_queue: &SendQueue, err: IPCDecodeError) {
+fn finish_decode(send_queue: &SendQueue, err: &IPCDecodeError) {
     match err {
         IPCDecodeError::Js(JsError::OutOfMemory) => {
             Output::print_errorln("IPC message is too long.");
@@ -2767,7 +2777,7 @@ fn finish_decode(send_queue: &SendQueue, err: IPCDecodeError) {
         // restore) threw: that is this message's delivery failing, folded like
         // a throwing listener, and the channel is closed as for any undecodable
         // input.
-        IPCDecodeError::Js(err) => crate::dispatch::fold(Err(err)),
+        IPCDecodeError::Js(err) => crate::dispatch::fold(Err(*err)),
         _ => {}
     }
     send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
@@ -2789,7 +2799,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
         send_queue.dispatching.set(false);
         match delivered {
             Ok(rest) => (data, held) = rest,
-            Err(err) => return finish_decode(send_queue, err),
+            Err(err) => return finish_decode(send_queue, &err),
         }
         if data.is_empty() && send_queue.incoming.get().is_empty() {
             return;

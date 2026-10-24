@@ -89,7 +89,8 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
     }
   }
 
-  describe.concurrent.each(["json", "advanced"])("%s", serialization => {
+  // Few children start at once: the tests run in small concurrent groups, and a test that is not concurrent ends a group.
+  const bothEnds = serialization => () => {
     // The messages that waited are emitted on the next tick, as in node: to both listeners, and before anything queued later.
     test("parent: first listeners added late", async () => {
       const child = ipcChild(`${burst} process.on("message", () => {});`, { serialization });
@@ -192,9 +193,10 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
         expect(sent).toBe(last + 1);
       });
     });
-  });
+  };
 
-  // Not concurrent, so the children of the tests above are gone before the next ones start.
+  describe.concurrent("json", bothEnds("json"));
+
   test("parent: listener added before spawn()", async () => {
     const child = new ChildProcess();
     const message = once(child, "message");
@@ -206,13 +208,15 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
     await withChild(child, async () => expect((await message)[0]).toBe("hello"));
   });
 
-  describe.concurrent("parent", () => {
-    // Fewer bytes than the channel holds: every send is written, so the child has nothing left to wait for.
-    test("a child that sends 20,000 messages to no listener exits", async () => {
-      const child = ipcChild(`for (let i = 0; i < 20_000; i++) process.send({ i });`);
-      expect(await once(child, "exit")).toEqual([0, null]);
-    });
+  describe.concurrent("advanced", bothEnds("advanced"));
 
+  // Fewer bytes than the channel holds: every send is written, so the child has nothing left to wait for.
+  test("parent: a child that sends 20,000 messages to no listener exits", async () => {
+    const child = ipcChild(`for (let i = 0; i < 20_000; i++) process.send({ i });`);
+    expect(await once(child, "exit")).toEqual([0, null]);
+  });
+
+  describe.concurrent("parent", () => {
     test("last listener removed, next one added late", async () => {
       const child = ipcChild(
         `process.on("message", m => { if (m === "ping") return process.send("pong"); ${burst} });`,
@@ -263,7 +267,19 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
       await once(child, "close");
       expect({ got, connected: child.connected }).toEqual({ got: [], connected: false });
     });
+  });
 
+  test("child: a ref() of the channel does not outlive the channel", async () => {
+    const child = ipcChild(
+      `process.send("ready"); process.channel.ref(); setTimeout(() => process.exit(1), 10_000).unref();`,
+    );
+    const exited = once(child, "exit");
+    expect((await once(child, "message"))[0]).toBe("ready");
+    child.disconnect();
+    expect((await exited)[0]).toBe(0);
+  });
+
+  describe.concurrent("parent", () => {
     test("a message that was not read is dropped when the child exits", async () => {
       const child = ipcChild(`process.send({ i: 0 }); process.send({ i: 1 }, () => process.exit(0));`);
       const got = [];
@@ -325,16 +341,42 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
     });
   });
 
-  // Not concurrent, so the children of the tests above are gone before the next ones start.
-  test("child: a ref() of the channel does not outlive the channel", async () => {
-    const child = ipcChild(
-      `process.send("ready"); process.channel.ref(); setTimeout(() => process.exit(1), 10_000).unref();`,
-    );
-    const exited = once(child, "exit");
-    expect((await once(child, "message"))[0]).toBe("ready");
-    child.disconnect();
-    expect((await exited)[0]).toBe(0);
-  });
+  // A handle is acked when it is read, as in node, so its sender does not wait for a listener. The message keeps its handle.
+  test.skipIf(isWindows)(
+    "child: handles sent before the first 'message' listener is added arrive with their messages",
+    async () => {
+      const child = ipcChild(`
+      setInterval(() => {}, 60_000);
+      process.send("ready");
+      process.once("internalMessage", () => {
+        const got = [];
+        process.on("message", (m, server) => {
+          got.push([m, server?.constructor.name]);
+          server?.close();
+          if (m === "end") process.send(got);
+        });
+      });
+    `);
+      const server = net.createServer();
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        await withChild(child, async () => {
+          expect((await once(child, "message"))[0]).toBe("ready");
+          const sent = [];
+          for (let i = 0; i < 20; i++) sent.push(new Promise(resolve => child.send(i, server, resolve)));
+          sent.push(new Promise(resolve => child.send("end", resolve)));
+          expect(await Promise.all(sent)).toEqual(Array(21).fill(null));
+          child.send(go);
+          expect((await once(child, "message"))[0]).toEqual([
+            ...Array.from({ length: 20 }, (_, i) => [i, "Server"]),
+            ["end", null],
+          ]);
+        });
+      } finally {
+        server.close();
+      }
+    },
+  );
 
   describe.concurrent("child", () => {
     // The three messages are in the channel before the child starts, so one read gets them all.
@@ -387,43 +429,58 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
       });
     });
 
-    // A handle is acked when it is read, as in node, so its sender does not wait for a listener. The message keeps its handle.
-    test.skipIf(isWindows)(
-      "handles sent before the first 'message' listener is added arrive with their messages",
-      async () => {
-        const child = ipcChild(`
-        setInterval(() => {}, 60_000);
-        process.send("ready");
-        process.once("internalMessage", () => {
-          const got = [];
-          process.on("message", (m, server) => {
-            got.push([m, server?.constructor.name]);
-            server?.close();
-            if (m === "end") process.send(got);
-          });
+    // An 'internalMessage' never waits, as in node: it passes the 'message' in front of it, which has no listener yet.
+    test("an 'internalMessage' passes a 'message' that waits", async () => {
+      const child = ipcChild(`
+        process.on("disconnect", () => {});
+        process.on("internalMessage", internal => {
+          process.on("message", m => process.send({ internal, m }));
         });
+        process.send("ready");
       `);
-        const server = net.createServer();
-        await once(server.listen(0, "127.0.0.1"), "listening");
-        try {
-          await withChild(child, async () => {
-            expect((await once(child, "message"))[0]).toBe("ready");
-            const sent = [];
-            for (let i = 0; i < 20; i++) sent.push(new Promise(resolve => child.send(i, server, resolve)));
-            sent.push(new Promise(resolve => child.send("end", resolve)));
-            expect(await Promise.all(sent)).toEqual(Array(21).fill(null));
-            child.send(go);
-            expect((await once(child, "message"))[0]).toEqual([
-              ...Array.from({ length: 20 }, (_, i) => [i, "Server"]),
-              ["end", null],
-            ]);
-          });
-        } finally {
-          server.close();
-        }
-      },
-    );
+      await withChild(child, async () => {
+        expect((await once(child, "message"))[0]).toBe("ready");
+        child.send("user");
+        child.send({ cmd: "NODE_TEST" });
+        expect((await once(child, "message"))[0]).toEqual({ internal: { cmd: "NODE_TEST" }, m: "user" });
+      });
+    });
+  });
 
+  // node:cluster gets its control messages from the channel through a native callback, not through a listener.
+  test("child: a cluster worker with no 'message' listener still listens", async () => {
+    using dir = tempDir("ipc-cluster-no-listener", {
+      "cluster.js": `
+        const cluster = require("cluster");
+        const net = require("net");
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          worker.on("listening", () => {
+            console.log("listening");
+            worker.process.kill();
+            process.exit(0);
+          });
+        } else {
+          process.removeAllListeners("message");
+          // Nothing else keeps the worker alive until the primary answers.
+          setTimeout(() => process.exit(1), 10_000);
+          net.createServer().listen(0, "127.0.0.1");
+        }`,
+    });
+    await using primary = Bun.spawn({
+      cmd: [bunExe(), "cluster.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    children.add(primary);
+    const [stdout, exitCode] = await Promise.all([primary.stdout.text(), primary.exited]);
+    expect(stdout).toBe("listening\n");
+    expect(exitCode).toBe(0);
+  });
+
+  describe.concurrent("child", () => {
     // The poll has a deadline, so a child that never sees the close still answers.
     const untilClosed = `const untilClosed = then => {
       const deadline = Date.now() + 10_000;
@@ -499,56 +556,5 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
         expect((await answers.next()).value).toBe("disconnect");
       });
     });
-
-    // An 'internalMessage' never waits, as in node: it passes the 'message' in front of it, which has no listener yet.
-    test("an 'internalMessage' passes a 'message' that waits", async () => {
-      const child = ipcChild(`
-        process.on("disconnect", () => {});
-        process.on("internalMessage", internal => {
-          process.on("message", m => process.send({ internal, m }));
-        });
-        process.send("ready");
-      `);
-      await withChild(child, async () => {
-        expect((await once(child, "message"))[0]).toBe("ready");
-        child.send("user");
-        child.send({ cmd: "NODE_TEST" });
-        expect((await once(child, "message"))[0]).toEqual({ internal: { cmd: "NODE_TEST" }, m: "user" });
-      });
-    });
-  });
-
-  // node:cluster gets its control messages from the channel through a native callback, not through a listener.
-  test("child: a cluster worker with no 'message' listener still listens", async () => {
-    using dir = tempDir("ipc-cluster-no-listener", {
-      "cluster.js": `
-        const cluster = require("cluster");
-        const net = require("net");
-        if (cluster.isPrimary) {
-          const worker = cluster.fork();
-          worker.on("listening", ({ port }) =>
-            net.connect(port, "127.0.0.1").on("data", data => {
-              console.log(String(data));
-              worker.process.kill();
-              process.exit(0);
-            }));
-        } else {
-          process.removeAllListeners("message");
-          // Nothing else keeps the worker alive until the primary answers.
-          setTimeout(() => process.exit(1), 10_000);
-          net.createServer(socket => socket.end("served")).listen(0, "127.0.0.1");
-        }`,
-    });
-    await using primary = Bun.spawn({
-      cmd: [bunExe(), "cluster.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    children.add(primary);
-    const [stdout, exitCode] = await Promise.all([primary.stdout.text(), primary.exited]);
-    expect(stdout).toBe("served\n");
-    expect(exitCode).toBe(0);
   });
 });

@@ -871,19 +871,19 @@ impl<'a> PackageInstaller<'a> {
 
             loop {
                 // `link_rel_buf` is free until the linker runs.
-                if !copied_tree
-                    && let Some(source) = Self::symlink_install_source(
-                        manager,
-                        lockfile,
-                        string_buf,
-                        pkg_metas,
-                        pkg_names,
-                        self.resolutions.slice(),
-                        tree_id,
-                        target_package_id,
-                        link_rel_buf,
-                    )
-                {
+                if let Some(source) = Self::symlink_install_source(
+                    manager,
+                    lockfile,
+                    string_buf,
+                    pkg_metas,
+                    pkg_names,
+                    self.resolutions.slice(),
+                    tree_id,
+                    dep_id,
+                    target_package_id,
+                    copied_tree,
+                    link_rel_buf,
+                ) {
                     bin::make_bins_executable(
                         bin,
                         source,
@@ -1364,7 +1364,8 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// The directory that the files of `package_id` in `node_modules` are symlinks into: its cache
-    /// entry, or the folder of a `file:` dependency. `None` when they are the real files.
+    /// entry, or the folder of a `file:` dependency. `None` when they are the real files. The
+    /// cases follow `install_package`.
     fn symlink_install_source<'b>(
         manager: &mut PackageManager,
         lockfile: &Lockfile,
@@ -1373,7 +1374,9 @@ impl<'a> PackageInstaller<'a> {
         pkg_names: &[String],
         resolutions: &[Resolution],
         tree_id: lockfile::tree::Id,
+        dependency_id: DependencyID,
         package_id: PackageID,
+        copied_tree: bool,
         buf: &'b mut [u8],
     ) -> Option<&'b [u8]> {
         let resolution = &resolutions[package_id as usize];
@@ -1385,7 +1388,7 @@ impl<'a> PackageInstaller<'a> {
             | resolution::Tag::Github
             | resolution::Tag::LocalTarball
             | resolution::Tag::RemoteTarball
-                if symlink_backend =>
+                if symlink_backend && !copied_tree =>
             {
                 let pkg_name = pkg_names[package_id as usize];
                 // Opens the cache directory, which sets its path.
@@ -1400,6 +1403,10 @@ impl<'a> PackageInstaller<'a> {
                     resolution,
                     Self::patch_contents_hash(lockfile, string_buf, pkg_name, resolution),
                 );
+                // A tarball without an integrity has no entry yet.
+                if entry.is_empty() {
+                    return None;
+                }
                 join_abs_string_buf_z_checked::<platform::Auto>(
                     cache_path,
                     buf,
@@ -1409,11 +1416,19 @@ impl<'a> PackageInstaller<'a> {
             }
             resolution::Tag::Folder => {
                 let folder = resolution.folder().slice(string_buf);
+                let is_transitive = !lockfile.is_workspace_tree_id(tree_id);
+                // A folder that an npm package declares is a link to the directory.
+                if is_transitive
+                    && !lockfile.is_folder_tree_id(tree_id)
+                    && !lockfile.is_overridden_dependency(dependency_id)
+                {
+                    return None;
+                }
                 // `get_install_method` symlinks a package from its own folder.
-                let own_folder = if lockfile.is_workspace_tree_id(tree_id) {
-                    matches!(folder, b"" | b".")
-                } else {
+                let own_folder = if is_transitive {
                     folder == b"."
+                } else {
+                    matches!(folder, b"" | b".")
                 };
                 if !symlink_backend && !own_folder {
                     return None;

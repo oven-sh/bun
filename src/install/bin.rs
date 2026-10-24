@@ -859,7 +859,7 @@ pub struct Linker<'a> {
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
 
-    /// Only sets the mode of the bin targets, without creating links.
+    /// Only sets the mode of the bin targets: no links, no shebang normalization.
     pub chmod_only: bool,
 }
 
@@ -980,7 +980,7 @@ impl<'a> Linker<'a> {
 
         if self.chmod_only {
             #[cfg(not(windows))]
-            Self::make_executable(abs_target, &target_stat);
+            Self::set_exec_mode(abs_target, &target_stat);
             return;
         }
 
@@ -1041,11 +1041,16 @@ impl<'a> Linker<'a> {
 
     #[cfg(not(windows))]
     fn make_executable(abs_target: &ZStr, target_stat: &sys::Stat) {
+        Self::set_exec_mode(abs_target, target_stat);
+        Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
+    }
+
+    #[cfg(not(windows))]
+    fn set_exec_mode(abs_target: &ZStr, target_stat: &sys::Stat) {
         let mode = exec_mode();
         if (target_stat.st_mode as Mode) & 0o777 != mode {
             let _ = sys::lchmod(abs_target, mode);
         }
-        Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
     }
 
     #[cfg(not(windows))]

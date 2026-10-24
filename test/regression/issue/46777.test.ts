@@ -118,30 +118,50 @@ test.concurrent.skipIf(isWindows)("--backend symlink makes the bin file of a fil
 });
 
 test.concurrent.skipIf(isWindows)(
-  "--backend symlink normalizes a CRLF shebang in the cache and keeps the link",
+  "--backend symlink leaves a CRLF shebang in the cache and normalizes the copy",
   async () => {
     using dir = tempDir("bin-symlink-backend-crlf", {
       "package.json": JSON.stringify({ name: "app", dependencies: { pkg: "file:./pkg-1.0.0.tgz" } }),
     });
     const cwd = String(dir);
+    const CRLF_BIN = "#!/bin/sh\r\necho hello\n";
     await Bun.Archive.write(
       join(cwd, "pkg-1.0.0.tgz"),
       {
         "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", bin: { pkg: "bin/cli.js" } }),
-        "package/bin/cli.js": "#!/bin/sh\r\necho hello\n",
+        "package/bin/cli.js": CRLF_BIN,
       },
       { compress: "gzip" },
     );
     await install(cwd, ["--backend=symlink"]);
 
+    // The bin linker replaces the link with a normalized copy, as it does on every backend.
     const binTarget = join(cwd, "node_modules", "pkg", "bin", "cli.js");
-    expect((await lstat(binTarget)).isSymbolicLink()).toBe(true);
-    const cacheFile = await readlink(binTarget);
-    expect(await readFile(cacheFile, "utf8")).toBe(BIN);
-    expect(await isExecutable(cacheFile)).toBe(true);
+    expect((await lstat(binTarget)).isSymbolicLink()).toBe(false);
+    expect(await readFile(binTarget, "utf8")).toBe(BIN);
+    const cacheFile = await readlink(join(cwd, "node_modules", "pkg", "package.json"));
+    expect(await readFile(join(cacheFile, "..", "bin", "cli.js"), "utf8")).toBe(CRLF_BIN);
     await runBin(cwd, "pkg");
   },
 );
+
+test.concurrent.skipIf(isWindows)("--backend symlink does not rewrite the bin file of a file: folder", async () => {
+  using dir = tempDir("bin-symlink-backend-folder-crlf", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { pkg: "file:./pkg" } }),
+    "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", bin: { pkg: "bin/cli.js" } }),
+    "pkg/bin/cli.js": "#!/bin/sh\r\necho hello\n",
+  });
+  const cwd = String(dir);
+  const sourceBin = join(cwd, "pkg", "bin", "cli.js");
+  await chmod(sourceBin, 0o644);
+  await install(cwd, ["--backend=symlink"]);
+
+  // The folder's file gets the mode and keeps its content. The copy in node_modules is normalized.
+  expect(await readFile(sourceBin, "utf8")).toBe("#!/bin/sh\r\necho hello\n");
+  expect(await isExecutable(sourceBin)).toBe(true);
+  expect(await readFile(join(cwd, "node_modules", "pkg", "bin", "cli.js"), "utf8")).toBe(BIN);
+  await runBin(cwd, "pkg");
+});
 
 /** A project that depends on registry packages, with the install cache inside it. */
 async function projectWithRegistry(name: string, dependencies: Record<string, string>) {

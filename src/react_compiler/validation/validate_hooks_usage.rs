@@ -10,17 +10,17 @@
 //! and not called dynamically. Also validates that hooks are not
 //! called inside function expressions.
 
-use crate::collections::{IdMap, IndexMap};
+use crate::collections::IndexMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, SourceLocation,
 };
-use crate::hir::dominator::compute_unconditional_blocks;
+use crate::hir::dominator::{BlockSet, compute_unconditional_blocks};
 use crate::hir::environment::{Environment, is_hook_name};
 use crate::hir::object_shape::HookKind;
-use crate::hir::visitors::{each_pattern_operand, each_terminal_operand};
+use crate::hir::visitors::terminal_operands;
 use crate::hir::{
-    FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, Place, PropertyLiteral,
-    Type, visitors,
+    BlockId, FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, Place,
+    PropertyLiteral, Type, visitors,
 };
 
 /// Value classification for hook validation.
@@ -31,6 +31,21 @@ enum Kind {
     PotentialHook,
     Global,
     Local,
+}
+
+/// By identifier.
+struct ValueKinds(Vec<Option<Kind>>);
+
+impl ValueKinds {
+    #[inline]
+    fn get(&self, id: IdentifierId) -> Option<Kind> {
+        self.0[id.0 as usize]
+    }
+
+    #[inline]
+    fn insert(&mut self, id: IdentifierId, kind: Kind) {
+        self.0[id.0 as usize] = Some(kind);
+    }
 }
 
 fn join_kinds(a: Kind, b: Kind) -> Kind {
@@ -47,12 +62,8 @@ fn join_kinds(a: Kind, b: Kind) -> Kind {
     }
 }
 
-fn get_kind_for_place(
-    place: &Place,
-    value_kinds: &IdMap<IdentifierId, Kind>,
-    identifiers: &[Identifier],
-) -> Kind {
-    let known_kind = value_kinds.get(place.identifier).copied();
+fn get_kind_for_place(place: &Place, value_kinds: &ValueKinds, identifiers: &[Identifier]) -> Kind {
+    let known_kind = value_kinds.get(place.identifier);
     let ident = &identifiers[place.identifier.0 as usize];
     if let Some(ref name) = ident.name {
         if is_hook_name(name.value()) {
@@ -84,11 +95,11 @@ fn get_hook_kind_for_id<'a>(
 
 fn visit_place(
     place: &Place,
-    value_kinds: &IdMap<IdentifierId, Kind>,
+    value_kinds: &ValueKinds,
     errors_by_loc: &mut IndexMap<SourceLocation, CompilerErrorDetail>,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
-    let kind = value_kinds.get(place.identifier).copied();
+    let kind = value_kinds.get(place.identifier);
     if kind == Some(Kind::KnownHook) {
         record_invalid_hook_usage_error(place, errors_by_loc, env)?;
     }
@@ -99,7 +110,7 @@ fn visit_place(
 #[inline(never)]
 fn record_conditional_hook_error(
     place: &Place,
-    value_kinds: &mut IdMap<IdentifierId, Kind>,
+    value_kinds: &mut ValueKinds,
     errors_by_loc: &mut IndexMap<SourceLocation, CompilerErrorDetail>,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
@@ -197,14 +208,49 @@ fn record_dynamic_hook_usage_error(
     Ok(())
 }
 
+/// The unconditional blocks of a function, computed for the first block asked for that is not the entry,
+/// which is always one of them.
+pub(crate) struct UnconditionalBlocks<'a> {
+    func: &'a HirFunction,
+    next_block_id: u32,
+    blocks: Option<BlockSet>,
+}
+
+impl<'a> UnconditionalBlocks<'a> {
+    pub(crate) fn new(func: &'a HirFunction, next_block_id: u32) -> Self {
+        debug_assert!(
+            compute_unconditional_blocks(func, next_block_id)
+                .is_ok_and(|blocks| blocks.contains(&func.body.entry))
+        );
+        UnconditionalBlocks {
+            func,
+            next_block_id,
+            blocks: None,
+        }
+    }
+
+    pub(crate) fn contains(&mut self, id: BlockId) -> Result<bool, CompilerDiagnostic> {
+        if id == self.func.body.entry {
+            return Ok(true);
+        }
+        let blocks = match &self.blocks {
+            Some(blocks) => blocks,
+            None => {
+                (self.blocks).insert(compute_unconditional_blocks(self.func, self.next_block_id)?)
+            }
+        };
+        Ok(blocks.contains(&id))
+    }
+}
+
 /// Validates hooks usage rules for a function.
 pub(crate) fn validate_hooks_usage(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
-    let unconditional_blocks = compute_unconditional_blocks(func, env.next_block_id().0)?;
+    let mut unconditional_blocks = UnconditionalBlocks::new(func, env.next_block_id().0);
     let mut errors_by_loc: IndexMap<SourceLocation, CompilerErrorDetail> = IndexMap::new();
-    let mut value_kinds: IdMap<IdentifierId, Kind> = IdMap::new();
+    let mut value_kinds = ValueKinds(vec![None; env.identifiers.len()]);
 
     // Process params
     for param in &func.params {
@@ -223,7 +269,7 @@ pub(crate) fn validate_hooks_usage(
                 Kind::Local
             };
             for (_, operand) in &phi.operands {
-                if let Some(&operand_kind) = value_kinds.get(operand.identifier) {
+                if let Some(operand_kind) = value_kinds.get(operand.identifier) {
                     kind = join_kinds(kind, operand_kind);
                 }
             }
@@ -306,7 +352,7 @@ pub(crate) fn validate_hooks_usage(
                     let callee_kind = get_kind_for_place(callee, &value_kinds, &env.identifiers);
                     let is_hook_callee =
                         callee_kind == Kind::KnownHook || callee_kind == Kind::PotentialHook;
-                    if is_hook_callee && !unconditional_blocks.contains(&block.id) {
+                    if is_hook_callee && !unconditional_blocks.contains(block.id)? {
                         record_conditional_hook_error(
                             callee,
                             &mut value_kinds,
@@ -331,7 +377,7 @@ pub(crate) fn validate_hooks_usage(
                     let callee_kind = get_kind_for_place(property, &value_kinds, &env.identifiers);
                     let is_hook_callee =
                         callee_kind == Kind::KnownHook || callee_kind == Kind::PotentialHook;
-                    if is_hook_callee && !unconditional_blocks.contains(&block.id) {
+                    if is_hook_callee && !unconditional_blocks.contains(block.id)? {
                         record_conditional_hook_error(
                             property,
                             &mut value_kinds,
@@ -348,14 +394,11 @@ pub(crate) fn validate_hooks_usage(
                         visit_place(place, &value_kinds, &mut errors_by_loc, env)?;
                     }
                 }
-                InstructionValue::Destructure { lvalue, value, .. } => {
+                InstructionValue::Destructure { value, .. } => {
                     visit_place(value, &value_kinds, &mut errors_by_loc, env)?;
                     let object_kind = get_kind_for_place(value, &value_kinds, &env.identifiers);
                     // Process instr.lvalue and all pattern operands (matching TS eachInstructionLValue)
-                    let pattern_places = each_pattern_operand(&lvalue.pattern);
-                    let all_lvalues =
-                        std::iter::once(instr.lvalue.clone()).chain(pattern_places.into_iter());
-                    for place in all_lvalues {
+                    let mut set_kind = |place: &Place| {
                         let is_hook_property =
                             ident_is_hook_name(place.identifier, &env.identifiers);
                         let kind = match object_kind {
@@ -378,11 +421,17 @@ pub(crate) fn validate_hooks_usage(
                             }
                         };
                         value_kinds.insert(place.identifier, kind);
-                    }
+                    };
+                    set_kind(&instr.lvalue);
+                    visitors::value_lvalues(&instr.value).for_each(set_kind);
                 }
                 InstructionValue::ObjectMethod { lowered_func, .. }
                 | InstructionValue::FunctionExpression { lowered_func, .. } => {
-                    visit_function_expression(env, lowered_func.func)?;
+                    let mut errors = Vec::new();
+                    visit_function_expression(env, lowered_func.func, &mut errors);
+                    for error in errors {
+                        env.record_error(error)?;
+                    }
                 }
                 _ => {
                     // For all other instructions: visit operands, set lvalue kinds
@@ -392,17 +441,17 @@ pub(crate) fn validate_hooks_usage(
                     let kind = get_kind_for_place(&instr.lvalue, &value_kinds, &env.identifiers);
                     value_kinds.insert(lvalue_id, kind);
                     // Also set kind for value-level lvalues (e.g. DeclareLocal, PrefixUpdate, PostfixUpdate)
-                    visitors::each_lvalue(&instr.value, |lv| {
+                    for lv in visitors::value_lvalues(&instr.value) {
                         let lv_kind = get_kind_for_place(lv, &value_kinds, &env.identifiers);
                         value_kinds.insert(lv.identifier, lv_kind);
-                    });
+                    }
                 }
             }
         }
 
         // Visit terminal operands
-        for place in each_terminal_operand(&block.terminal) {
-            visit_place(&place, &value_kinds, &mut errors_by_loc, env)?;
+        for place in terminal_operands(&block.terminal) {
+            visit_place(place, &value_kinds, &mut errors_by_loc, env)?;
         }
     }
 
@@ -417,70 +466,57 @@ pub(crate) fn validate_hooks_usage(
 /// Processes instructions in order, visiting nested functions immediately
 /// (before processing subsequent calls) to match TS error ordering.
 fn visit_function_expression(
-    env: &mut Environment,
+    env: &Environment,
     func_id: FunctionId,
-) -> Result<(), CompilerError> {
-    // Collect items in instruction order to process them sequentially.
-    // Each item is either a call to check or a nested function to visit.
-    enum Item {
-        Call(IdentifierId, Option<SourceLocation>),
-        NestedFunc(FunctionId),
+    errors: &mut Vec<CompilerErrorDetail>,
+) {
+    if !env.has_stack() {
+        return;
     }
-
     let func = &env.functions[func_id.0 as usize];
-    let mut items: Vec<Item> = Vec::new();
-
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
                 InstructionValue::ObjectMethod { lowered_func, .. }
                 | InstructionValue::FunctionExpression { lowered_func, .. } => {
-                    items.push(Item::NestedFunc(lowered_func.func));
+                    visit_function_expression(env, lowered_func.func, errors);
                 }
-                InstructionValue::CallExpression { callee, .. } => {
-                    items.push(Item::Call(callee.identifier, callee.loc));
-                }
-                InstructionValue::MethodCall { property, .. } => {
-                    items.push(Item::Call(property.identifier, property.loc));
+                InstructionValue::CallExpression { callee, .. }
+                | InstructionValue::MethodCall {
+                    property: callee, ..
+                } => {
+                    if let Ok(Some(hook_kind)) = env.get_hook_kind_for_id(callee.identifier) {
+                        errors.push(hook_in_function_expression_error(hook_kind, callee.loc));
+                    }
                 }
                 _ => {}
             }
         }
     }
+}
 
-    // Process items in instruction order (matching TS which visits nested
-    // functions immediately before processing subsequent calls)
-    for item in items {
-        match item {
-            Item::Call(identifier_id, loc) => {
-                let identifier = &env.identifiers[identifier_id.0 as usize];
-                let ty = &env.types[identifier.type_.0 as usize];
-                let hook_kind = env.get_hook_kind_for_type(ty).ok().flatten().cloned();
-                if let Some(hook_kind) = hook_kind {
-                    let description = format!(
-                        "Cannot call {} within a function expression",
-                        if hook_kind == HookKind::Custom {
-                            "hook"
-                        } else {
-                            hook_kind_display(&hook_kind)
-                        }
-                    );
-                    env.record_error(CompilerErrorDetail {
-                        category: ErrorCategory::Hooks,
-                        reason: "Hooks must be called at the top level in the body of a function component or custom hook, and may not be called within function expressions. See the Rules of Hooks (https://react.dev/warnings/invalid-hook-call-warning)".to_string(),
-                        description: Some(description),
-                        loc,
-                        suggestions: None,
-                    })?;
-                }
-            }
-            Item::NestedFunc(nested_func_id) => {
-                visit_function_expression(env, nested_func_id)?;
-            }
+#[cold]
+#[inline(never)]
+fn hook_in_function_expression_error(
+    hook_kind: &HookKind,
+    loc: Option<SourceLocation>,
+) -> CompilerErrorDetail {
+    let description = format!(
+        "Cannot call {} within a function expression",
+        if *hook_kind == HookKind::Custom {
+            "hook"
+        } else {
+            hook_kind_display(hook_kind)
         }
+    );
+    CompilerErrorDetail {
+        category: ErrorCategory::Hooks,
+        reason: "Hooks must be called at the top level in the body of a function component or custom hook, and may not be called within function expressions. See the Rules of Hooks (https://react.dev/warnings/invalid-hook-call-warning)".to_string(),
+        description: Some(description),
+        loc,
+        suggestions: None,
     }
-    Ok(())
 }
 
 fn hook_kind_display(kind: &HookKind) -> &'static str {
@@ -503,19 +539,15 @@ fn hook_kind_display(kind: &HookKind) -> &'static str {
     }
 }
 
-/// Visit all operands of an instruction value (generic fallback).
-/// Uses the canonical `each_instruction_value_operand` from visitors.
+/// Visit all operands of an instruction value that is not a function (generic fallback).
 fn visit_all_operands(
     value: &InstructionValue,
-    value_kinds: &IdMap<IdentifierId, Kind>,
+    value_kinds: &ValueKinds,
     errors_by_loc: &mut IndexMap<SourceLocation, CompilerErrorDetail>,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
-    let mut result = Ok(());
-    visitors::each_operand(value, |place| {
-        if result.is_ok() {
-            result = visit_place(place, value_kinds, errors_by_loc, env);
-        }
-    });
-    result
+    for place in visitors::operands(value, &[]) {
+        visit_place(place, value_kinds, errors_by_loc, env)?;
+    }
+    Ok(())
 }

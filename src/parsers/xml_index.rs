@@ -37,7 +37,8 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     }
 
     fn with_producer(contents: &'c [U], use_scalar: bool) -> Self {
-        debug_assert!(contents.len() <= i32::MAX as usize);
+        // Positions are stored as `u32`; transcoding can double the parser's `i32::MAX` bound.
+        debug_assert!(contents.len() <= u32::MAX as usize);
         let win_cap = contents.len().min(REFILL_INPUT) + 64 + SENTINELS + LOOKBEHIND;
         StructuralIndex {
             contents,

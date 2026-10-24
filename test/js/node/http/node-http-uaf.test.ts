@@ -20,6 +20,60 @@ const slow = isASAN || isDebug;
 uafTest("node-http-uaf-fixture.ts", { REQUESTS: slow ? "2000" : "10000" });
 uafTest("node-http-uaf-fixture-2.ts", { ROUNDS: "200" });
 
+// A termination request (worker.terminate(), a node:vm timeout) that landed on
+// the native writeHead of a response used to be taken in a stretch of native
+// code that had no exception scope. JSC's exception-check validator reports
+// that as "Unchecked JS exception ... NodeHTTPServer__writeHead" and aborts.
+// The validator only exists in debug and ASAN builds; release has nothing to
+// observe. The fixture steers node:vm deadlines onto that call. Against the
+// unfixed build, all 20 calibration runs (five at a time on a 16-core
+// debug+ASAN box) aborted, between attempt 350 and 1060. The fixed build
+// survived 20/20 runs of the full 3000 attempts, in 17 to 19 s each.
+test.concurrent.skipIf(!slow)(
+  "a termination request landing on the native writeHead passes the exception-check validator",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-http-writehead-termination-fixture.ts")],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // On a failure stdout stays empty and stderr carries the validator's report.
+    const summary = stdout.startsWith("ok ") ? JSON.parse(stdout.slice(3)) : stdout;
+    const counts = {
+      early: expect.any(Number),
+      inCall: expect.any(Number),
+      late: expect.any(Number),
+      cutAfterHead: expect.any(Number),
+    };
+    expect({ summary, stderr, exitCode }).toEqual({
+      summary: {
+        attempts: expect.any(Number),
+        timeout: expect.any(Number),
+        paths: [
+          { name: "end", ...counts },
+          { name: "flushHeaders", ...counts },
+        ],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(summary.attempts).toBeGreaterThan(100);
+    // The deadlines did land inside both calls (about 45% of them do here), and
+    // on the end() path some were taken right after the native writeHead had
+    // put the head out (20 to 30% of that path's attempts here).
+    const [end, flushHeaders] = summary.paths;
+    expect({ end: end.inCall > 0, flushHeaders: flushHeaders.inCall > 0, cutAfterHead: end.cutAfterHead > 0 }).toEqual({
+      end: true,
+      flushHeaders: true,
+      cutAfterHead: true,
+    });
+  },
+  60_000,
+);
+
 function uafTest(fixture: string, extraEnv: Record<string, string>) {
   test.concurrent(
     `should not crash on abort (${fixture})`,

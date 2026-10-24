@@ -1,0 +1,26 @@
+------------------
+{ printWidth: 80 }
+------------------
+const properties =
+  /** @type {import('@typescript-eslint/types').TSESTree.ObjectPattern} */ param.properties ||
+  /** @type {import('estree').ObjectPattern} */
+  (
+    /** @type {import('@typescript-eslint/types').TSESTree.AssignmentPattern} */ param.left
+  )?.properties;
+const a = /** @type {A} */ (
+  /** @type {import('@typescript-eslint/types').TSESTree.PropertyDefinition} */ item?.key
+).name;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const properties =
+  /** @type {import('@typescript-eslint/types').TSESTree.ObjectPattern} */ param.properties ||
+  /** @type {import('estree').ObjectPattern} */
+  (/** @type {import('@typescript-eslint/types').TSESTree.AssignmentPattern} */ param.left)
+    ?.properties;
+const a = /** @type {A} */ (
+  /** @type {import('@typescript-eslint/types').TSESTree.PropertyDefinition} */ item?.key
+).name;
+
+===================== End =====================

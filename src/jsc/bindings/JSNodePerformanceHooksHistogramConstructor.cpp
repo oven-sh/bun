@@ -70,7 +70,7 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
     Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    return JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, lowest, highest, figures);
+    RELEASE_AND_RETURN(scope, JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, lowest, highest, figures));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramConstructorCall, (JSGlobalObject * globalObject, CallFrame* callFrame))

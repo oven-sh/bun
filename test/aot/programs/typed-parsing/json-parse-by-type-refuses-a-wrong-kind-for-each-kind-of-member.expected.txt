@@ -1,0 +1,168 @@
+number given 1: documented value, got value {"m": 1}
+number given "text": documented TypeError, got TypeError
+number given true: documented TypeError, got TypeError
+number given null: documented TypeError, got TypeError
+number given []: documented TypeError, got TypeError
+number given {}: documented TypeError, got TypeError
+number given [1]: documented TypeError, got TypeError
+number given {"a":1}: documented TypeError, got TypeError
+string given 1: documented TypeError, got TypeError
+string given "text": documented value, got value {"m": "text"}
+string given true: documented TypeError, got TypeError
+string given null: documented TypeError, got TypeError
+string given []: documented TypeError, got TypeError
+string given {}: documented TypeError, got TypeError
+string given [1]: documented TypeError, got TypeError
+string given {"a":1}: documented TypeError, got TypeError
+boolean given 1: documented TypeError, got TypeError
+boolean given "text": documented TypeError, got TypeError
+boolean given true: documented value, got value {"m": true}
+boolean given null: documented TypeError, got TypeError
+boolean given []: documented TypeError, got TypeError
+boolean given {}: documented TypeError, got TypeError
+boolean given [1]: documented TypeError, got TypeError
+boolean given {"a":1}: documented TypeError, got TypeError
+null given 1: documented TypeError, got TypeError
+null given "text": documented TypeError, got TypeError
+null given true: documented TypeError, got TypeError
+null given null: documented value, got value {"m": null}
+null given []: documented TypeError, got TypeError
+null given {}: documented TypeError, got TypeError
+null given [1]: documented TypeError, got TypeError
+null given {"a":1}: documented TypeError, got TypeError
+a list of numbers given 1: documented TypeError, got TypeError
+a list of numbers given "text": documented TypeError, got TypeError
+a list of numbers given true: documented TypeError, got TypeError
+a list of numbers given null: documented TypeError, got TypeError
+a list of numbers given []: documented value, got value {"m": []}
+a list of numbers given {}: documented TypeError, got TypeError
+a list of numbers given [1]: documented value, got value {"m": [1]}
+a list of numbers given {"a":1}: documented TypeError, got TypeError
+a list of strings given 1: documented TypeError, got TypeError
+a list of strings given "text": documented TypeError, got TypeError
+a list of strings given true: documented TypeError, got TypeError
+a list of strings given null: documented TypeError, got TypeError
+a list of strings given []: documented value, got value {"m": []}
+a list of strings given {}: documented TypeError, got TypeError
+a list of strings given [1]: documented TypeError, got TypeError
+a list of strings given {"a":1}: documented TypeError, got TypeError
+an object with a given 1: documented TypeError, got TypeError
+an object with a given "text": documented TypeError, got TypeError
+an object with a given true: documented TypeError, got TypeError
+an object with a given null: documented TypeError, got TypeError
+an object with a given []: documented TypeError, got TypeError
+an object with a given {}: documented TypeError, got TypeError
+an object with a given [1]: documented TypeError, got TypeError
+an object with a given {"a":1}: documented value, got value {"m": {"a": 1}}
+an object with an optional a given 1: documented TypeError, got TypeError
+an object with an optional a given "text": documented TypeError, got TypeError
+an object with an optional a given true: documented TypeError, got TypeError
+an object with an optional a given null: documented TypeError, got TypeError
+an object with an optional a given []: documented TypeError, got TypeError
+an object with an optional a given {}: documented value, got value {"m": {}}
+an object with an optional a given [1]: documented TypeError, got TypeError
+an object with an optional a given {"a":1}: documented value, got value {"m": {"a": 1}}
+an empty object type given 1: documented TypeError, got TypeError
+an empty object type given "text": documented TypeError, got TypeError
+an empty object type given true: documented TypeError, got TypeError
+an empty object type given null: documented TypeError, got TypeError
+an empty object type given []: documented TypeError, got TypeError
+an empty object type given {}: documented value, got value {"m": {}}
+an empty object type given [1]: documented TypeError, got TypeError
+an empty object type given {"a":1}: documented value, got value {"m": {"a": 1}}
+object given 1: documented TypeError, got TypeError
+object given "text": documented TypeError, got TypeError
+object given true: documented TypeError, got TypeError
+object given null: documented TypeError, got TypeError
+object given []: documented value, got value {"m": []}
+object given {}: documented value, got value {"m": {}}
+object given [1]: documented value, got value {"m": [1]}
+object given {"a":1}: documented value, got value {"m": {"a": 1}}
+a table of numbers given 1: documented TypeError, got TypeError
+a table of numbers given "text": documented TypeError, got TypeError
+a table of numbers given true: documented TypeError, got TypeError
+a table of numbers given null: documented TypeError, got TypeError
+a table of numbers given []: documented TypeError, got TypeError
+a table of numbers given {}: documented value, got value {"m": {}}
+a table of numbers given [1]: documented TypeError, got TypeError
+a table of numbers given {"a":1}: documented value, got value {"m": {"a": 1}}
+a pair given 1: documented TypeError, got TypeError
+a pair given "text": documented TypeError, got TypeError
+a pair given true: documented TypeError, got TypeError
+a pair given null: documented TypeError, got TypeError
+a pair given []: documented TypeError, got TypeError
+a pair given {}: documented TypeError, got TypeError
+a pair given [1]: documented TypeError, got TypeError
+a pair given {"a":1}: documented TypeError, got TypeError
+a tuple of one given 1: documented TypeError, got TypeError
+a tuple of one given "text": documented TypeError, got TypeError
+a tuple of one given true: documented TypeError, got TypeError
+a tuple of one given null: documented TypeError, got TypeError
+a tuple of one given []: documented TypeError, got TypeError
+a tuple of one given {}: documented TypeError, got TypeError
+a tuple of one given [1]: documented value, got value {"m": [1]}
+a tuple of one given {"a":1}: documented TypeError, got TypeError
+an enum given 1: documented value, got value {"m": 1}
+an enum given "text": documented TypeError, got TypeError
+an enum given true: documented TypeError, got TypeError
+an enum given null: documented TypeError, got TypeError
+an enum given []: documented TypeError, got TypeError
+an enum given {}: documented TypeError, got TypeError
+an enum given [1]: documented TypeError, got TypeError
+an enum given {"a":1}: documented TypeError, got TypeError
+the literal 1 given 1: documented value, got value {"m": 1}
+the literal 1 given "text": documented TypeError, got TypeError
+the literal 1 given true: documented TypeError, got TypeError
+the literal 1 given null: documented TypeError, got TypeError
+the literal 1 given []: documented TypeError, got TypeError
+the literal 1 given {}: documented TypeError, got TypeError
+the literal 1 given [1]: documented TypeError, got TypeError
+the literal 1 given {"a":1}: documented TypeError, got TypeError
+the literal text given 1: documented TypeError, got TypeError
+the literal text given "text": documented value, got value {"m": "text"}
+the literal text given true: documented TypeError, got TypeError
+the literal text given null: documented TypeError, got TypeError
+the literal text given []: documented TypeError, got TypeError
+the literal text given {}: documented TypeError, got TypeError
+the literal text given [1]: documented TypeError, got TypeError
+the literal text given {"a":1}: documented TypeError, got TypeError
+the literal true given 1: documented TypeError, got TypeError
+the literal true given "text": documented TypeError, got TypeError
+the literal true given true: documented value, got value {"m": true}
+the literal true given null: documented TypeError, got TypeError
+the literal true given []: documented TypeError, got TypeError
+the literal true given {}: documented TypeError, got TypeError
+the literal true given [1]: documented TypeError, got TypeError
+the literal true given {"a":1}: documented TypeError, got TypeError
+number or null given 1: documented value, got value {"m": 1}
+number or null given "text": documented TypeError, got TypeError
+number or null given true: documented TypeError, got TypeError
+number or null given null: documented value, got value {"m": null}
+number or null given []: documented TypeError, got TypeError
+number or null given {}: documented TypeError, got TypeError
+number or null given [1]: documented TypeError, got TypeError
+number or null given {"a":1}: documented TypeError, got TypeError
+string or a list of numbers given 1: documented TypeError, got TypeError
+string or a list of numbers given "text": documented value, got value {"m": "text"}
+string or a list of numbers given true: documented TypeError, got TypeError
+string or a list of numbers given null: documented TypeError, got TypeError
+string or a list of numbers given []: documented value, got value {"m": []}
+string or a list of numbers given {}: documented TypeError, got TypeError
+string or a list of numbers given [1]: documented value, got value {"m": [1]}
+string or a list of numbers given {"a":1}: documented TypeError, got TypeError
+an optional number given 1: documented value, got value {"m": 1}
+an optional number given "text": documented TypeError, got TypeError
+an optional number given true: documented TypeError, got TypeError
+an optional number given null: documented TypeError, got TypeError
+an optional number given []: documented TypeError, got TypeError
+an optional number given {}: documented TypeError, got TypeError
+an optional number given [1]: documented TypeError, got TypeError
+an optional number given {"a":1}: documented TypeError, got TypeError
+unknown given 1: documented value, got value {"m": 1}
+unknown given "text": documented value, got value {"m": "text"}
+unknown given true: documented value, got value {"m": true}
+unknown given null: documented value, got value {"m": null}
+unknown given []: documented value, got value {"m": []}
+unknown given {}: documented value, got value {"m": {}}
+unknown given [1]: documented value, got value {"m": [1]}
+unknown given {"a":1}: documented value, got value {"m": {"a": 1}}

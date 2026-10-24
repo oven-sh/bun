@@ -1,0 +1,507 @@
+{
+  "node": {
+    "codeBytes": 4128768,
+    "bytesAValue": 31.44,
+    "tests": {
+      "executed": 10246,
+      "failed": 354
+    },
+    "typeTests": {
+      "executed": 5178,
+      "failed": 301
+    },
+    "alwaysFailing": {
+      "bun": {
+        "internal/streams/end-of-stream": [
+          "TypeTest 8482"
+        ],
+        "internal/streams/readable": [
+          "IsSlotFilled 23152",
+          "TypeTest 23152",
+          "IsClosureOf 48792",
+          "TypeTest 48792",
+          "IsClosureOf 49047",
+          "TypeTest 49047",
+          "TypeTest 49133"
+        ],
+        "internal/streams/state": [
+          "TypeTest 30236"
+        ],
+        "internal/streams/utils": [
+          "AreMembersUnchanged 4517",
+          "TypeTest 6717",
+          "TypeTest 9662"
+        ],
+        "node:_http_incoming": [
+          "IsSlotFilled 40272",
+          "TypeTest 40458",
+          "IsSlotFilled 43342",
+          "IsSlotFilled 45868",
+          "IsSlotFilled 48414",
+          "IsSlotFilled 48511"
+        ],
+        "node:_http_server": [
+          "IsSlotFilled 130151",
+          "TypeTest 178633",
+          "IsClosureOf 188898"
+        ]
+      },
+      "packages": 15,
+      "program": 4
+    },
+    "uneven": 0,
+    "calls": {
+      "all": 972,
+      "ofFunctionsNotExpectedToRun": 10
+    },
+    "accessesByName": 1931,
+    "runtimeOperations": {
+      "operationAOTAllocateSlow": 1,
+      "operationAOTDateNow": 8,
+      "operationAOTFinishAsyncIteratorStep": 3,
+      "operationAOTJSONAppendString": 90,
+      "operationAOTJSONParseValue": 3,
+      "operationAOTJSONSourceClose": 1,
+      "operationAOTJSONSourceOpen": 1,
+      "operationAOTNewArrayAtReviewedSite": 1,
+      "operationAOTNewGenerator": 3,
+      "operationAOTPromiseThen": 3,
+      "operationAOTPutById": 1,
+      "operationAOTResolvePromise": 9,
+      "operationAOTResolvePromiseOrReturnResult": 5,
+      "operationAOTStringBuilderDiscard": 1,
+      "operationAOTStringBuilderFinish": 15,
+      "operationAOTStringEqualsLiteral": 2
+    },
+    "allocated": {
+      "cells": 405.09,
+      "bytes": 29314.72
+    },
+    "closures": {
+      "aRound": 54,
+      "once": 1782
+    }
+  },
+  "express": {
+    "codeBytes": 6684672,
+    "bytesAValue": 32.65,
+    "tests": {
+      "executed": 14651,
+      "failed": 830
+    },
+    "typeTests": {
+      "executed": 8598,
+      "failed": 781
+    },
+    "alwaysFailing": {
+      "bun": {
+        "node:_http_incoming": [
+          "TypeTest 34111",
+          "TypeTest 38371",
+          "TypeTest 40458",
+          "TypeTest 45868",
+          "HasLayoutPrototype 47048"
+        ],
+        "node:_http_server": [
+          "HasLayoutPrototype 129484",
+          "HasLayoutPrototype 175539",
+          "TypeTest 178633",
+          "IsClosureOf 188898",
+          "TypeTest 202931"
+        ],
+        "node:crypto": [
+          "TypeTest 10397",
+          "TypeTest 10522"
+        ]
+      },
+      "packages": 72,
+      "program": 10
+    },
+    "uneven": 0,
+    "calls": {
+      "all": 1746,
+      "ofFunctionsNotExpectedToRun": 10
+    },
+    "accessesByName": 3588,
+    "runtimeOperations": {
+      "operationAOTAllocateSlow": 1,
+      "operationAOTAsyncIteratorStep": 1,
+      "operationAOTDateNow": 8,
+      "operationAOTFillSiteCache": 1,
+      "operationAOTFinishAsyncIteratorStep": 3,
+      "operationAOTFlatten": 17,
+      "operationAOTGetByIdAndCache": 3,
+      "operationAOTNewArrayAtReviewedSite": 1,
+      "operationAOTNumberOfAnyValue": 1,
+      "operationAOTNumberToStringWithRadix": 7,
+      "operationAOTPromiseThen": 2,
+      "operationAOTPutById": 1,
+      "operationAOTResolvePromise": 3,
+      "operationAOTResolvePromiseOrReturnResult": 2,
+      "operationAOTStackStringBuilderFinish": 20,
+      "operationAOTStringBuilderFinish": 10,
+      "operationAOTStringFindLiteral8": 15,
+      "operationAOTStringIndexOfFrom": 3,
+      "operationAOTStringReplaceRegExpString": 3,
+      "operationAOTStringSplitString": 3,
+      "operationAOTStringToLowerCase": 14,
+      "operationAOTStringsAreEqual": 6,
+      "operationAOTToNumber": 9
+    },
+    "allocated": {
+      "cells": 689.17,
+      "bytes": 42847.04
+    },
+    "closures": {
+      "aRound": 72,
+      "once": 2798
+    }
+  },
+  "hono": {
+    "codeBytes": 1851392,
+    "bytesAValue": 25.22,
+    "tests": {
+      "executed": 4270,
+      "failed": 309
+    },
+    "typeTests": {
+      "executed": 2476,
+      "failed": 295
+    },
+    "alwaysFailing": {
+      "bun": {},
+      "packages": 21,
+      "program": 5
+    },
+    "uneven": 0,
+    "calls": {
+      "all": 499,
+      "ofFunctionsNotExpectedToRun": 10
+    },
+    "accessesByName": 1634,
+    "runtimeOperations": {
+      "operationAOTAllocateSlow": 1,
+      "operationAOTAsyncIteratorStep": 1,
+      "operationAOTFinishAsyncIteratorStep": 3,
+      "operationAOTGetByValAndCache": 1,
+      "operationAOTGetByValGeneric": 5,
+      "operationAOTMoveClosureToHeap": 3,
+      "operationAOTPromiseCatch": 4,
+      "operationAOTPromiseThen": 4,
+      "operationAOTPutById": 1,
+      "operationAOTResolvePromiseOrReturnResult": 15,
+      "operationAOTStringBuilderFinish": 10,
+      "operationAOTStringIndexOfCharacter": 8,
+      "operationAOTStringIndexOfFrom": 2,
+      "operationAOTWeakMapSet": 1
+    },
+    "allocated": {
+      "cells": 439.97,
+      "bytes": 24413.76
+    },
+    "closures": {
+      "aRound": 149,
+      "once": 1139
+    }
+  },
+  "fastify": {
+    "codeBytes": 10469376,
+    "bytesAValue": 35.03,
+    "tests": {
+      "executed": 15243,
+      "failed": 627
+    },
+    "typeTests": {
+      "executed": 8327,
+      "failed": 569
+    },
+    "alwaysFailing": {
+      "bun": {
+        "internal/streams/end-of-stream": [
+          "TypeTest 4275",
+          "TypeTest 6943",
+          "TypeTest 7768",
+          "TypeTest 8041",
+          "TypeTest 8124",
+          "TypeTest 8565",
+          "TypeTest 9714"
+        ],
+        "internal/streams/from": [
+          "TypeTest 861",
+          "IsSlotFilled 1448",
+          "TypeTest 1728",
+          "TypeTest 2806",
+          "TypeTest 4765"
+        ],
+        "internal/streams/legacy": [
+          "TypeTest 5377"
+        ],
+        "internal/streams/readable": [
+          "TypeTest 31201",
+          "TypeTest 31391",
+          "TypeTest 31434",
+          "TypeTest 31549",
+          "TypeTest 31592",
+          "TypeTest 31637",
+          "TypeTest 31675",
+          "TypeTest 31714",
+          "TypeTest 34757",
+          "TypeTest 36878",
+          "TypeTest 59795",
+          "IsSlotFilled 60676"
+        ],
+        "internal/streams/state": [
+          "TypeTest 11481",
+          "TypeTest 11958",
+          "TypeTest 30236"
+        ],
+        "internal/streams/utils": [
+          "TypeTest 3722",
+          "TypeTest 3760",
+          "AreMembersUnchanged 4517",
+          "TypeTest 4556",
+          "TypeTest 5198",
+          "TypeTest 5233",
+          "TypeTest 9662"
+        ],
+        "node:_http_incoming": [
+          "TypeTest 34111",
+          "TypeTest 38371",
+          "TypeTest 40458"
+        ],
+        "node:_http_server": [
+          "TypeTest 178633",
+          "IsClosureOf 188898",
+          "TypeTest 202931"
+        ],
+        "node:events": [
+          "TypeTest 8107",
+          "TypeTest 36441"
+        ]
+      },
+      "packages": 42,
+      "program": 11
+    },
+    "uneven": 0,
+    "calls": {
+      "all": 1512,
+      "ofFunctionsNotExpectedToRun": 10
+    },
+    "accessesByName": 3187,
+    "runtimeOperations": {
+      "operationAOTAllocateSlow": 1,
+      "operationAOTByteLengthOfAnyValue": 10,
+      "operationAOTCreateThis": 8,
+      "operationAOTDateNow": 8,
+      "operationAOTDeleteByVal": 1,
+      "operationAOTFillSiteCache": 1,
+      "operationAOTFinishAsyncIteratorStep": 3,
+      "operationAOTFlatten": 1,
+      "operationAOTInt32ToStringWithRadix": 8,
+      "operationAOTNewArrayAtReviewedSite": 1,
+      "operationAOTNumberOfAnyValue": 4,
+      "operationAOTObjectToStringOfAnyValue": 9,
+      "operationAOTPromiseThen": 1,
+      "operationAOTPutById": 1,
+      "operationAOTResolvePromise": 4,
+      "operationAOTResolvePromiseOrReturnResult": 2,
+      "operationAOTStringBuilderDiscard": 3,
+      "operationAOTStringBuilderFinish": 10
+    },
+    "allocated": {
+      "cells": 547.53,
+      "bytes": 36564.16
+    },
+    "closures": {
+      "aRound": 71.04,
+      "once": 3473.4
+    }
+  },
+  "elysia": {
+    "codeBytes": 5783552,
+    "bytesAValue": 27.04,
+    "tests": {
+      "executed": 3549,
+      "failed": 363
+    },
+    "typeTests": {
+      "executed": 2222,
+      "failed": 361
+    },
+    "alwaysFailing": {
+      "bun": {},
+      "packages": 42,
+      "program": 9
+    },
+    "uneven": 0,
+    "calls": {
+      "all": 441,
+      "ofFunctionsNotExpectedToRun": 10
+    },
+    "accessesByName": 1610,
+    "runtimeOperations": {
+      "operationAOTFillSiteCache": 1,
+      "operationAOTFinishAsyncIteratorStep": 11,
+      "operationAOTPutById": 1,
+      "operationAOTPutByVal": 1,
+      "operationAOTResolvePromiseOrReturnResult": 12,
+      "operationAOTStringBuilderFinish": 10,
+      "operationAOTTakeGeneratorPrototype": 1,
+      "operationAOTTypeOf": 1
+    },
+    "allocated": {
+      "cells": 206.76,
+      "bytes": 14073.28
+    },
+    "closures": {
+      "aRound": 6,
+      "once": 1431
+    }
+  },
+  "tanstack": {
+    "codeBytes": 5619712,
+    "bytesAValue": 27.27,
+    "tests": {
+      "executed": 6704,
+      "failed": 780
+    },
+    "typeTests": {
+      "executed": 4150,
+      "failed": 696
+    },
+    "alwaysFailing": {
+      "bun": {
+        "node:async_hooks": [
+          "TypeTest 2259",
+          "TypeTest 2312"
+        ]
+      },
+      "packages": 52,
+      "program": 23
+    },
+    "uneven": 0,
+    "calls": {
+      "all": 937,
+      "ofFunctionsNotExpectedToRun": 8
+    },
+    "accessesByName": 3002,
+    "runtimeOperations": {
+      "operationAOTAllocateSlow": 2,
+      "operationAOTAwaitWithSavedFrame": 8,
+      "operationAOTCopyDataProperties": 8,
+      "operationAOTCopyObject": 8,
+      "operationAOTDoubleToString": 2,
+      "operationAOTEncodeTextToBytes": 10,
+      "operationAOTFillSiteCache": 1,
+      "operationAOTFinishAsyncIteratorStep": 3,
+      "operationAOTFlatten": 1,
+      "operationAOTGetByVal": 1,
+      "operationAOTIntToString": 8,
+      "operationAOTJSONAppendString": 56,
+      "operationAOTJSONAppendValue": 11,
+      "operationAOTMaterializeDeferredClosure": 8,
+      "operationAOTNewArrayAtReviewedSite": 1,
+      "operationAOTNumberOfAnyValue": 4,
+      "operationAOTNumberToStringWithRadix": 8,
+      "operationAOTPromiseThen": 4,
+      "operationAOTPutById": 1,
+      "operationAOTResolvePromise": 4,
+      "operationAOTResolvePromiseOrReturnResult": 8,
+      "operationAOTSetConstructPrototype": 8,
+      "operationAOTStackStringBuilderFinish": 16,
+      "operationAOTStringBuilderAppendJSON": 3,
+      "operationAOTStringBuilderFinish": 16,
+      "operationAOTToNumber": 7,
+      "operationAOTTryCopyTwoObjects": 16,
+      "operationAOTTryNewSetFromIterable": 16
+    },
+    "allocated": {
+      "cells": 953.23,
+      "bytes": 55781.44
+    },
+    "closures": {
+      "aRound": 282.03,
+      "once": 2210.8
+    }
+  },
+  "typescript": {
+    "codeBytes": 27639808,
+    "bytesAValue": 32.76,
+    "tests": {
+      "executed": 294714,
+      "failed": 61006
+    },
+    "typeTests": {
+      "executed": 209029,
+      "failed": 56695
+    },
+    "alwaysFailing": {
+      "bun": {},
+      "packages": 1557,
+      "program": 3
+    },
+    "uneven": 0,
+    "calls": {
+      "all": 70407,
+      "ofFunctionsNotExpectedToRun": 0
+    },
+    "accessesByName": 111562.6,
+    "runtimeOperations": {
+      "operationAOTAddPropertyBySlot": 49,
+      "operationAOTAllocateSlow": 14,
+      "operationAOTArrayCopy": 1,
+      "operationAOTArrayJoin": 2,
+      "operationAOTArrayPush": 1,
+      "operationAOTArraySplice": 4,
+      "operationAOTCompareLess": 1,
+      "operationAOTConcatenate": 93,
+      "operationAOTCopyObject": 3,
+      "operationAOTDefineAccessors": 1,
+      "operationAOTDoubleToString": 42,
+      "operationAOTEnsureExtensionGranules": 54,
+      "operationAOTFillSiteCache": 67,
+      "operationAOTFindLandingOfMisfit": 33,
+      "operationAOTFlatten": 2,
+      "operationAOTGetByIdAndCache": 25,
+      "operationAOTGetByVal": 1379,
+      "operationAOTIntToString": 12,
+      "operationAOTMapClear": 13,
+      "operationAOTMapGet": 471,
+      "operationAOTMapSet": 76,
+      "operationAOTMaterializeDeferredClosure": 39,
+      "operationAOTNewArray": 3,
+      "operationAOTNewArrayAtReviewedSite": 10,
+      "operationAOTNewClosureSlow": 2,
+      "operationAOTNewGenerator": 2,
+      "operationAOTNewMap": 1,
+      "operationAOTNewMapIterator": 4,
+      "operationAOTPutByIdAndCache": 11,
+      "operationAOTPutByVal": 281,
+      "operationAOTReadField": 1,
+      "operationAOTReserveArrayCapacity": 18,
+      "operationAOTReserveCollectionCapacity": 11,
+      "operationAOTSetAdd": 5,
+      "operationAOTSetConstructPrototype": 301,
+      "operationAOTStackStringBuilderFinish": 150,
+      "operationAOTStringBuilderDiscard": 1,
+      "operationAOTStringBuilderFinish": 4,
+      "operationAOTStringBuilderToString": 5,
+      "operationAOTStringReverseFindLiteral8": 32,
+      "operationAOTStringToLowerCase": 2,
+      "operationAOTStringsAreEqual": 16,
+      "operationAOTSubstring": 1,
+      "operationAOTToNumber": 81,
+      "operationAOTToString": 2,
+      "operationAOTTryFinishBirth": 6,
+      "operationAOTValueAdd": 342
+    },
+    "allocated": {
+      "cells": 8610.65,
+      "bytes": 444110.4
+    },
+    "closures": {
+      "aRound": 805,
+      "once": 7822
+    }
+  }
+}

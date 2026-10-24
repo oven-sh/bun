@@ -1,0 +1,26 @@
+# process.send("careful")
+# parseHandle (runtimefunction 65559) stands behind no built-in: a row of the table says that native code calls it on behalf of process.send, and no record says what it does with its operand.
+# It is entered with an operand nobody knows, and its call of that operand is a call of code that nobody compiles, which may write whatever it reaches.
+# With records: unknown-callback-in-the-code-behind-a-described-built-in-is-no-unknown-code.ir
+# LIBRARY: own
+# The call of process.send may raise the flag by itself, so the test asks for every edge into the flags.
+# RUN: valueflow-why timeline
+# CHECK: flag h6
+# CHECK: by CallGroup
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65559 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="send"
+    v2 = String string="careful"
+    v3 = Call v1, v0, v2
+    Return
+}
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65559 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return v1
+}

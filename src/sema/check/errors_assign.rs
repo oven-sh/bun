@@ -1049,9 +1049,9 @@ impl Checker<'_, '_> {
         // `GetErrorRangeForNode`: the keyword.
         let node = (file, hir[s].start, hir[s].start + b"return".len() as u32);
         let return_type = self.return_type_of_fn(file, container);
-        if e.is_none() && !self.p.files.options.strict_null_checks && !return_type.is_never() {
+        if e.is_none() && !self.reports_null_checks(file) && !return_type.is_never() {
             if hir[container].kind != FnKind::Constructor
-                && self.p.files.options.no_implicit_returns
+                && self.module_options(file).no_implicit_returns
                 && !self.is_unwrapped_return_type_undefined_void_or_any(
                     file,
                     container,

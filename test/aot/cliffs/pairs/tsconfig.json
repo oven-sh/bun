@@ -1,0 +1,19 @@
+{
+  "files": [],
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "esnext",
+    "module": "preserve",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "typeRoots": ["../../../../packages"],
+    "types": ["bun-types"],
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  }
+}

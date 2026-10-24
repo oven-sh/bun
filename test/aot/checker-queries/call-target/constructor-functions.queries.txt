@@ -1,0 +1,51 @@
+# `new` of a function gives back the object that the function got as `this`, unless the function returns a value. In a compile build it has the type that the function declares for `this`, where the callee is a binding that holds that function and no other.
+constructor-functions.ts:11 call `new Declared(1)` = declaration constructor-functions.ts:8
+constructor-functions.ts:11 call result `new Declared(1)` = unwritten checked Point
+constructor-functions.ts:15 call result `new Held(1)` = unwritten checked Point
+constructor-functions.ts:19 call result `new Generic("a")` = unwritten checked Box<string>
+constructor-functions.ts:24 call result `new Leaving(1)` = unwritten checked Point
+absent: constructor-functions.ts:11 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:15 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:19 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:24 diagnostic TS7009 = Style StopsBuild
+
+# A function that returns a value may give back another object.
+constructor-functions.ts:29 call result `new Returning(1)` = unwritten checked any
+constructor-functions.ts:29 diagnostic TS7009 = Style StopsBuild
+
+# Nobody wrote what `this` is.
+constructor-functions.ts:31 call result `new Undeclared(1)` = unwritten checked any
+constructor-functions.ts:31 diagnostic TS7009 = Style StopsBuild
+
+# The type of the callee names a function. Which function the binding holds is another question.
+constructor-functions.ts:34 call result `new Stored()` = unwritten checked any
+constructor-functions.ts:34 diagnostic TS7009 = Style StopsBuild
+constructor-functions.ts:36 call result `new Renamed(1)` = unwritten checked any
+constructor-functions.ts:36 diagnostic TS7009 = Style StopsBuild
+
+# What `new` allocates is an ordinary object, and the compiler gives it one layout: `this` is one object type that compiled code declares.
+constructor-functions.ts:38 call result `new OfNumber()` = unwritten checked any
+constructor-functions.ts:38 diagnostic TS7009 = Style StopsBuild
+constructor-functions.ts:40 call result `new OfDate()` = unwritten checked any
+constructor-functions.ts:40 diagnostic TS7009 = Style StopsBuild
+constructor-functions.ts:42 call result `new OfFunction()` = unwritten checked any
+constructor-functions.ts:42 diagnostic TS7009 = Style StopsBuild
+constructor-functions.ts:44 call result `new OfEither()` = unwritten checked any
+constructor-functions.ts:44 diagnostic TS7009 = Style StopsBuild
+
+# `return new F(..)` in `F` gives back what another call of `F` got as `this`.
+constructor-functions.ts:46 call result `new Guarded(x)` = unwritten checked Point
+constructor-functions.ts:49 call result `new Guarded(1)` = unwritten checked Point
+constructor-functions.ts:54 call result `new GuardedUnderCasts(1)` = unwritten checked Point
+absent: constructor-functions.ts:46 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:49 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:54 diagnostic TS7009 = Style StopsBuild
+
+# What another function constructed is another object.
+constructor-functions.ts:59 call result `new GivesAnother(1)` = unwritten checked any
+constructor-functions.ts:59 diagnostic TS7009 = Style StopsBuild
+
+# An interface of the function's name declares no value.
+constructor-functions.ts:64 call result `new Merged(x)` = unwritten checked Merged
+constructor-functions.ts:67 call result `new Merged(1)` = unwritten checked Merged
+absent: constructor-functions.ts:67 diagnostic TS7009 = Style StopsBuild

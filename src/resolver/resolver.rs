@@ -846,7 +846,10 @@ impl<'a> Resolver<'a> {
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
         let pm: NonNull<dyn AutoInstaller> = unsafe {
-            __bun_resolver_init_package_manager(
+            bun_removable_features::call_removable!(
+                Install,
+                Abort,
+                __bun_resolver_init_package_manager,
                 self.log,
                 self.opts.install,
                 env,
@@ -892,7 +895,32 @@ impl<'a> Resolver<'a> {
     ) -> Option<Dependency::Version> {
         match self.auto_installer().filter(|_| is_project) {
             Some(pm) => pm.parse_dependency(name, Some(name_hash), version, sliced, log),
-            None => __bun_resolver_parse_dependency(name, name_hash, version, sliced, log),
+            // `bun run --filter` (Tools) calls this too: the parser is removed only with both.
+            None if bun_removable_features::is_removed(
+                bun_removable_features::Feature::Install,
+            ) =>
+            {
+                bun_removable_features::call_removable!(
+                    Tools,
+                    Abort,
+                    __bun_resolver_parse_dependency,
+                    name,
+                    name_hash,
+                    version,
+                    sliced,
+                    log,
+                )
+            }
+            None => bun_removable_features::call_removable!(
+                Install,
+                Abort,
+                __bun_resolver_parse_dependency,
+                name,
+                name_hash,
+                version,
+                sliced,
+                log,
+            ),
         }
     }
 
@@ -929,7 +957,9 @@ impl<'a> Resolver<'a> {
         // in addition to being not fully stable, it is completely unexpected to invoke
         // a package manager after bundling an executable. if enough people run into
         // this, we could implement point 1
-        if self.standalone_module_graph.is_some() {
+        if self.standalone_module_graph.is_some()
+            || bun_removable_features::is_removed(bun_removable_features::Feature::Install)
+        {
             return false;
         }
 
@@ -1082,6 +1112,80 @@ impl<'a> Resolver<'a> {
     }
 
     // var tracing_start: i128 — unused; dropped.
+
+    /// The module of the executable that `specifier` names from `source_dir`, found as `bun run` finds a file: as spelled, with each extension, then the index file of a directory.
+    pub fn resolve_embedded_module(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+    ) -> Option<&'static [u8]> {
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        self.standalone_module_graph?
+            .resolve_module(source_dir, specifier, &search)
+    }
+
+    /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
+    fn resolve_embedded_package(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<&'static [u8]> {
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        let is_require = matches!(
+            kind,
+            ast::ImportKind::Require | ast::ImportKind::RequireResolve
+        );
+        self.standalone_module_graph?
+            .resolve_package(source_dir, specifier, is_require, &search)
+    }
+
+    /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module, then a file that `--asset` gave it.
+    fn resolve_at_source_path(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+        let graph = self.standalone_module_graph?;
+        let program = graph
+            .compiled_program()
+            .filter(|program| program.preserves_source_paths)?;
+        let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
+        if !is_relative && !bun_paths::is_absolute(specifier) {
+            return None;
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let path = join_abs_string_buf_checked::<platform::Auto>(
+            source_dir,
+            &mut buffer[..],
+            &[specifier],
+        )?;
+        let search = crate::compiled_program::ExtensionSearch {
+            extensions: self.opts.ext_order_slice(self.extension_order),
+            extra_extensions: &self.opts.extra_cjs_extensions,
+            rewritten_extensions: &|extension, path| {
+                rewritten_file_extensions(extension, || {
+                    strings::path_contains_node_modules_folder(path)
+                })
+            },
+        };
+        program
+            .resolve_module_at_source_path(path, &search)
+            .or_else(|| graph.file_at_source_path(path))
+    }
 
     pub fn resolve_and_auto_install(
         &mut self,
@@ -1342,31 +1446,45 @@ impl<'a> Resolver<'a> {
         //
         // ...unless you pass a relative path that exists in the standalone module graph executable.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
+        let importer_directory: Vec<u8>;
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
+                let embedded = self.resolve_embedded_module(source_dir, import_path);
+                if let Some(file_name) = embedded
+                    .or_else(|| self.resolve_embedded_package(source_dir, import_path, kind))
+                {
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(file_name),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Esm,
+                        flags: ResultFlags::IS_STANDALONE_MODULE,
+                        ..Default::default()
+                    });
+                }
                 if specifier_is_embedded_path
                     || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
                 {
-                    if let Some(file_name) = graph.resolve(source_dir, import_path) {
-                        self.extension_order = original_order;
-                        return ResultUnion::Success(Result {
-                            import_kind: kind,
-                            path_pair: PathPair {
-                                primary: Path::init(file_name),
-                                secondary: None,
-                            },
-                            module_type: options::ModuleType::Esm,
-                            flags: ResultFlags::IS_STANDALONE_MODULE,
-                            ..Default::default()
-                        });
-                    }
                     if specifier_is_embedded_path {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
-                    break 'brk Fs::FileSystem::instance().top_level_dir();
+                    let top_level_dir = Fs::FileSystem::instance().top_level_dir();
+                    let mut directories = graph
+                        .directories_of_importer(source_dir, top_level_dir)
+                        .into_iter();
+                    if let Some(directory) = directories
+                        .find(|directory| self.read_dir_info_ignore_error(directory).is_some())
+                    {
+                        importer_directory = directory;
+                        break 'brk &importer_directory[..];
+                    }
+                    break 'brk top_level_dir;
                 }
             }
 
@@ -1420,6 +1538,19 @@ impl<'a> Resolver<'a> {
 
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        if matches!(tmp, ResultUnion::NotFound)
+            && let Some(path) = self.resolve_at_source_path(source_dir_normalized, import_path)
+        {
+            self.extension_order = original_order;
+            return ResultUnion::Success(Result {
+                import_kind: kind,
+                path_pair: PathPair {
+                    primary: Path::init(path),
+                    secondary: None,
+                },
+                ..Default::default()
+            });
+        }
 
         // Fragments in URLs in CSS imports are technically expected to work
         if matches!(tmp, ResultUnion::NotFound) && kind.is_from_css() {
@@ -3050,7 +3181,10 @@ impl<'a> Resolver<'a> {
                         for (range, behavior) in installed.filter(|_| !resolve_from_lockfile) {
                             let buf = [esm.name, range].concat();
                             let (name, range) = buf.split_at(esm.name.len());
-                            let version = __bun_resolver_parse_dependency(
+                            let version = bun_removable_features::call_removable!(
+                                Install,
+                                Abort,
+                                __bun_resolver_parse_dependency,
                                 Semver::String::init(&buf, name),
                                 Semver::semver_string::Builder::string_hash(name),
                                 range,

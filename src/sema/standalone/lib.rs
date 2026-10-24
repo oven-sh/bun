@@ -4,9 +4,40 @@
 #![feature(linkage)]
 
 pub mod native;
+pub mod native_libraries;
+#[path = "../../runtime/cli/typescript_libs.rs"]
+mod typescript_libs;
+
+/// TypeScript's `lib.*.d.ts` files as Bun ships them.
+pub const TYPESCRIPT_LIBS: bun_sema_driver::host::BundledLibs = typescript_libs::BUNDLED;
 
 #[cfg(unix)]
 use core::mem::MaybeUninit;
+
+/// Runs `work(i)` for every `i` below `count` on `threads` threads, which have the stack of a thread of `bun check`.
+pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sync) {
+    let checked = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
+    // What a test does with a tree checks no stack, and a frame is many times as large without optimization.
+    let stack = checked * if cfg!(debug_assertions) { 16 } else { 1 };
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..threads.max(1) {
+            std::thread::Builder::new()
+                .stack_size(stack)
+                .spawn_scoped(scope, || {
+                    native::set_stack_size(checked - (256 << 10));
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if i >= count {
+                            break;
+                        }
+                        work(i);
+                    }
+                })
+                .unwrap();
+        }
+    });
+}
 
 /// Returns the column count of the terminal attached to standard output, or 0 if it isn't a terminal.
 pub fn terminal_width() -> usize {

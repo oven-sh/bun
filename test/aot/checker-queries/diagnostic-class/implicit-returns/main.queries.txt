@@ -1,0 +1,2 @@
+# A missing return under `noImplicitReturns` is Style.
+main.ts:2 diagnostic TS7030 = Style StopsBuild

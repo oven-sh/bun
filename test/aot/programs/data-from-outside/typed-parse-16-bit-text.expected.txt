@@ -1,0 +1,55 @@
+{"name":"\u00ff","tags":["\u00ff\u00ff","a"],"note":null,"extra":{"\u00ff":["\u00ff"]},"counts":{"\u00ff":1,"b":2}}
+{"name":"\u00ff","tags":["\u00ff\u00ff","a"],"note":null,"extra":{"\u00ff":["\u00ff"]},"counts":{"\u00ff":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u4e2d","tags":["\u4e2d\u4e2d","a"],"note":null,"extra":{"\u4e2d":["\u4e2d"]},"counts":{"\u4e2d":1,"b":2}}
+{"name":"\u4e2d","tags":["\u4e2d\u4e2d","a"],"note":null,"extra":{"\u4e2d":["\u4e2d"]},"counts":{"\u4e2d":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u00ff","tags":["\u00ff\u00ff","a"],"note":null,"extra":{"\u00ff":["\u00ff"]},"counts":{"\u00ff":1,"b":2}}
+{"name":"\u00ff","tags":["\u00ff\u00ff","a"],"note":null,"extra":{"\u00ff":["\u00ff"]},"counts":{"\u00ff":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u01ff","tags":["\u01ff\u01ff","a"],"note":null,"extra":{"\u01ff":["\u01ff"]},"counts":{"\u01ff":1,"b":2}}
+{"name":"\u01ff","tags":["\u01ff\u01ff","a"],"note":null,"extra":{"\u01ff":["\u01ff"]},"counts":{"\u01ff":1,"b":2},"\u3042":"\u3042"}
+{"name":"\uffff","tags":["\uffff\uffff","a"],"note":null,"extra":{"\uffff":["\uffff"]},"counts":{"\uffff":1,"b":2}}
+{"name":"\uffff","tags":["\uffff\uffff","a"],"note":null,"extra":{"\uffff":["\uffff"]},"counts":{"\uffff":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u00fe\u0100","tags":["\u00fe\u0100\u00fe\u0100","a"],"note":null,"extra":{"\u00fe\u0100":["\u00fe\u0100"]},"counts":{"\u00fe\u0100":1,"b":2}}
+{"name":"\u00fe\u0100","tags":["\u00fe\u0100\u00fe\u0100","a"],"note":null,"extra":{"\u00fe\u0100":["\u00fe\u0100"]},"counts":{"\u00fe\u0100":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u8000\u9fff","tags":["\u8000\u9fff\u8000\u9fff","a"],"note":null,"extra":{"\u8000\u9fff":["\u8000\u9fff"]},"counts":{"\u8000\u9fff":1,"b":2}}
+{"name":"\u8000\u9fff","tags":["\u8000\u9fff\u8000\u9fff","a"],"note":null,"extra":{"\u8000\u9fff":["\u8000\u9fff"]},"counts":{"\u8000\u9fff":1,"b":2},"\u3042":"\u3042"}
+{"name":"\ud83d\ude00","tags":["\ud83d\ude00\ud83d\ude00","a"],"note":null,"extra":{"\ud83d\ude00":["\ud83d\ude00"]},"counts":{"\ud83d\ude00":1,"b":2}}
+{"name":"\ud83d\ude00","tags":["\ud83d\ude00\ud83d\ude00","a"],"note":null,"extra":{"\ud83d\ude00":["\ud83d\ude00"]},"counts":{"\ud83d\ude00":1,"b":2},"\u3042":"\u3042"}
+{"name":"\ud83d","tags":["\ud83d\ud83d","a"],"note":null,"extra":{"\ud83d":["\ud83d"]},"counts":{"\ud83d":1,"b":2}}
+{"name":"\ud83d","tags":["\ud83d\ud83d","a"],"note":null,"extra":{"\ud83d":["\ud83d"]},"counts":{"\ud83d":1,"b":2},"\u3042":"\u3042"}
+{"name":"\ude00x","tags":["\ude00x\ude00x","a"],"note":null,"extra":{"\ude00x":["\ude00x"]},"counts":{"\ude00x":1,"b":2}}
+{"name":"\ude00x","tags":["\ude00x\ude00x","a"],"note":null,"extra":{"\ude00x":["\ude00x"]},"counts":{"\ude00x":1,"b":2},"\u3042":"\u3042"}
+{"name":"x\ud83d","tags":["x\ud83dx\ud83d","a"],"note":null,"extra":{"x\ud83d":["x\ud83d"]},"counts":{"x\ud83d":1,"b":2}}
+{"name":"x\ud83d","tags":["x\ud83dx\ud83d","a"],"note":null,"extra":{"x\ud83d":["x\ud83d"]},"counts":{"x\ud83d":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u0122","tags":["\u0122\u0122","a"],"note":null,"extra":{"\u0122":["\u0122"]},"counts":{"\u0122":1,"b":2}}
+{"name":"\u0122","tags":["\u0122\u0122","a"],"note":null,"extra":{"\u0122":["\u0122"]},"counts":{"\u0122":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u015c","tags":["\u015c\u015c","a"],"note":null,"extra":{"\u015c":["\u015c"]},"counts":{"\u015c":1,"b":2}}
+{"name":"\u015c","tags":["\u015c\u015c","a"],"note":null,"extra":{"\u015c":["\u015c"]},"counts":{"\u015c":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u0100","tags":["\u0100\u0100","a"],"note":null,"extra":{"\u0100":["\u0100"]},"counts":{"\u0100":1,"b":2}}
+{"name":"\u0100","tags":["\u0100\u0100","a"],"note":null,"extra":{"\u0100":["\u0100"]},"counts":{"\u0100":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u010a","tags":["\u010a\u010a","a"],"note":null,"extra":{"\u010a":["\u010a"]},"counts":{"\u010a":1,"b":2}}
+{"name":"\u010a","tags":["\u010a\u010a","a"],"note":null,"extra":{"\u010a":["\u010a"]},"counts":{"\u010a":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u017d\u017b\u012c\u013a","tags":["\u017d\u017b\u012c\u013a\u017d\u017b\u012c\u013a","a"],"note":null,"extra":{"\u017d\u017b\u012c\u013a":["\u017d\u017b\u012c\u013a"]},"counts":{"\u017d\u017b\u012c\u013a":1,"b":2}}
+{"name":"\u017d\u017b\u012c\u013a","tags":["\u017d\u017b\u012c\u013a\u017d\u017b\u012c\u013a","a"],"note":null,"extra":{"\u017d\u017b\u012c\u013a":["\u017d\u017b\u012c\u013a"]},"counts":{"\u017d\u017b\u012c\u013a":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u00e9","tags":["\u00e9\u00e9","a"],"note":null,"extra":{"\u00e9":["\u00e9"]},"counts":{"\u00e9":1,"b":2}}
+{"name":"\u00e9","tags":["\u00e9\u00e9","a"],"note":null,"extra":{"\u00e9":["\u00e9"]},"counts":{"\u00e9":1,"b":2},"\u3042":"\u3042"}
+{"name":"plain","tags":["plainplain","a"],"note":null,"extra":{"plain":["plain"]},"counts":{"plain":1,"b":2}}
+{"name":"plain","tags":["plainplain","a"],"note":null,"extra":{"plain":["plain"]},"counts":{"plain":1,"b":2},"\u3042":"\u3042"}
+{"name":"\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042","tags":["\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042","a"],"note":null,"extra":{"\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042":["\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042"]},"counts":{"\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042":1,"b":2}}
+{"name":"\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042","tags":["\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042","a"],"note":null,"extra":{"\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042":["\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042"]},"counts":{"\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042\u3042":1,"b":2},"\u3042":"\u3042"}
+{"name":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042","tags":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042","a"],"note":null,"extra":{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042"]},"counts":{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042":1,"b":2}}
+{"name":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042","tags":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042","a"],"note":null,"extra":{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042"]},"counts":{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u3042":1,"b":2},"\u3042":"\u3042"}
+fast path true
+{"name":"\n\u3042\u3042\\","tags":["\n\u3042\u3042\\\n\u3042\u3042\\","a"],"note":null,"extra":{"\n\u3042\u3042\\":["\n\u3042\u3042\\"]},"counts":{"\n\u3042\u3042\\":1,"b":2}}
+SyntaxError JSON Parse error: Unrecognized token '\u017b'
+SyntaxError JSON Parse error: Unrecognized token '\u017d'
+SyntaxError JSON Parse error: Unrecognized token '\u013a'
+SyntaxError JSON Parse error: Unexpected identifier "nul"
+SyntaxError JSON Parse error: Unrecognized token '\u012c'
+SyntaxError JSON Parse error: Unrecognized token '\u0122'
+TypeError name: expected string, received undefined
+SyntaxError JSON Parse error: Unrecognized token '\u3000'
+SyntaxError JSON Parse error: Unrecognized token '\ufeff'
+SyntaxError JSON Parse error: Unrecognized token '\u0131'
+SyntaxError JSON Parse error: Unterminated string
+SyntaxError JSON Parse error: Property name must be a string literal
+SyntaxError JSON Parse error: Unrecognized token '\u3042'

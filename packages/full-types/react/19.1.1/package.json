@@ -1,0 +1,15 @@
+{
+  "name": "@oven/full-types-react",
+  "version": "19.1.1",
+  "description": "Full types for react 19.1.1: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
+  "license": "MIT",
+  "peerDependencies": {
+    "react": "19.1.1"
+  },
+  "files": [
+    "full-types.json",
+    "lay",
+    "LICENSE",
+    "NOTICE"
+  ]
+}

@@ -1,0 +1,49 @@
+// A getter or setter of the program runs with a function as `this`, so `this.constructor` is Function.
+const text = "return Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter";
+//// Reflect-get-class-getter
+//@ not-seen
+//@ evaluated-code-uses-removed-api
+class A { get got() { return this.constructor; } }
+console.log(Reflect.get(A.prototype, "got", function () {})(text)());
+//// Reflect-get-object-getter
+//@ not-seen
+//@ evaluated-code-uses-removed-api
+const o = { a: 1, get got() { return this.constructor; } };
+console.log(Reflect.get(o, "got", function () {})(text)());
+//// Reflect-get-in-brackets
+//@ not-seen
+//@ evaluated-code-uses-removed-api
+class A { get got() { return this.constructor; } }
+console.log(Reflect["get"](A.prototype, "got", function () {})(text)());
+//// Reflect-get-of-an-instance
+//@ not-seen
+//@ evaluated-code-uses-removed-api
+class A { get got() { return this.constructor; } }
+console.log(Reflect.get(new A(), "got", () => {})(text)());
+//// Reflect-get-inherited-getter
+//@ not-seen
+//@ evaluated-code-uses-removed-api
+class A { get got() { return this.constructor; } }
+class B extends A {}
+console.log(Reflect.get(B.prototype, "got", function () {})(text)());
+//// Reflect-set-class-setter
+//@ not-seen
+//@ todo the compiler sees no use of Function where Reflect.set hands a setter its receiver, so --trim removes it, and the refusal has other words
+//@ evaluated-code-uses-removed-api
+class A { set put(given) { console.log(this.constructor(given)()); } }
+Reflect.set(A.prototype, "put", text, function () {});
+//// Reflect-set-object-setter
+//@ not-seen
+//@ todo the compiler sees no use of Function where Reflect.set hands a setter its receiver, so --trim removes it, and the refusal has other words
+//@ evaluated-code-uses-removed-api
+const o = { a: 1, set put(given) { console.log(this.constructor(given)()); } };
+Reflect.set(o, "put", text, function () {});
+//// Reflect-set-spread
+//@ not-seen
+//@ evaluated-code-uses-removed-api
+class A { set put(given) { console.log(this.constructor(given)()); } }
+Reflect.set(...[A.prototype, "put", text, function () {}]);
+//// Reflect-get-on-the-object-itself
+class A { get got() { return this.constructor.name; } }
+const a = new A();
+console.log(Reflect.get(a, "got"), Reflect.get(a, "got", a));

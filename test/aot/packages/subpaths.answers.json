@@ -1,0 +1,31 @@
+{
+  "exports.closed0.cjs": {
+    "output": "require THROWS Error MODULE_NOT_FOUND\nresolve \"string\"\n"
+  },
+  "exports.closed0.mjs": {
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
+  },
+  "exports.closed5.cjs": "compiled",
+  "exports.closed5.mjs": "compiled",
+  "exports.closed6.cjs": {
+    "output": "require THROWS Error MODULE_NOT_FOUND\nresolve \"string\"\n"
+  },
+  "exports.closed6.mjs": {
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
+  },
+  "exports.closed_literal0.cjs": {
+    "output": "require THROWS Error\n"
+  },
+  "exports.closed_literal0.mjs": {
+    "output": "import THROWS Error\n"
+  },
+  "exports.closed_literal6.cjs": {
+    "output": "require THROWS Error\n"
+  },
+  "exports.closed_literal6.mjs": {
+    "output": "import THROWS Error\n"
+  },
+  "imports.app_dyn.mjs": {
+    "output": "two \"app:two\"\nvariable THROWS ResolveMessage ERR_MODULE_NOT_FOUND\nnone THROWS ResolveMessage ERR_MODULE_NOT_FOUND\n"
+  }
+}

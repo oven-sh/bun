@@ -1,0 +1,72 @@
+# A call of a built-in that has a form for JSON text becomes a call of that form with the text the serializer wrote
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
+
+function f0 name="bodyOnly" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = CallBuiltin -, v0 overload=ResponseJson/1
+    Return v1
+}
+# CHECK-LABEL: function f0 name="bodyOnly"
+# CHECK: [[builder0]]: stringbuilder = StringBuilderBegin
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK: [[done0]](v1: {{*}}):
+# CHECK-NEXT: Return v1
+# CHECK: [[generic0]]() frequency=Rare:
+# CHECK-NEXT: [[original0]]: {{*}} = CallBuiltin -, v0 overload=ResponseJson/1
+# CHECK-NEXT: Jump -> next [[done0]]([[original0]])
+# CHECK: frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard [[builder0]]
+# CHECK-NEXT: Jump -> next [[generic0]]()
+# CHECK: = CallDirect v0, [[builder0]] function=
+# CHECK: [[text0]]: string = StringBuilderFinish [[builder0]]
+# CHECK-NEXT: [[unchecked0]]: anything = CallBuiltin -, [[text0]] overload=JSONTextResponseJson/0
+# CHECK-NEXT: [[response0]]: Response = AssumeType [[unchecked0]] castType=Response
+# CHECK-NEXT: Jump -> next [[done0]]([[response0]])
+
+function f1 name="bodyAndOptions" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: anything):
+    v2 = CallBuiltin -, v0, v1 overload=ResponseJson/2
+    Return v2
+}
+# CHECK-LABEL: function f1 name="bodyAndOptions"
+# CHECK: [[builder1]]: stringbuilder = StringBuilderBegin
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = CallBuiltin -, v0, v1 overload=ResponseJson/2
+# CHECK: [[text1]]: string = StringBuilderFinish [[builder1]]
+# CHECK-NEXT: = CallBuiltin -, [[text1]], v1 overload=JSONTextResponseJson/0
+
+function f2 name="noArgument" results=[{type=anything}] {
+  b0():
+    v0 = CallBuiltin overload=ResponseJson/0
+    Return v0
+}
+# CHECK-LABEL: function f2 name="noArgument"
+# CHECK: b0():
+# CHECK-NEXT: v0: {{*}} = CallBuiltin overload=ResponseJson/0
+# CHECK-NEXT: Return v0
+
+function f3 name="nothingKnownAboutTheBody" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=ResponseJson/1
+    Return v1
+}
+# CHECK-LABEL: function f3 name="nothingKnownAboutTheBody"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: {{*}} = CallBuiltin -, v0 overload=ResponseJson/1
+# CHECK-NEXT: Return v1
+
+function f4 name="onlyTheOptionsAreKnown" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object ~ L0):
+    v2 = CallBuiltin -, v0, v1 overload=ResponseJson/2
+    Return v2
+}
+# CHECK-LABEL: function f4 name="onlyTheOptionsAreKnown"
+# CHECK: b0(v0: anything, v1: object ~ L0):
+# CHECK-NEXT: v2: {{*}} = CallBuiltin -, v0, v1 overload=ResponseJson/2
+# CHECK-NEXT: Return v2

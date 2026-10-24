@@ -1,0 +1,5 @@
+# An inferred file answers with the checker's types, and nothing in it is written.
+inferred-file.js:0 role `` = Inferred
+inferred-file.js:3 type `a` = 1
+inferred-file.js:2 binding `a` = 1
+inferred-file.js:2 variable `a` = unwritten

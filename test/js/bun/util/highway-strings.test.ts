@@ -335,6 +335,119 @@ describe("highway byte-search kernels", () => {
   });
 });
 
+// The kernels of node:path (src/node_path/tidy.rs).
+describe("kernels for paths", () => {
+  const SLASH = 0x2f;
+  const DOT = 0x2e;
+  const slashOrDot = enc("/.");
+  const isUntidyPartAt = (p: Uint8Array, at: number) =>
+    p[at] === SLASH ||
+    (p[at] === DOT &&
+      (at + 1 === p.length ||
+        p[at + 1] === SLASH ||
+        (p[at + 1] === DOT && (at + 2 === p.length || p[at + 2] === SLASH))));
+  function refIndexOfUntidySlash(p: Uint8Array) {
+    for (let i = 0; i + 1 < p.length; i++) if (p[i] === SLASH && isUntidyPartAt(p, i + 1)) return i;
+    return p.length;
+  }
+  function refCommonPrefixLength(a: Uint8Array, b: Uint8Array) {
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    return i;
+  }
+  /** A copy that ends where its buffer ends, so that ASAN sees a read past it. */
+  const exact = (p: Uint8Array) => new Uint8Array(p);
+  // The runner of CI has a collection follow every expect(), and these tests compare over 100,000 times.
+  // So a test lists what is wrong and has one expect().
+  let wrong: string[] = [];
+  function compare(kernel: string, found: number, expected: number, at: () => string) {
+    if (found !== expected) wrong.push(`${kernel} ${at()}: ${found}, not ${expected}`);
+  }
+  function expectNothingWrong() {
+    const found = wrong;
+    wrong = [];
+    expect(found.slice(0, 20)).toEqual([]);
+  }
+  function check(p: Uint8Array, at: () => string) {
+    p = exact(p);
+    compare("indexOfUntidySlash", hw("indexOfUntidySlash", p, 0), refIndexOfUntidySlash(p), at);
+    compare("lastIndexOfSlash", hw("lastIndexOfSlash", p, 0), refLastIndexOf(p, SLASH), at);
+    compare("lastIndexOfSlashOrDot", hw("lastIndexOfSlashOrDot", p, 0), refLastIndexOfAny(p, slashOrDot), at);
+    compare("countSlashes", hw("countSlashes", p, 0), refCount(p, SLASH), at);
+  }
+
+  it("every text of up to 8 characters over '/', '.' and 'a'", () => {
+    const alphabet = enc("/.a");
+    for (let len = 0; len <= 8; len++) {
+      const p = new Uint8Array(len);
+      for (let k = 0; k < 3 ** len; k++) {
+        for (let i = 0, rest = k; i < len; i++, rest = Math.floor(rest / 3)) p[i] = alphabet[rest % 3];
+        check(p, () => new TextDecoder().decode(p));
+      }
+    }
+    expectNothingWrong();
+  });
+
+  it("one untidy part at every position of a path of every length up to 100", () => {
+    for (let len = 1; len <= 100; len++) {
+      const tidy = new Uint8Array(len);
+      for (let i = 0; i < len; i++) tidy[i] = i % 7 === 0 ? SLASH : i % 7 === 1 ? DOT : 0x61 + (i % 5);
+      // "/.abcd" is a name that starts with a dot.
+      if (len % 7 === 2) tidy[len - 1] = 0x61;
+      if (len % 7 === 1) tidy[len - 1] = 0x61;
+      check(tidy, () => `len=${len}`);
+      compare("indexOfUntidySlash", hw("indexOfUntidySlash", exact(tidy), 0), len, () => `len=${len}`);
+      for (const part of ["//", "/./", "/../", "/.", "/.."]) {
+        const planted = enc(part);
+        for (let pos = 0; pos + planted.length <= len; pos++) {
+          // One that does not end with a slash is a whole part only at the end.
+          if (!part.endsWith("/") && pos + planted.length !== len) continue;
+          const p = tidy.slice();
+          p.set(planted, pos);
+          check(p, () => `len=${len} part=${part} pos=${pos}`);
+        }
+      }
+    }
+    expectNothingWrong();
+  });
+
+  it("bytes that differ from '/' and '.' in one bit are neither", () => {
+    for (const len of [9, 17, 33, 34, 65, 70]) {
+      for (let bit = 0; bit < 8; bit++) {
+        for (let pos = 0; pos + 1 < len; pos++) {
+          for (const [first, second] of [
+            [SLASH ^ (1 << bit), SLASH],
+            [SLASH, SLASH ^ (1 << bit)],
+            [SLASH, DOT ^ (1 << bit)],
+          ]) {
+            const p = new Uint8Array(len).fill(0x61);
+            p[pos] = first;
+            p[pos + 1] = second;
+            check(p, () => `len=${len} pos=${pos} bytes=${first},${second}`);
+          }
+        }
+      }
+    }
+    expectNothingWrong();
+  });
+
+  it("commonPrefixLength: the first difference at every position, and none", () => {
+    for (let len = 0; len <= 70; len++) {
+      const a = filler(len, 1);
+      const found = (b: Uint8Array) => hw("commonPrefixLength", exact(a), exact(b));
+      compare("commonPrefixLength", found(a), len, () => `len=${len}`);
+      compare("commonPrefixLength", found(a.subarray(0, len >> 1)), len >> 1, () => `len=${len} and its half`);
+      for (let pos = 0; pos < len; pos++) {
+        const b = a.slice();
+        b[pos] ^= 1 << (pos & 7);
+        if (pos + 3 < len) b[pos + 3] ^= 0x80;
+        compare("commonPrefixLength", found(b), refCommonPrefixLength(a, b), () => `len=${len} pos=${pos}`);
+      }
+    }
+    expectNothingWrong();
+  });
+});
+
 describe("scannerRunStops", () => {
   const isNameByte = (b: number) =>
     (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a) || b === 0x5f || b === 0x24;

@@ -1,0 +1,848 @@
+# answer	plain	minified	difference	configuration	extension	source
+# answer: + `Removable` says that the statement with MARK in it can be left out when nothing uses it, - that it cannot. Of a statement with several declarations, the one with MARK answers.
+# plain, minified: + `bun build` and `bun build --minify-syntax` leave the statement out, - they keep it, . not asked: nothing of the statement would show in the output.
+# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing). missed: the bundler removes more.
+# literals and functions
++	+	+	-	-	ts	const MARK = 1;
++	+	+	-	-	ts	const MARK = "a";
++	+	+	-	-	ts	const MARK = 1n;
++	+	+	-	-	ts	const MARK = null;
++	+	+	-	-	ts	const MARK = true;
++	+	+	-	-	ts	const MARK = false;
++	+	+	-	-	ts	const MARK = /a/g;
++	+	+	-	-	ts	const MARK = undefined;
++	+	+	-	-	ts	const MARK = NaN;
++	+	+	-	-	ts	const MARK = Infinity;
++	+	+	-	-	ts	const MARK = this;
++	+	+	-	-	ts	const MARK = function () { sideEffect(); };
++	+	+	-	-	ts	const MARK = () => sideEffect();
++	+	+	-	-	ts	const MARK = async function* () {};
++	+	+	-	-	ts	const MARK = async () => {};
++	+	+	-	-	ts	let MARK;
++	+	+	-	-	ts	var MARK;
++	+	+	-	-	ts	var MARK = 1;
++	+	+	-	-	ts	let MARK = 1;
++	+	+	-	-	ts	export const MARK = 1;
+-	-	-	-	-	ts	function f(...a: any[]): any {} export const MARK = f();
+# import.meta
++	+	+	-	-	ts	const MARK = import.meta;
++	+	+	-	-	ts	const MARK = import.meta.url;
++	+	+	-	-	ts	const MARK = import.meta["url"];
++	+	+	-	-	ts	const MARK = import.meta.dir;
++	+	+	-	-	ts	const MARK = import.meta.whatever;
+-	-	-	-	-	ts	const MARK = import.meta.env.X;
+-	-	-	-	-	ts	const MARK = import.meta?.url;
++	+	+	-	-	ts	const MARK = import.meta.main;
+-	-	-	-	-	ts	const MARK = import.meta.hot;
+# names
++	+	+	-	-	ts	const a = 1; const MARK = a;
++	+	+	-	-	ts	function f(...a: any[]): any {} let a = f(); const MARK = a;
++	+	+	-	-	ts	const MARK = later; const later = 1;
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = f;
++	+	+	-	-	ts	class C {} const MARK = C;
++	+	+	-	-	ts	import { value } from "./dep.ts"; const MARK = value;
++	+	+	-	-	ts	import dflt from "./dep.ts"; const MARK = dflt;
++	+	+	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns;
+-	-	-	-	-	ts	const MARK = unknownGlobal;
++	+	+	-	-	ts	const MARK = Object;
++	+	+	-	-	ts	const MARK = Array;
++	+	+	-	-	ts	const MARK = Promise;
++	+	+	-	-	ts	const MARK = console;
++	+	+	-	-	ts	const MARK = Error;
++	+	+	-	-	ts	const MARK = URL;
++	+	+	-	-	ts	const MARK = fetch;
++	+	+	-	-	ts	const MARK = setTimeout;
++	+	+	-	-	ts	const MARK = globalThis;
++	+	+	-	-	ts	const MARK = Map;
++	+	+	-	-	ts	const MARK = Symbol;
++	+	+	-	-	ts	const MARK = Event;
++	+	+	-	-	ts	const MARK = crypto;
++	+	+	-	-	ts	const MARK = navigator;
++	+	+	-	-	ts	const MARK = AbortController;
++	+	+	-	-	ts	const MARK = Function;
++	+	+	-	-	ts	const MARK = Date;
++	+	+	-	-	ts	const MARK = self;
++	-	-	table	-	ts	const MARK = Buffer;
++	-	-	table	-	ts	const MARK = process;
++	-	-	table	-	ts	const MARK = Bun;
++	-	-	table	-	ts	const MARK = WeakRef;
++	-	-	table	-	ts	const MARK = structuredClone;
++	-	-	table	-	ts	const MARK = setImmediate;
++	-	-	table	-	ts	const MARK = SharedArrayBuffer;
++	-	-	table	-	ts	const MARK = TransformStream;
++	-	-	table	-	ts	const MARK = global;
+-	-	-	-	-	ts	const MARK = window;
+-	-	-	-	-	ts	const MARK = gc;
+-	-	-	-	-	ts	const MARK = $vm;
+-	-	-	-	-	ts	const MARK = Loader;
+-	-	-	-	-	ts	const MARK = __signpostStart;
+-	+	+	missed	-	ts	const MARK = document;
+-	+	+	missed	-	ts	const MARK = HTMLElement;
+-	+	+	missed	-	ts	const MARK = top;
+-	+	+	missed	-	ts	const MARK = onmessage;
+-	-	-	-	-	ts	const MARK = localStorage;
+-	-	-	-	-	ts	const MARK = require;
++	+	+	-	-	cjs	const MARK = module;
++	+	+	-	-	cjs	const MARK = exports;
+-	-	-	-	-	cjs	const MARK = __filename;
+-	-	-	-	-	cjs	const MARK = arguments;
++	+	+	-	-	ts	const Object = { get keys() { return sideEffect(); } }; const MARK = Object;
+# members
+-	-	-	-	-	ts	const o: any = { a: 1 }; const MARK = o.a;
+-	-	-	-	-	ts	const o: any = { a: 1 }; const MARK = o["a"];
+-	-	-	-	-	ts	const o: any = { a: 1 }; const MARK = o?.a;
+-	-	-	-	-	ts	const o: any = { a: 1 }; const MARK = o[0];
++	+	+	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns.value;
++	+	+	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns["value"];
++	+	+	-	-	ts	import * as ns from "./dep.ts"; const MARK = (ns as any).value;
+-	-	-	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns.value.x;
+-	-	-	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns?.value;
+-	-	-	-	-	ts	import * as ns from "./dep.ts"; let k = "value"; const MARK = ns[k];
++	+	+	-	-	ts	const MARK = Object.keys;
++	+	+	-	-	ts	const MARK = Math.PI;
++	+	+	-	-	ts	const MARK = Math.max;
++	+	+	-	-	ts	const MARK = Math.random;
++	+	+	-	-	ts	const MARK = JSON.parse;
++	+	+	-	-	ts	const MARK = console.log;
++	+	+	-	-	ts	const MARK = Symbol.iterator;
++	+	+	-	-	ts	const MARK = Reflect.get;
++	+	+	-	-	ts	const MARK = Promise.resolve;
++	+	+	-	-	ts	const MARK = Object.prototype.hasOwnProperty;
++	+	+	-	-	ts	const MARK = Array.isArray;
++	+	+	-	-	ts	const MARK = Number.isNaN;
++	+	+	-	-	ts	const MARK = Symbol.for;
++	+	+	-	-	ts	const MARK = Object.defineProperty;
++	-	-	table	-	ts	const MARK = Array.prototype.slice;
++	-	-	table	-	ts	const MARK = Date.now;
++	-	-	table	-	ts	const MARK = Number.MAX_SAFE_INTEGER;
++	-	-	table	-	ts	const MARK = Object.prototype;
++	-	-	table	-	ts	const MARK = process.cwd;
++	-	-	table	-	ts	const MARK = Function.prototype.call;
++	-	-	table	-	ts	const MARK = globalThis.Object;
++	-	-	table	-	ts	const MARK = globalThis.Object.keys;
++	-	-	table	-	ts	const MARK = String.fromCharCode;
++	-	+	table	-	ts	const MARK = Object["keys"];
++	-	-	table	-	ts	const MARK = Buffer.from;
++	-	-	table	-	ts	const MARK = Bun.serve;
++	-	-	table	-	ts	const MARK = performance.now;
+-	-	-	-	-	ts	const MARK = process.env;
+-	-	-	-	-	ts	const MARK = process.env.FOO;
+-	-	-	-	-	ts	const MARK = process.argv;
+-	-	-	-	-	ts	const MARK = process.stdin;
+-	-	-	-	-	ts	const MARK = process.stdout.write;
+-	-	-	-	-	ts	const MARK = Map.prototype.size;
+-	-	-	-	-	ts	const MARK = Bun.env;
+-	-	-	-	-	ts	const MARK = Error.stackTraceLimit;
+-	-	-	-	-	ts	const MARK = Object.notThere;
+-	-	-	-	-	ts	const MARK = Object?.keys;
+-	-	-	-	-	ts	const MARK = Object.keys.name;
+-	-	-	-	-	ts	const MARK = unknownGlobal.a;
+-	-	-	-	-	ts	const MARK = process.platform;
+-	-	-	-	-	ts	const MARK = process.nextTick;
+-	-	-	-	-	ts	const MARK = Bun.sql;
+-	-	-	-	-	ts	const MARK = Bun.password;
+-	-	-	-	-	ts	const MARK = Bun.$;
+-	-	-	-	-	ts	const MARK = globalThis.Map;
+-	+	+	missed	-	ts	const MARK = crypto.randomUUID;
+-	+	+	missed	-	ts	const MARK = Object.prototype.watch;
+-	-	-	-	-	ts	const O = Object; const MARK = O.keys;
+-	-	-	-	-	ts	const Object = { get keys() { return sideEffect(); } }; const MARK = Object.keys;
+-	-	-	-	-	ts	class C { static #a = 1; static m() { const MARK = C.#a; } static { C.m(); } }
+# calls and new
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = /* #__PURE__ */ f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = /*@__PURE__*/ f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f(1, "a", f, [1], { a: 1 });
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f(f());
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f(/* @__PURE__ */ f());
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const MARK = /* @__PURE__ */ f(...xs);
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f(unknownGlobal);
+-	-	-	-	-	ts	class C {} const MARK = new C();
+-	-	-	-	-	ts	class C {} const MARK = new C;
++	+	+	-	-	ts	class C {} const MARK = /* @__PURE__ */ new C();
++	+	+	-	-	ts	class C {} const MARK = /* @__PURE__ */ new C;
+-	-	-	-	-	ts	function f(...a: any[]): any {} class C { constructor(a: any) {} } const MARK = /* @__PURE__ */ new C(f());
++	+	+	-	-	ts	const o: any = { a: 1 }; const MARK = /* @__PURE__ */ o.b.c();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f()();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f().g();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f(f()).g();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f().g;
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f?.();
++	+	+	-	-	ts	const MARK = /* @__PURE__ */ (() => { sideEffect(); })();
++	+	+	-	-	ts	const MARK = /* @__PURE__ */ unknownGlobal();
+-	-	-	-	-	ts	const MARK = (() => {})();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = /* a comment */ f();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f() + f();
++	+	+	-	-	ts	function f(...a: any[]): any {} /* @__PURE__ */ f("MARK");
+-	-	-	-	-	ts	function f(...a: any[]): any {} f("MARK");
+-	-	+	-	-	ts	const MARK = new Map();
+-	-	+	-	-	ts	const MARK = new Set();
+-	-	+	-	-	ts	const MARK = new Set([1]);
+-	-	+	-	-	ts	const MARK = new WeakMap();
+-	-	-	-	-	ts	const MARK = new Error("x");
+-	-	+	-	-	ts	const MARK = new Date();
+-	-	-	-	-	ts	const MARK = new Array(1);
+-	-	+	-	-	ts	const MARK = new Object();
+-	-	+	-	-	ts	const MARK = Symbol.for("x");
+-	-	-	-	-	ts	const MARK = Symbol("x");
+-	-	-	-	-	ts	const MARK = Object.freeze({});
+-	-	-	-	-	ts	const MARK = Object.create(null);
+-	+	+	missed	-	ts	const MARK = "abc".charCodeAt(1);
+-	-	-	-	-	ts	const MARK = Math.max(1, 2);
+-	-	-	-	-	ts	const MARK = String(1);
+-	-	-	-	-	ts	const MARK = Number("1");
+-	-	-	-	-	ts	const MARK = Boolean(1);
+-	-	-	-	-	ts	const MARK = BigInt(1);
+-	-	-	-	-	ts	const MARK = Array.of(1);
+-	-	-	-	-	ts	const MARK = require("./dep.ts");
+-	-	-	-	-	ts	const MARK = /* @__PURE__ */ require("./dep.ts");
+-	-	-	-	-	cjs	const MARK = require("./dep.ts");
+-	-	-	-	-	ts	const MARK = import("./dep.ts");
+-	-	-	-	-	ts	const MARK = await 1;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = f`x`;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f`x`;
+# unary operators
++	+	+	-	-	ts	const MARK = void 0;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = !a;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = !!a;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = typeof a;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal;
++	+	+	-	-	ts	const MARK = typeof (unknownGlobal);
++	+	+	-	-	ts	const MARK = typeof (unknownGlobal as any);
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal.a;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = typeof f();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = void f();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = !f();
++	+	+	-	-	ts	const MARK = -1;
++	+	+	-	-	ts	const MARK = +1;
++	+	+	-	-	ts	const MARK = -"1";
++	+	+	-	-	ts	const MARK = +null;
++	+	+	-	-	ts	const MARK = +true;
++	+	+	-	-	ts	const MARK = -undefined;
++	+	+	-	-	ts	const MARK = - -1;
++	+	+	-	-	ts	const MARK = +"a";
++	+	+	-	-	ts	const MARK = -Infinity;
++	-	+	folded	-	ts	const MARK = ~1;
+-	-	-	-	-	ts	const MARK = -1n;
++	-	+	folded	-	ts	const a = 1; const MARK = -a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = -a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = +a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = ~a;
+-	-	-	-	-	ts	const o: any = { a: 1 }; const MARK = delete o.a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a++;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = --a;
+# binary operators
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a === b;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a !== b;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = (a, b);
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a ?? b;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a || b;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a && b;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a === 1;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = null === a;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a === b === a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a === f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() !== a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = (f(), a);
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = (a, f());
++	-	-	folded	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a ?? f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; a = b; function f(...a: any[]): any {} const MARK = a ?? f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() ?? a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() || a;
++	-	-	folded	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a || f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; a = b; function f(...a: any[]): any {} const MARK = a || f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a && f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() && a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a == b;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a != b;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a == null;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a == 1;
++	+	+	-	-	ts	const MARK = 1 == 1;
++	+	+	-	-	ts	const MARK = "a" != "b";
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = typeof a == "string";
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = typeof a != typeof b;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = !a == !b;
++	+	+	-	-	ts	const MARK = null == null;
++	+	+	-	-	ts	const MARK = null == undefined;
++	-	-	folded	-	ts	const MARK = 1 == "1";
++	+	+	-	-	ts	const MARK = 1 < 2;
++	+	+	-	-	ts	const MARK = "a" >= "b";
++	+	+	-	-	ts	const MARK = 1n <= 2n;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = typeof a < typeof b;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = +a > 1;
++	-	-	folded	-	ts	const MARK = 1 < "2";
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a < b;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a > 1;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = typeof a < 1;
++	-	+	folded	-	ts	const MARK = 1 + 2;
++	-	+	folded	-	ts	const MARK = "a" + "b";
++	-	+	folded	-	ts	const MARK = 1 + "a";
++	-	+	folded	-	ts	const MARK = 2 - 1;
++	-	+	folded	-	ts	const MARK = 2 * 3;
++	-	+	folded	-	ts	const MARK = 4 / 2;
++	-	+	folded	-	ts	const MARK = 5 % 2;
++	-	+	folded	-	ts	const MARK = 2 ** 3;
++	-	+	folded	-	ts	const MARK = 1 << 2;
++	-	+	folded	-	ts	const MARK = 8 >> 1;
++	-	+	folded	-	ts	const MARK = 8 >>> 1;
++	-	+	folded	-	ts	const MARK = 1 & 3;
++	-	+	folded	-	ts	const MARK = 1 | 2;
++	-	+	folded	-	ts	const MARK = 1 ^ 3;
++	-	+	folded	-	ts	const MARK = 1 + 2 + 3;
++	-	+	folded	-	ts	const MARK = "a" + 1 + 2;
++	-	+	folded	-	ts	const a = 1; const MARK = a + 1;
++	-	+	folded	-	ts	const a = "x"; const MARK = a + "y";
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a + 1;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a + b;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a - 1;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a * b;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = "x" + a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a | 0;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a ** 2;
+-	-	-	-	-	ts	const o: any = { a: 1 }; const MARK = "a" in o;
+-	-	-	-	-	ts	const o: any = { a: 1 }; class C {} const MARK = o instanceof C;
+# a free name behind a test of its type
++	+	+	-	-	ts	const MARK = typeof unknownGlobal !== "undefined" && unknownGlobal;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal != "undefined" && unknownGlobal;
++	+	+	-	-	ts	const MARK = "undefined" !== typeof unknownGlobal && unknownGlobal;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal === "undefined" || unknownGlobal;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal !== "undefined" ? unknownGlobal : null;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal === "undefined" ? null : unknownGlobal;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal === "object" ? unknownGlobal : null;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal === "function" && unknownGlobal;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal !== "function" || unknownGlobal;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal < "u" ? unknownGlobal : null;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal <= "u" ? unknownGlobal : null;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal > "u" ? null : unknownGlobal;
++	+	+	-	-	ts	const MARK = "u" > typeof unknownGlobal ? unknownGlobal : null;
++	+	+	-	-	ts	const MARK = "u" < typeof unknownGlobal ? null : unknownGlobal;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal < "u" && unknownGlobal;
++	+	+	-	-	ts	const MARK = typeof unknownGlobal > "u" || unknownGlobal;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal === "undefined" && unknownGlobal;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal !== "undefined" || unknownGlobal;
+-	-	-	-	-	ts	const MARK = typeof otherGlobal !== "undefined" && unknownGlobal;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal !== "undefined" ? null : unknownGlobal;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal === "undefined" ? unknownGlobal : null;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal !== "object" ? unknownGlobal : null;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal > "u" ? unknownGlobal : null;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal < "u" ? null : unknownGlobal;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal < "v" ? unknownGlobal : null;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal !== "undefined" && unknownGlobal.a;
+-	-	-	-	-	ts	const MARK = typeof unknownGlobal !== "undefined" && [unknownGlobal];
+-	-	-	-	-	ts	const MARK = unknownGlobal !== undefined && unknownGlobal;
+-	-	-	-	-	ts	const MARK = "u" > typeof unknownGlobal ? null : unknownGlobal;
+# operands that never run
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = true || f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = false && f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = 1 ?? f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = true ? 1 : f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = false ? f() : 1;
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = "a" || f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = 0 && f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = null ?? 1;
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = !0 || f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = (() => {}) || f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = [] || f();
++	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = ({}) && 1;
++	-	-	folded	-	ts	function f(...a: any[]): any {} const MARK = null?.a;
++	-	-	folded	-	ts	function f(...a: any[]): any {} const MARK = null?.a.b;
++	-	-	folded	-	ts	function f(...a: any[]): any {} const MARK = undefined?.[f()];
++	-	-	folded	-	ts	function f(...a: any[]): any {} const MARK = null?.(f());
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = false || f();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = true && f();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = null ?? f();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = true ? f() : 1;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = false ? 1 : f();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = [f()] || 1;
+# conditional operator
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a ? 1 : 2;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a ? b : a;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a ? f() : 2;
++	-	-	folded	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a ? 1 : f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; a = b; function f(...a: any[]): any {} const MARK = a ? 1 : f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() ? 1 : 2;
+# templates
++	+	+	-	-	ts	const MARK = `a`;
++	+	+	-	-	ts	const MARK = `a${1}`;
++	+	+	-	-	ts	const MARK = `a${"b"}c${true}${null}${undefined}${1n}`;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = `a${typeof a}`;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = `a${a === b}`;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = `a${!a}${void 0}`;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = `a${`b${typeof a}`}`;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = `a${a ? "x" : 1}`;
++	-	+	folded	-	ts	const a = 1; const MARK = `a${a}`;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = `a${a}`;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = `a${a ? b : 1}`;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = `a${a || "x"}`;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = `a${f()}`;
+-	-	-	-	-	ts	const MARK = `a${{}}`;
+-	-	-	-	-	ts	const MARK = `a${[]}`;
+-	-	-	-	-	ts	const MARK = `a${Symbol.iterator}`;
+# arrays
++	+	+	-	-	ts	const MARK = [];
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = [1, a, [b], "c"];
++	+	+	-	-	ts	const MARK = [, 1, ,];
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = [f()];
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = [1, [f()]];
+-	-	-	-	-	ts	const xs: any[] = []; const MARK = [...xs];
+-	-	+	-	-	ts	const MARK = [...[1]];
+-	-	-	-	-	ts	const MARK = [unknownGlobal];
+# objects
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = {} as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { a: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { a } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { "a": 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { 1: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { a() { sideEffect(); } } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { get a() { return sideEffect(); } } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { set a(v) { sideEffect(); } } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { ["a"]: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { [1]: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { [-1]: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { [`a`]: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { [null]: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { [undefined]: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { [true]: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { [1n]: 1 } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { ["a"]() {} } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { __proto__: null } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { __proto__: a } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { async *a() {} } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { a: { b: [a] } } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { a: class {} } as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = { 1n: 1 } as any;
++	-	+	folded	-	ts	const MARK = { ["a" + "b"]: 1 };
++	-	+	folded	-	ts	const k = "k"; const MARK = { [k]: 1 };
++	+	+	-	-	ts	enum Color { Red, Name = "n" } const MARK = { [Color.Red]: 1, [Color.Name]: 2 };
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { a: f() } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { ...o } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { ...{} } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { [a]: 1 } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { [f()]: 1 } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { [Symbol.iterator]: 1 } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { [a]() {} } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { a: { b: f() } } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { [{}]: 1 } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { a: unknownGlobal } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { unknownGlobal } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { a: class { static b = f(); } } as any;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const o: any = { a: 1 }; const MARK = { [typeof a]: 1 } as any;
+# classes
++	+	+	-	-	ts	class MARK {}
++	+	+	-	-	ts	export class MARK {}
++	+	+	-	-	ts	export default class MARK {}
++	+	+	-	-	ts	const MARK = class {};
++	+	+	-	-	ts	const MARK = class Named {};
++	+	+	-	-	ts	class Base {} class MARK extends Base {}
++	+	+	-	-	ts	class MARK extends Object {}
++	+	+	-	-	ts	class MARK extends Error {}
++	+	+	-	-	ts	class MARK extends (null as any) {}
++	+	+	-	-	ts	import * as ns from "./dep.ts"; class MARK extends ns.Base {}
++	+	+	-	-	ts	import { Base } from "./dep.ts"; class MARK extends Base {}
++	+	+	-	-	ts	function f(...a: any[]): any {} class MARK extends (/* @__PURE__ */ f()) {}
++	+	+	-	-	ts	class MARK extends class {} {}
++	-	-	table	-	ts	class MARK extends Buffer {}
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK extends f() {}
+-	-	-	-	-	ts	class MARK extends unknownGlobal {}
+-	+	+	missed	-	ts	class MARK extends HTMLElement {}
+-	-	-	-	-	ts	const o: any = { a: 1 }; class MARK extends o.Base {}
++	+	+	-	-	ts	class MARK { m() { sideEffect(); } get a() { return sideEffect(); } set a(v) {} static s() {} static get t() { return 1; } constructor() { sideEffect(); } async *g() {} }
++	+	+	-	-	ts	class MARK { static a = 1; static b = "x"; static c = [1]; static d = () => sideEffect(); static e; }
++	+	+	-	-	ts	class MARK { static a = this; }
++	+	+	-	-	ts	class MARK { static a = MARK; }
++	+	+	-	-	ts	function f(...a: any[]): any {} class MARK { a = f(); b = sideEffect(); }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static a = f(); }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static a = 1; static b = [f()]; }
+-	-	-	-	-	ts	class MARK { static a = unknownGlobal; }
+-	-	+	-	-	ts	class MARK { static a = new Map(); }
++	+	+	-	-	ts	class MARK { static {} }
++	+	+	-	-	ts	class MARK { static { const a = 1; let b; var c = 2; function g() { sideEffect(); } class D {} ; } }
++	+	+	-	-	ts	function f(...a: any[]): any {} class MARK { static { /* @__PURE__ */ f(); } }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static { f(); } }
+-	-	-	-	-	ts	class MARK { static { this.a = 1; } }
+-	-	-	-	-	ts	class MARK { static a = 1; static { MARK.a = 2; } }
+-	-	+	-	-	ts	class MARK { static { if (1) {} } }
++	+	+	-	-	ts	const k = "k"; class MARK { [k]() {} }
++	+	+	-	-	ts	let k = "k"; class MARK { [k]() {} }
++	+	+	-	-	ts	let k = "k"; class MARK { [k] = 1; static [k] = 2; get [k]() { return 1; } }
++	+	+	-	-	ts	class MARK { ["a"]() {} [1]() {} [`t`]() {} [-1]() {} }
++	+	+	-	-	ts	class MARK { [Symbol.iterator]() {} static [Symbol.hasInstance]() {} }
++	+	+	-	-	ts	import * as ns from "./dep.ts"; class MARK { [ns.value]() {} }
++	+	+	-	-	ts	import { value } from "./dep.ts"; class MARK { [value]() {} }
++	+	+	-	-	ts	enum Color { Red } class MARK { [Color.Red]() {} }
++	-	+	folded	-	ts	class MARK { ["a" + "b"]() {} }
++	+	+	-	-	ts	let k = "k"; class MARK { [k as any]() {} }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { [f()]() {} }
+-	-	-	-	-	ts	const o: any = { a: 1 }; class MARK { [o.k]() {} }
+-	-	-	-	-	ts	class MARK { [unknownGlobal]() {} }
+-	-	-	-	-	ts	let k = "k"; class MARK { [k + "x"]() {} }
+-	-	-	-	-	ts	let k = "k"; class MARK { [`${k}`]() {} }
+-	-	-	-	-	ts	class MARK { [{} as any]() {} }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static [f()] = 1; }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { [f()] = 1; }
+-	+	+	missed	-	ts	import * as ns from "./dep.ts"; class MARK { [ns["value"]]() {} }
++	+	+	-	-	ts	function f(...a: any[]): any {} class MARK { #a = f(); static #b = 1; #m() {} static #s() {} get #g() { return 1; } }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static #b = f(); }
+-	-	-	-	-	ts	class MARK { accessor a = 1; }
+-	-	-	-	-	ts	class MARK { static accessor a = 1; }
+-	-	-	-	-	ts	function f(...a: any[]): any {} @f class MARK {}
+-	-	-	-	-	ts	function f(...a: any[]): any {} @f() class MARK {}
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { @f m() {} }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { @f a = 1; }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { @f static a = 1; }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { @f get a() { return 1; } }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = @f class {};
+-	-	-	-	-	ts	function f(...a: any[]): any {} export default @f class MARK {}
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = class { static a = f(); };
+-	-	-	-	-	ts	function f(...a: any[]): any {} export default class MARK { static a = f(); }
+-	-	-	-	-	ts	function f(...a: any[]): any {} export class MARK extends f() {}
+# classes: what TypeScript adds
++	+	+	-	-	ts	declare class MARK { a: number; }
++	+	+	-	-	ts	function f(...a: any[]): any {} declare class MARK extends f {}
++	+	+	-	-	ts	abstract class MARK { abstract m(): void; abstract a: number; }
++	+	+	-	-	ts	function f(...a: any[]): any {} class MARK { declare a: number; declare static b: number; }
++	+	+	-	-	ts	class MARK { constructor(public a: number, private readonly b = 1) {} }
++	+	+	-	-	ts	class MARK { static a: number; b?: string; c!: number; }
++	+	+	-	-	ts	interface I {} class MARK implements I {}
++	+	+	-	-	ts	class MARK<T> { a?: T; }
++	+	+	-	-	ts	class Base<T> {} class MARK extends Base<number> {}
++	+	+	-	-	ts	class MARK { [key: string]: number; }
++	+	+	-	-	ts	class MARK { m(a: number): void; m(a: string): void; m(a: any) {} }
++	+	+	-	-	ts	class MARK { private a = 1; protected static b = 2; public readonly c = 3; override toString() { return ""; } }
++	+	+	-	-	ts	function f(...a: any[]): any {} abstract class MARK { abstract [f()]: number; }
++	+	+	-	-	ts	function f(...a: any[]): any {} class MARK { declare [f()]: number; }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { private static a = f(); }
+-	-	-	-	legacy	ts	function f(...a: any[]): any {} @f class MARK {}
+-	-	-	-	legacy	ts	function f(...a: any[]): any {} class MARK { @f m() {} }
+-	-	-	-	legacy	ts	function f(...a: any[]): any {} class MARK { @f a = 1; }
+-	-	-	-	legacy	ts	function f(...a: any[]): any {} class MARK { @f a: number; }
+-	-	-	-	legacy	ts	function f(...a: any[]): any {} class MARK { @f declare a: number; }
+-	-	-	-	legacy	ts	function f(...a: any[]): any {} class MARK { m(@f a: number) {} }
+-	-	-	-	legacy	ts	function f(...a: any[]): any {} class MARK { constructor(@f a: number) {} }
+-	.	.	-	legacy	ts	class MARK { accessor a = 1; }
++	+	+	-	legacy	ts	class MARK { a = 1; static b = 2; }
+# functions
++	+	+	-	-	ts	function MARK() { sideEffect(); }
++	+	+	-	-	ts	async function MARK() {}
++	+	+	-	-	ts	function* MARK() {}
++	+	+	-	-	ts	export function MARK() {}
++	+	+	-	-	ts	export default function MARK() {}
++	+	+	-	-	ts	export default function () { return "MARK"; }
++	+	+	-	-	ts	function f(...a: any[]): any {} function MARK(a = f(), { b } = f(), ...c: any[]) {}
++	+	+	-	-	ts	declare function MARK(): void;
++	+	+	-	-	ts	function MARK(a: number): void; function MARK(a: string): void; function MARK(a: any) {}
+# patterns
++	+	+	-	-	ts	const [MARK] = [1];
++	+	+	-	-	ts	const [MARK, b] = [1, 2];
++	+	+	-	-	ts	const [, MARK] = [1, 2];
++	+	+	-	-	ts	const [MARK = 1] = [];
++	+	+	-	-	ts	const [...MARK] = [1];
++	+	+	-	-	ts	const [MARK] = [];
++	+	+	-	-	ts	let [MARK] = [1];
++	+	+	-	-	ts	var [MARK] = [1];
++	+	+	-	-	ts	const [MARK] = [1] as const;
++	+	+	-	-	ts	const [] = [] as any[], MARK = 1;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [MARK = f()] = [];
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [MARK] = xs;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [[MARK]] = [[1]];
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [{ MARK }] = [{ MARK: 1 }];
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [MARK] = [f()];
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [MARK] = "ab";
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [MARK] = [...xs];
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [...[MARK]] = [1];
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [MARK] = /* @__PURE__ */ f();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const xs: any[] = []; const [MARK] = new Set([1]);
++	+	+	-	-	ts	const { MARK } = { MARK: 1 };
++	+	+	-	-	ts	const { a: MARK } = { a: 1 };
++	+	+	-	-	ts	const { MARK = 1 } = { MARK: 2 };
++	+	+	-	-	ts	const { a: { MARK } } = { a: { MARK: 1 } };
++	+	+	-	-	ts	const { a: [MARK] } = { a: [1] };
++	+	+	-	-	ts	const { MARK } = { MARK() {} };
++	+	+	-	-	ts	const { "a-b": MARK } = { "a-b": 1 };
++	+	+	-	-	ts	const { MARK } = { "MARK": 1 };
++	+	+	-	-	ts	const { MARK } = { a: 1, MARK: 2 };
++	+	+	-	-	ts	const { MARK } = { MARK: 1, MARK: 2 } as any;
++	+	+	-	-	ts	const {} = {}, MARK = 1;
++	+	+	-	-	ts	const { MARK } = { MARK: 1 } as any;
++	+	+	-	-	ts	const x = 1; const { MARK } = { MARK: x };
++	+	+	-	-	ts	const MARK0 = 1; const { MARK0: MARK } = { MARK0 };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = o;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = {} as any;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK = f() } = { MARK: 1 };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { ...MARK } = { a: 1 };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { a, ...MARK } = { a: 1 };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { ["a"]: MARK } = { a: 1 };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { [k]: MARK } = { a: 1 } as any;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = { get MARK() { return 1; } };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = { set MARK(v: any) {} } as any;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = { __proto__: null, MARK: 1 } as any;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = { ...o, MARK: 1 };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = { ["MARK"]: 1 };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { 0: MARK } = { 0: 1 };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = { 0: 1, MARK: 1 };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = { MARK: f() };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { a: { MARK } } = { a: o };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { a: [MARK] } = { a: o };
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = { MARK: 1, get MARK() { return 2; } } as any;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = /* @__PURE__ */ f();
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { length: MARK } = "abc";
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; const k = "a"; const { MARK } = [] as any;
+# several declarations in one statement
++	+	+	-	-	ts	function f(...a: any[]): any {} const a = f(), MARK = 1;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = f(), b = 1;
++	+	+	-	-	ts	const a = 1, MARK = 2;
+# using
++	+	+	-	-	ts	using MARK = null;
++	+	+	-	-	ts	using MARK = undefined;
++	+	+	-	-	ts	using MARK = void 0;
+-	-	-	-	-	ts	const o: any = { a: 1 }; using MARK = o;
+-	-	-	-	-	ts	using MARK = { [Symbol.dispose]() {} };
+-	-	-	-	-	ts	using MARK = 1 as any;
+-	-	-	-	-	ts	function f(...a: any[]): any {} using MARK = /* @__PURE__ */ f();
+-	-	-	-	-	ts	await using MARK = null;
+-	-	-	-	-	ts	await using MARK = undefined;
+# casts
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a as any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a satisfies any;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a!;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a!!;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = <any>a;
++	+	+	-	-	ts	const MARK = [1] as const;
++	+	+	-	-	ts	function g<T>() {} const MARK = g<number>;
++	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK: number = a as unknown as number;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = f() as any;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = f()!;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = f() satisfies any;
+-	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = <any>f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = (a as any).b;
+# statements that only TypeScript reads
++	+	+	-	-	ts	interface MARK { a: number; }
++	+	+	-	-	ts	export interface MARK {}
++	+	+	-	-	ts	type MARK = number;
++	+	+	-	-	ts	export type MARK = typeof sideEffect;
++	+	+	-	-	ts	declare const MARK: number;
++	+	+	-	-	ts	declare let MARK: number;
++	+	+	-	-	ts	declare var MARK: number;
++	+	+	-	-	ts	export declare const MARK: number;
++	+	+	-	-	ts	declare namespace MARK { const a: number; }
++	+	+	-	-	ts	declare module "MARK" { export const a: number; }
++	+	+	-	-	ts	declare global { var MARK: number; } export {};
++	+	+	-	-	ts	import type { Base as MARK } from "./dep.ts";
++	+	+	-	-	ts	import { type Base as MARK } from "./dep.ts";
++	+	+	-	-	ts	type T = number; export type { T as MARK };
++	+	+	-	-	ts	export type { Base as MARK } from "./dep.ts";
++	+	+	-	-	ts	export type * as MARK from "./dep.ts";
++	+	+	-	-	ts	import type MARK = require("./dep.ts");
+# namespaces
++	+	+	-	-	ts	namespace MARK {}
++	+	+	-	-	ts	namespace MARK { export type A = number; export interface B {} }
++	+	+	-	-	ts	namespace MARK { export namespace Inner { export type T = 1; } }
++	-	-	inert	-	ts	namespace MARK.Inner { export type T = 1; }
++	+	+	-	-	ts	namespace N { export const a = 1; } namespace MARK { import b = N.a; }
++	+	+	-	-	ts	export namespace MARK { export type A = number; }
+-	-	-	-	-	ts	namespace MARK { export const a = 1; }
+-	-	-	-	-	ts	namespace MARK { const a = 1; }
+-	-	-	-	-	ts	namespace MARK { function g() {} }
+-	-	-	-	-	ts	namespace MARK { export function g() {} }
+-	-	-	-	-	ts	namespace MARK { export class C {} }
+-	-	-	-	-	ts	namespace MARK { export enum E { A } }
+-	-	-	-	-	ts	namespace MARK { export const enum E { A } }
+-	-	-	-	-	ts	namespace MARK { sideEffect(); }
+-	-	-	-	-	ts	namespace MARK.Inner { export const a = 1; }
+-	-	-	-	-	ts	namespace MARK { export declare const a: number; }
+-	-	-	-	-	ts	export namespace MARK { export const a = 1; }
+# enums
++	+	+	-	-	ts	enum MARK {}
++	+	+	-	-	ts	enum MARK { A, B }
++	+	+	-	-	ts	enum MARK { A = 1, B = 2 }
++	+	+	-	-	ts	enum MARK { A = "a", B = "b" }
++	+	+	-	-	ts	enum MARK { A = 1 << 2, B = A | 1, C = A + B, D = ~A, E = -B }
++	+	+	-	-	ts	enum MARK { A, B = A, C }
++	+	+	-	-	ts	enum MARK { A = -1, B }
++	+	+	-	-	ts	enum MARK { A = `a` }
++	+	+	-	-	ts	enum MARK { A = "a" + "b" }
++	+	+	-	-	ts	enum MARK { A = 1, B = MARK.A, C = MARK["A"] }
++	+	+	-	-	ts	const enum MARK { A, B = 2 }
++	+	+	-	-	ts	declare enum MARK { A }
++	+	+	-	-	ts	declare const enum MARK { A }
++	+	+	-	-	ts	export enum MARK { A }
++	+	+	-	-	ts	export const enum MARK { A }
++	+	+	-	-	ts	enum MARK { "a-b" = 1, "c" }
++	+	+	-	-	ts	enum Other { X = 2 } enum MARK { A = Other.X, B = Other.X * 2 }
++	+	+	-	-	ts	const a = 1; enum MARK { A = a }
++	+	+	-	-	ts	let a = 1; enum MARK { A = a }
++	+	+	-	-	ts	enum MARK { A = 1.5, B = 1e3, C = 0x10 }
++	+	+	-	-	ts	enum MARK { A = NaN, B = Infinity }
++	+	+	-	-	ts	enum MARK { A = (1), B = (A) }
++	+	+	-	-	ts	enum MARK { A = 1 as number }
++	+	+	-	-	ts	enum MARK { A = "a", B = 1, C }
++	+	+	-	-	ts	enum MARK { A = typeof 1 }
++	+	+	-	-	ts	enum MARK { A = Math.PI }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = f() }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A, B = f(), C = 1 }
+-	-	+	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = "a".length }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = o.x }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = unknownGlobal }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = f(), B = A }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = a + 1 }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = B, B = 1 }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = a, B = A }
+-	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = Math.max(1, 2) }
++	+	+	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E;
++	+	+	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E.A;
++	+	+	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E.B;
++	+	+	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E.D;
++	+	+	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E.F;
++	+	+	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E["A"];
++	+	+	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = (E as any).A;
++	+	+	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = [E.A, { a: E.B }, `${E.A}`, -E.A, E.A < E.D, E.B == E.B];
+-	-	-	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E.C;
+-	-	-	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E.Missing;
+-	-	-	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E[0];
+-	-	-	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E?.A;
+-	-	-	-	-	ts	function f(...a: any[]): any {} enum E { A, B = "b", C = f(), D = 1 << 3, F } const MARK = E.A.toString;
++	+	+	-	-	ts	const enum E { A } const MARK = E.A;
++	+	+	-	-	ts	enum E { A } enum E { B = 5 } const MARK = [E.A, E.B];
+-	+	+	missed	-	ts	enum E { A } namespace E { export const b = 1; } const MARK = E.A;
++	+	+	-	-	ts	const MARK = E.A; enum E { A }
+-	-	-	-	-	ts	declare enum E { A } const MARK = E.A;
+-	-	-	-	-	ts	import { Color } from "./dep.ts"; const MARK = Color.Red;
+-	-	-	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns.Color.Red;
+# import = and export =
+-	-	-	-	-	ts	import MARK = require("./dep.ts");
+-	-	-	-	-	ts	export import MARK = require("./dep.ts");
++	+	+	-	-	ts	namespace N { export const a = 1; export namespace M { export const b = 2; } } import MARK = N;
++	+	+	-	-	ts	namespace N { export const a = 1; export namespace M { export const b = 2; } } import MARK = N.a;
++	+	+	-	-	ts	namespace N { export const a = 1; export namespace M { export const b = 2; } } import MARK = N.M.b;
++	+	+	-	-	ts	import MARK = unknownGlobal.a;
++	+	+	-	-	ts	namespace N { export const a = 1; export namespace M { export const b = 2; } } export import MARK = N;
+-	-	-	-	-	ts	namespace N { export const a = 1; export namespace M { export const b = 2; } } export import MARK = N.a;
+-	-	-	-	-	ts	export import MARK = unknownGlobal;
+-	-	-	-	-	ts	export = { MARK: 1 };
+-	-	-	-	-	ts	const a = 1; export = [a, "MARK"];
+# export default
++	+	+	-	-	ts	export default "MARK";
++	+	+	-	-	ts	export default { MARK: 1 };
++	+	+	-	-	ts	export default ["MARK"];
++	+	+	-	-	ts	export default () => "MARK";
++	.	.	-	-	ts	const a = "MARK"; export default a;
++	+	+	-	-	ts	export default class { m() { return "MARK"; } }
++	+	+	-	-	ts	function f(...a: any[]): any {} export default /* @__PURE__ */ f("MARK");
++	+	+	-	-	ts	export default "MARK" as string;
+-	-	-	-	-	ts	function f(...a: any[]): any {} export default f("MARK");
+-	-	-	-	-	ts	function f(...a: any[]): any {} export default { MARK: f() };
+-	-	-	-	-	ts	function f(...a: any[]): any {} export default class { static MARK = f(); }
+-	-	-	-	-	ts	export default unknownGlobal.MARK;
+# imports and exports of other modules
++	.	.	-	-	ts	/* MARK */ import "./dep.ts";
++	.	.	-	-	ts	import { value as MARK } from "./dep.ts";
++	.	.	-	-	ts	import MARK from "./dep.ts";
++	.	.	-	-	ts	import * as MARK from "./dep.ts";
++	.	.	-	-	ts	/* MARK */ import {} from "./dep.ts";
++	.	.	-	-	ts	const a = 1; export { a as MARK };
++	.	.	-	-	ts	export { value as MARK } from "./dep.ts";
++	.	.	-	-	ts	/* MARK */ export {};
+-	.	.	-	-	ts	/* MARK */ export * from "./dep.ts";
+-	.	.	-	-	ts	export * as MARK from "./dep.ts";
+# other statements
++	.	.	-	-	ts	/* MARK */ ;
++	-	+	inert	-	ts	"MARK";
++	.	.	-	-	ts	/* MARK */ "use strict";
++	+	+	-	-	ts	const a = 1; "MARK";
++	+	+	-	-	ts	1, "MARK";
++	+	+	-	-	ts	let a: any = 1, b: any = 2; a, b, "MARK";
++	+	+	-	-	ts	let a: any = 1, b: any = 2; a === b ? "MARK" : null;
+-	.	.	-	-	ts	/* MARK */ debugger;
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} if (a) { f("MARK"); }
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} if (a) { f("MARK"); } else {}
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; if (a) { var MARK = 1; }
++	+	+	-	-	ts	function f(...a: any[]): any {} if (false) { f("MARK"); }
++	+	+	-	-	ts	function f(...a: any[]): any {} if (0) f("MARK");
++	-	+	inert	-	ts	function f(...a: any[]): any {} if (false) { var MARK = f(); }
++	+	+	-	-	ts	function f(...a: any[]): any {} if (typeof 1 === "string") { f("MARK"); }
+-	-	-	-	-	ts	function f(...a: any[]): any {} if (true) { f("MARK"); }
+-	-	-	-	-	ts	function f(...a: any[]): any {} if (false) {} else { f("MARK"); }
+-	.	.	-	-	ts	function f(...a: any[]): any {} if (true) {} else { f("MARK"); }
+-	.	.	-	-	ts	function f(...a: any[]): any {} /* MARK */ if (f()) {}
+-	-	+	-	-	ts	{ const MARK = 1; }
+-	.	.	-	-	ts	{ /* MARK */ }
+-	-	-	-	-	ts	for (const MARK of []) {}
+-	-	-	-	-	ts	for (const MARK in {}) {}
+-	-	-	-	-	ts	for (let MARK = 0; MARK < 1; MARK++) {}
+-	-	-	-	-	ts	function f(...a: any[]): any {} while (false) { f("MARK"); }
+-	-	-	-	-	ts	function f(...a: any[]): any {} do { f("MARK"); } while (false);
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} switch (a) { case 1: f("MARK"); }
+-	-	-	-	-	ts	throw "MARK";
+-	-	-	-	-	ts	MARK: for (;;) break MARK;
+-	-	-	-	-	ts	MARK: { }
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; a = "MARK";
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; a += "MARK";
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; a ||= "MARK";
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; [a] = ["MARK"];
+-	-	-	-	-	ts	const o: any = { a: 1 }; o.MARK = 1;
+-	-	-	-	-	ts	globalThis.MARK = 1;
++	+	+	-	-	ts	try { const MARK = 1; } catch {}
++	+	+	-	-	ts	try { let MARK; class C {} ; "x"; } catch (e) { sideEffect(); }
++	+	+	-	-	ts	try {} catch { sideEffect("MARK"); }
++	+	+	-	-	ts	try { const MARK = 1; } finally { const b = 2; }
++	.	.	-	-	ts	/* MARK */ try {} finally {}
+-	-	-	-	-	ts	function f(...a: any[]): any {} try { f("MARK"); } catch {}
+-	-	+	-	-	ts	function f(...a: any[]): any {} try { const MARK = 1; } finally { f(); }
+-	-	-	-	-	ts	try { var MARK = 1; } catch {}
+-	-	-	-	-	ts	try { function MARK() {} } catch {}
++	+	+	-	-	ts	try { try { const MARK = 1; } catch {} } catch {}
+-	-	+	-	-	ts	try { { const MARK = 1; } } catch {}
+# CommonJS
+-	+	+	missed	-	cjs	exports.MARK = 1;
+-	-	-	-	-	cjs	module.exports = { MARK: 1 };
+-	+	+	missed	-	cjs	module.exports.MARK = 1;
+-	-	-	-	-	cjs	Object.defineProperty(exports, "MARK", { value: 1 });
+-	-	-	-	-	cjs	var o = {}; with (o) { sideEffect("MARK"); }
++	+	+	-	-	cjs	const MARK = 1;
++	+	+	-	-	cjs	function MARK() {}
+-	.	.	-	-	cjs	/* MARK */ return;
+# JavaScript
++	+	+	-	-	js	const MARK = 1;
++	+	+	-	-	js	class MARK { static a = 1; }
+-	-	-	-	-	js	function f() {} const MARK = f();
++	+	+	-	-	js	function f() {} const MARK = /* @__PURE__ */ f();
++	+	+	-	-	js	var MARK = /* @__PURE__ */ ((E) => { E[E.A = 0] = "A"; return E; })(MARK || {});
++	+	+	-	-	js	/** @typedef {number} T */ const MARK = 1;
+-	-	-	-	-	js	function f() {} @f class MARK {}
++	+	+	-	-	mjs	const MARK = 1;
+# JSX
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div />;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div></div>;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div a="b" c>text</div>;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div a={1} b={a} c={() => sideEffect()} />;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <Comp />;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <Comp a="b"><div /></Comp>;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <></>;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <><div /><Comp /></>;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div>{a}{"x"}{1}</div>;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div>{}</div>;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div key="k" />;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div key={a} b="c" />;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <a-b />;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div data-a="b" />;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <ns.Base />;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div>{/* @__PURE__ */ f()}</div>;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div a={<Comp />} />;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <div>{[<Comp key="1" />]}</div>;
++	+	+	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; let a: any = 1; const MARK = <Comp<number> />;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <div a={f()} />;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <div {...o} />;
+-	+	+	missed	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <div {...{}} />;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <Unknown />;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <div>{f()}</div>;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <o.Comp />;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <div>{...xs}</div>;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <div key={f()} />;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <Comp>{o.a}</Comp>;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <><div a={f()} /></>;
+-	-	-	-	-	tsx	import * as ns from "./dep.ts"; function Comp(p: any) { return null; } function f(...a: any[]): any {} const o: any = { a: 1 }; const xs: any[] = []; const MARK = <div a={unknownGlobal} />;
++	+	+	-	-	jsx	const MARK = <div a="b">text</div>;
+-	-	-	-	-	jsx	function f() {} const MARK = <div a={f()} />;
++	+	+	-	-	tsx	function Comp(p: any) { return null; } export default <Comp a="MARK" />;
++	+	+	-	-	tsx	function Comp(p: any) { return null; } <Comp a="MARK" />;

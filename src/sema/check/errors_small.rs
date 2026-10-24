@@ -56,7 +56,7 @@ impl<'p> Checker<'p, '_> {
             // `namesShareScope`: in the body of a function, a module or a file.
             while scope.is_some()
                 && match bound.scopes[scope.idx()].kind {
-                    ScopeKind::Block => true,
+                    ScopeKind::Block | ScopeKind::With(_) => true,
                     // A `ClassStaticBlockDeclaration` isn't function-like.
                     ScopeKind::Fn(f) => hir[f].kind == FnKind::StaticBlock,
                     _ => false,
@@ -87,7 +87,7 @@ impl<'p> Checker<'p, '_> {
                         });
                     if is_lexical {
                         let name = Arg::Atom(name);
-                        self.error_at((file, hir[pat].pos, 0), 2481, &[name, name]);
+                        self.early_error_at((file, hir[pat].pos, 0), 2481, &[name, name]);
                     }
                     break;
                 }
@@ -107,7 +107,7 @@ impl<'p> Checker<'p, '_> {
         cond_expr: ExprId,
         body: Parent,
     ) {
-        if self.p.files.options.strict_null_checks {
+        if self.reports_null_checks(file) {
             let body = match body {
                 Parent::Expr(e) => self.hir(file).child(e),
                 body => self.hir(file).node(body),
@@ -124,7 +124,7 @@ impl<'p> Checker<'p, '_> {
         is_and: bool,
         left: ExprId,
     ) {
-        if !self.p.files.options.strict_null_checks {
+        if !self.reports_null_checks(file) {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));

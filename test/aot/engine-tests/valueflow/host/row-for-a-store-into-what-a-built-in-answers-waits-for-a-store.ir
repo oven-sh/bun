@@ -1,0 +1,19 @@
+# `process.env.NAME` reads the object and stores nothing into it, so the warning printer that a store of an odd value reaches is not entered (runtimefunction 65572)
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65572 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="env"
+    v2 = PropGet v1 key="NAME"
+    Return v2
+}
+function f1 name="createOnWarning" role=Library enclosingRuntimeFunction=65572 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

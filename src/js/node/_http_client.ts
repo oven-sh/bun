@@ -12,18 +12,19 @@ const {
   HTTPParser,
   calculateLenientFlags,
   prepareError,
-  kSkipPendingData,
 } = require("node:_http_common");
-const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
+const { parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
+const http = require("internal/http");
 const Agent = require("node:_http_agent");
 const { urlToHttpOptions } = require("internal/url");
-const {
-  kOutHeaders,
-  kNeedDrain,
-  kProxyConfig,
-  checkShouldUseProxy,
-  kPerRequestCheckServerIdentity,
-} = require("internal/http");
+const { checkShouldUseProxy } = http;
+// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
+const kSkipPendingData: typeof http.kSkipPendingData = http.kSkipPendingData;
+const kUniqueHeaders: typeof http.kUniqueHeaders = http.kUniqueHeaders;
+const kOutHeaders: typeof http.kOutHeaders = http.kOutHeaders;
+const kNeedDrain: typeof http.kNeedDrain = http.kNeedDrain;
+const kProxyConfig: typeof http.kProxyConfig = http.kProxyConfig;
+const kPerRequestCheckServerIdentity: typeof http.kPerRequestCheckServerIdentity = http.kPerRequestCheckServerIdentity;
 const { validateInteger, validateBoolean, validateString, validateOneOf } = require("internal/validators");
 const { getTimerDuration } = require("internal/timers");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
@@ -41,7 +42,7 @@ const onClientRequestStartChannel = dc.channel("http.client.request.start");
 const onClientRequestErrorChannel = dc.channel("http.client.request.error");
 const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
 
-function emitErrorEvent(request, error) {
+function emitErrorEvent(request: $Node.ClientRequest, error: Error) {
   if (onClientRequestErrorChannel.hasSubscribers) {
     onClientRequestErrorChannel.publish({
       request,
@@ -54,7 +55,7 @@ function emitErrorEvent(request, error) {
   request.emit("error", error);
 }
 
-function onCreateConnection(this: any, err, socket) {
+function onCreateConnection(this: $Node.ClientRequest, err: unknown, socket?: $Node.HttpClientSocket | null) {
   if (err) {
     process.nextTick(emitErrorEvent, this, err);
   } else {
@@ -70,7 +71,7 @@ const kPath = Symbol("kPath");
 // (undefined when no execute() is in progress).
 const kPendingParserData = Symbol("kPendingParserData");
 
-function validateHost(host, name) {
+function validateHost(host: string | null | undefined, name: string) {
   if (host !== null && host !== undefined && typeof host !== "string") {
     // node passes ['string', 'undefined', 'null'] and its formatter renders the non-type
     // entries as "one of undefined or null"; pass the pre-formatted text to match.
@@ -82,8 +83,8 @@ function validateHost(host, name) {
 
 class HTTPClientAsyncResource {
   type: string;
-  req: any;
-  constructor(type, req) {
+  req: $Node.ClientRequest;
+  constructor(type: string, req: $Node.ClientRequest) {
     this.type = type;
     this.req = req;
   }
@@ -96,13 +97,13 @@ class HTTPClientAsyncResource {
 const kClientAsyncContext = Symbol("kClientAsyncContext");
 const runInFrame = require("internal/async_context_frame").run;
 
-function closeRequest(req) {
+function closeRequest(req: $Node.ClientRequest) {
   if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
   req._closed = true;
   req.emit("close");
 }
 
-function isURLInstance(input) {
+function isURLInstance(input: unknown): input is URL {
   return input != null && typeof input === "object" && input instanceof URL;
 }
 
@@ -114,7 +115,7 @@ function isURLInstance(input) {
 // This function checks whether the request should be rewritten for proxying
 // and modifies the headers as well as req.path if necessary.
 // The handling of the proxy server connection is done in createConnection.
-function rewriteForProxiedHttp(req, reqOptions) {
+function rewriteForProxiedHttp(req: $Node.ClientRequest, reqOptions: $Node.ClientRequestOptions) {
   if (req._header) {
     $debug("request._header is already sent, skipping rewriteForProxiedHttp", reqOptions);
     return false;
@@ -148,7 +149,8 @@ function rewriteForProxiedHttp(req, reqOptions) {
   const requestURL = new URL(req.path, requestBase);
   const reqOptionsPort = reqOptions.port;
   if (reqOptionsPort) {
-    requestURL.port = reqOptionsPort;
+    // The setter converts a number.
+    requestURL.port = reqOptionsPort as string;
   }
   req.path = requestURL.href;
   return true;
@@ -159,17 +161,125 @@ function rewriteForProxiedHttp(req, reqOptions) {
 // 'e' across the response/error/destroy/close paths. Near-zero cost when off.
 const kHttpTraceCat = "node,node.http";
 const kTraceRequestActive = Symbol("kTraceRequestActive");
-let traceEvents: typeof import("internal/trace_events").default;
-function traceClientResponseEnd(req) {
+let traceEvents: typeof import("internal/trace_event_recorder").default;
+function traceClientResponseEnd(req: $Node.ClientRequest) {
   if (req[kTraceRequestActive]) {
     req[kTraceRequestActive] = false;
     traceEvents.emitEvent("e", kHttpTraceCat, "http.client.request");
   }
 }
 
-function ClientRequest(input?, options?, cb?): void {
+type ResponseListener = (response: $Node.IncomingMessage) => void;
+
+declare global {
+  namespace $Node {
+    /** With the options of `net.connect()` and `tls.connect()`, which go on to the agent and to the connection. */
+    interface ClientRequestOptions {
+      __proto__?: null;
+      agent?: Agent | false | null;
+      _defaultAgent?: Agent;
+      createConnection?: (
+        options: ClientRequestOptions,
+        oncreate: (err: Error | null, socket?: HttpClientSocket | null) => void,
+      ) => HttpClientSocket | null | undefined | void;
+      protocol?: string | null;
+      hostname?: string | null;
+      host?: string | null;
+      port?: number | string | null;
+      defaultPort?: number | string;
+      path?: string | null;
+      socketPath?: string;
+      localAddress?: string;
+      family?: number;
+      servername?: string | null;
+      method?: string;
+      headers?: Record<string, HttpHeaderValue> | string[];
+      auth?: string | null;
+      setHost?: boolean;
+      setDefaultHeaders?: boolean;
+      timeout?: number;
+      signal?: AbortSignal;
+      maxHeaderSize?: number;
+      insecureHTTPParser?: boolean;
+      httpValidation?: "strict" | "relaxed" | "insecure";
+      joinDuplicateHeaders?: boolean;
+      uniqueHeaders?: string[];
+      checkServerIdentity?: (hostname: string, cert: object) => Error | undefined;
+      keepAlive?: boolean;
+      keepAliveInitialDelay?: number;
+      encoding?: null;
+      _agentKey?: string;
+      [kPerRequestCheckServerIdentity]?: number;
+      [option: string]: unknown;
+    }
+
+    /** The connection of a `ClientRequest`: a `net.Socket`, or what a `createConnection()` of the user's answered. */
+    interface HttpClientSocket extends HttpSocket {
+      _httpMessage?: ClientRequest | null;
+      parser?: HTTPParser | null;
+      connecting?: boolean;
+      setTimeout(msecs: number, callback?: () => void): this | undefined;
+      ref(): this;
+      unref(): this;
+      setNoDelay(noDelay?: boolean): this;
+      setKeepAlive(enable?: boolean, initialDelay?: number): this;
+      /** The chunks that arrived while `parser.execute()` was running on this socket. */
+      [kPendingParserData]?: Buffer[];
+    }
+
+    interface ClientRequest extends OutgoingMessage {
+      agent: Agent | null | undefined;
+      socket: HttpClientSocket | null;
+      socketPath: string | undefined;
+      timeout?: number;
+      method: string;
+      path: string;
+      host: string;
+      protocol: string;
+      maxHeaderSize: number | undefined;
+      maxHeadersCount: number | null;
+      insecureHTTPParser: boolean | undefined;
+      httpValidation: "strict" | "relaxed" | "insecure" | undefined;
+      joinDuplicateHeaders: boolean | undefined;
+      res: IncomingMessage | null;
+      parser: HTTPParser | null;
+      aborted: boolean;
+      reusedSocket: boolean;
+      upgradeOrConnect: boolean;
+      timeoutCb: ((this: HttpClientSocket) => void) | null;
+      domain?: Domain;
+      _ended: boolean;
+      abort(): void;
+      onSocket(socket: HttpClientSocket | null | undefined, err?: Error | null): void;
+      /** Calls the method of the socket once the request has a socket that is connected. */
+      _deferToConnect(method: string | null | undefined, arguments_: unknown[]): void;
+      setNoDelay(noDelay?: boolean): void;
+      setSocketKeepAlive(enable?: boolean, initialDelay?: number): void;
+      clearTimeout(callback?: () => void): void;
+      [kError]?: Error | null;
+      [kPath]: string;
+      [kClientAsyncContext]?: import("./async_hooks").Frame;
+      [kTraceRequestActive]?: boolean;
+      [kClientRequestStatistics]?: object;
+    }
+
+    type ClientRequestConstructor = typeof ClientRequest;
+
+    interface IncomingMessage {
+      /** Of a response: the domain that was active when its request was made. */
+      domain?: Domain;
+    }
+  }
+}
+
+function ClientRequest(
+  this: $Node.ClientRequest,
+  input?: string | URL | $Node.ClientRequestOptions | ReturnType<typeof urlToHttpOptions> | null,
+  options?: $Node.ClientRequestOptions | ResponseListener | null,
+  cb?: ResponseListener,
+): void {
   if (!(this instanceof ClientRequest)) {
-    return new (ClientRequest as any)(input, options, cb);
+    return new ClientRequest(input, options, cb) as any;
   }
   OutgoingMessage.$call(this);
 
@@ -180,22 +290,22 @@ function ClientRequest(input?, options?, cb?): void {
     // url.URL instance
     input = urlToHttpOptions(input);
   } else {
-    cb = options;
-    options = input;
+    cb = options as ResponseListener | undefined;
+    options = input as $Node.ClientRequestOptions | ResponseListener | null | undefined;
     input = null;
   }
 
   if (typeof options === "function") {
     cb = options;
-    options = input || kEmptyObject;
+    options = (input || kEmptyObject) as $Node.ClientRequestOptions;
   } else {
-    options = ObjectAssign({ __proto__: null }, input, options);
+    options = ObjectAssign({ __proto__: null }, input, options) as $Node.ClientRequestOptions;
   }
 
   let agent = options.agent;
   const defaultAgent = options._defaultAgent || Agent.globalAgent;
   if (agent === false) {
-    agent = new defaultAgent.constructor();
+    agent = new defaultAgent.constructor() as $Node.Agent;
   } else if (agent === null || agent === undefined) {
     if (typeof options.createConnection !== "function") {
       agent = defaultAgent;
@@ -212,7 +322,7 @@ function ClientRequest(input?, options?, cb?): void {
     err.message = err.message.replace(" must be of type ", " must be one of ");
     throw err;
   }
-  this.agent = agent;
+  this.agent = agent as $Node.Agent | null | undefined;
 
   const protocol = options.protocol || defaultAgent.protocol;
   let expectedProtocol = defaultAgent.protocol;
@@ -244,7 +354,7 @@ function ClientRequest(input?, options?, cb?): void {
 
   const defaultPort = options.defaultPort || this.agent?.defaultPort;
 
-  const optsWithoutSignal = { __proto__: null, ...options };
+  const optsWithoutSignal: $Node.ClientRequestOptions = { __proto__: null, ...options };
 
   const port = (optsWithoutSignal.port = options.port || defaultPort || 80);
   const host = (optsWithoutSignal.host =
@@ -456,7 +566,7 @@ function ClientRequest(input?, options?, cb?): void {
     });
   }
 
-  traceEvents ??= require("internal/trace_events");
+  traceEvents ??= require("internal/trace_event_recorder");
   if (traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) {
     traceEvents.emitEvent("b", kHttpTraceCat, "http.client.request");
     this[kTraceRequestActive] = true;
@@ -466,10 +576,10 @@ $toClass(ClientRequest, "ClientRequest", OutgoingMessage);
 
 ObjectDefineProperty(ClientRequest.prototype, "path", {
   __proto__: null,
-  get() {
+  get(this: $Node.ClientRequest) {
     return this[kPath];
   },
-  set(value) {
+  set(this: $Node.ClientRequest, value: string) {
     const path = String(value);
     if (INVALID_PATH_REGEX.test(path)) {
       throw $ERR_UNESCAPED_CHARACTERS("Request path");
@@ -480,8 +590,8 @@ ObjectDefineProperty(ClientRequest.prototype, "path", {
   enumerable: true,
 });
 
-ClientRequest.prototype._finish = function _finish() {
-  OutgoingMessage.prototype._finish.$call(this);
+ClientRequest.prototype._finish = function _finish(this: $Node.ClientRequest) {
+  (OutgoingMessage.prototype as $Node.OutgoingMessage)._finish.$call(this);
   if (hasObserver("http")) {
     startPerf(this, kClientRequestStatistics, {
       type: "http",
@@ -502,14 +612,14 @@ ClientRequest.prototype._finish = function _finish() {
   }
 };
 
-ClientRequest.prototype._implicitHeader = function _implicitHeader() {
+ClientRequest.prototype._implicitHeader = function _implicitHeader(this: $Node.ClientRequest) {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("render");
   }
   this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", this[kOutHeaders]);
 };
 
-ClientRequest.prototype.abort = function abort() {
+ClientRequest.prototype.abort = function abort(this: $Node.ClientRequest) {
   if (this.aborted) {
     return;
   }
@@ -518,7 +628,7 @@ ClientRequest.prototype.abort = function abort() {
   this.destroy();
 };
 
-ClientRequest.prototype.destroy = function destroy(err) {
+ClientRequest.prototype.destroy = function destroy(this: $Node.ClientRequest, err?: Error | null) {
   if (this.destroyed) {
     return this;
   }
@@ -540,15 +650,15 @@ ClientRequest.prototype.destroy = function destroy(err) {
   return this;
 };
 
-function emitAbortNT(req) {
+function emitAbortNT(req: $Node.ClientRequest) {
   req.emit("abort");
 }
 
-function ondrain() {
+function ondrain(this: $Node.HttpClientSocket) {
   return runInFrame(this._httpMessage?.[kClientAsyncContext], ondrainInner, this);
 }
 
-function ondrainInner() {
+function ondrainInner(this: $Node.HttpClientSocket) {
   const msg = this._httpMessage;
   if (msg && !msg.finished && msg[kNeedDrain]) {
     msg[kNeedDrain] = false;
@@ -556,13 +666,13 @@ function ondrainInner() {
   }
 }
 
-function socketCloseListener() {
+function socketCloseListener(this: $Node.HttpClientSocket) {
   return runInFrame(this._httpMessage?.[kClientAsyncContext], socketCloseListenerInner, this);
 }
 
-function socketCloseListenerInner() {
+function socketCloseListenerInner(this: $Node.HttpClientSocket) {
   const socket = this;
-  const req = socket._httpMessage;
+  const req = socket._httpMessage!;
   $debug("HTTP socket close");
 
   // NOTE: It's important to get parser here, because it could be freed by
@@ -584,11 +694,11 @@ function socketCloseListenerInner() {
       res.push(null);
     }
   } else {
-    if (!req.socket._hadError) {
+    if (!req.socket!._hadError) {
       // This socket error fired before we started to
       // receive a response. The error needs to
       // fire on the request.
-      req.socket._hadError = true;
+      req.socket!._hadError = true;
       emitErrorEvent(req, new ConnResetException("socket hang up"));
     }
     closeRequest(req);
@@ -606,11 +716,11 @@ function socketCloseListenerInner() {
   }
 }
 
-function socketErrorListener(err) {
+function socketErrorListener(this: $Node.HttpClientSocket, err: Error) {
   return runInFrame(this._httpMessage?.[kClientAsyncContext], socketErrorListenerInner, this, err);
 }
 
-function socketErrorListenerInner(err) {
+function socketErrorListenerInner(this: $Node.HttpClientSocket, err: Error) {
   const socket = this;
   const req = socket._httpMessage;
   $debug("SOCKET ERROR:", err);
@@ -634,19 +744,19 @@ function socketErrorListenerInner(err) {
   socket.destroy();
 }
 
-function socketOnEnd() {
+function socketOnEnd(this: $Node.HttpClientSocket) {
   return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnEndInner, this);
 }
 
-function socketOnEndInner() {
+function socketOnEndInner(this: $Node.HttpClientSocket) {
   const socket = this;
-  const req = this._httpMessage;
+  const req = this._httpMessage!;
   const parser = this.parser;
 
-  if (!req.res && !req.socket._hadError) {
+  if (!req.res && !req.socket!._hadError) {
     // If we don't have a response then we know that the socket
     // ended prematurely and we need to emit an error on the request.
-    req.socket._hadError = true;
+    req.socket!._hadError = true;
     emitErrorEvent(req, new ConnResetException("socket hang up"));
   }
   if (parser) {
@@ -656,11 +766,11 @@ function socketOnEndInner() {
   socket.destroy();
 }
 
-function socketOnData(d) {
+function socketOnData(this: $Node.HttpClientSocket, d: Buffer) {
   return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnDataInner, this, d);
 }
 
-function socketOnDataInner(d) {
+function socketOnDataInner(this: $Node.HttpClientSocket, d: Buffer) {
   const socket = this;
 
   // HTTPParser.execute() is not reentrant. User code can synchronously push
@@ -683,15 +793,15 @@ function socketOnDataInner(d) {
       // upgrade, parse error); any data queued after that point would have
       // been emitted with no 'data' listener attached in node, so drop it.
       if (!parser) break;
-      processClientData(socket, queue.shift(), parser);
+      processClientData(socket, queue.shift()!, parser);
     }
   } finally {
     socket[kPendingParserData] = undefined;
   }
 }
 
-function processClientData(socket, d, parser) {
-  const req = socket._httpMessage;
+function processClientData(socket: $Node.HttpClientSocket, d: Buffer, parser: $Node.HTTPParser) {
+  const req = socket._httpMessage!;
 
   $assert(parser && parser.socket === socket);
 
@@ -703,7 +813,7 @@ function processClientData(socket, d, parser) {
     socket.removeListener("data", socketOnData);
     socket.removeListener("end", socketOnEnd);
     socket.destroy();
-    req.socket._hadError = true;
+    req.socket!._hadError = true;
     emitErrorEvent(req, ret);
   } else {
     const res = parser.incoming;
@@ -754,7 +864,7 @@ function processClientData(socket, d, parser) {
       // sends a request body, so we must not free the parser.
       // 101 (Switching Protocols) and all other status codes
       // should be processed normally.
-      !statusIsInformational(res.statusCode)
+      !statusIsInformational(res.statusCode!)
     ) {
       socket.removeListener("data", socketOnData);
       socket.removeListener("end", socketOnEnd);
@@ -764,7 +874,7 @@ function processClientData(socket, d, parser) {
   }
 }
 
-function statusIsInformational(status) {
+function statusIsInformational(status: number) {
   // 100 (Continue)    RFC7231 Section 6.2.1
   // 102 (Processing)  RFC2518
   // 103 (Early Hints) RFC8297
@@ -773,9 +883,9 @@ function statusIsInformational(status) {
 }
 
 // client
-function parserOnIncomingClient(res, shouldKeepAlive) {
-  const socket = this.socket;
-  const req = socket._httpMessage;
+function parserOnIncomingClient(this: $Node.HTTPParser, res: $Node.IncomingMessage, shouldKeepAlive: boolean) {
+  const socket = this.socket as $Node.HttpClientSocket;
+  const req = socket._httpMessage!;
 
   $debug("AGENT incoming response!");
 
@@ -806,7 +916,7 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
     return 2; // Skip body and treat as Upgrade.
   }
 
-  const statusCode = res.statusCode;
+  const statusCode = res.statusCode!;
   if (statusIsInformational(statusCode)) {
     // Restart the parser, as this is a 1xx informational message.
     req.res = null; // Clear res so that we don't hit double-responses.
@@ -889,8 +999,8 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
 }
 
 // client
-function responseKeepAlive(req) {
-  const socket = req.socket;
+function responseKeepAlive(req: $Node.ClientRequest) {
+  const socket = req.socket!;
 
   $debug("AGENT socket keep-alive");
   if (req.timeoutCb) {
@@ -918,8 +1028,8 @@ function responseKeepAlive(req) {
   }
 }
 
-function responseOnEnd() {
-  const req = this.req;
+function responseOnEnd(this: $Node.IncomingMessage) {
+  const req = this.req!;
   const socket = req.socket;
 
   if (socket) {
@@ -930,12 +1040,12 @@ function responseOnEnd() {
   req._ended = true;
 
   if (!req.shouldKeepAlive) {
-    if (socket.writable) {
+    if (socket!.writable) {
       $debug("AGENT socket.destroySoon()");
-      if (typeof socket.destroySoon === "function") socket.destroySoon();
-      else socket.end();
+      if (typeof socket!.destroySoon === "function") socket!.destroySoon();
+      else socket!.end();
     }
-    $assert(!socket.writable);
+    $assert(!socket!.writable);
   } else if (req.writableFinished && !this.aborted) {
     $assert(req.finished);
     // We can assume `req.finished` means all data has been written since:
@@ -950,11 +1060,11 @@ function responseOnEnd() {
   }
 }
 
-function responseOnTimeout() {
+function responseOnTimeout(this: $Node.HttpClientSocket) {
   return runInFrame(this._httpMessage?.[kClientAsyncContext], responseOnTimeoutInner, this);
 }
 
-function responseOnTimeoutInner() {
+function responseOnTimeoutInner(this: $Node.HttpClientSocket) {
   const req = this._httpMessage;
   if (!req) return;
   const res = req.res;
@@ -964,7 +1074,7 @@ function responseOnTimeoutInner() {
 
 // This function is necessary in the case where we receive the entire response
 // from the server before we finish sending out the request.
-function requestOnFinish() {
+function requestOnFinish(this: $Node.ClientRequest) {
   const req = this;
 
   // If the response ends before this request finishes writing, `responseOnEnd()`
@@ -974,7 +1084,7 @@ function requestOnFinish() {
   if (req.shouldKeepAlive && req._ended && !req.destroyed) responseKeepAlive(req);
 }
 
-function emitFreeNT(req) {
+function emitFreeNT(req: $Node.ClientRequest) {
   closeRequest(req);
   const socket = req.socket;
   if (socket) {
@@ -982,8 +1092,8 @@ function emitFreeNT(req) {
   }
 }
 
-function tickOnSocket(req, socket) {
-  const parser = parsers.alloc();
+function tickOnSocket(req: $Node.ClientRequest, socket: $Node.HttpClientSocket) {
+  const parser: $Node.HTTPParser = parsers.alloc();
   req.socket = socket;
   req[kClientAsyncContext] = $getInternalField($asyncContext, 0);
   const lenientFlags = calculateLenientFlags(req.httpValidation, req.insecureHTTPParser);
@@ -1020,22 +1130,22 @@ function tickOnSocket(req, socket) {
   req.emit("socket", socket);
 }
 
-function emitRequestTimeout() {
+function emitRequestTimeout(this: $Node.HttpClientSocket) {
   return runInFrame(this._httpMessage?.[kClientAsyncContext], emitRequestTimeoutInner, this);
 }
 
-function emitRequestTimeoutInner() {
+function emitRequestTimeoutInner(this: $Node.HttpClientSocket) {
   const req = this._httpMessage;
   if (req) {
     req.emit("timeout");
   }
 }
 
-function onSocketListenTimeout(socket) {
+function onSocketListenTimeout(socket: $Node.HttpClientSocket) {
   socket.once("timeout", emitRequestTimeout);
 }
 
-function listenSocketTimeout(req) {
+function listenSocketTimeout(req: $Node.ClientRequest) {
   if (req.timeoutCb) {
     return;
   }
@@ -1050,7 +1160,11 @@ function listenSocketTimeout(req) {
   }
 }
 
-ClientRequest.prototype.onSocket = function onSocket(socket, err) {
+ClientRequest.prototype.onSocket = function onSocket(
+  this: $Node.ClientRequest,
+  socket: $Node.HttpClientSocket | null | undefined,
+  err?: Error | null,
+) {
   // Attach the error listener synchronously so that any errors emitted on
   // the socket before onSocketNT runs (e.g. from a blocklist check or other
   // next-tick error) are forwarded to the request and can be caught by the
@@ -1067,7 +1181,11 @@ ClientRequest.prototype.onSocket = function onSocket(socket, err) {
   process.nextTick(onSocketNT, this, socket, err);
 };
 
-function destroyRequestOnSocketNT(req, socket, err) {
+function destroyRequestOnSocketNT(
+  req: $Node.ClientRequest,
+  socket: $Node.HttpClientSocket | null | undefined,
+  err: Error | null | undefined,
+) {
   if (!req.aborted && !err) {
     err = new ConnResetException("socket hang up");
   }
@@ -1082,7 +1200,11 @@ function destroyRequestOnSocketNT(req, socket, err) {
   closeRequest(req);
 }
 
-function onSocketNT(req, socket, err) {
+function onSocketNT(
+  req: $Node.ClientRequest,
+  socket: $Node.HttpClientSocket | null | undefined,
+  err: Error | null | undefined,
+) {
   if (req.destroyed || err) {
     req.destroyed = true;
 
@@ -1098,32 +1220,37 @@ function onSocketNT(req, socket, err) {
 
     destroyRequestOnSocketNT(req, socket, err || req[kError]);
   } else {
-    tickOnSocket(req, socket);
+    tickOnSocket(req, socket!);
     req._flush();
   }
 }
 
-function onSocketFinishedDestroy(req, socket, err, er) {
+function onSocketFinishedDestroy(
+  req: $Node.ClientRequest,
+  socket: $Node.HttpClientSocket,
+  err: Error | null | undefined,
+  er?: Error | null,
+) {
   if (er?.code === "ERR_STREAM_PREMATURE_CLOSE") {
     er = null;
   }
   destroyRequestOnSocketNT(req, socket, er || err);
 }
 
-function callSocketMethod(this: any, method, arguments_) {
-  if (method) this.socket[method].$apply(this.socket, arguments_);
+function callSocketMethod(this: $Node.ClientRequest, method: string | null | undefined, arguments_: unknown[]) {
+  if (method) this.socket![method].$apply(this.socket, arguments_);
 }
 
-function deferToConnectOnSocket(this: any, method, arguments_) {
-  if (this.socket.writable) {
+function deferToConnectOnSocket(this: $Node.ClientRequest, method: string | null | undefined, arguments_: unknown[]) {
+  if (this.socket!.writable) {
     callSocketMethod.$call(this, method, arguments_);
   } else {
-    this.socket.once("connect", callSocketMethod.bind(this, method, arguments_));
+    this.socket!.once("connect", callSocketMethod.bind(this, method, arguments_));
   }
 }
 
 ClientRequest.prototype._deferToConnect = _deferToConnect;
-function _deferToConnect(this: any, method, arguments_) {
+function _deferToConnect(this: $Node.ClientRequest, method: string | null | undefined, arguments_: unknown[]) {
   // This function is for calls that need to happen once the socket is
   // assigned to this request and writable. It's an important promisy
   // thing for all the socket calls that happen either now
@@ -1137,7 +1264,11 @@ function _deferToConnect(this: any, method, arguments_) {
   }
 }
 
-ClientRequest.prototype.setTimeout = function setTimeout(msecs, callback) {
+ClientRequest.prototype.setTimeout = function setTimeout(
+  this: $Node.ClientRequest,
+  msecs: number,
+  callback?: () => void,
+) {
   if (this._ended) {
     return this;
   }
@@ -1156,11 +1287,11 @@ ClientRequest.prototype.setTimeout = function setTimeout(msecs, callback) {
   return this;
 };
 
-function onSocketSetTimeout(msecs, sock) {
+function onSocketSetTimeout(msecs: number, sock: $Node.HttpClientSocket) {
   setSocketTimeout(sock, msecs);
 }
 
-function setSocketTimeout(sock, msecs) {
+function setSocketTimeout(sock: $Node.HttpClientSocket, msecs: number) {
   if (sock.connecting) {
     sock.once("connect", function () {
       sock.setTimeout(msecs);
@@ -1170,15 +1301,19 @@ function setSocketTimeout(sock, msecs) {
   }
 }
 
-ClientRequest.prototype.setNoDelay = function setNoDelay(noDelay) {
+ClientRequest.prototype.setNoDelay = function setNoDelay(this: $Node.ClientRequest, noDelay?: boolean) {
   this._deferToConnect("setNoDelay", [noDelay]);
 };
 
-ClientRequest.prototype.setSocketKeepAlive = function setSocketKeepAlive(enable, initialDelay) {
+ClientRequest.prototype.setSocketKeepAlive = function setSocketKeepAlive(
+  this: $Node.ClientRequest,
+  enable?: boolean,
+  initialDelay?: number,
+) {
   this._deferToConnect("setKeepAlive", [enable, initialDelay]);
 };
 
-ClientRequest.prototype.clearTimeout = function clearTimeout(cb) {
+ClientRequest.prototype.clearTimeout = function clearTimeout(this: $Node.ClientRequest, cb?: () => void) {
   this.setTimeout(0, cb);
 };
 

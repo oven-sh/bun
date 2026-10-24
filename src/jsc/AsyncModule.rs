@@ -267,7 +267,9 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
 }
 
 impl Queue {
+    #[inline(never)]
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
+        bun_removable_features::removable_definition!(Install, Self::enqueue);
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
         module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
@@ -294,7 +296,9 @@ impl Queue {
         }
     }
 
+    #[inline(never)]
     pub fn on_poll(&mut self) {
+        bun_removable_features::removable_definition!(Install, Self::on_poll);
         bun_core::scoped_log!(AsyncModule, "onPoll");
         if self.map.is_empty() {
             // A synchronous auto-install drains its own tasks; here their failures would be lost.

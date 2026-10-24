@@ -1,0 +1,141 @@
+Map set -> 7
+Map get -> 99
+Map has -> true
+Map string key -> "v"
+Map double key -> "d"
+Map NaN key -> "n"
+Map -0 key -> "z"
+subclass set -> 7
+subclass get -> 99
+subclass has -> true
+subclass string key -> "v"
+subclass double key -> "d"
+subclass NaN key -> "n"
+subclass -0 key -> "z"
+added property set -> 7
+added property get -> 99
+added property has -> true
+added property string key -> "v"
+added property double key -> "d"
+added property NaN key -> "n"
+added property -0 key -> "z"
+Set add -> 5
+Set has -> true
+subclass add -> 5
+subclass has -> true
+WeakMap set -> true
+WeakMap get -> 99
+WeakMap has -> true
+WeakSet has -> false
+WeakMap get of a number -> undefined
+WeakMap has of a number -> false
+WeakSet has of a number -> false
+startsWith -> true
+startsWith absent -> false
+indexOf -> 2
+indexOf absent -> -1
+isArray -> [true, true, false, false, false, false]
+isArray of a Proxy of an object -> false
+Array push -> 7
+Array slice(1) -> [2, 3, 4, 5]
+Array slice(1, 3) -> [2, 3]
+Array slice(-2) -> [4, 5]
+Array slice class -> "Array"
+subclass push -> 7
+subclass slice(1) -> [2, 3, 4, 5]
+subclass slice(1, 3) -> [2, 3]
+subclass slice(-2) -> [4, 5]
+subclass slice class -> "A"
+doubles push -> 6
+doubles slice(1) -> [2.5, 3.5, 4.5]
+doubles slice(1, 3) -> [2.5, 3.5]
+doubles slice(-2) -> [3.5, 4.5]
+doubles slice class -> "Array"
+strings push -> 6
+strings slice(1) -> ["b", "c", "d"]
+strings slice(1, 3) -> ["b", "c"]
+strings slice(-2) -> ["c", "d"]
+strings slice class -> "Array"
+String() -> ""
+String(7) -> "7"
+String(7, 8) -> "7"
+String(7, 8, 9) -> "7"
+Number() -> 0
+Number(7) -> 7
+Number(7, 8) -> 7
+Number(7, 8, 9) -> 7
+Boolean() -> false
+Boolean(7) -> true
+Boolean(7, 8) -> true
+Boolean(7, 8, 9) -> true
+Array() -> []
+Array(7) -> [, , , , , , ]
+Array(7, 8) -> [7, 8]
+Array(7, 8, 9) -> [7, 8, 9]
+Object() -> [object Object]
+Object(7) -> [object Number]
+Object(7, 8) -> [object Number]
+Object(7, 8, 9) -> [object Number]
+Symbol() -> Symbol()
+Symbol(7) -> Symbol(7)
+Symbol(7, 8) -> Symbol(7)
+Symbol(7, 8, 9) -> Symbol(7)
+Date() -> "string"
+Date(7) -> "string"
+Date(7, 8) -> "string"
+Date(7, 8, 9) -> "string"
+new Date() -> true
+new Date(7) -> Date 7
+new Date(2000, 1) -> 1
+new Date(2000, 1, 2) -> 2
+new Array() -> []
+new Array(2) -> 2
+new Array(1, 2) -> [1, 2]
+new Array(1, 2, 3) -> [1, 2, 3]
+new Array(-1) throws RangeError: Array length must be a positive integer of safe magnitude.
+  stack new1:121 < attempt:35
+new Map() -> 0
+new Map(entries) -> 2
+new Error() -> Error: 
+new Error(text) -> Error: text
+new Error(text, options) -> 1
+new Symbol() throws TypeError: function is not a constructor
+  stack new0:120 < attempt:35
+Map get on a Set throws TypeError: Map operation called on non-Map object
+  stack attempt:35
+Map get on a number throws TypeError: 1 is not an object
+  stack attempt:35
+Map get by value on a Set throws TypeError: Map operation called on non-Map object
+  stack attempt:35
+WeakMap set of a number throws TypeError: WeakMap keys must be objects or non-registered symbols
+  stack attempt:35
+WeakMap set of a symbol -> true
+startsWith of a RegExp throws TypeError: Argument to String.prototype.startsWith cannot be a RegExp
+  stack attempt:35
+indexOf of a number -> 1
+isArray of a Proxy -> true
+isArray of a revoked Proxy throws TypeError: Array.isArray cannot be called on a Proxy that has been revoked
+  stack attempt:35
+push on a frozen array throws TypeError: Attempted to assign to readonly property.
+  stack attempt:35
+push on an array-like -> [1, 1, 1]
+slice of a string -> [2, 3]
+slice of a double -> [2, 3]
+other realm Map get -> 2
+other realm Map get by method -> 2
+other realm Map get on this realm's Map -> 3
+other realm Map get on a Set throws TypeError: Map operation called on non-Map object
+  stack attempt:35
+other realm WeakMap set of a number throws TypeError: WeakMap keys must be objects or non-registered symbols
+  stack attempt:35
+other realm startsWith -> true
+other realm startsWith of a RegExp throws TypeError: Argument to String.prototype.startsWith cannot be a RegExp
+  stack attempt:35
+other realm indexOf -> 2
+other realm isArray -> [true, true, true]
+other realm push -> [2, [1, 2]]
+other realm push on its own array -> 1
+other realm slice -> [[2, 3], false, true]
+other realm slice of its own array -> [[2], false, true]
+other realm push on a frozen array throws TypeError: Attempted to assign to readonly property.
+  stack attempt:35

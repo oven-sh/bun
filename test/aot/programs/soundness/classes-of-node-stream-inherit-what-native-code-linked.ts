@@ -1,0 +1,13 @@
+import { Stream, Readable } from "node:stream";
+import EventEmitter from "node:events";
+const s = new Stream();
+console.log(typeof s.on, typeof s.pipe, typeof s.emit);
+console.log(Object.getPrototypeOf(Stream.prototype) === EventEmitter.prototype, Object.getPrototypeOf(Stream) === EventEmitter);
+console.log(s instanceof EventEmitter, "on" in s, Stream.name, typeof (Stream as any).listenerCount);
+let seen = 0;
+s.on("x", () => seen++);
+s.emit("x");
+console.log(seen);
+const r = new Readable({ read() {} });
+console.log(typeof r.on, r instanceof Stream, r instanceof EventEmitter);
+console.log(Object.getOwnPropertyDescriptor(Stream, "prototype")!.writable);

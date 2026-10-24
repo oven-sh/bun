@@ -1,0 +1,16 @@
+{
+  "compiler/arrayFromAsync.ts": "throws TypeError instead of Error | both runs throw, at different places",
+  "compiler/controlFlowFinallyNoCatchAssignments.ts": "any | prints Math.random()",
+  "compiler/decoratorMetadataTypeOnlyExport.ts": "does not throw SyntaxError | plain Bun fails: it keeps an import, export or alias of a type, which TypeScript erases",
+  "compiler/es6ExportClauseWithoutModuleSpecifier.ts": "does not throw SyntaxError | plain Bun fails: it keeps an import, export or alias of a type, which TypeScript erases",
+  "compiler/es6ExportClauseWithoutModuleSpecifierInEs5.ts": "does not throw SyntaxError | plain Bun fails: it keeps an import, export or alias of a type, which TypeScript erases",
+  "compiler/exportDefaultForNonInstantiatedModule.ts": "throws ReferenceError | known bug: `export default` of a namespace that holds only types",
+  "compiler/exportDefaultImportedType.ts": "does not throw SyntaxError | plain Bun fails: it keeps an import, export or alias of a type, which TypeScript erases",
+  "compiler/importedModuleAddToGlobal.ts": "does not throw ReferenceError | plain Bun fails: it keeps an import, export or alias of a type, which TypeScript erases",
+  "compiler/nameCollisionWithBlockScopedVariable1.ts": "does not throw TypeError | plain Bun fails: a local variable shadows the namespace object it emits a reference to",
+  "conformance/es6/modules/exportsAndImports1-es6.ts": "does not throw SyntaxError | plain Bun fails: it keeps an import, export or alias of a type, which TypeScript erases",
+  "conformance/es6/modules/exportsAndImports1.ts": "does not throw SyntaxError | plain Bun fails: it keeps an import, export or alias of a type, which TypeScript erases",
+  "conformance/es6/modules/exportsAndImports3-es6.ts": "does not throw SyntaxError | plain Bun fails: it keeps an import, export or alias of a type, which TypeScript erases",
+  "conformance/es6/modules/exportsAndImports3.ts": "does not throw SyntaxError | plain Bun fails: it keeps an import, export or alias of a type, which TypeScript erases",
+  "conformance/parser/ecmascript5/MemberAccessorDeclarations/parserMemberAccessorDeclaration15.ts": "does not throw  | plain Bun's parser refuses a parameter property in a setter; nothing uses the class, so the build leaves it out and its error with it"
+}

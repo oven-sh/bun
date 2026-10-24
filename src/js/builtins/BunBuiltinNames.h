@@ -98,6 +98,7 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(initialExports) \
     macro(internal) \
     macro(internalMessage) \
     macro(internalModuleRegistry) \
@@ -158,6 +159,8 @@ using namespace JSC;
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
+    macro(requireCacheWillSet) \
+    macro(isHiddenFromRequireCache) \
     macro(requireCommonJS) \
     macro(requireESM) \
     macro(requireMap) \

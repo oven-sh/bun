@@ -1,0 +1,52 @@
+// A class extends an ordinary function: its forty fields do not fit the ordinary object that the run time makes for the function, and no instance reaches native code.
+function base() {}
+class Wide extends base {
+  f0 = 0 + 0.5;
+  f1 = 1 + 0.5;
+  f2 = 2 + 0.5;
+  f3 = 3 + 0.5;
+  f4 = 4 + 0.5;
+  f5 = 5 + 0.5;
+  f6 = 6 + 0.5;
+  f7 = 7 + 0.5;
+  f8 = 8 + 0.5;
+  f9 = 9 + 0.5;
+  f10 = 10 + 0.5;
+  f11 = 11 + 0.5;
+  f12 = 12 + 0.5;
+  f13 = 13 + 0.5;
+  f14 = 14 + 0.5;
+  f15 = 15 + 0.5;
+  f16 = 16 + 0.5;
+  f17 = 17 + 0.5;
+  f18 = 18 + 0.5;
+  f19 = 19 + 0.5;
+  f20 = 20 + 0.5;
+  f21 = 21 + 0.5;
+  f22 = 22 + 0.5;
+  f23 = 23 + 0.5;
+  f24 = 24 + 0.5;
+  f25 = 25 + 0.5;
+  f26 = 26 + 0.5;
+  f27 = 27 + 0.5;
+  f28 = 28 + 0.5;
+  f29 = 29 + 0.5;
+  f30 = 30 + 0.5;
+  f31 = 31 + 0.5;
+  f32 = 32 + 0.5;
+  f33 = 33 + 0.5;
+  f34 = 34 + 0.5;
+  f35 = 35 + 0.5;
+  f36 = 36 + 0.5;
+  f37 = 37 + 0.5;
+  f38 = 38 + 0.5;
+  f39 = 39 + 0.5;
+}
+const all = [];
+const others = [];
+for (let i = 0; i < 2000; i++) { all.push(new Wide()); others.push({ a: i, b: "s" + i }); }
+let sum = 0;
+for (const each of all) sum += each.f0 + each.f39;
+let text = 0;
+for (const each of others) text += each.b.length + each.a;
+console.log(sum, text);

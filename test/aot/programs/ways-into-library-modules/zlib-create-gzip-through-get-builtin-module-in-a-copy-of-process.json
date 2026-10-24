@@ -1,0 +1,5 @@
+{
+  "skipInVariant": {
+    "flow-rules-delayed": "TODO: with the rules of the analysis delayed the build does not see that the call reaches a module loader, and the executable refuses to load node:zlib"
+  }
+}

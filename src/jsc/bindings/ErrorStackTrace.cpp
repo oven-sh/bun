@@ -168,6 +168,12 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             removeCount = i + 1;
             break;
         }
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame() && JSC::AOT::isClosureOf(callerObject, frame.compiledFrame().function)) {
+            removeCount = i + 1;
+            break;
+        }
+#endif
         if (!callerName.isEmpty()) {
             WTF::String frameName = Zig::functionName(vm, frame, nullptr);
             if (frameName == callerName) {
@@ -222,6 +228,16 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
         }
+#if ENABLE(AOT)
+    } else if (frame.isCompiledFrame()) {
+        m_isAOTCompiled = true;
+        if (auto position = frame.compiledPosition(); position && frame.hasLineAndColumnInfo()) {
+            m_sourcePositions = { OrdinalNumber::fromOneBasedInt(position->lineColumn.line), OrdinalNumber::fromOneBasedInt(position->lineColumn.column) };
+            m_sourcePositionsState = SourcePositionsState::Calculated;
+            m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode;
+        }
+        return;
+#endif
     }
 
     if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
@@ -275,7 +291,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
-    auto url = Zig::sourceURL(m_codeBlock);
+    auto url = m_isAOTCompiled ? Zig::sourceURL(m_vm, *m_stackFrame) : Zig::sourceURL(m_codeBlock);
     if (!url.isEmpty()) {
         return url;
     }
@@ -327,6 +343,9 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
             return functionName;
         }
     }
+
+    if (m_isAOTCompiled)
+        return Zig::functionName(m_vm, *m_stackFrame, nullptr);
 
     return emptyString();
 }
@@ -411,6 +430,13 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
         return "[native code]"_s;
     }
 
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]] {
+        auto position = frame.compiledPosition();
+        return position && position->source ? JSC::AOT::sourceURLOf(position->source) : String();
+    }
+#endif
+
     return sourceURL(frame.codeBlock());
 }
 
@@ -421,6 +447,10 @@ String sourceURL(JSC::StackVisitor& visitor)
     case JSC::StackVisitor::Frame::Module:
     case JSC::StackVisitor::Frame::Function:
     case JSC::StackVisitor::Frame::Global: {
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame())
+            return visitor->compiledFrame().sourceURL();
+#endif
         return sourceURL(visitor->codeBlock());
     }
     case JSC::StackVisitor::Frame::Native:
@@ -506,8 +536,43 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
     return functionName;
 }
 
+#if ENABLE(AOT)
+static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
+{
+    JSC::AOT::FunctionDescription description(frame.compiledFrame().function);
+    return frame.isAsyncFrame() ? description.name(vm) : description.nameInFrames(vm);
+}
+
+static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
+{
+    if (!frame.hasLineAndColumnInfo())
+        return compiledFunctionName(vm, frame);
+
+    auto codeType = frame.codeType();
+    if (flags && (codeType == JSC::CodeType::FunctionCode || codeType == JSC::CodeType::EvalCode)) {
+        *flags |= static_cast<unsigned int>(codeType == JSC::CodeType::EvalCode ? FunctionNameFlags::Eval : FunctionNameFlags::Function);
+        if (frame.isBuiltinFunction())
+            *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
+    }
+
+    WTF::String functionName;
+    if (codeType == JSC::CodeType::FunctionCode && !(frame.isAsyncFrame() && JSC::AOT::FunctionDescription(frame.compiledFrame().function).isNamedByOwner()))
+        functionName = compiledFunctionName(vm, frame);
+
+    if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && frame.isConstructor() && !functionName.isEmpty())
+        return makeString("new "_s, functionName);
+
+    return functionName;
+}
+#endif
+
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
 {
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]]
+        return functionNameOfCompiledFrame(vm, frame, flags);
+#endif
+
     bool isConstructor = false;
     WTF::String functionName;
     JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;

@@ -89,4 +89,13 @@ JSC::JSSourceCode* createJSValueExportDefaultObjectSourceCode(GlobalObject* glob
     };
     return createSourceCode(globalObject, value, WTF::move(generator), WTF::move(sourceURL));
 }
+
+JSC::JSSourceCode* createJSValueExportDefaultOnlySourceCode(GlobalObject* globalObject, JSC::JSValue value, WTF::String&& sourceURL)
+{
+    JSC::SyntheticSourceProvider::SyntheticSourceGenerator generator = [value](JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier moduleKey, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues) -> void {
+        exportNames.append(JSC::getVM(lexicalGlobalObject).propertyNames->defaultKeyword);
+        exportValues.append(value);
+    };
+    return createSourceCode(globalObject, value, WTF::move(generator), WTF::move(sourceURL));
+}
 } // namespace Zig

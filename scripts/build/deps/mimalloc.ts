@@ -24,7 +24,17 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
-  patches: ["patches/mimalloc/new-oom-hook.patch"],
+  // What the two `hand-out-` patches add is switched on only while the ahead-of-time compiler runs, and costs every
+  // free a test: a build without the compiler leaves them out.
+  patches: cfg => [
+    "patches/mimalloc/new-oom-hook.patch",
+    ...(cfg.aot
+      ? ["patches/mimalloc/hand-out-last-freed.patch", "patches/mimalloc/hand-out-resident-slices.patch"]
+      : []),
+    "patches/mimalloc/secure-guard-pages-are-protected.patch",
+    "patches/mimalloc/out-of-memory-is-no-corruption.patch",
+    ...(cfg.lockEnvironment ? ["patches/mimalloc/environment-sets-sizes-and-pace-only.patch"] : []),
+  ],
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
@@ -78,6 +88,7 @@ export const mimalloc: Dependency = {
     if (cfg.linux) defines.MI_DEFAULT_ALLOW_THP = 0;
 
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
+    if (cfg.hardened) defines.MI_SECURE = 1;
     if (override) defines.MI_MALLOC_OVERRIDE = true;
 
     if (cfg.debug) {

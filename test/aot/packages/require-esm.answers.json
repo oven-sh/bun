@@ -1,0 +1,20 @@
+{
+  "require-esm.tla_dep_mjs.cjs": {
+    "output": "req THROWS TypeError\n"
+  },
+  "require-esm.tla_dep_mjs.in_esm.mjs": {
+    "output": "req THROWS TypeError\n"
+  },
+  "require-esm.tla_dep_mjs.ts": {
+    "output": "req THROWS TypeError\n"
+  },
+  "require-esm.tla_mjs.cjs": {
+    "output": "req THROWS TypeError\n"
+  },
+  "require-esm.tla_mjs.in_esm.mjs": {
+    "output": "req THROWS TypeError\n"
+  },
+  "require-esm.tla_mjs.ts": {
+    "output": "req THROWS TypeError\n"
+  }
+}

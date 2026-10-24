@@ -1,0 +1,1 @@
+Four lines of the stack traces differ: where a function ends in a call of a built-in function (toString, a bound function, a getter), plain Bun drops the caller's frame as for any tail call, and the executable keeps it. The answers are the same.

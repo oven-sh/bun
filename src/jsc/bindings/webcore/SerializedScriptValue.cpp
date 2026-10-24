@@ -69,11 +69,13 @@
 #include <JavaScriptCore/JSSetInlines.h>
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/JSWebAssemblyMemory.h>
 #include <JavaScriptCore/JSWebAssemblyModule.h>
 #include <JavaScriptCore/NumberObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectPrototype.h>
+#include <JavaScriptCore/OwedOutOfMemoryError.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/RegExpObject.h>
@@ -143,7 +145,10 @@ enum WalkerState { StateUnknown,
     MapDataEndVisitKey,
     MapDataEndVisitValue,
     SetDataStartVisitEntry,
-    SetDataEndVisitKey };
+    SetDataEndVisitKey,
+    CompactMapDataStartVisitEntry,
+    CompactMapDataEndVisitKey,
+    CompactSetDataStartVisitEntry };
 
 // These can't be reordered, and any new types must be added to the end of the list
 // When making changes to these lists please cover your new type(s) in the API test "IndexedDB.StructuredCloneBackwardCompatibility"
@@ -617,6 +622,28 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  */
 
 using DeserializationResult = std::pair<JSC::JSValue, SerializationReturnCode>;
+
+static bool isCompiledObject(JSC::JSObject* object)
+{
+#if ENABLE(AOT)
+    return JSC::AOT::PropertyWalk::isCompiledObject(object);
+#else
+    UNUSED_PARAM(object);
+    return false;
+#endif
+}
+
+static bool tryMaterializeAsFinalObject(JSC::VM& vm, JSC::JSObject* object)
+{
+#if ENABLE(AOT)
+    JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
+    return object->classInfo() == JSC::JSFinalObject::info();
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(object);
+    return false;
+#endif
+}
 
 class CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
@@ -2079,7 +2106,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // All supported objects other than plain Object have been handled; throw
             // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
             // are allowed (Node supports structuredClone(process.env) as a plain object).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()) && !isCompiledObject(inObject) && !tryMaterializeAsFinalObject(vm, inObject))
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
@@ -2143,13 +2170,15 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 m_gcBuffer.appendWithCrashOnOverflow(iterator);
                 mapIteratorStack.append(iterator);
                 inputObjectStack.append(inMap);
+                if (vm.hasCompiledCode()) [[unlikely]]
+                    goto compactMapDataStartVisitEntry;
                 goto mapDataStartVisitEntry;
             }
         mapDataStartVisitEntry:
         case MapDataStartVisitEntry: {
             JSMapIterator* iterator = mapIteratorStack.last();
             JSValue key, value;
-            if (!iterator->nextKeyValue(m_lexicalGlobalObject, key, value)) {
+            if (!iterator->nextKeyValue<JSMap::Storage>(m_lexicalGlobalObject, key, value)) {
                 mapIteratorStack.removeLast();
                 JSObject* object = inputObjectStack.last();
                 ASSERT(dynamicDowncast<JSMap>(object));
@@ -2190,13 +2219,15 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 m_gcBuffer.appendWithCrashOnOverflow(iterator);
                 setIteratorStack.append(iterator);
                 inputObjectStack.append(inSet);
+                if (vm.hasCompiledCode()) [[unlikely]]
+                    goto compactSetDataStartVisitEntry;
                 goto setDataStartVisitEntry;
             }
         setDataStartVisitEntry:
         case SetDataStartVisitEntry: {
             JSSetIterator* iterator = setIteratorStack.last();
             JSValue key;
-            bool hasNext = iterator->next(m_lexicalGlobalObject, key);
+            bool hasNext = iterator->next<JSSet::Storage>(m_lexicalGlobalObject, key);
             RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             if (!hasNext) {
                 setIteratorStack.removeLast();
@@ -2215,6 +2246,37 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         }
         case SetDataEndVisitKey: {
             goto setDataStartVisitEntry;
+        }
+
+        compactMapDataStartVisitEntry:
+        case CompactMapDataStartVisitEntry: {
+            JSValue key, value;
+            // A closed iterator stays closed, so MapDataStartVisitEntry only ends the map.
+            if (!mapIteratorStack.last()->nextKeyValue(m_lexicalGlobalObject, key, value))
+                goto mapDataStartVisitEntry;
+            inValue = key;
+            m_gcBuffer.appendWithCrashOnOverflow(value);
+            mapIteratorValueStack.append(value);
+            stateStack.append(CompactMapDataEndVisitKey);
+            goto stateUnknown;
+        }
+        case CompactMapDataEndVisitKey: {
+            inValue = mapIteratorValueStack.last();
+            mapIteratorValueStack.removeLast();
+            stateStack.append(CompactMapDataStartVisitEntry);
+            goto stateUnknown;
+        }
+
+        compactSetDataStartVisitEntry:
+        case CompactSetDataStartVisitEntry: {
+            JSValue key;
+            bool hasNext = setIteratorStack.last()->next(m_lexicalGlobalObject, key);
+            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+            if (!hasNext)
+                goto setDataStartVisitEntry;
+            inValue = key;
+            stateStack.append(CompactSetDataStartVisitEntry);
+            goto stateUnknown;
         }
 
         stateUnknown:
@@ -2248,6 +2310,38 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
 
     return SerializationReturnCode::SuccessfullyCompleted;
 }
+
+#if ENABLE(AOT)
+class ObjectFinisher {
+public:
+    NEVER_INLINE JSObject* finish(JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, JSObject* object)
+    {
+        if (object->type() != FinalObjectType || m_referencedObjects.contains(object))
+            return object;
+        JSObject* finished = JSC::AOT::withAllPropertiesInline(globalObject, object);
+        if (finished != object) {
+            gcBuffer.appendWithCrashOnOverflow(finished);
+            m_finishedObjects.set(object, finished);
+        }
+        return finished;
+    }
+
+    NEVER_INLINE JSValue resolveReference(JSValue value)
+    {
+        JSObject* object = value.getObject();
+        if (!object || object->type() != FinalObjectType)
+            return value;
+        if (JSObject* finished = m_finishedObjects.get(object))
+            return finished;
+        m_referencedObjects.add(object);
+        return value;
+    }
+
+private:
+    HashSet<JSObject*> m_referencedObjects;
+    HashMap<JSObject*, JSObject*> m_finishedObjects;
+};
+#endif
 
 class CloneDeserializer : public CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
@@ -3716,6 +3810,10 @@ private:
                 fail();
                 return JSValue();
             }
+#if ENABLE(AOT)
+            if (m_objectFinisher) [[unlikely]]
+                return m_objectFinisher->resolveReference(m_objectPool.at(*index));
+#endif
             return m_objectPool.at(*index);
         }
         case MessagePortReferenceTag: {
@@ -3929,6 +4027,9 @@ private:
     // Only values the serializer passed to recordObject() may be appended here (via
     // addToObjectPool), in the same order, or every later back-reference is wrong.
     MarkedArgumentBuffer m_objectPool;
+#if ENABLE(AOT)
+    std::optional<ObjectFinisher> m_objectFinisher { m_globalObject->aotInstance() ? std::make_optional<ObjectFinisher>() : std::nullopt };
+#endif
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
@@ -3966,6 +4067,8 @@ DeserializationResult CloneDeserializer::deserialize()
             if (!read(length)) {
                 goto error;
             }
+            if (throwOutOfMemoryErrorIfOwed(vm, m_lexicalGlobalObject, scope)) [[unlikely]]
+                goto error;
             JSArray* outArray = constructEmptyArray(m_globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), length);
             if (scope.exception()) [[unlikely]]
                 goto error;
@@ -4019,6 +4122,8 @@ DeserializationResult CloneDeserializer::deserialize()
         case ObjectStartState: {
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
+            if (throwOutOfMemoryErrorIfOwed(vm, m_lexicalGlobalObject, scope)) [[unlikely]]
+                goto error;
             JSObject* outObject = constructEmptyObject(m_lexicalGlobalObject, m_globalObject->objectPrototype());
             addToObjectPool(outObject);
             outputObjectStack.append(outObject);
@@ -4033,6 +4138,10 @@ DeserializationResult CloneDeserializer::deserialize()
                     goto error;
 
                 JSObject* outObject = outputObjectStack.last();
+#if ENABLE(AOT)
+                if (m_objectFinisher) [[unlikely]]
+                    outObject = m_objectFinisher->finish(m_globalObject, m_gcBuffer, outObject);
+#endif
                 outValue = outObject;
                 outputObjectStack.removeLast();
                 break;
@@ -4122,6 +4231,11 @@ DeserializationResult CloneDeserializer::deserialize()
             }
             goto setDataStartVisitEntry;
         }
+
+        case CompactMapDataStartVisitEntry:
+        case CompactMapDataEndVisitKey:
+        case CompactSetDataStartVisitEntry:
+            RELEASE_ASSERT_NOT_REACHED();
 
         stateUnknown:
         case StateUnknown:
@@ -4461,6 +4575,32 @@ static bool isObjectFastPathCandidate(Structure* structure)
     return true;
 }
 
+#if ENABLE(AOT)
+static bool collectCompiledObjectFields(JSGlobalObject& lexicalGlobalObject, JSObject* object, WTF::Vector<SimpleInMemoryPropertyTableEntry>& fields)
+{
+    ASSERT(isCompiledObject(object));
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (object->getDirect(vm, builtinNames(vm).isUncloneablePrivateName()))
+        return false;
+    auto result = JSC::AOT::PropertyWalk::forEachOwnProperty(vm, object, JSC::AOT::PropertyWalk::Filter::EnumerableStrings, [&](const JSC::AOT::PropertyWalk::OwnProperty& property) -> IterationStatus {
+        if (!property.value.isCell()) {
+            fields.append({ Bun::threadShareableCopy(*property.name), property.value });
+            return IterationStatus::Continue;
+        }
+        if (!property.value.isString())
+            return IterationStatus::Done;
+        String stringValue = asString(property.value)->value(&lexicalGlobalObject);
+        if (scope.exception())
+            return IterationStatus::Done;
+        fields.append({ Bun::threadShareableCopy(*property.name), Bun::toCrossThreadShareable(stringValue) });
+        return IterationStatus::Continue;
+    });
+    return result == JSC::AOT::PropertyWalk::Result::Completed;
+}
+#endif
+
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext, SerializationForCrossProcessTransfer forTransfer)
 {
     Vector<RefPtr<MessagePort>> dummyPorts;
@@ -4508,6 +4648,15 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 } else if (isObjectFastPathCandidate(structure)) {
                     canUseObjectFastPath = true;
                 }
+#if ENABLE(AOT)
+                else if (isCompiledObject(object)) {
+                    WTF::Vector<SimpleInMemoryPropertyTableEntry> fields;
+                    bool hasOnlySimpleFields = collectCompiledObjectFields(lexicalGlobalObject, object, fields);
+                    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+                    if (hasOnlySimpleFields)
+                        return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(fields)));
+                }
+#endif
             }
         }
 
@@ -4591,6 +4740,20 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                         }
                         auto* objStructure = obj->structure();
                         if (!isObjectFastPathCandidate(objStructure)) {
+#if ENABLE(AOT)
+                            if (isCompiledObject(obj)) {
+                                WTF::Vector<SimpleInMemoryPropertyTableEntry> fields;
+                                bool hasOnlySimpleFields = collectCompiledObjectFields(lexicalGlobalObject, obj, fields);
+                                RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+                                if (hasOnlySimpleFields) {
+                                    SimpleCloneableObject clonedObj;
+                                    clonedObj.properties = WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(fields));
+                                    elements.append(WTF::move(clonedObj));
+                                    hasObjects = true;
+                                    continue;
+                                }
+                            }
+#endif
                             ok = false;
                             break;
                         }
@@ -4919,8 +5082,9 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     return deserialize(lexicalGlobalObject, globalObject, dummyPorts, dummyBlobs, dummyPaths, throwExceptions, didFail);
 }
 
-JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode throwExceptions, bool* didFail)
+NEVER_INLINE JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, const Vector<String>& blobURLs, const Vector<String>& blobFilePaths, SerializationErrorMode throwExceptions, bool* didFail)
 {
+    BUN_REMOVABLE_DEFINITION(StructuredClone, static_cast<JSValue (SerializedScriptValue::*)(JSGlobalObject&, JSGlobalObject*, const Vector<RefPtr<MessagePort>>&, const Vector<String>&, const Vector<String>&, SerializationErrorMode, bool*)>(&SerializedScriptValue::deserialize));
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (m_fastPath) {
@@ -5003,6 +5167,11 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
         Vector<JSC::Identifier> cachedIdentifiers;
 
         for (unsigned i = 0; i < length; i++) {
+            if (throwOutOfMemoryErrorIfOwed(vm, &lexicalGlobalObject, scope)) [[unlikely]] {
+                if (didFail)
+                    *didFail = true;
+                return {};
+            }
             JSValue elemValue = std::visit(WTF::makeVisitor(
                                                [](JSC::JSValue v) -> JSValue { return v; },
                                                [&](const WTF::String& s) -> JSValue { return jsString(vm, s); },
@@ -5012,7 +5181,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                                    // Check if we can use the cached structure (same property count AND names,
                                                    // and no out-of-line storage — JSFinalObject::create cannot allocate a butterfly).
                                                    bool useCache = cachedStructure && cachedIdentifiers.size() == propCount
-                                                       && cachedStructure->outOfLineCapacity() == 0;
+                                                       && cachedStructure->outOfLineCapacity() == 0 && !cachedStructure->isDictionary();
                                                    if (useCache) {
                                                        for (unsigned j = 0; j < propCount; j++) {
                                                            if (cachedIdentifiers[j].string() != obj.properties[j].propertyName) {

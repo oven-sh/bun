@@ -1,0 +1,4 @@
+# `in` with a string literal narrows a union by the presence of the property.
+in.ts:3 type `u` = { a: number; } | { b: string; }
+in.ts:4 type `u` = { a: number; }
+in.ts:6 type `u` = { b: string; }

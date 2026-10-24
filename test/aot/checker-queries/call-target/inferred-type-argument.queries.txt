@@ -1,0 +1,3 @@
+# A type argument the checker inferred is not written: the result stays the type parameter.
+inferred-type-argument.ts:3 call result `wrap(1)` = T checked 1
+inferred-type-argument.ts:3 call signature `wrap(1)` = (T checked 1) this unwritten checked any returns T checked 1 generic

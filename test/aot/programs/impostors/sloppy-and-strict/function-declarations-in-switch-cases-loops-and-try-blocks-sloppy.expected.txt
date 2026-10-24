@@ -1,0 +1,17 @@
+strict: false
+inACase(1) "function"
+inACase(2) "declared under case 1"
+inACase(3) "undefined"
+inALoop(0) [0, false, "undefined", []]
+inALoop(3) [3, false, "function", [3, 3, 3]]
+inALoopWithLet(0) [[], "undefined"]
+inALoopWithLet(3) [[0, 1, 2], 2]
+inTry(false) "function"
+inTry(true) "undefined"
+inCatch "number"
+inFinally "function"
+underALabel "function"
+deep ["function", "function"]
+generatorInABlock "undefined"
+asyncInABlock "undefined"
+classInABlock "undefined"

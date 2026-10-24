@@ -1,5 +1,31 @@
 # List of tests for which we do NOT enable LeakSanitizer when running in ASAN CI
 
+# Third-party build tools and packages load native addons; plain Bun leaks in
+# napi_create_threadsafe_function and process.dlopen.
+test/aot/frameworks/angular.test.ts
+test/aot/frameworks/angular-one-file.test.ts
+test/aot/frameworks/astro.test.ts
+test/aot/frameworks/astro-one-file.test.ts
+test/aot/frameworks/next.test.ts
+test/aot/frameworks/next-one-file.test.ts
+test/aot/frameworks/nuxt.test.ts
+test/aot/frameworks/nuxt-one-file.test.ts
+test/aot/frameworks/react-router.test.ts
+test/aot/frameworks/react-router-one-file.test.ts
+test/aot/frameworks/sveltekit.test.ts
+test/aot/frameworks/sveltekit-one-file.test.ts
+test/aot/build-plugins-native.test.ts
+test/aot/backend-packages/programs-2.test.ts
+test/aot/backend-packages/programs-3.test.ts
+test/aot/backend-packages/programs-4.test.ts
+test/aot/backend-packages/programs-one-file.test.ts
+
+# Before its first check LeakSanitizer forks a child that tries ptrace, and ignores
+# what waitpid returns. The signal storm test's SIGALRM (every 20 ms, no SA_RESTART)
+# interrupts that wait about every second time, and the status nothing wrote prints
+# "Child exited with signal 42" on a stderr that must be empty.
+test/js/web/timers/setTimeout.test.js
+
 test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts
 test/cli/install/bun-security-scanner-matrix-without-node-modules.test.ts
 

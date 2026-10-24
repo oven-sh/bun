@@ -1,0 +1,13 @@
+# Each file is checked with the module options of the nearest tsconfig.json: `inner/` has `verbatimModuleSyntax` and `isolatedModules`, `main.ts` has neither.
+main.ts:0 option verbatimModuleSyntax `` = false
+main.ts:0 option isolatedModules `` = false
+inner/index.ts:0 option verbatimModuleSyntax `` = true
+inner/index.ts:0 option isolatedModules `` = true
+
+# A declaration file is not compiled, so it has the program's options, not those of `inner/tsconfig.json`.
+inner/types.d.ts:0 role `` = TypesOnly
+inner/types.d.ts:0 option verbatimModuleSyntax `` = false
+inner/types.d.ts:0 option isolatedModules `` = false
+
+inner/index.ts:2 diagnostic TS1484 = TypeScriptGrammar StopsBuild
+absent: main.ts:2 diagnostic TS1484 = TypeScriptGrammar StopsBuild

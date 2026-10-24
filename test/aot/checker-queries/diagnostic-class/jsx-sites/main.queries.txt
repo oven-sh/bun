@@ -1,0 +1,5 @@
+# An empty attribute expression is an early error: `bun run` rejects it. `bun run` accepts the other three, so they are TypeScript grammar.
+main.tsx:3 diagnostic TS17000 = EarlyError StopsBuild
+main.tsx:4 diagnostic TS17001 = TypeScriptGrammar StopsBuild
+main.tsx:5 diagnostic TS18007 = TypeScriptGrammar StopsBuild
+main.tsx:6 diagnostic TS2639 = TypeScriptGrammar StopsBuild

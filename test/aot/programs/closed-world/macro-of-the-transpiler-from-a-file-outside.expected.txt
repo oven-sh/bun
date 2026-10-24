@@ -1,0 +1,6 @@
+const a = 1; console.log(a);
+[{"kind":"import-statement","path":"./y"},{"kind":"dynamic-import","path":"z"}]
+a macro: threw
+what the macro left: undefined undefined
+exit code 1
+Error importing macro

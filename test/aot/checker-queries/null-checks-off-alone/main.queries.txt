@@ -1,0 +1,10 @@
+# `inner/` turns `strictNullChecks` off and keeps the rest of `strict`, the program has all of it.
+main.ts:0 option strictPropertyInitialization `` = true
+inner/only-reported.ts:0 option strictPropertyInitialization `` = true
+inner/only-reported.ts:0 role `` = Checked
+
+# TypeScript asks for `strictNullChecks` in front of each of these three. They make no type: the function returns `number`, the fields are `number`.
+inner/only-reported.ts:2 returns `half` = number
+absent: inner/only-reported.ts:2 diagnostic TS2322 = Semantic StopsBuild
+absent: inner/only-reported.ts:3 diagnostic TS2564 = Style StopsBuild
+absent: inner/only-reported.ts:4 diagnostic TS2565 = Semantic StopsBuild

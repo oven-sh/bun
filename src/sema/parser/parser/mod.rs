@@ -13,8 +13,11 @@ mod jsx;
 mod module;
 mod oxc;
 mod pattern;
+mod pure_calls;
 mod recover;
 mod reparse;
+mod runtime_syntax;
+mod skipped_blocks;
 mod stmt;
 mod ty;
 
@@ -62,6 +65,8 @@ pub(crate) mod ctx {
     pub(crate) const IN_NAMESPACE: u32 = 1 << 14;
     /// The node isn't inside a function body. It can still be in a function's parameters or return type, or in a class.
     pub(crate) const OUTSIDE_BODIES: u32 = 1 << 15;
+    /// The node is strict mode code as far as the parser has read: an enclosing class, or a `"use strict"` directive of the file or of an enclosing function.
+    pub(crate) const STRICT: u32 = 1 << 16;
 }
 
 macro_rules! stacks {
@@ -118,6 +123,8 @@ stacks! {
     /// See `note_stray_decorators`. The start and expression of each stray decorator that no statement list has
     /// picked up yet.
     stray_decorators: (u32, ExprId),
+    /// The parts of the templates that are open, innermost last.
+    template_parts: TemplatePart,
 }
 
 macro_rules! file_lists {
@@ -159,6 +166,8 @@ file_lists! {
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
     mentioned, diagnostics, after_skipped, stray_decorators,
     specifier_expressions, exports_from_expressions,
+    expr_flags, template_parts, template_part_starts, jsx_attribute_texts, export_star_attributes,
+    bigint_names,
 }
 
 /// The range and code of a syntax error that the checker reports.
@@ -376,6 +385,9 @@ pub(crate) fn run<'a>(
     lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
     lx.records_html_opens =
         options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
+    let is_compiled_javascript = options.compiles && is_ecmascript;
+    lx.compiles = is_compiled_javascript;
+    lx.decodes_ill_formed_text = options.compiles;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
     let seed = Seed {
@@ -419,14 +431,17 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     f.comment_directives = comment_directives;
+    pure_calls::mark_pure_calls(&mut f, text);
     let names = &mut scratch.names;
     let source = text;
     let mut intern = |it: &[u8]| names.atom(crate::names::Text::not_in_source(source, it), atoms);
+    let pragma_error_kind = runtime_syntax::pragma_error_kind(&options, is_compiled_javascript);
     let errors = f.diagnostics.len();
     if !crate::pragmas::process_pragmas_into_fields(
         text,
         &leading_comments,
-        options.recovers,
+        pragma_error_kind,
+        options.compiles,
         &mut intern,
         &mut f,
     ) {
@@ -437,7 +452,7 @@ pub(crate) fn run<'a>(
         if options.dialect == Default::default() {
             f.diagnostics.shared_sort_by_key(|it| (it.start, it.code));
         }
-        f.has_parse_diagnostics = true;
+        f.has_parse_diagnostics |= pragma_error_kind == Some(DiagnosticKind::Parse);
     }
     f.mentioned.extend_from_slice(scratch.names.mentioned());
     Ok(Parsed {
@@ -541,6 +556,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if self.has_top_level_await {
             self.f.rare_syntax |= rare::TOP_LEVEL_AWAIT;
         }
+        if self.lx.has_legacy_octal {
+            self.f.rare_syntax |= rare::LEGACY_OCTAL;
+        }
         self.note_odd_exports();
         *file = self.f;
         Harvest {
@@ -599,11 +617,17 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.s.ids.push(part.0);
         }
         let reparsed = self.jsdoc.reparsed.len();
+        let mut is_in_prologue = !self.options.is_json && self.options.part.is_none();
+        let mut has_module_declaration = false;
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
             let statement = match self.recovers() {
                 true => self.top_level_statement(),
                 false => self.statement(),
             };
+            if is_in_prologue {
+                is_in_prologue = self.take_directive(statement);
+            }
+            has_module_declaration |= self.is_module_declaration(statement);
             self.take_stray_decorators(0);
             if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;
@@ -619,6 +643,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.end_of_file_jsdoc(reparsed);
         }
         self.f.body = self.take_ids(base);
+        self.set_file_strictness(has_module_declaration);
         // A statement that was parsed twice is counted twice, so the flag only means "maybe".
         if self.module_statements.0 > self.module_statements.1 {
             self.f.rare_syntax |= rare::NESTED_MODULE_SYNTAX;
@@ -671,6 +696,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 .import_attributes
                 .shared_sort_unstable_by_key(|it| it.0);
         }
+        self.sort_runtime_side_tables();
     }
 
     // ───────────────────────────── tokens ─────────────────────────────
@@ -1127,7 +1153,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 (true, true) => 1262,
                 (true, false) => 1214,
             };
-            self.flag(DiagnosticKind::Grammar, code, (pos, pos + 5), &[]);
+            self.flag_early_error(code, (pos, pos + 5), &[]);
         }
     }
 

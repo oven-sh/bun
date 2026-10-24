@@ -1,6 +1,7 @@
 //! Functions: declarations, expressions, arrow functions, parameters.
 
 use super::declared::Declares;
+use super::runtime_syntax::Prologue;
 use super::stmt::{ModifiersOf, Start};
 use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::Rejection;
@@ -50,6 +51,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => flags,
             false => flags - Flags::DEFAULT,
         };
+        let text_start = self.text_start_after_modifiers(base);
         self.next();
         let mut fn_flags = self.ambient() | flags & (Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC);
         if self.eat(T::Asterisk) {
@@ -88,6 +90,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.declare(name, Declares::Function);
         }
         let func = self.function_rest(FnKind::Decl, fn_flags, name, name_pos, start.pos);
+        self.f[func].text_start = text_start;
         let modifiers = self.take_modifiers(base);
         self.add_stmt(StmtKind::Fn(func), start, modifiers)
     }
@@ -181,7 +184,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let (body, open) = match self.token() {
             T::OpenBrace => {
                 self.note_parameters(type_params, params);
-                self.function_block(signature_context(flags))
+                self.function_block(signature_context(flags), Prologue::Directives)
             }
             // `parseBlock` without its `{`
             _ if kind == FnKind::Expr || self.recovers() && !self.can_parse_semicolon() => {
@@ -207,6 +210,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         {
             self.js_error_at_type(ret, 8010);
         }
+        let is_strict = self.is_strict_body(body);
         let func = self.f.add_fn(Func {
             kind,
             flags,
@@ -219,6 +223,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body,
             anchor,
             start,
+            text_start: start,
+            is_strict,
+            is_strict_by_syntax: is_strict,
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
@@ -230,20 +237,29 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseFunctionBlock`, at the `{`. Returns the body and the position of the `{`.
-    pub(crate) fn function_block(&mut self, context: u32) -> (FnBody, u32) {
+    pub(crate) fn function_block(&mut self, context: u32, prologue: Prologue) -> (FnBody, u32) {
         let open = self.pos();
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR | ctx::CLASS_MEMBER;
         let cleared = cleared | ctx::IN_LOOP | ctx::IN_SWITCH | ctx::OUTSIDE_BODIES;
         let cleared = cleared | self.disallow_in_if_cleared_by_brackets();
         let saved = self.enter_context(context, cleared);
         let had_await_identifier = self.has_await_identifier;
+        if self.options.skips_function_blocks
+            && self.token() == T::OpenBrace
+            && let Some(close) =
+                super::skipped_blocks::find_end_of_block(self.lx.src, open as usize)
+        {
+            self.lx.start_at(close as u32);
+        }
         // `None` only for a block that recovery parses without its `{`.
         let open_at = self.expect(T::OpenBrace).then_some(open);
-        if self.token() == T::String {
+        if self.token() == T::String
+            && (!self.options.compiles || self.options.keeps_function_directives)
+        {
             self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
         }
         self.open_function();
-        let list = self.statements_until_close_brace();
+        let list = self.statements_until_close_brace(prologue);
         self.close_scope();
         self.context = saved;
         self.has_await_identifier = had_await_identifier;
@@ -961,6 +977,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let parameters = (odd_parameters, this_param);
         let errors = self.f.diagnostics.len();
         let has_return_colon = self.token() == T::Colon;
+        // JavaScript has no return types. In `a ? b ? (c, d) : e => e : 5` the colon is the inner conditional's.
+        let is_colon_of_conditional = self.is_ecmascript && !self.is_flow() && !allow_return_type;
+        if has_return_colon && !allow_ambiguity && (self.lx.compiles || is_colon_of_conditional) {
+            return None;
+        }
         let ret = match has_return_colon {
             true if self.is_flow() => {
                 self.next();
@@ -1030,6 +1051,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.options.is_javascript {
             self.js_error_at_type(ret, 8010);
         }
+        let is_strict = self.is_strict_body(body);
         let func = self.f.add_fn(Func {
             kind: FnKind::Arrow,
             flags,
@@ -1042,6 +1064,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body,
             anchor,
             start,
+            text_start: start,
+            is_strict,
+            is_strict_by_syntax: is_strict,
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
@@ -1083,7 +1108,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn arrow_function_body(&mut self, flags: Flags, allow_return_type: bool) -> (FnBody, u32) {
         let context = signature_context(flags);
         if self.token() == T::OpenBrace {
-            return self.function_block(context);
+            return self.function_block(context, Prologue::Directives);
         }
         // `@` starts a statement that isn't an expression statement, so this is a block whose `{` is missing.
         if self.token() == T::At {
@@ -1095,7 +1120,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && self.is_start_of_statement()
             && (self.token() == T::At || !self.is_start_of_expression())
         {
-            return self.function_block(context);
+            return self.function_block(context, Prologue::Directives);
         }
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::OUTSIDE_BODIES;
         let saved = self.enter_context(context, cleared);
@@ -1136,6 +1161,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.note_parameters(Span::EMPTY, Span::new(param.0, 1));
         }
         let (body, open) = self.arrow_function_body(flags, allow_return_type);
+        let is_strict = self.is_strict_body(body);
         let func = self.f.add_fn(Func {
             kind: FnKind::Arrow,
             flags,
@@ -1148,6 +1174,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body,
             anchor,
             start,
+            text_start: start,
+            is_strict,
+            is_strict_by_syntax: is_strict,
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));

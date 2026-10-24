@@ -436,6 +436,21 @@ for (const log of result.logs) {
 /app/src/index.ts:3: TS2322: Type 'string' is not assignable to type 'number'.
 ```
 
+### `bun compile`
+
+[`bun compile`](/bundler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. Like the build, it takes entry points.
+
+`bun check --aot` takes `--define k=v`, like `bun compile`. A define decides which code the build removes, and the build reports no errors in code that it removes. Pass both commands the same defines, so that they see the same program.
+
+```bash terminal icon="terminal"
+bun check --aot --define 'process.env.NODE_ENV="production"' ./server.ts
+bun compile --define 'process.env.NODE_ENV="production"' ./server.ts
+```
+
+It checks each file with the `tsconfig.json` that the build uses for it, so it takes neither `-b` nor [compiler options as flags](#compiler-options-as-flags). `-p` is the build's `--tsconfig-override`.
+
+With `--explain`, it also lists [the code that compiled to a slow path](/bundler/aot-explain), worst first, with a fix for each. `--explain=guards` lists [every type guard that can fail at run time](/bundler/aot-debugging#list-them-from-your-source).
+
 ## If `package.json` has a `check` script
 
 Your script wins. `bun check` runs it, like `bun run check`, and passes it your flags. To run the type checker in that project, pass `--no-script`.
@@ -684,5 +699,8 @@ bun check [flags] [...files or directories]
 | `--timing`               | Print how long loading and checking took                            |
 | `--cwd <path>`           | Set the working directory                                           |
 | `--no-script`            | Run the type checker even if the project has a `check` script       |
+| `--aot`                  | Check entry points the way [`bun compile`](/bundler/aot) does       |
+| `--explain`              | With `--aot`: list the code that compiled to a slow path            |
+| `--define <k=v>`         | With `--aot`: replace `k` with `v`, like `bun compile --define`     |
 | `--strict`, `--target`…  | Any compiler option, as for `tsc`. Overrides `tsconfig.json`        |
 | `-h`, `--help`           | Print the help menu                                                 |

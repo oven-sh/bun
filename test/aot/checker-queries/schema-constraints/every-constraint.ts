@@ -1,0 +1,20 @@
+// Each `Schema` alias from "bun" becomes a constraint on the type it is intersected with.
+import type { Schema } from "bun";
+let v1: number & Schema.Int;
+let v2: number & Schema.Min<1>;
+let v3: number & Schema.Max<9>;
+let v4: number & Schema.Above<0>;
+let v5: number & Schema.Below<1>;
+let v6: number & Schema.MultipleOf<5>;
+let v7: string & Schema.MinLength<2>;
+let v8: string & Schema.MaxLength<9>;
+let v9: string[] & Schema.MinItems<1>;
+let v10: string[] & Schema.MaxItems<9>;
+let v11: string & Schema.Pattern<"^a">;
+let v12: string & Schema.Format<"email">;
+let v13: number & Schema.Message<"no">;
+let v14: number & Schema.Default<1>;
+let v15: { a: 1 } & Schema.Strict;
+let v16: { a: 1 } & Schema.DeepStrict;
+let v17: number & Schema.Min<1> & Schema.Max<9>;
+export {};

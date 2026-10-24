@@ -1,0 +1,7 @@
+# Index signatures answer by key kind; an array element is not an index signature member.
+index-signatures.ts:4 index `D` = String number checked number
+index-signatures.ts:5 index `N` = Number string checked string
+index-signatures.ts:6 index `Record<string, boolean>` = String boolean checked boolean
+index-signatures.ts:7 index `{ [k: `a${string}`]: number }` = Pattern number checked number
+index-signatures.ts:8 member `d.foo` = index String number checked number
+index-signatures.ts:10 member `list[0]` = absent

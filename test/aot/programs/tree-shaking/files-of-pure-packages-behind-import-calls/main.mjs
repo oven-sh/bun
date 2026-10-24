@@ -1,0 +1,23 @@
+// Each page gets at a package that says "sideEffects": false in another way, and every file of the packages prints when it is evaluated. The pages are loaded by import(). `bun build --compile` makes a function of a file that a call loads and of all that such a file imports: an import of which a name is used calls the function of the file that it names, and so does every `export *` of a file that runs, whatever the package says.
+{ const { page } = await import("./pages/a-name-is-used.mjs"); console.log("a-name-is-used:", page()); }
+{ const { page } = await import("./pages/no-name-is-used.mjs"); console.log("no-name-is-used:", page()); }
+{ const { page } = await import("./pages/a-name-is-used-where-nothing-comes.mjs"); console.log("a-name-is-used-where-nothing-comes:", page()); }
+{ const { page } = await import("./pages/no-name-is-imported.mjs"); console.log("no-name-is-imported:", page()); }
+{ const { page } = await import("./pages/a-member-of-the-object.mjs"); console.log("a-member-of-the-object:", page()); }
+{ const { page } = await import("./pages/the-object-itself.mjs"); console.log("the-object-itself:", page()); }
+{ const { page } = await import("./pages/the-object-unused.mjs"); console.log("the-object-unused:", page()); }
+{ const { page } = await import("./pages/handed-on-by-name.mjs"); console.log("handed-on-by-name:", page()); }
+{ const { page } = await import("./pages/handed-on-by-star.mjs"); console.log("handed-on-by-star:", page()); }
+{ const { page } = await import("./pages/handed-on-as-an-object.mjs"); console.log("handed-on-as-an-object:", page()); }
+{ const { page } = await import("./pages/only-its-type-is-asked.mjs"); console.log("only-its-type-is-asked:", page()); }
+{ const { page } = await import("./pages/by-names.mjs"); console.log("by-names:", page()); }
+{ const { page } = await import("./pages/beside-a-star-with-a-name.mjs"); console.log("beside-a-star-with-a-name:", page()); }
+{ const { page } = await import("./pages/a-star-with-a-name.mjs"); console.log("a-star-with-a-name:", page()); }
+{ const { page } = await import("./pages/three-stars-in-a-row.mjs"); console.log("three-stars-in-a-row:", page()); }
+{ const { page } = await import("./pages/a-star-a-name-a-star.mjs"); console.log("a-star-a-name-a-star:", page()); }
+{ const { page } = await import("./pages/the-file-imports-for-its-own-functions.mjs"); console.log("the-file-imports-for-its-own-functions:", page()); }
+{ const { page } = await import("./pages/a-function-of-the-file-itself.mjs"); console.log("a-function-of-the-file-itself:", page()); }
+{ const { page } = await import("./pages/the-default-by-name.mjs"); console.log("the-default-by-name:", page()); }
+{ const { page } = await import("./pages/stars-of-other-packages.mjs"); console.log("stars-of-other-packages:", page()); }
+{ const { page } = await import("./pages/stars-in-a-ring.mjs"); console.log("stars-in-a-ring:", page()); }
+{ const { page } = await import("./pages/the-file-makes-a-global.mjs"); console.log("the-file-makes-a-global:", page()); }

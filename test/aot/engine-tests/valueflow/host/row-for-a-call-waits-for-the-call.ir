@@ -1,0 +1,19 @@
+# `typeof setTimeout` reads the function and calls nothing, so the warning printer that a call with an odd delay reaches is not entered (runtimefunction 65572)
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65572 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="setTimeout" [isFreeName, isForTypeOf]
+    v2 = TypeTest v1 testedType=function
+    Return v2
+}
+function f1 name="createOnWarning" role=Library enclosingRuntimeFunction=65572 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

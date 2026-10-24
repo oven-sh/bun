@@ -1,0 +1,4 @@
+# A call in an operand that folding removed has no target. The same call in live code has one.
+removed-operand.ts:3 call `one()` = gave up: UnreachedNode
+
+removed-operand.ts:4 call `one()` = declaration removed-operand.ts:2

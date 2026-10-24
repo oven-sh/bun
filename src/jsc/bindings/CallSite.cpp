@@ -56,6 +56,15 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         }
     }
 
+    const JSC::StackFrame& frame = stackFrame.stackFrame();
+    bool isCompiled = frame.isCompiledFrame();
+    bool isCompiledHostFunction = isCompiled && frame.representsHostFunction();
+    bool isCompiledHiddenBuiltin = isCompiled && !isCompiledHostFunction && frame.isBuiltinFunction();
+#if ENABLE(AOT)
+    if (isCompiled && !isStrictFrame && !isCompiledHiddenBuiltin && !isCompiledHostFunction)
+        isStrictFrame = JSC::AOT::FunctionDescription(frame.compiledFrame().function).isStrict();
+#endif
+
     // JSC::StackFrame has no receiver, so getThis() is always undefined.
     m_thisValue.set(vm, this, JSC::jsUndefined());
     if (isStrictFrame) {
@@ -70,7 +79,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
     if (!isStrictFrame) {
         auto* function = calleeFunction(callee);
-        if (function && !function->isHostFunction()) {
+        if (function ? !function->isHostFunction() : isCompiled && !isCompiledHostFunction && frame.codeType() == JSC::FunctionCode) {
             m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
         }
     }
@@ -93,7 +102,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (!stackFrame.codeBlock()) {
+    if (isCompiled ? isCompiledHiddenBuiltin || !frame.hasLineAndColumnInfo() : !stackFrame.codeBlock()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
     if (stackFrame.isAsync()) {

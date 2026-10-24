@@ -1,0 +1,24 @@
+readCount: undefined undefined
+countPlusOne: number NaN
+readLabel: undefined undefined
+labelLength: threw a TypeError
+ownerName: threw a TypeError
+runAction: threw a TypeError
+readSecret: threw a TypeError
+storeCount: number 99
+bump: number NaN
+storeLabel: string stored
+callsOther: threw a TypeError
+kind: string object
+the array is this: storeCount: number 99
+the array is this: storeLabel: string stored
+the array is this: readCount: number 99
+the array is this: readLabel: string stored
+keys of the array: string 0,1,2,3,count,label
+length of the array: number 4
+afterwards: count: number 10
+afterwards: label: string subject
+afterwards: keys: string count,label,owner,action
+on the object: readCount: number 10
+on the object: readSecret: number 42
+on the object: callsOther: number 20

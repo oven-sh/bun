@@ -1,0 +1,3 @@
+# A store in code that folding removed adds no member.
+stores-in-removed-code.js:2 class member `D` = b Field ThisStore 7 unwritten checked number
+absent: stores-in-removed-code.js:2 class member `D` = a Field ThisStore 5 unwritten checked 1 optional

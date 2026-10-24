@@ -5037,7 +5037,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             ExprKind::False => b"false".to_vec(),
             ExprKind::Number(_) | ExprKind::BigInt(_) => self.text_of_number_literal(file, e),
             ExprKind::String(value) => self.cloned_string_literal_text(file, value, hir[e].pos),
-            ExprKind::Regex => {
+            ExprKind::Regex { .. } => {
                 let raw_text = hir.text.get(hir[e].pos as usize..hir[e].end as usize)?;
                 raw_text.to_vec()
             }

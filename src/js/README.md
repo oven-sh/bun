@@ -46,6 +46,8 @@ On top of this, we have some special functions that are handled by the builtin p
 
 - `process.platform` and `process.arch` is properly inlined and DCE'd. Do use this to run different code on different platforms.
 
+- `"unlikely";` as the first statement of an arm of an `if` (`if (error) { "unlikely"; ... }`, or the same in an `else { ... }`) is an expression statement that does nothing, so it is nothing in `bun run`. `bun build --compile --aot` reads it in these files only: the arm is compiled out of the way of the usual path, and what is called only from there counts as seldom run. It never changes what the code does. Use it where you know that the arm is unusual: errors, replaced built-ins, every way out of a fast path. A wrong one costs two jumps and slower code each time the arm runs. Anywhere else in a file it is read by nobody, and `bun lint` reports it (`bun/no-unused-expressions`).
+
 ## Builtin Modules
 
 Files in `node`, `bun`, `thirdparty`, and `internal` are all bundled as "modules". These go through the preprocessor to construct a JS function, where `export default`/`export function`/etc are converted into a `return` statement. Due to this, non-type `import` statements are not supported.

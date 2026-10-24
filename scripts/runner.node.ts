@@ -34,6 +34,7 @@ import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
+import { units as partsOfOneTestFile, unitsThatDraw, unitsThatOnlyDraw } from "../test/aot/parts.mts";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
   getAbi,
@@ -342,6 +343,25 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["smoke"]: {
       type: "string",
+      default: undefined,
+    },
+    /** Of the tests that are left after --include and --exclude, one in this many: others for each commit. */
+    ["one-in"]: {
+      type: "string",
+      default: undefined,
+    },
+    /**
+     * `fixed`: the tests take only what is the same on every commit (AOT_TAKES in test/aot/run-programs.ts), and those that
+     * have nothing of the kind are left out. `drawn`: only the tests that take a share by the commit, and only that share.
+     */
+    ["aot-takes"]: {
+      type: "string",
+      default: undefined,
+    },
+    /** These are run whatever --one-in draws. */
+    ["always-draw"]: {
+      type: "string",
+      multiple: true,
       default: undefined,
     },
     ["vendor"]: {
@@ -1325,6 +1345,7 @@ async function runTests(): Promise<TestResult[]> {
       !/stress/i.test(t) &&
       isParallelAllowlisted(t) &&
       !needsDockerService(t) &&
+      !isPartOfOneTestFile(t) &&
       (!validationApplies || (shouldValidateExceptions(t) && shouldValidateLeakSan(t)));
 
     const serialTests = tests.filter(t => !isParallelSafeTest(t));
@@ -2193,10 +2214,12 @@ async function spawnBunTest(
     testArgs.push(`--reporter-outfile=${junitFilePath}`);
   }
 
-  testArgs.push(absPath);
+  testArgs.push(isPartOfOneTestFile(testPath) ? join(opts.cwd, "test", "aot", "parts.test.ts") : absPath);
 
   const env: SpawnEnv = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
+    ...(isPartOfOneTestFile(testPath) && { TEST_PART: testPath }),
+    ...(options["aot-takes"] && { AOT_TAKES: options["aot-takes"] }),
     ...opts.env,
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
@@ -2258,7 +2281,7 @@ async function spawnBunTest(
 
 function getTestTimeout(testPath: string): number {
   if (
-    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi/i.test(
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi|\baot\b/i.test(
       testPath,
     )
   ) {
@@ -2498,6 +2521,11 @@ function isTestStrict(path: string): boolean {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 
+/** It has the name of a test file and is none: test/aot/parts.mts. */
+function isPartOfOneTestFile(path: string): boolean {
+  return partsOfOneTestFile.includes(path.replaceAll("\\", "/").replace(/^test\//, ""));
+}
+
 function isHidden(path: string): boolean {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
@@ -2520,7 +2548,7 @@ function getTests(cwd: string): string[] {
       }
     }
   }
-  return [...getFiles(cwd, "")].sort();
+  return [...getFiles(cwd, ""), ...partsOfOneTestFile.map(path => join(path))].sort();
 }
 
 /** An entry of test/vendor.json. */
@@ -2745,6 +2773,43 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     }
   }
 
+  const aotTakes = options["aot-takes"];
+  if (aotTakes) {
+    const spelled = (testPath: string) => testPath.replaceAll("\\", "/");
+    // A test file draws if it calls one of the helpers that do.
+    const draws = (testPath: string) =>
+      isPartOfOneTestFile(testPath)
+        ? unitsThatDraw.has(spelled(testPath))
+        : /\b(generated|programs|programsBuiltWith|variant|joined|inShare|inShareOfList|partInShare)\(/.test(
+            readFileSync(join(cwd, testPath), "utf8"),
+          );
+    const taken = availableTests.filter(testPath =>
+      aotTakes === "drawn" ? draws(testPath) : !unitsThatOnlyDraw.has(spelled(testPath)),
+    );
+    !isQuiet && console.log("Tests that have something", aotTakes, taken.length, "/", availableTests.length);
+    availableTests.splice(0, availableTests.length, ...taken);
+  }
+
+  const oneIn = parseInt(options["one-in"] ?? "1");
+  if (oneIn > 1) {
+    // Every shard draws the same files, because it draws by the path and the commit.
+    const commit = process.env.BUILDKITE_COMMIT ?? "";
+    const isDrawn = (testPath: string) =>
+      createHash("sha1")
+        .update(`${commit} ${testPath.replaceAll("\\", "/")}`)
+        .digest()
+        .readUInt32LE(0) %
+        oneIn ===
+      0;
+    const alwaysDrawn: string[] = options["always-draw"] ?? [];
+    const drawnTests = availableTests.filter(
+      testPath => isDrawn(testPath) || alwaysDrawn.some(group => testPath.replaceAll("\\", "/").includes(group)),
+    );
+    !isQuiet &&
+      console.log("Drawing tests: one in", oneIn, "for", commit, drawnTests.length, "/", availableTests.length);
+    availableTests.splice(0, availableTests.length, ...drawnTests);
+  }
+
   const shardId = parseInt(options.shard);
   const maxShards = parseInt(options["max-shards"]);
   if (filters?.length) {
@@ -2766,10 +2831,13 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     // Every shard computes the same deterministic assignment from the same
     // sorted input and picks its own bin, so the result is identical across
     // machines without any coordination. Tests absent from the table (new
-    // files, or the file failing to load) fall back to the table's median so
-    // they spread across shards instead of all landing on shard 0.
+    // files, or the file failing to load) fall back to the median of the tests
+    // being dealt out so they spread across shards instead of all landing on shard 0.
     const durations = loadExpectedDurations(cwd);
-    const known = Object.values(durations).sort((a, b) => a - b);
+    const known = availableTests
+      .map(testPath => durations[testPath.replaceAll("\\", "/")])
+      .filter(cost => cost !== undefined)
+      .sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)]! : 100;
     const costOf = (testPath: string) => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
 
@@ -2960,7 +3028,7 @@ function addPath(...paths: (string | undefined)[]): string {
 }
 
 function getTestLabel(): string | undefined {
-  return getBuildLabel()?.replace(" - test-bun", "");
+  return getBuildLabel()?.replace(/ - test-(?:bun|aot|hardened)$/, "");
 }
 
 /**

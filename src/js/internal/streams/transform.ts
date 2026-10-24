@@ -43,12 +43,48 @@
 "use strict";
 
 const Duplex = require("internal/streams/duplex");
-const { getHighWaterMark } = require("internal/streams/state");
+const streamState = require("internal/streams/state");
+const { getHighWaterMark, internals } = streamState;
+const kState: typeof streamState.kState = streamState.kState;
+type ReadableState = $Node.ReadableState;
+type WritableState = $Node.WritableState;
+
+const enum ReadableFlag {
+  Ended = 1 << 9,
+  Sync = 1 << 12,
+}
+const enum WritableFlag {
+  Ended = 1 << 30,
+}
 
 const kCallback = Symbol("kCallback");
 
-function Transform(options): void {
-  if (!(this instanceof Transform)) return new Transform(options);
+declare global {
+  namespace $Node {
+    type TransformCallback = (error?: Error | null, data?: unknown) => void;
+
+    interface TransformOptions extends DuplexOptions {
+      transform?(this: Transform, chunk: unknown, encoding: string, callback: TransformCallback): void;
+      flush?(this: Transform, callback: TransformCallback): void;
+    }
+
+    interface Transform extends Duplex {
+      /** The callback of a write that waits until the readable side has room. */
+      [kCallback]: ErrorCallback | null;
+      _transform(chunk: unknown, encoding: string, callback: TransformCallback): void;
+      _flush?(callback: TransformCallback): void;
+    }
+
+    interface TransformConstructor {
+      new (options?: TransformOptions): Transform;
+      (this: Transform, options?: TransformOptions): void;
+      prototype: any;
+    }
+  }
+}
+
+function Transform(this: $Node.Transform, options?: $Node.TransformOptions): void {
+  if (!(this instanceof Transform)) return new Transform(options) as any;
 
   // TODO (ronag): This should preferably always be
   // applied but would be semver-major. Or even better;
@@ -62,7 +98,7 @@ function Transform(options): void {
       ...options,
       highWaterMark: null,
       readableHighWaterMark,
-      writableHighWaterMark: options.writableHighWaterMark || 0,
+      writableHighWaterMark: options!.writableHighWaterMark || 0,
     };
   }
 
@@ -71,7 +107,8 @@ function Transform(options): void {
   // We have implemented the _read method, and done the other things
   // that Readable wants before the first _read call, so unset the
   // sync guard flag.
-  this._readableState.sync = false;
+  const rState: ReadableState = this._readableState;
+  rState[kState] &= ~ReadableFlag.Sync;
 
   this[kCallback] = null;
 
@@ -90,7 +127,7 @@ function Transform(options): void {
 }
 $toClass(Transform, "Transform", Duplex);
 
-function final(cb?) {
+function final(this: $Node.Transform, cb?: $Node.ErrorCallback) {
   if (typeof this._flush === "function" && !this.destroyed) {
     this._flush((er, data) => {
       if (er) {
@@ -118,7 +155,7 @@ function final(cb?) {
   }
 }
 
-function prefinish() {
+function prefinish(this: $Node.Transform) {
   if (this._final !== final) {
     final.$call(this);
   }
@@ -126,13 +163,23 @@ function prefinish() {
 
 Transform.prototype._final = final;
 
-Transform.prototype._transform = function (_chunk, _encoding, _callback) {
+Transform.prototype._transform = function (
+  this: $Node.Transform,
+  _chunk: unknown,
+  _encoding: string,
+  _callback: $Node.TransformCallback,
+) {
   throw $ERR_METHOD_NOT_IMPLEMENTED("_transform()");
 };
 
-Transform.prototype._write = function (chunk, encoding, callback) {
-  const rState = this._readableState;
-  const wState = this._writableState;
+Transform.prototype._write = function (
+  this: $Node.Transform,
+  chunk: unknown,
+  encoding: string,
+  callback: $Node.ErrorCallback,
+) {
+  const rState: ReadableState = this._readableState;
+  const wState: WritableState = this._writableState;
   const length = rState.length;
 
   this._transform(chunk, encoding, (err, val) => {
@@ -142,16 +189,17 @@ Transform.prototype._write = function (chunk, encoding, callback) {
     }
 
     if (val != null) {
-      this.push(val);
+      if (this.push === internals.pushingMethod) internals.pushToReadable!(this, rState, val, undefined);
+      else this.push(val);
     }
 
-    if (rState.ended) {
+    if ((rState[kState] & ReadableFlag.Ended) !== 0) {
       // If user has called this.push(null) we have to
       // delay the callback to properly propagate the new
       // state.
       process.nextTick(callback);
     } else if (
-      wState.ended || // Backwards compat.
+      (wState[kState] & WritableFlag.Ended) !== 0 || // Backwards compat.
       length === rState.length || // Backwards compat.
       rState.length < rState.highWaterMark
     ) {
@@ -162,7 +210,7 @@ Transform.prototype._write = function (chunk, encoding, callback) {
   });
 };
 
-Transform.prototype._read = function () {
+Transform.prototype._read = function (this: $Node.Transform) {
   if (this[kCallback]) {
     const callback = this[kCallback];
     this[kCallback] = null;
@@ -170,4 +218,4 @@ Transform.prototype._read = function () {
   }
 };
 
-export default Transform as unknown as typeof import("node:stream").Transform;
+export default Transform as $Node.TransformConstructor;

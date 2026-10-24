@@ -1,0 +1,143 @@
+# A closure of a bound function is slim like the arrow functions beside it, whatever is done with it. In a runtime module, whose functions native code casts, it is slim only where every result of the calls of bind is only called: a read of name or of length and instanceof make it full. More than four captures make it full everywhere. It captures the closure of its target only where the target has captures of its own
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveCalls,PlaceTypeTests,ChooseCallingConventions
+# RUN: plan-slots closures
+# RUN(SITES): place program
+# STATISTIC: BoundFunctions = 7
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f1
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Undefined
+    v4 = NewClosure function=f6
+    v5 = PropGet v4 key="bind"
+    v6 = Call v5, v4, v3, v2 calleeKey="bind"
+    v7 = Call v6
+    v8 = PropGet v6 key="name"
+    v9 = NewClosure v2 function=f7
+    v10 = PropGet v9 key="bind"
+    v11 = Call v10, v9, v3, v2 calleeKey="bind"
+    v12 = Call v11
+    v13 = NewClosure v2, v2 function=f8
+    v14 = PropGet v13 key="bind"
+    v15 = Call v14, v13, v3, v2, v2 calleeKey="bind"
+    v16 = Call v15
+    Return
+}
+function f1 name="sqlite" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Undefined
+    v4 = NewClosure function=f2
+    v5 = PropGet v4 key="bind"
+    v6 = Call v5, v4, v3, v2 calleeKey="bind"
+    v7 = Call v6
+    v8 = NewClosure function=f3
+    v9 = PropGet v8 key="bind"
+    v10 = Call v9, v8, v3, v2 calleeKey="bind"
+    v11 = Call v10
+    v12 = PropGet v10 key="name"
+    v13 = NewClosure function=f4
+    v14 = PropGet v13 key="bind"
+    v15 = Call v14, v13, v3, v2 calleeKey="bind"
+    v16 = Call v15
+    v17 = PropGet v15 key="length"
+    v18 = NewClosure function=f5
+    v19 = PropGet v18 key="bind"
+    v20 = Call v19, v18, v3, v2 calleeKey="bind"
+    v21 = Call v20
+    v22 = InstanceOf v2, v20
+    Return
+}
+function f2 name="onlyCalled" module=m1 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="nameIsRead" module=m1 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="lengthIsRead" module=m1 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="testedWithInstanceOf" module=m1 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="nameIsReadInApplication" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="withCapture" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Return v1
+}
+function f8 name="withTwoCaptures" kind=Arrow captures=[{type=number}, {type=number}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: anything, v3: anything):
+    Return v3
+}
+
+# The closure of a target is the receiver of bind, so it is not only called.
+# CHECK: f0 Full
+# CHECK-NEXT: f1 Full
+# CHECK-NEXT: f2 Full
+# CHECK-NEXT: f3 Full
+# CHECK-NEXT: f4 Full
+# CHECK-NEXT: f5 Full
+# CHECK-NEXT: f6 Slim
+# CHECK-NEXT: f7 Slim
+# CHECK-NEXT: f8 Slim
+# Each bound function stands behind the generic entrypoint of its target, in the order of the targets: onlyCalled, nameIsRead, lengthIsRead, testedWithInstanceOf, nameIsReadInApplication,
+# withCapture, withTwoCaptures. No other derived function has slim closures.
+# CHECK-NOT: Slim
+# CHECK: f13 Slim
+# CHECK-NEXT: f14 Full
+# CHECK-NEXT: f15 Full
+# CHECK-NEXT: f16 Full
+# CHECK-NEXT: f17 Full
+# CHECK-NEXT: f18 Full
+# CHECK-NEXT: f19 Full
+# CHECK-NEXT: f20 Full
+# CHECK-NEXT: f21 Slim
+# CHECK-NEXT: f22 Full
+# CHECK-NEXT: f23 Slim
+# CHECK-NEXT: f24 Full
+# CHECK-NEXT: f25 Full
+# CHECK-NOT: Slim
+
+# SITES-LABEL: function f0 name="main"
+# SITES: = NewClosure function=f6
+# SITES: = NewClosure [[number]] function=[[nameIsReadInApplication]] {{*}}closureForm=Slim
+# SITES: [[closure]]: f7 = NewClosure [[number]] function=f7
+# SITES: = NewClosure [[number]], [[number]], [[closure]] function=[[withCapture]] {{*}}closureForm=Slim
+# SITES: [[otherClosure]]: f8 = NewClosure [[number]], [[number]] function=f8
+# SITES: = NewClosure [[number]], [[number]], [[number]], [[number]], [[otherClosure]] function=[[withTwoCaptures]]
+# SITES-NOT: closureForm
+# SITES-LABEL: function f1 name="sqlite"
+# SITES-NOT: closureForm
+# SITES: = NewClosure [[input]] function=[[onlyCalled]] {{*}}closureForm=Slim
+# SITES-NOT: closureForm
+# SITES: = NewClosure [[input]] function=[[nameIsRead]]
+# SITES-NOT: closureForm
+# SITES: = NewClosure [[input]] function=[[lengthIsRead]]
+# SITES-NOT: closureForm
+# SITES: = NewClosure [[input]] function=[[testedWithInstanceOf]]
+# SITES-NOT: closureForm
+# SITES: function [[onlyCalled]] name="onlyCalled"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f2 numberOfBoundArguments=1 numberOfCapturedArguments=1}
+# The body enters the target by a call that may be inlined.
+# SITES: = CallDirect {{*}}function=f2
+# SITES-NOT: isNeverInlined
+# SITES: function [[nameIsRead]] name="nameIsRead"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f3 numberOfBoundArguments=1 numberOfCapturedArguments=1}
+# SITES: function [[lengthIsRead]] name="lengthIsRead"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f4 numberOfBoundArguments=1 numberOfCapturedArguments=1}
+# SITES: function [[testedWithInstanceOf]] name="testedWithInstanceOf"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f5 numberOfBoundArguments=1 numberOfCapturedArguments=1}
+# SITES: function [[nameIsReadInApplication]] name="nameIsReadInApplication"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f6 numberOfBoundArguments=1 numberOfCapturedArguments=1}
+# SITES: function [[withCapture]] name="withCapture"{{*}}role=BoundFunction{{*}}{type=function}]{{*}}creator=BoundFunction{target=f7 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
+# SITES: function [[withTwoCaptures]] name="withTwoCaptures"{{*}}role=BoundFunction{{*}}{type=function}]{{*}}creator=BoundFunction{target=f8 numberOfBoundArguments=2 numberOfCapturedArguments=2 capturesTargetClosure=true}

@@ -1,25 +1,29 @@
-const { kInternalSocketData, serverSymbol } = require("internal/http");
-const { kAutoDestroyed } = require("internal/shared");
-const { Duplex } = require("internal/stream");
+const http = require("internal/http");
+// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
+const kInternalSocketData: typeof http.kInternalSocketData = http.kInternalSocketData;
+const serverSymbol: typeof http.serverSymbol = http.serverSymbol;
+const shared = require("internal/shared");
+const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
+const Duplex = require("internal/streams/duplex");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]?: [import("node:http").Server, import("node:http").ServerResponse, Request];
+  [kInternalSocketData]?: [$Node.HttpServer, $Node.ServerResponse, Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
   timeout = 0;
   isServer = false;
 
-  #address;
-  _httpMessage: any;
-  constructor(httpMessage: any) {
+  #address: Partial<$Node.SocketAddressInfo> | undefined;
+  _httpMessage: $Node.OutgoingMessage | null | undefined;
+  constructor(httpMessage: $Node.OutgoingMessage | null | undefined) {
     super();
     this._httpMessage = httpMessage;
   }
   address() {
     // Call server.requestIP() without doing any property getter twice.
-    var internalData;
+    var internalData: [$Node.HttpServer, $Node.ServerResponse, Request] | undefined;
     return (this.#address ??=
       (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol]?.requestIP(internalData[2]) ?? {});
   }
@@ -28,20 +32,20 @@ var FakeSocket = class Socket extends Duplex {
     return this.writableLength;
   }
 
-  connect(_port, _host, _connectListener) {
+  connect(_port?: unknown, _host?: unknown, _connectListener?: unknown) {
     return this;
   }
-  _onTimeout = function () {
+  _onTimeout = function (this: $Node.Duplex) {
     this.emit("timeout");
   };
 
-  _destroy(_err, _callback) {
+  _destroy(_err: Error | null, _callback: $Node.ErrorCallback) {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
     if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
   }
 
-  _final(_callback) {}
+  _final(_callback: $Node.ErrorCallback) {}
 
   get localAddress() {
     return this.address() ? "127.0.0.1" : undefined;
@@ -59,7 +63,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.connecting;
   }
 
-  _read(_size) {}
+  _read(_size: number) {}
 
   get readyState() {
     if (this.connecting) return "opening";
@@ -78,7 +82,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.address()?.address;
   }
 
-  set remoteAddress(val) {
+  set remoteAddress(val: string | undefined) {
     // initialize the object so that other properties wouldn't be lost
     this.address().address = val;
   }
@@ -87,7 +91,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.address()?.port;
   }
 
-  set remotePort(val) {
+  set remotePort(val: number | undefined) {
     // initialize the object so that other properties wouldn't be lost
     this.address().port = val;
   }
@@ -96,7 +100,7 @@ var FakeSocket = class Socket extends Duplex {
     return this.address()?.family;
   }
 
-  set remoteFamily(val) {
+  set remoteFamily(val: string | undefined) {
     // initialize the object so that other properties wouldn't be lost
     this.address().family = val;
   }
@@ -113,7 +117,7 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  setTimeout(timeout, callback) {
+  setTimeout(timeout: number, callback?: () => void) {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
 
@@ -126,7 +130,7 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(_chunk, _encoding, _callback) {}
+  _write(_chunk: unknown, _encoding: string, _callback: $Node.ErrorCallback) {}
 
   destroy() {
     this._httpMessage?.destroy?.();

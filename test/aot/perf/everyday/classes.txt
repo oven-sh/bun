@@ -1,0 +1,628 @@
+//// instance-made-and-read
+class Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+function turn(i: number): number {
+  const point = new Point(i, 2);
+  return point.x + point.y;
+}
+//// fields-with-initializers
+class Settings {
+  depth = 3;
+  label = "none";
+  enabled = true;
+  list: number[] = [];
+}
+function turn(i: number): number {
+  const settings = new Settings();
+  settings.depth += i & 3;
+  return settings.depth + settings.label.length + settings.list.length;
+}
+//// method-call
+class Counter {
+  count = 0;
+  add(n: number) {
+    this.count = (this.count + n) & 0xffff;
+    return this.count;
+  }
+}
+const counter = new Counter();
+function turn(i: number): number {
+  return counter.add(i);
+}
+//// method-chain
+class Builder {
+  total = 0;
+  plus(n: number) {
+    this.total += n;
+    return this;
+  }
+  times(n: number) {
+    this.total *= n;
+    return this;
+  }
+}
+function turn(i: number): number {
+  return new Builder().plus(i & 15).times(3).plus(1).total;
+}
+//// vector-math
+class Vector {
+  constructor(
+    readonly x: number,
+    readonly y: number,
+  ) {}
+  plus(other: Vector) {
+    return new Vector(this.x + other.x, this.y + other.y);
+  }
+  scale(by: number) {
+    return new Vector(this.x * by, this.y * by);
+  }
+  dot(other: Vector) {
+    return this.x * other.x + this.y * other.y;
+  }
+}
+const unit = new Vector(1, 1);
+function turn(i: number): number {
+  return new Vector(i & 7, 2).plus(unit).scale(0.5).dot(unit);
+}
+//// getter
+class Rectangle {
+  constructor(
+    public width: number,
+    public height: number,
+  ) {}
+  get area() {
+    return this.width * this.height;
+  }
+}
+const rectangle = new Rectangle(3, 4);
+function turn(i: number): number {
+  rectangle.width = i & 15;
+  return rectangle.area;
+}
+//// setter
+class Temperature {
+  kelvin = 0;
+  set celsius(value: number) {
+    this.kelvin = value + 273;
+  }
+  get celsius() {
+    return this.kelvin - 273;
+  }
+}
+const temperature = new Temperature();
+function turn(i: number): number {
+  temperature.celsius = i & 127;
+  return temperature.kelvin + temperature.celsius;
+}
+//// private-field
+class Wallet {
+  #cents = 0;
+  deposit(cents: number) {
+    this.#cents = (this.#cents + cents) & 0xffff;
+  }
+  get cents() {
+    return this.#cents;
+  }
+}
+const wallet = new Wallet();
+function turn(i: number): number {
+  wallet.deposit(i);
+  return wallet.cents;
+}
+//// private-method
+class Parser {
+  #position = 0;
+  #advance(by: number) {
+    this.#position = (this.#position + by) & 1023;
+    return this.#position;
+  }
+  step(i: number) {
+    return this.#advance(i & 3);
+  }
+}
+const parser = new Parser();
+function turn(i: number): number {
+  return parser.step(i);
+}
+//// private-in-check
+class Branded {
+  #brand = 1;
+  static is(value: object) {
+    return #brand in value;
+  }
+}
+const values = [new Branded(), {}, new Branded(), []];
+function turn(i: number): number {
+  return Branded.is(values[i & 3]!) ? 1 : 0;
+}
+//// instance-with-private-fields-made
+class Range {
+  #low: number;
+  #high: number;
+  constructor(low: number, high: number) {
+    this.#low = low;
+    this.#high = high;
+  }
+  get span() {
+    return this.#high - this.#low;
+  }
+}
+function turn(i: number): number {
+  return new Range(i, i + 5).span;
+}
+//// static-method
+class Angle {
+  static toRadians(degrees: number) {
+    return (degrees * Math.PI) / 180;
+  }
+}
+function turn(i: number): number {
+  return Angle.toRadians(i & 255);
+}
+//// static-field
+class Registry {
+  static count = 0;
+  static next() {
+    return (Registry.count = (Registry.count + 1) & 0xffff);
+  }
+}
+function turn(i: number): number {
+  return Registry.next() + (i & 1);
+}
+//// static-constants
+class Limits {
+  static readonly Low = 10;
+  static readonly High = 200;
+}
+function turn(i: number): number {
+  const value = i & 255;
+  return value < Limits.Low ? Limits.Low : value > Limits.High ? Limits.High : value;
+}
+//// static-factory
+class Color {
+  private constructor(
+    readonly red: number,
+    readonly green: number,
+    readonly blue: number,
+  ) {}
+  static fromNumber(rgb: number) {
+    return new Color((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+  }
+}
+function turn(i: number): number {
+  const color = Color.fromNumber(i);
+  return color.red + color.green + color.blue;
+}
+//// singleton
+class Store {
+  private static instance?: Store;
+  hits = 0;
+  static get shared() {
+    return (Store.instance ??= new Store());
+  }
+}
+function turn(i: number): number {
+  return (Store.shared.hits = (Store.shared.hits + i) & 255);
+}
+//// subclass-made
+class Animal {
+  constructor(public legs: number) {}
+}
+class Dog extends Animal {
+  name: string;
+  constructor(name: string) {
+    super(4);
+    this.name = name;
+  }
+}
+function turn(i: number): number {
+  const dog = new Dog(i & 1 ? "rex" : "fido");
+  return dog.legs + dog.name.length;
+}
+//// super-method
+class Logger {
+  format(n: number) {
+    return n + 1;
+  }
+}
+class Prefixed extends Logger {
+  override format(n: number) {
+    return super.format(n) * 2;
+  }
+}
+const logger = new Prefixed();
+function turn(i: number): number {
+  return logger.format(i & 255);
+}
+//// inherited-method
+class Base {
+  value = 2;
+  twice() {
+    return this.value * 2;
+  }
+}
+class Middle extends Base {}
+class Leaf extends Middle {}
+const leaf = new Leaf();
+function turn(i: number): number {
+  leaf.value = i & 31;
+  return leaf.twice();
+}
+//// virtual-call-of-two-classes
+abstract class Shape {
+  abstract area(): number;
+}
+class Square extends Shape {
+  constructor(public side: number) {
+    super();
+  }
+  area() {
+    return this.side * this.side;
+  }
+}
+class Disc extends Shape {
+  constructor(public radius: number) {
+    super();
+  }
+  area() {
+    return 3 * this.radius * this.radius;
+  }
+}
+const shapes: Shape[] = [new Square(2), new Disc(1), new Square(3), new Disc(2)];
+function turn(i: number): number {
+  return shapes[i & 3]!.area();
+}
+//// virtual-call-of-six-classes
+interface Op {
+  run(n: number): number;
+}
+class Add implements Op { run(n: number) { return n + 1; } }
+class Sub implements Op { run(n: number) { return n - 1; } }
+class Mul implements Op { run(n: number) { return n * 2; } }
+class Neg implements Op { run(n: number) { return -n; } }
+class Sqr implements Op { run(n: number) { return n * n; } }
+class Nop implements Op { run(n: number) { return n; } }
+const ops: Op[] = [new Add(), new Sub(), new Mul(), new Neg(), new Sqr(), new Nop()];
+function turn(i: number): number {
+  return ops[i % 6]!.run(i & 15);
+}
+//// instanceof
+class Cat {}
+class Bird {}
+const pets = [new Cat(), new Bird(), new Cat(), {}];
+function turn(i: number): number {
+  const pet = pets[i & 3]!;
+  return pet instanceof Cat ? 1 : pet instanceof Bird ? 2 : 0;
+}
+//// instanceof-up-a-chain
+class A {}
+class B extends A {}
+class C extends B {}
+const values = [new C(), new B(), new A(), {}];
+function turn(i: number): number {
+  return values[i & 3]! instanceof A ? 1 : 0;
+}
+//// instanceof-error
+const values: unknown[] = [new Error("x"), "text", new TypeError("y"), 5];
+function turn(i: number): number {
+  const value = values[i & 3];
+  return value instanceof Error ? value.message.length : 0;
+}
+//// constructor-name
+class Alpha {}
+class Beta {}
+const values = [new Alpha(), new Beta()];
+function turn(i: number): number {
+  return values[i & 1]!.constructor.name.length;
+}
+//// to-string-override
+class Id {
+  constructor(public n: number) {}
+  toString() {
+    return "id" + this.n;
+  }
+}
+function turn(i: number): number {
+  return `${new Id(i & 255)}`.length;
+}
+//// arrow-function-field
+class Button {
+  clicks = 0;
+  onClick = () => {
+    this.clicks = (this.clicks + 1) & 0xffff;
+    return this.clicks;
+  };
+}
+const button = new Button();
+function turn(i: number): number {
+  const handler = button.onClick;
+  return handler() + (i & 1);
+}
+//// instance-with-an-arrow-function-field-made
+class Widget {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+  describe = () => this.id + 1;
+}
+function turn(i: number): number {
+  return new Widget(i).describe();
+}
+//// bound-method
+class Greeter {
+  greeting = "hello";
+  constructor() {
+    this.greet = this.greet.bind(this);
+  }
+  greet(name: string) {
+    return this.greeting.length + name.length;
+  }
+}
+const greeter = new Greeter();
+function turn(i: number): number {
+  const greet = greeter.greet;
+  return greet(i & 1 ? "ann" : "robert");
+}
+//// optional-fields
+class Request {
+  body?: string;
+  query?: Record<string, string>;
+  constructor(public path: string) {}
+}
+function turn(i: number): number {
+  const request = new Request("/x");
+  if (i & 1) request.body = "data";
+  return request.path.length + (request.body?.length ?? 0);
+}
+//// linked-list-walk
+class Link {
+  constructor(
+    public value: number,
+    public next: Link | null,
+  ) {}
+}
+let head: Link | null = null;
+for (let k = 0; k < 16; k++) head = new Link(k, head);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let link = head; link; link = link.next) sum += link.value;
+  return sum;
+}
+//// tree-walk
+class Tree {
+  constructor(
+    public value: number,
+    public left?: Tree,
+    public right?: Tree,
+  ) {}
+}
+function build(depth: number): Tree {
+  return depth ? new Tree(depth, build(depth - 1), build(depth - 1)) : new Tree(0);
+}
+function sum(tree?: Tree): number {
+  return tree ? tree.value + sum(tree.left) + sum(tree.right) : 0;
+}
+const root = build(4);
+function turn(i: number): number {
+  return sum(root) + (i & 1);
+}
+//// tree-built-and-dropped
+class Leaf {
+  constructor(
+    public left: Leaf | null,
+    public right: Leaf | null,
+  ) {}
+}
+function grow(depth: number): Leaf {
+  return depth ? new Leaf(grow(depth - 1), grow(depth - 1)) : new Leaf(null, null);
+}
+function count(leaf: Leaf | null): number {
+  return leaf ? 1 + count(leaf.left) + count(leaf.right) : 0;
+}
+function turn(i: number): number {
+  return count(grow(3)) + (i & 1);
+}
+//// stack-class-over-an-array
+class Stack<T> {
+  private items: T[] = [];
+  push(item: T) {
+    this.items.push(item);
+  }
+  pop() {
+    return this.items.pop();
+  }
+  get size() {
+    return this.items.length;
+  }
+}
+const stack = new Stack<number>();
+function turn(i: number): number {
+  stack.push(i);
+  stack.push(i + 1);
+  return stack.pop()! + stack.pop()! + stack.size;
+}
+//// event-emitter-by-hand
+class Emitter {
+  private listeners = new Map<string, ((n: number) => void)[]>();
+  on(name: string, listener: (n: number) => void) {
+    const list = this.listeners.get(name);
+    if (list) list.push(listener);
+    else this.listeners.set(name, [listener]);
+  }
+  emit(name: string, n: number) {
+    for (const listener of this.listeners.get(name) ?? []) listener(n);
+  }
+}
+const emitter = new Emitter();
+let heard = 0;
+emitter.on("tick", n => void (heard = (heard + n) & 0xffff));
+emitter.on("tick", n => void (heard ^= n & 255));
+function turn(i: number): number {
+  emitter.emit("tick", i);
+  return heard;
+}
+//// class-below-array
+class Numbers extends Array<number> {
+  sum() {
+    let total = 0;
+    for (const value of this) total += value;
+    return total;
+  }
+}
+const numbers = Numbers.from([1, 2, 3, 4]) as Numbers;
+function turn(i: number): number {
+  return numbers.sum() + (i & 1);
+}
+//// class-below-map
+class Defaults extends Map<string, number> {
+  getOr(key: string, fallback: number) {
+    return this.get(key) ?? fallback;
+  }
+}
+const defaults = new Defaults([["a", 1]]);
+function turn(i: number): number {
+  return defaults.getOr(i & 1 ? "a" : "b", 9);
+}
+//// class-below-error
+class HttpError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+function turn(i: number): number {
+  const error = new HttpError(400 + (i & 3), "bad");
+  return error.status + error.message.length;
+}
+//// mixin
+type Constructor = new (...args: any[]) => object;
+function Timestamped<T extends Constructor>(Base: T) {
+  return class extends Base {
+    stamp = 7;
+  };
+}
+class Plain {
+  id = 1;
+}
+const Stamped = Timestamped(Plain);
+function turn(i: number): number {
+  const value = new Stamped();
+  return value.id + value.stamp + (i & 1);
+}
+//// constructor-function-with-a-prototype
+function Legacy(this: any, n: number) {
+  this.n = n;
+}
+Legacy.prototype.twice = function () {
+  return this.n * 2;
+};
+function turn(i: number): number {
+  return new (Legacy as any)(i & 255).twice();
+}
+//// symbol-iterator-on-a-class
+class Span {
+  constructor(
+    public from: number,
+    public to: number,
+  ) {}
+  *[Symbol.iterator]() {
+    for (let k = this.from; k < this.to; k++) yield k;
+  }
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of new Span(i & 3, 8)) sum += value;
+  return sum;
+}
+//// generator-method-of-a-class
+class Span {
+  constructor(
+    public from: number,
+    public to: number,
+  ) {}
+  *values() {
+    for (let k = this.from; k < this.to; k++) yield k;
+  }
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of new Span(i & 3, 8).values()) sum += value;
+  return sum;
+}
+//// symbol-iterator-that-returns-a-generator
+class Span {
+  constructor(
+    public from: number,
+    public to: number,
+  ) {}
+  *values() {
+    for (let k = this.from; k < this.to; k++) yield k;
+  }
+  [Symbol.iterator]() {
+    return this.values();
+  }
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (const value of new Span(i & 3, 8)) sum += value;
+  return sum;
+}
+//// enum-values
+enum Direction {
+  Up,
+  Down,
+  Left,
+  Right,
+}
+function step(direction: Direction): number {
+  return direction === Direction.Up ? -1 : direction === Direction.Down ? 1 : 0;
+}
+function turn(i: number): number {
+  return step((i & 3) as Direction);
+}
+//// enum-name-by-value
+enum Status {
+  Active,
+  Paused,
+  Stopped,
+}
+function turn(i: number): number {
+  return Status[i % 3]!.length;
+}
+//// string-enum
+enum Level {
+  Info = "info",
+  Warn = "warn",
+  Error = "error",
+}
+const levels = [Level.Info, Level.Warn, Level.Error, Level.Info];
+function turn(i: number): number {
+  return levels[i & 3] === Level.Error ? 2 : 1;
+}
+//// accessor-keyword
+class Gauge {
+  accessor level = 1;
+}
+const gauge = new Gauge();
+function turn(i: number): number {
+  gauge.level = i & 63;
+  return gauge.level;
+}
+//// static-block-and-table
+class Codes {
+  static table: number[] = [];
+  static {
+    for (let k = 0; k < 16; k++) Codes.table.push(k * k);
+  }
+}
+function turn(i: number): number {
+  return Codes.table[i & 15]!;
+}

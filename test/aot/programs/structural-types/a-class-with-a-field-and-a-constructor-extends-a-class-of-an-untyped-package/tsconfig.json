@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "allowJs": false,
+    "paths": {
+      "legacy": ["./packages/legacy/index.js"],
+      "legacy/*": ["./packages/legacy/*.js"]
+    }
+  },
+  "include": ["main.ts", "types"]
+}

@@ -24,6 +24,33 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  compile: { aot: true, aotLogTypeMismatches: true, aotExplain: ["guards", "guards-json"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotLogTypeMismatches: false, aotExplain: "guards-json" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotExplain: ["missed-optimizations", "guards"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotExplain: "decline" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotTypeErrors: "warn" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   plugins: [
     {
       name: "my-terrible-plugin",

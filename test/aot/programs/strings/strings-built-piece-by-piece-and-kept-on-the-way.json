@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: Bun.gc",
+  "runWithASAN": "it keeps strings that share their characters with a string still being built"
+}

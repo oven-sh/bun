@@ -28,6 +28,7 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
+#include <JavaScriptCore/AOTPropertyWalk.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace WebCore {
@@ -196,6 +197,41 @@ private:
 
             return result;
         }
+
+#if ENABLE(AOT)
+        if (JSC::AOT::PropertyWalk::isCompiledObject(object)) {
+            Vector<JSC::Identifier, 8> identifiers;
+            JSC::MarkedArgumentBuffer fieldValues;
+            auto walkResult = JSC::AOT::PropertyWalk::forEachOwnProperty(vm, object, JSC::AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const JSC::AOT::PropertyWalk::OwnProperty& property) -> WTF::IterationStatus {
+                if (property.attributes & JSC::PropertyAttribute::DontEnum)
+                    return WTF::IterationStatus::Continue;
+                if (property.value.isObject())
+                    return WTF::IterationStatus::Done;
+                identifiers.append(JSC::Identifier::fromUid(vm, property.name));
+                fieldValues.appendWithCrashOnOverflow(property.value);
+                return WTF::IterationStatus::Continue;
+            });
+            if (walkResult == JSC::AOT::PropertyWalk::Result::Completed) {
+                for (size_t i = 0; i < identifiers.size(); ++i) {
+                    auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, identifiers[i]);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto typedValue = Converter<V>::convert(lexicalGlobalObject, fieldValues.at(i), args...);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if constexpr (std::is_same_v<K, IDLUSVString>) {
+                        if (!typedKey.is8Bit()) {
+                            auto addResult = resultMap.add(typedKey, result.size());
+                            if (!addResult.isNewEntry) {
+                                result[addResult.iterator->value].value = WTF::move(typedValue);
+                                continue;
+                            }
+                        }
+                    }
+                    result.append({ WTF::move(typedKey), WTF::move(typedValue) });
+                }
+                return result;
+            }
+        }
+#endif
 
         // 4. Let keys be ? O.[[OwnPropertyKeys]]().
         JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);

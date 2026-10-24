@@ -19,9 +19,27 @@ pub use bun_sys::macho::{
 };
 
 pub(crate) const CPU_TYPE_ARM64: cpu_type_t = 0x0100_000C;
+pub(crate) const MH_MAGIC_64: u32 = 0xfeed_facf;
+pub(crate) const MH_EXECUTE: u32 = 0x2;
+pub(crate) const CPU_TYPE_X86_64: cpu_type_t = 0x0100_0007;
+
+pub(crate) const SG_READ_ONLY: u32 = 0x10;
 
 pub(crate) const S_REGULAR: u32 = 0x0;
+pub(crate) const SECTION_TYPE: u32 = 0x0000_00ff;
+pub(crate) const S_ZEROFILL: u32 = 0x1;
+pub(crate) const S_CSTRING_LITERALS: u32 = 0x2;
+pub(crate) const S_4BYTE_LITERALS: u32 = 0x3;
+pub(crate) const S_8BYTE_LITERALS: u32 = 0x4;
+pub(crate) const S_GB_ZEROFILL: u32 = 0xc;
+pub(crate) const S_16BYTE_LITERALS: u32 = 0xe;
+pub(crate) const S_THREAD_LOCAL_ZEROFILL: u32 = 0x12;
 pub(crate) const S_ATTR_NO_DEAD_STRIP: u32 = 0x1000_0000;
+pub(crate) const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x400;
+pub(crate) const N_SECT: u8 = 0x0e;
+pub(crate) const N_STAB: u8 = 0xe0;
+pub(crate) const N_TYPE: u8 = 0x0e;
+pub(crate) const INDIRECT_SYMBOL_LOCAL_OR_ABS: u32 = 0xc000_0000;
 
 pub(crate) const LC_REQ_DYLD: u32 = 0x8000_0000;
 
@@ -43,12 +61,64 @@ pub mod LC {
     pub(crate) const DYLD_INFO_ONLY: u32 = 0x22 | LC_REQ_DYLD;
     pub(crate) const DYLD_EXPORTS_TRIE: u32 = 0x33 | LC_REQ_DYLD;
     pub(crate) const DYLD_CHAINED_FIXUPS: u32 = 0x34 | LC_REQ_DYLD;
+    pub(crate) const LOAD_DYLIB: u32 = 0xc;
+    pub(crate) const LOAD_DYLINKER: u32 = 0xe;
+    pub(crate) const UUID: u32 = 0x1b;
+    pub(crate) const SEGMENT_SPLIT_INFO: u32 = 0x1e;
+    pub(crate) const VERSION_MIN_MACOSX: u32 = 0x24;
+    pub(crate) const DYLD_ENVIRONMENT: u32 = 0x27;
+    pub(crate) const SOURCE_VERSION: u32 = 0x2a;
+    pub(crate) const BUILD_VERSION: u32 = 0x32;
+    pub(crate) const ATOM_INFO: u32 = 0x36;
+    pub(crate) const LOAD_WEAK_DYLIB: u32 = 0x18 | LC_REQ_DYLD;
+    pub(crate) const RPATH: u32 = 0x1c | LC_REQ_DYLD;
+    pub(crate) const MAIN: u32 = 0x28 | LC_REQ_DYLD;
+}
+
+pub(crate) enum CommandKind {
+    Segment,
+    SymbolTable,
+    DynamicSymbolTable,
+    LinkeditData,
+    DyldInfo,
+    NoFileOffsets,
+    Unknown,
+}
+
+pub(crate) fn command_kind(cmd: u32) -> CommandKind {
+    match cmd {
+        LC::SEGMENT_64 => CommandKind::Segment,
+        LC::SYMTAB => CommandKind::SymbolTable,
+        LC::DYSYMTAB => CommandKind::DynamicSymbolTable,
+        LC::CODE_SIGNATURE
+        | LC::SEGMENT_SPLIT_INFO
+        | LC::FUNCTION_STARTS
+        | LC::DATA_IN_CODE
+        | LC::DYLIB_CODE_SIGN_DRS
+        | LC::LINKER_OPTIMIZATION_HINT
+        | LC::DYLD_EXPORTS_TRIE
+        | LC::DYLD_CHAINED_FIXUPS
+        | LC::ATOM_INFO => CommandKind::LinkeditData,
+        LC::DYLD_INFO | LC::DYLD_INFO_ONLY => CommandKind::DyldInfo,
+        LC::UUID
+        | LC::LOAD_DYLINKER
+        | LC::LOAD_DYLIB
+        | LC::LOAD_WEAK_DYLIB
+        | LC::RPATH
+        | LC::MAIN
+        | LC::BUILD_VERSION
+        | LC::VERSION_MIN_MACOSX
+        | LC::SOURCE_VERSION
+        | LC::DYLD_ENVIRONMENT => CommandKind::NoFileOffsets,
+        _ => CommandKind::Unknown,
+    }
 }
 
 pub(crate) mod PROT {
     use super::vm_prot_t;
     pub(crate) const READ: vm_prot_t = 0x01;
     pub(crate) const WRITE: vm_prot_t = 0x02;
+    pub(crate) const EXECUTE: vm_prot_t = 0x04;
 }
 
 #[repr(C)]
@@ -71,6 +141,10 @@ impl section_64 {
     #[inline]
     pub(crate) fn sect_name(&self) -> &[u8] {
         parse_name(&self.sectname)
+    }
+    #[inline]
+    pub(crate) fn seg_name(&self) -> &[u8] {
+        parse_name(&self.segname)
     }
 }
 
@@ -135,6 +209,43 @@ pub(crate) struct dyld_info_command {
     pub export_off: u32,
     pub export_size: u32,
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct nlist_64 {
+    pub n_strx: u32,
+    pub n_type: u8,
+    pub n_sect: u8,
+    pub n_desc: u16,
+    pub n_value: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct dyld_chained_fixups_header {
+    pub fixups_version: u32,
+    pub starts_offset: u32,
+    pub imports_offset: u32,
+    pub symbols_offset: u32,
+    pub imports_count: u32,
+    pub imports_format: u32,
+    pub symbols_format: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct dyld_chained_starts_in_segment {
+    pub size: u32,
+    pub page_size: u16,
+    pub pointer_format: u16,
+    pub segment_offset: u64,
+    pub max_valid_pointer: u32,
+    pub page_count: u16,
+    pub first_page_start: u16,
+}
+
+pub(crate) const DYLD_CHAINED_PTR_START_NONE: u16 = 0xffff;
+pub(crate) const DYLD_CHAINED_PTR_START_MULTI: u16 = 0x8000;
 
 // ── code-signing blobs ────────────────────────────────────────────────────
 

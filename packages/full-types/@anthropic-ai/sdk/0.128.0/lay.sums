@@ -1,0 +1,4 @@
+a17733af845d12105fb9ec9e00ab4865da571a75a0fd38a17b2336f0250138f7  core/streaming.mjs
+35dec156aff0a929535500698fa4e454723c516ba5b2921a9a27fc69f1461b11  internal/decoders/line.mjs
+e602b3a136cd5b78afe19ef9972efe64952dde071b3fb3e74991d13831e10356  internal/tslib.mjs
+5acccc33bee5b19c5c0e41dd9c7501da455fce8cfe07134de47e3dc60d942e78  internal/utils/bytes.mjs

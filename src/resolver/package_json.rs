@@ -386,6 +386,7 @@ impl PackageJSON {
         macro_map
     }
 
+    #[inline(never)]
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
         r: &mut resolver::Resolver<'_>,
         input_path: &[u8],
@@ -393,6 +394,10 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
+        bun_removable_features::removable_definition!(
+            PackageFiles,
+            Self::parse::<INCLUDE_DEPENDENCIES>
+        );
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
@@ -1066,6 +1071,49 @@ pub struct ExportsMap {
 }
 
 impl ExportsMap {
+    /// The keys that name one subpath each, without their dot: `/feature` for `"./feature"`. Neither `"."` nor a pattern.
+    pub fn written_subpaths(&self) -> Vec<&[u8]> {
+        let EntryData::Map(map) = &self.root.data else {
+            return Vec::new();
+        };
+        let keys = map.list.iter().map(|entry| &entry.key[..]);
+        keys.filter(|key| {
+            key.starts_with(b"./")
+                && key.len() > 2
+                && !bun_core::strings::contains_char(key, b'*')
+                && !key.ends_with(b"/")
+        })
+        .map(|key| &key[1..])
+        .collect()
+    }
+
+    /// The subpaths, without their dot, that a key with a `*` may give the file at `path_in_package` (`/lib/a.js`): for each text that the key can lead to, whatever its conditions, what the `*` has to stand for.
+    pub fn subpaths_by_pattern(&self, path_in_package: &[u8]) -> Vec<Vec<u8>> {
+        let EntryData::Map(map) = &self.root.data else {
+            return Vec::new();
+        };
+        let mut subpaths = Vec::new();
+        for entry in map.list.iter() {
+            let Some((key_start, key_end)) = split_at_star(&entry.key) else {
+                continue;
+            };
+            let Some(key_start) = key_start.strip_prefix(b".") else {
+                continue;
+            };
+            entry.value.for_each_text(&mut |target| {
+                let matched = split_at_star(target).and_then(|(start, end)| {
+                    path_in_package
+                        .strip_prefix(start.strip_prefix(b".")?)?
+                        .strip_suffix(end)
+                });
+                if let Some(matched) = matched.filter(|matched| !matched.is_empty()) {
+                    subpaths.push([key_start, matched, key_end].concat());
+                }
+            });
+        }
+        subpaths
+    }
+
     pub(crate) fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -1307,7 +1355,24 @@ pub struct MapEntry {
     pub(crate) value: Entry,
 }
 
+fn split_at_star(text: &[u8]) -> Option<(&[u8], &[u8])> {
+    let star = bun_core::strings::index_of_char_usize(text, b'*')?;
+    Some((&text[..star], &text[star + 1..]))
+}
+
 impl Entry {
+    fn for_each_text(&self, each: &mut dyn FnMut(&[u8])) {
+        match &self.data {
+            EntryData::Invalid | EntryData::Null => {}
+            EntryData::String(text) => each(text),
+            EntryData::Array(entries) => entries.iter().for_each(|entry| entry.for_each_text(each)),
+            EntryData::Map(map) => map
+                .list
+                .iter()
+                .for_each(|entry| entry.value.for_each_text(each)),
+        }
+    }
+
     pub(crate) fn keys_start_with_dot(&self) -> bool {
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }

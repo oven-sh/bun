@@ -1,0 +1,1 @@
+It reads error.stack in the form the jsc shell gives it; under Bun it fails with and without --aot.

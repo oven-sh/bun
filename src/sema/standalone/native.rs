@@ -213,6 +213,8 @@ mod fake_mimalloc {
     #[unsafe(no_mangle)]
     extern "C" fn mi_option_set(_option: u32, _value: core::ffi::c_long) {}
     #[unsafe(no_mangle)]
+    extern "C" fn mi_option_set_default(_option: u32, _value: core::ffi::c_long) {}
+    #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.
         unsafe { heap_alloc(heap.cast(), size, 16, false) }
@@ -376,12 +378,140 @@ fn first(text: &[u8], f: impl Fn(u8) -> bool) -> usize {
         .unwrap_or(text.len() - at)
 }
 
+#[repr(C)]
+struct XxHash64State {
+    lanes: [u64; 4],
+    buffer: [u8; 32],
+    total: u64,
+    buffered: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<XxHash64State>() == 80);
+
+const XXH_PRIME_1: u64 = 0x9E37_79B1_85EB_CA87;
+const XXH_PRIME_2: u64 = 0xC2B2_AE3D_27D4_EB4F;
+const XXH_PRIME_3: u64 = 0x1656_67B1_9E37_79F9;
+const XXH_PRIME_4: u64 = 0x85EB_CA77_C2B2_AE63;
+const XXH_PRIME_5: u64 = 0x27D4_EB2F_1656_67C5;
+
+fn xxh_round(lane: u64, input: u64) -> u64 {
+    lane.wrapping_add(input.wrapping_mul(XXH_PRIME_2))
+        .rotate_left(31)
+        .wrapping_mul(XXH_PRIME_1)
+}
+
+fn xxh_stripe(lanes: &mut [u64; 4], stripe: &[u8; 32]) {
+    for (lane, word) in lanes.iter_mut().zip(stripe.as_chunks::<8>().0) {
+        *lane = xxh_round(*lane, u64::from_le_bytes(*word));
+    }
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_xxhash64_reset(state: *mut XxHash64State, seed: u64) {
+    // SAFETY: the caller passes 80 writable bytes, aligned to 8.
+    unsafe {
+        state.write(XxHash64State {
+            lanes: [
+                seed.wrapping_add(XXH_PRIME_1).wrapping_add(XXH_PRIME_2),
+                seed.wrapping_add(XXH_PRIME_2),
+                seed,
+                seed.wrapping_sub(XXH_PRIME_1),
+            ],
+            buffer: [0; 32],
+            total: 0,
+            buffered: 0,
+        });
+    }
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_xxhash64_update(
+    state: *mut XxHash64State,
+    input: *const u8,
+    len: usize,
+) {
+    // SAFETY: the caller passes a state that `highway_xxhash64_reset` wrote, and a slice as a pointer and a length.
+    let (state, mut input) = unsafe { (&mut *state, bytes(input, len)) };
+    state.total += len as u64;
+    let buffered = state.buffered as usize;
+    if buffered + input.len() < 32 {
+        state.buffer[buffered..buffered + input.len()].copy_from_slice(input);
+        state.buffered += input.len() as u64;
+        return;
+    }
+    if buffered > 0 {
+        let (head, rest) = input.split_at(32 - buffered);
+        state.buffer[buffered..].copy_from_slice(head);
+        xxh_stripe(&mut state.lanes, &state.buffer);
+        input = rest;
+    }
+    let (stripes, tail) = input.as_chunks::<32>();
+    for stripe in stripes {
+        xxh_stripe(&mut state.lanes, stripe);
+    }
+    state.buffer[..tail.len()].copy_from_slice(tail);
+    state.buffered = tail.len() as u64;
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_xxhash64_digest(state: *const XxHash64State) -> u64 {
+    // SAFETY: the caller passes a state that `highway_xxhash64_reset` wrote.
+    let state = unsafe { &*state };
+    let mut hash = if state.total >= 32 {
+        let [a, b, c, d] = state.lanes;
+        let mixed = a
+            .rotate_left(1)
+            .wrapping_add(b.rotate_left(7))
+            .wrapping_add(c.rotate_left(12))
+            .wrapping_add(d.rotate_left(18));
+        state.lanes.iter().fold(mixed, |hash, &lane| {
+            (hash ^ xxh_round(0, lane))
+                .wrapping_mul(XXH_PRIME_1)
+                .wrapping_add(XXH_PRIME_4)
+        })
+    } else {
+        state.lanes[2].wrapping_add(XXH_PRIME_5)
+    };
+    hash = hash.wrapping_add(state.total);
+    let (words, tail) = state.buffer[..state.buffered as usize].as_chunks::<8>();
+    for word in words {
+        hash = (hash ^ xxh_round(0, u64::from_le_bytes(*word)))
+            .rotate_left(27)
+            .wrapping_mul(XXH_PRIME_1)
+            .wrapping_add(XXH_PRIME_4);
+    }
+    let (halves, tail) = tail.as_chunks::<4>();
+    for half in halves {
+        hash = (hash ^ u64::from(u32::from_le_bytes(*half)).wrapping_mul(XXH_PRIME_1))
+            .rotate_left(23)
+            .wrapping_mul(XXH_PRIME_2)
+            .wrapping_add(XXH_PRIME_3);
+    }
+    for &byte in tail {
+        hash = (hash ^ u64::from(byte).wrapping_mul(XXH_PRIME_5))
+            .rotate_left(11)
+            .wrapping_mul(XXH_PRIME_1);
+    }
+    hash = (hash ^ (hash >> 33)).wrapping_mul(XXH_PRIME_2);
+    hash = (hash ^ (hash >> 29)).wrapping_mul(XXH_PRIME_3);
+    hash ^ (hash >> 32)
+}
+
 // Weak linkage, so the real kernels win wherever they're linked.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_char(p: *const u8, len: usize, needle: u8) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| c == needle)
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_index_of_not_char(p: *const u8, len: usize, value: u8) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    first(unsafe { bytes(p, len) }, |c| c != value)
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -592,6 +722,31 @@ unsafe extern "C" fn highway_memrmem(
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_memmem16(
+    h: *const u16,
+    h_len: usize,
+    n: *const u16,
+    n_len: usize,
+) -> usize {
+    if n_len == 0 {
+        return 0;
+    }
+    if h_len < n_len {
+        return usize::MAX;
+    }
+    // SAFETY: the caller passes two slices, each as a pointer and a length.
+    let (hay, needle) = unsafe {
+        (
+            core::slice::from_raw_parts(h, h_len),
+            core::slice::from_raw_parts(n, n_len),
+        )
+    };
+    (0..=hay.len() - needle.len())
+        .find(|&i| hay[i..i + needle.len()] == *needle)
+        .unwrap_or(usize::MAX)
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_memrmem16(
     h: *const u16,
     h_len: usize,
@@ -638,6 +793,12 @@ unsafe extern "C" fn highway_index_of_interesting_character_in_multiline_comment
     first(unsafe { bytes(p, len) }, |c| {
         c == b'*' || c == b'\r' || c == b'\n' || c > 127
     })
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_index_of_newline_or_non_ascii(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    first(unsafe { bytes(p, len) }, |c| !(0x20..=0x7F).contains(&c))
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -697,6 +858,50 @@ unsafe extern "C" fn highway_json_index_chunk(
     // SAFETY: the caller passes a valid pointer for the flags.
     unsafe { *out_flags = 1 << 3 };
     0
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_xml_index_chunk(
+    input: *const u8,
+    len: usize,
+    base_offset: usize,
+    out_indices: *mut u32,
+    inout_state: *mut u64,
+) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length, and three words of state.
+    let (text, state) = unsafe { (bytes(input, len), &mut *inout_state.cast::<[u64; 3]>()) };
+    let mut is_in_tag = state[0] != 0;
+    let (mut last, mut before_last) = (state[1] as u8, state[2] as u8);
+    let mut count = 0;
+    for (at, &c) in text.iter().enumerate() {
+        let is_indexed = match c {
+            b'<' => {
+                is_in_tag = true;
+                true
+            }
+            b'>' => {
+                is_in_tag = false;
+                true
+            }
+            b'\t' | b'\n' | b'"' | b'\'' | b'=' => is_in_tag,
+            b'&' | 0..0x20 => true,
+            0xBE | 0xBF => last == 0xBF && before_last == 0xEF,
+            _ => false,
+        };
+        if is_indexed {
+            // SAFETY: the caller passes room for one index a byte.
+            unsafe { out_indices.add(count).write((base_offset + at) as u32) };
+            count += 1;
+        }
+        (before_last, last) = (last, c);
+    }
+    *state = [
+        u64::from(is_in_tag),
+        u64::from(last),
+        u64::from(before_last),
+    ];
+    count
 }
 
 // ───────────────────────────── simdutf ─────────────────────────────
@@ -807,6 +1012,33 @@ unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
         .sum()
 }
 #[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__utf8_length_from_latin1(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    unsafe { bytes(p, len) }
+        .iter()
+        .map(|&c| 1 + usize::from(c >= 0x80))
+        .sum()
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__convert_latin1_to_utf8(
+    p: *const u8,
+    len: usize,
+    out: *mut u8,
+) -> usize {
+    let mut written = 0;
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    for &c in unsafe { bytes(p, len) } {
+        let mut encoded = [0; 2];
+        let encoded = char::from(c).encode_utf8(&mut encoded).as_bytes();
+        // SAFETY: the caller's buffer holds the length that this text has in UTF-8.
+        unsafe {
+            core::ptr::copy_nonoverlapping(encoded.as_ptr(), out.add(written), encoded.len());
+        }
+        written += encoded.len();
+    }
+    written
+}
+#[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__utf16_length_from_utf8(p: *const u8, len: usize) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { bytes(p, len) }
@@ -847,14 +1079,59 @@ unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
         count: written,
     }
 }
+fn base64_length(len: usize, is_url_safe: bool) -> usize {
+    match is_url_safe {
+        true => len / 3 * 4 + (len % 3 * 4).div_ceil(3),
+        false => len.div_ceil(3) * 4,
+    }
+}
+
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__base64_encode(
+    p: *const u8,
+    len: usize,
+    out: *mut u8,
+    url: c_int,
+) -> usize {
+    let is_url_safe = url != 0;
+    let alphabet: &[u8; 64] = match is_url_safe {
+        true => b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_",
+        false => b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+    };
+    let length = base64_length(len, is_url_safe);
+    if length == 0 {
+        return 0;
+    }
+    // SAFETY: the caller passes a slice, and room for the encoded length.
+    let (input, output) = unsafe { (bytes(p, len), core::slice::from_raw_parts_mut(out, length)) };
+    output.fill(b'=');
+    for (chunk, encoded) in input.chunks(3).zip(output.chunks_mut(4)) {
+        let mut padded = [0; 3];
+        padded[..chunk.len()].copy_from_slice(chunk);
+        let bits = u32::from_be_bytes([0, padded[0], padded[1], padded[2]]);
+        for (index, character) in encoded.iter_mut().enumerate().take(chunk.len() + 1) {
+            *character = alphabet[(bits >> (18 - 6 * index) & 63) as usize];
+        }
+    }
+    length
+}
+#[unsafe(no_mangle)]
+extern "C" fn simdutf__base64_length_from_binary(len: usize, options: c_int) -> usize {
+    base64_length(len, options != 0)
+}
+/// Answers simdutf's INVALID_BASE64_CHARACTER: `bun_base64::decode` then uses its own decoder.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__base64_decode_from_binary(
     _p: *const u8,
     _len: usize,
     _out: *mut u8,
+    _out_len: usize,
     _url: c_int,
-) -> usize {
-    unreachable!("the parser never encodes base64")
+) -> SimdutfResult {
+    SimdutfResult {
+        status: 7,
+        count: 0,
+    }
 }
 
 // ───────────────────────────── widths ─────────────────────────────
@@ -952,7 +1229,7 @@ extern "C" fn bun_cpu_features() -> u8 {
 #[unsafe(no_mangle)]
 extern "C" fn bun_restore_stdio() {}
 #[unsafe(no_mangle)]
-extern "C" fn on_before_reload_process_posix() {}
+extern "C" fn on_before_reload_process_posix(_close_inherited_fds: bool) {}
 #[unsafe(no_mangle)]
 extern "C" fn getRSS(rss: &mut usize) -> c_int {
     *rss = 0;

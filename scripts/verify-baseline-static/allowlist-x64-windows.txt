@@ -437,7 +437,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Highway. MSVC-mangled bun::N_AVX* names.
-# (280 symbols)
+# (286 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::CopyAsciiPrefixImpl                                  [AVX, AVX512BW, AVX512F, AVX512VL]
@@ -457,6 +457,7 @@ bun::N_AVX10_2::CountCharImpl                                        [AVX, AVX2,
 bun::N_AVX10_2::IndexOfNotCharImpl                                   [AVX, AVX512BW]
 bun::N_AVX10_2::LastIndexOfCharImpl                                  [AVX, AVX512BW]
 bun::N_AVX10_2::LastIndexOfAnyCharImpl                               [AVX, AVX512BW, AVX512F]
+bun::N_AVX10_2::IndexOfUntidySlashImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 bun::N_AVX10_2::IndexOfEscapeChar16Impl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX10_2::IndexOfEscapeChar8Impl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX10_2::IndexOfFirstAsciiUpper16Impl                                  [AVX, AVX512BW, AVX512F]
@@ -503,6 +504,7 @@ bun::N_AVX2::CountCharImpl                                           [AVX, AVX2]
 bun::N_AVX2::IndexOfNotCharImpl                                      [AVX, AVX2]
 bun::N_AVX2::LastIndexOfCharImpl                                     [AVX, AVX2]
 bun::N_AVX2::LastIndexOfAnyCharImpl                                  [AVX, AVX2]
+bun::N_AVX2::IndexOfUntidySlashImpl                                  [AVX, AVX2, BMI1]
 bun::N_AVX2::IndexOfEscapeChar16Impl                                 [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX2::IndexOfEscapeChar8Impl                                  [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX2::IndexOfFirstAsciiUpper16Impl                                     [AVX, AVX2, BMI2]
@@ -546,6 +548,7 @@ bun::N_AVX3::CountCharImpl                                           [AVX, AVX2,
 bun::N_AVX3::IndexOfNotCharImpl                                      [AVX, AVX512BW]
 bun::N_AVX3::LastIndexOfCharImpl                                     [AVX, AVX512BW]
 bun::N_AVX3::LastIndexOfAnyCharImpl                                  [AVX, AVX512BW, AVX512F]
+bun::N_AVX3::IndexOfUntidySlashImpl                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 bun::N_AVX3::IndexOfEscapeChar16Impl                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::IndexOfEscapeChar8Impl                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::IndexOfFirstAsciiUpper16Impl                                     [AVX, AVX512BW, AVX512F]
@@ -589,6 +592,7 @@ bun::N_AVX3_DL::CountCharImpl                                        [AVX, AVX2,
 bun::N_AVX3_DL::IndexOfNotCharImpl                                   [AVX, AVX512BW]
 bun::N_AVX3_DL::LastIndexOfCharImpl                                  [AVX, AVX512BW]
 bun::N_AVX3_DL::LastIndexOfAnyCharImpl                               [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_DL::IndexOfUntidySlashImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 bun::N_AVX3_DL::IndexOfEscapeChar16Impl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_DL::IndexOfEscapeChar8Impl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_DL::IndexOfFirstAsciiUpper16Impl                                  [AVX, AVX512BW, AVX512F]
@@ -632,6 +636,7 @@ bun::N_AVX3_SPR::CountCharImpl                                       [AVX, AVX2,
 bun::N_AVX3_SPR::IndexOfNotCharImpl                                  [AVX, AVX512BW]
 bun::N_AVX3_SPR::LastIndexOfCharImpl                                 [AVX, AVX512BW]
 bun::N_AVX3_SPR::LastIndexOfAnyCharImpl                              [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_SPR::IndexOfUntidySlashImpl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 bun::N_AVX3_SPR::IndexOfEscapeChar16Impl                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_SPR::IndexOfEscapeChar8Impl                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_SPR::IndexOfFirstAsciiUpper16Impl                                 [AVX, AVX512BW, AVX512F]
@@ -675,6 +680,7 @@ bun::N_AVX3_ZEN4::CountCharImpl                                      [AVX, AVX2,
 bun::N_AVX3_ZEN4::IndexOfNotCharImpl                                 [AVX, AVX512BW]
 bun::N_AVX3_ZEN4::LastIndexOfCharImpl                                [AVX, AVX512BW]
 bun::N_AVX3_ZEN4::LastIndexOfAnyCharImpl                             [AVX, AVX512BW, AVX512F]
+bun::N_AVX3_ZEN4::IndexOfUntidySlashImpl                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 bun::N_AVX3_ZEN4::IndexOfEscapeChar16Impl                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::IndexOfEscapeChar8Impl                             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::IndexOfFirstAsciiUpper16Impl                                [AVX, AVX512BW, AVX512F]
@@ -889,7 +895,7 @@ bssl::BORINGSSL_keccak_squeeze_x4  [AVX, AVX2]
 
 # ----------------------------------------------------------------------------
 # MSVC STL vectorized algorithms. Gate: __isa_available.
-# (16 symbols)
+# (17 symbols)
 # ----------------------------------------------------------------------------
 __std_min_element_d                                                                                       [AVX, AVX2]
 __std_mismatch_1                                                                                          [AVX, AVX2]
@@ -898,6 +904,7 @@ __std_reverse_trivially_swappable_1                                             
 __std_reverse_trivially_swappable_2                                                                       [AVX, AVX2]
 __std_reverse_trivially_swappable_4                                                                       [AVX, AVX2]
 __std_reverse_trivially_swappable_8                                                                       [AVX, AVX2]
+__std_swap_ranges_trivially_swappable_noalias                                                             [AVX]
 `anonymous namespace'::__std_find_last_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char>  [AVX, AVX2, LZCNT]
 `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char>       [AVX, AVX2]
 `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_2,unsigned short>      [AVX, AVX2]

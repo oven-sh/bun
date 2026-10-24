@@ -1,0 +1,7 @@
+# The type of an object literal in a generic function is one type for each instantiation of the function: what the literal holds differs.
+object-literal-instantiations.ts:5 origin `box(n)` = object literal object-literal-instantiations.ts:2
+object-literal-instantiations.ts:6 origin `box(s)` = object literal object-literal-instantiations.ts:2
+different: object-literal-instantiations.ts:5 identity `box(n)` <=> object-literal-instantiations.ts:6 identity `box(s)`
+different: object-literal-instantiations.ts:5 identity `box(n)` <=> object-literal-instantiations.ts:2 identity `{ value }`
+
+same: object-literal-instantiations.ts:5 identity `box(n)` <=> object-literal-instantiations.ts:7 identity `box(n)`

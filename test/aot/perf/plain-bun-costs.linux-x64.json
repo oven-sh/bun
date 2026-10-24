@@ -1,0 +1,340 @@
+{
+  "start hello.js": {
+    "thousandInstructions": 3388,
+    "pageFaults": 687,
+    "peakKilobytes": 16948
+  },
+  "start hello.ts": {
+    "thousandInstructions": 3501,
+    "pageFaults": 706,
+    "peakKilobytes": 17668
+  },
+  "start fs.js": {
+    "thousandInstructions": 10053,
+    "pageFaults": 865,
+    "peakKilobytes": 21092
+  },
+  "start stream.js": {
+    "thousandInstructions": 20118,
+    "pageFaults": 1018,
+    "peakKilobytes": 23188
+  },
+  "start http.js": {
+    "thousandInstructions": 38848,
+    "pageFaults": 1328,
+    "peakKilobytes": 27124
+  },
+  "start thirty-modules.js": {
+    "thousandInstructions": 114296,
+    "pageFaults": 2409,
+    "peakKilobytes": 34780
+  },
+  "start node-http-server.js": {
+    "thousandInstructions": 64315,
+    "pageFaults": 1822
+  },
+  "start bun-serve.js": {
+    "thousandInstructions": 4826,
+    "pageFaults": 769
+  },
+  "interpreter arrays.js": {
+    "thousandInstructions": 4002132,
+    "pageFaults": 4422,
+    "peakKilobytes": 34828
+  },
+  "jit arrays.js": {
+    "thousandInstructions": 1746200,
+    "pageFaults": 5090,
+    "peakKilobytes": 48432
+  },
+  "interpreter buffers.js": {
+    "thousandInstructions": 357551,
+    "pageFaults": 3546,
+    "peakKilobytes": 30044
+  },
+  "jit buffers.js": {
+    "thousandInstructions": 299317,
+    "pageFaults": 3522,
+    "peakKilobytes": 39716
+  },
+  "interpreter classes-and-closures.js": {
+    "thousandInstructions": 4189403,
+    "pageFaults": 3932,
+    "peakKilobytes": 30832
+  },
+  "jit classes-and-closures.js": {
+    "thousandInstructions": 1096746,
+    "pageFaults": 5459,
+    "peakKilobytes": 49748
+  },
+  "interpreter collector.js": {
+    "thousandInstructions": 6823404,
+    "pageFaults": 12905,
+    "peakKilobytes": 50012
+  },
+  "jit collector.js": {
+    "thousandInstructions": 1678434,
+    "pageFaults": 11288,
+    "peakKilobytes": 78392
+  },
+  "interpreter errors.js": {
+    "thousandInstructions": 1200912,
+    "pageFaults": 9466,
+    "peakKilobytes": 53888
+  },
+  "jit errors.js": {
+    "thousandInstructions": 1165514,
+    "pageFaults": 6702,
+    "peakKilobytes": 51564
+  },
+  "interpreter events-and-streams.js": {
+    "thousandInstructions": 4159481,
+    "pageFaults": 3838,
+    "peakKilobytes": 33420
+  },
+  "jit events-and-streams.js": {
+    "thousandInstructions": 1134050,
+    "pageFaults": 7067,
+    "peakKilobytes": 58184
+  },
+  "interpreter json.js": {
+    "thousandInstructions": 1576091,
+    "pageFaults": 4144,
+    "peakKilobytes": 31804
+  },
+  "jit json.js": {
+    "thousandInstructions": 1442120,
+    "pageFaults": 4259,
+    "peakKilobytes": 41008
+  },
+  "interpreter large-functions.js": {
+    "thousandInstructions": 291974,
+    "pageFaults": 1830,
+    "peakKilobytes": 23932
+  },
+  "jit large-functions.js": {
+    "thousandInstructions": 1311521,
+    "pageFaults": 16883,
+    "peakKilobytes": 89972
+  },
+  "interpreter maps.js": {
+    "thousandInstructions": 2103076,
+    "pageFaults": 10416,
+    "peakKilobytes": 56064
+  },
+  "jit maps.js": {
+    "thousandInstructions": 984656,
+    "pageFaults": 19972,
+    "peakKilobytes": 103068
+  },
+  "interpreter objects.js": {
+    "thousandInstructions": 1112688,
+    "pageFaults": 4681,
+    "peakKilobytes": 34140
+  },
+  "jit objects.js": {
+    "thousandInstructions": 541555,
+    "pageFaults": 6482,
+    "peakKilobytes": 51996
+  },
+  "interpreter promises.js": {
+    "thousandInstructions": 1330838,
+    "pageFaults": 3166,
+    "peakKilobytes": 30964
+  },
+  "jit promises.js": {
+    "thousandInstructions": 279294,
+    "pageFaults": 4037,
+    "peakKilobytes": 45008
+  },
+  "interpreter regexps.js": {
+    "thousandInstructions": 5242730,
+    "pageFaults": 3729,
+    "peakKilobytes": 30772
+  },
+  "jit regexps.js": {
+    "thousandInstructions": 889878,
+    "pageFaults": 4066,
+    "peakKilobytes": 41516
+  },
+  "interpreter strings.js": {
+    "thousandInstructions": 739565,
+    "pageFaults": 6119,
+    "peakKilobytes": 41512
+  },
+  "jit strings.js": {
+    "thousandInstructions": 435049,
+    "pageFaults": 7369,
+    "peakKilobytes": 53100
+  },
+  "interpreter transpiler.js": {
+    "thousandInstructions": 591551,
+    "pageFaults": 5174,
+    "peakKilobytes": 36860
+  },
+  "jit transpiler.js": {
+    "thousandInstructions": 592107,
+    "pageFaults": 5294,
+    "peakKilobytes": 37848
+  },
+  "interpreter webassembly.js": {
+    "thousandInstructions": 4636608,
+    "pageFaults": 783,
+    "peakKilobytes": 20896
+  },
+  "jit webassembly.js": {
+    "thousandInstructions": 134146,
+    "pageFaults": 976,
+    "peakKilobytes": 26316
+  },
+  "interpreter emit-to-one-listener.js": {
+    "thousandInstructions": 3798513,
+    "pageFaults": 3078,
+    "peakKilobytes": 29564
+  },
+  "jit emit-to-one-listener.js": {
+    "thousandInstructions": 530036,
+    "pageFaults": 3779,
+    "peakKilobytes": 41428
+  },
+  "interpreter emit-to-two-listeners.js": {
+    "thousandInstructions": 4770824,
+    "pageFaults": 3060,
+    "peakKilobytes": 29524
+  },
+  "jit emit-to-two-listeners.js": {
+    "thousandInstructions": 776064,
+    "pageFaults": 4200,
+    "peakKilobytes": 43280
+  },
+  "interpreter waiting-ticks.js": {
+    "thousandInstructions": 12742793,
+    "pageFaults": 11719,
+    "peakKilobytes": 49300
+  },
+  "jit waiting-ticks.js": {
+    "thousandInstructions": 1272020,
+    "pageFaults": 14816,
+    "peakKilobytes": 62304
+  },
+  "interpreter bun-apis.js": {
+    "thousandInstructions": 698420,
+    "pageFaults": 6301,
+    "peakKilobytes": 45668
+  },
+  "jit bun-apis.js": {
+    "thousandInstructions": 600607,
+    "pageFaults": 7799,
+    "peakKilobytes": 60240
+  },
+  "interpreter compression.js": {
+    "thousandInstructions": 757378,
+    "pageFaults": 4569,
+    "peakKilobytes": 36816
+  },
+  "jit compression.js": {
+    "thousandInstructions": 591077,
+    "pageFaults": 6323,
+    "peakKilobytes": 52468
+  },
+  "interpreter crypto.js": {
+    "thousandInstructions": 816355,
+    "pageFaults": 4002,
+    "peakKilobytes": 36716
+  },
+  "jit crypto.js": {
+    "thousandInstructions": 639755,
+    "pageFaults": 5666,
+    "peakKilobytes": 52536
+  },
+  "interpreter files.js": {
+    "thousandInstructions": 181071,
+    "pageFaults": 4363,
+    "peakKilobytes": 41736
+  },
+  "jit files.js": {
+    "thousandInstructions": 139271,
+    "pageFaults": 4813,
+    "peakKilobytes": 53420
+  },
+  "interpreter intl.js": {
+    "thousandInstructions": 1602955,
+    "pageFaults": 4991,
+    "peakKilobytes": 39372
+  },
+  "jit intl.js": {
+    "thousandInstructions": 1452716,
+    "pageFaults": 5777,
+    "peakKilobytes": 51064
+  },
+  "interpreter language.js": {
+    "thousandInstructions": 6901538,
+    "pageFaults": 10749,
+    "peakKilobytes": 51256
+  },
+  "jit language.js": {
+    "thousandInstructions": 3254361,
+    "pageFaults": 13543,
+    "peakKilobytes": 83556
+  },
+  "interpreter many-regexps.js": {
+    "thousandInstructions": 3199523,
+    "pageFaults": 3340,
+    "peakKilobytes": 30488
+  },
+  "jit many-regexps.js": {
+    "thousandInstructions": 336029,
+    "pageFaults": 3783,
+    "peakKilobytes": 40796
+  },
+  "interpreter sqlite.js": {
+    "thousandInstructions": 652599,
+    "pageFaults": 4150,
+    "peakKilobytes": 35288
+  },
+  "jit sqlite.js": {
+    "thousandInstructions": 573868,
+    "pageFaults": 5429,
+    "peakKilobytes": 49780
+  },
+  "interpreter web-apis.js": {
+    "thousandInstructions": 1549260,
+    "pageFaults": 8301,
+    "peakKilobytes": 51624
+  },
+  "jit web-apis.js": {
+    "thousandInstructions": 751096,
+    "pageFaults": 11665,
+    "peakKilobytes": 75080
+  },
+  "interpreter bun test": {
+    "thousandInstructions": 108206,
+    "pageFaults": 2873,
+    "peakKilobytes": 29088
+  },
+  "jit bun test": {
+    "thousandInstructions": 110433,
+    "pageFaults": 3326,
+    "peakKilobytes": 35604
+  },
+  "interpreter 300 modules": {
+    "thousandInstructions": 196945,
+    "pageFaults": 3009,
+    "peakKilobytes": 26344
+  },
+  "jit 300 modules": {
+    "thousandInstructions": 197554,
+    "pageFaults": 3354,
+    "peakKilobytes": 28392
+  },
+  "interpreter streams-made.js": {
+    "thousandInstructions": 5332219,
+    "pageFaults": 3754,
+    "peakKilobytes": 30688
+  },
+  "jit streams-made.js": {
+    "thousandInstructions": 677558,
+    "pageFaults": 5300,
+    "peakKilobytes": 49024
+  }
+}

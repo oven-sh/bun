@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/AOTRealmStartup.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ThrowScope.h>
@@ -8,6 +9,9 @@
 
 #if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
 extern "C" uint8_t Bun__codeGenerationFromStrings();
+extern "C" bool Bun__isCodeGenerationDisallowedByTrimming();
+extern "C" bool Bun__isCodeGenerationDisallowedByCompiledProgram();
+extern "C" bool Bun__isCodeGenerationFromStringsStrictByFlags();
 #endif
 
 namespace Bun {
@@ -40,16 +44,46 @@ inline CodeGenerationFromStrings codeGenerationFromStrings()
 }
 #endif
 
-inline constexpr ASCIILiteral codeGenerationFromStringsDisallowedMessage = "Code generation from strings disallowed for this context"_s;
+inline ASCIILiteral codeGenerationFromStringsDisallowedMessage()
+{
+#if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+    // Ahead of the message of --trim: where the compiled program refuses text, keeping the interpreter changes nothing.
+    if (Bun__isCodeGenerationDisallowedByCompiledProgram())
+        return JSC::AOT::evaluationRefusedMessage();
+    if (Bun__isCodeGenerationDisallowedByTrimming())
+        return "Code generation from strings disallowed for this context: eval() and new Function() were removed by --trim because your code never uses them. To keep them, add \"interpreter\" to compile.trim.allow in Bun.build()."_s;
+#endif
+    return "Code generation from strings disallowed for this context"_s;
+}
 
 inline bool isCodeGenerationFromStringsStrict()
 {
     return codeGenerationFromStrings() == CodeGenerationFromStrings::Strict;
 }
 
+// The flag or the build asks for "strict", whatever else refuses text in this process.
+inline bool isCodeGenerationFromStringsStrictByFlags()
+{
+#if defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+    return true;
+#else
+    return Bun__isCodeGenerationFromStringsStrictByFlags();
+#endif
+}
+
+// No flag set the level: the program was compiled ahead of time to run nothing but its own code.
+inline bool isCodeGenerationDisallowedByCompiledProgram()
+{
+#if defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+    return false;
+#else
+    return Bun__isCodeGenerationDisallowedByCompiledProgram();
+#endif
+}
+
 inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* globalObject)
 {
-    return JSC::createEvalError(globalObject, codeGenerationFromStringsDisallowedMessage);
+    return JSC::createEvalError(globalObject, codeGenerationFromStringsDisallowedMessage());
 }
 
 // Throws and returns the rest when nothing may make script from a string. Where the level is a

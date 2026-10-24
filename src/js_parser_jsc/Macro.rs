@@ -489,7 +489,9 @@ impl Macro {
             // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
             // is a live promise cell.
             unsafe {
-                (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                (*vm).run_with_api_lock(|| {
+                    (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                });
             }
             return Err(crate::Error::MacroLoadError);
         }

@@ -267,9 +267,13 @@ impl Checker<'_, '_> {
             // `signature.declaration != nil`
             let has_declaration =
                 sig.map(|sig| self.sig_decl(self.types().sig_origin(sig)).is_some());
-            if self.p.files.options.no_implicit_any {
+            if self.module_options(file).no_implicit_any {
                 // `checkCallExpression`
-                if has_declaration != Some(false) {
+                if has_declaration != Some(false)
+                    && self
+                        .type_constructed_by_function(file, data.callee, sig)
+                        .is_none()
+                {
                     self.error_at(
                         (file, node_start, self.end_inside_parentheses(file, e)),
                         7009,

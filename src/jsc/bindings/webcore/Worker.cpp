@@ -193,6 +193,11 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
     proxy->parentContextWillDestroy();
 }
 
+extern "C" void WebWorker__postOutOfMemoryError(WorkerMessagingProxy* proxy)
+{
+    proxy->postOutOfMemoryErrorToWorkerObject();
+}
+
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
 // it to the Worker object.
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
@@ -383,6 +388,11 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     return array;
 }
 
+JSValue createNodeWorkerConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSWorker::getConstructor(globalObject->vm(), globalObject);
+}
+
 // worker_threads (worker side): { stdin?, stdout, stderr } ports from the parent Worker.
 // process.stdin/stdout/stderr are created over them on first access (BunProcess.cpp).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -397,7 +407,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * le
 // port), as Node runs its worker bootstrap before user code. Throws like require() would.
 extern "C" void Bun__Worker__loadNodeWorkerThreadsModule(Zig::GlobalObject* globalObject)
 {
-    globalObject->internalModuleRegistry()->requireId(globalObject, globalObject->vm(), Bun::InternalModuleRegistry::Field::NodeWorkerThreads);
+    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeWorkerThreads, "native:Cpp:Worker.cpp:createNodeWorkerConstructor");
 }
 
 // worker_threads (worker side): register the transferred port as this thread's parentPort.

@@ -1,0 +1,214 @@
+# A call of a callee expected to be one built-in reports the identity test of the callee, then the tests its operands need to match an overload
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=31 function=f0
+runtimefunction id=89 function=f1
+function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Boolean boolean=true
+    Return v3
+}
+function f1 name="some" role=Library flags=[HasThis] enclosingRuntimeFunction=89 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v2
+}
+
+function f2 name="globalFunction" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="encodeURIComponent" [isFreeName]
+    v3: anything ~ builtin(EncodeURIComponent) = Upcast v2 castType=anything
+    v4 = Call v3, -, v0
+    Return v4
+}
+# PLAN: function f2
+# PLAN-NEXT: stretch 0: test TypeTest {{*}} testedType=builtin(EncodeURIComponent) before v4; uses v4;
+# CHECK-LABEL: function f2 name="globalFunction"
+# CHECK: [[isEncode2]]: boolean{{*}} = TypeTest v3 testedType=builtin(EncodeURIComponent)
+# CHECK-NEXT: Branch [[isEncode2]] -> taken
+# CHECK: v4: string = CallBuiltin -, v0 overload=EncodeURIComponent/0
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call v3, -, v0
+
+function f3 name="memberOfExpectedObject" parameters=[{type=builtin(Console) flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(Console), v1: string):
+    v2 = PropGet v0 key="log"
+    v3: anything ~ builtin(ConsoleLog) = Upcast v2 castType=anything
+    v4 = Call v3, v0, v1 calleeKey="log"
+    Return v4
+}
+# The read is a use of its own: behind the tests of the object and of the member's location it is the member, which decides the test of the callee
+# PLAN: function f3
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=builtin(Console) before v2; test IsBuiltinLocationUnchanged member=ConsoleLog before v2; test TypeTest v2 testedType=builtin(ConsoleLog) before v4; uses v2 v4;
+# CHECK-LABEL: function f3 name="memberOfExpectedObject"
+# CHECK: [[isConsole3]]: boolean{{*}} = TypeTest v0 testedType=builtin(Console)
+# CHECK-NEXT: Branch [[isConsole3]] -> taken
+# CHECK-NOT: PropGet
+# CHECK: [[log3]]: builtin(ConsoleLog) = Builtin builtin=ConsoleLog
+# CHECK: [[callee3]]: builtin(ConsoleLog) = Upcast [[log3]] castType=anything
+# CHECK: true = TypeTest [[callee3]] testedType=builtin(ConsoleLog)
+# CHECK-NOT: PropGet
+# CHECK: undefined = CallBuiltin {{*}}v1 overload=ConsoleLog/
+# CHECK: [[read3]]: anything = PropGet v0 key="log"
+# CHECK-NEXT: [[readCallee3]]: anything ~ builtin(ConsoleLog) = Upcast [[read3]] castType=anything
+# CHECK-NEXT: Jump -> next [[call3]]([[readCallee3]])
+# CHECK-NEXT: [[call3]]([[passed3]]: anything ~ builtin(ConsoleLog)) frequency=Unlikely:
+# CHECK-NEXT: anything = Call [[passed3]], v0, v1 calleeKey="log"
+# CHECK: [[isUnchanged3]]: boolean = IsBuiltinLocationUnchanged member=ConsoleLog
+# CHECK-NEXT: Branch [[isUnchanged3]] -> taken
+# CHECK: frequency=Unlikely:
+
+function f4 name="construction" parameters=[{type=builtin(Map) flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(Map)):
+    v1 = Construct v0
+    Return v1
+}
+# PLAN: function f4
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=builtin(Map) before v1; uses v1;
+# CHECK-LABEL: function f4 name="construction"
+# CHECK: = TypeTest v0 testedType=builtin(Map)
+# CHECK: v1: Map{{*}} = CallBuiltin {{*}} overload=Map/1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything ~ object = Construct v0
+
+function f5 name="methodWithProvenReceiver" parameters=[{type=builtin(StringPrototypeSlice) flags=[IsExpected]}, {type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(StringPrototypeSlice), v1: string, v2: number):
+    v3 = Call v0, v1, v2
+    Return v3
+}
+# PLAN: function f5
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=builtin(StringPrototypeSlice) before v3; uses v3;
+# CHECK-LABEL: function f5 name="methodWithProvenReceiver"
+# CHECK: v3: string = CallBuiltin v1, v2 overload=StringPrototypeSlice/0
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call v0, v1, v2
+
+function f6 name="thenExpectedArgument" parameters=[{type=builtin(Uint8ArrayFromHex) flags=[IsExpected]}, {type=string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(Uint8ArrayFromHex), v1: anything ~ string):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# PLAN: function f6
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=builtin(Uint8ArrayFromHex) before v2; test TypeTest v1 testedType=string before v2; uses v2;
+# CHECK-LABEL: function f6 name="thenExpectedArgument"
+# CHECK: ([[text6]]: string):
+# CHECK: v2: Uint8Array = CallBuiltin -, [[text6]] overload=Uint8ArrayFromHex/0
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call v0, -, v1
+
+function f7 name="thenExpectedReceiver" parameters=[{type=builtin(ArrayPrototypePush) flags=[IsExpected]}, {type=Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(ArrayPrototypePush), v1: anything ~ Array, v2: anything):
+    v3 = Call v0, v1, v2
+    Return v3
+}
+# PLAN: function f7
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=builtin(ArrayPrototypePush) before v3; test TypeTest v1 testedType=Array before v3; test IsPristine v1 builtinClass=Array aspects=[Storage] before v3; uses v3;
+# CHECK-LABEL: function f7 name="thenExpectedReceiver"
+# CHECK: v3: int[0, 4294967295] = CallBuiltin {{*}}, v2 overload=ArrayPrototypePush/0 [needsPristineReceiver]
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call v0, v1, v2
+
+function f8 name="operandsMatchNoOverload" parameters=[{type=builtin(Uint8ArrayFromHex) flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(Uint8ArrayFromHex), v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# PLAN: function f8
+# PLAN-NEXT: function f9
+# CHECK-LABEL: function f8 name="operandsMatchNoOverload"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: Return v2
+
+function f9 name="nothingExpected" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# PLAN-NEXT: function f10
+# CHECK-LABEL: function f9 name="nothingExpected"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: Return v2
+
+function f10 name="twoBuiltinsExpected" parameters=[{type=builtin(MathCeil)|builtin(MathFloor) flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(MathCeil)|builtin(MathFloor), v1: number):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# PLAN-NEXT: function f11
+# CHECK-LABEL: function f10 name="twoBuiltinsExpected"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: Return v2
+
+function f11 name="expectedValueIsNotCalled" parameters=[{type=builtin(EncodeURIComponent) flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(EncodeURIComponent)):
+    Return v0
+}
+# PLAN-NEXT: function f12
+# CHECK-LABEL: function f11 name="expectedValueIsNotCalled"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: Return v0
+
+function f12 name="functionIsNoConstructor" parameters=[{type=builtin(MathFloor) flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(MathFloor), v1: number):
+    v2 = Construct v0, -, v1
+    Return v2
+}
+# PLAN-NEXT: function f13
+# CHECK-LABEL: function f12 name="functionIsNoConstructor"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: anything ~ object = Construct v0, -, v1
+# CHECK-NEXT: Return v2
+
+function f13 name="constructedForOtherClass" parameters=[{type=builtin(Map) flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(Map), v1: anything):
+    v2 = Construct v0, v1
+    Return v2
+}
+# PLAN-NEXT: function f14
+# CHECK-LABEL: function f13 name="constructedForOtherClass"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: anything ~ object = Construct v0, v1
+# CHECK-NEXT: Return v2
+
+function f14 name="entryReadsThisAndNoneIsPassed" parameters=[{type=builtin(PromiseResolve) flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ builtin(PromiseResolve), v1: number):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# PLAN-NEXT: function f15
+# CHECK-LABEL: function f14 name="entryReadsThisAndNoneIsPassed"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: Return v2
+
+function f15 name="resultInsideStoredType" parameters=[{type=Array flags=[IsExpected]}, {type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ Array, v1: function, v2: anything):
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeEvery/0 builtinCallForm=AnyReceiver
+    Return v3
+}
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=Array before v3; test IsPristine v0 builtinClass=Array aspects=[Storage] before v3; uses v3;
+# CHECK-LABEL: function f15 name="resultInsideStoredType"
+# CHECK: v3: boolean = CallDirect {{*}}, v1, v2 function=f0
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: boolean = CallBuiltin v0, v1, v2 overload=ArrayPrototypeEvery/0 builtinCallForm=AnyReceiver
+
+function f16 name="resultOutsideStoredTypeIsAssumed" parameters=[{type=Array flags=[IsExpected]}, {type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ Array, v1: function, v2: anything):
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSome/0 builtinCallForm=AnyReceiver
+    Return v3
+}
+# The function of the library declares anything, the table a boolean, which is assumed
+# PLAN: function f16
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=Array before v3; test IsPristine v0 builtinClass=Array aspects=[Storage] before v3; uses v3;
+# CHECK-LABEL: function f16 name="resultOutsideStoredTypeIsAssumed"
+# CHECK: [[called16]]: anything = CallDirect {{*}}, v1, v2 function=f1
+# CHECK-NEXT: v3: boolean = AssumeType [[called16]] castType=boolean
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: boolean = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSome/0 builtinCallForm=AnyReceiver

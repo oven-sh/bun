@@ -1,0 +1,1093 @@
+# What differs between `bun test` and `bun test --debug-aot` over Bun's own tests, and why: `bun test/aot/other-suites/bun-tests.ts test/js --known test/aot/other-suites/bun-tests.known.txt`
+# prints only what is not here. A line is `<kind> <file>[ > <test>]: <why>`. "open" is a fault that has a red program under test/aot/programs. What is the same again goes out of this file.
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.file(0) survives GC: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write('out.txt', 'string'): plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > Bun.write(Bun.stdout, response) rejects with EPIPE when the reader of the pipe leaves while a direct stream's flush() is parked: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > Bun.write(Bun.stdout, response) rejects with EPIPE when the reader of the pipe leaves while an async iterable's write is parked: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a Request body inside Bun.serve: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a bare ReadableStream: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a write that fails with ENOSPC closes a generator whose loop catches and goes on with return() > chunks of 6 bytes: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a write that fails with ENOSPC closes a generator whose loop catches and goes on with return() > chunks of 64 KiB: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a write that fails with ENOSPC closes a generator with try/catch/finally with return() > chunks of 6 bytes: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a write that fails with ENOSPC closes a generator with try/catch/finally with return() > chunks of 64 KiB: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a write that fails with ENOSPC closes a node Readable with autoDestroy: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a write that fails with ENOSPC closes an iterator with next() and return() with return() > chunks of 6 bytes: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a write that fails with ENOSPC closes an iterator with next() and return() with return() > chunks of 64 KiB: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a write that fails with ENOSPC closes an iterator with next(), return() and throw() with return() > chunks of 6 bytes: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > a write that fails with ENOSPC closes an iterator with next(), return() and throw() with return() > chunks of 64 KiB: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > Bun.write(path, response) streams the body to the file > rejects with the write error, for each kind of body: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/bun-write.test.js > Bun.write > timed output should work: plain Bun fails, the compiled run passes
+BETTER test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts > fetch aborts immediately during EINPROGRESS connect: plain Bun fails, the compiled run passes
+BETTER test/js/bun/jsc/bun-jsc.test.ts > bun:jsc > profile can be called multiple times: plain Bun fails, the compiled run passes
+BETTER test/js/bun/shell/shell-load.test.ts > shell load > immediate exit: plain Bun fails, the compiled run passes
+BETTER test/js/bun/spawn/spawn-maxbuf.test.ts > yes is killed > Bun.spawn: plain Bun fails, the compiled run passes
+BETTER test/js/bun/spawn/spawn-pipe-start-error.test.ts > a script whose pidfd fails to register with the event loop is ended > bun install: plain Bun fails, the compiled run passes
+BETTER test/js/bun/websocket/websocket-server-reload-leak.test.ts > server.reload() with websocket config lacking open/message does not leak protected handlers: plain Bun fails, the compiled run passes
+BETTER test/js/first_party/ws/ws.test.ts > WebSocketServer > sockets can be terminated: plain Bun fails, the compiled run passes
+BETTER test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts > AsyncLocalStorage passes context to callbacks > http-clientrequest: plain Bun fails, the compiled run passes
+BETTER test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts > AsyncLocalStorage passes context to callbacks > http-request: plain Bun fails, the compiled run passes
+BETTER test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts > AsyncLocalStorage passes context to callbacks > https-request: plain Bun fails, the compiled run passes
+BETTER test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts > AsyncLocalStorage passes context to callbacks > net-connect: plain Bun fails, the compiled run passes
+BETTER test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts > AsyncLocalStorage passes context to callbacks > net-server: plain Bun fails, the compiled run passes
+BETTER test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts > AsyncLocalStorage passes context to callbacks > net-socket-write: plain Bun fails, the compiled run passes
+BETTER test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts > AsyncLocalStorage passes context to callbacks > tls-connect: plain Bun fails, the compiled run passes
+BETTER test/js/node/async_hooks/AsyncLocalStorage.test.ts > async context passes through > fetch: plain Bun fails, the compiled run passes
+BETTER test/js/node/tls/fetch-tls-cert.test.ts > complete cert chains sent to peer.: plain Bun fails, the compiled run passes
+BETTER test/js/node/tls/node-tls-cert.test.ts > tls.connect should not accept untrusted certificates: plain Bun fails, the compiled run passes
+BETTER test/js/web/streams/streams-leak.test.ts > Absolute memory usage remains relatively constant when reading and writing to a pipe: plain Bun fails, the compiled run passes
+BETTER test/regression/issue/02499/02499.test.ts > onAborted() and onWritable are not called after receiving an empty response body due to a promise rejection: plain Bun fails, the compiled run passes
+BETTER test/regression/issue/32492.test.ts > concurrent bun build does not stall on worker-pool shutdown: plain Bun fails, the compiled run passes
+BETTER test/regression/issue/33227.test.ts > reader.cancel() aborts the fetch and triggers the server's stream cancel: plain Bun fails, the compiled run passes
+DIFFERS test/js/bun/dns/dns-interleave.test.ts > fetch(), WebSocket and Bun.connect() reach the listener a hosts-file loopback name maps to > localhost6 -> ::1: the clock
+DIFFERS test/js/bun/ffi/ffi.test.js > CString > yields a string primitive: open: `new CString()` answers with a string, the compiler believes an object
+DIFFERS test/js/bun/glob/proto.test.ts > Object prototype followSymlinks: the lock of the built-ins
+DIFFERS test/js/bun/http/bun-serve-html-405.test.ts > dev server html route: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/http/bun-serve-html.test.ts > mixed api and html routes with development: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/http/bun-serve-html.test.ts > mixed api and html routes with non-* false routes: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/http/bun-serve-html.test.ts > serve html error handling: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/http/bun-serve-html.test.ts > serve html with JSX runtime in development mode: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/http/bun-serve-html.test.ts > serve html with JSX runtime in production mode: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/http/bun-serve-html.test.ts > wildcard static routes: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/http/bun-serve-html.test.ts > you can have HTML imports apply to only specific methods outside of the dev server: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/http/bun-serve-propagate-errors.test.ts > Bun.serve() propagates errors to the parent fixture: the clock
+DIFFERS test/js/bun/http/serve.test.ts > requests pipelined in one read > sends a response before the JavaScript that runs after it: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/http/serve.test.ts > requests pipelined in one read > sends the completed responses before a later handler blocks: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/jsc/bun-jsc.test.ts > bun:jsc > drainMicrotasks > does not run a task that another thread has posted: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/bun/jsc/bun-jsc.test.ts > bun:jsc > getProtectedObjects: a testing hook into the engine or the JIT (bun:jsc, bun:internal-for-testing)
+DIFFERS test/js/bun/jsc/bun-jsc.test.ts > bun:jsc > isRope: a testing hook into the engine or the JIT (bun:jsc, bun:internal-for-testing)
+DIFFERS test/js/bun/jsc/webkit-upgrade-7b485a76e9.test.ts > WebKit 7b485a76e9 upgrade > Reflect.construct call sites keep the semantics of the function (7b485a76e9): the lock of the built-ins
+DIFFERS test/js/bun/jsc/webkit-upgrade-7b485a76e9.test.ts > WebKit 7b485a76e9 upgrade > a parenthesized assignment target does not name an anonymous function (a848db6782): the constant text of new Function goes through Bun's transpiler, as a file does
+DIFFERS test/js/bun/jsc/webkit-upgrade-7b485a76e9.test.ts > WebKit 7b485a76e9 upgrade > a source knows where its lines start once it is parsed (c76c52f5b1): a testing hook into the engine or the JIT (bun:jsc, bun:internal-for-testing)
+DIFFERS test/js/bun/jsc/webkit-upgrade-9b02218df6.test.ts > a SyntaxError from JavaScriptCore's parser with no JS frame on the stack has the parser's line and sourceURL: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph-callbacks.test.ts > every callback of several graphs and the host, all running at once, finds its own graph's context: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph-gc.test.ts > ModuleGraph GC: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph-io.test.ts > ModuleGraph: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph-matrix.test.ts > ModuleGraph matrix: Bun.ModuleGraph in compiled code: open
+DIFFERS test/js/bun/module-graph/module-graph-matrix.test.ts > ModuleGraph matrix: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > CommonJS: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > ESM import of a CommonJS file is per graph (own cache, own evaluation, own env) and the host's copy evaluates lazily only when the host imports it: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > async evaluation: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > data modules (json import attribute, toml) are per graph; builtin objects are per-graph copies over shared functions; sync require of an in-flight module throws: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > documented sharing: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > dynamic import() inside a graph loads into that graph; builtins are shared: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > each graph gets its own module state; live bindings and imports resolve within the graph: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > edge cases: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > executables and CodeBlocks are shared across graphs (only function objects and environments are per graph): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > graphs constructed with the same set of globals names share compiled code; a different set links its own: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > import defer: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > namespace objects and import.meta are per graph; namespaces have live bindings: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > top-level await in the root and in a dependency: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph > uncaught exceptions and unhandled rejections from graph code go to that graph's onError: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — API validation and error attribution edges > a graph can create a nested ModuleGraph; the inner graph is independent of the outer one: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — API validation and error attribution edges > errors thrown synchronously during evaluation reject import() (not onError); errors from a disposed graph's leftover callbacks are still attributed; onError throwing does not crash the host: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — API validation and error attribution edges > stack traces from graph code carry the module's file path and line; Error.captureStackTrace works inside a graph: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > CommonJS code in graphs with different globals name sets resolves each graph's own names (one wrapper executable per name set): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > ESM import of CommonJS packages where one require()s the other (react-dom/server + react shape), after the host loaded them: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > a CommonJS module that throws at load rejects the import with the graph's error and is retried on next require: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > a require() that throws inside a graph leaves neither the graph's nor the host's cache holding the module; the next require re-evaluates: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > circular require behaves like Node (partial exports) per graph: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > createRequire(import.meta.url) inside a graph gives the graph's require: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > import() from CommonJS in a graph loads into the graph: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > import.meta in a CommonJS module of a graph is the graph's: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > module state, __filename/__dirname and module object are per graph: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > require of JSON is per graph (own object, mutations isolated): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > require.cache is the graph's: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — CommonJS surface per graph > require.main, module.children, module.paths, require.resolve: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — binding forms, one per test (instance vs instance vs host) > JSON / text / TOML modules are per instance (mutations isolated), text is shared immutable: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — binding forms, one per test (instance vs instance vs host) > default export identity is per instance and consistent across import paths within an instance: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — binding forms, one per test (instance vs instance vs host) > destructuring a namespace at load time captures that instance's value: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — binding forms, one per test (instance vs instance vs host) > exported object identity: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — binding forms, one per test (instance vs instance vs host) > import attributes: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — binding forms, one per test (instance vs instance vs host) > import.meta fields per instance: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — binding forms, one per test (instance vs instance vs host) > live binding through 3 re-export hops updates in the importing instance only: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — concurrency > 20 graphs importing the same TLA module concurrently each evaluate once, with their own env: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — concurrency > a graph disposed while another graph is mid-import of the same module does not affect it: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — concurrency > interleaved: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — concurrency > within one graph, concurrent imports of a TLA module and of its dependent share one evaluation: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — constructor / method contract > accepts: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — constructor / method contract > globals: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > a builtin import()ed first is not the graph's main: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > a first import() that fails, however it fails, is still the graph's main: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > a first import() with a query is main: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > a main module that ran stays main when it is evicted and a reload of it fails: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > a rejection by graph code whose reason is an Error constructed by host code (module, CommonJS or global code) → the rejecting graph's onError: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > asyncFnRejection → graph onError (unhandledRejection): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > attribution survives the error's stack being materialized before it escapes (e.stack read, console.error) — still the graph's onError: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > awaitedRejection → rejects to the caller, not onError: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > evaluation-time throw and TLA rejection → import() rejects, not onError: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > eventListenerThrow → graph onError (uncaughtException): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > hostCallbackThrow (graph closure invoked later by a host timer) → graph onError: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > immediateThrow → graph onError (uncaughtException): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > import() of a long-lived graph leaves nothing behind per call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > microtaskThrow → graph onError (uncaughtException): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > nestedTimerThrow → graph onError (uncaughtException): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > nextTickThrow → graph onError (uncaughtException): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > rejectNonError → graph onError (unhandledRejection): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > rejection → graph onError (unhandledRejection): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > syncThrow → throws to the caller, not onError: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > the first import() is main from the moment it is requested: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > throwString → graph onError (uncaughtException): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > timerThrow → graph onError (uncaughtException): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — error attribution matrix > two graphs throwing concurrently are attributed to their own onError: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — generators, iterators, WeakRef/FinalizationRegistry, Atomics from graph code > WeakRef created in graph code clears; FinalizationRegistry created in graph code fires with its token: Bun.ModuleGraph in compiled code: open
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — host stays correct while graphs exist > host require.cache invalidation and module._compile still see NEW source after a graph has loaded the same CommonJS file: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — host stays correct while graphs exist > require(esm) from a graph's CommonJS after the graph was disposed throws instead of loading into the host's registry: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — imports racing edits, workers, deep re-export chains > instantiation that fails part-way is rolled back: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — instance evaluation algorithm > TLA: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — instance evaluation algorithm > a module is never evaluated twice in one instance when an in-flight TLA dependency parks one import() and another import() reaches a shared dependency meanwhile: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — instance evaluation algorithm > an evaluation error leaves untouched siblings importable (not stuck 'evaluating') and errors every member of the failed cycle: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — instance evaluation algorithm > export * as ns from a JSON/synthetic module resolves inside an instance (namespace slot of a per-instance synthetic environment): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — instance evaluation algorithm > host imports a module AFTER an instance already evaluated it: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — instance evaluation algorithm > import() from instance top-level code that has tiered up (hot loop in module body) still loads into the instance: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — module linking semantics per instance > ambiguous star exports and missing exports are link errors per import() and do not poison other graphs or later imports: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — module linking semantics per instance > cycles: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — module linking semantics per instance > default export forms have per-instance identity; classes, private fields and instanceof do not cross instances: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — module linking semantics per instance > eval inside module code sees that instance's module bindings; new Function / indirect eval see the (real) global: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — module linking semantics per instance > import() variants inside an instance: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — module linking semantics per instance > import.meta per instance: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — module linking semantics per instance > namespace objects: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — module linking semantics per instance > re-export chains (export *, export * as ns, export {x as y} from) resolve within the instance and stay live: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — module linking semantics per instance > scope order inside an instance: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — nested graphs, stack traces, misc host integration > a Worker thread can host graphs: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — nested graphs, stack traces, misc host integration > a graph can create and use a nested graph; each keeps its own env and globals: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — nested graphs, stack traces, misc host integration > constructing many graphs without importing anything is cheap and they are collectable: Bun.ModuleGraph in compiled code: open
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — nested graphs, stack traces, misc host integration > stack traces carry file:line of the graph's module; Error.prepareStackTrace sees CallSites with file names: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — nested graphs, stack traces, misc host integration > structuredClone, Intl, URL, TextEncoder, btoa, performance work inside a graph: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — process-global registries touched from a graph (documented shared) > Bun.plugin registered from graph code is process-wide (documented) and keeps working after the graph exits: Bun.ModuleGraph in compiled code: open
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared CodeBlocks under JIT tier-up > a module function hot enough to be DFG/FTL-compiled while running in instance A still reads and writes instance B's module variables when B calls it: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared CodeBlocks under JIT tier-up > generators, async functions and class methods defined in a module keep their instance's bindings across many resumptions: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared CodeBlocks under JIT tier-up > module-scope writes (put_to_scope) from optimized code land in the calling instance; a third instance created after tier-up starts fresh: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > arrow: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > async function: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > bound: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > classAccessor: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > classField: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > classPrivate: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > classStatic: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > closures created by hot factory code capture their own instance and their own locals: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > decl: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > directEval: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > generator: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > getter: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > module-scope writes through a setter and a counter stay per instance under tier-up: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > restArgs: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > staticField: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > tailCall: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/module-graph/module-graph.test.ts > Bun.ModuleGraph — shared code under tier-up, one access path per test > tryCatch: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/net/socket.test.ts > socket and tls options are not read from Object.prototype: the lock of the built-ins
+DIFFERS test/js/bun/resolve/esModule-annotation.test.js > CJS exports the ESM wrapper cannot enumerate > ownKeys trap throws (__esModule: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-empty.test.js > importing empty file returns module with path as default export: one empty file imported under several types: the bundler's answers, with --aot and without
+DIFFERS test/js/bun/resolve/import-empty.test.js > importing empty html file returns HTMLBundle with its path: one empty file imported under several types: the bundler's answers, with --aot and without
+DIFFERS test/js/bun/resolve/import-empty.test.js > importing empty json file throws JSON Parse error: one empty file imported under several types: the bundler's answers, with --aot and without
+DIFFERS test/js/bun/resolve/import-empty.test.js > importing empty jsonc/toml file returns module with empty object as default export: one empty file imported under several types: the bundler's answers, with --aot and without
+DIFFERS test/js/bun/resolve/import-empty.test.js > importing empty sqlite files returns database object: one empty file imported under several types: the bundler's answers, with --aot and without
+DIFFERS test/js/bun/resolve/import-meta.test.js > Module._resolveFilename(): the lock of the built-ins
+DIFFERS test/js/bun/resolve/import-meta.test.js > import.meta is correct in a module that was imported with a query param: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-meta.test.js > import.meta is correct in a module that was required with a query param: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-meta.test.js > import.meta.require (javascript): a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-meta.test.js > import.meta.require is settable: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-meta.test.js > import.meta.require.resolve: import.meta.require is resolved at the build: it cannot be replaced, and has no resolve of its own
+DIFFERS test/js/bun/resolve/import-meta.test.js > require with a query string works on dynamically created content: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-meta.test.js > require.resolve with empty options object: import.meta.require is resolved at the build: it cannot be replaced, and has no resolve of its own
+DIFFERS test/js/bun/resolve/import-query.test.ts > [/import-query-fixture.ts, /import-query-fixture.ts?query, /import-query-fixture.ts?query2]: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-query.test.ts > [/import-query-fixture.ts, /import-query-fixture.ts?query2, /import-query-fixture.ts?query]: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-query.test.ts > [/import-query-fixture.ts?query, /import-query-fixture.ts, /import-query-fixture.ts?query2]: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-query.test.ts > [/import-query-fixture.ts?query, /import-query-fixture.ts?query2, /import-query-fixture.ts]: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-query.test.ts > [/import-query-fixture.ts?query2, /import-query-fixture.ts, /import-query-fixture.ts?query]: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-query.test.ts > [/import-query-fixture.ts?query2, /import-query-fixture.ts?query, /import-query-fixture.ts]: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-query.test.ts > [no query, query]: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/import-query.test.ts > [query, no query]: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/load-same-js-file-a-lot.test.ts > load the same empty JS file 10000 times: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/load-same-js-file-a-lot.test.ts > load the same file 10000 times: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/resolve/resolve-error.test.ts > ResolveMessage > preserves non-ASCII specifier in .message and .specifier (require node:): open: a written require of an unknown node: module has the code MODULE_NOT_FOUND
+DIFFERS test/js/bun/shell/bunshell.test.ts > bunshell > unicode > escape unicode: the compiled run is right: the raw text of a template is as written
+DIFFERS test/js/bun/spawn/spawn-signal.test.ts > spawnSync AbortSignal works as timeout: the clock
+DIFFERS test/js/bun/spawn/spawnSync.test.ts > spawnSync > should not set a timeout if timeout is 0 and ignore is used for stdout: the clock
+DIFFERS test/js/bun/spawn/spawnSync.test.ts > spawnSync > should not set a timeout if timeout is 0 and inherit is used for stdout: the clock
+DIFFERS test/js/bun/sqlite/sqlite.test.js > an exception that is raised behind a step ends a statement that writes > a timeout of node:vm, in the load of a table whose trigger feeds a full-text index > by get(): the clock, and what is collected when
+DIFFERS test/js/bun/sqlite/sqlite.test.js > an exception that is raised behind a step ends a statement that writes > a timeout of node:vm, in the load of a table whose trigger feeds a full-text index > by iterate(): the clock, and what is collected when
+DIFFERS test/js/bun/sqlite/sqlite.test.js > db.function() > terminating a Worker that is inside a function ends it: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/sqlite/sqlite.test.js > db.function() > terminating a Worker that is inside a hook ends it: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/sqlite/sqlite.test.js > db.onInsert, db.onUpdate and db.onDelete > the database keeps a hook alive, and nothing else > hooks that were replaced or removed, those of a closed database, and databases that their own hooks hold, are collected: the clock, and what is collected when
+DIFFERS test/js/bun/test/describe.test.ts > blocks should handle a number, string, anonymous class, named class, or function for the first arg > MyClass > Should also pass: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/bun/test/mock/6879/6879.test.ts > mocks named re-export: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/6879/6879.test.ts > mocks re-export from export list: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module-non-string.test.ts > mock.module still works with valid string argument: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module-resolve-log.test.ts > mock.module with non-existent specifier does not crash: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a factory export getter that throws fails the import: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a factory export getter that throws while patching an already-imported module throws from mock.module and leaves the namespace untouched: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a factory promise still pending on return patches an already-imported ES module once it settles: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a factory promise still pending on return patches an already-required CommonJS module once it settles: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a factory promise that resolves to a non-object is rejected like the synchronous case: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a factory that require()s the module it is mocking also patches the require.cache entry that creates: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a factory that returns a module namespace object patches an already-imported module with its exports: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a factory that returns import() of another module patches an already-imported module with its exports: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a later mock.module for the same module is not overwritten when an earlier pending factory settles: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a pending factory promise that rejects rejects the promise mock.module returned and leaves the module untouched: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > a pending factory whose exports throw while being read rejects the returned promise and unregisters the mock: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > mock.module async: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > mock.restore: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > mocking a builtin: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > mocking a local file: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > mocking a module that points to a file which does not resolve successfully still works: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > mocking a non-existant relative file with a file URL: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > mocking a non-existant relative file: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > mocking a package: a spy or a mock on what a module exports
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > onResolve plugin errors surface from mock.module; an unresolvable specifier is still mockable: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/test/mock/mock-module.test.ts > spyOn: a spy or a mock on what a module exports
+DIFFERS test/js/bun/udp/dgram.test.ts > a worker exiting from its first 'message' of a batch does not crash: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/BunObject.test.ts > hasNonReifiedStatic: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/csrf.test.ts > Bun.CSRF > options are read in order, each once, and not from Object.prototype: the lock of the built-ins
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_agent > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_agent > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_agent > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_client > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_client > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_client > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_common > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_common > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_common > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_incoming > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_incoming > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_incoming > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_outgoing > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_outgoing > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_outgoing > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_server > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_server > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > _http_server > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > bun:ffi > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > bun:ffi > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > bun:ffi > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > crypto > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > crypto > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > crypto > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > domain > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > domain > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > domain > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > http > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > http > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > http > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > http2 > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > http2 > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > http2 > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > path/posix > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > path/posix > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > path/posix > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > path/win32 > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > path/win32 > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > path/win32 > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > perf_hooks > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > perf_hooks > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > perf_hooks > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > punycode > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > punycode > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > punycode > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > timers > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > timers > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > timers > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > trace_events > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > trace_events > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > trace_events > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > undici > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > undici > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > undici > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > util > call: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > util > construct-subclass: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > util > construct: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/util/index-of-line.test.ts > indexOfLine searches a SharedArrayBuffer that another thread is writing: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      const f = function () {};\n      // workaround transpiler inlining losing the display name\n      // TODO: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      let f = function () {};\n      // workaround transpiler inlining losing the display name\n      // TODO: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      var f = function () {};\n      return f;\n    }": the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/bun/util/inspect.test.js > crash testing > inspecting "() =>\n    new Proxy(" doesn't crash: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/bun/util/inspect.test.js > crash testing > inspecting "() =>\n    new Writab" doesn't crash: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/bun/util/mmap.test.js > Bun.mmap > mmap reads its options in order, each once, and not from Object.prototype: the lock of the built-ins
+DIFFERS test/js/bun/util/readablestreamtoarraybuffer.test.ts > an async start() promise is adopted observably, like Node: the lock of the built-ins
+DIFFERS test/js/bun/util/readablestreamtoarraybuffer.test.ts > readableStreamToArrayBuffer does not call a patched Promise.prototype.then: the lock of the built-ins
+DIFFERS test/js/bun/util/sleep.test.ts > sleep should saturate timeout values: the clock
+DIFFERS test/js/bun/util/stringWidth.test.ts > options lookup ignores Object.prototype pollution: the lock of the built-ins
+DIFFERS test/js/bun/util/which.test.ts > which ignores options that are not an object, and Object.prototype: the lock of the built-ins
+DIFFERS test/js/bun/wasm/compile-rss.test.ts > WebAssembly.compile does not retain memory in idle compiler threads (#41438): the clock
+DIFFERS test/js/bun/wasm/wasm-gc-object-size.test.ts > a WebAssembly GC array of narrow elements is its 12-byte header and its elements: the size classes of an executable's heap
+DIFFERS test/js/bun/wasm/wasm-gc-object-size.test.ts > a WebAssembly GC struct is its 8-byte header and its fields: the size classes of an executable's heap
+DIFFERS test/js/bun/webview/webview-chrome.test.ts > the chrome backend is refused off the main thread: a file by a path that is computed or made at run time
+DIFFERS test/js/bun/yaml/yaml.test.ts > Bun.YAML > parse > a key that is a sequence or a mapping > it is named once the input has been read: the lock of the built-ins
+DIFFERS test/js/node/buffer-inspectmaxbytes.test.ts > buffer.INSPECT_MAX_BYTES is a number and not a custom getter/setter: open: a named import of a number of node:buffer is read live
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > #9120 alloc: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > #9120 fill: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > 'ascii' encoding preserves high-bit bytes on encode (Node parity): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > ASCII slice: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > ArrayBuffer.isView(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer can be mocked: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer global is settable: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer,poolSize: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.allocUnsafe(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.asciiSlice()): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.base64Slice(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.base64urlSlice(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.byteLength matches the encoder for unpaired surrogates: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.byteLength(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.byteLength: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.compare: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.concat huge: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.concat: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.copy > copy to the same buffer: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.copy > should ignore sourceEnd if it's out of range: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.copy > should work with offset: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.copy > should work: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.equals: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.fill (Node.js tests): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.fill 1 char string: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.fill string > 1234567890: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.fill string > byte-truncates a ucs2 pattern longer than the destination: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.fill string > byte-truncates a utf8 pattern longer than the destination: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.fill string > encodes a lone high surrogate as U+FFFD in fill and write: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.fill string > hello world: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.fill string > 😀: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.fill string > 😀😃😄😁😆😅😂🤣☺️😊😊😇: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.from (Node.js test/test-buffer-from.js): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.from latin1 vs ascii: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.from() with encoding: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.from(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.from(base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.from: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.hexSlice() throws for large buffers: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.hexSlice(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.isBuffer: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.latin1Slice() on a Uint8Array: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.latin1Slice() on non-ArrayBufferView fails: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.latin1Slice(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.latin1Write() on a Uint8Array: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.slice: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.subarray: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.swap16 matches a byte-reversal reference across vector boundaries and odd byteOffsets: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.swap16: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.swap32 matches a byte-reversal reference across vector boundaries and odd byteOffsets: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.swap32: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.swap64 matches a byte-reversal reference across vector boundaries and odd byteOffsets: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.swap64: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.toJSON(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.toString regessions: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.toString(base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.toString(binary): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.toString(encoding, start, end): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.toString(utf16le): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.ucs2Slice(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer.utf8Slice(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > Buffer: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > File: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > ParseArrayIndex() should handle full uint32: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > ParseArrayIndex() should reject values that don't fit in a 32 bits size_t: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > UTF-8 slice: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > UTF-8 string includes null character: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > UTF-8 write() & slice(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > alloc with fill option: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > alloc() repeat pattern: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > alloc() should throw on invalid data: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > alloc() should throw on non-numeric size: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > allocUnsafeSlow().fill(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > big example (base64 & base64url): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > big example (base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > big example (base64url): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > binary encoding should write only one byte per character: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > buffer overflow: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > buffer overrun: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > buffer: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > bypassing `length` should not cause an abort: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > check for fractional length args, junk length args, etc.: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > common write{U}IntLE/BE(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > constants: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > construct buffer from UTF16, issue #3914: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > construct buffer from buffer: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > construct buffer from hex, issue #4919: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > construction from arrayish object: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > copy() beyond end of buffer: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > create 0-length buffers: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > creating a Buffer from a Uint32Array (old constructor): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > creating a Buffer from a Uint32Array: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > creating buffers larger than pool size: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > encodes single '.' character in UTF-16: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > fill() repeat byte: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > fill() repeat pattern: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > fill() should not hang indefinitely: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > fill() should properly check `start` & `end`: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > fill() should throw on invalid arguments: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > fill() with a fractional offset or end throws ERR_OUT_OF_RANGE: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > fill(N, empty string) should be the same as fill(N) and not include any uninitialized bytes: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > hex decoding around SIMD block boundaries > buf.write() with long hex input respects the destination length: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > hex decoding around SIMD block boundaries > decodes UTF-16 code units above 0xFF from their low byte, like Node: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > hex decoding around SIMD block boundaries > decodes valid input at every length around the vector widths: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > hex decoding around SIMD block boundaries > stops at a UTF-16 code unit above 0xFF whose low byte is not a hex digit: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > hex decoding around SIMD block boundaries > stops at an invalid character at any position: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > hex decoding of two-byte strings uses the low byte of each code unit: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > hex input containing byte 0xFF is treated as invalid: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > hex toString(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > if a trailing character is discarded, rest of string is processed: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > includes: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > indexOf(value, encoding) is unchanged by the lastIndexOf fix: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > indexOf/lastIndexOf with an explicit byteOffset are unchanged by the fix: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > indexOf/lastIndexOf/includes on an empty buffer: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > indexOf: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > inspect() should exist: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > invalid encoding: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > invalid slice end: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > isAscii: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > isUtf8: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > large negative Buffer length inputs should not affect pool offset: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lastIndexOf with utf16le only matches on a code-unit boundary: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lastIndexOf(value, encoding) defaults to searching from the end: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lastIndexOf/indexOf(Buffer, negativeOffset, 'ucs2') wraps against the raw byte length on odd-length haystacks: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lastIndexOf: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > latin1 encoding should write only one byte per character: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > length overflow: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lenient decoding accepts both alphabets in the same input (base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lenient decoding accepts both alphabets in the same input (base64url): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lenient decoding of long inputs (base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lenient decoding of long inputs (base64url): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lenient decoding skips non-alphabet characters (base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lenient decoding skips non-alphabet characters (base64url): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lenient decoding stops at the first '=' (base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > lenient decoding stops at the first '=' (base64url): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > new Buffer() (Node.js test/test-buffer-new.js): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > new Buffer.alloc(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > new Buffer.from(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > offset properties: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > offset returns are correct: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > only top level parent propagates from a non-pooled instance: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > only top level parent propagates from allocPool: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > padding (base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > padding (base64url): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > prototype getters should not throw: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > read alias: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > read: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > regression tests from Node.js: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > regular and URL-safe base64 work both ways with padding: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > regular and URL-safe base64 work both ways: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > repro #2063: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > should not crash on invalid UTF-8 byte sequence with ASCII head: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > should not crash on invalid UTF-8 byte sequence: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > should not perform out-of-bound access on invalid UTF-8 byte sequence: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > should use args correctly: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > single base64 char encodes as 0: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > single hex character is discarded: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > slice() on detached buffer throws TypeError: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > slice() on resizable ArrayBuffer returns fixed-length view: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > slice() with fractional offsets truncates toward zero: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > slice(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > smart defaults and ability to pass string values as offset: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > subarray() on detached buffer throws TypeError: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > toLocaleString(): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > toString('base64'): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > toString('base64url'): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > transcode: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > triple slice: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > truncate input values: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > truncate write() at character boundary: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > truncation after decode: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > two-byte strings decode from the low byte of each code unit (base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > two-byte strings decode from the low byte of each code unit (base64url): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > unmatched surrogates should not produce invalid utf8 output: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > unpooled buffer (replaces SlowBuffer): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > verify that an empty ArrayBuffer does not throw: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write BigInt beyond 64-bit range: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write BigInt64 with an out-of-range or non-integer offset throws ERR_OUT_OF_RANGE: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write BigInt64 with insufficient buffer space: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write alias: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write long utf16 string works: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() (ucs-2): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() (ucs2): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() (utf-16le): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() (utf16le): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() beyond end of buffer: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() only reports bytes actually written (base64): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() only reports bytes actually written (base64url): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() with maxLength: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() with offset (ucs-2): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() with offset (ucs2): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() with offset (utf-16le): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write() with offset (utf16le): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > write: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writeInt: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing base64 at a position > 0 should not mangle the result: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing base64url at a position > 0 should not mangle the result: the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeDoubleBE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeDoubleBE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeDoubleLE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeDoubleLE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeFloatBE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeFloatBE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeFloatLE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeFloatLE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt16BE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt16BE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt16LE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt16LE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt32BE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt32BE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt32LE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt32LE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt8 (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeInt8 (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt16BE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt16BE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt16LE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt16LE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt32BE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt32BE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt32LE (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt32LE (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt8 (explicit offset): the lock of the built-ins
+DIFFERS test/js/node/buffer.test.js > with Buffer.write that calls into .utf8Write, .asciiWrite, etc > writing with offset undefined > writeUInt8 (implicit offset): the lock of the built-ins
+DIFFERS test/js/node/events/event-emitter.test.ts > EventEmitter constructors > class MyEmitter extends EventEmitter {} should work: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/node/events/event-emitter.test.ts > EventEmitter constructors > new (class extends EventEmitter {})() should work: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/node/events/event-emitter.test.ts > EventEmitter constructors > new EventEmitter() should work: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/node/http/node-http-backpressure.test.ts > backpressure > 'drain' after a later write() flushes the backlog > (unnamed): the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/node/inspector/inspector.test.ts > Object.prototype pollution does not cause Runtime.enable to hook extra console methods: the lock of the built-ins
+DIFFERS test/js/node/inspector/inspector.test.ts > a tampered Set.prototype[Symbol.iterator] or Date.now does not break console.log while Runtime is enabled: the lock of the built-ins
+DIFFERS test/js/node/module/module-resolve-filename-paths.test.js > Module._resolveFilename with overridden function receives options.paths: the lock of the built-ins
+DIFFERS test/js/node/module/node-module-module.test.js > node-module-module > builtin resolution: open: a written require.resolve("fs") answers "node:fs"; require.cache
+DIFFERS test/js/node/module/node-module-module.test.js > node-module-module > require cache node builtins specifier: open: a written require.resolve("fs") answers "node:fs"; require.cache
+DIFFERS test/js/node/process/stdin/stdin-fixtures.test.ts > stdin > works with readable listener: the clock
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_agent: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_client: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_common: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_incoming: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_outgoing: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_server: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _stream_duplex: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _stream_passthrough: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _stream_readable: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _stream_transform: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _stream_wrap: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _stream_writable: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _tls_common: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _tls_wrap: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require assert/strict: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require assert: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require cluster: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require console: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require crypto: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require dns/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require domain: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require http2: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require http: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require https: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require inspector/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require inspector: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:assert/strict: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:assert: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:cluster: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:console: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:crypto: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:dns/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:domain: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:http2: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:http: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:https: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:inspector/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:inspector: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:path/posix: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:path/win32: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:perf_hooks: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:punycode: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:querystring: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:repl: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:stream/consumers: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:stream/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:stream/web: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:timers/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:tls: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:trace_events: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:vm: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:worker_threads: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require node:zlib: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require path/posix: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require path/win32: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require perf_hooks: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require punycode: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require querystring: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require repl: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require stream/consumers: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require stream/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require stream/web: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require timers/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require tls: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require trace_events: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require vm: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require worker_threads: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require zlib: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _http_agent: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _http_client: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _http_common: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _http_incoming: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _http_outgoing: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _http_server: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _stream_duplex: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _stream_passthrough: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _stream_readable: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _stream_transform: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _stream_wrap: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _stream_writable: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _tls_common: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require _tls_wrap: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require assert/strict: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require assert: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require cluster: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require console: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require crypto: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require dns/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require domain: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require http2: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require http: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require https: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require inspector/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require inspector: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:assert/strict: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:assert: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:cluster: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:console: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:crypto: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:dns/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:domain: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:http2: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:http: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:https: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:inspector/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:inspector: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:path/posix: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:path/win32: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:perf_hooks: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:punycode: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:querystring: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:repl: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:stream/consumers: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:stream/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:stream/web: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:timers/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:tls: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:trace_events: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:vm: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:worker_threads: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require node:zlib: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require path/posix: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require path/win32: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require perf_hooks: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require punycode: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require querystring: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require repl: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require stream/consumers: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require stream/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require stream/web: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require timers/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require tls: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require trace_events: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require vm: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require worker_threads: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed CJS require zlib: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _http_agent: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _http_client: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _http_common: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _http_incoming: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _http_outgoing: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _http_server: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _stream_duplex: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _stream_passthrough: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _stream_readable: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _stream_transform: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _stream_wrap: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _stream_writable: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _tls_common: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import _tls_wrap: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import assert/strict: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import assert: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import cluster: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import console: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import crypto: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import dns/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import domain: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import http2: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import http: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import https: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import inspector/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import inspector: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:assert/strict: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:assert: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:cluster: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:console: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:crypto: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:dns/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:domain: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:http2: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:http: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:https: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:inspector/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:inspector: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:path/posix: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:path/win32: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:perf_hooks: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:punycode: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:querystring: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:repl: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:stream/consumers: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:stream/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:stream/web: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:timers/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:tls: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:trace_events: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:vm: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:worker_threads: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import node:zlib: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import path/posix: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import path/win32: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import perf_hooks: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import punycode: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import querystring: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import repl: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import stream/consumers: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import stream/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import stream/web: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import timers/promises: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import tls: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import trace_events: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import vm: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import worker_threads: a file by a path that is computed or made at run time
+DIFFERS test/js/node/stubs.test.js > stubbed import zlib: a file by a path that is computed or made at run time
+DIFFERS test/js/node/url/url-parse-format.test.js > url.parse then url.format > url.parse is unaffected by Object.prototype pollution: the lock of the built-ins
+DIFFERS test/js/node/util/node-inspect-tests/parallel/util-inspect.test.js > no assertion failures 3: the lock of the built-ins
+DIFFERS test/js/node/util/test-aborted.test.ts > aborted does not hand its internal settle function to a patched Function.prototype.bind: the lock of the built-ins
+DIFFERS test/js/node/util/test-util-types.test.js > #11780: a file by a path that is computed or made at run time
+DIFFERS test/js/node/v8/capture-stack-trace.test.js > CallFrame isTopLevel returns false for Function constructor: a compiled frame gives no function object
+DIFFERS test/js/node/v8/capture-stack-trace.test.js > CallFrame.p.getScriptNameOrSourceURL inside eval: a compiled frame gives no function object
+DIFFERS test/js/node/visible-shape-follows-node.test.ts > process.nextTick is a JavaScript function: the text of a function
+DIFFERS test/js/node/visible-surface.test.ts > the visible surface of the modules of Node.js: a file by a path that is computed or made at run time
+DIFFERS test/js/node/vm/vm.test.ts > can extend generated globals & WebCore globals: the lock of the built-ins
+DIFFERS test/js/node/vm/vm.test.ts > the file: a file by a path that is computed or made at run time
+DIFFERS test/js/node/vm/vm.test.ts > the options argument > Script#runInThisContext() > rejects a Proxy around an array: open: the library's error text for a proxy around an array
+DIFFERS test/js/node/vm/vm.test.ts > the options argument > compileFunction() > rejects a Proxy around an array: open: the library's error text for a proxy around an array
+DIFFERS test/js/node/vm/vm.test.ts > the options argument > createContext() > rejects a Proxy around an array: open: the library's error text for a proxy around an array
+DIFFERS test/js/node/vm/vm.test.ts > the options argument > new Script() > rejects a Proxy around an array: open: the library's error text for a proxy around an array
+DIFFERS test/js/node/vm/vm.test.ts > the options argument > vm.runInThisContext() > rejects a Proxy around an array: open: the library's error text for a proxy around an array
+DIFFERS test/js/node/worker_threads/worker-async-dispose.test.ts > Worker can be used with await using: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-async-dispose.test.ts > Worker implements Symbol.asyncDispose: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-top-level-await.test.ts > unsettled top-level await preserves a user-set process.exitCode: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-top-level-await.test.ts > unsettled top-level await still exits 13 when process.exitCode is 0: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-top-level-await.test.ts > worker that stays busy after top-level await exits with code 0: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-top-level-await.test.ts > worker with a rejected top-level await emits error: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-top-level-await.test.ts > worker with a settled top-level await exits with code 0: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-top-level-await.test.ts > worker with an unsettled top-level await exits with code 13: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-transfer-list.test.ts > a valid transferList still detaches the transferred buffer: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-transfer-list.test.ts > an invalid transferList entry throws before anything is detached: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker-transfer-terminate-stress.test.ts > terminate() during MessagePort transfer does not crash: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > 'online' precedes the worker's first message > a 'message' listener attached after 'online' sees it: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > 'online' precedes the worker's first message > in event order: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > FileHandles nested in Map and Set workerData are transferred: a file by a path that is computed or made at run time
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > a FileHandle in transferList but not in workerData is detached without leaking: a file by a path that is computed or made at run time
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > a FileHandle referenced twice in workerData deserializes to one instance: a file by a path that is computed or made at run time
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > a file worker's static imports load before it counts as started: a file by a path that is computed or made at run time
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > a parent message reaches parentPort only, not self.onmessage, in a node worker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > a worker with a preload is not started before its entry module runs: a file by a path that is computed or made at run time
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > captured stdio backpressure > large stdout survives writev batching and repeated acks: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > captured stdio backpressure > stdout write completion is withheld until the parent reads: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > environmentData > can pass a value to a child: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > environmentData > child modifications do not affect parent: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > error event > falls back to string when the error cannot be serialized: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > error event > is fired with a copy of the error value: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > getHeapSnapshot > queues while the worker is starting and rejects once it has exited: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > getHeapSnapshot > rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start: a file by a path that is computed or made at run time
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > getHeapSnapshot > resolves to a Stream.Readable with JSON text in V8 format: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > getHeapSnapshot > throws if the wrong options are passed: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > getHeapStatistics settles when terminated mid-request: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > no JS entry after a worker's termination has been thrown > stuck in a portMessage callback: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > no JS entry after a worker's termination has been thrown > stuck in a socketData callback: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > nothing queued runs after the worker's VM stops > process.exit() in Bun.spawn onExit: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > nothing queued runs after the worker's VM stops > process.exit() in a timer: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > nothing queued runs after the worker's VM stops > terminate() landing mid-callback: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > parent messages are delivered after the worker's entry evaluated; exit handler's exitCode wins: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > parentPort messages are delivered while a top-level await is pending: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > parentPort queues messages until a 'message' listener is attached > listener attached after a top-level await: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > parentPort queues messages until a 'message' listener is attached > removing the last listener pauses delivery until one is attached again: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > parentPort.close() ends a worker that is only listening for messages: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > parentPort.onmessage = <not a function> lets the worker exit: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > parentPort.unref() lets a listening worker exit: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > receiveMessageOnPort works across threads: a file by a path that is computed or made at run time
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > stdio is flushed when the worker exits synchronously > buffered output, then 'exit' handler output, arrive in order; handler exitCode wins: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > stdio is flushed when the worker exits synchronously > captured stderr: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > stdio is flushed when the worker exits synchronously > captured stdout: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > support eval in worker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > support require in eval for a file that doesnt exist: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > support require in eval for a file: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > support require in eval: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > support worker eval that throws: a file by a path that is computed or made at run time
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > terminate with work in flight > a SubtleCrypto digest still on the work queue at terminate(): text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > terminate with work in flight > a transpile queued on the thread pool that starts after terminate(): a file by a path that is computed or made at run time
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > terminate with work in flight > an async zlib job on the thread pool at terminate(): text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > terminate() of a running, idle worker resolves 1 like Node: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > transfer list invalidated while the message is serialized > new Worker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > transfer list invalidated while the message is serialized > worker.postMessage honors markAsUntransferable applied during serialization: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > transfer list invalidated while the message is serialized > worker.postMessage: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > worker argv/execArgv option strings, read repeatedly in the worker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > worker event > is emitted on the next tick with the right value: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > worker event > uses an overridden process.emit function: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > worker stop ordering as seen by the worker's own handlers > process.exit() inside a callback: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > worker stop ordering as seen by the worker's own handlers > terminate(): text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/worker_threads/worker_threads.test.ts > you can override globalThis.postMessage: a file by a path that is computed or made at run time
+DIFFERS test/js/sql/adapter-env-var-precedence.test.ts > SQL adapter environment variable precedence > the tls option object > an inherited rejectUnauthorized is not read: the lock of the built-ins
+DIFFERS test/js/sql/adapter-env-var-precedence.test.ts > SQL adapter environment variable precedence > the tls option object > an inherited serverName is not read: the lock of the built-ins
+DIFFERS test/js/sql/sqlite-sql.test.ts > rows or changes > the rows are not spread into a call: the lock of the built-ins
+DIFFERS test/js/third_party/remix/remix.test.ts > remix works: a file by a path that is computed or made at run time
+DIFFERS test/js/third_party/wpt-streams/wpt-streams.test.ts > streams/piping/then-interception.any.js > piping should not be observable: the lock of the built-ins
+DIFFERS test/js/third_party/wpt-streams/wpt-streams.test.ts > streams/piping/then-interception.any.js > tee should not be observable: the lock of the built-ins
+DIFFERS test/js/third_party/wpt-streams/wpt-streams.test.ts > streams/readable-byte-streams/patched-global.any.js > Patched then() sees byobRequest after filling all pending pull-into descriptors: the lock of the built-ins
+DIFFERS test/js/third_party/wpt-streams/wpt-streams.test.ts > streams/readable-streams/patched-global.any.js > ReadableStream tee() should not touch Object.prototype properties: the lock of the built-ins
+DIFFERS test/js/third_party/wpt-streams/wpt-streams.test.ts > streams/readable-streams/patched-global.any.js > pipeTo() should not call Promise.prototype.then(): the lock of the built-ins
+DIFFERS test/js/third_party/wpt-streams/wpt-streams.test.ts > streams/readable-streams/patched-global.any.js > tee() should not call Promise.prototype.then(): the lock of the built-ins
+DIFFERS test/js/third_party/wpt-streams/wpt-streams.test.ts > streams/transform-streams/patched-global.any.js > TransformStream constructor should not call setters for highWaterMark or size: the lock of the built-ins
+DIFFERS test/js/web/crypto/web-crypto.test.ts > ChaCha20-Poly1305 and AKP review fixes > Worker postMessage delivers ChaCha20-Poly1305 and ML-DSA keys: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/fetch/blob-array-fast-path.test.ts > JSArrayIterator butterfly fast path > hole + Array.prototype indexed getter consults prototype (slow path): the lock of the built-ins
+DIFFERS test/js/web/fetch/blob.test.ts > blob: a file by a path that is computed or made at run time
+DIFFERS test/js/web/fetch/fetch.test.ts > fetch > Object: a name that changes from run to run
+DIFFERS test/js/web/fetch/fetch.test.ts > fetch > Request: a name that changes from run to run
+DIFFERS test/js/web/fetch/fetch.test.ts > fetch > URL: a name that changes from run to run
+DIFFERS test/js/web/fetch/fetch.test.ts > fetch > http://127.0.0.1:<port>/: a name that changes from run to run
+DIFFERS test/js/web/fetch/fetch.test.ts > fetch > https://127.0.0.1:<port>/: a name that changes from run to run
+DIFFERS test/js/web/streams/streams.test.js > multi-chunk consumers produce exactly the concatenated bytes > a patched Object.prototype.then that releases the reader mid-resolution does not crash: the lock of the built-ins
+DIFFERS test/js/web/structured-clone-shared-array-buffer.test.ts > structuredClone(SharedArrayBuffer) > worker postMessage shares the SAB: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/web-globals.test.js > new.target.prototype > new Worker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/websocket/websocket-client.test.ts > WebSocket TLS server identity > WebSocket tls.checkServerIdentity > does not approve when the handshake ends in a worker that terminate() has stopped: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/websocket/websocket-custom-headers.test.ts > WebSocket options are read through the prototype chain > ignores options placed on Object.prototype: the lock of the built-ins
+DIFFERS test/js/web/websocket/websocket.test.js > terminate() on a wss:// socket whose peer never answers close_notify still fires close: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/message-channel.test.ts > message channel created on main thread: the file of a Worker has to be an entry point
+DIFFERS test/js/web/workers/message-channel.test.ts > message channel created on other thread: the file of a Worker has to be an entry point
+DIFFERS test/js/web/workers/worker-postmessage-transfer.test.ts > Worker#postMessage transfer list > a listed port closed during serialization fails the transfer without detaching the buffer: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker-postmessage-transfer.test.ts > self.postMessage transfer list > postMessage with a listed port closed during serialization detaches nothing: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker-postmessage-transfer.test.ts > self.postMessage transfer list > postMessage(msg, [ArrayBuffer, null]) throws TypeError and detaches nothing: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker-postmessage-transfer.test.ts > self.postMessage transfer list > postMessage(msg, [ArrayBuffer]) transfers and detaches the buffer: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker-postmessage-transfer.test.ts > self.postMessage transfer list > postMessage(msg, [MessagePort]) transfers the port: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker-postmessage-transfer.test.ts > self.postMessage transfer list > postMessage(msg, invalidOptions) throws TypeError: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker-postmessage-transfer.test.ts > self.postMessage transfer list > postMessage(msg, { transfer: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > argv / execArgv defaults: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > web worker > argv / execArgv options: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > web worker > error event > is fired with a string of the error: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > message delivery does not wait for a 'message' handler > a handler installed after a top-level await misses what was dispatched before it: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > message delivery does not wait for a 'message' handler > a handler installed before a top-level await that never settles receives what was queued during startup: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > open event > is fired for a worker whose entry does not resolve: the file of a Worker has to be an entry point
+DIFFERS test/js/web/workers/worker.test.ts > web worker > open event > precedes the worker's first message: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > preload > array of 2 strings: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > web worker > preload > array of string: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > web worker > preload > error in preload doesn't crash parent: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > web worker > preload > string: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > web worker > terminate() races and lifecycle edges > a long data: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > terminate() races and lifecycle edges > a message flood from a worker does not starve the parent's event loop: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > terminate() races and lifecycle edges > messages posted right before a natural exit are all delivered before close: the clock
+DIFFERS test/js/web/workers/worker.test.ts > web worker > terminate() races and lifecycle edges > parent messages still arrive after a node:vm timeout in the worker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > terminate() races and lifecycle edges > postMessage() to a terminated worker is a no-op: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > terminate() races and lifecycle edges > process.exit() from a nested node:vm context inside a worker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > terminate() races and lifecycle edges > terminate() while a node:vm script with a timeout is running: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > worker event > is fired with the right object: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > web worker > worker with event listeners doesn't close event loop 2: the file of a Worker has to be an entry point
+DIFFERS test/js/web/workers/worker.test.ts > web worker > worker with process.exit: the file of a Worker has to be an entry point
+DIFFERS test/js/web/workers/worker.test.ts > worker_threads > worker terminate while setting up thread: the file of a Worker has to be an entry point
+DIFFERS test/js/web/workers/worker.test.ts > worker_threads > worker terminating forcefully properly interrupts: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > worker_threads > worker with argv/execArgv: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > worker_threads > worker with eval = true succeeds with valid code: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker.test.ts > worker_threads > worker with process.exit (delay) and terminate: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > worker_threads > worker with process.exit: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker.test.ts > worker_threads > worker without argv/execArgv: a file by a path that is computed or made at run time
+DIFFERS test/js/web/workers/worker_blob.test.ts > Revoking an object URL after a Worker is created before it loads should throw an error: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker_blob.test.ts > TypeScript Worker from a Blob: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker_blob.test.ts > Worker from a Blob: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker_blob.test.ts > Worker from a blob errors on invalid blob: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/web/workers/worker_blob.test.ts > Worker on a revoked blob still works: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/regression/issue/09563/09563.test.ts > importing empty files in the async transpiler does not crash: a file by a path that is computed or made at run time
+DIFFERS test/regression/issue/19219.test.ts > HTMLRewriter should throw proper errors instead of [native code: the same error with another text
+DIFFERS test/regression/issue/22635/22635.test.ts > issue #22635 - MessagePort communication fails after transfer to worker: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/regression/issue/issue-1825-jest-mock-functions.test.ts > Jest mock functions from issue #1825 > jest.mock should be available and work with factory function: a spy or a mock on what a module exports
+MISSING test/js/bun/http/bun-serve-html.test.ts > mixed api and html routes with non-* false routes (2): a file by a path that is computed or made at run time
+MISSING test/js/bun/http/bun-serve-html.test.ts > mixed api and html routes with non-* false routes (3): a file by a path that is computed or made at run time
+MISSING test/js/bun/test/describe.test.ts > blocks should handle a number, string, anonymous class, named class, or function for the first arg > Should also pass: the compiled run is right: `const C = class {}` names the class
+MISSING test/js/bun/test/mock/mock-module.test.ts > adding a default on a module with no default (2): a spy or a mock on what a module exports
+MISSING test/js/bun/util/fuzzy-wuzzy.test.ts > http2 > call (2): the lock of the built-ins
+MISSING test/js/bun/util/fuzzy-wuzzy.test.ts > http2 > construct (2): the lock of the built-ins
+MISSING test/js/bun/util/fuzzy-wuzzy.test.ts > http2 > construct-subclass (2): the lock of the built-ins
+MISSING test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      const f = function() {};\n      f.length;\n      return f;\n    }": the name of the test is made of a function's text
+MISSING test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      let f = function() {};\n      f.length;\n      return f;\n    }": the name of the test is made of a function's text
+MISSING test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      var f = function() {};\n      return f;\n    }": the name of the test is made of a function's text
+MISSING test/js/bun/util/inspect.test.js > crash testing > inspecting "() => new Proxy({ yo" doesn't crash (2): the name of the test is made of a function's text
+MISSING test/js/bun/util/inspect.test.js > crash testing > inspecting "() => new WritableSt" doesn't crash: the name of the test is made of a function's text
+MISSING test/js/node/events/event-emitter.test.ts > EventEmitter constructors > class MyEmitter extends EventEmitter { should work: the name of the test is made of a function's text
+MISSING test/js/node/events/event-emitter.test.ts > EventEmitter constructors > new EventEmitter should work: the name of the test is made of a function's text
+MISSING test/js/node/events/event-emitter.test.ts > EventEmitter constructors > new class extends EventEmitter { } should work: the name of the test is made of a function's text
+MISSING test/js/node/http/node-http-backpressure.test.ts > backpressure > 'drain' after a later write() flushes the backlog > a large write() behind buffered writes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/node/http/node-http-backpressure.test.ts > backpressure > 'drain' after a later write() flushes the backlog > a small write() behind a large write: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/node/http/node-http-backpressure.test.ts > backpressure > 'drain' after a later write() flushes the backlog > a small write() behind buffered writes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([ArrayBuffer]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([BigInt64Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([BigUint64Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([DataView]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Float16Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Float32Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Float64Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Int16Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Int32Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Int8Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Uint16Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Uint32Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Uint8Array]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Blob([Uint8ClampedArray]) copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(ArrayBuffer).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(BigInt64Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(BigUint64Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(DataView).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Float16Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Float32Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Float64Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Int16Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Int32Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Int8Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Uint16Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Uint32Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Uint8Array).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > new Response(Uint8ClampedArray).blob() copies the bytes: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > Blob from ArrayBuffer-like values > string, view, and Blob parts concatenate in order: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > Bun.file(path).slice(start, end) streams only the slice: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path) with a resolved size still streams the whole file: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(0, 262144).stream().bytes(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(0, 262144).stream(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(0, 5).stream().bytes(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(0, 5).stream(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(100, 700000).stream().bytes(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(100, 700000).stream(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(1048566, 1048576).stream().bytes(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(1048566, 1048576).stream(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(1048566, 1048676).stream().bytes(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(1048566, 1048676).stream(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(3, 7).stream().bytes(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(3, 7).stream(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(4096, 4096).stream().bytes(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > Bun.file(path).slice(4096, 4096).stream(): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > HTMLRewriter.transform(new Response(Bun.file(path).slice(0, 262144))): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > HTMLRewriter.transform(new Response(Bun.file(path).slice(0, 5))): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > HTMLRewriter.transform(new Response(Bun.file(path).slice(100, 700000))): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > HTMLRewriter.transform(new Response(Bun.file(path).slice(1048566, 1048576))): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > HTMLRewriter.transform(new Response(Bun.file(path).slice(1048566, 1048676))): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > HTMLRewriter.transform(new Response(Bun.file(path).slice(3, 7))): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > HTMLRewriter.transform(new Response(Bun.file(path).slice(4096, 4096))): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > new Response(Bun.file(path).slice(0, 262144)).body: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > new Response(Bun.file(path).slice(0, 5)).body: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > new Response(Bun.file(path).slice(100, 700000)).body: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > new Response(Bun.file(path).slice(1048566, 1048576)).body: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > new Response(Bun.file(path).slice(1048566, 1048676)).body: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > new Response(Bun.file(path).slice(3, 7)).body: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > a slice of a file that continues past it > new Response(Bun.file(path).slice(4096, 4096)).body: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > content-length of a sliced Bun.file response body: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > slice end beyond EOF clamps to the file size: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > file-backed slice bounds are respected when streaming and serving > structuredClone keeps the slice size and does not mutate the original: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > new Blob([], { type: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > new Blob([typedBlob], {type}) with a known mime type does not free a static pointer (2): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > new Blob([typedBlob], {type}) with a known mime type does not free a static pointer: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > new File([typedBlob], {type}) with a known mime type does not free a static pointer (2): text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/blob.test.ts > new File([typedBlob], {type}) with a known mime type does not free a static pointer: text at run time (eval, the Function constructor, a Worker or an import of text)
+MISSING test/js/web/fetch/fetch-leak.test.ts > fetch() compress option does not leak bodies or compressor state: the clock
+MISSING test/js/web/fetch/fetch-leak.test.ts > fetch() does not leak streaming decompressor state across fragmented compressed responses: the clock
+MISSING test/js/web/fetch/fetch-leak.test.ts > fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet Holder.swap): the clock
+MISSING test/js/web/fetch/fetch-leak.test.ts > fetch(file://...) does not leak the response url WTFStringImpl: the clock
+MISSING test/js/web/fetch/fetch-leak.test.ts > fetch({proxy}) object form does not leak the proxy href WTFStringImpl > RSS stays bounded: the clock
+MISSING test/js/web/fetch/fetch-leak.test.ts > fetch({proxy}) string form does not leak the proxy href WTFStringImpl > RSS stays bounded: the clock
+MISSING test/js/web/fetch/fetch.test.ts > fetch > Object: a name that changes from run to run
+MISSING test/js/web/fetch/fetch.test.ts > fetch > Request: a name that changes from run to run
+MISSING test/js/web/fetch/fetch.test.ts > fetch > URL: a name that changes from run to run
+MISSING test/js/web/fetch/fetch.test.ts > fetch > http://127.0.0.1:<port>/: a name that changes from run to run
+MISSING test/js/web/fetch/fetch.test.ts > fetch > https://127.0.0.1:<port>/: a name that changes from run to run
+NOT-BUILT test/js/bun/glob/match.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/http/request-smuggling.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/jsc/webkit-upgrade-23b0720b40.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/jsc/webkit-upgrade-dbdca7545d.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/module-graph/module-graph-isolation.test.ts: a file by a path that is computed or made at run time
+NOT-BUILT test/js/bun/plugin/plugins.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/resolve/build-error.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/resolve/toml/toml.test.js: the compiler's own refusal at the build (TS100xxx)
+NOT-BUILT test/js/bun/resolve/xml/xml.test.js: a fixture that is no valid XML is an error of the build
+NOT-BUILT test/js/bun/runtime-error.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/shell/brace.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/test/mock/6874/A.test.ts: a spy or a mock on what a module exports
+NOT-BUILT test/js/bun/test/mock/6874/B.test.ts: a spy or a mock on what a module exports
+NOT-BUILT test/js/bun/test/require-bun-test.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/util/bun-cryptohasher.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/util/inspect-error.test.js: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/util/randomUUIDv5.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/websocket/websocket-server-backpressure-buffer.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/websocket/websocket-server-permessage-deflate.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/websocket/websocket-server-rsv-frames.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/websocket/websocket-server-stop-retained-ws.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/websocket/websocket-server-upgrade-reentrant.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/bun/websocket/websocket-server.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/abort/abort-controller.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/crypto/random.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/crypto/webcrypto.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/encoding/encoding.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/event/custom-event.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/event/event-target.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/event/event.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/fetch/blob.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/fetch/body.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/fetch/headers.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/fetch/request.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/fetch/response.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/performance/performance.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/url/url.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/url/urlsearchparams.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/deno/v8/error.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/first_party/undici/undici.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/first_party/ws/ws-client-compat-send.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/first_party/ws/ws-proxy.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/node/diagnostics_channel/diagnostics_channel.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/node/http/node-http.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/node/module/require-extensions.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/node/tls/tls-syscall-fault.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/postgres-auth.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/postgres-connection.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/postgres-copy.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/postgres-duplicate-auth-request.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/postgres-listen-notify.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-handles-servers.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-handles.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-helpers-validation.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-mysql-connection.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-mysql-packet-overrun.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-options.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-pool.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-query-building.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-tls-server-identity.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sql-transform.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/sql/sqlite-url-parsing.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/third_party/astro/astro-post.test.js: a native addon by a computed name
+NOT-BUILT test/js/third_party/rollup-v4/rollup-v4.test.ts: a file by a path that is computed or made at run time
+NOT-BUILT test/js/third_party/svelte/svelte.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/web/fetch/headers.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/js/web/websocket/websocket-proxy.test.ts: the check refuses the test's own text (a type error)
+NOT-BUILT test/regression/issue/16476/16476.test.ts: the compiler's own refusal at the build (TS100xxx)
+TIMES-OUT test/js/node/util/test-aborted.test.ts > aborted with gc cleanup: the clock
+TIMES-OUT test/js/third_party/comlink/comlink.test.ts > comlink > should start without big delay: the clock
+TIMES-OUT test/js/web/broadcastchannel/broadcast-channel.test.ts > broadcast channel used with workers: the clock
+TIMES-OUT test/js/web/broadcastchannel/broadcast-channel.test.ts > broadcast channel worker wait: the clock
+TIMES-OUT test/js/web/fetch/fetch-backpressure.test.ts > S3 receive backpressure > s3file.writer().end() resolves with the byte count, also once the writer is collected: the clock
+TIMES-OUT test/js/web/fetch/fetch-leak.test.ts > Sending String > does not leak: the clock
+TIMES-OUT test/js/web/fetch/fetch-leak.test.ts > Sending URLSearchParams > does not leak: the clock
+TIMES-OUT test/js/web/fetch/fetch-leak.test.ts > Sending iterator > does not leak: the clock
+TIMES-OUT test/js/web/fetch/fetch-leak.test.ts > Sending stream > does not leak: the clock
+TIMES-OUT test/js/web/fetch/fetch.test.ts > a numeric `timeout` does not abort in-flight requests on the 4s sweep tick: the clock
+TIMES-OUT test/js/web/websocket/websocket-client.test.ts > WebSocket > close() > (no arguments): the clock
+TIMES-OUT test/js/web/websocket/websocket-client.test.ts > WebSocket > close() > (no reason): the clock
+TIMES-OUT test/js/web/workers/worker-terminate-lifetime.test.ts > a worker ends while a stream is still being piped into a FileSink: the clock
+TIMES-OUT test/js/web/workers/worker-terminate-lifetime.test.ts > terminate() while async-iterable Response/request bodies are being pumped: the clock
+TIMES-OUT test/js/web/workers/worker-terminate-lifetime.test.ts > terminate() while the worker drains work scheduled by 'beforeExit' stops it: the clock
+TIMES-OUT test/js/web/workers/worker-terminate-lifetime.test.ts > terminate() while the worker's Bun.serve() renders a promise/stream body stuck in a microtask: the clock
+TIMES-OUT test/js/web/workers/worker-terminate-lifetime.test.ts > worker exit with streaming-request-body fetches whose response.body was touched: the clock
+TIMES-OUT test/js/web/workers/worker.test.ts > web worker > sending 50 messages should just work: the clock
+TIMES-OUT test/js/web/workers/worker.test.ts > web worker > terminate() races and lifecycle edges > preload with an un-awaited import() does not open message delivery before the entry runs: the clock
+TIMES-OUT test/regression/issue/18413-deflate-semantics.test.ts > truncated zlib-wrapped deflate should fail: the clock
+TIMES-OUT test/regression/issue/18413-truncation.test.ts > brotli with delayed chunks should succeed: the clock
+TIMES-OUT test/regression/issue/22353.test.ts > issue #22353 - server should handle oversized request without crashing: the clock
+TIMES-OUT test/regression/issue/27428.test.ts > stream.finished callback preserves AsyncLocalStorage context: the clock
+TIMES-OUT test/regression/issue/29181.test.ts > Bun.serve static file route: the clock
+TIMES-OUT test/regression/issue/32489.test.ts > epoll_pwait2 disable gate > BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2 gates the main loop: the clock

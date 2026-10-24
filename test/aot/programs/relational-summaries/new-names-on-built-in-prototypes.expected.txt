@@ -1,0 +1,18 @@
+undefined,1,no method,no method,undefined,undefined,undefined,undefined,[999],{},998,999,999,999,3,undefined,undefined 0
+1,2 0
+1001,1,kept an array,kept a map,1000,1000,marked,detail of error 1000,[1000],{},999,1000,1000,1000,3,string,number
+3721 [1000,1001] | [1000] | number 1000 | [1000] | collection of 1 | collection of 1 | collection of 1 | function 1000 | error 1000 | string text1000
+[[3,4]] {"inner":[5]} "an error's toJSON" ["an error's toJSON"] 961 collection of 1 | collection of 1 | to JSON | nested
+99 100 true true 961 minus | plus | less | equal
+6 default string by key 961 number | default | string | key
+an error was a thenable an error was a thenable an error was a thenable an error was a thenable a weak reference was a thenable 961 5
+1 pattern from 1 961 spread | pattern | from | set
+2 961 concatenated
+inspected {
+  inner: inspected,
+} inspected
+inspected inspected
+961 [20] | [21] | collection of 1 | [23] | collection of 1
+1209 3721 function 98 | [99,99] | function 198 | [199,199] | function 298 | [299,299]
+undefined,1,no method,no method,undefined,undefined,undefined,undefined,[2000],{},1999,2000,2000,2000,3,undefined,undefined 0
+1,2 0

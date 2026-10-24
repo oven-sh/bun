@@ -1,0 +1,61 @@
+# process.nextTick(callback); function show(cb) { cb.seen() }
+# Nothing has put a function on the ring, so the overload of process.nextTick finds nothing to show the operands to.
+# operands-of-next-tick-reach-the-function-that-shows-them-to-hooks-once-it-is-handed-over.ir has the store.
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f5
+# CHECK-NEXT: unreached f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal/process/next_tick_queue" displayPath="internal/process/next_tick_queue" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessNext_tick_queue body=f2
+entry module=m0
+runtimefunction id=65578 function=f1
+layout L0 name="Exports" fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="ring" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Ring" fields=[{key="pushWithInitHooks" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="nextTick" module=m1 declared={type=anything} initialization=Function function=f3 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="internal/process/next_tick_queue"
+    v1 = PropGet v0 key="ring"
+    v2 = NewClosure function=f5
+    v3 = Undefined
+    v4 = Builtin builtin=Process
+    v5 = PropGet v4 key="nextTick"
+    v6 = NewClosure function=f4
+    v7 = NewClosure function=f6
+    PropSet v6, v7 key="seen"
+    v9 = Call v5, v4, v6
+    Return
+}
+function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65578 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = RequireModule module=m1 referrer=m1 specifier="internal/process/next_tick_queue"
+    v4 = PropGet v3 key="nextTick"
+    Return v4
+}
+function f2 name="queueModule" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
+    Return v3
+}
+function f3 name="nextTick" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="callback" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="show" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="seen"
+    v2 = Call v1, v0
+    Return
+}
+function f6 name="seen" results=[{type=anything}] {
+  b0():
+    Return
+}

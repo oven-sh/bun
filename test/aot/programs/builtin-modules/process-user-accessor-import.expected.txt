@@ -1,0 +1,8 @@
+before
+read
+read arrow
+read bound
+loaded
+after 1 1
+after 2 3
+function string

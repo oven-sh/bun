@@ -263,9 +263,23 @@
             "pages": ["/bundler/executables"]
           },
           {
+            "group": "Ahead-of-Time Compilation",
+            "icon": "cpu",
+            "pages": [
+              "/bundler/aot",
+              "/bundler/aot-types",
+              "/bundler/aot-explain",
+              "/bundler/aot-compatibility",
+              "/bundler/aot-debugging",
+              "/bundler/aot-size",
+              "/bundler/aot-libraries",
+              "/bundler/aot-troubleshooting"
+            ]
+          },
+          {
             "group": "Extensions",
             "icon": "plug",
-            "pages": ["/bundler/plugins", "/bundler/macros"]
+            "pages": ["/bundler/plugins", "/bundler/macros", "/bundler/validate"]
           },
           {
             "group": "Optimization",

@@ -1,0 +1,82 @@
+# Whoever enters a graph of modules in which something is to be linked, or waited for, goes through the loader. A site that evaluates such a module asks the loader where it stands,
+# and the module that holds the site is a function like any other.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 1
+# STATISTIC: ModulesWithoutState = 2
+# STATISTIC: RequireSitesBound = 1
+# CHECK: outcome: Changed
+
+variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="dlopen" module=m2 declared={type=anything}
+variable g2 name="b" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 requests=[{target=m5 kind=Require completes=true}]
+module m1 path="/imports-library.mjs" displayPath="imports-library.mjs" body=f1 requests=[{target=m2 completes=true}, {target=m6 completes=true}] exports=[{name="a" variable=g0}]
+module m2 path="bun:ffi" displayPath="bun:ffi" kind=Runtime exportRule=RuntimeModule runtimeModule=BunFfi syntheticExports=[{name="dlopen" variable=g1}]
+module m3 path="/imports-awaiting.mjs" displayPath="imports-awaiting.mjs" body=f2 requests=[{target=m4 completes=true}] exports=[{name="b" variable=g2}]
+module m4 path="/awaits.mjs" displayPath="awaits.mjs" flags=[HasTopLevelAwait] body=f3
+module m5 path="/between.cjs" displayPath="between.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f4 requests=[{target=m1 kind=Require completes=true}, {target=m3 kind=Require}]
+module m6 path="/below.mjs" displayPath="below.mjs" body=f5
+entry module=m0
+# CHECK: module m1 {{*}}flags=[EvaluatesItself] body=f1
+# CHECK: module m3 path="/imports-awaiting.mjs" displayPath="imports-awaiting.mjs" body=f2
+# CHECK: module m5 path="/between.cjs" displayPath="between.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports requests=
+# CHECK: module m6 path="/below.mjs" displayPath="below.mjs" namespaceLayout=
+
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m5 referrer=m0 [isBare]
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = CallDirect function=f4
+# CHECK-NEXT: Return
+
+# The loader links it and then calls it: it evaluates what it imports beside the library by itself.
+function f1 name="importsLibrary" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f1 name="importsLibrary"
+# CHECK: = BeginModuleEvaluation module=m1
+# CHECK-NOT: AbandonModuleEvaluation
+# CHECK: = CallDirect function=f5
+# CHECK-NEXT: = CallDirect function=f6
+# CHECK-NEXT: FinishModuleEvaluation module=m1
+function f2 name="importsAwaiting" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g2
+    Return
+}
+# CHECK-LABEL: function f2 name="importsAwaiting"
+# CHECK-NOT: ModuleEvaluation
+function f3 name="awaits" module=m4 kind=Module flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    v1 = Await v0
+    Return
+}
+function f4 name="between" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m5 [isBare]
+    EvaluateModule module=m3 referrer=m5 [isBare]
+    Return
+}
+# CHECK-LABEL: function f4 name="between"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = RequireModule module=m1 referrer=m5 specifier="/imports-library.mjs"
+# CHECK-NEXT: = RequireModule module=m3 referrer=m5 specifier="/imports-awaiting.mjs"
+# CHECK-NEXT: Return
+function f5 name="below" module=m6 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f5 name="below"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-LABEL: function f6 name="importsLibrary"{{*}}derivation={source=f1}
+# CHECK-NOT: function f7

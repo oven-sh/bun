@@ -1,0 +1,2 @@
+exit code 1
+error: Cannot load '/$bunfs/root/counter.cjs': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)

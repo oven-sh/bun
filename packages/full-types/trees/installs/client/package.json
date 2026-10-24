@@ -1,0 +1,11 @@
+{
+  "name": "full-types-trees-client",
+  "private": true,
+  "dependencies": {
+    "@types/node": "25.9.9",
+    "@types/react": "19.2.7",
+    "@types/react-reconciler": "0.33.0",
+    "react": "19.2.0",
+    "react-reconciler": "0.33.0"
+  }
+}

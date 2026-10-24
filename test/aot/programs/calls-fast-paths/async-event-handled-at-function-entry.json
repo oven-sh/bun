@@ -1,0 +1,7 @@
+{
+  "env": {
+    "JSC_aotCountsPath": "/dev/null",
+    "JSC_watchdog": "250"
+  },
+  "erased": "as plain Bun"
+}

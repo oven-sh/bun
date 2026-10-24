@@ -290,6 +290,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) bundler_feature_flag_ref: Ref,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,
+    /// The local names of `import { JSON } from "bun"`.
+    pub(crate) json_imports_from_bun: BumpVec<'a, Ref>,
+    /// The local names of all of "bun": `import Bun from "bun"`, `import * as Bun from "bun"`.
+    pub(crate) whole_imports_of_bun: BumpVec<'a, Ref>,
+    /// Where the name stands in each `x.parse<T>` and `x["parse"]<T>`. See `check_type_arguments_of_parse`.
+    pub(crate) parse_members_with_type_arguments: BumpVec<'a, bun_ast::Loc>,
 
     pub(crate) has_classic_runtime_warned: bool,
     pub(crate) macro_call_count: MacroCallCountType,
@@ -4255,6 +4261,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(star) = stmt.star_name_loc.to_nullable() {
             let name = self.load_name_from_ref(stmt.namespace_ref);
             stmt.namespace_ref = self.declare_symbol(js_ast::symbol::Kind::Import, star, name)?;
+            if path.text == b"bun" {
+                self.whole_imports_of_bun.push(stmt.namespace_ref);
+            }
 
             if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
@@ -4301,6 +4310,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
                 name_loc.ref_ = r#ref;
                 self.is_import_item.insert(r#ref, ());
+                if path.text == b"bun" {
+                    self.whole_imports_of_bun.push(r#ref);
+                }
 
                 // ensure every e_import_identifier holds the namespace
                 if self.options.features.hot_module_reloading {
@@ -4382,6 +4394,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+            if path.text == b"bun" {
+                match alias {
+                    b"JSON" => self.json_imports_from_bun.push(r#ref),
+                    b"default" => self.whole_imports_of_bun.push(r#ref),
+                    _ => {}
+                }
+            }
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -6515,6 +6534,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    pub(crate) fn should_remove_dead_statements(&self) -> bool {
+        let features = &self.options.features;
+        features.minify_syntax || (features.is_library && features.dead_code_elimination)
+    }
+
     pub(crate) fn select_local_kind(&self, kind: js_ast::s::Kind) -> js_ast::s::Kind {
         // Use "var" instead of "let" and "const" if the variable declaration may
         // need to be separated from the initializer. This allows us to safely move
@@ -6523,6 +6547,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             && self.current_scope().parent.is_none()
             && !kind.is_using()
+            && !(kind == js_ast::s::Kind::KConst
+                && self.options.features.is_library
+                && !self.will_wrap_module_in_try_catch_for_using)
         {
             return js_ast::s::Kind::KVar;
         }
@@ -6532,6 +6559,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.bundle
             && kind == js_ast::s::Kind::KConst
             && self.options.features.minify_syntax
+            && !self.options.features.is_library
         {
             return js_ast::s::Kind::KLet;
         }
@@ -7123,6 +7151,53 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
+    /// The symbol that `expr`, which hasn't been visited yet, refers to if it's an identifier.
+    fn symbol_of_unvisited_identifier(&mut self, expr: Expr) -> Option<(Ref, &'a [u8])> {
+        let js_ast::ExprData::EIdentifier(identifier) = expr.data else {
+            return None;
+        };
+        let name = self.load_name_from_ref(identifier.ref_);
+        let found = self
+            .find_symbol_with_record_usage::<false>(expr.loc, name)
+            .ok()?;
+        (!found.is_inside_with_scope).then_some((found.r#ref, name))
+    }
+
+    /// True if `expr`, which hasn't been visited yet, is the `JSON` that "bun" exports: a name
+    /// that it was imported under, or the property of the `Bun` object.
+    fn is_json_of_bun(&mut self, expr: Expr) -> bool {
+        if let js_ast::ExprData::EDot(dot) = expr.data {
+            let Some((holder, name)) = self.symbol_of_unvisited_identifier(dot.target) else {
+                return false;
+            };
+            let is_global = holder.is_empty()
+                || self.symbols[holder.inner_index() as usize].kind
+                    == js_ast::symbol::Kind::Unbound;
+            return dot.name == b"JSON"
+                && (self.whole_imports_of_bun.contains(&holder) || (is_global && name == b"Bun"));
+        }
+        (self.symbol_of_unvisited_identifier(expr))
+            .is_some_and(|(symbol, _)| self.json_imports_from_bun.contains(&symbol))
+    }
+
+    /// Only an ahead-of-time build validates `JSON.parse<T>(text)`. This parser erases `T`, so the
+    /// call would check nothing and say nothing. That's an error for the `JSON` of "bun", which is
+    /// only there for that call. The global `JSON` stays as it was: a program may have declared a
+    /// type parameter for its `parse` itself. `target`, the object, hasn't been visited yet.
+    pub(crate) fn check_type_arguments_of_parse(&mut self, member: bun_ast::Loc, target: Expr) {
+        if self.is_control_flow_dead
+            || !self.parse_members_with_type_arguments.contains(&member)
+            || !self.is_json_of_bun(target)
+        {
+            return;
+        }
+        self.log().add_error(
+            Some(self.source),
+            member,
+            b"JSON.parse<T>() from \"bun\" only validates with --aot. Use \"bun run --aot\", \"bun test --aot\" or \"bun compile\", or remove the type argument",
+        );
+    }
+
     pub(crate) fn is_dot_define_match(&mut self, mut expr: Expr, mut parts: &[Box<[u8]>]) -> bool {
         while parts.len() > 1 {
             let last = parts.len() - 1;
@@ -9008,6 +9083,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned (arena-/process-lifetime).
+                unsafe { parts.set_len(parts_end) };
+
                 // We need to iterate multiple times if an import-equals statement was
                 // removed and there are more import-equals statements that may be removed
                 if !kept_import_equals || !removed_import_equals {
@@ -9727,6 +9805,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hmr_api_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,
             in_branch_condition: false,
+            json_imports_from_bun: BumpVec::new_in(arena),
+            whole_imports_of_bun: BumpVec::new_in(arena),
+            parse_members_with_type_arguments: BumpVec::new_in(arena),
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),

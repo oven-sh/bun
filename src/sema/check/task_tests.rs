@@ -736,6 +736,7 @@ fn is_like_new(task: &mut Task) -> bool {
         is_first_in_order,
         is_first_in_component,
         cycle_members,
+        closed_cycles,
         cycle_since_idle,
         logged_at_cycles,
         logged_when_idle,
@@ -760,6 +761,7 @@ fn is_like_new(task: &mut Task) -> bool {
         && !is_first_in_order.get()
         && !is_first_in_component.get()
         && cycle_members.get_mut().is_empty()
+        && closed_cycles.get() == 0
         && cycle_since_idle.get().is_none()
         && logged_at_cycles.borrow().is_empty()
         && logged_when_idle.get() == [0; 2]

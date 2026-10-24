@@ -1,0 +1,5 @@
+# A type without members says nothing; an optional member is enough to be an object.
+empty-object.ts:3 shape `{}` = Anything(EmptyObjectType)
+empty-object.ts:4 shape `Object` = Anything(EmptyObjectType)
+empty-object.ts:5 shape `Empty` = Anything(EmptyObjectType)
+empty-object.ts:6 shape `{ a?: number }` = Object

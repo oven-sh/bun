@@ -99,9 +99,18 @@ function get(): Frame | undefined {
   return $getInternalField($asyncContext, 0);
 }
 
+// Until a frame is put in place for the first time, every context that a job could capture is undefined, and the engine captures and restores nothing.
+// Compiled code waits for that frame, which keeps an await short in a program that only creates an AsyncLocalStorage. Under the JIT an await costs
+// the same either way, and a call in set() that is never made again costs every run(): there the constructors turn tracking on.
+let isTrackingEnabled = false;
+
 function set(frame: Frame | undefined) {
   $assert(assertValidFrame(frame));
   $debug("set", debugFormatContextValue(frame));
+  if (IS_COMPILED_AHEAD_OF_TIME && !isTrackingEnabled && frame !== undefined) {
+    isTrackingEnabled = true;
+    setAsyncHooksEnabled(true);
+  }
   return $putInternalField($asyncContext, 0, frame);
 }
 
@@ -185,11 +194,11 @@ function mergeMasks(a: AsyncLocalStorage[] | undefined, b: AsyncLocalStorage[]):
 // leaves a binding to undefined rather than removing it like run(). Like any
 // enterWith() residue, it is dropped at the next top-level checkpoint.
 class RunScope {
-  #storage;
-  #previousStore;
+  #storage: AsyncLocalStorage;
+  #previousStore: unknown;
   #disposed = false;
 
-  constructor(storage, store) {
+  constructor(storage: AsyncLocalStorage, store: unknown) {
     this.#storage = storage;
     this.#previousStore = storage.getStore();
     storage.enterWith(store);
@@ -221,7 +230,7 @@ class AsyncLocalStorage<T = any> {
         this.#name = `${name}`;
       }
     }
-    setAsyncHooksEnabled(true);
+    if (!IS_COMPILED_AHEAD_OF_TIME) setAsyncHooksEnabled(true);
 
     // In debug mode assign every AsyncLocalStorage a unique ID
     if (IS_BUN_DEVELOPMENT) {
@@ -234,14 +243,14 @@ class AsyncLocalStorage<T = any> {
     }
   }
 
-  static bind(fn, ...args: any) {
+  static bind(fn: (...args: any[]) => unknown, ...args: any) {
     validateFunction(fn, "fn");
     return this.snapshot().bind(null, fn, ...args);
   }
 
   static snapshot() {
     var context = get();
-    return (fn, ...args) => {
+    return <R extends unknown>(fn: (...args: any[]) => R, ...args: unknown[]): R => {
       var prev = get();
       set(context);
       try {
@@ -259,11 +268,11 @@ class AsyncLocalStorage<T = any> {
     $assert(sameValue(this.getStore(), store));
   }
 
-  exit(cb, ...args) {
+  exit<R>(cb: (...args: any[]) => R, ...args: unknown[]): R {
     return this.run(undefined, cb, ...args);
   }
 
-  run(store_value, callback, ...args) {
+  run<R>(store_value: T | undefined, callback: (...args: any[]) => R, ...args: unknown[]): R {
     $debug("run " + (this as any).__id__);
     var prior = get();
     var bound = find(prior, this);
@@ -352,7 +361,7 @@ class AsyncLocalStorage<T = any> {
 }
 
 if (IS_BUN_DEVELOPMENT) {
-  AsyncLocalStorage.prototype[Bun.inspect.custom] = function (depth, options) {
+  AsyncLocalStorage.prototype[Bun.inspect.custom] = function (depth: number, options) {
     if (depth < 0) return `AsyncLocalStorage { ${Bun.inspect((this as any).__id__, options)} }`;
     return `AsyncLocalStorage { [${options.stylize("debug id", "special")}]: ${Bun.inspect(
       (this as any).__id__,
@@ -379,7 +388,7 @@ class AsyncResource {
       throw $ERR_ASYNC_TYPE(type);
     }
 
-    setAsyncHooksEnabled(true);
+    if (!IS_COMPILED_AHEAD_OF_TIME) setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
     this.#triggerAsyncId = triggerAsyncId;
@@ -405,7 +414,7 @@ class AsyncResource {
     //
   }
 
-  runInAsyncScope(fn, thisArg, ...args) {
+  runInAsyncScope<R>(fn: (...args: any[]) => R, thisArg?: unknown, ...args: unknown[]): R {
     var prev = get();
     set(this.#snapshot);
     try {
@@ -417,25 +426,30 @@ class AsyncResource {
 
   bind(fn, thisArg) {
     validateFunction(fn, "fn");
-    let bound;
-    if (thisArg === undefined) {
-      const resource = this;
-      bound = function (this: unknown, ...args) {
-        return resource.runInAsyncScope(fn, this, ...args);
-      };
-    } else {
-      bound = this.runInAsyncScope.bind(this, fn, thisArg);
-    }
-    Object.defineProperties(bound, {
-      length: {
+    if (thisArg !== undefined) {
+      const bound = this.runInAsyncScope.bind(this, fn, thisArg);
+      return Object.defineProperty(bound, "length", {
         __proto__: null,
         configurable: true,
         enumerable: false,
         value: fn.length,
         writable: false,
-      },
+      });
+    }
+    const resource = this;
+    const bound = function (this: unknown, ...args) {
+      return resource.runInAsyncScope(fn, this, ...args);
+    };
+    // A function whose only parameter is a rest parameter is created with the length 0 and these attributes.
+    const length = fn.length;
+    if (sameValue(length, 0)) return bound;
+    return Object.defineProperty(bound, "length", {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      value: length,
+      writable: false,
     });
-    return bound;
   }
 
   static bind(fn, type, thisArg) {
@@ -491,7 +505,15 @@ const createHookNotImpl = createWarning(
 
 let hasEnabledCreateHook = false;
 const kHookEnabled = Symbol("kHookEnabled");
-function createHook(hook) {
+interface HookCallbacks {
+  init?(asyncId: number, type: string, triggerAsyncId: number, resource: object): void;
+  before?(asyncId: number): void;
+  after?(asyncId: number): void;
+  destroy?(asyncId: number): void;
+  promiseResolve?(asyncId: number): void;
+}
+
+function createHook(hook: HookCallbacks) {
   validateObject(hook, "hook");
   const { init, before, after, destroy, promiseResolve } = hook;
   if (init !== undefined && typeof init !== "function") throw $ERR_ASYNC_CALLBACK("hook.init");
@@ -501,7 +523,7 @@ function createHook(hook) {
   if (promiseResolve !== undefined && typeof promiseResolve !== "function")
     throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
-  let enabledInit;
+  let enabledInit: $BunModules["internal/async_hooks_tick"]["tickInitHooks"][number] | undefined;
   return {
     enable() {
       if (init !== undefined && enabledInit === undefined) {
@@ -511,7 +533,19 @@ function createHook(hook) {
         // function must stay independently removable (removal is by
         // identity, and removing the other instance's entry would reorder
         // its callback relative to unrelated hooks).
-        enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
+        enabledInit = (asyncId, type, triggerAsyncId, resource) => {
+          try {
+            init(asyncId, type, triggerAsyncId, resource);
+            return false;
+          } catch (err: any) {
+            try {
+              console.error(typeof err?.stack === "string" ? err.stack : err);
+            } catch {}
+            return true;
+          }
+        };
+        require("internal/process/next_tick_queue").ring.pushWithInitHooks =
+          require("internal/process/tick_ring").pushWithInitHooks;
         require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
       }
       if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {

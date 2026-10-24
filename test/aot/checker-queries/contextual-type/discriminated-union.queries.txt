@@ -1,0 +1,2 @@
+# A discriminant property selects the union member that is the literal's contextual type.
+discriminated-union.ts:3 contextual `{ kind: "a", x: 1 }` = { kind: "a"; x: number; }

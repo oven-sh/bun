@@ -22,13 +22,12 @@ test/js/third_party/remix/remix.test.ts
 # napi_create_dataview, napi_create_buffer, NapiEnv::throwPendingException) and
 # napi_get_all_property_names' unchecked get/toPropertyKey.
 test/napi/napi.test.ts
+test/aot/native-addons.test.ts
+test/aot/napi-addon.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_bigint/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_dataview/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
-
-# TODO: jsc
-test/js/bun/jsonl/jsonl-parse.test.ts
 
 # X509Certificate toLegacyObject → computeInfoAccess pushes onto a JSArray in a
 # loop without checking (JSX509Certificate.cpp); reached from a TLS peer

@@ -850,7 +850,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getReducedType` removes an intersection that reduces to `never`.
         let obj = self.reduced(obj);
         let index = self.key_into_string_index_only(obj, index);
-        if self.p.files.options.no_unchecked_indexed_access
+        if self.no_unchecked_indexed_access_at(access_node)
             && access_flags.contains(AccessFlags::EXPRESSION_POSITION)
         {
             access_flags |= AccessFlags::INCLUDE_UNDEFINED;
@@ -1266,7 +1266,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some((file, e)) = access_expression
                 && !self.is_const_enum_object(object)
             {
-                let no_implicit_any = self.p.files.options.no_implicit_any;
+                let no_implicit_any = self.module_options(file).no_implicit_any;
                 if self.is_object_literal_type(object) {
                     if no_implicit_any
                         && self.flags(index) & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0
@@ -1338,7 +1338,9 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some(name) = name
             {
                 let printed = self.apparent_type_of_intersection(object);
-                self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
+                let subject = self.member_container_of_type(printed);
+                self.error_at(index_node, 2339, &[Arg::Atom(name), Arg::Type(printed)])
+                    .subject = subject;
             } else if index == TypeId::STRING || index == TypeId::NUMBER {
                 let printed = self.apparent_type_of_intersection(object);
                 self.error_at(index_node, 2537, &[Arg::Type(printed), Arg::Type(index)]);

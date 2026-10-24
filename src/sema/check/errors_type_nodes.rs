@@ -459,11 +459,11 @@ impl Checker<'_, '_> {
         }
         match member.kind {
             MemberKind::Property => {
-                self.error_at(self.span_of_token(file, member.name_pos), 18016, &[]);
+                self.early_error_at(self.span_of_token(file, member.name_pos), 18016, &[]);
             }
             // `GetErrorRangeForNode` has no case for a method signature, so the error starts at the first modifier.
             MemberKind::Method if !self.is_signature_inside_a_class(file, m) => {
-                self.error_at((file, member.start, member.loc.end), 18016, &[]);
+                self.early_error_at((file, member.start, member.loc.end), 18016, &[]);
             }
             _ => {}
         }

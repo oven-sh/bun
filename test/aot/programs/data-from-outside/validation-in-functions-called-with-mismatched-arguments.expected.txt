@@ -1,0 +1,378 @@
+a declared function, a text that matches, fitting options: value [{"x":1,"y":2},3,"object"]
+a declared function called by name, a text that matches, fitting options: value [{"x":1,"y":2},3,"object"]
+an arrow function, a text that matches, fitting options: value [{"x":1,"y":2},3,"object"]
+validate, a text that matches, fitting options: value [{"x":1,"y":2},3,"object"]
+a nested arrow function, a text that matches, fitting options: value [{"x":1,"y":2},3,"object"]
+a nested declared function, a text that matches, fitting options: value {"x":1,"y":2}
+a method, a text that matches, fitting options: value [{"x":1,"y":2},3,"object","object"]
+a method of an instance made with them, a text that matches, fitting options: value [{"x":1,"y":2},3,"object","object"]
+a static method, a text that matches, fitting options: value {"x":1,"y":2}
+a method of a literal, a text that matches, fitting options: value {"x":1,"y":2}
+a destructured parameter, a text that matches, fitting options: value [{"x":1,"y":2},"boolean","string"]
+a parameter with a default, a text that matches, fitting options: value [{"x":1,"y":2},"object"]
+call, a text that matches, fitting options: value [{"x":1,"y":2},3,"object"]
+apply, a text that matches, fitting options: value [{"x":1,"y":2},3,"object"]
+bind, a text that matches, fitting options: value [{"x":1,"y":2},3,"object"]
+Reflect.apply, a text that matches, fitting options: value [{"x":1,"y":2},3,"object"]
+a callback of map, a text that matches, fitting options: value [[{"x":1,"y":2},3,"object"]]
+the function itself as a callback of map, a text that matches, fitting options: value [[{"x":1,"y":2},3,"number"]]
+a default value of a parameter, a text that matches, fitting options: value [{"x":1,"y":2},"object"]
+a constructor, a text that matches, fitting options: value {"x":1,"y":2}
+a field initializer, a text that matches, fitting options: value {"x":1,"y":2}
+a setter, a text that matches, fitting options: value {"x":1,"y":2}
+a function that returns the type, a text that matches, fitting options: value {"x":1,"y":2}
+with a reviver, a text that matches, fitting options: value {"x":1,"y":2}
+in a try, a text that matches, fitting options: value {"x":1,"y":2}
+in a loop, a text that matches, fitting options: value 3
+a generator, a text that matches, fitting options: value [{"x":1,"y":2}]
+a declared function, a text that does not match, fitting options: TypeError with 1 issues
+a declared function called by name, a text that does not match, fitting options: TypeError with 1 issues
+an arrow function, a text that does not match, fitting options: TypeError with 1 issues
+validate, a text that does not match, fitting options: TypeError with 1 issues
+a nested arrow function, a text that does not match, fitting options: TypeError with 1 issues
+a nested declared function, a text that does not match, fitting options: TypeError with 1 issues
+a method, a text that does not match, fitting options: TypeError with 1 issues
+a method of an instance made with them, a text that does not match, fitting options: TypeError with 1 issues
+a static method, a text that does not match, fitting options: TypeError with 1 issues
+a method of a literal, a text that does not match, fitting options: TypeError with 1 issues
+a destructured parameter, a text that does not match, fitting options: TypeError with 1 issues
+a parameter with a default, a text that does not match, fitting options: TypeError with 1 issues
+call, a text that does not match, fitting options: TypeError with 1 issues
+apply, a text that does not match, fitting options: TypeError with 1 issues
+bind, a text that does not match, fitting options: TypeError with 1 issues
+Reflect.apply, a text that does not match, fitting options: TypeError with 1 issues
+a callback of map, a text that does not match, fitting options: TypeError with 1 issues
+the function itself as a callback of map, a text that does not match, fitting options: TypeError with 1 issues
+a default value of a parameter, a text that does not match, fitting options: TypeError with 1 issues
+a constructor, a text that does not match, fitting options: TypeError with 1 issues
+a field initializer, a text that does not match, fitting options: TypeError with 1 issues
+a setter, a text that does not match, fitting options: TypeError with 1 issues
+a function that returns the type, a text that does not match, fitting options: TypeError with 1 issues
+with a reviver, a text that does not match, fitting options: TypeError with 1 issues
+in a try, a text that does not match, fitting options: value "caught TypeError with issues"
+in a loop, a text that does not match, fitting options: TypeError with 1 issues
+a generator, a text that does not match, fitting options: TypeError with 1 issues
+a declared function, a text that matches, options of other types: value [{"x":1,"y":2},3,"object"]
+a declared function called by name, a text that matches, options of other types: value [{"x":1,"y":2},3,"object"]
+an arrow function, a text that matches, options of other types: value [{"x":1,"y":2},3,"object"]
+validate, a text that matches, options of other types: value [{"x":1,"y":2},3,"object"]
+a nested arrow function, a text that matches, options of other types: value [{"x":1,"y":2},3,"object"]
+a nested declared function, a text that matches, options of other types: value {"x":1,"y":2}
+a method, a text that matches, options of other types: value [{"x":1,"y":2},3,"object","object"]
+a method of an instance made with them, a text that matches, options of other types: value [{"x":1,"y":2},3,"object","object"]
+a static method, a text that matches, options of other types: value {"x":1,"y":2}
+a method of a literal, a text that matches, options of other types: value {"x":1,"y":2}
+a parameter with a default, a text that matches, options of other types: value [{"x":1,"y":2},"object"]
+call, a text that matches, options of other types: value [{"x":1,"y":2},3,"object"]
+apply, a text that matches, options of other types: value [{"x":1,"y":2},3,"object"]
+bind, a text that matches, options of other types: value [{"x":1,"y":2},3,"object"]
+Reflect.apply, a text that matches, options of other types: value [{"x":1,"y":2},3,"object"]
+a callback of map, a text that matches, options of other types: value [[{"x":1,"y":2},3,"object"]]
+the function itself as a callback of map, a text that matches, options of other types: value [[{"x":1,"y":2},3,"number"]]
+a default value of a parameter, a text that matches, options of other types: value [{"x":1,"y":2},"object"]
+a constructor, a text that matches, options of other types: value {"x":1,"y":2}
+a field initializer, a text that matches, options of other types: value {"x":1,"y":2}
+a setter, a text that matches, options of other types: value {"x":1,"y":2}
+a function that returns the type, a text that matches, options of other types: value {"x":1,"y":2}
+with a reviver, a text that matches, options of other types: value {"x":1,"y":2}
+in a try, a text that matches, options of other types: value {"x":1,"y":2}
+in a loop, a text that matches, options of other types: value 3
+a generator, a text that matches, options of other types: value [{"x":1,"y":2}]
+a declared function, a text that does not match, options of other types: TypeError with 1 issues
+a declared function called by name, a text that does not match, options of other types: TypeError with 1 issues
+an arrow function, a text that does not match, options of other types: TypeError with 1 issues
+validate, a text that does not match, options of other types: TypeError with 1 issues
+a nested arrow function, a text that does not match, options of other types: TypeError with 1 issues
+a nested declared function, a text that does not match, options of other types: TypeError with 1 issues
+a method, a text that does not match, options of other types: TypeError with 1 issues
+a method of an instance made with them, a text that does not match, options of other types: TypeError with 1 issues
+a static method, a text that does not match, options of other types: TypeError with 1 issues
+a method of a literal, a text that does not match, options of other types: TypeError with 1 issues
+a parameter with a default, a text that does not match, options of other types: TypeError with 1 issues
+call, a text that does not match, options of other types: TypeError with 1 issues
+apply, a text that does not match, options of other types: TypeError with 1 issues
+bind, a text that does not match, options of other types: TypeError with 1 issues
+Reflect.apply, a text that does not match, options of other types: TypeError with 1 issues
+a callback of map, a text that does not match, options of other types: TypeError with 1 issues
+the function itself as a callback of map, a text that does not match, options of other types: TypeError with 1 issues
+a default value of a parameter, a text that does not match, options of other types: TypeError with 1 issues
+a constructor, a text that does not match, options of other types: TypeError with 1 issues
+a field initializer, a text that does not match, options of other types: TypeError with 1 issues
+a setter, a text that does not match, options of other types: TypeError with 1 issues
+a function that returns the type, a text that does not match, options of other types: TypeError with 1 issues
+with a reviver, a text that does not match, options of other types: TypeError with 1 issues
+in a try, a text that does not match, options of other types: value "caught TypeError with issues"
+in a loop, a text that does not match, options of other types: TypeError with 1 issues
+a generator, a text that does not match, options of other types: TypeError with 1 issues
+a declared function, a text that matches, empty options: value [{"x":1,"y":2},3,"object"]
+a declared function called by name, a text that matches, empty options: value [{"x":1,"y":2},3,"object"]
+an arrow function, a text that matches, empty options: value [{"x":1,"y":2},3,"object"]
+validate, a text that matches, empty options: value [{"x":1,"y":2},3,"object"]
+a nested arrow function, a text that matches, empty options: value [{"x":1,"y":2},3,"object"]
+a nested declared function, a text that matches, empty options: value {"x":1,"y":2}
+a method, a text that matches, empty options: value [{"x":1,"y":2},3,"object","object"]
+a method of an instance made with them, a text that matches, empty options: value [{"x":1,"y":2},3,"object","object"]
+a static method, a text that matches, empty options: value {"x":1,"y":2}
+a method of a literal, a text that matches, empty options: value {"x":1,"y":2}
+a parameter with a default, a text that matches, empty options: value [{"x":1,"y":2},"object"]
+call, a text that matches, empty options: value [{"x":1,"y":2},3,"object"]
+apply, a text that matches, empty options: value [{"x":1,"y":2},3,"object"]
+bind, a text that matches, empty options: value [{"x":1,"y":2},3,"object"]
+Reflect.apply, a text that matches, empty options: value [{"x":1,"y":2},3,"object"]
+a callback of map, a text that matches, empty options: value [[{"x":1,"y":2},3,"object"]]
+the function itself as a callback of map, a text that matches, empty options: value [[{"x":1,"y":2},3,"number"]]
+a default value of a parameter, a text that matches, empty options: value [{"x":1,"y":2},"object"]
+a constructor, a text that matches, empty options: value {"x":1,"y":2}
+a field initializer, a text that matches, empty options: value {"x":1,"y":2}
+a setter, a text that matches, empty options: value {"x":1,"y":2}
+a function that returns the type, a text that matches, empty options: value {"x":1,"y":2}
+with a reviver, a text that matches, empty options: value {"x":1,"y":2}
+in a try, a text that matches, empty options: value {"x":1,"y":2}
+in a loop, a text that matches, empty options: value 3
+a generator, a text that matches, empty options: value [{"x":1,"y":2}]
+a declared function, a text that does not match, empty options: TypeError with 1 issues
+a declared function called by name, a text that does not match, empty options: TypeError with 1 issues
+an arrow function, a text that does not match, empty options: TypeError with 1 issues
+validate, a text that does not match, empty options: TypeError with 1 issues
+a nested arrow function, a text that does not match, empty options: TypeError with 1 issues
+a nested declared function, a text that does not match, empty options: TypeError with 1 issues
+a method, a text that does not match, empty options: TypeError with 1 issues
+a method of an instance made with them, a text that does not match, empty options: TypeError with 1 issues
+a static method, a text that does not match, empty options: TypeError with 1 issues
+a method of a literal, a text that does not match, empty options: TypeError with 1 issues
+a parameter with a default, a text that does not match, empty options: TypeError with 1 issues
+call, a text that does not match, empty options: TypeError with 1 issues
+apply, a text that does not match, empty options: TypeError with 1 issues
+bind, a text that does not match, empty options: TypeError with 1 issues
+Reflect.apply, a text that does not match, empty options: TypeError with 1 issues
+a callback of map, a text that does not match, empty options: TypeError with 1 issues
+the function itself as a callback of map, a text that does not match, empty options: TypeError with 1 issues
+a default value of a parameter, a text that does not match, empty options: TypeError with 1 issues
+a constructor, a text that does not match, empty options: TypeError with 1 issues
+a field initializer, a text that does not match, empty options: TypeError with 1 issues
+a setter, a text that does not match, empty options: TypeError with 1 issues
+a function that returns the type, a text that does not match, empty options: TypeError with 1 issues
+with a reviver, a text that does not match, empty options: TypeError with 1 issues
+in a try, a text that does not match, empty options: value "caught TypeError with issues"
+in a loop, a text that does not match, empty options: TypeError with 1 issues
+a generator, a text that does not match, empty options: TypeError with 1 issues
+a declared function, a text that matches, a number for options: value [{"x":1,"y":2},3,"number"]
+an arrow function, a text that matches, a number for options: value [{"x":1,"y":2},3,"number"]
+validate, a text that matches, a number for options: value [{"x":1,"y":2},3,"number"]
+a nested arrow function, a text that matches, a number for options: value [{"x":1,"y":2},3,"number"]
+a nested declared function, a text that matches, a number for options: value {"x":1,"y":2}
+a method, a text that matches, a number for options: value [{"x":1,"y":2},3,"number","object"]
+a static method, a text that matches, a number for options: value {"x":1,"y":2}
+a method of a literal, a text that matches, a number for options: value {"x":1,"y":2}
+a destructured parameter, a text that matches, a number for options: value [{"x":1,"y":2},"undefined","undefined"]
+a parameter with a default, a text that matches, a number for options: value [{"x":1,"y":2},"number"]
+call, a text that matches, a number for options: value [{"x":1,"y":2},3,"number"]
+apply, a text that matches, a number for options: value [{"x":1,"y":2},3,"number"]
+bind, a text that matches, a number for options: value [{"x":1,"y":2},3,"number"]
+Reflect.apply, a text that matches, a number for options: value [{"x":1,"y":2},3,"number"]
+the function itself as a callback of map, a text that matches, a number for options: value [[{"x":1,"y":2},3,"number"]]
+a default value of a parameter, a text that matches, a number for options: value [{"x":1,"y":2},"number"]
+a constructor, a text that matches, a number for options: value {"x":1,"y":2}
+a setter, a text that matches, a number for options: value {"x":1,"y":2}
+a function that returns the type, a text that matches, a number for options: value {"x":1,"y":2}
+with a reviver, a text that matches, a number for options: value {"x":1,"y":2}
+in a try, a text that matches, a number for options: value {"x":1,"y":2}
+in a loop, a text that matches, a number for options: value 3
+a generator, a text that matches, a number for options: value [{"x":1,"y":2}]
+a declared function, a text that does not match, a number for options: TypeError with 1 issues
+an arrow function, a text that does not match, a number for options: TypeError with 1 issues
+validate, a text that does not match, a number for options: TypeError with 1 issues
+a nested arrow function, a text that does not match, a number for options: TypeError with 1 issues
+a nested declared function, a text that does not match, a number for options: TypeError with 1 issues
+a method, a text that does not match, a number for options: TypeError with 1 issues
+a static method, a text that does not match, a number for options: TypeError with 1 issues
+a method of a literal, a text that does not match, a number for options: TypeError with 1 issues
+a destructured parameter, a text that does not match, a number for options: TypeError with 1 issues
+a parameter with a default, a text that does not match, a number for options: TypeError with 1 issues
+call, a text that does not match, a number for options: TypeError with 1 issues
+apply, a text that does not match, a number for options: TypeError with 1 issues
+bind, a text that does not match, a number for options: TypeError with 1 issues
+Reflect.apply, a text that does not match, a number for options: TypeError with 1 issues
+the function itself as a callback of map, a text that does not match, a number for options: TypeError with 1 issues
+a default value of a parameter, a text that does not match, a number for options: TypeError with 1 issues
+a constructor, a text that does not match, a number for options: TypeError with 1 issues
+a setter, a text that does not match, a number for options: TypeError with 1 issues
+a function that returns the type, a text that does not match, a number for options: TypeError with 1 issues
+with a reviver, a text that does not match, a number for options: TypeError with 1 issues
+in a try, a text that does not match, a number for options: value "caught TypeError with issues"
+in a loop, a text that does not match, a number for options: TypeError with 1 issues
+a generator, a text that does not match, a number for options: TypeError with 1 issues
+a declared function, a text that matches, null for options: value [{"x":1,"y":2},3,"object"]
+a declared function called by name, a text that matches, null for options: value [{"x":1,"y":2},3,"object"]
+an arrow function, a text that matches, null for options: value [{"x":1,"y":2},3,"object"]
+validate, a text that matches, null for options: value [{"x":1,"y":2},3,"object"]
+a nested arrow function, a text that matches, null for options: value [{"x":1,"y":2},3,"object"]
+a nested declared function, a text that matches, null for options: value {"x":1,"y":2}
+a method, a text that matches, null for options: value [{"x":1,"y":2},3,"object","object"]
+a method of an instance made with them, a text that matches, null for options: value [{"x":1,"y":2},3,"object","object"]
+a static method, a text that matches, null for options: value {"x":1,"y":2}
+a method of a literal, a text that matches, null for options: value {"x":1,"y":2}
+a destructured parameter, a text that matches, null for options: TypeError
+a parameter with a default, a text that matches, null for options: value [{"x":1,"y":2},"object"]
+call, a text that matches, null for options: value [{"x":1,"y":2},3,"object"]
+apply, a text that matches, null for options: value [{"x":1,"y":2},3,"object"]
+bind, a text that matches, null for options: value [{"x":1,"y":2},3,"object"]
+Reflect.apply, a text that matches, null for options: value [{"x":1,"y":2},3,"object"]
+a callback of map, a text that matches, null for options: value [[{"x":1,"y":2},3,"object"]]
+the function itself as a callback of map, a text that matches, null for options: value [[{"x":1,"y":2},3,"number"]]
+a default value of a parameter, a text that matches, null for options: value [{"x":1,"y":2},"object"]
+a constructor, a text that matches, null for options: value {"x":1,"y":2}
+a field initializer, a text that matches, null for options: value {"x":1,"y":2}
+a setter, a text that matches, null for options: value {"x":1,"y":2}
+a function that returns the type, a text that matches, null for options: value {"x":1,"y":2}
+with a reviver, a text that matches, null for options: value {"x":1,"y":2}
+in a try, a text that matches, null for options: value {"x":1,"y":2}
+in a loop, a text that matches, null for options: value 3
+a generator, a text that matches, null for options: value [{"x":1,"y":2}]
+a declared function, a text that does not match, null for options: TypeError with 1 issues
+a declared function called by name, a text that does not match, null for options: TypeError with 1 issues
+an arrow function, a text that does not match, null for options: TypeError with 1 issues
+validate, a text that does not match, null for options: TypeError with 1 issues
+a nested arrow function, a text that does not match, null for options: TypeError with 1 issues
+a nested declared function, a text that does not match, null for options: TypeError with 1 issues
+a method, a text that does not match, null for options: TypeError with 1 issues
+a method of an instance made with them, a text that does not match, null for options: TypeError with 1 issues
+a static method, a text that does not match, null for options: TypeError with 1 issues
+a method of a literal, a text that does not match, null for options: TypeError with 1 issues
+a destructured parameter, a text that does not match, null for options: TypeError
+a parameter with a default, a text that does not match, null for options: TypeError with 1 issues
+call, a text that does not match, null for options: TypeError with 1 issues
+apply, a text that does not match, null for options: TypeError with 1 issues
+bind, a text that does not match, null for options: TypeError with 1 issues
+Reflect.apply, a text that does not match, null for options: TypeError with 1 issues
+a callback of map, a text that does not match, null for options: TypeError with 1 issues
+the function itself as a callback of map, a text that does not match, null for options: TypeError with 1 issues
+a default value of a parameter, a text that does not match, null for options: TypeError with 1 issues
+a constructor, a text that does not match, null for options: TypeError with 1 issues
+a field initializer, a text that does not match, null for options: TypeError with 1 issues
+a setter, a text that does not match, null for options: TypeError with 1 issues
+a function that returns the type, a text that does not match, null for options: TypeError with 1 issues
+with a reviver, a text that does not match, null for options: TypeError with 1 issues
+in a try, a text that does not match, null for options: value "caught TypeError with issues"
+in a loop, a text that does not match, null for options: TypeError with 1 issues
+a generator, a text that does not match, null for options: TypeError with 1 issues
+a declared function, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined"]
+a declared function called by name, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined"]
+an arrow function, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined"]
+validate, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined"]
+a nested arrow function, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined"]
+a nested declared function, a text that matches, nothing for options: value {"x":1,"y":2}
+a method, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined","object"]
+a method of an instance made with them, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined","undefined"]
+a static method, a text that matches, nothing for options: value {"x":1,"y":2}
+a method of a literal, a text that matches, nothing for options: value {"x":1,"y":2}
+a destructured parameter, a text that matches, nothing for options: TypeError
+a parameter with a default, a text that matches, nothing for options: value [{"x":1,"y":2},"object"]
+call, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined"]
+apply, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined"]
+bind, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined"]
+Reflect.apply, a text that matches, nothing for options: value [{"x":1,"y":2},3,"undefined"]
+a callback of map, a text that matches, nothing for options: value [[{"x":1,"y":2},3,"undefined"]]
+the function itself as a callback of map, a text that matches, nothing for options: value [[{"x":1,"y":2},3,"number"]]
+a default value of a parameter, a text that matches, nothing for options: value [{"x":1,"y":2},"undefined"]
+a constructor, a text that matches, nothing for options: value {"x":1,"y":2}
+a field initializer, a text that matches, nothing for options: value {"x":1,"y":2}
+a setter, a text that matches, nothing for options: value {"x":1,"y":2}
+a function that returns the type, a text that matches, nothing for options: value {"x":1,"y":2}
+with a reviver, a text that matches, nothing for options: value {"x":1,"y":2}
+in a try, a text that matches, nothing for options: value {"x":1,"y":2}
+in a loop, a text that matches, nothing for options: value 3
+a generator, a text that matches, nothing for options: value [{"x":1,"y":2}]
+a declared function, a text that does not match, nothing for options: TypeError with 1 issues
+a declared function called by name, a text that does not match, nothing for options: TypeError with 1 issues
+an arrow function, a text that does not match, nothing for options: TypeError with 1 issues
+validate, a text that does not match, nothing for options: TypeError with 1 issues
+a nested arrow function, a text that does not match, nothing for options: TypeError with 1 issues
+a nested declared function, a text that does not match, nothing for options: TypeError with 1 issues
+a method, a text that does not match, nothing for options: TypeError with 1 issues
+a method of an instance made with them, a text that does not match, nothing for options: TypeError with 1 issues
+a static method, a text that does not match, nothing for options: TypeError with 1 issues
+a method of a literal, a text that does not match, nothing for options: TypeError with 1 issues
+a destructured parameter, a text that does not match, nothing for options: TypeError
+a parameter with a default, a text that does not match, nothing for options: TypeError with 1 issues
+call, a text that does not match, nothing for options: TypeError with 1 issues
+apply, a text that does not match, nothing for options: TypeError with 1 issues
+bind, a text that does not match, nothing for options: TypeError with 1 issues
+Reflect.apply, a text that does not match, nothing for options: TypeError with 1 issues
+a callback of map, a text that does not match, nothing for options: TypeError with 1 issues
+the function itself as a callback of map, a text that does not match, nothing for options: TypeError with 1 issues
+a default value of a parameter, a text that does not match, nothing for options: TypeError with 1 issues
+a constructor, a text that does not match, nothing for options: TypeError with 1 issues
+a field initializer, a text that does not match, nothing for options: TypeError with 1 issues
+a setter, a text that does not match, nothing for options: TypeError with 1 issues
+a function that returns the type, a text that does not match, nothing for options: TypeError with 1 issues
+with a reviver, a text that does not match, nothing for options: TypeError with 1 issues
+in a try, a text that does not match, nothing for options: value "caught TypeError with issues"
+in a loop, a text that does not match, nothing for options: TypeError with 1 issues
+a generator, a text that does not match, nothing for options: TypeError with 1 issues
+a declared function, a text that matches, an array for options: value [{"x":1,"y":2},3,"object"]
+a declared function called by name, a text that matches, an array for options: value [{"x":1,"y":2},3,"object"]
+an arrow function, a text that matches, an array for options: value [{"x":1,"y":2},3,"object"]
+validate, a text that matches, an array for options: value [{"x":1,"y":2},3,"object"]
+a nested arrow function, a text that matches, an array for options: value [{"x":1,"y":2},3,"object"]
+a nested declared function, a text that matches, an array for options: value {"x":1,"y":2}
+a method, a text that matches, an array for options: value [{"x":1,"y":2},3,"object","object"]
+a method of an instance made with them, a text that matches, an array for options: value [{"x":1,"y":2},3,"object","object"]
+a static method, a text that matches, an array for options: value {"x":1,"y":2}
+a method of a literal, a text that matches, an array for options: value {"x":1,"y":2}
+a parameter with a default, a text that matches, an array for options: value [{"x":1,"y":2},"object"]
+call, a text that matches, an array for options: value [{"x":1,"y":2},3,"object"]
+apply, a text that matches, an array for options: value [{"x":1,"y":2},3,"object"]
+bind, a text that matches, an array for options: value [{"x":1,"y":2},3,"object"]
+Reflect.apply, a text that matches, an array for options: value [{"x":1,"y":2},3,"object"]
+a callback of map, a text that matches, an array for options: value [[{"x":1,"y":2},3,"object"]]
+the function itself as a callback of map, a text that matches, an array for options: value [[{"x":1,"y":2},3,"number"]]
+a default value of a parameter, a text that matches, an array for options: value [{"x":1,"y":2},"object"]
+a constructor, a text that matches, an array for options: value {"x":1,"y":2}
+a field initializer, a text that matches, an array for options: value {"x":1,"y":2}
+a setter, a text that matches, an array for options: value {"x":1,"y":2}
+a function that returns the type, a text that matches, an array for options: value {"x":1,"y":2}
+with a reviver, a text that matches, an array for options: value {"x":1,"y":2}
+in a try, a text that matches, an array for options: value {"x":1,"y":2}
+in a loop, a text that matches, an array for options: value 3
+a generator, a text that matches, an array for options: value [{"x":1,"y":2}]
+a declared function, a text that does not match, an array for options: TypeError with 1 issues
+a declared function called by name, a text that does not match, an array for options: TypeError with 1 issues
+an arrow function, a text that does not match, an array for options: TypeError with 1 issues
+validate, a text that does not match, an array for options: TypeError with 1 issues
+a nested arrow function, a text that does not match, an array for options: TypeError with 1 issues
+a nested declared function, a text that does not match, an array for options: TypeError with 1 issues
+a method, a text that does not match, an array for options: TypeError with 1 issues
+a method of an instance made with them, a text that does not match, an array for options: TypeError with 1 issues
+a static method, a text that does not match, an array for options: TypeError with 1 issues
+a method of a literal, a text that does not match, an array for options: TypeError with 1 issues
+a parameter with a default, a text that does not match, an array for options: TypeError with 1 issues
+call, a text that does not match, an array for options: TypeError with 1 issues
+apply, a text that does not match, an array for options: TypeError with 1 issues
+bind, a text that does not match, an array for options: TypeError with 1 issues
+Reflect.apply, a text that does not match, an array for options: TypeError with 1 issues
+a callback of map, a text that does not match, an array for options: TypeError with 1 issues
+the function itself as a callback of map, a text that does not match, an array for options: TypeError with 1 issues
+a default value of a parameter, a text that does not match, an array for options: TypeError with 1 issues
+a constructor, a text that does not match, an array for options: TypeError with 1 issues
+a field initializer, a text that does not match, an array for options: TypeError with 1 issues
+a setter, a text that does not match, an array for options: TypeError with 1 issues
+a function that returns the type, a text that does not match, an array for options: TypeError with 1 issues
+with a reviver, a text that does not match, an array for options: TypeError with 1 issues
+in a try, a text that does not match, an array for options: value "caught TypeError with issues"
+in a loop, a text that does not match, an array for options: TypeError with 1 issues
+a generator, a text that does not match, an array for options: TypeError with 1 issues
+an async function, fitting options: value {"x":1,"y":2}
+an async function, fitting options: TypeError with 1 issues
+an async function, options of other types: value {"x":1,"y":2}
+an async function, options of other types: TypeError with 1 issues
+an async function, empty options: value {"x":1,"y":2}
+an async function, empty options: TypeError with 1 issues
+an async function, a number for options: value {"x":1,"y":2}
+an async function, a number for options: TypeError with 1 issues
+an async function, null for options: value {"x":1,"y":2}
+an async function, null for options: TypeError with 1 issues
+an async function, nothing for options: value {"x":1,"y":2}
+an async function, nothing for options: TypeError with 1 issues
+an async function, an array for options: value {"x":1,"y":2}
+an async function, an array for options: TypeError with 1 issues

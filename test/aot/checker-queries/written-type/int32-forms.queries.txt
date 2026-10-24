@@ -1,0 +1,17 @@
+# Every way to name `int32` from "bun" gives the type `int32`, a number with the constraint `Int32`: imports, aliases, `import("bun").int32`, `| undefined` and parentheses.
+int32-forms.ts:6 written `int32` = int32
+int32-forms.ts:6 shape `int32` = Constrained(number; Int32)
+int32-forms.ts:6 variable `a` = int32
+int32-forms.ts:7 written `Whole` = int32
+int32-forms.ts:7 shape `Whole` = Constrained(number; Int32)
+int32-forms.ts:8 written `Count` = int32
+int32-forms.ts:8 shape `Count` = Constrained(number; Int32)
+int32-forms.ts:9 written `Inline` = int32
+int32-forms.ts:9 shape `Inline` = Constrained(number; Int32)
+int32-forms.ts:10 written `int32 | undefined` = int32 | undefined
+int32-forms.ts:10 shape `int32 | undefined` = Union(undefined | int32)
+int32-forms.ts:11 signature `g` = (int32 checked int32) this unwritten checked any returns unwritten checked void
+int32-forms.ts:12 signature `r` = () this unwritten checked any returns int32 checked int32
+int32-forms.ts:13 written `int32` = int32
+int32-forms.ts:13 shape `int32` = Constrained(number; Int32)
+int32-forms.ts:15 has `K` = field Field int32 checked int32

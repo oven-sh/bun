@@ -24,8 +24,8 @@ Stream.Readable = require("internal/streams/readable");
 const streamKeys = ObjectKeys(streamReturningOperators);
 for (let i = 0; i < streamKeys.length; i++) {
   const key = streamKeys[i];
-  const op = streamReturningOperators[key];
-  function fn(...args) {
+  const op: (this: $Node.Readable, ...args: any[]) => AsyncIterable<unknown> = streamReturningOperators[key];
+  function fn(this: $Node.Readable, ...args: unknown[]) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
@@ -44,8 +44,8 @@ for (let i = 0; i < streamKeys.length; i++) {
 const promiseKeys = ObjectKeys(promiseReturningOperators);
 for (let i = 0; i < promiseKeys.length; i++) {
   const key = promiseKeys[i];
-  const op = promiseReturningOperators[key];
-  function fn(...args) {
+  const op: (this: $Node.Readable, ...args: any[]) => Promise<unknown> = promiseReturningOperators[key];
+  function fn(this: $Node.Readable, ...args: unknown[]) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }

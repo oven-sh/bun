@@ -31,6 +31,14 @@ pub mod handle_oom;
 pub mod error;
 pub use error::{Error, Result};
 
+pub mod build_id;
+mod compiled_frames;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod fault_registers;
+mod stopped_builds;
+pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
+pub use stopped_builds::{BuildDescribers, DescribeBuild, report_stopped_builds};
+
 /// Link-time target for `bun_alloc::out_of_memory()` — declared
 /// `extern "Rust"` in `bun_alloc` (which is below this crate in the dep graph)
 /// and defined here.
@@ -775,6 +783,16 @@ mod draft {
         /// the walk follows the fp chain. Windows: `fp` is the `*const CONTEXT`
         /// from `EXCEPTION_POINTERS` and the walk uses `RtlVirtualUnwind`.
         Fault { pc: usize, fp: usize },
+        /// POSIX: as `Fault`, with the stack pointer, from which the callers of
+        /// compiled code without a frame record are found. `behind_pc`: see
+        /// `capture_from_fault`.
+        #[cfg(unix)]
+        FaultOnStack {
+            pc: usize,
+            behind_pc: usize,
+            fp: usize,
+            sp: usize,
+        },
         /// Walk the current stack and trim the capture machinery above this PC.
         BeginAddr(usize),
         /// Walk the current stack with no trim (the handler's own `return_address()`
@@ -797,6 +815,8 @@ mod draft {
 
                 PANIC_STAGE.with(|s| s.set(1));
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
+                let addresses_in_trace: [usize; 20];
+                let trace_address_count: usize;
 
                 {
                     let _panic_guard = PANIC_MUTEX.lock();
@@ -1018,6 +1038,7 @@ mod draft {
                             abort();
                         }
                     }
+                    crate::stopped_builds::write_where_this_thread_stopped(writer);
 
                     let mut addr_buf: [usize; 20] = [0; 20];
                     let trace_buf: StackTrace;
@@ -1034,6 +1055,19 @@ mod draft {
                             TraceSeed::Fault { pc, fp } => {
                                 bun_core::debug::capture_from_context(pc, fp, &mut addr_buf)
                             }
+                            #[cfg(unix)]
+                            TraceSeed::FaultOnStack {
+                                pc,
+                                behind_pc,
+                                fp,
+                                sp,
+                            } => bun_core::debug::capture_from_fault(
+                                pc,
+                                behind_pc,
+                                fp,
+                                sp,
+                                &mut addr_buf,
+                            ),
                             TraceSeed::BeginAddr(addr) => {
                                 debug::capture_stack_trace(addr, &mut addr_buf)
                             }
@@ -1047,6 +1081,8 @@ mod draft {
                         };
                         &trace_buf
                     };
+                    addresses_in_trace = addr_buf;
+                    trace_address_count = trace.index.min(addr_buf.len());
 
                     if debug_trace {
                         // SAFETY: single-threaded mutation under panic_mutex
@@ -1162,6 +1198,11 @@ mod draft {
                         }
                     }
 
+                    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+                    crate::fault_registers::write_to(&mut |text| {
+                        let _ = writer.write_all(text);
+                    });
+
                     if enable_ansi_colors_stderr() {
                         if writer
                             .write_all(&Output::pretty_fmt::<true>("<r>\n"))
@@ -1191,6 +1232,13 @@ mod draft {
                 // want another thread to interrupt the crashing of the first one.
                 reset_segfault_handler();
 
+                crate::compiled_frames::write_frames_on_stack(
+                    &addresses_in_trace[..trace_address_count],
+                    &mut |text| {
+                        let _ = stderr_writer().write_all(text);
+                    },
+                );
+
                 if bun_core::auto_reload_on_crash()
                 // Do not reload if the panic arose FROM the reload function.
                 && !bun_core::is_process_reload_in_progress_on_another_thread()
@@ -1204,7 +1252,9 @@ mod draft {
                     );
                     Output::flush();
 
-                    bun_core::reload_process(false, true);
+                    bun_removable_features::removable_body!(HotReload, Abort, {
+                        bun_core::reload_process(false, true);
+                    });
                 }
             }
             t @ (1 | 2) => {
@@ -1490,12 +1540,12 @@ mod draft {
         ARCH_DISPLAY_STRING,
     );
 
-    /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
+    /// Extract `(pc, fp, sp)` from the `ucontext_t` the kernel hands the signal
     /// handler. Seeds the frame-pointer walk from the faulting frame. Returns
     /// `None` on arch/OS combos we don't have register offsets for (the caller
     /// then falls back to a current-stack capture).
     #[cfg(unix)]
-    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize)> {
+    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize, usize)> {
         debug_assert!(!ctx.is_null());
         let uc = ctx.cast::<libc::ucontext_t>().cast_const();
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -1504,13 +1554,14 @@ mod draft {
             let mc = &(*uc).uc_mcontext;
             let pc = mc.gregs[libc::REG_RIP as usize] as usize;
             let fp = mc.gregs[libc::REG_RBP as usize] as usize;
-            Some((pc, fp))
+            let sp = mc.gregs[libc::REG_RSP as usize] as usize;
+            Some((pc, fp, sp))
         }
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            Some((mc.pc as usize, mc.regs[29] as usize))
+            Some((mc.pc as usize, mc.regs[29] as usize, mc.sp as usize))
         }
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1519,7 +1570,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
+            Some((
+                (*mc).__ss.__rip as usize,
+                (*mc).__ss.__rbp as usize,
+                (*mc).__ss.__rsp as usize,
+            ))
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1528,7 +1583,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
+            Some((
+                (*mc).__ss.__pc as usize,
+                (*mc).__ss.__fp as usize,
+                (*mc).__ss.__sp as usize,
+            ))
         }
         #[cfg(not(any(
             all(target_os = "linux", target_arch = "x86_64"),
@@ -1547,6 +1606,28 @@ mod draft {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
+        let context = fault_context_from_ucontext(ctx);
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        crate::fault_registers::remember(
+            ctx,
+            matches!(sig, libc::SIGSEGV | libc::SIGBUS).then_some(addr),
+        );
+
+        // Removed code was filled with traps, or cut out of the file, which leaves its pages unmapped.
+        const SEGV_MAPERR: c_int = 1;
+        let pc = context.map(|(pc, _, _)| pc);
+        // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
+        // SAFETY: kernel provides a valid siginfo_t.
+        let is_unmapped = cfg!(target_os = "macos") || unsafe { (*info).si_code } == SEGV_MAPERR;
+        let entered = match sig {
+            libc::SIGTRAP if cfg!(target_arch = "x86_64") => pc.map(|pc| pc.wrapping_sub(1)),
+            libc::SIGTRAP | libc::SIGILL => pc,
+            libc::SIGSEGV if is_unmapped => pc.filter(|&pc| pc == addr),
+            _ => None,
+        };
+        if let Some(feature) = entered.and_then(crate::compiled_frames::removed_feature_entered) {
+            bun_removable_features::abort_for_removed_feature(feature);
+        }
 
         crash_handler(
             match sig {
@@ -1559,8 +1640,18 @@ mod draft {
                 // we do not register this handler for other signals
                 _ => unreachable!(),
             },
-            match fault_context_from_ucontext(ctx) {
-                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+            match context {
+                Some((pc, fp, sp)) => TraceSeed::FaultOnStack {
+                    pc,
+                    // A breakpoint instruction of x86-64 has run when its signal arrives.
+                    behind_pc: if cfg!(target_arch = "x86_64") && sig == libc::SIGTRAP {
+                        pc
+                    } else {
+                        pc.wrapping_add(1)
+                    },
+                    fp,
+                    sp,
+                },
                 None => TraceSeed::None,
             },
         );
@@ -1638,10 +1729,35 @@ mod draft {
         let _ = update_posix_segfault_handler(Some(&mut act));
     }
 
+    /// For a process whose threads may crash at the same moment, as the threads of a build do that meet the same broken
+    /// state. As `reset_on_posix` leaves the signals, the first crash puts them back to their default actions, and the
+    /// second ends the process in the middle of the report of the first.
+    #[cfg(unix)]
+    pub(crate) fn report_crashes_of_several_threads() {
+        if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
+            return;
+        }
+        // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
+        let mut act: libc::sigaction = bun_core::ffi::zeroed();
+        act.sa_sigaction = handle_segfault_posix as *const () as usize;
+        act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
+        if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
+            act.sa_flags |= libc::SA_ONSTACK;
+        }
+        // SAFETY: sa_mask is a valid out-pointer.
+        unsafe {
+            libc::sigemptyset(&raw mut act.sa_mask);
+        }
+        let _ = update_posix_segfault_handler(Some(&mut act));
+    }
+
     pub fn init() {
         if !ENABLE {
             return;
         }
+        bun_core::debug::set_compiled_frame_at_return_address(
+            crate::compiled_frames::frame_at_return_address,
+        );
         #[cfg(windows)]
         {
             let range = bun_sys::windows::exe_image_range();
@@ -1690,6 +1806,28 @@ mod draft {
         }
 
         install_hooks();
+    }
+
+    #[cfg(windows)]
+    static REPORTS_ABORTS: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    /// For a process that has loaded a compiled program or compiles one: an assertion of the engine that fails there calls `abort()`, which on Windows raises no exception.
+    pub fn report_aborts() {
+        #[cfg(windows)]
+        {
+            if !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
+                return;
+            }
+            REPORTS_ABORTS.store(true, Ordering::Relaxed);
+            // SAFETY: the handler has the signature that `signal` calls and is never unloaded.
+            unsafe {
+                libc::signal(
+                    libc::SIGABRT,
+                    handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
+                );
+            }
+        }
     }
 
     /// One-shot state registration into lower-tier crates. Storage moved down:
@@ -1787,6 +1925,7 @@ mod draft {
             if let Some(action) = CURRENT_ACTION.with(|c| c.get()) {
                 let _ = writeln!(writer, "Crashed while {}", action);
             }
+            crate::stopped_builds::write_where_this_thread_stopped(writer);
 
             let mut addr_buf: [usize; 20] = [0; 20];
             let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
@@ -1920,6 +2059,9 @@ mod draft {
             // filter back to the OS default.
             unsafe {
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
+                if REPORTS_ABORTS.swap(false, Ordering::Relaxed) {
+                    libc::signal(libc::SIGABRT, libc::SIG_DFL);
+                }
             }
             return;
         }
@@ -1942,6 +2084,23 @@ mod draft {
     static WINDOWS_EXE_IMAGE_BASE: AtomicUsize = AtomicUsize::new(0);
     #[cfg(windows)]
     static WINDOWS_EXE_IMAGE_END: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(windows)]
+    fn accessed_address_windows(record: &bun_sys::windows::EXCEPTION_RECORD) -> Option<usize> {
+        (record.ExceptionCode == bun_sys::windows::EXCEPTION_ACCESS_VIOLATION)
+            .then(|| record.ExceptionInformation[1])
+    }
+
+    #[cfg(windows)]
+    fn removed_feature_entered_windows(
+        record: &bun_sys::windows::EXCEPTION_RECORD,
+    ) -> Option<bun_removable_features::Feature> {
+        let pc = record.ExceptionAddress as usize;
+        if accessed_address_windows(record).is_some_and(|accessed| accessed != pc) {
+            return None;
+        }
+        crate::compiled_frames::removed_feature_entered(pc)
+    }
 
     #[cfg(windows)]
     fn classify_exception_windows(
@@ -1977,6 +2136,10 @@ mod draft {
         // https://github.com/go-delve/delve/pull/1384
         if record.ExceptionCode == bun_sys::windows::MS_VC_EXCEPTION {
             return bun_sys::windows::EXCEPTION_CONTINUE_EXECUTION;
+        }
+
+        if let Some(feature) = removed_feature_entered_windows(record) {
+            bun_removable_features::abort_for_removed_feature(feature);
         }
 
         let Some(reason) = classify_exception_windows(record) else {
@@ -2049,6 +2212,9 @@ mod draft {
             return ExceptionContinueSearch;
         };
         let pc = record.ExceptionAddress as usize;
+        if let Some(feature) = removed_feature_entered_windows(record) {
+            bun_removable_features::abort_for_removed_feature(feature);
+        }
         crash_handler(
             reason,
             TraceSeed::Fault {
@@ -2056,6 +2222,22 @@ mod draft {
                 fp: context as usize,
             },
         );
+    }
+
+    #[cfg(windows)]
+    extern "C" fn handle_abort_windows(_signal: core::ffi::c_int) {
+        // The C runtime has put the default action back, with which the `abort()` of a second thread would end the
+        // process in the middle of this report.
+        // SAFETY: the handler has the signature that `signal` calls and is never unloaded.
+        unsafe {
+            libc::signal(
+                libc::SIGABRT,
+                handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
+            );
+        }
+        bun_core::debug::with_current_context(|pc, context| {
+            crash_handler(CrashReason::Abort, TraceSeed::Fault { pc, fp: context })
+        })
     }
 
     #[cfg(windows)]
@@ -2069,6 +2251,9 @@ mod draft {
             return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH;
         };
         let pc = record.ExceptionAddress as usize;
+        if let Some(feature) = removed_feature_entered_windows(record) {
+            bun_removable_features::abort_for_removed_feature(feature);
+        }
         crash_handler(
             reason,
             TraceSeed::Fault {
@@ -2105,6 +2290,11 @@ mod draft {
         let is_ancient_cpu: bool;
 
         writer.write_all(METADATA_VERSION_LINE.as_bytes())?;
+        if let Some(id) = crate::build_id::build_id() {
+            writer.write_all(b"Build ID: ")?;
+            writer.write_all(&crate::build_id::write_hexadecimal(&id))?;
+            writer.write_all(b"\n")?;
+        }
         {
             let cpu_features = CPUFeatures::get();
 
@@ -2417,6 +2607,13 @@ mod draft {
     impl StackLine {
         /// `None` implies the trace is not known.
         fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
+            if let Some(address) = crate::compiled_frames::offset_in_code(addr.saturating_sub(1)) {
+                return Some(StackLine {
+                    address,
+                    object: Some(crate::compiled_frames::object_name(false)),
+                });
+            }
+
             #[cfg(windows)]
             {
                 let module = bun_sys::windows::get_module_handle_from_address(addr)?;
@@ -2600,8 +2797,15 @@ mod draft {
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
 
+        let mut names_build = true;
         for &addr in &opts.trace.instruction_addresses[0..opts.trace.index] {
-            let line = StackLine::from_address(addr, &mut name_bytes);
+            let mut line = StackLine::from_address(addr, &mut name_bytes);
+            let is_compiled =
+                crate::compiled_frames::offset_in_code(addr.saturating_sub(1)).is_some();
+            if let Some(line) = line.as_mut().filter(|_| is_compiled && names_build) {
+                line.object = Some(crate::compiled_frames::object_name(true));
+                names_build = false;
+            }
             StackLine::write_encoded(line.as_ref(), writer)?;
         }
 
@@ -2719,6 +2923,11 @@ mod draft {
             return enable_crash_reporting;
         }
 
+        // A hardened build starts no other program and opens no connection that nobody asked for.
+        if cfg!(bun_hardened) {
+            return false;
+        }
+
         // Debug builds shouldn't report to the default url by default
         if cfg!(debug_assertions) {
             return false;
@@ -2751,6 +2960,11 @@ mod draft {
     /// information (PII). The stackframes point to Bun's open-source native code
     /// (not user code), and are safe to share publicly and with the Bun team.
     fn report(url: &[u8]) {
+        bun_removable_features::call_removable!(CrashReport, ReturnDefault, send_report, url)
+    }
+
+    #[inline(never)]
+    fn send_report(url: &[u8]) {
         if !is_reporting_enabled() {
             return;
         }

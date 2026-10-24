@@ -1,0 +1,95 @@
+--- a/include/mimalloc.h
++++ b/include/mimalloc.h
+@@ -582,6 +582,7 @@
+   mi_option_purge_holes_full_every,     // every N'th idle sweep walks every page instead of skipping the unchanged ones (=64, 0=never). See `_mi_page_purge_holes`.
+   mi_option_purge_holes_large_floor,    // KiB of large pages (their free blocks, or all of a page with none in use) that the idle sweeps of all threads together leave alone (=4096, 0=none). See `_mi_page_purge_holes`. In the environment a bare number is BYTES, as for every size option: write `MIMALLOC_PURGE_HOLES_LARGE_FLOOR=4MiB` (or `4096KiB`), not `4096`.
+   mi_option_purge_holes_large_floor_epochs,   // ..while their page was allocated from in the last so many epochs of the sweep (=256; 0=the floor is off). An epoch lasts for `purge_holes_min_interval` at least and ends only when a thread is swept: nothing is kept by the clock, and nothing is woken for this.
++  mi_option_hand_out_last_freed,
+   _mi_option_last,
+   // legacy option names
+   mi_option_large_os_pages = mi_option_allow_large_os_pages,
+--- a/include/mimalloc/internal.h
++++ b/include/mimalloc/internal.h
+@@ -196,6 +196,7 @@
+ void          _mi_process_fork_prepare(void);
+ extern mi_decl_hidden bool _mi_process_is_initialized;
+ extern mi_decl_hidden bool _mi_process_is_forked_child;
++extern mi_decl_hidden bool _mi_hands_out_last_freed;
+ void          _mi_process_fork_parent(void);
+ void          _mi_process_fork_child(void);
+ void          _mi_thread_locals_fork_prepare(void);
+--- a/src/options.c
++++ b/src/options.c
+@@ -190,7 +190,10 @@
+   { 64,  MI_OPTION_UNINIT, MI_OPTION(purge_holes_full_every) },   // every N'th sweep walks every page, not just the changed ones (=64, 0=never)
+   { 4096, MI_OPTION_UNINIT, MI_OPTION(purge_holes_large_floor) }, // KiB of large pages that idle sweeps leave alone, process-wide (=4 MiB, 0=none; in the environment a bare number is bytes: write 4MiB)
+   { 256, MI_OPTION_UNINIT, MI_OPTION(purge_holes_large_floor_epochs) }, // ..while their page was allocated from in the last so many epochs of the sweep (=256)
++  { 0,   MI_OPTION_UNINIT, MI_OPTION(hand_out_last_freed) },
+ };
++
++mi_decl_hidden bool _mi_hands_out_last_freed = false;
+ 
+ static void mi_option_init(mi_option_desc_t* desc);
+ 
+@@ -208,6 +211,7 @@
+   }
+   mi_max_error_count = mi_option_get(mi_option_max_errors);
+   mi_max_warning_count = mi_option_get(mi_option_max_warnings);
++  _mi_hands_out_last_freed = mi_option_is_enabled(mi_option_hand_out_last_freed);
+   #if MI_GUARDED
+   if (mi_option_get(mi_option_guarded_sample_rate) > 0) {
+     if (mi_option_is_enabled(mi_option_allow_large_os_pages)) {
+@@ -345,6 +349,7 @@
+   mi_option_desc_t* desc = &mi_options[option];
+   mi_assert(desc->option == option);  // index should match the option
+   mi_option_desc_set(desc, value, MI_OPTION_INITIALIZED);
++  if (desc->option == mi_option_hand_out_last_freed) { _mi_hands_out_last_freed = (value != 0); }
+   // ensure min/max range; be careful to not recurse.
+   if (desc->option == mi_option_guarded_min && _mi_option_get_fast(mi_option_guarded_max) < value) {
+     mi_option_set(mi_option_guarded_max, value);
+@@ -360,6 +365,7 @@
+   mi_option_desc_t* desc = &mi_options[option];
+   if (desc->init != MI_OPTION_INITIALIZED) {
+     desc->value = value;
++    if (option == mi_option_hand_out_last_freed) { _mi_hands_out_last_freed = (value != 0); }
+   }
+ }
+ 
+--- a/src/free.c
++++ b/src/free.c
+@@ -37,6 +37,24 @@
+ // ------------------------------------------------------
+ // Free
+ // ------------------------------------------------------
++
++static mi_decl_noinline void mi_free_block_local_to_hand_out_next(mi_page_t* page, mi_block_t* block, bool check_full)
++{
++  mi_block_set_next(page, block, page->free);
++  page->free = block;
++  page->free_is_zero = false;
++  if mi_unlikely(mi_page_alloc_count(page) >= 0x8000) { _mi_page_update_stats(page); }
++  const size_t used = mi_xused_dec_used(&page->xused);
++  mi_assert_internal(mi_page_alloc_count(page) + mi_page_last_used(page) >= mi_page_used(page));
++  if mi_unlikely(used == 0) {
++    if (page->retire_expire==0) {
++      _mi_page_retire(page);
++    }
++  }
++  else if mi_unlikely(check_full && mi_page_is_in_full(page)) {
++    _mi_page_unfull(page);
++  }
++}
+ 
+ // regular free of a (thread local) block pointer
+ // fast path written carefully to prevent spilling on the stack
+@@ -57,6 +75,10 @@
+   #endif
+   
+   // actual free: push on the local free list
++  if mi_unlikely(_mi_hands_out_last_freed) {
++    mi_free_block_local_to_hand_out_next(page, block, check_full);
++    return;
++  }
+   mi_block_set_next(page, block, page->local_free);
+   page->local_free = block;
+   const size_t used = mi_xused_dec_used(&page->xused);

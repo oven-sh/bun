@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { aotTests } from "../../scripts/buildkite.ts";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
 import { parseLog } from "../../scripts/ci-slowest-tests";
-import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
+import { isAotTest, parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
 const bk = (ts: number, body: string) => `\x1b_bk;t=${ts}\x07${body}`;
@@ -164,6 +165,12 @@ describe("phase-header boundary", () => {
   ])("%p %s", (expected, body) => {
     expect(isPhaseGroupHeader(body)).toBe(expected);
   });
+});
+
+test("scripts/update-test-durations.mjs keeps the durations of everything that the test-aot steps run", () => {
+  expect(aotTests.filter(group => !isAotTest(`${group}x.test.ts`))).toEqual([]);
+  expect(isAotTest("internal/trim/features.test.ts")).toBe(true);
+  expect(isAotTest("bundler/bundler_compile.test.ts")).toBe(false);
 });
 
 describe("scripts/update-test-durations.mjs parseLog", () => {

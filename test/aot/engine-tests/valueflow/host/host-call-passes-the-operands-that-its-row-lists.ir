@@ -1,0 +1,36 @@
+# initializeNextTickQueue(process, queue, drainMicrotasks), called by native code on behalf of process.nextTick (runtimefunction 65578)
+# The row lists the operands: `process`, the queue, which is an object that native code makes by itself, and a function that native code makes. A call of that function is a call of its entry.
+# What the call answers is process.nextTick and nothing else becomes of it but what the row lists: it has not escaped.
+# LIBRARY: own
+# RUN: valueflow-why values=f1:v3 values=f1:v4
+# CHECK: values=f1:v3
+# CHECK: operand 0 {{*}} 1 members: Process
+# CHECK: values=f1:v4
+# CHECK: operand 0 {{*}} 1 members: object{{*}}
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f1 v5 -> NativeFunctionsBunProcessCppJsFunctionDrainMicrotaskQueue
+# RUN(ESCAPED): valueflow-why escaped=f2
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65578 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    Return
+}
+function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65578 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="x"
+    v4 = PropGet v1 key="x"
+    v5 = Call v2
+    v6 = NewClosure function=f2
+    Return v6
+}
+function f2 name="nextTick" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

@@ -1,0 +1,14 @@
+{
+ "a-file-import": "as the bundle",
+ "bunfig-preload": "alone: undefined",
+ "dot-env-local-and-mode": "as the bundle",
+ "import-meta": "alone: string string true function undefined",
+ "loaders": "alone: {\"a\":1,\"list\":[1,2],\"default\":\"d\"} 1 2 {\"title\":\"toml\",\"t\":{\"n\":1}} \"text of a file\\n\" 42 true {\"a\":1,\"list\":[1,2],\"default\":\"d\"} true {\"title\":\"toml\",\"t\":{\"n\":",
+ "node-env": "as the bundle",
+ "package-type-commonjs": "as bun run",
+ "package-type-module": "as bun run",
+ "prepare-stack-trace": "alone: where:where:undefined:main.ts:1:171:false:true:false:false:false | K:K:undefined:main.ts:2:39:false:true:true:false:false | ::undefined:main.ts:3:39:false:true:",
+ "stacks": "as bun run",
+ "text-of-functions": "alone: function plain(a, b) { /* kept? */ return; }\n(x) => x * 2\nclass K { m(v) { return v; } static #p = 1; }\nm(v) { return v; }\nand 1 lines more",
+ "what-the-process-says": "as the bundle"
+}

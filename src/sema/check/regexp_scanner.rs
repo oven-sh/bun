@@ -9,6 +9,7 @@
 //!
 //! tsgo always enables Annex B, so its `anyUnicodeModeOrNonAnnexB` is `anyUnicodeMode`.
 
+use super::errors_operators::language_version;
 use super::explain::NOWHERE;
 use super::sink::held;
 use super::*;
@@ -23,11 +24,7 @@ impl Checker<'_, '_> {
         if has_parse_diagnostics(hir) {
             return;
         }
-        // `GetEmitScriptTarget`
-        let target = match self.p.files.options.target {
-            ScriptTarget::None => ScriptTarget::ES2025,
-            target => target,
-        };
+        let target = language_version(self);
         let mut scan_errors: Vec<RegExpError> = Vec::new();
         check_regular_expression_literal(&hir.text, hir[e].pos as usize, target, &mut scan_errors);
         for (start, end, code, args) in scan_errors {
@@ -37,7 +34,8 @@ impl Checker<'_, '_> {
                     last.add_related_info(Reported::new(NOWHERE, code, held(args)));
                 }
                 _ => {
-                    self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
+                    let diagnostic = Reported::new((file, start, end), code, held(args));
+                    self.add_diagnostic(diagnostic.with_class(DiagnosticClass::TypeScriptGrammar));
                 }
             }
         }

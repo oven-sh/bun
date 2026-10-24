@@ -22,6 +22,8 @@
         }                                                                                                          \
     } while (false)
 
+JSC_DECLARE_HOST_FUNCTION(NodeError_proto_toString);
+
 namespace Bun {
 
 // For a message that embeds text from JS: past `String::MaxLength` it records the overflow where a default `StringBuilder` calls `CRASH()`.

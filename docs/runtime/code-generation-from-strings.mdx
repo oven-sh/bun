@@ -143,27 +143,35 @@ Tools that transpile through `require.extensions`, such as `ts-node` and `@babel
 
 ## In a compiled executable
 
-Embed the flag when you compile. The executable then runs with it every time, with no arguments:
+Pass the flag when you compile. The executable then runs with it every time, with no arguments:
 
 ```bash icon="terminal" terminal
-bun build --compile --compile-exec-argv="--disallow-code-generation-from-strings=strict" ./server.ts --outfile server
+bun build --compile --disallow-code-generation-from-strings=strict ./server.ts --outfile server
 ```
 
 ```ts build.ts icon="/icons/typescript.svg"
 await Bun.build({
   entrypoints: ["./server.ts"],
   compile: {
-    execArgv: ["--disallow-code-generation-from-strings=strict"],
+    disallowCodeGenerationFromStrings: "strict", // or true, for the level of Node.js's flag
     outfile: "./server",
   },
 });
 ```
+
+It is the same as putting the flag first in `--compile-exec-argv` (`execArgv` in `Bun.build`), which also works.
 
 Write the value with `=`. In `--compile-exec-argv="--disallow-code-generation-from-strings strict"`, with a space, `strict` is a separate argument, which a compiled executable ignores. That executable runs with the flag and no value, and prints no error. The check in [Checking that the flag is on](#checking-that-the-flag-is-on) catches the mistake.
 
 `BUN_OPTIONS` can raise the level of a compiled executable. It cannot lower it.
 
 A compiled executable does not read its own command line as Bun flags. `./server --preload ./x.js` passes both arguments to the program in `process.argv`.
+
+### With `--trim`
+
+`bun compile --trim` does not turn the flag on. `eval` and `new Function` work in a trimmed executable as in any other.
+
+If you pass both, the flag also makes the executable smaller: Bun removes the JavaScript parser and the interpreter, since nothing can use them. See [Turn off code from strings](/bundler/aot-size#turn-off-code-from-strings).
 
 ### Files on disk are not part of the program
 

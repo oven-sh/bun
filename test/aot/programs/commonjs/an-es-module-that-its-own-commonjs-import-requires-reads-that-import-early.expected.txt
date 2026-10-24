@@ -1,0 +1,2 @@
+mb: object:first:1
+main: object:first:1 object:first,second:1:true

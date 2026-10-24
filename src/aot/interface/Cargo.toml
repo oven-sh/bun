@@ -1,0 +1,26 @@
+[package]
+name = "bun_aot_interface"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+test = false
+bench = false
+doctest = false
+
+[features]
+# This Bun is built without the compiler: `bun_aot_absent` turns it on.
+absent = []
+
+[dependencies]
+bun_ast.workspace = true
+bun_core.workspace = true
+bun_options_types.workspace = true
+bun_sema.workspace = true
+bun_sema_driver.workspace = true
+bun_trim.workspace = true
+bstr.workspace = true
+
+[lints]
+workspace = true

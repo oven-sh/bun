@@ -2,6 +2,7 @@
 name = "bun_sema_standalone"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [lib]
 path = "lib.rs"
@@ -11,6 +12,7 @@ name = "bun-sema"
 path = "main.rs"
 
 [dependencies]
+bun_sema_parser.workspace = true
 bun_sema = { workspace = true, features = ["baselines"] }
 bun_sema_driver.workspace = true
 bun_sema_baselines.workspace = true
@@ -19,8 +21,13 @@ bun_threading.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_sys.workspace = true
+bun_zstd.workspace = true
+bun_boringssl_sys.workspace = true
 libc.workspace = true
 bstr.workspace = true
+
+[build-dependencies]
+cc = "1"
 
 [lints]
 workspace = true

@@ -1,0 +1,8 @@
+# The type of an enum member that the program computes holds no value: the checker's digits are not the engine's.
+enum-inexact-power.ts:4 shape `Size.Exact` = NumericEnumMember(1024)
+enum-inexact-power.ts:5 shape `Size.Inexact` = Number
+enum-inexact-power.ts:6 shape `Size.After` = Number
+enum-inexact-power.ts:7 shape `Size.Text` = String
+enum-inexact-power.ts:8 shape `Size.ExactText` = StringLiteral("1024")
+enum-inexact-power.ts:9 shape `Size.Borrowed` = Number
+enum-inexact-power.ts:10 shape `Other.Inexact` = Number

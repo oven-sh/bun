@@ -107,12 +107,6 @@ fn after_await(text: &[u8], at: u32) -> AfterAwait {
 
 // ───────────────────────────── syntax ─────────────────────────────
 
-/// A `with` statement is stored as a block of its object and its body, positioned at the keyword.
-pub(super) fn is_with_statement(hir: &File, s: StmtId) -> bool {
-    matches!(hir[s].kind, StmtKind::Block(list) if list.len() == 2)
-        && is_word_at(&hir.text, hir[s].start as usize, b"with")
-}
-
 /// The parts of `range` that aren't in any of `holes`.
 fn parts_outside(range: (u32, u32), mut holes: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
     holes.shared_sort_unstable();
@@ -226,11 +220,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for (i, s) in hir.stmts.iter().enumerate() {
             let code = match s.kind {
-                StmtKind::Block(_)
-                    if !hir.with_bodies.is_empty() && is_with_statement(hir, StmtId(i as u32)) =>
-                {
-                    1101
-                }
+                StmtKind::With { .. } => 1101,
                 // A declaration can't be a jump target.
                 StmtKind::Labeled { body, .. }
                     if matches!(
@@ -256,13 +246,20 @@ impl Checker<'_, '_> {
                 _ => continue,
             };
             if !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None) {
-                self.error_at((file, s.start, 0), code, &[]);
+                let class = self.strict_mode_statement_error_class(file, StmtId(i as u32));
+                self.error_at((file, s.start, 0), code, &[]).class = class;
             }
         }
     }
 
     /// `checkWithStatement`: 1300 2410. The body isn't checked.
-    pub(super) fn check_with_statement(&mut self, file: FileId, s: StmtId, parts: IdList<StmtId>) {
+    pub(super) fn check_with_statement(
+        &mut self,
+        file: FileId,
+        s: StmtId,
+        object: ExprId,
+        body: StmtId,
+    ) {
         let hir = self.hir(file);
         let pos = hir[s].start;
         if !self.check_grammar_statement_in_ambient_context(file, s)
@@ -274,14 +271,11 @@ impl Checker<'_, '_> {
         {
             self.error_at((file, pos, 0), 1300, &[]);
         }
-        // The object is stored as a statement but isn't one.
-        if let StmtKind::Expr(object) = hir[hir.id_at(parts, 0)].kind {
-            self.check_expression(file, object);
-        }
+        self.check_expression(file, object);
         // Up to `node.Statement.Pos()`.
-        let end = hir[hir.id_at(parts, 1)].loc.pos;
+        let end = hir[body].loc.pos;
         self.grammar_error_at((file, pos, end), 2410, &[]);
-        self.leave_expressions_unvisited(file, hir.node(hir.id_at(parts, 1)));
+        self.leave_expressions_unvisited(file, hir.node(body));
     }
 
     /// Runs `leave_unvisited` for the outermost expressions below `node`.
@@ -303,9 +297,7 @@ impl Checker<'_, '_> {
             return;
         }
         for s in (0..hir.stmts.len() as u32).map(StmtId) {
-            if let StmtKind::Block(parts) = hir[s].kind
-                && is_with_statement(hir, s)
-                && let body = hir.id_at(parts, 1)
+            if let StmtKind::With { body, .. } = hir[s].kind
                 // An empty body has no contents, and its `pos` can be 0, which isn't its real position.
                 && !matches!(hir[body].kind, StmtKind::Empty)
             {
@@ -388,12 +380,14 @@ impl Checker<'_, '_> {
     ) -> Option<FnId> {
         let hir = self.hir(file);
         if !self.check_grammar_statement_in_ambient_context(file, s) {
-            let code = match self.enclosing_fn(file, Parent::Stmt(s)) {
+            let at = (file, hir[s].start, 0);
+            match self.enclosing_fn(file, Parent::Stmt(s)) {
                 Some(func) if hir[func].kind != FnKind::StaticBlock => return Some(func),
-                Some(_) => 18041,
-                None => 1108,
+                Some(_) => self.early_grammar_error_at(at, 18041, &[]),
+                // `bun run` wraps a CommonJS module in a function.
+                None if self.is_compiled_as_commonjs(file) => self.grammar_error_at(at, 1108, &[]),
+                None => self.early_grammar_error_at(at, 1108, &[]),
             };
-            self.grammar_error_at((file, hir[s].start, 0), code, &[]);
         }
         if let StmtKind::Return(e) = hir[s].kind
             && e.is_some()
@@ -432,7 +426,7 @@ impl Checker<'_, '_> {
         if hir.kind(container) == Kind::ClassStaticBlockDeclaration
             && let Some(start) = await_after_for(&hir.text, hir[s].start)
         {
-            self.grammar_error_at((file, start, 0), 18038, &[]);
+            self.early_grammar_error_at((file, start, 0), 18038, &[]);
         }
     }
 
@@ -460,7 +454,7 @@ impl Checker<'_, '_> {
                 }
                 AwaitContext::Other => {
                     let related = self.function_to_mark_async(file, hir.node(s), true);
-                    let diagnostic = self.error_at((file, start, 0), 1103, &[]);
+                    let diagnostic = self.early_error_at((file, start, 0), 1103, &[]);
                     diagnostic.related_information.extend(related);
                     return true;
                 }
@@ -478,7 +472,11 @@ impl Checker<'_, '_> {
                         AwaitContext::TopLevel | AwaitContext::Other
                     )
                 {
-                    self.grammar_error_on_node(file, target, 1106, &[]);
+                    if self.is_for_async_of(file, s) {
+                        self.early_grammar_error_on_node(file, target, 1106, &[]);
+                    } else {
+                        self.grammar_error_on_node(file, target, 1106, &[]);
+                    }
                 }
                 return false;
             }
@@ -493,9 +491,18 @@ impl Checker<'_, '_> {
         if decls.len() > 1 {
             let second = hir[hir[decls.at(1)].pat].pos;
             let code = if is_for_in { 1091 } else { 1188 };
-            self.grammar_error_at((file, second, 0), code, &[])
+            self.early_grammar_error_at((file, second, 0), code, &[])
         } else if first.init.is_some() {
-            self.grammar_error_on_node(file, first.pat, if is_for_in { 1189 } else { 1190 }, &[])
+            // Annex B.3.5: `for (var a = 0 in o)` is JavaScript in sloppy mode.
+            let is_annex_b = is_for_in
+                && first.kind == VarKind::Var
+                && matches!(hir[first.pat].kind, PatKind::Ident(_));
+            if is_annex_b {
+                self.grammar_error_on_node(file, first.pat, 1189, &[])
+            } else {
+                let code = if is_for_in { 1189 } else { 1190 };
+                self.early_grammar_error_on_node(file, first.pat, code, &[])
+            }
         } else {
             first.ty.is_some()
                 && self.grammar_error_on_node(
@@ -523,14 +530,14 @@ impl Checker<'_, '_> {
                 keyword = skip_trivia(&hir.text, keyword + b"await".len());
             }
             let end = (keyword + word_at(&hir.text, keyword).len()) as u32;
-            return self.grammar_error_at((file, end, end), 1123, &[]);
+            return self.early_grammar_error_at((file, end, end), 1123, &[]);
         };
         // `checkGrammarForDisallowedTrailingComma`: in a file without syntax errors no other comma can follow the last
         // declaration.
         let end = self.end_of_var_decl_list(file, decls);
         let comma = skip_trivia(&hir.text, end as usize) as u32;
         if hir.text.get(comma as usize) == Some(&b',') {
-            return self.grammar_error_at((file, comma, comma + 1), 1009, &[]);
+            return self.early_grammar_error_at((file, comma, comma + 1), 1009, &[]);
         }
         let is_await = match hir[first].kind {
             VarKind::Using => false,
@@ -544,14 +551,19 @@ impl Checker<'_, '_> {
             _ => None,
         };
         let codes = match parent_statement_kind {
-            Some(StmtKind::ForIn { left, .. }) if left == s => Some([1493, 1494]),
-            _ if hir[first].flags.contains(Flags::AMBIENT) => Some([1545, 1546]),
+            Some(StmtKind::ForIn { left, .. }) if left == s => Some(([1493, 1494], true)),
+            _ if hir[first].flags.contains(Flags::AMBIENT) => Some(([1545, 1546], false)),
             // A clause's statements have the `switch` as their parent.
-            Some(StmtKind::Switch { .. }) => Some([1547, 1548]),
+            Some(StmtKind::Switch { .. }) => Some(([1547, 1548], true)),
             _ => None,
         };
-        if let Some(codes) = codes {
-            return self.grammar_error_at(at, codes[usize::from(is_await)], &[]);
+        if let Some((codes, is_early)) = codes {
+            let code = codes[usize::from(is_await)];
+            return if is_early {
+                self.early_grammar_error_at(at, code, &[])
+            } else {
+                self.grammar_error_at(at, code, &[])
+            };
         }
         is_await
             && self.check_grammar_await_or_await_using(file, hir.node(s), start, |_| at.2, false)
@@ -587,7 +599,7 @@ impl Checker<'_, '_> {
             Some(VarKind::Var) | None => return,
         };
         if !self.container_allows_block_scoped_variable(file, s) {
-            self.error_at(
+            self.early_error_at(
                 (file, hir[s].start, hir[s].loc.end),
                 1156,
                 &[Arg::Text(keyword)],
@@ -609,8 +621,9 @@ impl Checker<'_, '_> {
                 | StmtKind::DoWhile { .. }
                 | StmtKind::For { .. }
                 | StmtKind::ForIn { .. }
-                | StmtKind::ForOf { .. } => return false,
-                _ => return !is_with_statement(hir, p),
+                | StmtKind::ForOf { .. }
+                | StmtKind::With { .. } => return false,
+                _ => return true,
             }
         }
         true
@@ -642,7 +655,7 @@ impl Checker<'_, '_> {
             return;
         }
         if caught.init.is_some() {
-            self.grammar_error_at((file, self.start_of(file, caught.init), 0), 1197, &[]);
+            self.early_grammar_error_at((file, self.start_of(file, caught.init), 0), 1197, &[]);
             return;
         }
         // `node.Locals()` is the scope around the block, and `Block.Locals()` is the one around its statements.
@@ -663,7 +676,12 @@ impl Checker<'_, '_> {
                 && symbol.flags.intersects(SymFlags::BLOCK_SCOPED_VARIABLE)
                 && let Some(&declaration) = symbol.decls.get(symbol.value_declaration as usize)
             {
-                self.grammar_error_on_node(file, declaration, 2492, &[Arg::Atom(caught_name)]);
+                self.early_grammar_error_on_node(
+                    file,
+                    declaration,
+                    2492,
+                    &[Arg::Atom(caught_name)],
+                );
             }
         }
     }
@@ -712,20 +730,24 @@ impl Checker<'_, '_> {
             AwaitContext::Allowed => false,
             // "We report this regardless as to whether there are parse diagnostics."
             AwaitContext::StaticBlock => {
-                self.error_at((file, start, end(self)), codes[0], &[]);
+                self.early_error_at((file, start, end(self)), codes[0], &[]);
                 true
             }
             _ if has_parse_diagnostics(hir) => false,
             AwaitContext::TopLevel => self.check_top_level_await(file, start, codes[1], codes[2]),
             AwaitContext::Other => {
                 let related = self.function_to_mark_async(file, node, false);
-                let diagnostic = self.error_at((file, start, 0), codes[3], &[]);
+                let diagnostic = self.early_error_at((file, start, 0), codes[3], &[]);
                 diagnostic.related_information.extend(related);
                 true
             }
         };
         if is_await_expression && hir.is_in_parameter_initializer_before_containing_function(node) {
-            self.error_at((file, start, end(self)), 2524, &[]);
+            self.early_error_at((file, start, end(self)), 2524, &[]);
+            has_error = true;
+        }
+        if is_await_expression && !has_error && self.is_await_refused_at(file, node) {
+            self.early_error_at((file, start, 0), 1308, &[]);
             has_error = true;
         }
         has_error
@@ -740,7 +762,7 @@ impl Checker<'_, '_> {
         is_no_module: u32,
         options_do_not_have_it: u32,
     ) -> bool {
-        let kind = self.p.files.options.module;
+        let kind = self.module_options(file).module;
         let is_module = self.is_effective_external_module(file);
         if !is_module {
             self.error_at((file, start, 0), is_no_module, &[]);
@@ -765,7 +787,7 @@ impl Checker<'_, '_> {
 
     /// `IsEffectiveExternalModule`
     pub(super) fn is_effective_external_module(&self, file: FileId) -> bool {
-        let (module, kind) = (self.files().module(file), self.p.files.options.module);
+        let (module, kind) = (self.files().module(file), self.module_options(file).module);
         // `isCommonJSContainingModuleKind`
         module.hir.has_module_syntax
             || (kind == ModuleKind::CommonJs || kind.is_node()) && module.is_commonjs()
@@ -931,7 +953,8 @@ impl Checker<'_, '_> {
         let never_checked = [&self.never_checked.borrow()[..], &discarded[..]].concat();
         if !never_checked.is_empty() {
             self.reported.retain(|d| {
-                !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&d.start))
+                d.file != file
+                    || !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&d.start))
                     || d.by_emit
                     || d.by_another_node
                     // Reported on the node that isn't checked, and only by the check of its parent.

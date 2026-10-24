@@ -1,0 +1,250 @@
+// Patterns whose text the build cannot know: names, globs turned into patterns, words looked for in a command. The last eight go back over the same places again and again.
+//// globstar-that-matches
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:.*/)?src/.*\\.tsx?$" + nothing);
+const subjects: string[] = ["packages/app/src/components/button/primary/index.test.tsx" + nothing, "src/index.ts" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// globstar-that-does-not-match
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:.*/)?lib/.*\\.tsx?$" + nothing);
+const subjects: string[] = ["packages/app/src/components/button/primary/index.test.tsx" + nothing, "src/index.ts" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// segments-of-a-path
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:[^/]*/)*[^/]*\\.test\\.[jt]sx?$" + nothing);
+const subjects: string[] = ["packages/app/src/components/button/primary/index.test.tsx" + nothing, "src/index.ts" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// globstar-that-skips-dot-files
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:(?:(?!(?:\\/|^)\\.).)*?\\/)?(?!\\.)[^/]*?\\.tsx$" + nothing);
+const subjects: string[] = ["packages/app/src/components/button/primary/index.test.tsx" + nothing, "src/.cache/index.tsx" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// stars-between-slashes
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:(?!\\.)(?=.)[^/]*?\\/(?!\\.)(?=.)[^/]*?\\/src\\/.*)$" + nothing);
+const subjects: string[] = ["packages/app/src/components/button/primary/index.test.tsx" + nothing, "src/index.ts" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// one-of-nine-names
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:Copy|Move|Write|Read|Glob|Grep|Download|Task|Notebook)$" + nothing);
+const subjects: string[] = ["Download" + nothing, "Search" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-prefix-a-name-and-a-verb
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^plugin__[a-z0-9_]+__(?:read|list|get)_.*$" + nothing);
+const subjects: string[] = ["plugin__files_server__list_directory" + nothing, "plugin__files_server__write_file" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// one-of-eight-words-in-a-command
+const nothing = String(Date.now()).slice(99);
+const command = "cd /srv/app && FOO=1 BAR=two npm run build -- --mode production --out dist/client && git add -A && git commit -m 'build: client' && git push origin main";
+const pattern = new RegExp("\\b(?:rm|sudo|chmod|chown|mkfs|dd|shutdown|reboot)\\b" + nothing);
+const subjects: string[] = [command + nothing, (command + " && sudo reboot") + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-verb-behind-a-separator
+const nothing = String(Date.now()).slice(99);
+const command = "cd /srv/app && FOO=1 BAR=two npm run build -- --mode production --out dist/client && git add -A && git commit -m 'build: client' && git push origin main";
+const pattern = new RegExp("(?:^|&&\\s*|;\\s*)git (?:push|pull|fetch)(?: .*)?$" + nothing);
+const subjects: string[] = [command + nothing, (command + " --dry-run; ls") + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// assignments-before-a-command
+const nothing = String(Date.now()).slice(99);
+const command = "cd /srv/app && FOO=1 BAR=two npm run build -- --mode production --out dist/client && git add -A && git commit -m 'build: client' && git push origin main";
+const pattern = new RegExp("^(?:cd \\S+ && )?(?:\\w+=\\S*\\s+)*npm (?:run|test)\\b" + nothing);
+const subjects: string[] = [command + nothing, "FOO=1 yarn build" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// one-of-four-flags-in-a-command
+const nothing = String(Date.now()).slice(99);
+const command = "cd /srv/app && FOO=1 BAR=two npm run build -- --mode production --out dist/client && git add -A && git commit -m 'build: client' && git push origin main";
+const pattern = new RegExp("(?:^|\\s)--?(?:force|f|hard|no-verify)(?:\\s|=|$)" + nothing);
+const subjects: string[] = [command + nothing, (command + " --force") + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// one-of-four-words-whatever-the-case
+const nothing = String(Date.now()).slice(99);
+const line = "2026-10-23T14:05:11.123Z INFO  [http] GET /api/v1/users/12345?expand=teams&limit=50 200 12ms host=example.com ua=\"Mozilla/5.0 (X11; Linux x86_64)\"";
+const pattern = new RegExp("password|secret|token|api[_-]?key" + nothing, "i");
+const subjects: string[] = [line + nothing, (line + " X-Api-Key: 1") + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-level-whatever-the-case
+const nothing = String(Date.now()).slice(99);
+const line = "2026-10-23T14:05:11.123Z INFO  [http] GET /api/v1/users/12345?expand=teams&limit=50 200 12ms host=example.com ua=\"Mozilla/5.0 (X11; Linux x86_64)\"";
+const pattern = new RegExp("\\b(?:error|warn|info|debug)\\b" + nothing, "i");
+const subjects: string[] = [line + nothing, "nothing of the kind here" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// an-address
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^https?://(?:[\\w-]+\\.)+[a-z]{2,}(?:/[^\\s?#]*)?(?:\\?[^\\s#]*)?$" + nothing, "i");
+const subjects: string[] = ["https://api.example.com/v1/users/12345?expand=teams&limit=50" + nothing, "ftp://example.com/" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-version
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:-([\\w.-]+))?(?:\\+([\\w.-]+))?$" + nothing);
+const subjects: string[] = ["v12.34.56-beta.7+build.89" + nothing, "12.34" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// letters-and-digits-of-any-script
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^[\\p{L}\\p{N}_-]+$" + nothing, "u");
+const subjects: string[] = ["alpha_beta-gamma42" + nothing, "alpha beta" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// letters-and-digits-of-any-script-in-greek
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^[\\p{L}\\p{N}_-]+$" + nothing, "u");
+const subjects: string[] = ["\u03b1\u03b2\u03b3\u03b4_\u03b5\u03b6\u03b7\u03b8-\u03b9\u03ba\u03bb\u03bc42" + nothing, "\u03b1\u03b2 \u03b3" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-capital-whatever-the-case-in-greek
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\p{Lu}\\p{Ll}+" + nothing, "iu");
+const subjects: string[] = ["\u03b1\u03b2\u03b3\u03b4_\u03b5\u03b6\u03b7\u03b8" + nothing, "42 \u03b1\u03b2" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// as-little-as-possible-twice
+const nothing = String(Date.now()).slice(99);
+const line = "2026-10-23T14:05:11.123Z INFO  [http] GET /api/v1/users/12345?expand=teams&limit=50 200 12ms host=example.com ua=\"Mozilla/5.0 (X11; Linux x86_64)\"";
+const pattern = new RegExp("\\[(.*?)\\].*?\"(.*?)\"" + nothing, "s");
+const subjects: string[] = [line + nothing, "[a] b" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// three-words-in-order
+const nothing = String(Date.now()).slice(99);
+const command = "cd /srv/app && FOO=1 BAR=two npm run build -- --mode production --out dist/client && git add -A && git commit -m 'build: client' && git push origin main";
+const pattern = new RegExp("^.*npm.*build.*dist.*$" + nothing);
+const subjects: string[] = [command + nothing, "npm run build" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// three-words-in-order-on-a-line
+const nothing = String(Date.now()).slice(99);
+const command = "cd /srv/app && FOO=1 BAR=two npm run build -- --mode production --out dist/client && git add -A && git commit -m 'build: client' && git push origin main";
+const pattern = new RegExp("^.*npm.*build.*dist.*$" + nothing, "m");
+const subjects: string[] = ["# build\n" + command + "\n" + nothing, "npm run\nbuild dist" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-quote-that-no-backslash-precedes
+const nothing = String(Date.now()).slice(99);
+const line = "2026-10-23T14:05:11.123Z INFO  [http] GET /api/v1/users/12345?expand=teams&limit=50 200 12ms host=example.com ua=\"Mozilla/5.0 (X11; Linux x86_64)\"";
+const pattern = new RegExp("(?<!\\\\)\"[^\"]*\"" + nothing);
+const subjects: string[] = [line + nothing, "no quote here" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-flag-behind-a-space-or-the-start
+const nothing = String(Date.now()).slice(99);
+const command = "cd /srv/app && FOO=1 BAR=two npm run build -- --mode production --out dist/client && git add -A && git commit -m 'build: client' && git push origin main";
+const pattern = new RegExp("(?<=^|\\s)--?(?:force|f|hard|no-verify)(?=\\s|=|$)" + nothing);
+const subjects: string[] = [command + nothing, (command + " --force") + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// four-words-in-order-of-which-the-last-is-missing
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^.*foo.*bar.*baz.*quux.*$" + nothing);
+const subjects: string[] = ["echo foo | grep bar > baz.txt; cat qux.log; ".repeat(7) + nothing, "foo bar baz" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// stars-in-four-optional-groups
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:.*/)?(?:.*/)?(?:.*/)?(?:.*/)?end$" + nothing);
+const subjects: string[] = ["a/".repeat(24) + "x" + nothing, "a/end" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// words-and-spaces-without-the-end
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:\\w+\\s*)+;$" + nothing);
+const subjects: string[] = ["alpha beta gamma" + nothing, "alpha;" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-repeated-group-of-a-repeated-letter
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(a+)+b$" + nothing);
+const subjects: string[] = ["a".repeat(14) + "c" + nothing, "aab" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-match-behind-a-repeated-group
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:(a+)+b|a+c)$" + nothing);
+const subjects: string[] = ["a".repeat(14) + "c" + nothing, "aab" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// assignments-without-the-end
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("(?:\\w+=\\S*\\s+)*end$" + nothing);
+const subjects: string[] = ["A=k ".repeat(60) + "no" + nothing, "A=k end" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// turns-that-may-take-nothing
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(a*)*b$" + nothing);
+const subjects: string[] = ["a".repeat(13) + "c" + nothing, "aab" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// whole-words-whatever-their-case-in-unicode-mode
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\b(?:error|warning|fatal)\\b" + nothing, "iu");
+const subjects: string[] = ["2026-10-24 00:36:12 info the request for /api/v1/items ended in order after 12 ms, no Warning" + nothing, "2026-10-24 00:36:13 info the request for /api/v1/items ended in order after 9 ms" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-group-that-ignores-case
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?i:get|post|put) /[a-z/]+ HTTP/1\\.[01]$" + nothing);
+const subjects: string[] = ["Post /api/items HTTP/1.1" + nothing, "PATCH /api/items HTTP/1.1" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// an-address-far-behind-the-start-of-a-line
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\b([a-z0-9-]{1,64}@[a-z0-9-]+\\.example\\.invalid)\\b" + nothing, "i");
+const subjects: string[] = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid" + nothing, "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-name-and-its-number-far-behind-the-start-of-a-line
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("[a-z_]+\\s*=\\s*\\d+" + nothing);
+const subjects: string[] = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok and retries_left = 3" + nothing, "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west while queue_length=12" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}

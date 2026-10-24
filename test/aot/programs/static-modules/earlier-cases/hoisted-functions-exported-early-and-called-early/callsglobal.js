@@ -1,0 +1,1 @@
+exports.got = globalThis.leaked();

@@ -1,0 +1,17 @@
+every element as it was born: [{"id":0,"title":"item 0","price":0.25},{"id":1,"title":"item 1","price":1.25},{"id":2,"title":"item 2","price":2.25}]: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+every element built up: [{"id":0,"title":"item 0"},{"id":1,"price":1.25,"title":"item 1"},{"id":2,"title":"item 2"}]: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+the last built up: [{"id":0,"title":"item 0","price":0.25},{"id":1,"title":"item 1","price":1.25},{"id":2,"title":"item 2"}]: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+the first built up: [{"id":0,"title":"item 0"},{"id":1,"title":"item 1","price":1.25},{"id":2,"title":"item 2","price":2.25}]: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+one element: [{"id":0,"title":"item 0"}]: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+no element: []: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+four hundred built up: 14726 characters, -96753888: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+two hundred built up behind two hundred: 16171 characters, 1377920810: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+a 16-bit string in the rest: [{"id":0,"title":"item 0"},{"id":1,"price":1.25,"title":"item 1"},{"id":2,"title":"中文"}]: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+nulls among them: [{"id":0,"title":"item 0","price":0.25},null,{"id":2,"title":"item 2"},null]: 100 texts finished by compiled code, 200 values and 0 rests of lists handed to the runtime
+one with an extra property: [{"id":0,"title":"item 0","price":0.25},{"id":1,"title":"item 1","price":1.25,"more":true},{"id":2,"title":"item 2","price":2.25}]: 100 texts finished by compiled code, 100 values and 0 rests of lists handed to the runtime
+no optional members, one with an extra property: [{"id":0,"name":"zero"},{"id":1,"name":"one","more":true},{"id":2,"name":"two"},{"id":3,"name":"three"}]: 100 texts finished by compiled code, 0 values and 100 rests of lists handed to the runtime
+the same among four hundred: 11393 characters, 1200179841: 100 texts finished by compiled code, 0 values and 100 rests of lists handed to the runtime
+the same with a 16-bit string behind it: [{"id":0,"name":"zero"},{"id":1,"name":"one","more":true},{"id":2,"name":"中文"}]: 100 texts finished by compiled code, 0 values and 100 rests of lists handed to the runtime
+in a record: {"total":3,"rows":[{"id":0,"title":"item 0"},{"id":1,"price":1.25,"title":"item 1"},{"id":2,"title":"item 2"}]}: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+in records in a list: 376 characters, -2114398851: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime
+lists in a list: 319 characters, -772385875: 100 texts finished by compiled code, 0 values and 0 rests of lists handed to the runtime

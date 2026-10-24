@@ -1,0 +1,2 @@
+// The text of a direct eval names `require`, `module`, `exports`, `__filename` and `__dirname` in a CommonJS file whose own code names none of them: at its top, in a function, in an arrow function, and in the shape ncc emits for an external module, whose parameter shadows `module`. Plain Bun takes such a file for an ES module, in which `require` is not defined, so the output is stored.
+import "./named-in-text-only.cjs";

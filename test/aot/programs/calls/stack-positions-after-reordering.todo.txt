@@ -1,0 +1,1 @@
+It reads error.stack in the form the jsc shell gives it, so only test/aot/shell/quick.py runs it.

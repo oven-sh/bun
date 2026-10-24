@@ -13,7 +13,7 @@
 //! HIR nodes that aren't tsgo nodes: the statement that wraps the contents of a `for` statement's head, the `Pat` of an
 //! omitted element, the `TupleElem` of a plain element, the `Assign` of `{ a = 1 }`, and the placeholders for the
 //! specifier of `import()` and for the empty `{}` of JSX. The heritage elements a class extends after the first have no
-//! `ExpressionWithTypeArguments` around them. A `WithStatement` is a `Block` of two statements.
+//! `ExpressionWithTypeArguments` around them.
 //! tsgo nodes that aren't represented yet, so `parent` skips them: `ParenthesizedType`, tokens.
 
 use crate::atom::{Atom, known};
@@ -751,7 +751,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
     fn jsx_child(&mut self, e: ExprId) -> bool {
         match self.file.exprs.get(e.idx()).map(|e| e.kind) {
             None => false,
-            Some(ExprKind::Jsx(_)) => self.one(e),
+            Some(ExprKind::Jsx(_) | ExprKind::JsxText(_)) => self.one(e),
             Some(ExprKind::String(_)) if jsx_expression_around(self.file, e).is_none() => {
                 self.one(e)
             }
@@ -834,7 +834,8 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             | ExprKind::False
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Regex => false,
+            | ExprKind::Regex { .. }
+            | ExprKind::JsxText(_) => false,
             ExprKind::String(_) => {
                 file.is_namespaced_tag_name(e)
                     && (self.one(node.with(Part::Namespace))
@@ -920,7 +921,10 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             StmtKind::Break(label) | StmtKind::Continue(label) => {
                 self.part(node, Part::Label, label.is_some())
             }
-            StmtKind::Expr(e) | StmtKind::Return(e) | StmtKind::Throw(e) => self.one(e),
+            StmtKind::Expr(e)
+            | StmtKind::Directive { expr: e, .. }
+            | StmtKind::Return(e)
+            | StmtKind::Throw(e) => self.one(e),
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
                 self.one(file.jsdoc_type(JsDocTypeOwner::Export(s))) || self.one(e)
             }
@@ -962,11 +966,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             } => self.for_initializer(left) || self.one(expr) || self.one(body),
             StmtKind::While { test, body } => self.one(test) || self.one(body),
             StmtKind::DoWhile { body, test } => self.one(body) || self.one(test),
-            // The statement that wraps the object of a `with` isn't a node.
-            StmtKind::Block(statements) if file.is_with_statement(s) => {
-                let (object, body) = (file.id_at(statements, 0), file.id_at(statements, 1));
-                matches!(file[object].kind, StmtKind::Expr(e) if self.one(e)) || self.one(body)
-            }
+            StmtKind::With { object, body } => self.one(object) || self.one(body),
             StmtKind::Block(statements) => self.list(statements),
             StmtKind::Switch { expr, .. } => self.one(expr) || self.one(node.with(Part::Body)),
             StmtKind::Try {
@@ -1323,7 +1323,8 @@ impl<'s> File<'s> {
                     | ExprKind::Number(_)
                     | ExprKind::String(_)
                     | ExprKind::BigInt(_)
-                    | ExprKind::Regex
+                    | ExprKind::Regex { .. }
+                    | ExprKind::JsxText(_)
                     | ExprKind::ImportMeta
                     | ExprKind::NewTarget(_)
             ),
@@ -1507,13 +1508,6 @@ impl<'s> File<'s> {
         self[e].pos < open_parenthesis(self, operand).unwrap_or(self[operand].pos)
     }
 
-    /// A `with` statement is stored as a block of its object and its body, positioned at the keyword.
-    pub(crate) fn is_with_statement(&self, s: StmtId) -> bool {
-        let statement_text = self.text.get(self[s].start as usize..);
-        matches!(self[s].kind, StmtKind::Block(list) if list.len() == 2)
-            && statement_text.is_some_and(|text| text.starts_with(b"with"))
-    }
-
     /// Returns the position of the `:` of the `JsxNamespacedName` that starts at `pos`, or `None` if the name there is
     /// a plain identifier.
     fn colon_of_jsx_name(&self, pos: u32) -> Option<u32> {
@@ -1600,6 +1594,7 @@ impl<'s> File<'s> {
                 ExprKind::Ident(text)
                 | ExprKind::PrivateIdentifier(text)
                 | ExprKind::String(text)
+                | ExprKind::JsxText(text)
                 | ExprKind::BigInt(text) => text,
                 _ => Atom::NONE,
             },
@@ -2135,8 +2130,9 @@ impl<'s> File<'s> {
                 }
                 _ => Kind::StringLiteral,
             },
+            ExprKind::JsxText(_) => Kind::JsxText,
             ExprKind::BigInt(_) => Kind::BigIntLiteral,
-            ExprKind::Regex => Kind::RegularExpressionLiteral,
+            ExprKind::Regex { .. } => Kind::RegularExpressionLiteral,
             ExprKind::Template { exprs, .. } if exprs.is_empty() => {
                 Kind::NoSubstitutionTemplateLiteral
             }
@@ -2189,7 +2185,7 @@ impl<'s> File<'s> {
         match self[s].kind {
             StmtKind::Empty => Kind::EmptyStatement,
             StmtKind::Debugger => Kind::DebuggerStatement,
-            StmtKind::Expr(_) => Kind::ExpressionStatement,
+            StmtKind::Expr(_) | StmtKind::Directive { .. } => Kind::ExpressionStatement,
             StmtKind::Var(_) => Kind::VariableStatement,
             StmtKind::Fn(_) => Kind::FunctionDeclaration,
             StmtKind::Class(_) => Kind::ClassDeclaration,
@@ -2207,7 +2203,7 @@ impl<'s> File<'s> {
             StmtKind::ForOf { .. } => Kind::ForOfStatement,
             StmtKind::While { .. } => Kind::WhileStatement,
             StmtKind::DoWhile { .. } => Kind::DoStatement,
-            StmtKind::Block(_) if self.is_with_statement(s) => Kind::WithStatement,
+            StmtKind::With { .. } => Kind::WithStatement,
             StmtKind::Block(_) => Kind::Block,
             StmtKind::Switch { .. } => Kind::SwitchStatement,
             StmtKind::Try { .. } => Kind::TryStatement,
@@ -2542,6 +2538,7 @@ impl File<'_> {
             },
             NodeData::Stmt(s) => match self[s].kind {
                 StmtKind::Expr(e)
+                | StmtKind::Directive { expr: e, .. }
                 | StmtKind::Return(e)
                 | StmtKind::Throw(e)
                 | StmtKind::ExportDefault(e)
@@ -2551,10 +2548,8 @@ impl File<'_> {
                 | StmtKind::DoWhile { test: e, .. }
                 | StmtKind::ForIn { expr: e, .. }
                 | StmtKind::ForOf { expr: e, .. }
+                | StmtKind::With { object: e, .. }
                 | StmtKind::Switch { expr: e, .. } => self.child(e),
-                StmtKind::Block(statements) if self.is_with_statement(s) => {
-                    self.expression(self.node(self.id_at(statements, 0)))
-                }
                 _ => Node::NONE,
             },
             NodeData::Type(t) => match self[t].kind {
@@ -2780,30 +2775,54 @@ impl File<'_> {
     /// `is_identifier_name` is true, only some are included.
     pub fn keyword_identifiers(&self) -> &[Node] {
         self.lazy.cells.keyword_identifiers.get_or_init(|| {
+            let mut positions: Vec<u32> = self.keyword_identifier_positions.to_vec();
+            positions.shared_sort_unstable();
+            positions.dedup();
             let mut found = Vec::new();
-            for &pos in self.keyword_identifier_positions.iter() {
-                // Descend from the file, at each level into the last child that doesn't start after `pos`.
-                let mut node = Node::FILE;
-                while node.is_some() {
-                    let (mut inside, mut starts) = (Node::NONE, 0);
-                    self.for_each_child(node, &mut |child| {
-                        if self.text(child).is_keyword_identifier()
-                            && self.kind(child) == Kind::Identifier
-                        {
-                            found.push(child);
-                        }
-                        let start = self.start(child);
-                        if (starts..=pos).contains(&start) {
-                            (inside, starts) = (child, start);
-                        }
-                        false
-                    });
-                    node = inside;
+            let mut children = Vec::new();
+            // Descend from the file, for each position at each level into the last child that doesn't start after it.
+            let mut entered = vec![(Node::FILE, 0..positions.len())];
+            while let Some((node, leading_here)) = entered.pop() {
+                children.clear();
+                self.for_each_child(node, &mut |child| {
+                    let start = self.start(child);
+                    if self.text(child).is_keyword_identifier()
+                        && self.kind(child) == Kind::Identifier
+                    {
+                        found.push((start, child));
+                    }
+                    children.push((start, child));
+                    false
+                });
+                if !children.is_sorted_by_key(|&(start, _)| start) {
+                    children.shared_sort_by_key(|&(start, _)| start);
+                }
+                let count_before = |from: usize, start: u32| {
+                    positions[from..leading_here.end].partition_point(|&position| position < start)
+                };
+                let mut from = match children.first() {
+                    Some(&(start, _)) => {
+                        leading_here.start + count_before(leading_here.start, start)
+                    }
+                    None => leading_here.end,
+                };
+                for (index, &(_, child)) in children.iter().enumerate() {
+                    if from == leading_here.end {
+                        break;
+                    }
+                    let end = match children.get(index + 1) {
+                        Some(&(next_start, _)) => from + count_before(from, next_start),
+                        None => leading_here.end,
+                    };
+                    if from < end {
+                        entered.push((child, from..end));
+                    }
+                    from = end;
                 }
             }
-            found.shared_sort_unstable_by_key(|&node| (self.start(node), node));
+            found.shared_sort_unstable();
             found.dedup();
-            found.into()
+            found.into_iter().map(|(_, node)| node).collect()
         })
     }
 

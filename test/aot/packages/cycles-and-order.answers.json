@@ -1,0 +1,8 @@
+{
+  "cycles.mixed.mjs": {
+    "output": "mixed [\"undef\",\"ma own\"]\n"
+  },
+  "order.throws_req.cjs": {
+    "output": "1 THROWS RangeError\n2 THROWS RangeError\nlog [\"thrower.cjs\"]\n"
+  }
+}

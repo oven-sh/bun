@@ -1,0 +1,6 @@
+# The origin of an object type is the symbol that declares it: an interface, or an alias declared at the top level of a file or a namespace. Any other type literal is its own origin.
+type-names.ts:8 origin `Point` = symbol Point type-names.ts:2
+type-names.ts:9 origin `Pair` = symbol Pair type-names.ts:3
+
+type-names.ts:6 origin `Inner` = type literal type-names.ts:5
+type-names.ts:10 origin `{ d: number }` = type literal type-names.ts:10

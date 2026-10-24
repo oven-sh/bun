@@ -1,0 +1,7 @@
+{
+  "name": "lower-modules-tests",
+  "private": true,
+  "imports": {
+    "#values": "./imports/values.ts"
+  }
+}

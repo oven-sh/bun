@@ -1,0 +1,23 @@
+// `h.f = () => h`-style stores where the variable holding the object is rebound by a loop, a conditional, a labelled `continue` or a `switch`.
+function row(name, f) { try { console.log(name + ": " + f()); } catch (e) { console.log(name + ": threw " + e.name); } }
+const who = (...os) => os.map(o => o === null || o === undefined ? "nil" : typeof o.f === "function" ? "f->" + (o.f().n) : "none").join(" ");
+row("the hunt's while with a comma", () => { const a = { n: "a" }, b = { n: "b" }; let h = a, g = () => a; while ((h.f = g, h != b)) { const k = h; h = b; g = () => k; } return who(a, b); });
+row("for, the holder steps", () => { const os = [{ n: 0 }, { n: 1 }, { n: 2 }]; let g = null; for (let i = 0, h = os[0]; i < 3; h = os[++i]) { if (g) h.f = g; const k = h; g = () => k; } return who(...os); });
+row("do while", () => { const a = { n: "a" }, b = { n: "b" }; let h = a, g = () => a, t = 0; do { h.f = g; const k = h; h = b; g = () => k; } while (++t < 2); return who(a, b); });
+row("a conditional holder", () => { const a = { n: "a" }, b = { n: "b" }; const f = c => { let h = a; const k = h, g = () => k; if (c) h = b; h.f = g; return who(a, b); }; const r = f(true); delete a.f; delete b.f; return r + " | " + f(false); });
+row("a ternary holder", () => { const a = { n: "a" }, b = { n: "b" }; const f = c => { const k = a, g = () => k; (c ? b : a).f = g; return who(a, b); }; const r = f(true); delete a.f; delete b.f; return r + " | " + f(false); });
+row("a labelled continue", () => { const os = [{ n: 0 }, { n: 1 }, { n: 2 }]; let h = os[0], g = () => os[0], i = 0; outer: while (i < 3) { h.f = g; const k = h; g = () => k; h = os[++i]; if (i < 3) continue outer; break; } return who(...os); });
+row("a switch that falls through", () => { const a = { n: "a" }, b = { n: "b" }; let h = a, g; switch (1) { case 1: { const k = h; g = () => k; h = b; } case 2: h.f = g; } return who(a, b); });
+row("try and finally", () => { const a = { n: "a" }, b = { n: "b" }; let h = a, g; try { const k = h; g = () => k; h = b; } finally { h.f = g; } return who(a, b); });
+row("a throw caught", () => { const a = { n: "a" }, b = { n: "b" }; let h = a, g; try { const k = h; g = () => k; h = b; throw 1; } catch (e) { h.f = g; } return who(a, b); });
+row("the holder becomes null: the TypeError is kept", () => { const a = { n: "a" }; let h = a, g, t = 0; while (t++ < 2) { if (g) h.f = g; const k = h; g = () => k; h = null; } return "no throw"; });
+row("the holder becomes a number", () => { const a = { n: "a" }; let h = a, g, t = 0; while (t++ < 2) { if (g) h.f = g; const k = h; g = () => k; h = 5; } return who(a); });
+row("the holder is frozen in between", () => { "use strict"; const a = { n: "a" }, b = Object.freeze({ n: "b" }); let h = a, g = () => a, t = 0; while (t++ < 2) { h.f = g; const k = h; g = () => k; h = b; } return who(a, b); });
+row("the holder has a setter", () => { const log = []; const a = { n: "a" }, b = { n: "b", set f(v) { log.push("set " + v().n); } }; let h = a, g = () => a, t = 0; while (t++ < 2) { h.f = g; const k = h; g = () => k; h = b; } return who(a) + " " + log.join(); });
+row("one function, stored twice", () => { const a = { n: "a" }, b = { n: "b" }; let h = a, g = null, t = 0; while (t++ < 3) { if (g) { h.f = g; h.e = g; } const k = a; if (!g) g = () => k; h = t === 1 ? a : b; } return (a.f === a.e) + " " + (a.f === b.f) + " " + who(a, b); });
+row("identity over the turns", () => { const os = [{ n: 0 }, { n: 1 }, { n: 2 }]; const made = []; let h = os[0], g = null; for (let i = 0; i < 3; i++) { if (g) h.f = g; const k = h; g = () => k; made.push(g); h = os[i + 1] || os[0]; } return [os[1].f === made[0], os[2].f === made[1], os[0].f === undefined, who(...os)].join(" "); });
+row("the first form stays: o.f = () => o", () => { const o = { n: "o" }; o.f = () => o; const p = { n: "p" }; p.f = () => p; return who(o, p) + " " + (o.f() === o) + " " + (o.f === o.f); });
+row("the first form in a loop", () => { const os = []; for (let i = 0; i < 3; i++) { const o = { n: i }; o.f = () => o; os.push(o); } return who(...os) + " " + (os[0].f !== os[1].f); });
+row("the first form, read behind a jump", () => { const o = { n: "o" }; o.f = () => o; let r = ""; for (let i = 0; i < 2; i++) r += o.f().n + (o.f === o.f); return r; });
+row("two captures: no lazy closure", () => { const a = { n: "a" }, b = { n: "b" }; let h = a, g = () => a, t = 0; while (t++ < 2) { h.f = g; const k = h, j = t; g = () => ({ n: k.n + j }); h = b; } return who(a, b); });
+row("hot", () => { let s = ""; for (let q = 0; q < 300; q++) { const a = { n: "a" }, b = { n: "b" }; let h = a, g = () => a; while ((h.f = g, h != b)) { const k = h; h = b; g = () => k; } s = who(a, b); } return s; });

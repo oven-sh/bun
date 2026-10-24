@@ -1,0 +1,5 @@
+# `inner/` is written with `strict` alone, the program with `exactOptionalPropertyTypes` too.
+# What may be deleted is a rule that only reports, so it is asked of the file.
+main.ts:4 diagnostic TS2790 = Semantic StopsBuild
+absent: inner/deletes.ts:3 diagnostic TS2790 = Semantic StopsBuild
+inner/deletes.ts:4 diagnostic TS2790 = Semantic StopsBuild

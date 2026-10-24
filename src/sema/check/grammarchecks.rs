@@ -5,7 +5,6 @@
 //! Tokens aren't nodes yet. Once a `?`, `!`, `...`, `*` or `=` is known to exist, its position is
 //! found in the source text next to a node.
 
-use super::errors_operators::language_version;
 use super::related::FileSpan;
 use super::spans::line_break_len;
 use super::*;
@@ -33,7 +32,7 @@ impl Checker<'_, '_> {
     ) -> bool {
         let is_reported = !has_parse_diagnostics(self.hir(file));
         if is_reported {
-            self.error(file, node, code, args);
+            self.error(file, node, code, args).class = DiagnosticClass::of_grammar_code(code);
         }
         is_reported
     }
@@ -48,7 +47,9 @@ impl Checker<'_, '_> {
     ) -> bool {
         let is_reported = !has_parse_diagnostics(self.hir(file));
         if is_reported {
-            self.error(file, node, code, args).skipped_on_no_emit = true;
+            let reported = self.error(file, node, code, args);
+            reported.class = DiagnosticClass::TypeScriptGrammar;
+            reported.skipped_on_no_emit = true;
         }
         is_reported
     }
@@ -104,7 +105,7 @@ impl Checker<'_, '_> {
             Some(b'!') => 1255,
             _ => 1162,
         };
-        self.grammar_error_at((file, start, start + 1), code, &[])
+        self.early_grammar_error_at((file, start, start + 1), code, &[])
     }
 
     /// `checkGrammarBreakOrContinueStatement`
@@ -123,7 +124,7 @@ impl Checker<'_, '_> {
         while current.is_some() {
             let kind = hir.kind(current);
             if kind.is_function_like() || kind == Kind::ClassStaticBlockDeclaration {
-                return self.grammar_error_on_node(file, s, 1107, &[]);
+                return self.early_grammar_error_on_node(file, s, 1107, &[]);
             }
             match kind {
                 Kind::LabeledStatement => {
@@ -135,7 +136,7 @@ impl Checker<'_, '_> {
                         // `continue` can only target labels that are on iteration statements.
                         return !is_break
                             && !is_iteration_statement(hir, body, true)
-                            && self.grammar_error_on_node(file, s, 1115, &[]);
+                            && self.early_grammar_error_on_node(file, s, 1115, &[]);
                     }
                 }
                 Kind::SwitchStatement if is_break && target_label.is_none() => return false,
@@ -150,20 +151,28 @@ impl Checker<'_, '_> {
             (false, true) => 1105,
             (false, false) => 1104,
         };
-        self.grammar_error_on_node(file, s, code, &[])
+        self.early_grammar_error_on_node(file, s, code, &[])
     }
 
     /// Duplicate-label check from `checkLabeledStatement` (TS1114).
     pub(super) fn check_grammar_duplicate_label(&mut self, file: FileId, s: StmtId, label: Atom) {
         let hir = self.hir(file);
         let mut current = hir.parent(hir.node(s));
+        // ECMAScript starts an empty label set in a class static block. `tsc` searches past it.
+        let mut is_in_label_set = true;
         while current.is_some() && !hir.kind(current).is_function_like() {
             if let NodeData::Stmt(outer) = hir.data(current)
                 && matches!(hir[outer].kind, StmtKind::Labeled { label: it, .. } if it == label)
             {
-                self.grammar_error_at((file, hir[s].start, 0), 1114, &[Arg::Atom(label)]);
+                let (at, args) = ((file, hir[s].start, 0), [Arg::Atom(label)]);
+                if is_in_label_set {
+                    self.early_grammar_error_at(at, 1114, &args);
+                } else {
+                    self.grammar_error_at(at, 1114, &args);
+                }
                 break;
             }
+            is_in_label_set &= hir.kind(current) != Kind::ClassStaticBlockDeclaration;
             current = hir.parent(current);
         }
     }
@@ -208,6 +217,8 @@ impl Checker<'_, '_> {
     fn check_grammar_parameter_list(&mut self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         let f = &hir[func];
+        // `is_erased_syntax`, for the errors on a token.
+        let is_erased = !has_body_node(f);
         let mut seen_optional_parameter = false;
         for (i, p) in f.params.iter().enumerate() {
             let parameter = &hir[p];
@@ -215,7 +226,11 @@ impl Checker<'_, '_> {
             if parameter.flags.contains(Flags::REST) {
                 let name = hir[parameter.pat].pos;
                 if i != f.params.len() - 1 {
-                    return self.grammar_error_on_token_before(file, name, b"...", 1014);
+                    return if is_erased {
+                        self.grammar_error_on_token_before(file, name, b"...", 1014)
+                    } else {
+                        self.early_grammar_error_on_token_before(file, name, b"...", 1014)
+                    };
                 }
                 // `checkGrammarForDisallowedTrailingComma`. A signature that the reparser builds
                 // from JSDoc tags has no list in the source.
@@ -223,14 +238,18 @@ impl Checker<'_, '_> {
                     && !hir.is_ambient(hir.node(p))
                 {
                     let end = self.end_of_param(file, p);
-                    self.grammar_error_on_token_after(file, end, b',', 1013);
+                    if is_erased {
+                        self.grammar_error_on_token_after(file, end, b',', 1013);
+                    } else {
+                        self.early_grammar_error_on_token_after(file, end, b',', 1013);
+                    }
                 }
                 if is_optional {
                     let end = self.end_of_pat(file, parameter.pat);
                     return self.grammar_error_on_token_after(file, end, b'?', 1047);
                 }
                 if parameter.default.is_some() {
-                    return self.grammar_error_on_node(file, parameter.pat, 1048, &[]);
+                    return self.early_grammar_error_on_node(file, parameter.pat, 1048, &[]);
                 }
             } else if is_optional {
                 seen_optional_parameter = true;
@@ -267,7 +286,7 @@ impl Checker<'_, '_> {
         let arrow = f.anchor as usize;
         text[arrow.min(text.len())..].starts_with(b"=>")
             && (skip_trivia_back(text, arrow)..arrow).any(|at| line_break_len(text, at) != 0)
-            && self.grammar_error_at((file, f.anchor, f.anchor + 2), 1200, &[])
+            && self.early_grammar_error_at((file, f.anchor, f.anchor + 2), 1200, &[])
     }
 
     /// `checkGrammarForUseStrictSimpleParameterList`, for nodes that satisfy
@@ -296,18 +315,26 @@ impl Checker<'_, '_> {
                     || hir[p].flags.contains(Flags::REST)
             })
             .collect();
-        if non_simple_parameters.is_empty() || language_version(self) < ScriptTarget::ES2016 {
+        let class = self.function_directive_error_class(file);
+        // In a build, where the directive reaches the engine the rule is ECMAScript's, whatever the target.
+        let target = self.p.files.options.target;
+        let is_rule_of_ecmascript =
+            self.is_in_compile_build(file) && class == DiagnosticClass::EarlyError;
+        let is_allowed_by_target =
+            !is_rule_of_ecmascript && target != ScriptTarget::None && target < ScriptTarget::ES2016;
+        if non_simple_parameters.is_empty() || is_allowed_by_target {
             return false;
         }
         let mut related = Vec::with_capacity(non_simple_parameters.len());
         for (index, &parameter) in non_simple_parameters.iter().enumerate() {
             let used_here = Reported::bare(use_strict_directive, 1349);
             let error = self.error(file, parameter, 1346, &[]);
+            error.class = class;
             error.add_related_info(used_here);
             let at = (file, error.start, error.end);
             related.push(Reported::bare(at, if index == 0 { 1348 } else { 6204 }));
         }
-        let error = self.error_at(use_strict_directive, 1347, &[]);
+        let error = self.error_with_class(use_strict_directive, 1347, &[], class);
         error.related_information.extend(related);
         true
     }
@@ -329,7 +356,7 @@ impl Checker<'_, '_> {
                 ..
             }
         ) && !is_parenthesized(hir, expression)
-            && self.grammar_error_on_node(file, expression, 1171, &[])
+            && self.early_grammar_error_on_node(file, expression, 1171, &[])
     }
 
     /// `checkGrammarForGenerator`
@@ -367,7 +394,7 @@ impl Checker<'_, '_> {
             let is_only_async =
                 modifiers.len() == 1 && modifiers[0].kind == ModifierKind::Keyword(Flags::ASYNC);
             if !modifiers.is_empty() && !is_only_async {
-                return self.grammar_error_at((file, hir[p].start, 0), 1184, &[]);
+                return self.early_grammar_error_at((file, hir[p].start, 0), 1184, &[]);
             }
             let postfix_token = hir[p].postfix_token;
             if self.check_grammar_for_invalid_postfix_token_in_object_literal(file, postfix_token) {
@@ -375,7 +402,11 @@ impl Checker<'_, '_> {
             }
             if !has_body_node(f) {
                 let end = self.end_of_fn(file, func);
-                return self.grammar_error_at((file, end - 1, end), 1005, &[Arg::Bytes(b"{")]);
+                return self.early_grammar_error_at(
+                    (file, end - 1, end),
+                    1005,
+                    &[Arg::Bytes(b"{")],
+                );
             }
             return self.check_grammar_for_generator(file, func);
         };
@@ -409,7 +440,11 @@ impl Checker<'_, '_> {
         if !has_body_node(f) {
             if !is_in_type && !is_abstract && !hir.is_ambient(hir.node(func)) {
                 let end = self.end_of_fn(file, func);
-                return self.grammar_error_at((file, end - 1, end), 1005, &[Arg::Bytes(b"{")]);
+                return self.early_grammar_error_at(
+                    (file, end - 1, end),
+                    1005,
+                    &[Arg::Bytes(b"{")],
+                );
             }
         } else if is_abstract {
             return self.grammar_error_on_node(file, func, 1318, &[]);
@@ -426,7 +461,7 @@ impl Checker<'_, '_> {
         let count = f.params.len() + usize::from(f.this_param.is_some());
         if f.accessor_this_parameter().is_none() && count != usize::from(!is_getter) {
             let code = if is_getter { 1054 } else { 1049 };
-            return self.grammar_error_on_node(file, name, code, &[]);
+            return self.early_grammar_error_on_node(file, name, code, &[]);
         }
         if is_getter {
             return false;
@@ -438,7 +473,13 @@ impl Checker<'_, '_> {
             return false;
         };
         if parameter.flags.contains(Flags::REST) {
-            return self.grammar_error_on_token_before(file, hir[parameter.pat].pos, b"...", 1053);
+            let name = hir[parameter.pat].pos;
+            // `is_erased_syntax`: in a type, abstract or ambient.
+            return if has_body_node(f) {
+                self.early_grammar_error_on_token_before(file, name, b"...", 1053)
+            } else {
+                self.grammar_error_on_token_before(file, name, b"...", 1053)
+            };
         }
         if parameter.flags.contains(Flags::OPTIONAL) {
             let end = self.end_of_pat(file, parameter.pat);
@@ -522,7 +563,7 @@ impl Checker<'_, '_> {
             if member.key == PropKey::Name(known::constructor)
                 && matches!(text.get(name as usize), Some(b'"' | b'\''))
             {
-                return self.grammar_error_on_node(file, hir.name(hir.node(m)), 18006, &[]);
+                return self.early_grammar_error_on_node(file, hir.name(hir.node(m)), 18006, &[]);
             }
             if self.check_grammar_for_invalid_dynamic_name(file, member.key, name, 1166)
                 || member.flags.contains(Flags::ACCESSOR | Flags::OPTIONAL)
@@ -660,7 +701,7 @@ impl Checker<'_, '_> {
         };
         let is_using = matches!(node.kind, VarKind::Using | VarKind::AwaitUsing);
         if is_binding_pattern && is_using {
-            return self.grammar_error_on_node(file, d, 1492, &[Arg::Text(keyword)]);
+            return self.early_grammar_error_on_node(file, d, 1492, &[Arg::Text(keyword)]);
         }
         let is_ambient = is_ambient(hir, node.flags);
         let name = (!is_binding_pattern).then_some(hir[node.pat].pos);
@@ -670,10 +711,10 @@ impl Checker<'_, '_> {
                 self.check_ambient_initializer(file, node.init, node.ty, is_const_like, name);
             } else if node.init.is_none() {
                 if is_binding_pattern {
-                    return self.grammar_error_on_node(file, d, 1182, &[]);
+                    return self.early_grammar_error_on_node(file, d, 1182, &[]);
                 }
                 if !keyword.is_empty() {
-                    return self.grammar_error_on_node(file, d, 1155, &[Arg::Text(keyword)]);
+                    return self.early_grammar_error_on_node(file, d, 1155, &[Arg::Text(keyword)]);
                 }
             }
         }
@@ -726,7 +767,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkGrammarNameInLetOrConstDeclarations`
-    fn check_grammar_name_in_let_or_const_declarations(
+    pub(super) fn check_grammar_name_in_let_or_const_declarations(
         &mut self,
         file: FileId,
         name: PatId,
@@ -734,7 +775,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         match hir[name].kind {
             PatKind::Ident(known::let_) => {
-                return self.grammar_error_on_node(file, name, 2480, &[]);
+                return self.early_grammar_error_on_node(file, name, 2480, &[]);
             }
             PatKind::Object(properties) => {
                 for p in properties.iter() {
@@ -805,12 +846,13 @@ impl Checker<'_, '_> {
         self.property_name_of_type(ty)
     }
 
-    /// `checkGrammarObjectLiteralExpression`
+    /// `checkGrammarObjectLiteralExpression`.
     pub(super) fn check_grammar_object_literal_expression(
         &mut self,
         file: FileId,
         node: ExprId,
         properties: Span<PropId>,
+        computes_types: bool,
     ) -> bool {
         let hir = self.hir(file);
         // The default library's text isn't retained, and nothing is reported for a JSON file.
@@ -848,10 +890,16 @@ impl Checker<'_, '_> {
             !in_destructuring && (!has_only_literal_names || properties.len() > 1 && has_repeated);
         // `lateBindMember`
         let container = self.bound(file).symbol_of_expr(node);
-        if may_repeat && !has_only_literal_names && properties.len() > 1 && container.is_some() {
+        if computes_types
+            && may_repeat
+            && !has_only_literal_names
+            && properties.len() > 1
+            && container.is_some()
+        {
             let container = self.files().sym(file, container);
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
+        let mut has_proto_setter = false;
         let mut seen: SmallVec<[(Atom, u8); 8]> = SmallVec::new();
         for p in properties.iter() {
             let prop = &hir[p];
@@ -865,7 +913,12 @@ impl Checker<'_, '_> {
                             ExprKind::Array(_) | ExprKind::Object(_)
                         )
                     {
-                        return self.grammar_error_on_node(file, hir.child(prop.value), 2501, &[]);
+                        return self.early_grammar_error_on_node(
+                            file,
+                            hir.child(prop.value),
+                            2501,
+                            &[],
+                        );
                     }
                     continue;
                 }
@@ -882,11 +935,11 @@ impl Checker<'_, '_> {
                 && matches!(hir[prop.value].kind, ExprKind::Assign { op: None, .. })
                 && let Some(start) = equals_token_after_name(&hir.text, prop.pos)
             {
-                self.grammar_error_at((file, start, start + 1), 1312, &[]);
+                self.early_grammar_error_at((file, start, start + 1), 1312, &[]);
             }
             // Outside a class the key of `#a` is `PropKey::None`.
             if hir.text.get(prop.pos as usize) == Some(&b'#') {
-                self.grammar_error_at(self.span_of_token(file, prop.pos), 18016, &[]);
+                self.early_grammar_error_at(self.span_of_token(file, prop.pos), 18016, &[]);
             }
             // "Modifiers are never allowed on properties except for 'async' on a method
             // declaration"
@@ -896,7 +949,7 @@ impl Checker<'_, '_> {
                         && (keyword != Flags::ASYNC || prop.kind != PropKind::Method)
                     {
                         let text = Arg::Text(modifier_text(keyword));
-                        self.grammar_error_at((file, modifier.pos, 0), 1042, &[text]);
+                        self.early_grammar_error_at((file, modifier.pos, 0), 1042, &[text]);
                     }
                 }
             }
@@ -914,6 +967,15 @@ impl Checker<'_, '_> {
             if !may_repeat {
                 continue;
             }
+            let repeats_proto_setter =
+                is_proto_setter(prop) && std::mem::replace(&mut has_proto_setter, true);
+            // TypeScript's rule asks for the types of computed names, and returns at 1118 and 1119.
+            if !computes_types {
+                if repeats_proto_setter {
+                    self.early_grammar_error_on_node(file, hir.name(hir.node(p)), 1117, &[]);
+                }
+                continue;
+            }
             let Some(effective_name) =
                 self.get_effective_property_name_for_property_name_node(file, p)
             else {
@@ -929,7 +991,11 @@ impl Checker<'_, '_> {
                 let text = self.source_text(file, start, end);
                 self.grammar_error_at((file, start, end), 2300, &[Arg::Bytes(&text)]);
             } else if current_kind & existing.1 & PROPERTY_ASSIGNMENT != 0 {
-                self.grammar_error_on_node(file, name, 1117, &[]);
+                if repeats_proto_setter {
+                    self.early_grammar_error_on_node(file, name, 1117, &[]);
+                } else {
+                    self.grammar_error_on_node(file, name, 1117, &[]);
+                }
             } else if current_kind & GET_OR_SET_ACCESSOR != 0
                 && existing.1 & GET_OR_SET_ACCESSOR != 0
             {

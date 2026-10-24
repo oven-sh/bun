@@ -1,0 +1,11 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@lib/*": ["../lib/*"],
+      "fields": ["../packages/fields"],
+      "assigned": ["../packages/assigned/index.ts"],
+      "same-file": ["../lib/counter.ts"]
+    }
+  }
+}

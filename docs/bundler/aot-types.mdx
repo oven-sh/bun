@@ -1,0 +1,357 @@
+---
+title: "How bun compile uses your types"
+sidebarTitle: "Types"
+description: "What a declared type gets you in a compiled program, what happens when a value doesn't match it, and which patterns keep your code on the fast path"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+`bun run` removes your TypeScript types before it runs your program. [`bun compile`](/bundler/aot) reads them first and generates machine code that relies on them.
+
+## What types get you
+
+```ts account.ts icon="/icons/typescript.svg"
+class Account {
+  constructor(
+    public id: number,
+    public balance: number,
+  ) {}
+}
+
+function total(accounts: Account[]): number {
+  let sum = 0;
+  for (const account of accounts) sum += account.balance;
+  return sum;
+}
+
+const accounts: Account[] = [];
+for (let id = 0; id < 1000; id++) {
+  const account = new Account(id, id % 100);
+  accounts.push(account);
+}
+
+const sum = total(accounts);
+console.log(sum);
+```
+
+`bun check --aot` checks a program the way `bun compile` does and builds nothing. With `--explain`, it lists the code that compiled to a slow path. This program has none.
+
+```bash terminal icon="terminal"
+bun check --aot ./account.ts --explain
+```
+
+```txt
+note: Every property access is typed. Nothing to fix.
+```
+
+Typed code has three things that untyped code doesn't.
+
+- **Fields at fixed offsets.** Every `Account` has the same two fields in the same places. `account.balance` is one load from a known offset, with no lookup and no cache to check.
+- **Unboxed numbers.** `balance` is stored as a raw 64-bit number. Untyped code stores a boxed value and has to check its tag and unbox it before it can add.
+- **Direct calls.** The compiler knows which function `total(accounts)` calls, so it can call that function directly or inline it.
+
+Here is the same program as JavaScript.
+
+```js account.js icon="/icons/javascript.svg"
+class Account {
+  constructor(id, balance) {
+    this.id = id;
+    this.balance = balance;
+  }
+}
+
+function total(accounts) {
+  let sum = 0;
+  for (const account of accounts) sum += account.balance;
+  return sum;
+}
+
+const accounts = [];
+for (let id = 0; id < 1000; id++) {
+  const account = new Account(id, id % 100);
+  accounts.push(account);
+}
+
+const sum = total(accounts);
+console.log(sum);
+```
+
+```bash terminal icon="terminal"
+bun check --aot ./account.js --explain
+```
+
+```txt
+note: Every property access is typed. Nothing to fix.
+```
+
+Both programs compile, both print `49500`, and both are typed. The annotations aren't what puts `balance` at a fixed offset. The class is. A class has a fixed layout, with its fields at fixed offsets like a struct in Go or Rust, and that's true in a JavaScript file too. The compiler then tracks every `Account` from `new Account`, through the array, to `account.balance`, so it knows what the loop reads from. [What is counted](/bundler/aot-explain#what-is-counted) says how far it can track an object, and what stops it.
+
+Type annotations matter where the compiler can't track a value on its own. The result of `JSON.parse` could be anything, and so could the argument of a function that Bun calls, such as a route handler.
+
+- **With a declared type, the code after it stays on the fast path.** A [guard](#when-a-value-doesnt-match-its-type) checks the value once, where it reaches the type. After `n: number`, the compiled code works with a raw number.
+- **Without one, nothing is known about the value.** Every `+`, every comparison and every property access that the value reaches has to find out what it has.
+- **`JSON.parse<T>(text)` and `validate<T>(value)` take a type.** They [validate data where it enters](#validate-data-where-it-enters), and create objects with the fixed layout of `T`.
+
+## When a value doesn't match its type
+
+TypeScript lets you call a value a `number` when it isn't one: through `any`, `as`, `!`, `JSON.parse` and declaration files.
+
+```ts visits.ts icon="/icons/typescript.svg"
+function double(n: number): number {
+  return n * 2;
+}
+
+const body: any = JSON.parse('{"visits":"3"}');
+console.log(double(body.visits));
+```
+
+```bash terminal icon="terminal"
+bun compile ./visits.ts && ./visits
+```
+
+```txt
+6
+```
+
+`bun visits.ts` prints `6` too.
+
+Typed code trusts its declared types. Where the build sees every caller and each one passes the declared types, nothing is checked at run time. Otherwise a guard at the function's entry checks the arguments, and Bun also compiles a slow version of that function, which works like plain JavaScript on the value that didn't match. If an argument doesn't match its declared type, the call takes the slow version. The result is the same as under `bun run`. It's just slower.
+
+Here `double` takes a raw number, so it can't take the string `"3"`. The guard sends the call to the slow version, which multiplies the way plain JavaScript does.
+
+- **Nothing throws.** A type mismatch is never an error at run time.
+- **Nothing is converted or copied.** The string stays a string, and an object stays the same object.
+- **The fallback is per value.** The next call of `double` with a number takes the fast version again.
+
+A guard in the middle of a function works the same way. The function continues on its slow path from that point. It returns to the fast path at the next loop iteration, once every live value matches its type again.
+
+A [type error](/bundler/aot#type-errors-stop-the-build) stops the build, so all of this is about code that TypeScript accepts.
+
+### Where a guard sits
+
+The compiler removes a guard where it can prove the value. A call from typed code with proven arguments skips the entry guard and calls the fast version directly. The guards that are left sit where an untyped value can get in.
+
+| Where                                                                                                | The guard checks                                                              | If it fails                                         |
+| ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------- |
+| A parameter: `function double(n: number)`                                                            | Each argument, at the function's entry                                        | The call falls back to the function's slow version  |
+| `this` in a method                                                                                   | That `this` is an instance of the class. `counter.reset.call(other)` fails it | The call falls back to the method's slow version    |
+| The result of a call through a function type or an unknown callee: `handlers[name](request)`         | The result, after the call returns                                            | The function falls back to its slow path            |
+| An element of a collection: `items[0]`, `map.get(key)`, `for (const item of items)`, `await promise` | The element, after it's read                                                  | The function falls back to its slow path            |
+| A field or variable that untyped code can write                                                      | The value, after it's read                                                    | The function falls back to its slow path            |
+| An `as` cast from a looser type: `body as User`, `query.page as number`                              | The value of the cast                                                         | The code after the cast falls back to its slow path |
+
+A guard checks the kind of a primitive or the shape of an object. It doesn't look inside an array or an object.
+
+| Declared type                           | Passes the guard                                                                                                                                            |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `number`, `string`, `boolean`, `bigint` | A value of that kind                                                                                                                                        |
+| A class, an interface or an object type | An object that was created as that type: with `new`, as an object literal of that type, or by `JSON.parse<T>` or `validate<T>`. This guard is a shape check |
+| An array type, such as `number[]`       | An array. A `Proxy` around an array doesn't                                                                                                                 |
+| Any type                                | [`undefined` and `null`](#undefined-and-null)                                                                                                               |
+
+[`bun check --aot --explain=guards`](/bundler/aot-debugging#list-them-from-your-source) lists every guard that can fail. [`--aot-log-type-mismatches`](/bundler/aot-debugging#log-them-at-run-time) logs the ones that do.
+
+### `undefined` and `null`
+
+```ts port.ts icon="/icons/typescript.svg"
+const ports = new Map<string, number>();
+const port: number = ports.get("http")!;
+console.log(port);
+```
+
+```bash terminal icon="terminal"
+bun compile ./port.ts && ./port
+```
+
+```txt
+undefined
+```
+
+Every declared type also takes `undefined` and `null`, so they never fail a guard.
+
+- `double(undefined)` returns `NaN` and `double(null)` returns `0`, compiled or not.
+- If you store `undefined` in a `number` field of a class, the field reads `undefined`.
+- A property that an object doesn't have reads as `undefined`.
+- With `strictNullChecks`, TypeScript still reports an `undefined` or a `null` that it can see, and that stops the build like any other type error.
+
+### Unsound casts
+
+`as`, `any` and `!` tell TypeScript to stop checking. In a compiled program they never convert a value and never throw. A cast from a looser type costs a guard.
+
+```ts page.ts icon="/icons/typescript.svg"
+const query: any = { page: "2" };
+const page = query.page as number;
+console.log(typeof page, page + 1);
+```
+
+```bash terminal icon="terminal"
+bun compile ./page.ts && ./page
+```
+
+```txt
+string 21
+```
+
+`bun page.ts` prints the same. The fast path after the cast works with a raw number. The guard sees a string, so the code after the cast takes the slow path and concatenates.
+
+TypeScript accepts such a cast, so it's easy to miss. `--explain=guards` lists each one as `cast`.
+
+If you want a conversion, write it out.
+
+```ts
+const page = query.page as number; // [!code --]
+const page = Number(query.page); // [!code ++]
+```
+
+### Unchecked data keeps its shape
+
+`JSON.parse`, `response.json()` and `structuredClone` return objects that the compiler never saw being created. A cast or an annotation doesn't change them.
+
+```ts user.ts icon="/icons/typescript.svg"
+interface User {
+  id: number;
+  name: string;
+}
+
+const user = JSON.parse('{"id":"7"}') as User;
+console.log(user.name);
+console.log(user.id);
+```
+
+```bash terminal icon="terminal"
+bun compile ./user.ts && ./user
+```
+
+```txt
+undefined
+7
+```
+
+The object has a different shape from a `User` that your own code creates. So every property access that it can reach needs a shape check first. This object fails the check, and its properties are looked up by name. [`bun compile --explain`](/bundler/aot-explain) points to the line where the object comes from.
+
+The same goes for a value whose type comes from a JavaScript package's declaration file (`.d.ts`). Nothing has checked that file against the package's code.
+
+### Validate data where it enters
+
+`validate<T>(value)`, imported from `"bun:bundle"`, checks a value against a type you've already declared. `JSON.parse<T>(text)`, with `JSON` imported from `"bun"`, does the same while it parses.
+
+```ts checked.ts icon="/icons/typescript.svg"
+import { JSON } from "bun";
+
+interface User {
+  id: number;
+  name: string;
+}
+
+const user = JSON.parse<User>('{"id":7,"name":"Ada"}');
+console.log(typeof user.id, user.name);
+console.log(JSON.parse<User>('{"id":"7","name":"Ada"}'));
+```
+
+```bash terminal icon="terminal"
+bun compile ./checked.ts && ./checked
+```
+
+```txt
+number Ada
+TypeError: id: expected number, received string
+```
+
+These two do throw. That's what they're for. Only the type checker knows what `T` expands to, so they work where it runs: `bun compile`, `bun run --aot` and `bun test --aot`. Under plain `bun run` both are errors, so the check is never skipped by accident: see [Where it works](/bundler/validate#where-it-works). If the data matches, the compiler trusts the result: `user.id` is one load from a known offset, with no guard.
+
+[Validate data by its type](/bundler/validate) has the types they can check, the shape of the error, and rules such as a minimum length.
+
+To use your own checks and your own error messages, take the value as `unknown`, narrow it, and build a new object from it. [The `unknown-object` entry of `--explain`](/bundler/aot-explain#unknown-object) has an example.
+
+### What costs nothing
+
+| You write                                                 | At run time                                                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `value!`                                                  | Nothing. [`undefined` and `null`](#undefined-and-null) pass the next guard too                   |
+| `as any`, `as unknown`, `as const`, `satisfies`           | Nothing                                                                                          |
+| A cast to a wider type, such as `circle as Shape`         | Nothing                                                                                          |
+| A type guard of your own, `value is User`                 | The function runs. The compiler doesn't rely on its answer                                       |
+| A type parameter, such as `T` in `first<T>(list: T[]): T` | Nothing. The value gets a guard where it reaches a concrete declared type                        |
+| A type that a package's `.d.ts` file declares             | Nothing, and the compiler assumes nothing about the value until it reaches one of your own types |
+
+## Patterns that fall off the fast path
+
+When the compiler can't prove which objects reach a property access, it doesn't stop. It compiles that access like plain JavaScript, which behaves the same and runs slower. [`bun compile --explain`](/bundler/aot-explain) finds these patterns in your program and counts the accesses each one slows down. An `any` or a `.js` file isn't one of them. What matters is where the objects come from, and what happens to them.
+
+| Pattern                                                                                                          | What it costs                                                                                                          | Instead                                                                                                                                                           |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `JSON.parse(text) as Config`                                                                                     | Every access that the object can reach needs a shape check first. In cold code, it looks the property up by name       | `JSON.parse<Config>(text)`                                                                                                                                        |
+| Unchecked data in an `any` that is returned or passed as a declared type                                         | The same                                                                                                               | Return a new object literal, or `validate<T>(value)`                                                                                                              |
+| An object passed to code that isn't in the executable, such as a module loaded at run time                       | The same, for every access to its type                                                                                 | [Pass only the fields the other code needs](/bundler/aot-explain#passed-to-untyped-code), not the object                                                          |
+| A `delete` of a required property, `Object.defineProperty`, `Object.setPrototypeOf`, a store with a computed key | The same, for every access to the object's type                                                                        | Each of them has [an entry of its own](/bundler/aot-explain#causes), with a fix                                                                                   |
+| `Object.freeze(value)`, `Object.seal(value)`, `Object.preventExtensions(value)`                                  | Every store to a field of that type checks for a frozen object first                                                   | Freeze only what has to be frozen. `readonly` and `Readonly<T>` catch a store at build time, and cost nothing                                                     |
+| `class HttpError extends Error`, or any other built-in base class                                                | The built-in constructor allocates the instances, so their fields can't be at fixed offsets. They're looked up by name | This is fine for error classes. For a class with many instances, [hold the built-in object in a field](/bundler/aot-explain#builtin-base) instead of extending it |
+| `eval`, `new Function`, `node:vm`                                                                                | Bun interprets that code                                                                                               | [Code from strings](/bundler/aot-compatibility#code-from-strings)                                                                                                 |
+
+External data only slows down the code it reaches. If a parsed object ends up in one array, the reads from that array need a shape check, and reads of the same type elsewhere stay proven.
+
+Changing an object's shape slows down every access to that type, anywhere in the program, because any object of the type could be the one that changed. [Read an entry](/bundler/aot-explain#read-an-entry) works through an example.
+
+## 32-bit integers
+
+`int32` is a whole number from -2147483648 to 2147483647. To TypeScript, and under `bun run`, it's a `number`. In a compiled executable, a variable, field, parameter or return value of that type takes four bytes instead of eight, and arithmetic on it skips the checks for fractions.
+
+```ts cursor.ts icon="/icons/typescript.svg"
+import type { int32 } from "bun";
+
+class Cursor {
+  line: int32 = 0;
+  column: int32 = 0;
+}
+
+function advance(cursor: Cursor, by: int32): int32 {
+  cursor.column = cursor.column + by;
+  return cursor.column;
+}
+
+console.log(advance(new Cursor(), 4));
+```
+
+The build has to prove that every value you store in an `int32` is one. Where it can't, it stops, and the error says what to write. `cursor.ts` doesn't pass yet.
+
+```bash terminal icon="terminal"
+bun check --aot ./cursor.ts
+```
+
+```txt
+cursor.ts(9,19): error TS100031: Property 'column' of 'Cursor' is declared 'int32', but 'cursor.column + by' might not be an int32: it can be anything from -4294967296 to 4294967294. Write '(cursor.column + by) | 0'.
+```
+
+```ts
+cursor.column = cursor.column + by; // [!code --]
+cursor.column = (cursor.column + by) | 0; // [!code ++]
+```
+
+Because the build proves every store that it sees, typed code has nothing to check when it stores an `int32`. `| 0` is ordinary JavaScript: it gives the same 32-bit value compiled, under `bun run` and in every other engine.
+
+| The build accepts                                                                                                                    | It doesn't accept, and what to write                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A whole number in range: `7`, `-1`, `2 ** 31 - 1`                                                                                    | `1.5`, `2 ** 31`, `-0`, `NaN`                                                                                                                                                 |
+| Another `int32`                                                                                                                      | A `number` or an `any`: `n \| 0`                                                                                                                                              |
+| `a \| b`, `a & b`, `a ^ b`, `~a`, `a << n`, `a >> n`                                                                                 | `a >>> 0`, which goes up to 4294967295: `a \| 0`                                                                                                                              |
+| `Math.imul(a, b)`, `Math.clz32(a)`                                                                                                   | `a * b`: `Math.imul(a, b)`                                                                                                                                                    |
+| `Math.min(a, b)`, `Math.max(a, b)`, `Math.sign(a)`                                                                                   | `Math.abs(a)`, which goes up to 2147483648: `Math.abs(a) \| 0`                                                                                                                |
+| `text.length`, `text.indexOf(..)`, `map.size`, `set.size`                                                                            | `array.length`, which goes up to 4294967295: `array.length \| 0`                                                                                                              |
+| Arithmetic that stays in range: `(a & 255) * 3 + 1`                                                                                  | `a + b` and `a - b` of two `int32` values, which can overflow: `(a + b) \| 0`                                                                                                 |
+| `i + 1` and `i++` where a test limits `i`: `i < end`, `i < text.length`                                                              | `i++` with no limit in sight: `i = (i + 1) \| 0`                                                                                                                              |
+| `a % b` where `a` isn't negative and `b` is positive                                                                                 | `a / b`: `(a / b) \| 0`                                                                                                                                                       |
+| `Math.floor(a / 2)`. `Math.ceil`, `Math.round` and `Math.trunc` too, if the quotient can't be negative: `Math.trunc((a & 1023) / 3)` | `Math.floor(x)` of a `number`, or of a quotient whose divisor can be 0: `Math.floor(x) \| 0`                                                                                  |
+|                                                                                                                                      | `bytes[i]` and `text.charCodeAt(i)`, which can be `undefined` or `NaN`: `bytes[i] \| 0`                                                                                       |
+|                                                                                                                                      | `[cursor.line] = pair`, `for (cursor.line of lines)` and `advance(cursor, ...rest)`, which the build can't track: store the value in a `number` variable first, then `n \| 0` |
+
+- **A call that the build can't see gets a guard,** like every other type. `numbers.map(half)` passes `half` around as a value, so the build doesn't know what it's called with. Such a call guards each `int32` argument, and `1.5` takes the slow version of the function. So does a call through an `any` or from a JavaScript file.
+- **Untyped code can store anything in a field.** Storing `1.5` in `cursor.column` through an `any` works as in plain JavaScript, and the field reads `1.5` afterwards. Typed code that reads `cursor.column` from that object falls back to its slow path. [`JSON.parse<T>(text)`](/bundler/validate) checks an `int32` property as a whole number in range.
+- **Declare a member `int32` in every type that the object is used as,** such as a class and the interface it implements. If the interface says `number`, a store through the interface is a store of a `number`, and `1.5` ends up in the field the same way.
+- **`int32` only counts when it's the whole type** of a variable, field, parameter or return value. Inside another type, as in `int32[]` or `Map<string, int32>`, it's a `number`. `column?: int32` is an `int32` or `undefined`.
+
+You rarely need `int32` for a local variable. The compiler infers the range of a loop counter by itself. `int32` pays off in the fields of objects that you create by the million, where it halves the size of a number.
+
+## See also
+
+- [Get more of your program typed](/bundler/aot-explain) explains the typed percentage and every cause that `--explain` reports.
+- [Full types of packages](/bundler/aot-libraries#add-types-to-a-package-you-dont-maintain) give a JavaScript package its types back, without changing its code.

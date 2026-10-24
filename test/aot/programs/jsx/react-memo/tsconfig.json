@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "react": [
+        "./react-stand-in"
+      ]
+    }
+  }
+}

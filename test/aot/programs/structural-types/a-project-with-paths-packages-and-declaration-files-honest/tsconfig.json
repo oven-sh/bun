@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "shapes": ["./packages/shapes/index.ts"],
+      "legacy": ["./packages/legacy/index"],
+      "@/*": ["./src/*"]
+    }
+  }
+}

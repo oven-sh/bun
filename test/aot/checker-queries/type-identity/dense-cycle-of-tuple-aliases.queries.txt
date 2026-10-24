@@ -1,0 +1,4 @@
+# A cycle of types is described as one component, in time that does not grow with the number of paths through it. The identity of a member does not depend on where the walk enters the cycle, and members that are alike have one identity.
+same: dense-cycle-of-tuple-aliases.ts:19 identity `T3` <=> dense-cycle-of-tuple-aliases.ts:20 identity `T3`
+same: dense-cycle-of-tuple-aliases.ts:19 identity `T3` <=> dense-cycle-of-tuple-aliases.ts:21 identity `T9`
+different: dense-cycle-of-tuple-aliases.ts:22 identity `U0` <=> dense-cycle-of-tuple-aliases.ts:23 identity `U1`

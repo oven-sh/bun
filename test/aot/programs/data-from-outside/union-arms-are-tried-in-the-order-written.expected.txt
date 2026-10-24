@@ -1,0 +1,29 @@
+Zed | Abe: {"a":1,"by":"Zed"}
+Abe | Zed: {"a":1,"by":"Abe"}
+an alias, Zed first: {"a":1,"by":"Zed"}
+an alias, Abe first: {"a":1,"by":"Abe"}
+an alias in a union: {"a":1,"by":"Abe"}
+a union in front of an alias: {"a":1,"by":"Zed"}
+arguments of an alias, Zed first: {"a":1,"by":"Zed"}
+arguments of an alias, Abe first: {"a":1,"by":"Abe"}
+a union as an argument: {"a":1,"by":"Zed"}
+an argument of an interface: {"held":{"a":1,"by":"Zed"}}
+a member: {"x":{"a":1,"by":"Zed"},"y":{"a":1,"by":"Abe"}}
+an optional member: {"x":{"a":1,"by":"Zed"}}
+every member made optional: {"x":{"a":1,"by":"Zed"}}
+elements: [{"a":1,"by":"Zed"},{"a":1,"by":"Zed"}]
+elements of a tuple: [{"a":1,"by":"Zed"},{"a":1,"by":"Abe"}]
+values of a dictionary: {"k":{"a":1,"by":"Zed"}}
+a record, then a dictionary: {"a":1,"by":"Sized"}
+a dictionary, then a record: {"a":1}
+a record, then any object: {"a":1,"by":"Sized"}
+any object, then a record: {"a":1}
+arrays: [{"a":1,"by":"Zed"}]
+arrays the other way: [{"a":1,"by":"Abe"}]
+a union made strict: {"a":1,"by":"Zed"}
+a union made strict, the other way: {"a":1,"by":"Abe"}
+defaults of a member that is missing: {"n":2}
+validate, Zed | Abe: {"a":1,"by":"Zed"}
+validate, Abe | Zed: {"a":1,"by":"Abe"}
+validate, plain data: {"x":{"a":1,"by":"Zed"}}
+validate, an alias: {"a":1,"by":"Abe"}

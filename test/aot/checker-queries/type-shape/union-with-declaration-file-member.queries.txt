@@ -1,0 +1,6 @@
+# A union lists its members, and each has its own trust: a member of a declaration file takes nothing from the one beside it.
+union-with-declaration-file-member.ts:4 shape `Mine | Theirs` = Union(Mine | Theirs)
+union-with-declaration-file-member.ts:5 shape `string | Theirs` = Union(string | Theirs)
+union-with-declaration-file-member.ts:6 shape `Mine` = Object
+union-with-declaration-file-member.ts:7 shape `Theirs` = Object untrusted
+absent: union-with-declaration-file-member.ts:6 shape `Mine` = Object untrusted

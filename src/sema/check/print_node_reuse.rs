@@ -2178,7 +2178,7 @@ impl Checker<'_, '_> {
         name: Atom,
         meaning: SymFlags,
     ) {
-        let options = &self.files().options;
+        let options = self.module_options(file);
         let used = (file, scope, name, meaning);
         if (options.no_unused_locals || options.no_unused_parameters)
             && scope.is_some()

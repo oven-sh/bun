@@ -1,0 +1,64 @@
+declared order: 0 differ, 0 of 2 kept ones lost
+declared order, misfit: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 2 kept ones lost
+declared order, missing: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 2 kept ones lost
+declared order, token: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 2 kept ones lost
+declared order, end: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 2 kept ones lost
+declared order, escaped key: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+declared order, twice: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+declared order, odd keys: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+shuffled: 0 differ, 0 of 5 kept ones lost
+shuffled, misfit: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+shuffled, missing: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+shuffled, token: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+shuffled, end: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+shuffled, escaped key: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+shuffled, twice: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+shuffled, odd keys: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+spaced: 0 differ, 0 of 5 kept ones lost
+spaced, misfit: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+spaced, missing: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+spaced, token: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+spaced, end: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+spaced, escaped key: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+spaced, twice: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+spaced, odd keys: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys behind: 0 differ, 0 of 5 kept ones lost
+undeclared keys behind, misfit: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys behind, missing: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys behind, token: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys behind, end: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys behind, escaped key: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys behind, twice: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys behind, odd keys: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys in front: 0 differ, 0 of 5 kept ones lost
+undeclared keys in front, misfit: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys in front, missing: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys in front, token: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys in front, end: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys in front, escaped key: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys in front, twice: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys in front, odd keys: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys between: 0 differ, 0 of 5 kept ones lost
+undeclared keys between, misfit: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys between, missing: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys between, token: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys between, end: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys between, escaped key: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys between, twice: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys between, odd keys: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys, shuffled: 0 differ, 0 of 5 kept ones lost
+undeclared keys, shuffled, misfit: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys, shuffled, missing: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys, shuffled, token: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys, shuffled, end: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys, shuffled, escaped key: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys, shuffled, twice: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys, shuffled, odd keys: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys, shuffled and spaced: 0 differ, 0 of 5 kept ones lost
+undeclared keys, shuffled and spaced, misfit: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys, shuffled and spaced, missing: 3 texts: 0 values, 3 refusals, 0 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys, shuffled and spaced, token: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys, shuffled and spaced, end: 3 texts: 0 values, 0 refusals, 3 syntax errors, 0 differ, 0 of 3 kept ones lost
+undeclared keys, shuffled and spaced, escaped key: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys, shuffled and spaced, twice: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost
+undeclared keys, shuffled and spaced, odd keys: 3 texts: 3 values, 0 refusals, 0 syntax errors, 0 differ, 0 of 4 kept ones lost

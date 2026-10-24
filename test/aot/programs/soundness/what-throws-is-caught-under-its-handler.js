@@ -1,0 +1,76 @@
+let caught = 0;
+function guard(label, run) {
+  let state = "before";
+  try {
+    state = "running";
+    const value = run();
+    state = "done " + typeof value;
+  } catch (error) {
+    caught++;
+    state += ", caught " + (error instanceof Error ? error.constructor.name : typeof error);
+  } finally {
+    state += ", finally";
+  }
+  console.log(label + ": " + state);
+}
+const nothing = null, missing = undefined, frozen = Object.freeze({ a: 1 }), revoked = Proxy.revocable({}, {});
+revoked.revoke();
+guard("null member", () => nothing.x);
+guard("undefined call", () => missing());
+guard("undefined member call", () => ({}).m());
+guard("getter", () => ({ get g() { throw new RangeError("g"); } }).g);
+guard("setter", () => { ({ set s(v) { throw new EvalError("s"); } }).s = 1; });
+guard("valueOf", () => ({ valueOf() { throw new URIError("v"); } }) * 2);
+guard("toString", () => `${{ toString() { throw 5; } }}`);
+guard("toPrimitive", () => ({ [Symbol.toPrimitive]() { return {}; } }) + 1);
+guard("symbol to string", () => Symbol() + "");
+guard("bigint mix", () => 1n + 1);
+guard("bigint of fraction", () => BigInt(1.5));
+guard("bigint division", () => 1n / 0n);
+guard("array length", () => new Array(-1));
+guard("set length", () => { [].length = -1; });
+guard("repeat", () => "a".repeat(-1));
+guard("toFixed", () => (1).toFixed(101));
+guard("radix", () => (1).toString(1));
+guard("normalize", () => "a".normalize("x"));
+guard("parse", () => JSON.parse("{"));
+guard("stringify cycle", () => { const o = {}; o.o = o; return JSON.stringify(o); });
+guard("stringify bigint", () => JSON.stringify(1n));
+guard("decode", () => decodeURIComponent("%"));
+guard("regexp", () => new RegExp("("));
+guard("date", () => new Date(NaN).toISOString());
+guard("reduce", () => [].reduce((a, b) => a));
+guard("class call", () => (class {})());
+guard("arrow new", () => new (() => {})());
+guard("extends null", () => new (class extends null {})());
+guard("no super", () => new (class extends Object { constructor() { this.x = 1; } })());
+guard("frozen store", () => { frozen.a = 2; });
+guard("frozen define", () => Object.defineProperty(frozen, "b", { value: 1 }));
+guard("frozen delete", () => delete frozen.a);
+guard("destructure null", () => { const { a } = nothing; });
+guard("destructure array", () => { const [a] = 5; });
+guard("spread", () => [...5]);
+guard("spread call", () => Math.max(...missing));
+guard("for of", () => { for (const v of {}) v; });
+guard("instanceof", () => ({}) instanceof 5);
+guard("in", () => "a" in 5);
+guard("revoked", () => revoked.proxy.a);
+guard("proxy invariant", () => new Proxy(frozen, { get: () => 2 }).a);
+guard("weak key", () => new WeakMap().set(1, 1));
+guard("reflect", () => Reflect.ownKeys(1));
+guard("clone", () => structuredClone(() => {}));
+guard("url", () => new URL("x"));
+guard("atob", () => atob("*"));
+guard("decoder", () => new TextDecoder("x"));
+guard("typed array", () => new Uint8Array(-1));
+guard("typed offset", () => new Uint32Array(new ArrayBuffer(8), 1));
+guard("data view", () => new DataView(new ArrayBuffer(1)).getInt32(0));
+guard("generator running", () => { const g = (function* () { g.next(); })(); g.next(); });
+guard("iterator result", () => { for (const v of { [Symbol.iterator]: () => ({ next: () => 1 }) }) v; });
+guard("overflow", () => (function deep() { return deep() + 1; })());
+guard("private", () => { class P { #p = 1; static read(o) { return o.#p; } } return P.read({}); });
+guard("species", () => { class A extends Array { static get [Symbol.species]() { return 5; } } return new A(1, 2).map(x => x); });
+guard("new target", () => Reflect.construct(function () {}, [], 5));
+guard("thrown undefined", () => { throw undefined; });
+guard("label", () => { out: try { throw 1; } finally { break out; } return "kept"; });
+console.log(caught);

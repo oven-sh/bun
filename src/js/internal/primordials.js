@@ -1,6 +1,7 @@
 // TODO: Use native code and JSC intrinsics for everything in this file.
 // Do not use this file for new code, many things here will be slow especailly when intrinsics for these operations is available.
 // It is primarily used for `internal/util`
+// `bun build --compile --aot` reads src/js/ahead-of-time/internal/primordials.js in place of this file: what changes here changes there.
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectFreeze = Object.freeze;
@@ -96,8 +97,7 @@ const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, Array
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseResolve = Promise.$resolve.bind(Promise);
-// Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`
-// is null for the void variant (no result bookkeeping, resolves with nothing).
+// Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal` is null for the void variant (no result bookkeeping, resolves with nothing).
 const safePromiseAllCollect = (promises, mapFn, returnVal) =>
   new Promise((resolve, reject) => {
     const { length } = promises;

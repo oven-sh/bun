@@ -1,0 +1,1 @@
+{ "compilerOptions": { "target": "esnext", "lib": ["es2017"], "module": "preserve", "moduleResolution": "bundler", "types": [], "strict": true, "noEmit": true } }

@@ -10,7 +10,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// This is called when AsyncLocalStorage is constructed.
+// This is called when AsyncLocalStorage is constructed; in an executable that was compiled ahead of time, when one is entered for the first time.
 JSC_DEFINE_HOST_FUNCTION(jsSetAsyncHooksEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ASSERT(callFrame->argumentCount() == 1);

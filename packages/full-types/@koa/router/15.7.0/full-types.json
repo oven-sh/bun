@@ -1,0 +1,11 @@
+{
+  "format": 2,
+  "name": "@koa/router",
+  "version": "15.7.0",
+  "when": {},
+  "basis": {},
+  "lay": {
+    "dist/index.mjs": "38f1ddbe2f3eab7f81302a8b31af320d686b8bf4bd7a5e3aac894c86aa2ffed5"
+  },
+  "needs": []
+}

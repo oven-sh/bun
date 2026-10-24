@@ -1,0 +1,13 @@
+Pair: 300 graphs: 198 accepted, 87 rejected, 0 huge, 0 with a cycle, 15 with changing getters; shared parts kept 0, copied again 60; getters read 37 times; digest 8f1fb29b: 0 differ
+Forked: 300 graphs: 219 accepted, 66 rejected, 0 huge, 2 with a cycle, 13 with changing getters; shared parts kept 0, copied again 244; getters read 100 times; digest dbaa35ab: 0 differ
+Lists: 300 graphs: 204 accepted, 74 rejected, 0 huge, 0 with a cycle, 22 with changing getters; shared parts kept 0, copied again 797; getters read 53 times; digest d1ecd6a2: 0 differ
+Four: 300 graphs: 207 accepted, 79 rejected, 0 huge, 0 with a cycle, 14 with changing getters; shared parts kept 0, copied again 148; getters read 36 times; digest 4277869a: 0 differ
+Named: 300 graphs: 215 accepted, 69 rejected, 0 huge, 0 with a cycle, 16 with changing getters; shared parts kept 0, copied again 357; getters read 51 times; digest a8d343ca: 0 differ
+Tagged: 300 graphs: 205 accepted, 78 rejected, 0 huge, 3 with a cycle, 14 with changing getters; shared parts kept 0, copied again 130; getters read 55 times; digest 280eabc4: 0 differ
+Untagged: 300 graphs: 216 accepted, 71 rejected, 0 huge, 2 with a cycle, 11 with changing getters; shared parts kept 0, copied again 2453; getters read 257 times; digest ca6b220e: 0 differ
+Optional: 300 graphs: 206 accepted, 78 rejected, 0 huge, 1 with a cycle, 15 with changing getters; shared parts kept 0, copied again 94; getters read 47 times; digest d46f8e44: 0 differ
+Loose: 300 graphs: 218 accepted, 62 rejected, 0 huge, 0 with a cycle, 20 with changing getters; shared parts kept 0, copied again 0; getters read 27 times; digest a1a0859e: 0 differ
+Tree: 300 graphs: 218 accepted, 66 rejected, 0 huge, 2 with a cycle, 14 with changing getters; shared parts kept 0, copied again 1875; getters read 215 times; digest cd07a0d3: 0 differ
+Grid: 300 graphs: 232 accepted, 59 rejected, 0 huge, 0 with a cycle, 9 with changing getters; shared parts kept 0, copied again 1022; getters read 51 times; digest 34bd36f2: 0 differ
+Late: 300 graphs: 209 accepted, 77 rejected, 0 huge, 1 with a cycle, 13 with changing getters; shared parts kept 0, copied again 3069; getters read 349 times; digest cff38ea9: 0 differ
+Mixed: 300 graphs: 196 accepted, 82 rejected, 0 huge, 0 with a cycle, 22 with changing getters; shared parts kept 0, copied again 231; getters read 21 times; digest 6b993acb: 0 differ

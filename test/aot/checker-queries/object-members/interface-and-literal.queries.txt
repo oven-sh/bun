@@ -1,0 +1,8 @@
+# Members of interfaces and type literals are written; members of an object literal are not.
+interface-and-literal.ts:3 has `Point` = x Field number checked number
+interface-and-literal.ts:3 has `Point` = y Field string checked string
+interface-and-literal.ts:3 has `Point` = move Method (dx: number) => void checked (dx: number) => void
+interface-and-literal.ts:4 member `p.x` = member x Field number checked number
+interface-and-literal.ts:5 member `p["y"]` = member y Field string checked string
+interface-and-literal.ts:6 has `{ a: boolean }` = a Field boolean checked boolean
+interface-and-literal.ts:8 member `o.a` = member a Field unwritten checked number

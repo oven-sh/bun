@@ -1154,12 +1154,31 @@ impl PathLikeExt for PathLike<'_> {
     }
 }
 
+/// The system resolves a relative path against its own working directory, which is never a folder of the executable.
+fn from_working_directory_in_executable(str: bun_core::String) -> bun_core::String {
+    use bun_paths::resolve_path::{self, platform};
+    let Some(directory) = bun_core::working_directory_in_executable() else {
+        return str;
+    };
+    let utf8 = str.to_utf8();
+    let path = utf8.slice();
+    if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
+        drop(utf8);
+        return str;
+    }
+    bun_core::String::clone_utf8(resolve_path::join_abs_string::<platform::Auto>(
+        directory,
+        &[path],
+    ))
+}
+
 /// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).
 fn path_like_from_string(
     global: &JSGlobalObject,
     str: bun_core::String,
     will_be_async: bool,
 ) -> JsResult<PathLike<'static>> {
+    let str = from_working_directory_in_executable(str);
     let utf8 = if will_be_async {
         str.into_utf8_with_string_thread_isolated()
     } else {

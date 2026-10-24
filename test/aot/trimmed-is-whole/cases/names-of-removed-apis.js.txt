@@ -1,0 +1,32 @@
+// Removing an API removes its code, never its name: what a program can ask about an API without calling it answers as under `bun run`.
+//// typeof
+//@ removes WebSocket
+//@ removes HTMLRewriter
+//@ removes Bun.color
+console.log(typeof WebSocket, typeof HTMLRewriter, typeof Bun.color);
+//// constants-of-a-class
+//@ removes WebSocket
+console.log(WebSocket.CONNECTING, WebSocket.OPEN, WebSocket.CLOSING, WebSocket.CLOSED);
+//// in-the-prototype
+//@ removes WebSocket
+console.log("send" in WebSocket.prototype, "close" in WebSocket.prototype, "nothing" in WebSocket.prototype);
+//// name-and-length
+//@ removes WebSocket
+//@ removes HTMLRewriter
+//@ removes Bun.color
+console.log(WebSocket.name, WebSocket.length, HTMLRewriter.name, HTMLRewriter.length, Bun.color.name, Bun.color.length);
+//// names-of-the-prototype
+//@ removes WebSocket
+console.log(Object.getOwnPropertyNames(WebSocket.prototype).sort().join());
+//// in-Bun
+//@ removes Bun.color
+console.log("color" in Bun, Object.hasOwn(Bun, "color"), "nothing" in Bun);
+//// in-globalThis
+//@ removes WebSocket
+console.log("WebSocket" in globalThis, Object.hasOwn(globalThis, "WebSocket"));
+//// instanceof
+//@ removes WebSocket
+console.log({} instanceof WebSocket, Object.create(WebSocket.prototype) instanceof WebSocket);
+//// a-property-that-holds-an-instance
+//@ removes Bun.redis
+console.log("redis" in Bun, Object.hasOwn(Bun, "redis"), Object.keys(Bun).includes("redis"));

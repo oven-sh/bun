@@ -1,0 +1,28 @@
+# The same program without the call: the function that makes a promise is not reached, so nothing that hangs on Promise is entered
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NEXT: unreached f2
+# CHECK-NEXT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65572 function=f2
+runtimefunction id=65578 function=f3
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    Return
+}
+function f1 name="later" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="emit" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="startQueue" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -1,6 +1,6 @@
 const { validateInteger, validateObject } = require("internal/validators");
 const httpAgent = require("node:_http_agent");
-const { Agent } = httpAgent;
+const { Agent } = require("node:_http_agent");
 const { ClientRequest } = require("node:_http_client");
 const { validateHeaderName, validateHeaderValue, parsers } = require("node:_http_common");
 const { IncomingMessage } = require("node:_http_incoming");
@@ -11,9 +11,14 @@ const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = re
 
 if (process.env.NODE_DEBUG) require("node:util").debuglog("http");
 
-const { WebSocket, CloseEvent, MessageEvent } = globalThis;
+const WebSocket = globalThis.WebSocket;
+const CloseEvent = globalThis.CloseEvent;
+const MessageEvent = globalThis.MessageEvent;
 
-function createServer(options, callback) {
+type ServerParameters = Parameters<typeof Server>;
+type ClientRequestParameters = Parameters<typeof ClientRequest>;
+
+function createServer(options?: ServerParameters[0], callback?: ServerParameters[1]): $Node.HttpServer {
   return new Server(options, callback);
 }
 
@@ -24,7 +29,11 @@ function createServer(options, callback) {
  * @param {Function} [cb]
  * @returns {ClientRequest}
  */
-function request(url, options, cb) {
+function request(
+  url?: ClientRequestParameters[0],
+  options?: ClientRequestParameters[1],
+  cb?: ClientRequestParameters[2],
+): $Node.ClientRequest {
   return new ClientRequest(url, options, cb);
 }
 
@@ -35,7 +44,7 @@ function request(url, options, cb) {
  * @param {Function} [cb]
  * @returns {ClientRequest}
  */
-function get(url, options, cb) {
+function get(url?: ClientRequestParameters[0], options?: ClientRequestParameters[1], cb?: ClientRequestParameters[2]) {
   const req = request(url, options, cb);
   req.end();
   return req;
@@ -59,7 +68,7 @@ const http_exports = {
   },
   validateHeaderName,
   validateHeaderValue,
-  setMaxIdleHTTPParsers(max) {
+  setMaxIdleHTTPParsers(max: number) {
     validateInteger(max, "max", 1);
     parsers.max = max;
   },
@@ -87,7 +96,7 @@ function noopRestore() {}
 // https agents at the proxy servers configured through the given environment
 // variables, returning a function that restores the previous agents.
 // (The fetch() global dispatcher half is not applicable here.)
-function setGlobalProxyFromEnv(env = process.env) {
+function setGlobalProxyFromEnv(env: Record<string, string | undefined> = process.env) {
   validateObject(env, "proxyEnv");
   const { parseProxyUrl, redactInvalidProxyUrl } = require("internal/http");
   const httpProxy = parseProxyUrl(env, "http:");
@@ -104,7 +113,7 @@ function setGlobalProxyFromEnv(env = process.env) {
     throw $ERR_PROXY_INVALID_CONFIG(redactInvalidProxyUrl(httpsProxy));
   }
 
-  let originalHttpsAgent, originalHttpAgent;
+  let originalHttpsAgent: $Node.Agent | undefined, originalHttpAgent: $Node.Agent | undefined;
   if (httpProxy !== null) {
     originalHttpAgent = httpAgent.globalAgent;
     httpAgent.globalAgent = new Agent({

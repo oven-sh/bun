@@ -1,0 +1,1 @@
+class Unused extends notDefinedAnywhere {}

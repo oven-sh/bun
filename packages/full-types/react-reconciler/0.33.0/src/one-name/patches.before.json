@@ -1,0 +1,14 @@
+[
+ [
+  "  type TypeOfMode = int32;",
+  "  type TypeOfMode = number;"
+ ],
+ [
+  "  type RootTag = int32;",
+  "  type RootTag = number;"
+ ],
+ [
+  "  type OffscreenVisibility = int32;",
+  "  type OffscreenVisibility = number;"
+ ]
+]

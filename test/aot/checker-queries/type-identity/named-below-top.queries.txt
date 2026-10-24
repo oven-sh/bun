@@ -1,0 +1,5 @@
+# An interface has one identity wherever it is named, at the top of an annotation or below a member. Two interfaces with the same members have two identities.
+same: named-below-top.ts:4 identity `A` <=> named-below-top.ts:6 identity `A`
+same: named-below-top.ts:5 identity `B` <=> named-below-top.ts:7 identity `B`
+different: named-below-top.ts:4 identity `A` <=> named-below-top.ts:5 identity `B`
+different: named-below-top.ts:6 identity `{ p: A }` <=> named-below-top.ts:7 identity `{ p: B }`

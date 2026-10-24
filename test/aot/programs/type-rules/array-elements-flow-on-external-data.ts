@@ -1,0 +1,23 @@
+// Elements read back from an array with an inferred element type that holds external data flow on into variables, other containers and functions.
+const data = JSON.parse('{"t":"abc"}') as { t: number };
+const say = (label: string, f: () => unknown): void => { let r: string; try { const v = f(); r = typeof v + " " + (typeof v === "object" ? JSON.stringify(v) : String(v)); } catch (e) { r = "throws " + (e as Error).constructor.name; } console.log(label + " ==> " + r); };
+say("a variable assigned from an element", () => { const c = [data.t]; let n = 0; n = c[0]; return n + 1; });
+say("a variable assigned from pop", () => { const c = [data.t]; let n = 0; n = c.pop()!; return n + 1; });
+say("a variable that adds up elements", () => { const c = [1, data.t]; let n = 0; for (let i = 0; i < c.length; i++) n += c[i]; return n; });
+say("a const taken from an element", () => { const c = [data.t]; const first = c[0]; return first + 1; });
+say("an element pushed onto another array", () => { const c = [data.t]; const d = [1]; d.push(c[0]); return d[1] + 1; });
+say("a slice", () => { const c = [1, data.t]; return c.slice(1)[0] + 1; });
+say("a filter", () => { const c = [1, data.t]; return c.filter(() => true)[1] + 1; });
+say("a copy by spread", () => { const c = [data.t]; const d = [...c]; return d[0] + 1; });
+say("an alias", () => { const c = [data.t]; const d = c; return d[0] + 1; });
+say("a concat", () => { const c = [data.t]; return [1].concat(c)[1] + 1; });
+say("an element returned by a function", () => { const c = [data.t]; const first = () => c[0]; return first() + 1; });
+say("an element in a literal property", () => { const c = [data.t]; const o = { v: c[0] }; return o.v + 1; });
+say("length, indexOf and includes stay exact", () => { const c = [1, data.t]; return [c.length, c.indexOf(1), c.includes(1)].join(); });
+say("trusted stays exact", () => { const c = [1, 2]; let n = 0; n = c[0]; return n + c.pop()! + 1; });
+say("Array.from", () => { const c = [data.t]; return Array.from(c)[0] + 1; });
+say("Array.from with a function", () => { const c = [data.t]; return Array.from(c, v => v + 1)[0]; });
+say("into a Set and out", () => { const c = [data.t]; return [...new Set(c)][0] + 1; });
+say("flat", () => { const c = [data.t]; return [c].flat()[0] + 1; });
+say("Object.values", () => { const c = [data.t]; return Object.values(c)[0] + 1; });
+say("nested", () => { const c = [data.t]; const outer = [c]; return outer[0][0] + 1; });

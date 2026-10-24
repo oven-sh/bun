@@ -57,21 +57,22 @@ pub(super) fn check_grammar_rest_element(
     default: ExprId,
 ) {
     if !is_last {
-        c.error(file, name, 2462, &[]);
+        c.early_error_on_node(file, name, 2462, &[]);
     } else if has_property_name {
-        c.error(file, name, 2566, &[]);
+        c.early_error_on_node(file, name, 2566, &[]);
     } else if default.is_some()
         && let Some(start) = start_of_equals_before(c, file, default)
     {
-        c.error_at((file, start, 0), 1186, &[]);
+        c.early_error_at((file, start, 0), 1186, &[]);
     }
 }
 
 // ───────────────────────────── source text ─────────────────────────────
 
-/// `GetEmitScriptTarget`: defaults to the latest standard.
+/// `GetEmitScriptTarget`: defaults to the latest standard. A build writes nothing for an older engine.
 pub(super) fn language_version(c: &Checker<'_, '_>) -> ScriptTarget {
     match c.p.files.options.target {
+        _ if c.p.files.is_compile_build() => ScriptTarget::ESNext,
         ScriptTarget::None => ScriptTarget::ES2025,
         reported => reported,
     }
@@ -123,7 +124,9 @@ pub(super) fn start_of_dots_before(
 /// `isLiteralExpressionOfObject`
 pub(super) fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
     let is_literal = match hir[e].kind {
-        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Regex | ExprKind::Class(_) => true,
+        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Regex { .. } | ExprKind::Class(_) => {
+            true
+        }
         ExprKind::Fn(f) => hir[f].kind == FnKind::Expr,
         _ => false,
     };
@@ -297,7 +300,7 @@ fn is_result_unused(hir: &File, bound: &Bound, mut e: ExprId) -> bool {
 
 /// The end of `checkYieldExpression`: 7057. Nothing specifies the type `yield` evaluates to, and that type matters.
 pub(super) fn check_yield_result(c: &mut Checker<'_, '_>, file: FileId, e: ExprId) {
-    if !c.p.files.options.no_implicit_any {
+    if !c.module_options(file).no_implicit_any {
         return;
     }
     let (hir, bound) = (c.hir(file), c.bound(file));

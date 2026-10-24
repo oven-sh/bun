@@ -211,7 +211,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.jsdoc.full_signatures.contains(&func.0)
     }
 
-    /// `checkNonIdentifierName`. It reports a parser error, not a JSDoc error.
+    /// `checkNonIdentifierName`.
     fn check_non_identifier_name(&mut self, name: &Name<'_>) {
         if bun_core::lexer::is_identifier(&name.text) {
             return;
@@ -222,6 +222,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             false => name.start,
         };
         match self.recovers() {
+            true if self.lx.compiles => self.f.error(DiagnosticKind::JsDoc, start, name.end, 1003),
             true => self.f.error(DiagnosticKind::Parse, start, name.end, 1003),
             false => self.report(),
         }
@@ -700,6 +701,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             body: FnBody::None,
             anchor: pos,
             start: pos,
+            text_start: pos,
+            is_strict: false,
+            is_strict_by_syntax: false,
         })
     }
 

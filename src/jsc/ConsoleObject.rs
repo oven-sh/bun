@@ -650,12 +650,14 @@ struct CollectedRow {
 const PADDING: u32 = 1;
 
 impl<'a> TablePrinter<'a> {
+    #[inline(never)]
     pub fn init(
         global_object: &'a JSGlobalObject,
         level: MessageLevel,
         tabular_data: JSValue,
         properties: JSValue,
     ) -> JsResult<Self> {
+        bun_removable_features::removable_definition!(ConsoleTable, Self::init);
         let _ = level;
         Ok(TablePrinter {
             global_object,
@@ -867,10 +869,15 @@ impl<'a> TablePrinter<'a> {
         let _ = writer.write_all("│\n".as_bytes());
     }
 
+    #[inline(never)]
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer: &mut dyn bun_io::Write,
     ) -> JsResult<()> {
+        bun_removable_features::removable_definition!(
+            ConsoleTable,
+            Self::print_table::<ENABLE_ANSI_COLORS>
+        );
         let global_object = self.global_object;
 
         let mut columns: Vec<Column> = Vec::with_capacity(16);
@@ -2197,13 +2204,19 @@ pub mod formatter {
                 T::RegExpObject => TagPayload::String,
                 T::Symbol => TagPayload::Symbol,
                 T::BooleanObject => TagPayload::Boolean,
-                T::JSFunction => TagPayload::Function,
+                T::JSFunction
+                | T::CompiledClosure
+                | T::SlimClosure
+                | T::SlimClosureWithProperties => TagPayload::Function,
                 T::WeakMap | T::Map => TagPayload::Map,
                 T::MapIterator => TagPayload::MapIterator,
                 T::SetIterator => TagPayload::SetIterator,
                 T::WeakSet | T::Set => TagPayload::Set,
                 T::JSDate => TagPayload::JSON,
                 T::JSPromise => TagPayload::Promise,
+
+                // The engine's generator objects have a cell type of their own, which falls to the last arm.
+                T::Object if value.is_compiled_generator() => TagPayload::JSON,
 
                 T::WrapForValidIterator
                 | T::RegExpStringIterator
@@ -2212,6 +2225,7 @@ pub mod formatter {
                 | T::IteratorHelper
                 | T::Object
                 | T::FinalObject
+                | T::CompiledObject
                 | T::ModuleNamespaceObject => TagPayload::Object,
 
                 T::ProxyObject => {

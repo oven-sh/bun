@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "shapes-v1": ["./packages/shapes-1/index.ts"],
+      "shapes-v2": ["./packages/shapes-2/index.ts"],
+      "maker-a": ["./packages/maker-a/index.ts"],
+      "maker-b": ["./packages/maker-b/index.ts"]
+    }
+  }
+}

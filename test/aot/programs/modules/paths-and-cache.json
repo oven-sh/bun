@@ -1,0 +1,1 @@
+{ "build": ["--compile-inspector"], "skipInShell": "it needs Bun's require.cache, node:vm and files on disk" }

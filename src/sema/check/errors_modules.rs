@@ -102,7 +102,7 @@ impl Checker<'_, '_> {
             sorted = uses;
             &sorted
         };
-        let is_verbatim = self.p.files.options.verbatim_module_syntax;
+        let is_verbatim = self.module_options(file).verbatim_module_syntax;
         let cx = Cx {
             file,
             text: &hir.text,
@@ -292,9 +292,11 @@ impl Checker<'_, '_> {
         s: StmtId,
         container: StatementParent,
         code: u32,
+        class: DiagnosticClass,
     ) -> bool {
         if !container.is_appropriate_context && cx.grammar && !cx.text.is_empty() {
-            self.error_at((cx.file, self.hir(cx.file)[s].start, 0), code, &[]);
+            let at = (cx.file, self.hir(cx.file)[s].start, 0);
+            self.error_at(at, code, &[]).class = class;
         }
         !container.is_appropriate_context
     }
@@ -370,7 +372,8 @@ impl Checker<'_, '_> {
             self.error_at((cx.file, name_pos, 0), 2670, &[]);
         }
         let context_error = if is_ambient_module { 1234 } else { 1235 };
-        if self.check_grammar_module_element_context(cx, s, container, context_error) {
+        let class = DiagnosticClass::TypeScriptGrammar;
+        if self.check_grammar_module_element_context(cx, s, container, context_error, class) {
             return;
         }
         // `!c.checkGrammarModifiers(node)`
@@ -386,7 +389,7 @@ impl Checker<'_, '_> {
         }
         // Both relate to options that preserve `const enum`s, so a namespace that contains nothing else counts too.
         if !is_ambient
-            && self.p.files.options.isolated_modules
+            && self.module_options(cx.file).isolated_modules
             && self.bound(cx.file).module_instance_state[m.idx()]
                 != ModuleInstanceState::NonInstantiated
         {
@@ -546,10 +549,13 @@ impl Checker<'_, '_> {
                 {
                     are_strings = false;
                     let start = self.start_of(cx.file, value);
-                    self.error_at(
+                    let in_comment = DiagnosticClass::TypeScriptGrammar;
+                    let is_code = !hir.is_in_jsdoc(hir[s].start);
+                    self.error_with_class(
                         (cx.file, start, self.end_of_expr(cx.file, value)),
                         2858,
                         &[],
+                        DiagnosticClass::early_error_if(is_code, in_comment),
                     );
                 }
             }
@@ -795,7 +801,7 @@ impl Checker<'_, '_> {
                 && hir.find_modifier(hir.stmt_modifiers(StmtId(i as u32)), Flags::DEFAULT).is_none()
             {
                 let start = hir[c].start;
-                self.error_at((cx.file, start, 0), 1211, &[]);
+                self.early_error_at((cx.file, start, 0), 1211, &[]);
             }
             if matches!(
                 bound.parent_of_stmt(StmtId(i as u32)),
@@ -942,7 +948,12 @@ impl Checker<'_, '_> {
         let (hir, files) = (self.hir(cx.file), self.files());
         let (import, pos) = (hir[i], hir[s].start);
         let context_error = if cx.is_js { 1473 } else { 1232 };
-        if self.check_grammar_module_element_context(cx, s, container, context_error) {
+        // An `@import` tag is a comment.
+        let class = DiagnosticClass::early_error_if(
+            !hir.is_in_jsdoc(pos),
+            DiagnosticClass::TypeScriptGrammar,
+        );
+        if self.check_grammar_module_element_context(cx, s, container, context_error, class) {
             self.modules_resolve_aliases_of_import_if_used(cx, i);
             return;
         }
@@ -963,7 +974,8 @@ impl Checker<'_, '_> {
             }
             // 1543: `isOnlyImportableAsDefault`, `hasTypeJsonImportAttribute`
             if !import.type_only
-                && (ModuleKind::Node18..=ModuleKind::NodeNext).contains(&files.options.module)
+                && (ModuleKind::Node18..=ModuleKind::NodeNext)
+                    .contains(&self.module_options(cx.file).module)
                 && let Some(specifier_use) = cx.specifier(pos, import.spec)
                 && specifier_use.kind != SpecifierKind::SideEffect
                 && let Some(module) = self.resolve_external_module_name_ignoring_errors(
@@ -986,7 +998,7 @@ impl Checker<'_, '_> {
                 self.error_at(
                     (cx.file, specifier_use.pos, 0),
                     1543,
-                    &[Arg::Bytes(files.options.module.name())],
+                    &[Arg::Bytes(self.module_options(cx.file).module.name())],
                 );
             }
         } else {
@@ -1041,10 +1053,12 @@ impl Checker<'_, '_> {
             18058
         } else if import.has_named_imports {
             18059
-        } else if !matches!(
-            self.p.files.options.module,
-            ModuleKind::EsNext | ModuleKind::Preserve
-        ) {
+        } else if !self.is_in_compile_build(file)
+            && !matches!(
+                self.module_options(file).module,
+                ModuleKind::EsNext | ModuleKind::Preserve
+            )
+        {
             18060
         } else {
             return None;
@@ -1098,7 +1112,8 @@ impl Checker<'_, '_> {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let (import, decl) = (hir[i], Decl::ImportEquals(i));
         let context_error = if cx.is_js { 1473 } else { 1232 };
-        if self.check_grammar_module_element_context(cx, s, container, context_error) {
+        let class = DiagnosticClass::TypeScriptGrammar;
+        if self.check_grammar_module_element_context(cx, s, container, context_error, class) {
             self.modules_resolve_alias_if_used(cx, decl);
             if let Some(&symbol) = cx.aliases.get(&decl)
                 && files.resolve_alias(symbol).is_none()
@@ -1113,7 +1128,8 @@ impl Checker<'_, '_> {
                 if self.modules_is_in_valid_position(cx, s, spec, false, container) {
                     self.check_import_binding(cx, decl, import.name, is_ambient);
                     self.modules_module_is_missing(cx, s, spec, container);
-                    if (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&files.options.module)
+                    if (ModuleKind::Es2015..=ModuleKind::EsNext)
+                        .contains(&self.module_options(cx.file).module)
                         && !import.flags.contains(Flags::TYPE_ONLY)
                         && !is_ambient
                     {
@@ -1200,7 +1216,7 @@ impl Checker<'_, '_> {
         let name = hir[names.at(0)].text;
         // `canCollectSymbolAliasAccessibilityData`
         if name == known::empty
-            || files.options.verbatim_module_syntax
+            || self.module_options(cx.file).verbatim_module_syntax
             || !self.modules_is_marked_as_referenced(cx.file, &cx.aliases, i, &mut Vec::new())
         {
             return;
@@ -1280,7 +1296,7 @@ impl Checker<'_, '_> {
     fn modules_module_export_name(&mut self, cx: &Cx<'_>, pos: u32) {
         if cx.grammar
             && matches!(
-                self.p.files.options.module,
+                self.module_options(cx.file).module,
                 ModuleKind::Es2015 | ModuleKind::Es2020
             )
             && self.hir(cx.file).kind != FileKind::Declaration
@@ -1301,7 +1317,8 @@ impl Checker<'_, '_> {
         let hir = self.hir(cx.file);
         let export = hir[x];
         let context_error = if cx.is_js { 1474 } else { 1233 };
-        if self.check_grammar_module_element_context(cx, s, container, context_error) {
+        let class = DiagnosticClass::EarlyError;
+        if self.check_grammar_module_element_context(cx, s, container, context_error, class) {
             for item in export.items.iter() {
                 self.modules_resolve_alias_if_used(cx, Decl::ExportSpec(item));
             }
@@ -1388,7 +1405,14 @@ impl Checker<'_, '_> {
                     || self.is_first_declared_in_global_source_file(found)
             });
         if is_global {
-            self.error(cx.file, location, 2661, &[Arg::Atom(name)]);
+            // In TypeScript `bun run` drops the specifier.
+            let is_early = hir.is_js && !type_only && !hir[x].type_only && !is_ambient;
+            let reported = self.error(cx.file, location, 2661, &[Arg::Atom(name)]);
+            reported.class = if is_early {
+                DiagnosticClass::EarlyError
+            } else {
+                DiagnosticClass::Semantic
+            };
             return;
         }
         // `markLinkedReferences` skips it where nothing is emitted, and when exports are preserved verbatim.
@@ -1397,7 +1421,7 @@ impl Checker<'_, '_> {
             && !is_ambient
             && !type_only
             && !hir[x].type_only
-            && !files.options.verbatim_module_syntax
+            && !self.module_options(cx.file).verbatim_module_syntax
         {
             let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
             let message = self.get_cannot_find_name_diagnostic_for_name(cx.file, location, name);
@@ -1428,7 +1452,8 @@ impl Checker<'_, '_> {
             && bound.export_stars.iter().any(is_of_file)
             && (files.export(files.file_symbol(cx.file), known::export_equals)).is_none();
         let context_error = if cx.is_js { 1474 } else { 1233 };
-        if self.check_grammar_module_element_context(cx, s, container, context_error) {
+        let class = DiagnosticClass::EarlyError;
+        if self.check_grammar_module_element_context(cx, s, container, context_error, class) {
             if is_resolved_for_file {
                 self.modules_module_is_missing(cx, s, spec, container);
             }
@@ -1491,8 +1516,12 @@ impl Checker<'_, '_> {
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let start = hir[s].start;
-        let context_error = if is_export_equals { 1231 } else { 1258 };
-        if self.check_grammar_module_element_context(cx, s, container, context_error) {
+        let (context_error, class) = if is_export_equals {
+            (1231, DiagnosticClass::TypeScriptGrammar)
+        } else {
+            (1258, DiagnosticClass::EarlyError)
+        };
+        if self.check_grammar_module_element_context(cx, s, container, context_error, class) {
             return;
         }
         if container.module.is_some() && !container.is_ambient_module {
@@ -1505,7 +1534,7 @@ impl Checker<'_, '_> {
             self.error_at(self.span_of_parenthesized_expr(cx.file, e), 2714, &[]);
         }
         // The rest only matters to a compiler that processes one file at a time.
-        if is_ambient || !self.p.files.options.isolated_modules {
+        if is_ambient || !self.module_options(cx.file).isolated_modules {
             return;
         }
         // `isIllegalExportDefaultInCJS`: nothing else is reported then.
@@ -1653,7 +1682,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `SupportsImportAttributes`
-        let kind = self.p.files.options.module;
+        let kind = self.module_options(cx.file).module;
         let code = if !((ModuleKind::Node18..=ModuleKind::NodeNext).contains(&kind)
             || matches!(kind, ModuleKind::Preserve | ModuleKind::EsNext))
         {

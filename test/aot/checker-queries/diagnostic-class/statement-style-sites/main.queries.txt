@@ -1,0 +1,7 @@
+# Implicit `any` in a mapped type, in a captured variable and in a field assigned `[]`, a fallthrough and an unused label are Style.
+main.ts:1 diagnostic TS7039 = Style StopsBuild
+main.ts:3 diagnostic TS7029 = Style StopsBuild
+main.ts:4 diagnostic TS7028 = Style StopsBuild
+main.ts:5 diagnostic TS7034 = Style StopsBuild
+main.ts:5 diagnostic TS7005 = Style StopsBuild
+main.ts:6 diagnostic TS7008 = Style StopsBuild

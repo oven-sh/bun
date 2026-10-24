@@ -1,0 +1,24 @@
+a record, through a function: 100 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+a record, through a method: 100 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+a record, through an arrow function in a field: 100 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+forty records in a chain, through a function: 794 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+forty records in a chain, through a method: 794 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+forty records in a chain, through an arrow function in a field: 794 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+a tree five levels deep, through a function: 1732 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+a tree five levels deep, through a method: 1732 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+a tree five levels deep, through an arrow function in a field: 1732 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+a property that the type does not name, through a function: 110 characters, 0 texts finished by compiled code, 0 values handed to the runtime
+a property that the type does not name, through a method: 110 characters, 0 texts finished by compiled code, 0 values handed to the runtime
+a property that the type does not name, through an arrow function in a field: 110 characters, 0 texts finished by compiled code, 0 values handed to the runtime
+such a property one level down, through a function: 110 characters, 100 texts finished by compiled code, 100 values handed to the runtime
+such a property one level down, through a method: 110 characters, 100 texts finished by compiled code, 100 values handed to the runtime
+such a property one level down, through an arrow function in a field: 110 characters, 100 texts finished by compiled code, 100 values handed to the runtime
+an object without a type, through a function: 23 characters, 0 texts finished by compiled code, 0 values handed to the runtime
+an object without a type, through a method: 23 characters, 0 texts finished by compiled code, 0 values handed to the runtime
+an object without a type, through an arrow function in a field: 23 characters, 0 texts finished by compiled code, 0 values handed to the runtime
+an object of a class, through a function: 13 characters, 99 texts finished by compiled code, 100 values handed to the runtime
+an object of a class, through a method: 13 characters, 100 texts finished by compiled code, 100 values handed to the runtime
+an object of a class, through an arrow function in a field: 13 characters, 100 texts finished by compiled code, 100 values handed to the runtime
+a string, through a function: 6 characters, 100 texts finished by compiled code, 100 values handed to the runtime
+a string, through a method: 6 characters, 100 texts finished by compiled code, 100 values handed to the runtime
+a string, through an arrow function in a field: 6 characters, 100 texts finished by compiled code, 100 values handed to the runtime

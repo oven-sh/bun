@@ -1,0 +1,67 @@
+near read of object: ok 1
+near read of null: TypeError: null is not an object (evaluating 'null.x')
+near read of undefined: TypeError: undefined is not an object (evaluating 'undefined.x')
+near store of object: ok 1
+near store of null: TypeError: null is not an object (evaluating 'null.x')
+near store of undefined: TypeError: undefined is not an object (evaluating 'undefined.x')
+near call of object: ok 2
+near call of null: TypeError: null is not an object (evaluating 'null.m')
+near call of undefined: TypeError: undefined is not an object (evaluating 'undefined.m')
+near iterate of object: ok 1
+near iterate of null: TypeError: null is not an object
+near iterate of undefined: TypeError: undefined is not an object
+near assert of object: ok 1
+near assert of null: TypeError: null is not an object (evaluating 'null.x')
+near assert of undefined: TypeError: undefined is not an object (evaluating 'undefined.x')
+near read in try of object: ok 1
+near read in try of null: ok caught null is not an object (evaluating 'null.x')
+near read in try of undefined: ok caught undefined is not an object (evaluating 'undefined.x')
+near store in try of object: ok 1
+near store in try of null: ok caught null is not an object (evaluating 'null.x')
+near store in try of undefined: ok caught undefined is not an object (evaluating 'undefined.x')
+near call in try of object: ok 2
+near call in try of null: ok caught null is not an object (evaluating 'null.m')
+near call in try of undefined: ok caught undefined is not an object (evaluating 'undefined.m')
+near iterate in try of object: ok 1
+near iterate in try of null: ok caught null is not an object
+near iterate in try of undefined: ok caught undefined is not an object
+near assert in try of object: ok 1
+near assert in try of null: ok caught null is not an object (evaluating 'null.x')
+near assert in try of undefined: ok caught undefined is not an object (evaluating 'undefined.x')
+far read of object: ok 1
+far read of null: TypeError: null is not an object (evaluating 'null.last')
+far read of undefined: TypeError: undefined is not an object (evaluating 'undefined.last')
+far store of object: ok 1
+far store of null: TypeError: null is not an object (evaluating 'null.last')
+far store of undefined: TypeError: undefined is not an object (evaluating 'undefined.last')
+far call of object: ok 2
+far call of null: TypeError: null is not an object (evaluating 'null.m')
+far call of undefined: TypeError: undefined is not an object (evaluating 'undefined.m')
+far iterate of object: ok 1
+far iterate of null: TypeError: null is not an object
+far iterate of undefined: TypeError: undefined is not an object
+far assert of object: ok 1
+far assert of null: TypeError: null is not an object (evaluating 'null.last')
+far assert of undefined: TypeError: undefined is not an object (evaluating 'undefined.last')
+far read in try of object: ok 1
+far read in try of null: ok caught null is not an object (evaluating 'null.last')
+far read in try of undefined: ok caught undefined is not an object (evaluating 'undefined.last')
+far store in try of object: ok 1
+far store in try of null: ok caught null is not an object (evaluating 'null.last')
+far store in try of undefined: ok caught undefined is not an object (evaluating 'undefined.last')
+far call in try of object: ok 2
+far call in try of null: ok caught null is not an object (evaluating 'null.m')
+far call in try of undefined: ok caught undefined is not an object (evaluating 'undefined.m')
+far iterate in try of object: ok 1
+far iterate in try of null: ok caught null is not an object
+far iterate in try of undefined: ok caught undefined is not an object
+far assert in try of object: ok 1
+far assert in try of null: ok caught null is not an object (evaluating 'null.last')
+far assert in try of undefined: ok caught undefined is not an object (evaluating 'undefined.last')
+far fields: 2205000
+near read of undefined field: ok undefined
+near assert of undefined field: ok undefined
+near read in try of undefined field: ok undefined
+far read of undefined field: ok undefined
+far assert of undefined field: ok undefined
+far read in try of undefined field: ok undefined

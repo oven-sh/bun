@@ -1,0 +1,1 @@
+It prints "no error" three times where Bun prints "RangeError": joining texts counts as an operation without effect, so where the result is never read the whole loop is removed, and with it the step that passes the longest text.

@@ -1,0 +1,17 @@
+# An enum member is a constant where `bun run` inlines it: not where its value reads another file, a variable or a declared enum, not after such a member, and not through an import.
+enum-member-origin.ts:7 enum member `Shifted = 1 << 1` = 2
+enum-member-origin.ts:8 enum member `AfterShifted` = 3
+enum-member-origin.ts:9 enum member `FromOwnFile = Own.A` = 2
+enum-member-origin.ts:10 enum member `FromOtherFile = Other.A` = 7 reads other file or variable
+enum-member-origin.ts:11 enum member `AfterOtherFile` = 8 reads other file or variable
+enum-member-origin.ts:12 enum member `FromVariable = five` = 5 reads other file or variable
+enum-member-origin.ts:13 enum member `FromDeclared = Declared.A` = 1 reads other file or variable
+
+enum-member-origin.ts:15 enum `E.Shifted` = 2
+enum-member-origin.ts:16 enum `E.AfterShifted` = 3
+enum-member-origin.ts:17 enum `E.FromOwnFile` = 2
+absent: enum-member-origin.ts:18 enum `E.FromOtherFile` = 7
+absent: enum-member-origin.ts:19 enum `E.AfterOtherFile` = 8
+absent: enum-member-origin.ts:20 enum `E.FromVariable` = 5
+absent: enum-member-origin.ts:21 enum `E.FromDeclared` = 1
+absent: enum-member-origin.ts:23 enum `Alias.Shifted` = 2

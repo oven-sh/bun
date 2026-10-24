@@ -82,6 +82,8 @@ pub struct WebWorker {
     exec_argv_len: usize,
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
+    /// In an executable whose entry points begin programs of their own: the image of the program that begins at the specifier.
+    image: Option<&'static [u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
 
@@ -172,6 +174,7 @@ unsafe extern "C" {
         message: BunString,
         err: JSValue,
     );
+    safe fn WebWorker__postOutOfMemoryError(proxy: *mut c_void);
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
     // it with the VM — see the note there.
@@ -194,6 +197,25 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
         let messaging_proxy = unsafe { (*child).messaging_proxy };
         WebWorker__parentContextWillDestroy(messaging_proxy);
     }
+}
+
+/// The heap of the thread that `vm` runs on is full, and the RangeError has found
+/// no place where compiled code can be handed it. A worker ends alone, as by an
+/// uncaught error: 'error' on the parent, exit code 1. The main thread goes on.
+/// Called inside an allocation: nothing here touches the JS heap or runs script.
+#[unsafe(no_mangle)]
+extern "C" fn WebWorker__endForExhaustedHeap(vm: *mut VirtualMachine) {
+    // SAFETY: this thread's live VM; `worker` is a read-only field.
+    let Some(worker) = (unsafe { (*vm).worker_ref() }) else {
+        return;
+    };
+    if worker.has_requested_terminate() {
+        return;
+    }
+    // SAFETY: this thread's live VM.
+    unsafe { (*vm).exit_handler.exit_code = 1 };
+    WebWorker__postOutOfMemoryError(worker.messaging_proxy);
+    worker.exit();
 }
 
 /// The messaging proxy of the worker running on `vm`'s thread, or null on the
@@ -347,6 +369,21 @@ impl WebWorker {
             }
         }
 
+        // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
+        let image = crate::compiled_program::has_image_for_each_entry_point().then(|| {
+            let mut ignored_message = BunString::EMPTY;
+            // SAFETY: as for the preloads.
+            let path = unsafe {
+                resolve_entry_point_specifier(
+                    parent,
+                    spec_slice.slice(),
+                    &mut ignored_message,
+                    temp_log,
+                )
+            };
+            crate::compiled_program::image_of_worker(path)
+        });
+
         // Everything the worker thread needs from this VM is copied here, on
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
@@ -421,6 +458,7 @@ impl WebWorker {
             exec_argv_len,
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
+            image,
             preloads,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
@@ -695,6 +733,9 @@ impl WebWorker {
             return Ok(core::ptr::null_mut());
         }
 
+        if let Some(image) = self.image {
+            crate::compiled_program::use_image_of_worker(image);
+        }
         let vm = VirtualMachine::init_worker(
             self,
             virtual_machine::Options {
@@ -871,7 +912,8 @@ impl WebWorker {
             Ok(p) => p,
             Err(_) => {
                 // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // Nor is the parent's terminate() the entry's failure.
+                if !self.exit_called.load(Ordering::Relaxed) && !self.was_terminated_by_parent() {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -907,7 +949,7 @@ impl WebWorker {
                 // Same rule as the main thread (run_command): a CJS worker
                 // entry's top-level throw is an uncaughtException; only an
                 // ESM entry rejection reports origin "unhandledRejection".
-                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
+                let is_rejection = !vm.entry_point_is_commonjs();
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
@@ -1063,6 +1105,13 @@ impl WebWorker {
             exit_code,
             self.stopped_by_parent(),
         );
+    }
+
+    /// `request_termination` publishes the flag first and says whose stop it is
+    /// second, both under the handle's lock.
+    fn was_terminated_by_parent(&self) -> bool {
+        let _published = self.vm_handle.lock();
+        self.terminated_by_parent.load(Ordering::Relaxed)
     }
 
     /// worker.terminate() from the parent, and the worker did not also exit on
@@ -1270,6 +1319,18 @@ unsafe fn resolve_entry_point_specifier<'s>(
     {
         return Some(name);
     }
+    // The file of the first entry point has the name of the executable, and its module the name of its source.
+    // SAFETY: per fn contract; the resolver is only read.
+    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
+        // SAFETY: as above.
+        && let Some(module) = unsafe {
+            let root = graph.base_public_path_with_default_suffix();
+            (*parent).transpiler.resolver.resolve_embedded_module(root, str)
+        }
+        && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
+    {
+        return Some(crate::compiled_program::module_key(entry));
+    }
 
     // A `data:` URL is the module itself (the loader decodes it); it never names
     // a path, so it must not go through path resolution (long ones would fail
@@ -1322,6 +1383,13 @@ unsafe fn resolve_entry_point_specifier<'s>(
             }
         }
     };
+
+    if let Some(entry) = resolved_entry_point
+        .path_const()
+        .and_then(|path| crate::compiled_program::find_entry_point_by_source_path(path.text))
+    {
+        return Some(crate::compiled_program::module_key(entry));
+    }
 
     // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —

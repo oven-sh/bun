@@ -11,10 +11,12 @@
  * reads public build metadata and writes one file in the repo.
  */
 
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { units as partsOfOneTestFile } from "../test/aot/parts.mts";
+import { aotTests } from "./buildkite.ts";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +48,9 @@ const lanes = {
   windows: "windows-x64-2019-test-bun",
   "windows-aarch64": "windows-aarch64-11-test-bun",
 };
+
+const aotStepOf = stepKey => stepKey.replace(/-test-bun$/, "-test-aot");
+export const isAotTest = path => aotTests.some(group => path.startsWith(group));
 
 const api = async path => {
   for (let attempt = 0; ; attempt++) {
@@ -146,8 +151,16 @@ async function findSourceBuilds(want) {
 }
 
 async function collect(build, stepKey, into) {
-  const jobs = (await (await api(`builds/${build}`)).json()).jobs.filter(
-    j => j.step_key === stepKey && j.started_at && j.finished_at && j.state !== "canceled",
+  const allJobs = (await (await api(`builds/${build}`)).json()).jobs;
+  // Only a build that ran all of test/aot has the asan lane's step; the others run a tenth of it, and Windows arm64
+  // always does (getAotTests in .buildkite/ci.ts).
+  const ranAllOfAot = stepKey !== lanes["windows-aarch64"] && allJobs.some(j => j.step_key === aotStepOf(lanes.asan));
+  const jobs = allJobs.filter(
+    j =>
+      (j.step_key === stepKey || (ranAllOfAot && j.step_key === aotStepOf(stepKey))) &&
+      j.started_at &&
+      j.finished_at &&
+      j.state !== "canceled",
   );
   let idx = 0;
   const worker = async () => {
@@ -221,10 +234,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       lanes,
     },
   };
+  const previous = JSON.parse(readFileSync(outputPath, "utf8"));
+  for (const p of Object.keys(previous)) {
+    if (isAotTest(p) && (existsSync(join(dirname(outputPath), p)) || partsOfOneTestFile.includes(p))) paths.add(p);
+  }
   for (const p of [...paths].sort()) {
     const entry = {};
     for (const lane of Object.keys(lanes)) {
       if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
+      else if (isAotTest(p) && previous[p]?.[lane] !== undefined) entry[lane] = previous[p][lane];
     }
     out[p] = entry;
   }

@@ -1,0 +1,9 @@
+TypeError: process.stdin.resume is not a function. (In 'process.stdin.resume()', 'process.stdin.resume' is undefined). None of process.openStdin or process.stdin was compiled into this executable
+TypeError: process.stdin['res' + 'ume'] is not a function. (In 'process.stdin['res' + 'ume']()', 'process.stdin['res' + 'ume']' is undefined). None of process.openStdin or process.stdin was compiled into this executable
+function
+TypeError: member.resume is not a function. (In 'member.resume()', 'member.resume' is undefined)
+TypeError: undefined is not a function
+TypeError: holder[key].setEncoding is not a function. (In 'holder[key].setEncoding()', 'holder[key].setEncoding' is undefined)
+TypeError: resume is not a function. (In 'resume()', 'resume' is undefined)
+TypeError: ({}).resume is not a function. (In '({}).resume()', '({}).resume' is undefined)
+TypeError: undefined is not a function. (In 'undefined()', 'undefined' is undefined)

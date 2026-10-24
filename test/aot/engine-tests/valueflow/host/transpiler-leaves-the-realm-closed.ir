@@ -1,0 +1,17 @@
+# new Bun.Transpiler(input)
+# The transpiler makes text of text. It runs code only for a macro, through a few lines of its own that import the macro's file, and the loader refuses a file that is not in the image.
+# So the realm is not changed behind the analysis. plugin-changes-the-realm.ir has code that is started with a loader in its hands
+# RUN: valueflow-why flag=h19
+# CHECK: flag=h19
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=BunTranspiler
+    v3 = Construct v2, -, v1
+    Return
+}

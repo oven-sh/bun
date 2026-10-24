@@ -1,0 +1,32 @@
+require gives the imported node:events: true
+require without the prefix gives it: true
+createRequire gives it: true
+a dynamic import gives it: true
+process.getBuiltinModule gives it: true
+the named export is the default export: true
+a dynamic import gives the required node:stream: true
+process.getBuiltinModule gives it: true
+Stream inherits from the imported EventEmitter: true
+process.stdout is a Writable of the required module: true
+process.stdout is a Stream of the required module: true
+process.stdout is an EventEmitter of the imported module: true
+a property set on the import, read through require: set on the import
+read through process.getBuiltinModule: set on the import
+read through node:stream: set on the import
+deleted on the import, read through require: undefined
+a property set on the prototype through require, read on process.stdout: set through require
+read on a new emitter of the import: set through require
+defaultMaxListeners set on the import, read through require: 23
+read by process.stdout: 23
+read by a new stream: 23
+listeners of process.stdout counted by the import: 1
+events heard: 1
+a context maps and joins: 2,4
+a context creates a Map: 0
+the context has its own Array: true
+the context has its own map: true
+an array of the context is an instance of this realm's Array: false
+an array of the context is an array: true
+the context's map calls a function of the program: 2,3,4
+the context's map on an array of the program: 12,15
+a ShadowRealm import throws: TypeError

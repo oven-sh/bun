@@ -1,0 +1,16 @@
+# Two parents, a parent that no binding names, a prototype object that is replaced by another object, and a function of the same name that is no built-in: no parent.
+absent: no-single-parent.js:3 constructor function parent `TwoParents` = no-single-parent.js:1
+absent: no-single-parent.js:3 constructor function parent `TwoParents` = no-single-parent.js:2
+absent: no-single-parent.js:6 constructor function parent `EitherParent` = no-single-parent.js:1
+absent: no-single-parent.js:6 constructor function parent `EitherParent` = no-single-parent.js:2
+absent: no-single-parent.js:8 constructor function parent `Replaced` = no-single-parent.js:1
+absent: no-single-parent.js:11 constructor function parent `UnderAnObject` = no-single-parent.js:1
+absent: no-single-parent.js:15 constructor function parent `Itself` = no-single-parent.js:15
+absent: no-single-parent.js:17 constructor function parent `SharesThePrototypeObject` = no-single-parent.js:1
+absent: no-single-parent.js:19 constructor function parent `InRemovedCode` = no-single-parent.js:1
+absent: no-single-parent.js:21 constructor function parent `function () {}` = no-single-parent.js:1
+absent: no-single-parent.js:24 constructor function parent `ReassignedParent` = no-single-parent.js:1
+absent: no-single-parent.js:24 constructor function parent `ReassignedParent` = no-single-parent.js:2
+absent: no-single-parent.js:28 constructor function parent `TheFunctionItself` = no-single-parent.js:1
+absent: no-single-parent.js:32 constructor function parent `OtherObject` = no-single-parent.js:1
+absent: no-single-parent.js:34 constructor function parent `OtherCreate` = no-single-parent.js:1

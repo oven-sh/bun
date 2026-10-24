@@ -1,0 +1,48 @@
+undefined for an optional member {a:undefined,b:1}
+undefined for a member that may be undefined {a:undefined,b:1}
+that member absent TypeError a invalid_type undefined | number undefined
+undefined for unknown {a:undefined}
+undefined for a number TypeError a invalid_type number undefined
+undefined itself undefined
+undefined for an object TypeError  invalid_type object undefined
+undefined in an array [1,undefined]
+a hole in an array TypeError 1 invalid_type number undefined
+a hole where undefined fits [1,undefined,3]
+NaN, Infinity TypeError x invalid_type number nan; y invalid_type number infinity
+-0 {x:-0,y:0}
+a bigint {big:5n}
+a number for a bigint TypeError big invalid_type bigint number
+a bigint for a number TypeError n invalid_type number bigint
+wrapped primitives TypeError s invalid_type string object; n invalid_type number object; b invalid_type boolean object
+an instance of a class {x:3,y:4,z:3} false true false true {x:3,y:4,z:3}
+a getter of its class is not its own TypeError length invalid_type number undefined
+an inherited member is not its own TypeError x invalid_type number undefined; y invalid_type number undefined
+a member that is not enumerable TypeError y invalid_type number undefined
+no prototype {x:1,y:2} true
+a Date for an object type {}
+a Map for an object type {}
+a function for an object type {}
+an array for an object type TypeError  invalid_type object array
+an object for an array type TypeError  invalid_type array object
+under unknown, any, object true true true true true true
+a function under object true
+a key that is a symbol {x:1,y:2,Symbol(mark):"kept"}
+getters x,more,y,inner,inner.x {x:1,more:3,y:3,inner:{x:4,y:5}} true true
+a getter that throws RangeError from a getter
+a getter that fits once {a:1}
+a getter that misfits once TypeError a invalid_type number string
+reads 2
+a proxy of an object {x:1,more:"m",y:2} {"ownKeys":1,"describe x":1,"get x":1,"describe more":1,"get more":1,"describe y":1,"get y":1} {x:1,more:"m",y:2}
+a proxy of an array [1,2]
+{"get Symbol(Symbol.iterator)":1,"get length":3,"get 0":1,"get 1":1}
+a proxy that is refused TypeError x invalid_type number string
+{"ownKeys":1,"describe x":1,"get x":1,"describe y":1,"get y":1}
+a cycle under unknown true true true true
+a cycle under an undeclared key true true
+a getter that throws in an object without the tag RangeError mine
+a getter for the tag {kind:"b",b:{x:1,y:2}}
+the tag was read 1
+a getter where the second of two types fits {a:1,c:"c"}
+it was read 1
+the same where both types fill a member in {a:1,c:"c",size:2}
+it was read 1

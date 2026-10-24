@@ -74,7 +74,7 @@ function versionLeq(a: string, b: string): boolean {
 }
 
 type CheckName =
-  "exports" | "dynamic libraries" | "imports" | "static initializers" | "hardening" | "debug info" | "size";
+  "exports" | "dynamic libraries" | "imports" | "static initializers" | "symbols" | "hardening" | "debug info" | "size";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -109,6 +109,11 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "is never used. bun, JSC and WTF have none by policy: use a function-local static,",
     "WTF::LazyNeverDestroyed / NeverDestroyed, or constinit. The symbol name says which",
     "translation unit added it (_GLOBAL__sub_I_<file>).",
+  ],
+  symbols: [
+    "This code is there for tests and debugging and must not ship: the linker kept it because",
+    "something reachable refers to it. Find the caller (llvm-nm -A --undefined-only over the link",
+    "inputs) and compile the call out of this flavour, as binary-expectations.ts says for the list.",
   ],
   hardening: [
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
@@ -220,7 +225,10 @@ const loadCommands = (priv: string): { cmd: string; text: string }[] =>
     .map(text => ({ cmd: text.match(/^\s*cmd (\S+)/m)?.[1] ?? "", text }));
 
 /** Symbol table as address-sorted [addr, name] for symbolizing initializer pointers. */
-function symbolTable(nm: string, exe: string): { lookup(addr: bigint): string | undefined; size: number } {
+function symbolTable(
+  nm: string,
+  exe: string,
+): { lookup(addr: bigint): string | undefined; size: number; names: string[] } {
   const text = run(nm, ["--defined-only", "--numeric-sort", "--no-demangle", exe]);
   const addrs: bigint[] = [];
   const names: string[] = [];
@@ -232,7 +240,14 @@ function symbolTable(nm: string, exe: string): { lookup(addr: bigint): string | 
   }
   const exact = new Map<bigint, string>();
   for (let i = 0; i < addrs.length; i++) if (!exact.has(addrs[i]!)) exact.set(addrs[i]!, names[i]!);
-  return { lookup: a => exact.get(a) ?? exact.get(a & ~1n), size: addrs.length };
+  return { lookup: a => exact.get(a) ?? exact.get(a & ~1n), size: addrs.length, names };
+}
+
+/** An executable without a symbol table would pass for the wrong reason. */
+function forbiddenSymbolViolations(names: string[], forbidden: string[]): string[] {
+  if (names.length === 0) return ["the executable has no symbol table, so nothing can be said"];
+  const pat = globToRegExp(forbidden);
+  return names.filter(name => pat.test(name)).map(name => `+ ${name} (forbidden symbol)`);
 }
 
 function readAt(path: string, offset: number, length: number): Buffer {
@@ -340,11 +355,11 @@ function verifyElf(spec: VerifySpec): void {
   {
     const pat = globToRegExp(expect.forbiddenImports);
     const bad = imported.filter(s => pat.test(s));
-    report(
-      "imports",
-      `${imported.length} imported symbols`,
-      bad.map(s => `+ ${s} (forbidden import)`),
-    );
+    const missing = (expect.requiredImports ?? []).filter(s => !imported.includes(s));
+    report("imports", `${imported.length} imported symbols`, [
+      ...bad.map(s => `+ ${s} (forbidden import)`),
+      ...missing.map(s => `- ${s} (required import)`),
+    ]);
   }
 
   const sections = blocks(info, "Section");
@@ -386,6 +401,11 @@ function verifyElf(spec: VerifySpec): void {
       }
     }
     report("static initializers", `${names.length} static initializers`, violations, names);
+  }
+
+  if (expect.forbiddenSymbols !== undefined) {
+    const { names } = symbolTable(nm, exe);
+    report("symbols", `${names.length} defined symbols`, forbiddenSymbolViolations(names, expect.forbiddenSymbols));
   }
 
   // 5. hardening
@@ -529,6 +549,11 @@ function verifyMachO(spec: VerifySpec): void {
       }
     }
     report("static initializers", `${names.length} static initializers`, violations, names);
+  }
+
+  if (expect.forbiddenSymbols !== undefined) {
+    const { names } = symbolTable(nm, exe);
+    report("symbols", `${names.length} defined symbols`, forbiddenSymbolViolations(names, expect.forbiddenSymbols));
   }
 
   // 5. hardening: header flags + segment protections

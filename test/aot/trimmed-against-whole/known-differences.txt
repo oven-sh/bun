@@ -1,0 +1,7 @@
+# Where a trimmed executable does not behave as the whole one does today. Every line is a bug, and goes when the bug is fixed.
+# trimmed-against-whole.test.ts does not fail for a difference that a line describes:
+#   program | <corpus> <name> | what is wrong
+#   says | <regular expression that what the trimmed executable prints matches> | what is wrong
+says | it isn't in this executable\. Import it by name | a native built-in module (node:sqlite, bun:jsc) asked for by a computed name loads without --trim and is left out with it
+says | (throws|rejects) Error: (MessageChannel, MessagePort and BroadcastChannel|the WebSocket client|worker threads|crypto\.subtle, SubtleCrypto and CryptoKey|Bun\.Image) was removed by --trim | a method of MessagePort, BroadcastChannel, WebSocket, Worker or SubtleCrypto, or File.prototype.image, that is taken from the prototype object and called on another receiver throws this in place of the TypeError about the receiver
+says | (throws|rejects) Error: .* was removed by --trim because your code never uses it\. To keep it, add "temporal" | a method or a getter of a class of Temporal that is taken from the prototype object and used on another receiver throws this in place of the TypeError about the receiver

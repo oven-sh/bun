@@ -82,7 +82,7 @@ impl Checker<'_, '_> {
 
     /// From `checkExportAssignment`, for an `export =` in a valid position: 1203 1218.
     pub(super) fn check_grammar_export_equals(&mut self, file: FileId, s: StmtId) {
-        let (hir, kind) = (self.hir(file), self.p.files.options.module);
+        let (hir, kind) = (self.hir(file), self.module_options(file).module);
         let is_ambient = hir.is_ambient(hir.node(s));
         let format = self.files().module(file).implied_format;
         if kind >= ModuleKind::Es2015
@@ -98,11 +98,11 @@ impl Checker<'_, '_> {
 
     /// `checkGrammarImportCallExpression`
     pub(super) fn check_grammar_import_call_expression(&mut self, file: FileId, e: ExprId) -> bool {
-        let (hir, kind) = (self.hir(file), self.p.files.options.module);
+        let (hir, kind) = (self.hir(file), self.module_options(file).module);
         let ExprKind::ImportCall { args, .. } = hir[e].kind else {
             return false;
         };
-        if self.p.files.options.verbatim_module_syntax && kind == ModuleKind::CommonJs {
+        if self.module_options(file).verbatim_module_syntax && kind == ModuleKind::CommonJs {
             let message = self.verbatim_module_syntax_error_message(file);
             return self.grammar_error_on_node(file, e, message, &[]);
         }
@@ -131,7 +131,7 @@ impl Checker<'_, '_> {
             }
         }
         if args.len() > 2 || matches!(hir[specifier].kind, ExprKind::Missing) {
-            return self.grammar_error_on_node(file, e, 1450, &[]);
+            return self.early_grammar_error_on_node(file, e, 1450, &[]);
         }
         let is_spread = |a: &ExprId| matches!(hir[*a].kind, ExprKind::Spread(_));
         match [Some(specifier), options]
@@ -141,7 +141,7 @@ impl Checker<'_, '_> {
         {
             Some(spread) => {
                 let at = (file, hir[spread].pos, self.end_of_expr(file, spread));
-                self.grammar_error_at(at, 1325, &[])
+                self.early_grammar_error_at(at, 1325, &[])
             }
             None => false,
         }
@@ -152,10 +152,10 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         if !hir.yield_context(hir.node(e)) {
             // `grammarErrorOnFirstToken`
-            self.grammar_error_at((file, hir[e].pos, 0), 1163, &[]);
+            self.early_grammar_error_at((file, hir[e].pos, 0), 1163, &[]);
         }
         if hir.is_in_parameter_initializer_before_containing_function(hir.node(e)) {
-            self.error(file, e, 2523, &[]);
+            self.early_error_on_node(file, e, 2523, &[]);
         }
     }
 
@@ -167,7 +167,7 @@ impl Checker<'_, '_> {
         left: ExprId,
         right: ExprId,
     ) {
-        if self.p.files.options.allow_unreachable_code == Some(true)
+        if self.module_options(file).allow_unreachable_code == Some(true)
             || !self.is_side_effect_free(file, left)
             || self.is_indirect_call(file, id, left, right)
         {
@@ -228,7 +228,7 @@ impl Checker<'_, '_> {
             ExprKind::Ident(_)
             | ExprKind::Missing
             | ExprKind::String(_)
-            | ExprKind::Regex
+            | ExprKind::Regex { .. }
             | ExprKind::TaggedTemplate(_)
             | ExprKind::Template { .. }
             | ExprKind::Number(_)
@@ -292,7 +292,7 @@ impl Checker<'_, '_> {
 
     /// The errors binder.go reports for an `Identifier` based on its text, and for the operand of `delete`. All code is
     /// strict mode code. `checkContextualIdentifier` only reports for a file that `parses`.
-    fn check_strict_mode(&mut self, file: FileId, parses: bool) {
+    pub(super) fn check_strict_mode(&mut self, file: FileId, parses: bool) {
         let hir = self.hir(file);
         for &node in hir.keyword_identifiers() {
             match hir.text(node) {
@@ -308,7 +308,7 @@ impl Checker<'_, '_> {
 
     /// `getStrictModeIdentifierMessage`, `getStrictModeEvalOrArgumentsMessage`: the message depends on why the code is
     /// strict: `[in a class, in a module, otherwise]`.
-    fn strict_mode_message(&self, file: FileId, node: Node, codes: [u32; 3]) -> u32 {
+    pub(super) fn strict_mode_message(&self, file: FileId, node: Node, codes: [u32; 3]) -> u32 {
         let hir = self.hir(file);
         if hir.get_containing_class(node).is_some() {
             codes[0]
@@ -326,19 +326,25 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        let code = if hir.text(node) != known::r#await {
-            self.strict_mode_message(file, node, [1213, 1214, 1212])
+        let (code, class) = if hir.text(node) != known::r#await {
+            let code = self.strict_mode_message(file, node, [1213, 1214, 1212]);
+            (code, self.strict_mode_name_error_class(file, node))
         } else if hir.has_module_syntax && hir.is_in_top_level_context(node) {
-            1262
+            // A compile build sets `has_module_syntax` in a CommonJS file too.
+            if self.is_compiled_as_commonjs(file) {
+                (1262, DiagnosticClass::TypeScriptGrammar)
+            } else {
+                (1262, self.early_error_class(file, node))
+            }
         } else if hir.await_context(node) == Ok(true) {
-            1359
+            (1359, self.early_error_class(file, node))
         } else {
             return;
         };
         // `DeclarationNameToString`: the source text, including escapes.
         let start = hir.start(node);
         let raw_name = &hir.text[start as usize..self.end_of_name_at(file, start) as usize];
-        self.error(file, node, code, &[Arg::Bytes(raw_name)]);
+        self.error(file, node, code, &[Arg::Bytes(raw_name)]).class = class;
     }
 
     /// `checkStrictModeEvalOrArguments` for `name`, which is `eval` or `arguments`, wherever binder.go calls it.
@@ -374,7 +380,9 @@ impl Checker<'_, '_> {
         };
         if is_visited {
             let code = self.strict_mode_message(file, context, [1210, 1215, 1100]);
-            self.error(file, name, code, &[Arg::Atom(hir.text(name))]);
+            let class = self.strict_mode_name_error_class(file, name);
+            let text = Arg::Atom(hir.text(name));
+            self.error(file, name, code, &[text]).class = class;
         }
     }
 
@@ -393,19 +401,21 @@ impl Checker<'_, '_> {
             if matches!(bound.parent_of_expr(id), Parent::None) {
                 continue;
             }
-            match hir[operand].kind {
+            let at = match hir[operand].kind {
                 // A parenthesized expression isn't an identifier, whatever it contains.
                 ExprKind::Ident(_) if !is_parenthesized(hir, operand) => {
-                    self.error_at((file, hir[operand].pos, 0), 1102, &[]);
+                    (file, hir[operand].pos, 0)
                 }
                 // A missing operand is a missing identifier, which starts at the end of the keyword
                 // (`createMissingNode`).
                 ExprKind::Missing => {
                     let start = hir[id].pos + b"delete".len() as u32;
-                    self.error_at((file, start, start), 1102, &[]);
+                    (file, start, start)
                 }
-                _ => {}
-            }
+                _ => continue,
+            };
+            let class = self.strict_mode_error_class(file, hir.node(id));
+            self.error_at(at, 1102, &[]).class = class;
         }
     }
 }

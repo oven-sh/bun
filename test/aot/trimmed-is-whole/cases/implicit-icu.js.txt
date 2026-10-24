@@ -1,0 +1,137 @@
+// Uses ICU without naming Intl: implicit conversions, and names that arrive as data.
+// --trim keeps toLocaleString and localeCompare where something names them. A name that arrives as data names nothing, so the call throws.
+//@ args toLocaleString localeCompare normalize toLocaleUpperCase de
+const names = process.argv.slice(2);
+//// number-toLocaleString
+console.log((1234567.891).toLocaleString());
+//// number-toLocaleString-de
+console.log((1234567.891).toLocaleString("de-DE"));
+//// number-toLocaleString-argv-locale
+console.log((1234567.891).toLocaleString(names[4]));
+//// number-toLocaleString-currency
+console.log((1234.5).toLocaleString("ja-JP", { style: "currency", currency: "JPY" }));
+//// number-toLocaleString-unit
+console.log((16).toLocaleString("en-US", { style: "unit", unit: "liter", unitDisplay: "long" }), (16).toLocaleString("de", { style: "unit", unit: "kilometer-per-hour" }));
+//// number-toLocaleString-compact
+console.log((1234567).toLocaleString("en", { notation: "compact", compactDisplay: "long" }), (1234567).toLocaleString("hi", { notation: "compact" }));
+//// number-computed-name
+//@ trimmed-says toLocaleString was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+console.log((1234567.891)[names[0]]("de-DE"));
+//// number-computed-name-that-a-list-names
+const known = ["toLocaleString", "toFixed"];
+console.log(known.includes(names[0]) ? (1234567.891)[names[0]]("de-DE") : "unknown");
+//// number-computed-name-that-a-comparison-names
+console.log(names[0] === "toLocaleString" ? (1234567.891)[names[0]]("de-DE") : "unknown");
+//// bigint-toLocaleString
+console.log((12345678901234567890n).toLocaleString("de-DE"));
+//// date-toLocaleString
+console.log(new Date(0).toLocaleString("en-US", { timeZone: "UTC" }), new Date(0).toLocaleString("fr-FR", { timeZone: "Asia/Tokyo" }));
+//// date-toLocaleDateString
+console.log(new Date(0).toLocaleDateString("de-DE", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "UTC" }));
+//// date-toLocaleTimeString
+console.log(new Date(0).toLocaleTimeString("ar-EG", { timeZone: "UTC" }));
+//// date-toString
+console.log(new Date(0).toString(), String(new Date(1e12)), `${new Date(1.5e12)}`);
+//// date-toTimeString
+console.log(new Date(0).toTimeString());
+//// date-concat
+console.log("" + new Date(0));
+//// date-console-log
+console.log(new Date(0), [new Date(0)]);
+//// date-parse-zone
+console.log(Date.parse("Thu, 01 Jan 1970 00:00:00 PST"), new Date("2024-03-10T02:30:00").getTimezoneOffset(), new Date(2024, 6, 1).getTimezoneOffset());
+//// date-tz-env
+//@ env TZ=Europe/Berlin
+console.log(new Date(0).toString(), new Date(0).getHours(), new Date(1720000000000).toString());
+//// date-tz-set-at-run-time
+process.env.TZ = "Asia/Kolkata";
+console.log(new Date(0).toString(), new Date(0).getHours());
+//// array-toLocaleString
+console.log([1234.5, new Date(0), 10n].toLocaleString("de-DE", { timeZone: "UTC" }));
+//// array-toLocaleString-no-args
+console.log([1234.5, 1e6].toLocaleString());
+//// typedarray-toLocaleString
+console.log(new Float64Array([1234.5, 1e6]).toLocaleString("de-DE"));
+//// object-toLocaleString
+console.log(({}).toLocaleString(), Object.prototype.toLocaleString.call(1234.5));
+//// array-computed
+//@ trimmed-says toLocaleString was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+console.log([1234.5][names[0]]("de-DE"));
+//// localeCompare
+console.log(["ä", "a", "z", "Z", "é"].sort((a, b) => a.localeCompare(b)).join());
+//// localeCompare-sv
+console.log(["ä", "a", "z"].sort((a, b) => a.localeCompare(b, "sv")).join(), ["ä", "a", "z"].sort((a, b) => a.localeCompare(b, "de")).join());
+//// localeCompare-numeric
+console.log(["a10", "a2"].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join());
+//// localeCompare-computed
+//@ trimmed-says localeCompare was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+console.log("ä"[names[1]]("z", "sv"));
+//// localeCompare-bound
+const compare = String.prototype.localeCompare;
+console.log(compare.call("ä", "z", "sv"));
+//// localeCompare-destructured
+const { localeCompare } = String.prototype;
+console.log(localeCompare.call("ä", "z", "sv"));
+//// normalize
+console.log("é".normalize().length, "é".normalize("NFD").length, "ﬁ".normalize("NFKC"), "ẛ̣".normalize("NFKD").length);
+//// normalize-computed
+console.log("é"[names[2]]("NFC").length);
+//// toLocaleUpperCase
+console.log("i".toLocaleUpperCase("tr"), "I".toLocaleLowerCase("tr"), "ß".toLocaleUpperCase("de"), "ǆ".toLocaleUpperCase());
+//// toLocaleUpperCase-computed
+console.log("i"[names[3]]("tr"));
+//// toUpperCase-unicode
+console.log("ß".toUpperCase(), "ǆ".toUpperCase(), "İ".toLowerCase().length, "Σ".toLowerCase(), "ΑΣ".toLowerCase());
+//// isWellFormed
+console.log("a\uD800".isWellFormed(), "a\uD800".toWellFormed().charCodeAt(1));
+//// regexp-ignore-case-unicode
+console.log(/ſ/iu.test("s"), /K/iu.test("k"), /ß/i.test("ẞ"));
+//// string-at-grapheme-free
+console.log([..."👨‍👩‍👧"].length, "👨‍👩‍👧".length);
+//// Bun-stringWidth
+console.log(Bun.stringWidth("👨‍👩‍👧"), Bun.stringWidth("日本語"), Bun.stringWidth("é"));
+//// util-getStringWidth-table
+console.table([{ "名前": "日本語", b: "é" }]);
+//// url-idna
+console.log(new URL("http://münchen.de/ü?ü#ü").href, new URL("http://xn--mnchen-3ya.de").hostname);
+//// url-domainToUnicode
+import { domainToUnicode, domainToASCII } from "node:url";
+console.log(domainToUnicode("xn--mnchen-3ya.de"), domainToASCII("münchen.de"), domainToASCII("xn--iñvalid.com"));
+//// punycode
+import punycode from "node:punycode";
+console.log(punycode.toASCII("münchen.de"), punycode.toUnicode("xn--mnchen-3ya.de"));
+//// buffer-transcode
+import { transcode } from "node:buffer";
+console.log(transcode(Buffer.from("€"), "utf8", "ucs2"), transcode(Buffer.from("€"), "utf8", "latin1"));
+//// buffer-isUtf8
+import { isUtf8, isAscii } from "node:buffer";
+console.log(isUtf8(Buffer.from("é")), isAscii(Buffer.from("é")));
+//// process-versions-icu
+console.log(typeof process.versions.icu, typeof process.versions.unicode, typeof process.versions.cldr, typeof process.versions.tz);
+//// navigator-language
+console.log(navigator.language, navigator.languages);
+//// lang-env-number
+//@ env LANG=de_DE.UTF-8
+//@ env LC_ALL=de_DE.UTF-8
+console.log((1234567.891).toLocaleString(), new Date(0).toLocaleDateString(undefined, { timeZone: "UTC" }), navigator.language);
+//// temporal-free-date-toTemporalInstant
+console.log(typeof Date.prototype.toTemporalInstant, new Date(0).toTemporalInstant?.().toString());
+//// toLocaleString-via-template-helper
+function format(value) { return value.toLocaleString("de-DE"); }
+console.log(format(1234.5), format(new Date(0)).length > 0, format([1.5]), format({}));
+//// toLocaleString-typed-number
+//@ ext ts
+function format(value: number): string { return value.toLocaleString("de-DE"); }
+console.log(format(1234.5));
+//// toLocaleString-typed-date
+//@ ext ts
+function format(value: Date): string { return value.toLocaleString("de-DE", { timeZone: "UTC" }); }
+console.log(format(new Date(0)));
+//// JSON-stringify-date
+console.log(JSON.stringify({ d: new Date(0) }));
+//// Reflect-apply-toLocaleString
+//@ trimmed-says toLocaleString was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+console.log(Reflect.apply(Number.prototype[names[0]], 1234.5, ["de-DE"]));
+//// getOwnPropertyNames-number-prototype
+//@ trimmed-says toLocaleString was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+for (const name of Object.getOwnPropertyNames(Number.prototype)) if (name.startsWith("toLocale")) console.log(Number.prototype[name].call(1234.5, "de-DE"));

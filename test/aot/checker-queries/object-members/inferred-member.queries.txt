@@ -1,0 +1,3 @@
+# A class field without an annotation is unwritten; one with an annotation is written.
+inferred-member.ts:3 has `C` = x Field unwritten checked number
+inferred-member.ts:3 has `C` = y Field number checked number

@@ -1,0 +1,195 @@
+feature InternalForTesting "bun:internal-for-testing and internal/test/binding"
+  entered-from command-line
+
+feature Test "bun:test and node:test"
+  minimum 100000
+
+feature WebView "Bun.WebView"
+
+feature OpenInEditor "Bun.openInEditor"
+
+feature Unsafe "Bun.unsafe"
+
+feature Ffi "bun:ffi and its C compiler"
+  exports
+  minimum 20000
+
+feature Plugin "Bun.plugin"
+
+feature FileSystemRouter "Bun.FileSystemRouter"
+
+feature Cron "Bun.cron"
+
+feature Secrets "Bun.secrets"
+
+feature Shell "the Bun.$ shell"
+  minimum 200000 elf
+  minimum 200000 macho
+
+feature Color "Bun.color"
+
+feature Markdown "Bun.markdown"
+
+feature Xml "Bun.XML"
+
+feature Json5 "Bun.JSON5"
+
+feature Jsonc "Bun.JSONC"
+
+feature Jsonl "Bun.JSONL"
+
+feature Yaml "Bun.YAML"
+
+feature Toml "Bun.TOML"
+
+feature Archive "Bun.Archive"
+
+feature Semver "Bun.semver"
+
+feature Ansi "Bun.sliceAnsi and Bun.wrapAnsi"
+
+feature EscapeHtml "Bun.escapeHTML"
+
+feature Hash "Bun.hash"
+
+feature Uuid "Bun.randomUUIDv5 and Bun.randomUUIDv7"
+
+feature Csrf "Bun.CSRF"
+
+feature Password "Bun.password"
+
+feature Hashers "Bun.sha and the hash classes from Bun.MD4 to Bun.SHA512_256"
+
+feature Sqlite "bun:sqlite and node:sqlite"
+  exports
+  minimum 30000
+
+feature SqliteExtensions "loadExtension in bun:sqlite and node:sqlite"
+
+feature Sql "Bun.sql and Bun.SQL for PostgreSQL and MySQL"
+
+feature CompressionFunctions "Bun.gunzipSync, Bun.inflateSync, Bun.zstdDecompress and Bun.zstdDecompressSync"
+
+feature BunZstdCompress "Bun.zstdCompress and Bun.zstdCompressSync"
+
+feature BunDeflate "Bun.gzipSync and Bun.deflateSync"
+
+feature BunJsc "bun:jsc"
+
+feature ModuleGraph "Bun.ModuleGraph"
+
+feature Valkey "Bun.redis and Bun.RedisClient"
+
+feature RuntimeTranspiler "Bun.Transpiler and the transpiler for code loaded at run time"
+  minimum 700000
+
+feature DataFileLoaders "import() and require() of JSON, TOML, YAML, text and other data files that aren't in the executable"
+
+feature Bundler "Bun.build, HTML imports and the development server"
+  minimum 450000
+
+feature CssParser "the CSS parser"
+
+feature ReactCompiler "the React Compiler"
+  minimum 600000
+
+feature Libarchive "tar archive support"
+  cxx-function archive_ ^_{0,2}archive_\w+$
+
+feature ServeHttp2 "HTTP/2 and HTTP/3 in Bun.serve"
+  cxx-function uws_h2_ ^uws_h2_(?!res_is_closed$|res_write_continue$)
+  cxx-function Http2 (^|\s)uWS::Http2\w*::
+  cxx-function H2 (^|\s)uWS::H2\w*::
+
+feature LibdeflateCompressor "gzip and deflate compression with libdeflate"
+  c-function libdeflate_alloc_compressor libdeflate_alloc_compressor_ex libdeflate_free_compressor
+  c-function libdeflate_deflate_compress libdeflate_deflate_compress_bound libdeflate_gzip_compress libdeflate_gzip_compress_bound
+  c-function libdeflate_zlib_compress libdeflate_zlib_compress_bound
+
+feature BrotliEncoder "Brotli compression"
+  c-function BrotliEncoderCreateInstance BrotliEncoderDestroyInstance BrotliEncoderSetParameter
+  c-function BrotliEncoderCompress BrotliEncoderCompressStream BrotliEncoderMaxCompressedSize
+  c-function BrotliEncoderPrepareDictionary BrotliEncoderDestroyPreparedDictionary BrotliEncoderAttachPreparedDictionary
+
+feature ZstdCompressor "zstd compression"
+  c-function ZSTD_compress ZSTD_compressBound ZSTD_compressStream2 ZSTD_createCCtx ZSTD_freeCCtx
+  c-function ZSTD_CCtx_loadDictionary ZSTD_CCtx_reset ZSTD_CCtx_setParameter ZSTD_CCtx_setPledgedSrcSize
+
+feature NativeAddons "native addons, process.dlopen and N-API"
+  exports
+
+feature Terminal "Bun.Terminal"
+
+feature CryptoHasher "Bun.CryptoHasher"
+
+feature Udp "Bun.udpSocket and node:dgram"
+
+feature DeepEquals "Bun.deepEquals, Bun.deepMatch, util.isDeepStrictEqual and assert.partialDeepStrictEqual"
+  minimum 30000
+
+feature Spawn "Bun.spawn and Bun.spawnSync"
+
+feature BunSpawn "Bun.spawn"
+
+feature ChildProcess "child process support"
+  c-function posix_spawn_bun
+  cxx-function spawn_process_posix ^bun_spawn_sys::spawn_process::spawn_process_posix\b
+
+feature Sockets "Bun.listen, Bun.connect and node:net"
+
+feature Dns "Bun.dns and node:dns"
+  minimum 100000 elf
+  minimum 100000 macho
+
+feature BunUtilities "Bun.stripANSI, Bun.mmap, Bun.which, Bun.indexOfLine, Bun.sleep, Bun.sleepSync, Bun.gc, Bun.shrink, Bun.allocUnsafe, Bun.nanoseconds, Bun.peek and Bun.concatArrayBuffers"
+
+feature ExternalSerializedValues "deserialize in bun:jsc and node:v8, and IPC with advanced serialization"
+
+feature Image "Bun.Image"
+  minimum 200000
+
+feature Cookie "Bun.Cookie and Bun.CookieMap"
+
+feature Glob "Bun.Glob"
+
+feature StringWidth "Bun.stringWidth"
+
+feature S3Responses "S3 response parsing"
+
+feature S3Client "Bun.s3, Bun.S3Client and s3: URLs"
+
+feature BrotliDecoder "Brotli decompression"
+  c-function BrotliDecoderCreateInstance BrotliDecoderDestroyInstance BrotliDecoderSetParameter BrotliDecoderAttachDictionary
+  c-function BrotliDecoderDecompressStream BrotliDecoderGetErrorCode BrotliDecoderErrorString BrotliDecoderHasMoreOutput
+
+feature Http3 "HTTP/3 in Bun.serve and fetch"
+  c-function us_quic_loop_process us_quic_loop_flush_if_pending
+  cxx-function uws_h3_ ^uws_h3_(?!app_clear_routes$|listen_socket_port$|listen_socket_local_address$|listen_socket_close$)
+  cxx-function Http3 (^|\s)uWS::Http3\w*::
+  cxx-function H3 (^|\s)uWS::H3\w*::
+
+feature TlsSockets "TLS sockets and servers"
+  cxx-function uWS uWS::(TemplatedApp|HttpContext|HttpContextData|HttpResponse|HttpResponseData|AsyncSocket|WebSocket|WebSocketContext|WebSocketContextData)<(?:true|1)[,>]
+
+feature X509 "crypto.X509Certificate and crypto.KeyObject"
+
+feature SystemCaCertificates "tls.getCACertificates('system')"
+
+feature Tls "TLS"
+  c-function us_internal_ssl_attach us_internal_ssl_detach us_internal_ssl_close us_internal_ssl_shutdown
+  c-function us_internal_ssl_on_open us_internal_ssl_on_data us_internal_ssl_on_writable us_internal_ssl_on_timeout
+  c-function us_internal_ssl_on_end us_internal_ssl_on_end_after_rejected_send us_internal_ssl_on_close
+  c-function us_internal_ssl_write us_internal_ssl_writev us_internal_ssl_fatal_write_error us_internal_ssl_spill_pending
+  c-function us_internal_ssl_is_shut_down us_internal_ssl_is_low_prio us_internal_ssl_is_handshake_finished
+  c-function us_internal_ssl_handshake_callback_has_fired us_internal_ssl_get_native_handle us_internal_ssl_verify_error
+  c-function us_internal_ssl_sni_servername us_internal_ssl_socket_relocated us_internal_ssl_ctx_up_ref us_internal_ssl_ctx_unref
+  c-function us_internal_free_loop_ssl_data
+
+feature BunInfo "the development server's /bun:info route"
+
+feature Serve "Bun.serve"
+  minimum 100000
+
+feature BunFile "Bun.file and Bun.write"
+
+feature FileSink "FileSink and .writer()"

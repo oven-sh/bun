@@ -875,7 +875,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // "a['b']" => "a.b"
-        if p.options.features.minify_syntax {
+        if p.options.features.minify_syntax && !p.options.features.is_library {
             if let Some(mut s) = e_.index.data.e_string() {
                 if !s.is_utf16 && s.is_identifier(p.arena) {
                     let dot = p.new_expr(
@@ -904,6 +904,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
             }
+        }
+
+        if !p.parse_members_with_type_arguments.is_empty() {
+            p.check_type_arguments_of_parse(e_.index.loc, e_.target);
         }
 
         p.visit_expr_in_out(
@@ -1004,7 +1008,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
-                        if p.options.features.minify_syntax && s.is_identifier(p.arena) {
+                        if p.options.features.minify_syntax
+                            && !p.options.features.is_library
+                            && s.is_identifier(p.arena)
+                        {
                             let dot = p.new_expr(
                                 E::Dot {
                                     name: s.data,
@@ -1348,6 +1355,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_template_tag = matches!(p.template_tag, Data::EDot(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
+
+        if !p.parse_members_with_type_arguments.is_empty() {
+            p.check_type_arguments_of_parse(e_.name_loc, e_.target);
+        }
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
         // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called

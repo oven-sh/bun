@@ -58,7 +58,7 @@ impl Checker<'_, '_> {
                 self.start_of(file, mixed),
                 self.end_of_expr(file, mixed),
             );
-            self.grammar_error_at(at, 5076, &[Arg::Text(first), Arg::Text(second)]);
+            self.early_grammar_error_at(at, 5076, &[Arg::Text(first), Arg::Text(second)]);
         }
         // `checkNullishCoalesceOperandLeft`
         let left_target = self.skip_outer_expressions(file, left);
@@ -240,7 +240,7 @@ impl Checker<'_, '_> {
             | ExprKind::BigInt(_)
             | ExprKind::Class(_)
             | ExprKind::Object(_)
-            | ExprKind::Regex => ALWAYS,
+            | ExprKind::Regex { .. } => ALWAYS,
             // Not a fragment.
             ExprKind::Jsx(j) if hir[j].tag.is_some() => ALWAYS,
             ExprKind::Unary { op: UnOp::Void, .. } | ExprKind::Null => NEVER,
@@ -344,7 +344,7 @@ impl Checker<'_, '_> {
         let is_private =
             self.atoms().is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. });
         if is_private {
-            self.error_at((file, start, end), 18011, &[]);
+            self.early_error_at((file, start, end), 18011, &[]);
         }
         let object = self.type_of_expr(file, obj);
         if self.is_any(object) {
@@ -379,14 +379,14 @@ impl Checker<'_, '_> {
         }
         // `checkDeleteExpressionMustBeOptional`
         let ty = self.type_of_prop(prop, mapper);
-        if !self.p.files.options.strict_null_checks
+        if !self.reports_null_checks(file)
             || self.is_any(ty)
             || ty == TypeId::UNKNOWN
             || ty.is_never()
         {
             return;
         }
-        let is_optional = if self.p.files.options.exact_optional_property_types {
+        let is_optional = if self.module_options(file).exact_optional_property_types {
             prop.flags.contains(PropFlags::OPTIONAL)
         } else {
             self.is_possibly_undefined(ty)

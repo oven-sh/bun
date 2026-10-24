@@ -1,0 +1,142 @@
+# x.json() that is awaited at once becomes a call for what it parses, the same await, and a parse of that, with the decoded text given to JSON.parse on the rare path
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 4
+# STATISTIC: ParsersCreated = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+# CHECK-NEXT: decline TypedResultNotSelected f4 v1 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NEXT: decline TypedResultNotSelected f5 v2 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NEXT: decline TypedResultNotSelected f6 v2 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NEXT: decline TypedResultNotSelected f7 v1 None [0] reason=NoTarget
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+
+function f0 name="responseAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = Await v1
+    v3 = Check v2 castType=undefined|null|L0
+    Return v3
+}
+# CHECK-LABEL: function f0 name="responseAwaitedAtOnce"
+# CHECK: b0(v0: Response):
+# CHECK-NEXT: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
+# CHECK-NEXT: [[bytes0]]:{{*}}= Await v1
+# CHECK-NEXT: [[open0]]: boolean = JSONSourceOpen [[bytes0]]
+# CHECK-NEXT: Branch [[open0]] -> taken [[opened0]](| 0), notTaken
+# CHECK: [[done0]](v2:{{*}}):
+# CHECK-NEXT: v3:{{*}}= Check v2 castType=undefined|null|L0
+# CHECK-NEXT: Return v3
+# CHECK: [[generic0]]() frequency=Rare:
+# CHECK-NEXT: [[text0]]:{{*}}= JSONDecodeBytes [[bytes0]]
+# CHECK-NEXT: [[plain0]]:{{*}}= CallBuiltin -, [[text0]] overload=JSONParse/0
+# CHECK-NEXT: Jump -> next [[done0]]([[plain0]])
+# CHECK: [[opened0]]([[source0]]: guard):
+# CHECK-NEXT: [[start0]]: cursor = JSONSourceStart [[source0]]
+# CHECK-NEXT: [[first0]]: cursor = JSONSkipWhitespace [[start0]]
+# CHECK-NEXT: = CallDirect [[first0]] function=[[parser]]
+# CHECK: = JSONSourceClose [[source0]],
+# CHECK: JSONSourceAbandon [[source0]]
+# CHECK-NEXT: Jump -> next [[generic0]]()
+# CHECK-NOT: ResponsePrototypeJson
+
+function f1 name="requestAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Request}] results=[{type=Promise}] {
+  b0(v0: Request):
+    v1 = CallBuiltin v0 overload=RequestPrototypeJson/0
+    v2 = Await v1
+    v3 = Check v2 castType=undefined|null|L0
+    Return v3
+}
+# CHECK-LABEL: function f1 name="requestAwaitedAtOnce"
+# CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
+# CHECK-NEXT: [[bytes1]]:{{*}}= Await v1
+# CHECK-NEXT: = JSONSourceOpen [[bytes1]]
+# CHECK: = CallDirect {{*}} function=[[parser]]
+
+function f2 name="blobAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Blob}] results=[{type=Promise}] {
+  b0(v0: Blob):
+    v1 = CallBuiltin v0 overload=BlobPrototypeJson/0
+    v2 = Await v1
+    v3 = Check v2 castType=undefined|null|L0
+    Return v3
+}
+# CHECK-LABEL: function f2 name="blobAwaitedAtOnce"
+# CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
+# CHECK-NEXT: [[bytes2]]:{{*}}= Await v1
+# CHECK-NEXT: = JSONSourceOpen [[bytes2]]
+# CHECK: = CallDirect {{*}} function=[[parser]]
+
+function f3 name="valueWithoutEffectsBetweenCallAndAwait" flags=[IsAsync] parameters=[{type=Response}, {type=number}] results=[{type=Promise}] {
+  b0(v0: Response, v1: number):
+    v2 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v3 = Add v1, v1
+    v4 = Await v2
+    v5 ~ undefined|null|L0 = Upcast v4 castType=anything
+    v6 = NewArray v3, v5 contents=anything
+    Return v6
+}
+# CHECK-LABEL: function f3 name="valueWithoutEffectsBetweenCallAndAwait"
+# CHECK: v2:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
+# CHECK-NEXT: v3: number = Add v1, v1
+# CHECK-NEXT: [[bytes3]]:{{*}}= Await v2
+# CHECK-NEXT: = JSONSourceOpen [[bytes3]]
+# CHECK: = CallDirect {{*}} function=[[parser]]
+
+function f4 name="promiseHasAnotherUse" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = Await v1
+    v3 = Check v2 castType=undefined|null|L0
+    v4 = NewArray v1, v3 contents=anything
+    Return v4
+}
+# CHECK-LABEL: function f4 name="promiseHasAnotherUse"
+# CHECK: b0(v0: Response):
+# CHECK-NEXT: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeJson/0
+# CHECK-NEXT: v2:{{*}}= Await v1
+# CHECK-NEXT: v3:{{*}}= Check v2 castType=undefined|null|L0
+
+function f5 name="unknownCodeBetweenCallAndAwait" flags=[IsAsync] parameters=[{type=Response}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: Response, v1: anything):
+    v2 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v3 = Call v1
+    v4 = Await v2
+    v5 = Check v4 castType=undefined|null|L0
+    Return v5
+}
+# CHECK-LABEL: function f5 name="unknownCodeBetweenCallAndAwait"
+# CHECK: v2:{{*}}= CallBuiltin v0 overload=ResponsePrototypeJson/0
+# CHECK-NEXT: v3:{{*}}= Call v1
+# CHECK-NEXT: v4:{{*}}= Await v2
+
+function f6 name="awaitInAnotherBlock" flags=[IsAsync] parameters=[{type=Response}, {type=boolean}] results=[{type=Promise}] {
+  b0(v0: Response, v1: boolean):
+    v2 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Await v2
+    v4 = Check v3 castType=undefined|null|L0
+    Return v4
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f6 name="awaitInAnotherBlock"
+# CHECK: v2:{{*}}= CallBuiltin v0 overload=ResponsePrototypeJson/0
+# CHECK-NEXT: Branch v1
+# CHECK: v3:{{*}}= Await v2
+
+function f7 name="awaitedValueIsNotChecked" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = Await v1
+    Return v2
+}
+# CHECK-LABEL: function f7 name="awaitedValueIsNotChecked"
+# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeJson/0
+# CHECK-NEXT: v2:{{*}}= Await v1
+# CHECK-NEXT: Return v2
+# CHECK: function [[parser]] {{*}}role=Parser

@@ -2,7 +2,9 @@
 #include "headers-handwritten.h"
 #include "NodeModuleModule.h"
 #include "CodeGenerationFromStrings.h"
+#include "BunCompiledModules.h"
 #include "ModuleGraph.h"
+#include "Path.h"
 #include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -185,8 +187,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
             0);
     }
 
-    out->putDirect(vm, JSC::Identifier::fromString(vm, "exports"_s),
-        JSC::constructEmptyObject(globalObject), 0);
+    JSObject* exports = JSC::constructEmptyObject(globalObject);
+    out->putDirect(vm, JSC::Identifier::fromString(vm, "exports"_s), exports, 0);
 
     return JSValue::encode(out);
 }
@@ -444,6 +446,10 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
         }
     }
 
+    auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+    Bun::willChangeRequireOverride(globalObject, JSC::AOT::RequireOverride::ResolveFilename, !isOriginal);
+    RETURN_IF_EXCEPTION(scope, false);
+
     if (isOriginal) {
         globalObject->hasOverriddenModuleResolveFilenameFunction = false;
         globalObject->m_moduleResolveFilenameOverride.clear();
@@ -548,14 +554,8 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
     JSValue dirname;
     if (parent.filename) {
-        EncodedJSValue encodedFilename = JSValue::encode(parent.filename);
-#if OS(WINDOWS)
-        dirname = JSValue::decode(
-            Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
-#else
-        dirname = JSValue::decode(
-            Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
-#endif
+        dirname = Bun::pathDirname(globalObject, parent.filename);
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         dirname = jsString(vm, String("."_s));
     }
@@ -611,6 +611,9 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
         JSC::EncodedJSValue value,
         JSC::PropertyName propertyName))
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Bun::willChangeRequireOverride(globalObject, JSC::AOT::RequireOverride::RequireFunction, true);
+    RETURN_IF_EXCEPTION(scope, false);
     globalObject->putDirect(globalObject->vm(),
         WebCore::clientData(globalObject->vm())
             ->builtinNames()
@@ -625,6 +628,9 @@ static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* cache = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
                           ->lazyRequireCacheObject();
+    // An executable compiled ahead of time whose code never names the cache lacks the function that makes it.
+    if (!cache && vm.hasCompiledCode() && scope.tryClearException())
+        return jsUndefined();
     RETURN_IF_EXCEPTION(scope, {});
     return cache;
 }
@@ -704,7 +710,8 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, String&& start, String&& end)
 {
     bool isOverride = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
-    if (isOverride) [[unlikely]] {
+    // A compiled program that runs nothing but its own code compiles no module from text: the wrapper goes around nothing.
+    if (isOverride && !Bun::isCodeGenerationDisallowedByCompiledProgram()) [[unlikely]] {
         THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(global, scope);
     }
     global->hasOverriddenModuleWrapper = isOverride;
@@ -1153,6 +1160,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSObject* moduleConstructor = JSModuleConstructor::create(
                 init.vm, static_cast<Zig::GlobalObject*>(init.owner));
             init.set(moduleConstructor);
+            JSC::AOT::hostDidCreateNodeModule(init.owner, moduleConstructor);
         });
 
     globalObject->m_nodeModuleSourceMapEntryStructure.initLater(

@@ -1,0 +1,4 @@
+# A call to a user-defined type guard narrows its argument in both branches.
+type-guard-call.ts:4 type `x` = string | number
+type-guard-call.ts:5 type `x` = string
+type-guard-call.ts:7 type `x` = number

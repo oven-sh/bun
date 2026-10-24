@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <JavaScriptCore/AOTFunctionDescription.h>
+#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/WasmIndexOrName.h>
@@ -63,6 +65,7 @@ private:
 
     bool m_isFunctionOrEval = false;
     bool m_isAsync = false;
+    bool m_isAOTCompiled = false;
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -129,6 +132,8 @@ public:
     }
     bool isConstructor() const
     {
+        if (m_isAOTCompiled)
+            return m_stackFrame->isConstructor() && !m_stackFrame->isBuiltinFunction();
         return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
     }
 
@@ -186,6 +191,20 @@ private:
 
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
+
+// The position of a compiled frame was recorded at build time in the original source: no source map applies to it.
+inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
+{
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]] {
+        auto position = frame.compiledPosition();
+        return position && position->source;
+    }
+#else
+    UNUSED_PARAM(frame);
+#endif
+    return false;
+}
 
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);

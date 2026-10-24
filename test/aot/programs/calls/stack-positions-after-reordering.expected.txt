@@ -1,0 +1,33 @@
+outer 1: 10
+outer 3: Error fail 3 | fail:5:45 middle:7:73 outer:8:103 attempt:45:105 module:46:37
+outer 7: Error fail 7 | fail:5:45 middle:7:73 outer:8:103 attempt:45:105 module:46:73
+rare 4: 6
+rare five: Error fail 5 | fail:5:45 rare:13:37 attempt:45:105 module:47:39
+rare seven: TypeError undefined is not an object (evaluating 'undefined.deep') | rare:12:29 attempt:45:105 module:47:92
+nested 0: "a, b, finally 1, c, finally 2"
+nested 1: "inner fail 1, finally 1, c, finally 2"
+nested 2: "a, inner fail 9, finally 1, outer again nested:22:81 attempt:45:105 module:48:29, finally 2"
+nested 3: "a, b, finally 1, outer fail 3 fail:5:45 nested:23:55 attempt:45:105 module:48:29, finally 2"
+nested 4: "a, b, finally 1, c, outer fail 4 fail:5:45 middle:7:73 nested:24:37 attempt:45:105 module:48:29, finally 2"
+in a loop: "ok 1, fail 3, ok 2, fail 5, ok 1"
+members 0: 0
+members 1: Error fail -5 | fail:5:45 Shape:38:58 make:38:224 throughMembers:39:62 attempt:45:105 module:50:29
+members 2: Error fail 200 | fail:5:45 attempt:45:105 module:50:29
+members 3: Error fail -1 | fail:5:45 throughMembers:39:126 attempt:45:105 module:50:29
+callbacks 0: 6
+callbacks 1: Error fail 1 | fail:5:45 map@ throughCallbacks:40:65 attempt:45:105 module:51:29
+callbacks 2: Error fail 2 | fail:5:45 map@ throughCallbacks:40:65 attempt:45:105 module:51:29
+callbacks 3: Error fail 3 | fail:5:45 map@ throughCallbacks:40:65 attempt:45:105 module:51:29
+nil 1: TypeError undefined is not an object (evaluating 'undefined.b') | nil:41:63 attempt:45:105 module:52:29
+nil 2: TypeError f is not a function. (In 'f()', 'f' is undefined) | nil:41:81 attempt:45:105 module:52:29
+nil 3: TypeError undefined is not an object (evaluating 'undefined[1]') | nil:41:99 attempt:45:105 module:52:29
+nil 4: TypeError undefined is not a constructor | nil:41:123 attempt:45:105 module:52:29
+nil 5: TypeError expected string[], got untyped object (bun compile checks ty | nil:41:130 attempt:45:105 module:52:29
+async 0: 2
+async 1: fail 1 | fail:5:45 later:42:74 async:43:76
+async 2: fail 7 | fail:5:45 later:42:136 async:43:76
+generator 0: [1,1,9]
+generator 1: Error fail 1 | fail:5:45 generated:44:75 :54:65 attempt:45:105 module:54:29
+generator 2: Error fail 8 | fail:5:45 generated:44:96 :54:65 attempt:45:105 module:54:29
+deep: Error fail 0 | fail:5:45 deep:55:47 deep:55:47 deep:55:47 deep:55:47 deep:55:47 attempt:45:105 module:56:1
+overflow: RangeError

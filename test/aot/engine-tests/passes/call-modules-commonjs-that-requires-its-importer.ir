@@ -1,0 +1,64 @@
+# `bun run` runs a CommonJS file that is imported while it links the importer, which has not begun by then: a require() of the importer in that file evaluates the importer there and then, once.
+# So where some require() names an ES module, the CommonJS files that the module imports are evaluated before it begins. Each of them has a state of its own, for the importer comes by twice.
+# Whatever else the module imports is evaluated behind its beginning, as everything is that a module imports which no require() names.
+# FORM: AsRead
+# RUN: pipeline CallModules
+# STATISTIC: ModulesWithState = 2
+# STATISTIC: ModulesWithoutState = 2
+
+variable g0 name="value" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="seen" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}] exports=[{name="value" variable=g0}]
+module m1 path="/requires-its-importer.cjs" displayPath="requires-its-importer.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1
+module m2 path="/below.mjs" displayPath="below.mjs" flags=[KeepsError] body=f2 requests=[{target=m3 completes=true}]
+module m3 path="/below-that.cjs" displayPath="below-that.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f3
+entry module=m0
+# CHECK: module m0 {{*}}flags=[KeepsError, EvaluatesItself] body=f0
+# CHECK: module m1 {{*}}flags=[KeepsError, EvaluatesItself] requireResult=ModuleExports body=f1
+# CHECK: module m2 path="/below.mjs" displayPath="below.mjs" flags=[KeepsError] requests=
+# CHECK: module m3 path="/below-that.cjs" displayPath="below-that.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=ConsoleLog
+    v3 = Call v2, -, v0
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK-NEXT: = BeginModuleEvaluation module=m0
+# CHECK-NEXT: Branch
+# CHECK-NEXT: b1():
+# CHECK-NEXT: = CallDirect function=f3
+# CHECK-NEXT: = CallDirect function=f2
+# CHECK-NEXT: = CallDirect function=f5
+# CHECK-NEXT: FinishModuleEvaluation module=m0
+function f1 name="requiresItsImporter" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m0 referrer=m1 specifier="./main.mjs"
+    PutModuleVariable v0 variable=g1
+    Return
+}
+# CHECK-LABEL: function f1 name="requiresItsImporter"
+# CHECK: = CallDirect function=f6
+function f2 name="below" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ConsoleLog
+    v1 = Call v0, -, v0
+    Return
+}
+# CHECK-LABEL: function f2 name="below"
+# CHECK-NOT: BeginModuleEvaluation
+function f3 name="belowThat" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ConsoleLog
+    v1 = Call v0, -, v0
+    Return
+}
+# CHECK-LABEL: function f3 name="belowThat"
+# CHECK-NOT: BeginModuleEvaluation
+# CHECK-LABEL: function f6 name="requiresItsImporter"
+# CHECK: = BeginModuleEvaluation module=m1

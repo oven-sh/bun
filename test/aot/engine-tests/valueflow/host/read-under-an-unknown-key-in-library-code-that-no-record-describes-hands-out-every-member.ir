@@ -1,0 +1,24 @@
+# process.send("careful"), where parseHandle reads `handle[handle]`
+# parseHandle (runtimefunction 65559) stands behind no built-in: no record says what it reads. Its operand is an object nobody knows, which may be an array, and the key may be "filter":
+# what the read answers is in the hands of whoever has the value, so Array.prototype.filter counts as used. Nobody calls the value here, so its code need not run.
+# With records: read-under-an-unknown-key-in-the-code-behind-a-described-built-in-hands-out-nothing.ir
+# LIBRARY: own
+# RUN: valueflow-solve used
+# CHECK: {{*}} ArrayPrototypeFilter
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65559 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="send"
+    v2 = String string="careful"
+    v3 = Call v1, v0, v2
+    Return
+}
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65559 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ElemGet v0, v0
+    Return v1
+}

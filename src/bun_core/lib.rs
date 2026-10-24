@@ -39,6 +39,7 @@ pub mod compress {
 }
 pub mod heap;
 
+pub mod current_work;
 pub mod debug;
 pub mod env;
 #[cfg(windows)]
@@ -246,7 +247,10 @@ pub mod env_var;
 pub mod feature_flags;
 pub use code_generation::{
     CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
-    code_generation_from_strings, disallow_code_generation_from_strings,
+    code_generation_from_strings, code_generation_from_strings_by_flags,
+    disallow_code_generation_for_compiled_program,
+    disallow_code_generation_for_removed_interpreter, disallow_code_generation_from_strings,
+    is_code_generation_disallowed_by_compiled_program, is_code_generation_disallowed_by_trimming,
 };
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
@@ -1600,51 +1604,45 @@ pub(crate) mod strings_impl {
         [0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]
     }
 
+    /// Appends `latin1` as UTF-8, of which it makes `utf8_length` bytes.
+    fn append_latin1_as_utf8(list: &mut Vec<u8>, latin1: &[u8], utf8_length: usize) {
+        list.reserve(utf8_length);
+        // SAFETY: simdutf writes `utf8_length_from_latin1(latin1)` initialized bytes, which were just reserved.
+        unsafe {
+            let written = simdutf::simdutf__convert_latin1_to_utf8(
+                latin1.as_ptr(),
+                latin1.len(),
+                list.as_mut_ptr().add(list.len()),
+            );
+            debug_assert_eq!(written, utf8_length);
+            list.set_len(list.len() + written);
+        }
+    }
+
     /// Port of `allocateLatin1IntoUTF8WithList`.
-    /// Uses `first_non_ascii` (simdutf SIMD) for the ASCII-span scan.
     pub fn allocate_latin1_into_utf8_with_list(
         mut list: Vec<u8>,
         offset_into_list: usize,
         latin1: &[u8],
     ) -> Vec<u8> {
         list.truncate(offset_into_list);
-        list.reserve(latin1.len());
-        let mut rest = latin1;
-        while !rest.is_empty() {
-            match first_non_ascii_usize(rest) {
-                None => {
-                    list.extend_from_slice(rest);
-                    break;
-                }
-                Some(i) => {
-                    list.extend_from_slice(&rest[..i]);
-                    rest = &rest[i..];
-                    while let Some(&c) = rest.first() {
-                        if c < 0x80 {
-                            break;
-                        }
-                        list.reserve(2);
-                        let [a, b] = latin1_to_codepoint_bytes_assume_not_ascii(c);
-                        list.push(a);
-                        list.push(b);
-                        rest = &rest[1..];
-                    }
-                }
-            }
-        }
+        append_latin1_as_utf8(
+            &mut list,
+            latin1,
+            simdutf::length::utf8::from::latin1(latin1),
+        );
         list
     }
 
     /// Port of `toUTF8FromLatin1` — None if input is already ASCII.
     pub fn to_utf8_from_latin1(latin1: &[u8]) -> Option<Vec<u8>> {
-        if is_all_ascii(latin1) {
+        let utf8_length = simdutf::length::utf8::from::latin1(latin1);
+        if utf8_length == latin1.len() {
             return None;
         }
-        Some(allocate_latin1_into_utf8_with_list(
-            Vec::with_capacity(latin1.len()),
-            0,
-            latin1,
-        ))
+        let mut utf8 = Vec::new();
+        append_latin1_as_utf8(&mut utf8, latin1, utf8_length);
+        Some(utf8)
     }
 
     /// Slow-path fallback for unpaired surrogates (port of `toUTF8ListWithTypeBun` core loop).
@@ -1831,6 +1829,23 @@ pub(crate) mod strings_impl {
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
     #[inline]
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
+        const MIN_LEN_FOR_SIMDUTF: usize = 64;
+        if latin1.len() >= MIN_LEN_FOR_SIMDUTF
+            && buf.len() >= simdutf::length::utf8::from::latin1(latin1)
+        {
+            // SAFETY: simdutf writes `utf8_length_from_latin1(latin1)` bytes, which `buf` has room for.
+            let written = unsafe {
+                simdutf::simdutf__convert_latin1_to_utf8(
+                    latin1.as_ptr(),
+                    latin1.len(),
+                    buf.as_mut_ptr(),
+                )
+            };
+            return EncodeIntoResult {
+                read: latin1.len(),
+                written,
+            };
+        }
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
     }
 

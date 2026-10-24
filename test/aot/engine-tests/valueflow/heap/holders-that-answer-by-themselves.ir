@@ -1,0 +1,19 @@
+# $inherits(..) in a module of the library; a helper that the compiler calls
+# A built-in holder that has the name among its own members answers by itself, also where the table does not say what lies above it. A private name of the global object names a function of the host.
+# RUN: valueflow-solve calls
+# CHECK: f0 v2 -> PrivateGlobalsInherits
+# CHECK: f0 v5 -> CompilerHelpersCopyOwnProperties
+# CHECK-NOT: unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key=@"inherits" [isFreeName]
+    v2 = Call v1
+    v3 = Builtin builtin=CompilerHelpers
+    v4 = PropGet v3 key="copyOwnProperties"
+    v5 = Call v4, v3
+    Return
+}

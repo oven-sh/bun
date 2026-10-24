@@ -1,0 +1,16 @@
+@oven/full-types-anthropic-ai__sdk 0.112.1
+
+This package holds files of @anthropic-ai/sdk 0.112.1 (https://www.npmjs.com/package/@anthropic-ai/sdk/v/0.112.1).
+Copyright 2023 Anthropic, PBC.
+Licensed under MIT: see LICENSE, which is that package's own.
+
+What was changed:
+  lay/core/streaming.mjs
+  lay/internal/decoders/line.mjs
+  lay/internal/tslib.mjs
+  lay/internal/utils/bytes.mjs
+  TypeScript type annotations, type declarations, `declare`d fields and type-only casts were added to the
+  package's own JavaScript. No statement and no expression was changed: with the types erased, each file
+  prints as the file it was made from. Each takes the place of the package's file of the same name.
+
+The additions are offered under the same licence as the package.

@@ -1,0 +1,37 @@
+`rgb:${string}` 1100010
+`${string}-${string}-${string}-${string}-${string}` 11001101
+`/api/${string}` 11000
+`${string}.json` 110001
+`a${string}b` 100011100
+`ab${string}ba` 010011
+`${string}ab${string}ab` 1001101
+`${number}` 1111111001101101110100000110000
+`${number}px` 111111100110110010
+`${number}-${number}` 101000001
+`${string}-${number}` 1100011
+`${number}-${string}` 11001
+`${bigint}` 1100110001110101000000001
+`${bigint}n` 11001100011100
+`${string}${string}` 1111
+`${string}${number}` 0011001
+`${number}${string}` 0111001
+`${string}${string}${string}x` 00110
+`${boolean}!` 11000
+`${"a" | "b"}-${string}` 11000
+`${"x" | "y"}${1 | 2}` 110000
+`<${`a${string}`}>` 11000
+`${null}-${undefined}` 100
+`\u00e9${string}\u00fc` 11001
+`${string}\u2192${string}` 1100
+`\ud83c\udf89${string}` 11000
+`a.b*${string}(c)` 1100
+`${string}\n${string}` 11011
+`${any}x` 110
+`id:${number}` | `name:${string}` | "none" 1011100
+pairs 237 accepted 121 disagreements 0
+{"id":"1-2-3-4-5","parent":null,"color":"rgb:102030","path":"/api/x","sizes":["1px","2.5px"]}
+{"id":"1-2-3-4-5","parent":"a-b-c-d-e","color":"red","sizes":[]}
+{"sizes":["1px"],"color":"green","parent":null,"id":"1-2-3-4-5"}
+TypeError: id invalid_format `${string}-${string}-${string}-${string}-${string}` string; parent invalid_format `${string}-${string}-${string}-${string}-${string}` string; color invalid_format `rgb:${string}` string; path invalid_format `/api/${string}` string; sizes.0 invalid_format `${number}px` string; sizes.1 invalid_type string number
+TypeError: id invalid_type string number
+A-B-C-D-E5

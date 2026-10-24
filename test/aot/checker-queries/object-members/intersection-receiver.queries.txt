@@ -1,0 +1,7 @@
+# A member that several parts of an intersection declare is written only if it is written in every part: `{ brand: true } & string` is a string, so one part says nothing about the whole.
+intersection-receiver.ts:6 member `both.id` = member id Field { brand: true; } & string checked { brand: true; } & string
+intersection-receiver.ts:7 member `both.rows` = member rows Field { n: number; }[] & (string | { n: number; }) checked { n: number; }[] & (string | { n: number; })
+intersection-receiver.ts:8 member `both.own` = member own Field number checked number
+intersection-receiver.ts:10 member `half.id` = member id Field unwritten checked { brand: true; } & string
+intersection-receiver.ts:11 member `half.rows` = member rows Field unwritten checked { n: number; }[] & (string | { n: number; })
+intersection-receiver.ts:12 member `half.own` = member own Field number checked number

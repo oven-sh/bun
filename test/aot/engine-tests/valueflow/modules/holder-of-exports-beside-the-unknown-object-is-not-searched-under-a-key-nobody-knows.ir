@@ -1,0 +1,79 @@
+# As a-read-through-the-unknown-object-finds-what-a-held-holder-of-exports-holds.ir, and `start` also does: const either = this[kPath] || path; either[name()]()
+# `either` may be the unknown object or the object that holds what node:path exports, which has come into unknown hands. The unknown object stands for that holder, so it is not listed beside it,
+# and a key nobody knows names nothing on it: the read does not search the holder, and `close`, which no code names, stays out of the image. A call of it at run time throws the error that names it.
+# `open` is read by name and is entered
+# RUN: valueflow-solve calls
+# CHECK: f3 v4 ->{{*}} f4
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f4
+# UNREACHED: unreached f5
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+module m1 path="node:path" displayPath="node:path" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f1
+module m2 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f2
+entry module=m0
+layout L0 name="Stream" fields=[{key="start" declared={type=anything}}]
+layout L1 module=m1 fields=[{key="open" declared={type=anything}}, {key="close" declared={type=anything}}]
+layout L2 module=m2
+variable g0 name="kPath" module=m2 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m0 specifier="node:readline"
+    Return v0
+}
+function f1 name="path" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Return v2
+}
+function f2 name="readline" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m2 specifier="node:path"
+    v1 = Builtin builtin=Symbol
+    v2 = String string="path"
+    v3 = Call v1, -, v2 @100
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f3
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = GetModuleVariable variable=g0
+    ElemSet v6, v7, v0 mode=Strict
+    v9 = Builtin builtin=Function
+    v10 = String string="text"
+    v11 = Call v9, -, v10
+    v12 = Call v11, -, v6
+    v13 = NewObject layout=L2
+    Return v13
+}
+function f3 name="start" module=m2 role=Library flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="open"
+    v4 = Call v3, v2
+    v5 = RequireModule module=m1 referrer=m2 specifier="node:path"
+    v6 = ToBoolean v2
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v5)
+  b3(v7: anything):
+    v8 = Builtin builtin=DateNow
+    v9 = Call v8
+    v10 = ToString v9
+    v11 = ElemGet v7, v10
+    v12 = Call v11, v7
+    Return v4
+}
+function f4 name="open" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f5 name="close" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

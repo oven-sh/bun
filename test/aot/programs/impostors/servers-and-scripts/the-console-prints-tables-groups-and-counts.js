@@ -1,0 +1,37 @@
+import { Console } from "node:console";
+import { Writable } from "node:stream";
+
+console.log("%s is %d years and %i months, %o, %j, %c styled, 100%%", "Ada", 36.5, 7.9, { a: 1 }, [1], "color: red", "extra");
+console.info("info", 1, true, null, undefined, 10n, Symbol("s"));
+console.debug({ nested: { list: [1, [2, [3, [4]]]], map: new Map([[1, { a: 1 }]]), set: new Set(["x"]) } });
+console.table([{ name: "Ada", age: 36 }, { name: "Bob", city: "Oslo" }]);
+console.table([[1, 2], [3, 4]]);
+console.table([{ a: 1, b: 2 }], ["b"]);
+console.table("not a table");
+console.group("outer");
+console.log("inside outer");
+console.group();
+console.log("inside\ninner");
+console.groupEnd();
+console.groupEnd();
+console.groupEnd();
+console.log("outside");
+console.count();
+console.count("named");
+console.count();
+console.countReset();
+console.count();
+console.dir({ a: { b: { c: { d: 1 } } } }, { depth: 0 });
+console.dir([1, "two"], { colors: false });
+console.assert(true, "never printed");
+console.log(new Error("shown with its name").message, [new Date(0)], [function f() {}, class C {}, () => {}], { "needs-quotes": 1, plain: 2, 3: 4 });
+console.log(Object.create(null), Object.create({ inherited: 1 }), new (class Named { field = 1 })(), [undefined, , null], "a\nb", ["a\nb"], -0, [-0], new Uint8Array(3), new ArrayBuffer(2));
+console.log(Promise.resolve(4), Promise.reject(new Error("x")).catch(() => {}) instanceof Promise, new WeakMap(), Symbol.iterator, [1.0, 1.5, 1e21, 1e-7, NaN], "%", "%s");
+
+let captured = "";
+const own = new Console({ stdout: new Writable({ write(chunk, encoding, done) { captured += chunk; done(); } }), stderr: process.stderr });
+own.log("to my own stream", { a: 1 });
+own.group("g");
+own.info("indented");
+own.table([{ x: 1 }]);
+console.log(JSON.stringify(captured), typeof console.time, typeof console.trace, console.log.name, typeof console.Console);

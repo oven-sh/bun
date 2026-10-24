@@ -1081,6 +1081,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
         options.to_js(),
         crate::server::server_config::FromJSOptions {
             allow_bake_config: bun_core::FeatureFlags::bake(),
+            may_start_development_server: true,
             is_fetch_required: true,
             previous_fetch: false,
             previous_routes: false,
@@ -1139,9 +1140,15 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                         reload!(crate::api::DebugHTTPServer)
                     }
                     t if t == AnyServerTag::DebugHTTPSServer as u8 => {
-                        reload!(crate::api::DebugHTTPSServer)
+                        return bun_removable_features::removable_body!(TlsSockets, Abort, {
+                            reload!(crate::api::DebugHTTPSServer)
+                        });
                     }
-                    t if t == AnyServerTag::HTTPSServer as u8 => reload!(crate::api::HTTPSServer),
+                    t if t == AnyServerTag::HTTPSServer as u8 => {
+                        return bun_removable_features::removable_body!(TlsSockets, Abort, {
+                            reload!(crate::api::HTTPSServer)
+                        });
+                    }
                     _ => {}
                 }
             }
@@ -1252,9 +1259,13 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     let has_ssl_config = config.ssl_config.is_some();
     let development = config.is_development();
     match (development, has_ssl_config) {
-        (true, true) => serve_with!(crate::api::DebugHTTPSServer, AnyServerTag::DebugHTTPSServer),
+        (true, true) => bun_removable_features::removable_body!(TlsSockets, Abort, {
+            serve_with!(crate::api::DebugHTTPSServer, AnyServerTag::DebugHTTPSServer)
+        }),
         (true, false) => serve_with!(crate::api::DebugHTTPServer, AnyServerTag::DebugHTTPServer),
-        (false, true) => serve_with!(crate::api::HTTPSServer, AnyServerTag::HTTPSServer),
+        (false, true) => bun_removable_features::removable_body!(TlsSockets, Abort, {
+            serve_with!(crate::api::HTTPSServer, AnyServerTag::HTTPSServer)
+        }),
         (false, false) => serve_with!(crate::api::HTTPServer, AnyServerTag::HTTPServer),
     }
 }
@@ -1419,6 +1430,11 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
 fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     use crate::valkey_jsc::JSValkeyClient;
 
+    if bun_removable_features::is_removed(bun_removable_features::Feature::Valkey) {
+        let constructor = crate::valkey_jsc::js_valkey::js::get_constructor(global_this);
+        return crate::removed_feature::stand_in_for_removed_instance(global_this, constructor);
+    }
+
     // `Bun.redis` is the realm's: not owned (and closed at dispose()) by whichever
     // Bun.ModuleGraph reads the property first.
     let vm = global_this.bun_vm();
@@ -1463,7 +1479,9 @@ fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> J
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     use crate::webcore::blob::{Blob, BlobExt as _};
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
-    let Some(graph) = StandaloneModuleGraph::get_ref() else {
+    let Some(graph) =
+        StandaloneModuleGraph::get_ref().filter(|_| !bun_jsc::compiled_program::runs_in_place())
+    else {
         return JSValue::create_empty_array(global_this, 0);
     };
 
@@ -1541,6 +1559,16 @@ pub(crate) mod environment_variables {
         let item: &[u8] = unsafe { &**ptr.add(i) };
         data_ptr.write(item.as_ptr());
         item.len()
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__getEnvValueAt<'a>(
+        global_object: &'a JSGlobalObject,
+        i: usize,
+        value: &mut core::mem::MaybeUninit<EncodedSlice<'a>>,
+    ) {
+        let env = global_object.bun_vm().env_loader();
+        value.write(EncodedSlice::from_bytes(&env.map.map.values()[i].value));
     }
 
     #[unsafe(no_mangle)]

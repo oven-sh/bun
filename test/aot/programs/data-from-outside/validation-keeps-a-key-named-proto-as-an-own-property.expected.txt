@@ -1,0 +1,12 @@
+JSON.parse<User> {"name":"x","__proto__":{"isAdmin":true}} isAdmin: undefined own keys: name,__proto__ prototype is Object.prototype: true
+validate<User> {"name":"x","__proto__":{"isAdmin":true}} isAdmin: undefined own keys: name,__proto__ prototype is Object.prototype: true
+with a reviver {"name":"x","__proto__":{"isAdmin":true}} isAdmin: undefined own keys: name,__proto__ prototype is Object.prototype: true
+JSON.parse<Bag> {"a":1,"__proto__":{"isAdmin":true}} isAdmin: undefined own keys: a,__proto__ prototype is Object.prototype: true
+validate<Bag> {"a":1,"__proto__":{"isAdmin":true}} isAdmin: undefined own keys: a,__proto__ prototype is Object.prototype: true
+JSON.parse<Holder>.user {"name":"x","__proto__":{"isAdmin":true}} isAdmin: undefined own keys: name,__proto__ prototype is Object.prototype: true
+validate<Holder>.users[0] {"name":"x","__proto__":{"isAdmin":true}} isAdmin: undefined own keys: name,__proto__ prototype is Object.prototype: true
+JSON.parse<Either> {"kind":"a","name":"x","__proto__":{"isAdmin":true}} isAdmin: undefined own keys: kind,name,__proto__ prototype is Object.prototype: true
+validate<Either> {"kind":"a","name":"x","__proto__":{"isAdmin":true}} isAdmin: undefined own keys: kind,name,__proto__ prototype is Object.prototype: true
+JSON.parse<any> {"name":"x","__proto__":{"isAdmin":true}} isAdmin: undefined own keys: name,__proto__ prototype is Object.prototype: true
+validate<unknown> {"name":"x","__proto__":{"isAdmin":true}} isAdmin: undefined own keys: name,__proto__ prototype is Object.prototype: true
+Object.prototype is clean: true

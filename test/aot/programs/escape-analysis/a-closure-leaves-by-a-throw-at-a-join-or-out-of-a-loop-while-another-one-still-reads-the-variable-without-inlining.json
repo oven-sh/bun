@@ -1,0 +1,3 @@
+{
+  "build": ["--aot-disable=InlineCalls", "--aot-heat=everything-is-hot"]
+}

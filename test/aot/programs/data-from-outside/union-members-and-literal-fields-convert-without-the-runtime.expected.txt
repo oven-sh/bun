@@ -1,0 +1,37 @@
+10 11 open/low/7/typed/to do
+10709600 without the runtime
+10718797 /null/7/grown/to do through the runtime: 400
+{"kind":"circle","inner":{"n":7},"radius":1} {"kind":"square","inner":{"n":7},"side":2} kind,inner,radius circle square
+{"state":"open","level":"low","inner":{"n":7},"title":"grown"} {"state":"closed","level":"high","inner":{"n":7},"title":"grown"} {"state":"","level":null,"inner":{"n":7},"title":"grown"} {"state":"open","inner":{"n":7},"title":"grown"} state,level,inner,title
+7 7
+closed/high/7/grown/done closed/low/7/grown/done
+8 8
+open/high/7/grown/to do open/low/7/grown/to do
+13 13
+closed/high/7/grown/done closed/low/7/grown/done
+16 16
+open/high/7/grown/to do open/low/7/grown/to do
+19 19
+closed/high/7/grown/done closed/low/7/grown/done
+32 32
+open/high/7/grown/to do open/low/7/grown/to do
+25 25
+closed/high/7/grown/done closed/low/7/grown/done
+56 56
+open/high/7/grown/to do open/low/7/grown/to do
+TypeError | TypeError | TypeError
+TypeError | TypeError | TypeError
+TypeError | TypeError | TypeError
+TypeError | TypeError | TypeError
+TypeError | /low/7/grown/to do | TypeError
+TypeError | TypeError | TypeError
+TypeError | TypeError | TypeError
+TypeError | TypeError | TypeError
+TypeError | TypeError | TypeError
+11 | null/low/7/grown/to do | open/null/7/grown/to do
+11 | undefined/low/7/grown/to do | open/undefined/7/grown/to do
+TypeError | TypeError | TypeError
+TypeError | TypeError | TypeError
+TypeError | TypeError | TypeError
+16 {"kind":"square","inner":{"n":7},"radius":3}
+closed/low/7/grown/done open/low/7/grown/to do {"state":"other","level":"low","inner":{"n":7},"title":"grown"}

@@ -1,0 +1,33 @@
+typeof process.stdout.write: undefined
+typeof process.stderr.write: undefined
+typeof process.stdin.on: undefined
+typeof process.stdout.isTTY: undefined
+typeof process.stdout._writableState: undefined
+typeof console._stdout.write: undefined
+typeof console._stderr.write: undefined
+typeof process.openStdin().pause().on: refused: process.openStdin().pause is not a function. (In 'process.openStdin().pause()', 'process.openStdin().pause' is undefined). None of process.openStdin or process.stdin was compiled into this executable because your code never uses them. To keep them, use one of them somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+new console.Console(process.stdout).log.name: refused: console.Console was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+typeof console.Console: function
+(object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(process): 
+(object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(console): 
+(object => Reflect.ownKeys(object).filter(key => { try { object[key]; return false; } catch { return true; } }).map(String).sort().join())(Bun): 
+typeof process.finalization.register: undefined
+typeof process.allowedNodeEnvironmentFlags.has: undefined
+typeof process.loadEnvFile: function
+process.loadEnvFile('/nothing-there'): refused: process.loadEnvFile was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+typeof Bun.$: function
+typeof Bun.sql: function
+typeof Bun.SQL: function
+typeof Bun.peek: function
+Bun.peek(1): refused: Bun.peek was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+typeof new Bun.Glob('*').scanSync: function
+new Bun.Glob('*').scanSync('/nothing-there'): Error
+typeof Object.getOwnPropertyDescriptor(Buffer.prototype, 'parent').get: function
+Buffer.alloc(1).parent.byteLength > 0: true
+Buffer.alloc(1).offset >= 0: true
+JSON.stringify(Buffer.alloc(1)): {"type":"Buffer","data":[0]}
+typeof console.write: function
+console.write(''): refused: console.write was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+typeof process.stdout.write: undefined
+process.pid > 0 && typeof process.cwd() + typeof Bun.version + typeof console.log: stringstringfunction
+the program goes on

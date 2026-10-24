@@ -1,0 +1,440 @@
+0 Point x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point y x -> {y:2,x:1} | in:y,x | json:{"y":2,"x":1}
+0 StrictPoint y x -> {y:2,x:1} | in:y,x | json:{"y":2,"x":1}
+0 Point parsed x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint parsed x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point parsed y x label -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+0 StrictPoint parsed y x label -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+0 Point label first -> {label:"l",x:1,y:2} | in:label,x,y | json:{"label":"l","x":1,"y":2}
+0 StrictPoint label first -> {label:"l",x:1,y:2} | in:label,x,y | json:{"label":"l","x":1,"y":2}
+0 Point tags between -> {x:1,tags:["a","b"],y:2} | in:x,tags,y | json:{"x":1,"tags":["a","b"],"y":2}
+0 StrictPoint tags between -> {x:1,tags:["a","b"],y:2} | in:x,tags,y | json:{"x":1,"tags":["a","b"],"y":2}
+0 Point all four -> {x:1,y:2,label:"l",tags:[]} | in:x,y,label,tags | json:{"x":1,"y":2,"label":"l","tags":[]}
+0 StrictPoint all four -> {x:1,y:2,label:"l",tags:[]} | in:x,y,label,tags | json:{"x":1,"y":2,"label":"l","tags":[]}
+0 Point all four backwards -> {tags:["t"],label:"l",y:2,x:1} | in:tags,label,y,x | json:{"tags":["t"],"label":"l","y":2,"x":1}
+0 StrictPoint all four backwards -> {tags:["t"],label:"l",y:2,x:1} | in:tags,label,y,x | json:{"tags":["t"],"label":"l","y":2,"x":1}
+0 Point label undefined -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+0 StrictPoint label undefined -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+0 Point label undefined first -> {label:undefined,x:1,y:2} | in:label,x,y | json:{"x":1,"y":2}
+0 StrictPoint label undefined first -> {label:undefined,x:1,y:2} | in:label,x,y | json:{"x":1,"y":2}
+0 Point tags undefined, label there -> {x:1,tags:undefined,y:2,label:"l"} | in:x,tags,y,label | json:{"x":1,"y":2,"label":"l"}
+0 StrictPoint tags undefined, label there -> {x:1,tags:undefined,y:2,label:"l"} | in:x,tags,y,label | json:{"x":1,"y":2,"label":"l"}
+0 Point y missing -> TypeError y:invalid_type
+0 StrictPoint y missing -> TypeError y:invalid_type
+0 Point y undefined -> TypeError y:invalid_type
+0 StrictPoint y undefined -> TypeError y:invalid_type
+0 Point y a string -> TypeError y:invalid_type
+0 StrictPoint y a string -> TypeError y:invalid_type
+0 Point y not finite -> TypeError y:invalid_type
+0 StrictPoint y not finite -> TypeError y:invalid_type
+0 Point label a number -> TypeError label:invalid_type
+0 StrictPoint label a number -> TypeError label:invalid_type
+0 Point tags hold a number -> TypeError tags.1:invalid_type
+0 StrictPoint tags hold a number -> TypeError tags.1:invalid_type
+0 Point one more key -> {x:1,y:2,z:3} | in:x,y,z | json:{"x":1,"y":2,"z":3}
+0 StrictPoint one more key -> TypeError :unrecognized_keys
+0 Point one more key first -> {z:3,x:1,y:2} | in:z,x,y | json:{"z":3,"x":1,"y":2}
+0 StrictPoint one more key first -> TypeError :unrecognized_keys
+0 Point one more key between -> {x:1,z:{deep:[1]},y:2,label:"l"} | in:x,z,y,label | json:{"x":1,"z":{"deep":[1]},"y":2,"label":"l"}
+0 StrictPoint one more key between -> TypeError :unrecognized_keys
+0 Point an index -> {0:"zero",x:1,y:2} | in:0,x,y | json:{"0":"zero","x":1,"y":2}
+0 StrictPoint an index -> TypeError :unrecognized_keys
+0 Point a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
+0 Point __proto__ as a key -> {x:1,y:2,__proto__:{label:"from above"}} | in:x,y,__proto__ | json:{"x":1,"y":2,"__proto__":{"label":"from above"}}
+0 StrictPoint __proto__ as a key -> TypeError :unrecognized_keys
+0 Point a getter -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a getter -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point a hidden label -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a hidden label -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point a read-only y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a read-only y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point frozen -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint frozen -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point sealed -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+0 StrictPoint sealed -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+0 Point not extensible -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint not extensible -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point no prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint no prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point y from the prototype -> TypeError y:invalid_type
+0 StrictPoint y from the prototype -> TypeError y:invalid_type
+0 Point label from the prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint label from the prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point an instance -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint an instance -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point a dictionary -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a dictionary -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point deleted and added again -> {y:2,label:"l",x:5} | in:y,label,x | json:{"y":2,"label":"l","x":5}
+0 StrictPoint deleted and added again -> {y:2,label:"l",x:5} | in:y,label,x | json:{"y":2,"label":"l","x":5}
+0 Point an array -> TypeError :invalid_type
+0 StrictPoint an array -> TypeError :invalid_type
+0 Point a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point a Map -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a Map -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point a getter in a literal -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint a getter in a literal -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point a setter alone in a literal -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+0 StrictPoint a setter alone in a literal -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+0 Point a method in a literal -> TypeError label:invalid_type
+0 StrictPoint a method in a literal -> TypeError label:invalid_type
+0 Point an instance with one more member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+0 StrictPoint an instance with one more member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+0 Point an instance with an accessor above -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 StrictPoint an instance with an accessor above -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+0 Point a literal that grew -> {x:1,label:"l",y:2} | in:x,label,y | json:{"x":1,"label":"l","y":2}
+0 StrictPoint a literal that grew -> {x:1,label:"l",y:2} | in:x,label,y | json:{"x":1,"label":"l","y":2}
+0 Point a literal that lost a member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+0 StrictPoint a literal that lost a member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+0 Point a literal with a computed key -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+0 StrictPoint a literal with a computed key -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+0 Point a spread of a literal -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+0 StrictPoint a spread of a literal -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+0 Point a frozen literal with tags -> {x:1,y:2,tags:["a"]} | in:x,y,tags | json:{"x":1,"y":2,"tags":["a"]}
+0 StrictPoint a frozen literal with tags -> {x:1,y:2,tags:["a"]} | in:x,y,tags | json:{"x":1,"y":2,"tags":["a"]}
+0 Point null -> TypeError :invalid_type
+0 StrictPoint null -> TypeError :invalid_type
+0 Point a validated point -> {y:2,x:1,label:"again"} | in:y,x,label | json:{"y":2,"x":1,"label":"again"}
+0 StrictPoint a validated point -> {y:2,x:1,label:"again"} | in:y,x,label | json:{"y":2,"x":1,"label":"again"}
+1 Point x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point y x -> {y:2,x:1} | in:y,x | json:{"y":2,"x":1}
+1 StrictPoint y x -> {y:2,x:1} | in:y,x | json:{"y":2,"x":1}
+1 Point parsed x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint parsed x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point parsed y x label -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+1 StrictPoint parsed y x label -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+1 Point label first -> {label:"l",x:1,y:2} | in:label,x,y | json:{"label":"l","x":1,"y":2}
+1 StrictPoint label first -> {label:"l",x:1,y:2} | in:label,x,y | json:{"label":"l","x":1,"y":2}
+1 Point tags between -> {x:1,tags:["a","b"],y:2} | in:x,tags,y | json:{"x":1,"tags":["a","b"],"y":2}
+1 StrictPoint tags between -> {x:1,tags:["a","b"],y:2} | in:x,tags,y | json:{"x":1,"tags":["a","b"],"y":2}
+1 Point all four -> {x:1,y:2,label:"l",tags:[]} | in:x,y,label,tags | json:{"x":1,"y":2,"label":"l","tags":[]}
+1 StrictPoint all four -> {x:1,y:2,label:"l",tags:[]} | in:x,y,label,tags | json:{"x":1,"y":2,"label":"l","tags":[]}
+1 Point all four backwards -> {tags:["t"],label:"l",y:2,x:1} | in:tags,label,y,x | json:{"tags":["t"],"label":"l","y":2,"x":1}
+1 StrictPoint all four backwards -> {tags:["t"],label:"l",y:2,x:1} | in:tags,label,y,x | json:{"tags":["t"],"label":"l","y":2,"x":1}
+1 Point label undefined -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+1 StrictPoint label undefined -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+1 Point label undefined first -> {label:undefined,x:1,y:2} | in:label,x,y | json:{"x":1,"y":2}
+1 StrictPoint label undefined first -> {label:undefined,x:1,y:2} | in:label,x,y | json:{"x":1,"y":2}
+1 Point tags undefined, label there -> {x:1,tags:undefined,y:2,label:"l"} | in:x,tags,y,label | json:{"x":1,"y":2,"label":"l"}
+1 StrictPoint tags undefined, label there -> {x:1,tags:undefined,y:2,label:"l"} | in:x,tags,y,label | json:{"x":1,"y":2,"label":"l"}
+1 Point y missing -> TypeError y:invalid_type
+1 StrictPoint y missing -> TypeError y:invalid_type
+1 Point y undefined -> TypeError y:invalid_type
+1 StrictPoint y undefined -> TypeError y:invalid_type
+1 Point y a string -> TypeError y:invalid_type
+1 StrictPoint y a string -> TypeError y:invalid_type
+1 Point y not finite -> TypeError y:invalid_type
+1 StrictPoint y not finite -> TypeError y:invalid_type
+1 Point label a number -> TypeError label:invalid_type
+1 StrictPoint label a number -> TypeError label:invalid_type
+1 Point tags hold a number -> TypeError tags.1:invalid_type
+1 StrictPoint tags hold a number -> TypeError tags.1:invalid_type
+1 Point one more key -> {x:1,y:2,z:3} | in:x,y,z | json:{"x":1,"y":2,"z":3}
+1 StrictPoint one more key -> TypeError :unrecognized_keys
+1 Point one more key first -> {z:3,x:1,y:2} | in:z,x,y | json:{"z":3,"x":1,"y":2}
+1 StrictPoint one more key first -> TypeError :unrecognized_keys
+1 Point one more key between -> {x:1,z:{deep:[1]},y:2,label:"l"} | in:x,z,y,label | json:{"x":1,"z":{"deep":[1]},"y":2,"label":"l"}
+1 StrictPoint one more key between -> TypeError :unrecognized_keys
+1 Point an index -> {0:"zero",x:1,y:2} | in:0,x,y | json:{"0":"zero","x":1,"y":2}
+1 StrictPoint an index -> TypeError :unrecognized_keys
+1 Point a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
+1 Point __proto__ as a key -> {x:1,y:2,__proto__:{label:"from above"}} | in:x,y,__proto__ | json:{"x":1,"y":2,"__proto__":{"label":"from above"}}
+1 StrictPoint __proto__ as a key -> TypeError :unrecognized_keys
+1 Point a getter -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a getter -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point a hidden label -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a hidden label -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point a read-only y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a read-only y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point frozen -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint frozen -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point sealed -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+1 StrictPoint sealed -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+1 Point not extensible -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint not extensible -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point no prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint no prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point y from the prototype -> TypeError y:invalid_type
+1 StrictPoint y from the prototype -> TypeError y:invalid_type
+1 Point label from the prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint label from the prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point an instance -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint an instance -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point a dictionary -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a dictionary -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point deleted and added again -> {y:2,label:"l",x:5} | in:y,label,x | json:{"y":2,"label":"l","x":5}
+1 StrictPoint deleted and added again -> {y:2,label:"l",x:5} | in:y,label,x | json:{"y":2,"label":"l","x":5}
+1 Point an array -> TypeError :invalid_type
+1 StrictPoint an array -> TypeError :invalid_type
+1 Point a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point a Map -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a Map -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point a getter in a literal -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint a getter in a literal -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point a setter alone in a literal -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+1 StrictPoint a setter alone in a literal -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+1 Point a method in a literal -> TypeError label:invalid_type
+1 StrictPoint a method in a literal -> TypeError label:invalid_type
+1 Point an instance with one more member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+1 StrictPoint an instance with one more member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+1 Point an instance with an accessor above -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 StrictPoint an instance with an accessor above -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+1 Point a literal that grew -> {x:1,label:"l",y:2} | in:x,label,y | json:{"x":1,"label":"l","y":2}
+1 StrictPoint a literal that grew -> {x:1,label:"l",y:2} | in:x,label,y | json:{"x":1,"label":"l","y":2}
+1 Point a literal that lost a member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+1 StrictPoint a literal that lost a member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+1 Point a literal with a computed key -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+1 StrictPoint a literal with a computed key -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+1 Point a spread of a literal -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+1 StrictPoint a spread of a literal -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+1 Point a frozen literal with tags -> {x:1,y:2,tags:["a"]} | in:x,y,tags | json:{"x":1,"y":2,"tags":["a"]}
+1 StrictPoint a frozen literal with tags -> {x:1,y:2,tags:["a"]} | in:x,y,tags | json:{"x":1,"y":2,"tags":["a"]}
+1 Point null -> TypeError :invalid_type
+1 StrictPoint null -> TypeError :invalid_type
+1 Point a validated point -> {y:2,x:1,label:"again"} | in:y,x,label | json:{"y":2,"x":1,"label":"again"}
+1 StrictPoint a validated point -> {y:2,x:1,label:"again"} | in:y,x,label | json:{"y":2,"x":1,"label":"again"}
+2 Point x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point y x -> {y:2,x:1} | in:y,x | json:{"y":2,"x":1}
+2 StrictPoint y x -> {y:2,x:1} | in:y,x | json:{"y":2,"x":1}
+2 Point parsed x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint parsed x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point parsed y x label -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+2 StrictPoint parsed y x label -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+2 Point label first -> {label:"l",x:1,y:2} | in:label,x,y | json:{"label":"l","x":1,"y":2}
+2 StrictPoint label first -> {label:"l",x:1,y:2} | in:label,x,y | json:{"label":"l","x":1,"y":2}
+2 Point tags between -> {x:1,tags:["a","b"],y:2} | in:x,tags,y | json:{"x":1,"tags":["a","b"],"y":2}
+2 StrictPoint tags between -> {x:1,tags:["a","b"],y:2} | in:x,tags,y | json:{"x":1,"tags":["a","b"],"y":2}
+2 Point all four -> {x:1,y:2,label:"l",tags:[]} | in:x,y,label,tags | json:{"x":1,"y":2,"label":"l","tags":[]}
+2 StrictPoint all four -> {x:1,y:2,label:"l",tags:[]} | in:x,y,label,tags | json:{"x":1,"y":2,"label":"l","tags":[]}
+2 Point all four backwards -> {tags:["t"],label:"l",y:2,x:1} | in:tags,label,y,x | json:{"tags":["t"],"label":"l","y":2,"x":1}
+2 StrictPoint all four backwards -> {tags:["t"],label:"l",y:2,x:1} | in:tags,label,y,x | json:{"tags":["t"],"label":"l","y":2,"x":1}
+2 Point label undefined -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+2 StrictPoint label undefined -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+2 Point label undefined first -> {label:undefined,x:1,y:2} | in:label,x,y | json:{"x":1,"y":2}
+2 StrictPoint label undefined first -> {label:undefined,x:1,y:2} | in:label,x,y | json:{"x":1,"y":2}
+2 Point tags undefined, label there -> {x:1,tags:undefined,y:2,label:"l"} | in:x,tags,y,label | json:{"x":1,"y":2,"label":"l"}
+2 StrictPoint tags undefined, label there -> {x:1,tags:undefined,y:2,label:"l"} | in:x,tags,y,label | json:{"x":1,"y":2,"label":"l"}
+2 Point y missing -> TypeError y:invalid_type
+2 StrictPoint y missing -> TypeError y:invalid_type
+2 Point y undefined -> TypeError y:invalid_type
+2 StrictPoint y undefined -> TypeError y:invalid_type
+2 Point y a string -> TypeError y:invalid_type
+2 StrictPoint y a string -> TypeError y:invalid_type
+2 Point y not finite -> TypeError y:invalid_type
+2 StrictPoint y not finite -> TypeError y:invalid_type
+2 Point label a number -> TypeError label:invalid_type
+2 StrictPoint label a number -> TypeError label:invalid_type
+2 Point tags hold a number -> TypeError tags.1:invalid_type
+2 StrictPoint tags hold a number -> TypeError tags.1:invalid_type
+2 Point one more key -> {x:1,y:2,z:3} | in:x,y,z | json:{"x":1,"y":2,"z":3}
+2 StrictPoint one more key -> TypeError :unrecognized_keys
+2 Point one more key first -> {z:3,x:1,y:2} | in:z,x,y | json:{"z":3,"x":1,"y":2}
+2 StrictPoint one more key first -> TypeError :unrecognized_keys
+2 Point one more key between -> {x:1,z:{deep:[1]},y:2,label:"l"} | in:x,z,y,label | json:{"x":1,"z":{"deep":[1]},"y":2,"label":"l"}
+2 StrictPoint one more key between -> TypeError :unrecognized_keys
+2 Point an index -> {0:"zero",x:1,y:2} | in:0,x,y | json:{"0":"zero","x":1,"y":2}
+2 StrictPoint an index -> TypeError :unrecognized_keys
+2 Point a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a symbol -> {x:1,y:2,Symbol(s):1} | in:x,y | json:{"x":1,"y":2}
+2 Point __proto__ as a key -> {x:1,y:2,__proto__:{label:"from above"}} | in:x,y,__proto__ | json:{"x":1,"y":2,"__proto__":{"label":"from above"}}
+2 StrictPoint __proto__ as a key -> TypeError :unrecognized_keys
+2 Point a getter -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a getter -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point a hidden label -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a hidden label -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point a read-only y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a read-only y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point frozen -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint frozen -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point sealed -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+2 StrictPoint sealed -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+2 Point not extensible -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint not extensible -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point no prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint no prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point y from the prototype -> TypeError y:invalid_type
+2 StrictPoint y from the prototype -> TypeError y:invalid_type
+2 Point label from the prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint label from the prototype -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point an instance -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint an instance -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point a dictionary -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a dictionary -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point deleted and added again -> {y:2,label:"l",x:5} | in:y,label,x | json:{"y":2,"label":"l","x":5}
+2 StrictPoint deleted and added again -> {y:2,label:"l",x:5} | in:y,label,x | json:{"y":2,"label":"l","x":5}
+2 Point an array -> TypeError :invalid_type
+2 StrictPoint an array -> TypeError :invalid_type
+2 Point a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a function -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a proxy -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point a Map -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a Map -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point a getter in a literal -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint a getter in a literal -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point a setter alone in a literal -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+2 StrictPoint a setter alone in a literal -> {x:1,y:2,label:undefined} | in:x,y,label | json:{"x":1,"y":2}
+2 Point a method in a literal -> TypeError label:invalid_type
+2 StrictPoint a method in a literal -> TypeError label:invalid_type
+2 Point an instance with one more member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+2 StrictPoint an instance with one more member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+2 Point an instance with an accessor above -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 StrictPoint an instance with an accessor above -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+2 Point a literal that grew -> {x:1,label:"l",y:2} | in:x,label,y | json:{"x":1,"label":"l","y":2}
+2 StrictPoint a literal that grew -> {x:1,label:"l",y:2} | in:x,label,y | json:{"x":1,"label":"l","y":2}
+2 Point a literal that lost a member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+2 StrictPoint a literal that lost a member -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+2 Point a literal with a computed key -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+2 StrictPoint a literal with a computed key -> {x:1,y:2,label:"l"} | in:x,y,label | json:{"x":1,"y":2,"label":"l"}
+2 Point a spread of a literal -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+2 StrictPoint a spread of a literal -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+2 Point a frozen literal with tags -> {x:1,y:2,tags:["a"]} | in:x,y,tags | json:{"x":1,"y":2,"tags":["a"]}
+2 StrictPoint a frozen literal with tags -> {x:1,y:2,tags:["a"]} | in:x,y,tags | json:{"x":1,"y":2,"tags":["a"]}
+2 Point null -> TypeError :invalid_type
+2 StrictPoint null -> TypeError :invalid_type
+2 Point a validated point -> {y:2,x:1,label:"again"} | in:y,x,label | json:{"y":2,"x":1,"label":"again"}
+2 StrictPoint a validated point -> {y:2,x:1,label:"again"} | in:y,x,label | json:{"y":2,"x":1,"label":"again"}
+getter runs 12
+{x:1,y:20,tags:["a"]} {x:10,y:2,tags:["a","b"],label:"late"} x,y,tags,label
+{x:10,tags:["a","b"],label:"late",extra:true} false {"x":10,"tags":["a","b"],"label":"late","extra":true}
+0 Nested plain -> {name:"n",at:{x:1,y:2},corners:[{x:1,y:2},{y:4,x:3},{x:5,y:6,label:"c"}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2},{"y":4,"x":3},{"x":5,"y":6,"label":"c"}]}
+0 Nested orders mixed -> {corners:[{label:"c",y:6,x:5}],at:{y:2,x:1},name:"n"} | in:corners,at,name | json:{"corners":[{"label":"c","y":6,"x":5}],"at":{"y":2,"x":1},"name":"n"}
+0 Nested three deep -> {name:"a",at:{x:0,y:0},corners:[],next:{next:{corners:[],at:{y:1,x:1},name:"c"},name:"b",at:{x:0,y:0},corners:[]}} | in:name,at,corners,next | json:{"name":"a","at":{"x":0,"y":0},"corners":[],"next":{"next":{"corners":[],"at":{"y":1,"x":1},"name":"c"},"name":"b","at":{"x":0,"y":0},"corners":[]}}
+0 Nested the last corner is wrong -> TypeError corners.2.y:invalid_type
+0 Nested a corner has one more key -> {name:"n",at:{x:1,y:2},corners:[{x:1,y:2,z:3}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2,"z":3}]}
+0 Nested a corner holds undefined -> {name:"n",at:{x:1,y:2},corners:[{x:1,label:undefined,y:2}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2}]}
+0 Nested one object twice -> {name:"n",at:{x:1,y:2},corners:[{x:1,y:2},{x:1,y:2}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2},{"x":1,"y":2}]}
+1 Nested plain -> {name:"n",at:{x:1,y:2},corners:[{x:1,y:2},{y:4,x:3},{x:5,y:6,label:"c"}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2},{"y":4,"x":3},{"x":5,"y":6,"label":"c"}]}
+1 Nested orders mixed -> {corners:[{label:"c",y:6,x:5}],at:{y:2,x:1},name:"n"} | in:corners,at,name | json:{"corners":[{"label":"c","y":6,"x":5}],"at":{"y":2,"x":1},"name":"n"}
+1 Nested three deep -> {name:"a",at:{x:0,y:0},corners:[],next:{next:{corners:[],at:{y:1,x:1},name:"c"},name:"b",at:{x:0,y:0},corners:[]}} | in:name,at,corners,next | json:{"name":"a","at":{"x":0,"y":0},"corners":[],"next":{"next":{"corners":[],"at":{"y":1,"x":1},"name":"c"},"name":"b","at":{"x":0,"y":0},"corners":[]}}
+1 Nested the last corner is wrong -> TypeError corners.2.y:invalid_type
+1 Nested a corner has one more key -> {name:"n",at:{x:1,y:2},corners:[{x:1,y:2,z:3}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2,"z":3}]}
+1 Nested a corner holds undefined -> {name:"n",at:{x:1,y:2},corners:[{x:1,label:undefined,y:2}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2}]}
+1 Nested one object twice -> {name:"n",at:{x:1,y:2},corners:[{x:1,y:2},{x:1,y:2}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2},{"x":1,"y":2}]}
+2 Nested plain -> {name:"n",at:{x:1,y:2},corners:[{x:1,y:2},{y:4,x:3},{x:5,y:6,label:"c"}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2},{"y":4,"x":3},{"x":5,"y":6,"label":"c"}]}
+2 Nested orders mixed -> {corners:[{label:"c",y:6,x:5}],at:{y:2,x:1},name:"n"} | in:corners,at,name | json:{"corners":[{"label":"c","y":6,"x":5}],"at":{"y":2,"x":1},"name":"n"}
+2 Nested three deep -> {name:"a",at:{x:0,y:0},corners:[],next:{next:{corners:[],at:{y:1,x:1},name:"c"},name:"b",at:{x:0,y:0},corners:[]}} | in:name,at,corners,next | json:{"name":"a","at":{"x":0,"y":0},"corners":[],"next":{"next":{"corners":[],"at":{"y":1,"x":1},"name":"c"},"name":"b","at":{"x":0,"y":0},"corners":[]}}
+2 Nested the last corner is wrong -> TypeError corners.2.y:invalid_type
+2 Nested a corner has one more key -> {name:"n",at:{x:1,y:2},corners:[{x:1,y:2,z:3}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2,"z":3}]}
+2 Nested a corner holds undefined -> {name:"n",at:{x:1,y:2},corners:[{x:1,label:undefined,y:2}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2}]}
+2 Nested one object twice -> {name:"n",at:{x:1,y:2},corners:[{x:1,y:2},{x:1,y:2}]} | in:name,at,corners | json:{"name":"n","at":{"x":1,"y":2},"corners":[{"x":1,"y":2},{"x":1,"y":2}]}
+copies of one object are two two
+0 OnlyOptional {} -> {} | in: | json:{}
+0 OnlyOptional {a:1} -> {a:1} | in:a | json:{"a":1}
+0 OnlyOptional {b:"b"} -> {b:"b"} | in:b | json:{"b":"b"}
+0 OnlyOptional {c:true,a:1} -> {c:true,a:1} | in:c,a | json:{"c":true,"a":1}
+0 OnlyOptional {c:false,b:"",a:0} -> {c:false,b:"",a:0} | in:c,b,a | json:{"c":false,"b":"","a":0}
+0 OnlyOptional {a:undefined} -> {a:undefined} | in:a | json:{}
+0 OnlyOptional {b:undefined,c:true} -> {b:undefined,c:true} | in:b,c | json:{"c":true}
+0 OnlyOptional {a:"1"} -> TypeError a:invalid_type
+0 OnlyOptional {d:1} -> {d:1} | in:d | json:{"d":1}
+0 MayBeUndefined {a:1} -> {a:1} | in:a | json:{"a":1}
+0 MayBeUndefined {a:undefined} -> {a:undefined} | in:a | json:{}
+0 MayBeUndefined {} -> TypeError a:invalid_type
+0 MayBeUndefined {b:1} -> TypeError a:invalid_type
+0 MayBeUndefined {a:undefined,b:undefined} -> {a:undefined,b:undefined} | in:a,b | json:{}
+0 MayBeUndefined {b:2,a:1} -> {b:2,a:1} | in:b,a | json:{"b":2,"a":1}
+0 WithDefault {host:"h"} -> {host:"h",port:8080} | in:host,port | json:{"host":"h","port":8080}
+0 WithDefault {host:"h",port:1} -> {host:"h",port:1} | in:host,port | json:{"host":"h","port":1}
+0 WithDefault {port:2,host:"h"} -> {port:2,host:"h"} | in:port,host | json:{"port":2,"host":"h"}
+0 WithDefault {port:undefined,host:"h"} -> {port:8080,host:"h"} | in:port,host | json:{"port":8080,"host":"h"}
+0 WithDefault {port:3} -> TypeError host:invalid_type
+1 OnlyOptional {} -> {} | in: | json:{}
+1 OnlyOptional {a:1} -> {a:1} | in:a | json:{"a":1}
+1 OnlyOptional {b:"b"} -> {b:"b"} | in:b | json:{"b":"b"}
+1 OnlyOptional {c:true,a:1} -> {c:true,a:1} | in:c,a | json:{"c":true,"a":1}
+1 OnlyOptional {c:false,b:"",a:0} -> {c:false,b:"",a:0} | in:c,b,a | json:{"c":false,"b":"","a":0}
+1 OnlyOptional {a:undefined} -> {a:undefined} | in:a | json:{}
+1 OnlyOptional {b:undefined,c:true} -> {b:undefined,c:true} | in:b,c | json:{"c":true}
+1 OnlyOptional {a:"1"} -> TypeError a:invalid_type
+1 OnlyOptional {d:1} -> {d:1} | in:d | json:{"d":1}
+1 MayBeUndefined {a:1} -> {a:1} | in:a | json:{"a":1}
+1 MayBeUndefined {a:undefined} -> {a:undefined} | in:a | json:{}
+1 MayBeUndefined {} -> TypeError a:invalid_type
+1 MayBeUndefined {b:1} -> TypeError a:invalid_type
+1 MayBeUndefined {a:undefined,b:undefined} -> {a:undefined,b:undefined} | in:a,b | json:{}
+1 MayBeUndefined {b:2,a:1} -> {b:2,a:1} | in:b,a | json:{"b":2,"a":1}
+1 WithDefault {host:"h"} -> {host:"h",port:8080} | in:host,port | json:{"host":"h","port":8080}
+1 WithDefault {host:"h",port:1} -> {host:"h",port:1} | in:host,port | json:{"host":"h","port":1}
+1 WithDefault {port:2,host:"h"} -> {port:2,host:"h"} | in:port,host | json:{"port":2,"host":"h"}
+1 WithDefault {port:undefined,host:"h"} -> {port:8080,host:"h"} | in:port,host | json:{"port":8080,"host":"h"}
+1 WithDefault {port:3} -> TypeError host:invalid_type
+0 Wide 0 1 true 0 undefined undefined undefined undefined
+0 Wide 0 1 true 0 undefined undefined undefined undefined
+0 Wide 0 1 true 0 undefined undefined undefined undefined
+0 Wide 1 2 true 2 0 undefined undefined undefined
+0 Wide 1 2 true 2 0 undefined undefined undefined
+0 Wide 1 2 true 2 0 undefined undefined undefined
+0 Wide 5 6 true 20 0 undefined undefined undefined
+0 Wide 5 6 true 20 0 undefined undefined undefined
+0 Wide 5 6 true 20 0 undefined undefined undefined
+0 Wide 6 7 true 27 0 5 undefined undefined
+0 Wide 6 7 true 27 0 5 undefined undefined
+0 Wide 6 7 true 27 0 5 undefined undefined
+0 Wide 7 8 true 35 0 5 6 undefined
+0 Wide 7 8 true 35 0 5 6 undefined
+0 Wide 7 8 true 35 0 5 6 undefined
+0 Wide 8 9 true 44 0 5 6 undefined
+0 Wide 8 9 true 44 0 5 6 undefined
+0 Wide 8 9 true 44 0 5 6 undefined
+0 Wide 20 21 true 230 0 5 6 undefined
+0 Wide 20 21 true 230 0 5 6 undefined
+0 Wide 20 21 true 230 0 5 6 undefined
+0 Wide 63 64 true 2079 0 5 6 undefined
+0 Wide 63 64 true 2079 0 5 6 undefined
+0 Wide 63 64 true 2079 0 5 6 undefined
+0 Wide 64 65 true 2144 0 5 6 undefined
+0 Wide 64 65 true 2144 0 5 6 undefined
+0 Wide 64 65 true 2144 0 5 6 undefined
+0 Wide 70 71 true 2555 0 5 6 69
+0 Wide 70 71 true 2555 0 5 6 69
+0 Wide 70 71 true 2555 0 5 6 69
+1 Wide 0 1 true 0 undefined undefined undefined undefined
+1 Wide 0 1 true 0 undefined undefined undefined undefined
+1 Wide 0 1 true 0 undefined undefined undefined undefined
+1 Wide 1 2 true 2 0 undefined undefined undefined
+1 Wide 1 2 true 2 0 undefined undefined undefined
+1 Wide 1 2 true 2 0 undefined undefined undefined
+1 Wide 5 6 true 20 0 undefined undefined undefined
+1 Wide 5 6 true 20 0 undefined undefined undefined
+1 Wide 5 6 true 20 0 undefined undefined undefined
+1 Wide 6 7 true 27 0 5 undefined undefined
+1 Wide 6 7 true 27 0 5 undefined undefined
+1 Wide 6 7 true 27 0 5 undefined undefined
+1 Wide 7 8 true 35 0 5 6 undefined
+1 Wide 7 8 true 35 0 5 6 undefined
+1 Wide 7 8 true 35 0 5 6 undefined
+1 Wide 8 9 true 44 0 5 6 undefined
+1 Wide 8 9 true 44 0 5 6 undefined
+1 Wide 8 9 true 44 0 5 6 undefined
+1 Wide 20 21 true 230 0 5 6 undefined
+1 Wide 20 21 true 230 0 5 6 undefined
+1 Wide 20 21 true 230 0 5 6 undefined
+1 Wide 63 64 true 2079 0 5 6 undefined
+1 Wide 63 64 true 2079 0 5 6 undefined
+1 Wide 63 64 true 2079 0 5 6 undefined
+1 Wide 64 65 true 2144 0 5 6 undefined
+1 Wide 64 65 true 2144 0 5 6 undefined
+1 Wide 64 65 true 2144 0 5 6 undefined
+1 Wide 70 71 true 2555 0 5 6 69
+1 Wide 70 71 true 2555 0 5 6 69
+1 Wide 70 71 true 2555 0 5 6 69
+many shapes 12000 12000
+afterwards x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+afterwards y x -> {y:2,x:1} | in:y,x | json:{"y":2,"x":1}
+afterwards parsed x y -> {x:1,y:2} | in:x,y | json:{"x":1,"y":2}
+afterwards parsed y x label -> {y:2,x:1,label:"l"} | in:y,x,label | json:{"y":2,"x":1,"label":"l"}
+afterwards label first -> {label:"l",x:1,y:2} | in:label,x,y | json:{"label":"l","x":1,"y":2}
+afterwards tags between -> {x:1,tags:["a","b"],y:2} | in:x,tags,y | json:{"x":1,"tags":["a","b"],"y":2}
+afterwards all four -> {x:1,y:2,label:"l",tags:[]} | in:x,y,label,tags | json:{"x":1,"y":2,"label":"l","tags":[]}
+afterwards all four backwards -> {tags:["t"],label:"l",y:2,x:1} | in:tags,label,y,x | json:{"tags":["t"],"label":"l","y":2,"x":1}

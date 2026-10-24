@@ -77,7 +77,8 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Number(_)
             | ExprKind::BigInt(_)
             | ExprKind::String(_)
-            | ExprKind::Regex
+            | ExprKind::JsxText(_)
+            | ExprKind::Regex { .. }
             | ExprKind::True
             | ExprKind::False
                 if !is_parenthesized(hir, e) =>
@@ -530,6 +531,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | ExprKind::False
                 | ExprKind::Number(_)
                 | ExprKind::String(_)
+                | ExprKind::JsxText(_)
         ) || self.is_most_of_stack_in_use()
         {
             return None;
@@ -539,7 +541,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::True => TypeId::FRESH_TRUE,
             ExprKind::False => TypeId::FRESH_FALSE,
             ExprKind::Number(n) => self.number_literal(hir.numbers[n as usize], true),
-            ExprKind::String(s) => self.string_literal(s, true),
+            ExprKind::String(s) | ExprKind::JsxText(s) => self.string_literal(s, true),
             _ => return None,
         };
         self.found_cycle = false;
@@ -1087,7 +1089,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return (any, may_short_circuit);
             }
             if self.classes_enclosing_private_name(file, e).is_empty() {
-                self.grammar_error_at(self.span_of_token(file, name_pos), 18016, &[]);
+                self.early_grammar_error_at(self.span_of_token(file, name_pos), 18016, &[]);
                 return (TypeId::ANY, may_short_circuit);
             }
         }
@@ -1116,7 +1118,7 @@ impl<'p, 's> Checker<'p, 's> {
             None
         } else if target.written {
             // You can't assign through an index signature of a type parameter's constraint.
-            let to_write = self.property_type(left, holder, name, Access::Written);
+            let to_write = self.property_type_in(file, left, holder, name, Access::Written);
             let is_read = to_write.is_some_and(|(_, how)| match how {
                 // `NoUncheckedIndexedAccess`
                 Found::ByIndex => !target.definite,
@@ -1124,12 +1126,12 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => !bound.is_write_only_access(hir, e),
             });
             if is_read {
-                self.property_type(left, holder, name, Access::Read)
+                self.property_type_in(file, left, holder, name, Access::Read)
             } else {
                 to_write
             }
         } else {
-            self.property_type(left, holder, name, Access::Read)
+            self.property_type_in(file, left, holder, name, Access::Read)
         };
         let found = match found {
             // `getPropertyOfTypeEx` with `includeTypeOnlyMembers`: used for a qualified name in
@@ -1196,7 +1198,7 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     let name_text = self.declaration_name_at(file, name_pos);
                     let right = self.span_of_token(file, name_pos);
-                    self.grammar_error_at(right, 1111, &[Arg::Bytes(&name_text)]);
+                    self.early_grammar_error_at(right, 1111, &[Arg::Bytes(&name_text)]);
                 }
             }
             // `isJSLiteralType`. A property missing from a JavaScript object literal's type is
@@ -1210,7 +1212,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let right = self.span_of_right(file, name, name_pos);
                 if self.is_block_scoped_global(name) {
                     self.error_at(right, 2339, &[Arg::Atom(name), Arg::Type(left)]);
-                } else if self.p.files.options.no_implicit_any {
+                } else if self.module_options(file).no_implicit_any {
                     self.error_at(right, 7017, &[Arg::Type(left)]);
                 }
                 return (TypeId::ANY, may_short_circuit);
@@ -1257,8 +1259,11 @@ impl<'p, 's> Checker<'p, 's> {
                 let printed = self.apparent_type_of_intersection(apparent);
                 self.error_at(node, 2542, &[Arg::Type(printed)]);
             }
-            if self.p.files.options.no_property_access_from_index_signature
+            if self
+                .module_options(file)
+                .no_property_access_from_index_signature
                 && !bound.is_in_type_query(e)
+                && !self.is_of_class_below_undeclared_class(apparent)
             {
                 let right = self.span_of_right(file, name, name_pos);
                 self.error_at(right, 4111, &[Arg::Atom(name)]);
@@ -1368,7 +1373,7 @@ impl<'p, 's> Checker<'p, 's> {
         hir.kind(hir.node(member)) == Kind::PropertyDeclaration
             && hir[member].ty.is_none()
             && hir[member].init.is_none()
-            && self.p.files.options.no_implicit_any
+            && self.follows_untyped_variables(file)
     }
 
     /// `getDeclaringConstructor` for the symbol in `file` whose `Declarations` are `declarations`.
@@ -1589,7 +1594,7 @@ impl<'p, 's> Checker<'p, 's> {
             None => TypeId::ERROR,
         };
         // `getPropertyTypeForIndexType`. Each member of a union of keys is a property name.
-        if self.p.files.options.no_unused_locals && !self.is_generic(key) {
+        if self.can_mark_properties_as_referenced(file) && !self.is_generic(key) {
             for &k in self.parts(key) {
                 if let Some(name) = self.property_name_of_type(k) {
                     self.mark_property_as_referenced(file, receiver, name, Some(e));
@@ -1768,9 +1773,9 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Number(n) => self.number_literal(hir.numbers[n as usize], true),
             // `checkPrivateIdentifierExpression`
             ExprKind::PrivateIdentifier(_) => TypeId::ANY,
-            ExprKind::String(s) => self.string_literal(s, true),
+            ExprKind::String(s) | ExprKind::JsxText(s) => self.string_literal(s, true),
             ExprKind::BigInt(text) => self.fresh_bigint_literal(text, false),
-            ExprKind::Regex => self.global_ref(known::RegExp, &[]),
+            ExprKind::Regex { .. } => self.global_ref(known::RegExp, &[]),
             // `checkTemplateExpression`
             ExprKind::Template { exprs } => {
                 // The comparison runs for every span, whether or not the types are used. Comparing
@@ -2027,7 +2032,7 @@ impl<'p, 's> Checker<'p, 's> {
         let node = self.span_of_expr(file, e);
         // `getEmitSyntaxForUsageLocationWorker`. An `import()`'s emit format doesn't depend only on
         // the file.
-        let usage = files.emit_syntax_of_import_call(file);
+        let usage = (file, files.emit_syntax_of_import_call(file));
         let mode = files.mode_of_import_call(file);
         let module = match hir[specifier].kind {
             // `resolveExternalModuleName`: `IsStringLiteralLike(moduleReferenceExpression)`
@@ -2224,7 +2229,11 @@ impl<'p, 's> Checker<'p, 's> {
                     let hir = self.hir(file);
                     if hir.is_in_property_initializer_or_class_static_block(hir.node(e), true) {
                         let node = self.span_of_token(file, self.hir(file)[e].pos);
-                        self.error_at(node, 2815, &[]);
+                        let is_early_error = Self::is_in_class_initializer(hir, hir.node(e));
+                        self.error_at(node, 2815, &[]).class = DiagnosticClass::early_error_if(
+                            is_early_error,
+                            DiagnosticClass::Semantic,
+                        );
                         return TypeId::ERROR;
                     }
                     self.global_ref(known::IArguments, &[])
@@ -2397,7 +2406,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns the class that `func` is a member of.
-    fn class_of_member_fn(&self, file: FileId, func: FnId) -> Option<ClassId> {
+    pub(super) fn class_of_member_fn(&self, file: FileId, func: FnId) -> Option<ClassId> {
         let FnOwner::Member(m) = self.bound(file).fns[func.idx()].owner else {
             return None;
         };
@@ -2503,7 +2512,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `checkThisInStaticClassFieldInitializerInDecoratedClass`
         if hir.kind(container) == Kind::PropertyDeclaration
             && hir.is_static(container)
-            && self.p.files.options.experimental_decorators
+            && self.module_options(file).experimental_decorators
             && hir
                 .find_ancestor(this, |n| n == hir.initializer(container))
                 .is_some()
@@ -2527,7 +2536,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => {}
         }
         let Some(t) = self.try_get_this_type_at_ex(file, this, container) else {
-            if !self.p.files.options.no_implicit_this {
+            if !self.module_options(file).no_implicit_this {
                 return TypeId::ANY;
             }
             let is_shadowed = self
@@ -2542,7 +2551,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::ANY;
         };
         if captured_by_arrow_function
-            && self.p.files.options.no_implicit_this
+            && self.module_options(file).no_implicit_this
             && self.is_global_this_type(t)
         {
             self.error_at(node(self), 7041, &[]);
@@ -2663,7 +2672,7 @@ impl<'p, 's> Checker<'p, 's> {
         // doesn't handle it.
         let hir = self.hir(file);
         let this = &hir[f.this_param];
-        if self.p.files.options.no_implicit_any
+        if self.module_options(file).no_implicit_any
             && !this.flags.contains(Flags::REPARSED)
             && !(hir.is_js && !self.is_check_js(file))
             && !self.is_private_within_ambient(file, func)
@@ -2799,7 +2808,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return Some(this);
         }
-        if !self.p.files.options.no_implicit_this && !self.hir(file).is_js {
+        if !self.module_options(file).no_implicit_this && !self.hir(file).is_js {
             return None;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -3348,7 +3357,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 2338
             };
-            self.error_at(node, code, &[]);
+            self.error_at(node, code, &[]).class = Self::super_error_class(hir, sup);
             return TypeId::ERROR;
         }
         if !is_call_expression && hir.kind(immediate_container) == Kind::Constructor {
@@ -3359,7 +3368,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::ANY;
         };
         if hir[class].extends.is_none() {
-            self.error_at(node, 2335, &[]);
+            self.error_at(node, 2335, &[]).class = Self::super_error_class(hir, sup);
             return TypeId::ERROR;
         }
         let sym = self.class_sym(file, class);
@@ -3600,7 +3609,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isJSLiteralType`
     pub(super) fn is_js_literal_type(&mut self, ty: TypeId) -> bool {
         // The flag has no effect under noImplicitAny.
-        if self.p.files.options.no_implicit_any {
+        if self.p.files.options.no_implicit_any && !self.p.files.is_compile_build() {
             return false;
         }
         match self.data(ty) {
@@ -3637,7 +3646,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// type that `getSpreadType` creates never has the flag.
     pub(super) fn is_js_literal(&mut self, file: FileId, literal: ExprId) -> bool {
         // `isJSLiteralType`, `hasExcessProperties`: nothing reads the flag under noImplicitAny.
-        if self.p.files.options.no_implicit_any {
+        if self.reports_implicit_any(file) {
             return false;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -3698,7 +3707,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_object_literal(&mut self, file: FileId, e: ExprId, props: Span<PropId>) -> TypeId {
         let hir = self.hir(file);
         if !self.is_rechecking() {
-            self.check_grammar_object_literal_expression(file, e, props);
+            self.check_grammar_object_literal_expression(file, e, props, true);
         }
         // `checkObjectLiteral` starts with `getApparentTypeOfContextualType`. Here the shape
         // requests it when it's built, which is too late for the errors the assignment's target
@@ -5769,8 +5778,12 @@ impl<'p, 's> Checker<'p, 's> {
             Some(module) => files.module_export(module, known::JSX),
             None => {
                 let is_opening_fragment = hir.kind(location) == Kind::JsxOpeningFragment;
-                let name =
-                    super::errors_jsx::jsx_namespace(files, self.atoms(), hir, is_opening_fragment);
+                let name = super::errors_jsx::jsx_namespace(
+                    self.module_options(file),
+                    self.atoms(),
+                    hir,
+                    is_opening_fragment,
+                );
                 let scope = match hir.data(location.row()) {
                     NodeData::Expr(element) => self.bound(file).expr_scope.get(&element).copied(),
                     _ => None,

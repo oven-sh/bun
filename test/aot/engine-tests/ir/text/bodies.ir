@@ -1,0 +1,372 @@
+# Heads of blocks, handlers, proofs on edges, absent and variadic operands, operations without a result, one payload field of every kind, flags, positions and inline frames
+# FORM: AsRead
+# RUN: round-trip
+# CHECK: typesite w0 module=m0 position=3 kind=Assertion text="T"
+# CHECK-NEXT: expectedresult x0 type=anything
+# CHECK-NEXT: layout L0 kind=Environment module=m0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+# CHECK-NEXT: layout L1 name="P" module=m0 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=anything}}]
+# CHECK-NEXT: variable g0 name="g" module=m0 declared={type=anything} initialization=Undefined
+# CHECK-NEXT: module m0 path="/a.js" displayPath="a.js" body=f0
+# CHECK-NEXT: module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+# CHECK-NEXT: modulefailure q0 importer=m0 specifier="./missing"
+# CHECK-NEXT: evalscope e0
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f1 name="blocks" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1 = IteratorOpen v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3():
+# CHECK-NEXT: v2 = Call v0
+# CHECK-NEXT: Jump -> next b2(v2)
+# CHECK-NEXT: b2(v3) frequency=Unlikely handler=b4(v0, v3):
+# CHECK-NEXT: v4 = Call v0, -, v3
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b3() role=IterationCleanup subject=v1 frequency=Unlikely handler=b5(v0):
+# CHECK-NEXT: v5 = CatchException
+# CHECK-NEXT: IteratorClose v1 completion=Throw
+# CHECK-NEXT: Rethrow v5
+# CHECK-NEXT: b4(v7, v8) role=CatchHandler handler=b6():
+# CHECK-NEXT: v9 = CatchValue
+# CHECK-NEXT: v10 = Call v7, v8, v9
+# CHECK-NEXT: Throw v10
+# CHECK-NEXT: b5(v11: anything) role=CleanupHandler:
+# CHECK-NEXT: v12 = CatchException
+# CHECK-NEXT: Rethrow v12
+# CHECK-NEXT: b6() role=DisposalCleanup subject=v0:
+# CHECK-NEXT: v13 = CatchException
+# CHECK-NEXT: Rethrow v13
+# CHECK-NEXT: }
+# CHECK-NEXT: function f2 name="terminators" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: boolean):
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Switch v0 cases=[0, -1, 4294967296] -> case b3(), case b3(), case b4(v0), otherwise b4(v0)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: SwitchString v0 strings=["a", "\""] -> case b3(), case b3(), otherwise b5()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Jump -> next b4(v0)
+# CHECK-NEXT: b4(v2):
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b5():
+# CHECK-NEXT: Branch v1 -> taken b6(), notTaken b7()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: Throw v0
+# CHECK-NEXT: b7():
+# CHECK-NEXT: Branch v1 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v3 = Call v0
+# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=string site=w0}}, {declared={type=anything}}]
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Branch v1 -> taken b10(), notTaken b11()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: Return
+# CHECK-NEXT: b11():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-NEXT: function f3 name="proofs" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(v1 | 0)
+# CHECK-NEXT: b1(v3):
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2(v4, v5):
+# CHECK-NEXT: v6 = StrictEq v4, v5
+# CHECK-NEXT: Branch v6 -> taken b3(| 0, 1), notTaken b4()
+# CHECK-NEXT: b3(v7, v8):
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Switch v0 cases=[1, 2] -> case b5(| 0), case b6(v1 | 0), otherwise b7()
+# CHECK-NEXT: b5(v9):
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: b6(v10, v11):
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b7():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: function f4 name="operands" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: object):
+# CHECK-NEXT: v3 = Call v0, -, v1, v1
+# CHECK-NEXT: v4 = Call v0, v1
+# CHECK-NEXT: v5 = Call v0
+# CHECK-NEXT: v6 = GetSuperBase v2 homeKind=ClassPrototype
+# CHECK-NEXT: SuperSet v6, v0, v1, v1 mode=Sloppy
+# CHECK-NEXT: SuperSet v6, v0, v1 key="p"
+# CHECK-NEXT: v9 = SuperGet v6, v0, v1
+# CHECK-NEXT: v10 = SuperGet v6, v0 key="p"
+# CHECK-NEXT: v11 = Strcat v3, v4
+# CHECK-NEXT: v12 = Strcat
+# CHECK-NEXT: v13 = ImportDynamic v0, v1 referrer=m0
+# CHECK-NEXT: v14 = ImportDynamic v0 referrer=m0
+# CHECK-NEXT: PutModuleVariable v14 variable=g0
+# CHECK-NEXT: v16 = Undefined
+# CHECK-NEXT: Return v16
+# CHECK-NEXT: }
+# CHECK-NEXT: function f5 name="payloads" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2 = Boolean boolean=true
+# CHECK-NEXT: v3 = Integer integer=-5
+# CHECK-NEXT: v4 = Double number=1.5
+# CHECK-NEXT: v5 = String string="a\"\\\n\u{0}\u{e9}\u{1f600}\u{d800}b"
+# CHECK-NEXT: v6 = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: v7 = GetModuleVariable variable=g0
+# CHECK-NEXT: v8 = PropGet v1 key=@"p"
+# CHECK-NEXT: PropSet v1, v2 key="p" mode=Sloppy
+# CHECK-NEXT: v10 = NewObject -, v4, v1 layout=L1 fields=[0, 1]
+# CHECK-NEXT: v11 = FinishObject v10
+# CHECK-NEXT: v12 = TypeTest v1 testedType=undefined|number
+# CHECK-NEXT: v13 = Check v1 castType=number site=w0
+# CHECK-NEXT: v14 = NewRegExp pattern="a" regExpFlags=[Global, IgnoreCase]
+# CHECK-NEXT: v15 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {raw="\\q"}]
+# CHECK-NEXT: v16 = NewArray v4 contents=number holes=[1]
+# CHECK-NEXT: v17 = ModuleNamespace module=m0 phase=Defer
+# CHECK-NEXT: v18 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: v19 = GetEnvironmentField v18 layout=L0 field=1
+# CHECK-NEXT: v20 = NewClosure function=f0
+# CHECK-NEXT: v21 = DirectEval v1, v0 evalScope=e0
+# CHECK-NEXT: v22 = Data data=d0
+# CHECK-NEXT: v23 = Call v1 expectedResult=x0
+# CHECK-NEXT: v24 = Convert v1 declared={type=number site=w0} illTypedCause=Assertion
+# CHECK-NEXT: v25 = Convert v8 declared={type=i32 flags=[IsExpected]}
+# CHECK-NEXT: CopyDataProperties v11, v1 excludedKeys=["a", @@iterator]
+# CHECK-NEXT: Return v23
+# CHECK-NEXT: }
+# CHECK-NEXT: function f6 name="doubles" module=m0 thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0 = Double
+# CHECK-NEXT: v1 = Double number=-0
+# CHECK-NEXT: v2 = Double number=100
+# CHECK-NEXT: v3 = Double number=1e+21
+# CHECK-NEXT: v4 = Double number=-2.5e-7
+# CHECK-NEXT: v5 = Double number=5e-324
+# CHECK-NEXT: v6 = Double number=NaN
+# CHECK-NEXT: v7 = Double number=Infinity
+# CHECK-NEXT: v8 = Double number=-Infinity
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-NEXT: function f7 name="failure" module=m0 thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0 = ThrowModuleFailure failure=q0
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-NEXT: function f8 name="externals" module=m1 role=Library thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1 = RequireBuiltinModule runtimeModule=BunSqlite
+# CHECK-NEXT: v2 = HasJSType v0 first=2 last=4
+# CHECK-NEXT: v3 = LinkTimeConstant constant=6
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-NEXT: function f9 name="flagsAndPositions" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1 = Call v0 [isAnnotatedPure, isNeverInlined] @12
+# CHECK-NEXT: v2 = PropGet v0 key="n" @4294967294
+# CHECK-NEXT: v3 = Builtin builtin=GlobalThis @0
+# CHECK-NEXT: v4 = PropGet v3 key="x" [isFreeName, isForTypeOf]
+# CHECK-NEXT: Return v1 @7
+# CHECK-NEXT: }
+# CHECK-NEXT: function f10 name="inlineFrames" module=m0 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f0 callPosition=3 module=m0}, {callee=f6 callPosition=4 parent=1 isTailCall=true module=m0}, {callee=f6 callPosition=5 parent=2 isConstruction=true module=m0}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0 = Undefined @12:3
+# CHECK-NEXT: Return v0 @13:1
+# CHECK-NEXT: }
+# CHECK-NEXT: function f11 name="otherSpellings" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() frequency=Unlikely handler=b2():
+# CHECK-NEXT: v1 = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: b2() role=DisposalCleanup subject=v0 frequency=Unlikely:
+# CHECK-NEXT: v2 = CatchException
+# CHECK-NEXT: Rethrow v2
+# CHECK-NEXT: }
+# CHECK-NEXT: data d0 root=Null
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(V): pass TypeValues VerifyProgram
+# V: outcome: Changed
+# V-NEXT: outcome: Unchanged
+
+typesite w0 module=m0 position=3 kind=Assertion text="T"
+expectedresult x0 type=anything
+layout L0 kind=Environment module=m0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 name="P" module=m0 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=anything}}]
+variable g0 name="g" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/a.js" displayPath="a.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+modulefailure q0 importer=m0 specifier="./missing"
+evalscope e0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="blocks" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v0
+    Jump -> next b2(v2)
+  b2(v3) frequency=Unlikely handler=b4(v0, v3):
+    v4 = Call v0, -, v3
+    Return v4
+  b3() role=IterationCleanup subject=v1 frequency=Unlikely handler=b5(v0):
+    v5 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v5
+  b4(v7, v8) role=CatchHandler handler=b6():
+    v9 = CatchValue
+    v10 = Call v7, v8, v9
+    Throw v10
+  b5(v11: anything) role=CleanupHandler:
+    v12 = CatchException
+    Rethrow v12
+  b6() role=DisposalCleanup subject=v0:
+    v13 = CatchException
+    Rethrow v13
+}
+function f2 name="terminators" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Switch v0 cases=[0, -1, 4294967296] -> case b3(), case b3(), case b4(v0), otherwise b4(v0)
+  b2():
+    SwitchString v0 strings=["a", "\""] -> case b3(), case b3(), otherwise b5()
+  b3():
+    Jump -> next b4(v0)
+  b4(v2):
+    Return v2
+  b5():
+    Branch v1 -> taken b6(), notTaken b7()
+  b6():
+    Throw v0
+  b7():
+    Branch v1 -> taken b8(), notTaken b9()
+  b8():
+    v3 = Call v0
+    ReturnCall v3 casts=[{declared={type=string site=w0}}, {declared={type=anything}}]
+  b9():
+    Branch v1 -> taken b10(), notTaken b11()
+  b10():
+    Return
+  b11():
+    Unreachable
+}
+function f3 name="proofs" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2(v1 | 0)
+  b1(v3):
+    Return v3
+  b2(v4, v5):
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b3(| 0, 1), notTaken b4()
+  b3(v7, v8):
+    Return v7
+  b4():
+    Switch v0 cases=[1, 2] -> case b5(| 0), case b6(v1 | 0), otherwise b7()
+  b5(v9):
+    Return v9
+  b6(v10, v11):
+    Return v11
+  b7():
+    Return
+}
+function f4 name="operands" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: object):
+    v3 = Call v0, -, v1, v1
+    v4 = Call v0, v1
+    v5 = Call v0
+    v6 = GetSuperBase v2 homeKind=ClassPrototype
+    SuperSet v6, v0, v1, v1 mode=Sloppy
+    SuperSet v6, v0, v1 key="p"
+    v9 = SuperGet v6, v0, v1
+    v10 = SuperGet v6, v0 key="p"
+    v11 = Strcat v3, v4
+    v12 = Strcat
+    v13 = ImportDynamic v0, v1 referrer=m0
+    v14 = ImportDynamic v0 referrer=m0
+    PutModuleVariable v14 variable=g0
+    v16 = Undefined
+    Return v16
+}
+function f5 name="payloads" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Boolean boolean=true
+    v3 = Integer integer=-5
+    v4 = Double number=1.5
+    v5 = String string="a\"\\\n\u{0}\u{e9}\u{1f600}\u{d800}b"
+    v6 = Builtin builtin=ArrayPrototypePush
+    v7 = GetModuleVariable variable=g0
+    v8 = PropGet v1 key=@"p"
+    PropSet v1, v2 key="p" mode=Sloppy
+    v10 = NewObject -, v4, v1 layout=L1 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = TypeTest v1 testedType=undefined|number
+    v13 = Check v1 castType=number site=w0
+    v14 = NewRegExp pattern="a" regExpFlags=[Global, IgnoreCase]
+    v15 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {raw="\\q"}]
+    v16 = NewArray v4 contents=number holes=[1]
+    v17 = ModuleNamespace module=m0 phase=Defer
+    v18 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v19 = GetEnvironmentField v18 layout=L0 field=1
+    v20 = NewClosure function=f0
+    v21 = DirectEval v1, v0 evalScope=e0
+    v22 = Data data=d0
+    v23 = Call v1 expectedResult=x0
+    v24 = Convert v1 declared={type=number site=w0} illTypedCause=Assertion
+    v25 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    CopyDataProperties v11, v1 excludedKeys=["a", @@iterator]
+    Return v23
+}
+function f6 name="doubles" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Double
+    v1 = Double number=-0
+    v2 = Double number=100
+    v3 = Double number=1e+21
+    v4 = Double number=-2.5e-7
+    v5 = Double number=5e-324
+    v6 = Double number=NaN
+    v7 = Double number=Infinity
+    v8 = Double number=-Infinity
+    Return v8
+}
+function f7 name="failure" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ThrowModuleFailure failure=q0
+    Unreachable
+}
+function f8 name="externals" module=m1 role=Library thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = RequireBuiltinModule runtimeModule=BunSqlite
+    v2 = HasJSType v0 first=2 last=4
+    v3 = LinkTimeConstant constant=6
+    Return v2
+}
+function f9 name="flagsAndPositions" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0 [isAnnotatedPure, isNeverInlined] @12
+    v2 = PropGet v0 key="n" @4294967294
+    v3 = Builtin builtin=GlobalThis @0
+    v4 = PropGet v3 key="x" [isFreeName, isForTypeOf]
+    Return v1 @7
+}
+function f10 name="inlineFrames" module=m0 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f0 callPosition=3 module=m0}, {callee=f6 callPosition=4 parent=1 isTailCall=true module=m0}, {callee=f6 callPosition=5 parent=2 isConstruction=true module=m0}] {
+  b0():
+    v0 = Undefined @12:3
+    Return v0 @13:1
+}
+function f11 name="otherSpellings" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2() frequency=Unlikely:
+    v1 = Call v0, -
+    Return v1
+  b2() frequency=Unlikely subject=v0 role=DisposalCleanup:
+    v2 = CatchException
+    Rethrow v2
+}
+data d0 root=Null
+entry module=m0

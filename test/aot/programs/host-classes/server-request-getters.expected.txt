@@ -1,0 +1,60 @@
+0 /plain?a=b: 200 http://127.0.0.1:PORT/plain?a=b true GET true 1 true true
+0 /own-before: 200 own, before a read true GET true own true true
+0 /own-after: 200 own, after a read true OWN true 1 true true
+0 /extra: 200 http://127.0.0.1:PORT/extra true GET true 1 true true
+0 /frozen: 200 http://127.0.0.1:PORT/frozen true GET true 1 true true
+0 /clone: 200 http://127.0.0.1:PORT/clone true GET true 1 true true | http://127.0.0.1:PORT/clone true GET true 1 true true
+0 /route/7: 200 http://127.0.0.1:PORT/route/7 true GET 7 1
+0 /shadow-the-prototype: 200 refused: Cannot assign to %BunRequest%.prototype.url because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility) | http://127.0.0.1:PORT/shadow-the-prototype true GET  1
+0 /route/8: 200 http://127.0.0.1:PORT/route/8 true GET 8 1
+0 /clear-the-prototype: 200 http://127.0.0.1:PORT/clear-the-prototype true GET  1
+0 /route/9: 200 http://127.0.0.1:PORT/route/9 true GET 9 1
+0 /shadow-the-method: 200 refused: Cannot assign to %BunRequest%.prototype.method because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility) | http://127.0.0.1:PORT/shadow-the-method true GET  1
+0 /route/10: 200 http://127.0.0.1:PORT/route/10 true GET 10 1
+0 /clear-the-method: 200 http://127.0.0.1:PORT/clear-the-method true GET  1
+0 /route/11: 200 http://127.0.0.1:PORT/route/11 true GET 11 1
+0 /put-a-prototype-in-between: 200 refused: Cannot set prototype of object with immutable properties | http://127.0.0.1:PORT/put-a-prototype-in-between true GET  1
+0 /route/12: 200 http://127.0.0.1:PORT/route/12 true GET 12 1
+0 /take-it-out-again: 200 http://127.0.0.1:PORT/take-it-out-again true GET  1
+0 /route/13: 200 http://127.0.0.1:PORT/route/13 true GET 13 1
+0 /plain: 200 http://127.0.0.1:PORT/plain true GET true 1 true true
+1 /plain?a=b: 200 http://127.0.0.1:PORT/plain?a=b true POST true 1 true true
+1 /own-before: 200 own, before a read true POST true own true true
+1 /own-after: 200 own, after a read true OWN true 1 true true
+1 /extra: 200 http://127.0.0.1:PORT/extra true POST true 1 true true
+1 /frozen: 200 http://127.0.0.1:PORT/frozen true POST true 1 true true
+1 /clone: 200 http://127.0.0.1:PORT/clone true POST true 1 true true | http://127.0.0.1:PORT/clone true POST true 1 true true
+1 /route/7: 200 http://127.0.0.1:PORT/route/7 true POST 7 1
+1 /shadow-the-prototype: 200 refused: Cannot assign to %BunRequest%.prototype.url because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility) | http://127.0.0.1:PORT/shadow-the-prototype true POST  1
+1 /route/8: 200 http://127.0.0.1:PORT/route/8 true POST 8 1
+1 /clear-the-prototype: 200 http://127.0.0.1:PORT/clear-the-prototype true POST  1
+1 /route/9: 200 http://127.0.0.1:PORT/route/9 true POST 9 1
+1 /shadow-the-method: 200 refused: Cannot assign to %BunRequest%.prototype.method because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility) | http://127.0.0.1:PORT/shadow-the-method true POST  1
+1 /route/10: 200 http://127.0.0.1:PORT/route/10 true POST 10 1
+1 /clear-the-method: 200 http://127.0.0.1:PORT/clear-the-method true POST  1
+1 /route/11: 200 http://127.0.0.1:PORT/route/11 true POST 11 1
+1 /put-a-prototype-in-between: 200 refused: Cannot set prototype of object with immutable properties | http://127.0.0.1:PORT/put-a-prototype-in-between true POST  1
+1 /route/12: 200 http://127.0.0.1:PORT/route/12 true POST 12 1
+1 /take-it-out-again: 200 http://127.0.0.1:PORT/take-it-out-again true POST  1
+1 /route/13: 200 http://127.0.0.1:PORT/route/13 true POST 13 1
+1 /plain: 200 http://127.0.0.1:PORT/plain true POST true 1 true true
+2 /plain?a=b: 200 http://127.0.0.1:PORT/plain?a=b true GET true 1 true true
+2 /own-before: 200 own, before a read true GET true own true true
+2 /own-after: 200 own, after a read true OWN true 1 true true
+2 /extra: 200 http://127.0.0.1:PORT/extra true GET true 1 true true
+2 /frozen: 200 http://127.0.0.1:PORT/frozen true GET true 1 true true
+2 /clone: 200 http://127.0.0.1:PORT/clone true GET true 1 true true | http://127.0.0.1:PORT/clone true GET true 1 true true
+2 /route/7: 200 http://127.0.0.1:PORT/route/7 true GET 7 1
+2 /shadow-the-prototype: 200 refused: Cannot assign to %BunRequest%.prototype.url because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility) | http://127.0.0.1:PORT/shadow-the-prototype true GET  1
+2 /route/8: 200 http://127.0.0.1:PORT/route/8 true GET 8 1
+2 /clear-the-prototype: 200 http://127.0.0.1:PORT/clear-the-prototype true GET  1
+2 /route/9: 200 http://127.0.0.1:PORT/route/9 true GET 9 1
+2 /shadow-the-method: 200 refused: Cannot assign to %BunRequest%.prototype.method because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility) | http://127.0.0.1:PORT/shadow-the-method true GET  1
+2 /route/10: 200 http://127.0.0.1:PORT/route/10 true GET 10 1
+2 /clear-the-method: 200 http://127.0.0.1:PORT/clear-the-method true GET  1
+2 /route/11: 200 http://127.0.0.1:PORT/route/11 true GET 11 1
+2 /put-a-prototype-in-between: 200 refused: Cannot set prototype of object with immutable properties | http://127.0.0.1:PORT/put-a-prototype-in-between true GET  1
+2 /route/12: 200 http://127.0.0.1:PORT/route/12 true GET 12 1
+2 /take-it-out-again: 200 http://127.0.0.1:PORT/take-it-out-again true GET  1
+2 /route/13: 200 http://127.0.0.1:PORT/route/13 true GET 13 1
+2 /plain: 200 http://127.0.0.1:PORT/plain true GET true 1 true true

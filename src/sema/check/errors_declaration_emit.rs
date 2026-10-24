@@ -2171,10 +2171,11 @@ impl<'p, 's> Checker<'p, 's> {
         modules
     }
 
-    /// The first call builds the index.
-    fn exporting_modules(&mut self) -> Rc<ExportingModules> {
-        if let Some(index) = &self.exporting_modules {
-            return Rc::clone(index);
+    /// The first call for the program builds the index.
+    fn exporting_modules(&mut self) -> &'p ExportingModules {
+        let program = self.p;
+        if let Some(index) = program.exporting_modules.get() {
+            return index;
         }
         let files = self.files();
         let mut index = ExportingModules::default();
@@ -2198,9 +2199,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let index = Rc::new(index);
-        self.exporting_modules = Some(Rc::clone(&index));
-        index
+        program.exporting_modules.get_or_init(|| index)
     }
 
     /// "look for a variable in scope with the container's type which may be acting like a namespace (eg, `Symbol` acts

@@ -1,17 +1,17 @@
 // This is a port of Node.js's lib/_http_agent.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js
 const EventEmitter = require("node:events");
-const {
-  parseProxyConfigFromEnv,
-  kProxyConfig,
-  checkShouldUseProxy,
-  kWaitForProxyTunnel,
-  kPerRequestCheckServerIdentity,
-} = require("internal/http");
-const { getLazy, kEmptyObject, once } = require("internal/shared");
+const http = require("internal/http");
+const { parseProxyConfigFromEnv, checkShouldUseProxy } = http;
+// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
+const kProxyConfig: typeof http.kProxyConfig = http.kProxyConfig;
+const kWaitForProxyTunnel: typeof http.kWaitForProxyTunnel = http.kWaitForProxyTunnel;
+const kPerRequestCheckServerIdentity: typeof http.kPerRequestCheckServerIdentity = http.kPerRequestCheckServerIdentity;
+const { kEmptyObject, once } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
-const { kDestroyOnRead } = require("internal/net/symbols");
+const netSymbols = require("internal/net/symbols");
+const kDestroyOnRead: typeof netSymbols.kDestroyOnRead = netSymbols.kDestroyOnRead;
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
@@ -24,16 +24,84 @@ const kOwnerFrame = Symbol("ownerFrame");
 const AsyncContextFrame = require("internal/async_context_frame");
 const ObjectDefineProperty = Object.defineProperty;
 
-function freeSocketErrorListener(err) {
+function freeSocketErrorListener(this: $Node.HttpClientSocket, err: Error) {
   const socket = this;
   $debug("SOCKET ERROR on FREE socket:", err.message, err.stack);
   socket.destroy();
   socket.emit("agentRemove");
 }
 
-type Agent = import("node:http").Agent;
-function Agent(options): void {
-  if (!(this instanceof Agent)) return new Agent(options);
+type SocketCreatedCallback = (err: Error | null, socket?: $Node.HttpClientSocket | null) => void;
+
+declare global {
+  namespace $Node {
+    /** With the options of `net.connect()` and `tls.connect()`, which every connection of the agent gets. */
+    interface AgentOptions {
+      __proto__?: null;
+      defaultPort?: number;
+      protocol?: string;
+      noDelay?: boolean;
+      path?: string | null;
+      keepAlive?: boolean;
+      keepAliveMsecs?: number;
+      maxSockets?: number;
+      maxFreeSockets?: number;
+      maxTotalSockets?: number;
+      scheduling?: "fifo" | "lifo";
+      agentKeepAliveTimeoutBuffer?: number;
+      proxyEnv?: Record<string, string | undefined>;
+      timeout?: number;
+      [option: string]: unknown;
+    }
+
+    interface Agent extends EventEmitter {
+      constructor: AgentConstructor;
+      options: AgentOptions;
+      defaultPort: number;
+      protocol: string;
+      requests: Dictionary<ClientRequest[]>;
+      sockets: Dictionary<HttpClientSocket[]>;
+      freeSockets: Dictionary<HttpClientSocket[]>;
+      keepAliveMsecs: number;
+      keepAlive: boolean;
+      maxSockets: number;
+      maxFreeSockets: number;
+      maxTotalSockets: number;
+      totalSocketCount: number;
+      scheduling: "fifo" | "lifo";
+      agentKeepAliveTimeoutBuffer: number;
+      createConnection(options: ClientRequestOptions, callback?: SocketCreatedCallback): HttpClientSocket | undefined;
+      getName(options?: ClientRequestOptions): string;
+      addRequest(
+        req: ClientRequest,
+        options: ClientRequestOptions | string,
+        port?: number | string,
+        localAddress?: string,
+      ): void;
+      createSocket(req: ClientRequest, options: ClientRequestOptions, callback: SocketCreatedCallback): void;
+      removeSocket(socket: HttpClientSocket, options: ClientRequestOptions | undefined): void;
+      keepSocketAlive(socket: HttpClientSocket): boolean;
+      reuseSocket(socket: HttpClientSocket, req: ClientRequest): void;
+      destroy(): void;
+      [kOnKeylog]?: (this: HttpClientSocket, keylog: Buffer) => void;
+      readonly [kOwnerFrame]?: unknown;
+    }
+
+    type AgentConstructor = typeof Agent;
+
+    interface ClientRequest {
+      [kRequestOptions]?: ClientRequestOptions;
+      [kRequestAsyncResource]?: InstanceType<typeof import("./async_hooks").default.AsyncResource> | null;
+    }
+
+    interface HttpClientSocket {
+      [kDestroyOnRead]?: boolean;
+    }
+  }
+}
+
+function Agent(this: $Node.Agent, options?: $Node.AgentOptions): void {
+  if (!(this instanceof Agent)) return new Agent(options) as any;
 
   EventEmitter.$call(this);
 
@@ -49,15 +117,15 @@ function Agent(options): void {
 
   // Don't confuse node:net and make it think that we're connecting to a pipe
   this.options.path = null;
-  this.requests = { __proto__: null };
-  this.sockets = { __proto__: null };
-  this.freeSockets = { __proto__: null };
+  this.requests = { __proto__: null } as $Node.Dictionary<$Node.ClientRequest[]>;
+  this.sockets = { __proto__: null } as $Node.Dictionary<$Node.HttpClientSocket[]>;
+  this.freeSockets = { __proto__: null } as $Node.Dictionary<$Node.HttpClientSocket[]>;
   this.keepAliveMsecs = this.options.keepAliveMsecs || 1000;
   this.keepAlive = this.options.keepAlive || false;
   this.maxSockets = this.options.maxSockets || Agent.defaultMaxSockets;
   this.maxFreeSockets = this.options.maxFreeSockets || 256;
   this.scheduling = this.options.scheduling || "lifo";
-  this.maxTotalSockets = this.options.maxTotalSockets;
+  this.maxTotalSockets = this.options.maxTotalSockets!;
   this.totalSocketCount = 0;
 
   this.agentKeepAliveTimeoutBuffer =
@@ -82,7 +150,7 @@ function Agent(options): void {
     this.maxTotalSockets = Infinity;
   }
 
-  this.on("free", (socket, options) => {
+  this.on("free", (socket: $Node.HttpClientSocket, options: $Node.ClientRequestOptions | undefined) => {
     const name = this.getName(options);
     $debug("agent.on(free)", name);
 
@@ -104,7 +172,7 @@ function Agent(options): void {
 
     const requests = this.requests[name];
     if (requests?.length) {
-      const req = requests.shift();
+      const req = requests.shift()!;
       const reqAsyncRes = req[kRequestAsyncResource];
       if (reqAsyncRes) {
         // Run request within the original async context.
@@ -157,56 +225,50 @@ function Agent(options): void {
 }
 $toClass(Agent, "Agent", EventEmitter);
 
-function maybeEnableKeylog(this: Agent, eventName) {
+function maybeEnableKeylog(this: $Node.Agent, eventName: $Node.EventName) {
   if (eventName === "keylog") {
     this.removeListener("newListener", maybeEnableKeylog);
     // Future sockets will listen on keylog at creation.
     const agent = this;
-    this[kOnKeylog] = function onkeylog(keylog) {
+    this[kOnKeylog] = function onkeylog(this: $Node.HttpClientSocket, keylog: Buffer) {
       agent.emit("keylog", keylog, this);
     };
     // Existing sockets will start listening on keylog now. agent.sockets
     // maps names to socket arrays, so flatten before attaching (upstream
     // iterates the outer object and calls .on() on the arrays).
-    for (const socket of Object.values(this.sockets).flat() as any[]) {
+    for (const socket of Object.values(this.sockets).flat() as $Node.HttpClientSocket[]) {
       socket.on("keylog", this[kOnKeylog]);
     }
   }
 }
 
-const tls = getLazy(() => require("node:tls"));
-const net = getLazy(() => require("node:net"));
-
 Agent.defaultMaxSockets = Infinity;
 
-Agent.prototype.createConnection = function createConnection(...args) {
-  const normalized = net()._normalizeArgs(args);
+Agent.prototype.createConnection = function createConnection(this: $Node.Agent, ...args: unknown[]) {
+  const normalized = require("node:net")._normalizeArgs(args);
   const options = normalized[0];
   const cb = normalized[1];
 
   const shouldUseProxy = checkShouldUseProxy(this[kProxyConfig], options);
   $debug(`http createConnection should use proxy for ${options.host}:${options.port}:`, shouldUseProxy);
   if (!shouldUseProxy) {
-    // @ts-ignore
-    return net().createConnection(...args);
+    return require("node:net").createConnection(...args);
   }
 
   const connectOptions = {
-    ...this[kProxyConfig].proxyConnectionOptions,
+    ...this[kProxyConfig]!.proxyConnectionOptions,
   };
-  const proxyProtocol = this[kProxyConfig].protocol;
+  const proxyProtocol = this[kProxyConfig]!.protocol;
   if (proxyProtocol === "http:") {
-    // @ts-ignore
-    return net().connect(connectOptions, cb);
+    return require("node:net").connect(connectOptions, cb);
   } else if (proxyProtocol === "https:") {
-    // @ts-ignore
-    return tls().connect(connectOptions, cb);
+    return require("node:tls").connect(connectOptions, cb);
   }
   // This should be unreachable because proxy config should be null for other protocols.
   $assert(false, `Unexpected proxy protocol ${proxyProtocol}`);
 };
 
-Agent.prototype.getName = function getName(options = kEmptyObject) {
+Agent.prototype.getName = function getName(this: $Node.Agent, options: $Node.ClientRequestOptions = kEmptyObject) {
   const { host, port, localAddress, family, socketPath } = options;
   let name = host || "localhost";
 
@@ -224,7 +286,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   return name;
 };
 
-function handleSocketAfterProxy(err, req) {
+function handleSocketAfterProxy(err: Error & { proxyTunnelTimeout?: boolean }, req: $Node.ClientRequest) {
   if (err.code === "ERR_PROXY_TUNNEL") {
     if (err.proxyTunnelTimeout) {
       req.emit("timeout"); // Propagate the timeout from the tunnel to the request.
@@ -233,7 +295,13 @@ function handleSocketAfterProxy(err, req) {
   }
 }
 
-Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */, localAddress /* legacy */) {
+Agent.prototype.addRequest = function addRequest(
+  this: $Node.Agent,
+  req: $Node.ClientRequest,
+  options: $Node.ClientRequestOptions | string,
+  port?: number | string /* legacy */,
+  localAddress?: string /* legacy */,
+) {
   // Legacy API: addRequest(req, host, port, localAddress)
   if (typeof options === "string") {
     options = {
@@ -255,7 +323,7 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
   this.sockets[name] ||= [];
 
   const freeSockets = this.freeSockets[name];
-  let socket;
+  let socket: $Node.HttpClientSocket | undefined;
   if (freeSockets) {
     while (freeSockets.length && freeSockets[0].destroyed) {
       freeSockets.shift();
@@ -299,12 +367,12 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
 };
 
 // Node leaves the entry that addRequest() made when no socket ever joins it.
-function dropEmptySocketsEntry(agent, name) {
+function dropEmptySocketsEntry(agent: $Node.Agent, name: string) {
   const { sockets } = agent;
   if (sockets[name]?.length === 0) delete sockets[name];
 }
 
-function destroyOneFreeSocket(agent) {
+function destroyOneFreeSocket(agent: $Node.Agent) {
   const freeSockets = agent.freeSockets;
   for (const name in freeSockets) {
     const idle = freeSockets[name].find(socket => !socket.destroyed);
@@ -312,7 +380,12 @@ function destroyOneFreeSocket(agent) {
   }
 }
 
-Agent.prototype.createSocket = function createSocket(req, options, cb) {
+Agent.prototype.createSocket = function createSocket(
+  this: $Node.Agent,
+  req: $Node.ClientRequest,
+  options: $Node.ClientRequestOptions,
+  cb: SocketCreatedCallback | undefined,
+) {
   options = { __proto__: null, ...options, ...this.options };
   const socketPath = options.socketPath;
   if (socketPath) options.path = socketPath;
@@ -337,23 +410,23 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   // what follows runs in the requester's frame; otherwise wherever the answer came in, as in node.
   const requesterFrame = AsyncContextFrame.current();
   const requesterGraph = AsyncContextFrame.currentGraph();
-  const oncreate = once((err, s) =>
+  const oncreate = once((err: Error | null, s?: $Node.HttpClientSocket | null) =>
     requesterGraph === AsyncContextFrame.currentGraph()
       ? onSocketReady.$call(this, err, s)
       : AsyncContextFrame.run(requesterFrame, onSocketReady, this, err, s),
   );
-  function onSocketReady(err, s) {
+  function onSocketReady(this: $Node.Agent, err: Error | null, s?: $Node.HttpClientSocket | null) {
     // `cb` is onSocketCreated.bind(this, req); release it from this closure's
     // scope so retaining this arrow past its call cannot retain req.
     const done = cb;
     cb = undefined;
-    if (err) return done(err);
+    if (err) return done!(err);
     this.sockets[name] ||= [];
-    this.sockets[name].push(s);
+    this.sockets[name].push(s!);
     this.totalSocketCount++;
     $debug("sockets", name, this.sockets[name].length, this.totalSocketCount);
-    installListeners(this, s, options);
-    done(null, s);
+    installListeners(this, s!, options);
+    done!(null, s);
   }
   const keepAlive = this.keepAlive;
   if (keepAlive) {
@@ -369,13 +442,13 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   if (newSocket && !newSocket[kWaitForProxyTunnel]) oncreate(null, newSocket);
 };
 
-function normalizeServerName(options, req) {
+function normalizeServerName(options: $Node.ClientRequestOptions, req: $Node.ClientRequest) {
   if (!options.servername && options.servername !== "") options.servername = calculateServerName(options, req);
 }
 
-function calculateServerName(options, req) {
+function calculateServerName(options: $Node.ClientRequestOptions, req: $Node.ClientRequest) {
   let servername = options.host;
-  const hostHeader = req.getHeader("host");
+  const hostHeader = req.getHeader("host") as string | undefined;
   if (hostHeader) {
     validateString(hostHeader, "options.headers.host");
 
@@ -400,7 +473,7 @@ function calculateServerName(options, req) {
   return servername;
 }
 
-function installListeners(agent, s, options) {
+function installListeners(agent: $Node.Agent, s: $Node.HttpClientSocket, options: $Node.ClientRequestOptions) {
   function onFree() {
     $debug("CLIENT socket onFree");
     agent.emit("free", s, options);
@@ -443,7 +516,11 @@ function installListeners(agent, s, options) {
   }
 }
 
-Agent.prototype.removeSocket = function removeSocket(s, options) {
+Agent.prototype.removeSocket = function removeSocket(
+  this: $Node.Agent,
+  s: $Node.HttpClientSocket,
+  options: $Node.ClientRequestOptions | undefined,
+) {
   const name = this.getName(options);
   $debug("removeSocket", name, "writable:", s.writable);
   const sets = [this.sockets];
@@ -463,7 +540,7 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
     }
   }
 
-  let req;
+  let req: $Node.ClientRequest | undefined;
   let queueName = name;
   const requests = this.requests;
   if (requests[name]?.length) {
@@ -485,7 +562,7 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
   if (req && options) {
     req[kRequestOptions] = undefined;
     let created = false;
-    const onCreated = (err, socket) => {
+    const onCreated: SocketCreatedCallback = (err, socket) => {
       created = true;
       onSocketCreatedForPending.$call(this, req, queueName, err, socket);
     };
@@ -494,12 +571,18 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
     } catch (err) {
       // Nobody called this function for the request, so the request has to get the error.
       if (created) throw err;
-      onCreated(err, null);
+      onCreated(err as Error, null);
     }
   }
 };
 
-function onSocketCreated(this: any, req, name, err, socket) {
+function onSocketCreated(
+  this: $Node.Agent,
+  req: $Node.ClientRequest,
+  name: string,
+  err: Error | null,
+  socket?: $Node.HttpClientSocket | null,
+) {
   if (err) {
     dropEmptySocketsEntry(this, name);
     handleSocketAfterProxy(err, req);
@@ -507,10 +590,16 @@ function onSocketCreated(this: any, req, name, err, socket) {
     return;
   }
 
-  setRequestSocket(this, req, socket);
+  setRequestSocket(this, req, socket!);
 }
 
-function onSocketCreatedForPending(this: any, req, queueName, err, socket) {
+function onSocketCreatedForPending(
+  this: $Node.Agent,
+  req: $Node.ClientRequest,
+  queueName: string,
+  err: Error | null,
+  socket?: $Node.HttpClientSocket | null,
+) {
   if (err) {
     // No socket of this name may ever free and take the failed request out: left at the head it blocks removeSocket().
     const queue = this.requests[queueName];
@@ -525,10 +614,10 @@ function onSocketCreatedForPending(this: any, req, queueName, err, socket) {
     return;
   }
 
-  socket.emit("free");
+  socket!.emit("free");
 }
 
-Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
+Agent.prototype.keepSocketAlive = function keepSocketAlive(this: $Node.Agent, socket: $Node.HttpClientSocket) {
   socket.setKeepAlive(true, this.keepAliveMsecs);
   socket.unref();
 
@@ -540,7 +629,7 @@ Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
     const keepAliveHint = res.headers["keep-alive"];
 
     if (keepAliveHint) {
-      const hint = /^timeout=(\d+)/.exec(keepAliveHint)?.[1];
+      const hint = /^timeout=(\d+)/.exec(keepAliveHint as string)?.[1];
 
       if (hint) {
         // Let the timer expire before the announced timeout to reduce the likelihood of ECONNRESET errors
@@ -563,7 +652,11 @@ Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
   return canKeepSocketAlive;
 };
 
-Agent.prototype.reuseSocket = function reuseSocket(socket, req) {
+Agent.prototype.reuseSocket = function reuseSocket(
+  this: $Node.Agent,
+  socket: $Node.HttpClientSocket,
+  req: $Node.ClientRequest,
+) {
   $debug("have free socket");
   socket.removeListener("error", freeSocketErrorListener);
   socket[kDestroyOnRead] = false;
@@ -571,7 +664,7 @@ Agent.prototype.reuseSocket = function reuseSocket(socket, req) {
   socket.ref();
 };
 
-Agent.prototype.destroy = function destroy() {
+Agent.prototype.destroy = function destroy(this: $Node.Agent) {
   const sets = [this.freeSockets, this.sockets];
   for (let s = 0; s < sets.length; s++) {
     const set = sets[s];
@@ -585,7 +678,7 @@ Agent.prototype.destroy = function destroy() {
   }
 };
 
-function setRequestSocket(agent, req, socket) {
+function setRequestSocket(agent: $Node.Agent, req: $Node.ClientRequest, socket: $Node.HttpClientSocket) {
   req.onSocket(socket);
   const agentTimeout = agent.options.timeout || 0;
   if (req.timeout === undefined || req.timeout === agentTimeout) {

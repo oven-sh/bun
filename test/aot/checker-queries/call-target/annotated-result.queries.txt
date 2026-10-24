@@ -1,0 +1,4 @@
+# A call reports its declaration, the written result and the written signature.
+annotated-result.ts:3 call `f(1)` = declaration annotated-result.ts:2
+annotated-result.ts:3 call result `f(1)` = string checked string
+annotated-result.ts:3 call signature `f(1)` = (number checked number) this unwritten checked any returns string checked string

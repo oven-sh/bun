@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "widgets-old": ["./packages/old/index"],
+      "widgets-new": ["./packages/new/index"]
+    }
+  }
+}

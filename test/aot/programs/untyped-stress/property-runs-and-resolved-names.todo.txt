@@ -1,0 +1,1 @@
+It needs loadString(), which only the jsc shell has.

@@ -1,45 +1,77 @@
 // Hardcoded module "node:path"
 const { validateString } = require("internal/validators");
 
-const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
-const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
-const toNamespacedPathWin32 = bindingWin32.toNamespacedPath.bind(bindingWin32);
+declare global {
+  namespace $Node {
+    interface ParsedPath {
+      root: string;
+      dir: string;
+      base: string;
+      ext: string;
+      name: string;
+    }
+
+    /** `path.posix` and `path.win32`. The native functions validate their arguments themselves. */
+    interface Path {
+      resolve(...paths: unknown[]): string;
+      normalize(path: unknown): string;
+      isAbsolute(path: unknown): boolean;
+      join(...paths: unknown[]): string;
+      relative(from: unknown, to: unknown): string;
+      toNamespacedPath<T>(path: T): T;
+      dirname(path: unknown): string;
+      basename(path: unknown, suffix?: unknown): string;
+      extname(path: unknown): string;
+      format(pathObject: unknown): string;
+      parse(path: unknown): ParsedPath;
+      matchesGlob(path: string, pattern: string): boolean;
+      sep: "/" | "\\";
+      delimiter: ":" | ";";
+      win32: Path;
+      posix: Path;
+      _makeLong<T>(path: T): T;
+    }
+  }
+}
+
+const toNamespacedPathPosix = $bindgen("node_path.bind.ts", "toNamespacedPathPosix");
+const toNamespacedPathWin32 = $bindgen("node_path.bind.ts", "toNamespacedPathWin32");
 const posix = {
-  resolve: bindingPosix.resolve.bind(bindingPosix),
-  normalize: bindingPosix.normalize.bind(bindingPosix),
-  isAbsolute: bindingPosix.isAbsolute.bind(bindingPosix),
-  join: bindingPosix.join.bind(bindingPosix),
-  relative: bindingPosix.relative.bind(bindingPosix),
+  resolve: $bindgen("node_path.bind.ts", "resolvePosix"),
+  normalize: $bindgen("node_path.bind.ts", "normalizePosix"),
+  isAbsolute: $bindgen("node_path.bind.ts", "isAbsolutePosix"),
+  join: $bindgen("node_path.bind.ts", "joinPosix"),
+  relative: $bindgen("node_path.bind.ts", "relativePosix"),
   toNamespacedPath: toNamespacedPathPosix,
-  dirname: bindingPosix.dirname.bind(bindingPosix),
-  basename: bindingPosix.basename.bind(bindingPosix),
-  extname: bindingPosix.extname.bind(bindingPosix),
-  format: bindingPosix.format.bind(bindingPosix),
-  parse: bindingPosix.parse.bind(bindingPosix),
+  dirname: $bindgen("node_path.bind.ts", "dirnamePosix"),
+  basename: $bindgen("node_path.bind.ts", "basenamePosix"),
+  extname: $bindgen("node_path.bind.ts", "extnamePosix"),
+  format: $bindgen("node_path.bind.ts", "formatPosix"),
+  parse: $bindgen("node_path.bind.ts", "parsePosix"),
   sep: "/",
   delimiter: ":",
-  win32: undefined as typeof win32,
-  posix: undefined as typeof posix,
+  win32: undefined! as $Node.Path,
+  posix: undefined! as $Node.Path,
   _makeLong: toNamespacedPathPosix,
-};
+} as $Node.Path;
 const win32 = {
-  resolve: bindingWin32.resolve.bind(bindingWin32),
-  normalize: bindingWin32.normalize.bind(bindingWin32),
-  isAbsolute: bindingWin32.isAbsolute.bind(bindingWin32),
-  join: bindingWin32.join.bind(bindingWin32),
-  relative: bindingWin32.relative.bind(bindingWin32),
+  resolve: $bindgen("node_path.bind.ts", "resolveWin32"),
+  normalize: $bindgen("node_path.bind.ts", "normalizeWin32"),
+  isAbsolute: $bindgen("node_path.bind.ts", "isAbsoluteWin32"),
+  join: $bindgen("node_path.bind.ts", "joinWin32"),
+  relative: $bindgen("node_path.bind.ts", "relativeWin32"),
   toNamespacedPath: toNamespacedPathWin32,
-  dirname: bindingWin32.dirname.bind(bindingWin32),
-  basename: bindingWin32.basename.bind(bindingWin32),
-  extname: bindingWin32.extname.bind(bindingWin32),
-  format: bindingWin32.format.bind(bindingWin32),
-  parse: bindingWin32.parse.bind(bindingWin32),
+  dirname: $bindgen("node_path.bind.ts", "dirnameWin32"),
+  basename: $bindgen("node_path.bind.ts", "basenameWin32"),
+  extname: $bindgen("node_path.bind.ts", "extnameWin32"),
+  format: $bindgen("node_path.bind.ts", "formatWin32"),
+  parse: $bindgen("node_path.bind.ts", "parseWin32"),
   sep: "\\",
   delimiter: ";",
-  win32: undefined as typeof win32,
+  win32: undefined! as $Node.Path,
   posix,
   _makeLong: toNamespacedPathWin32,
-};
+} as $Node.Path;
 posix.win32 = win32.win32 = win32;
 posix.posix = posix;
 
@@ -49,7 +81,7 @@ type Glob = import("bun").Glob;
 // loop with the same pattern
 let prevGlob: Glob | undefined;
 let prevPattern: string | undefined;
-function matchesGlob(isWindows, path, pattern) {
+function matchesGlob(isWindows: boolean, path: string, pattern: string) {
   let glob: Glob;
 
   validateString(path, "path");
@@ -78,4 +110,4 @@ function matchesGlob(isWindows, path, pattern) {
 posix.matchesGlob = matchesGlob.bind(null, false);
 win32.matchesGlob = matchesGlob.bind(null, true);
 
-export default (process.platform === "win32" ? win32 : posix) as any as typeof import("node:path");
+export default process.platform === "win32" ? win32 : posix;

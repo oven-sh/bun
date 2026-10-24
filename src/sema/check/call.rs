@@ -1020,7 +1020,7 @@ impl<'p, 's> Checker<'p, 's> {
         let node = CallLike::Call(id);
         let this_arg = self.this_argument_of_call(file, call, node);
         // `resolveNewExpression` reads the return type of a call signature invoked with `new` only without `noImplicitAny` (2350).
-        let expects_return = if is_call_by_new && self.p.files.options.no_implicit_any {
+        let expects_return = if is_call_by_new && self.module_options(file).no_implicit_any {
             ExpectsReturn::No
         } else {
             ExpectsReturn::Yes
@@ -1038,8 +1038,9 @@ impl<'p, 's> Checker<'p, 's> {
         );
         // `checkCallExpression`: `new` on something that isn't a constructor yields `any`.
         if is_call_by_new {
+            let constructed = self.type_constructed_by_function(file, data.callee, resolved.sig);
             ResolvedCall {
-                ret: TypeId::ANY,
+                ret: constructed.unwrap_or(TypeId::ANY),
                 ..resolved
             }
         } else {
@@ -1605,7 +1606,7 @@ impl<'p, 's> Checker<'p, 's> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Regex => true,
+            | ExprKind::Regex { .. } => true,
             ExprKind::Template { exprs } => exprs.is_empty(),
             // `checkIdentifier` returns the declared type of a variable that's being assigned. A
             // declaration that comes earlier has been checked, so that type is resolved.

@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2017",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "importHelpers": true,
+    "typeRoots": ["../../../../../packages"],
+    "types": ["bun-types"],
+    "noEmit": true
+  }
+}

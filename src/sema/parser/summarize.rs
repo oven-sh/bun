@@ -2,6 +2,10 @@
 //! goes through the parser without recovery, which rejects it at the first error. A rejected text
 //! is parsed again by the parser that recovers from errors the way TypeScript's does.
 
+mod compile;
+
+pub use compile::{CompileParseOptions, parse_for_compile};
+
 use crate::{Options, Part, Rejection, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
@@ -81,6 +85,12 @@ struct ParseSettings<'a> {
     jsdoc: JsDoc,
     /// `Options::attach_comments`
     attach_comments: bool,
+    /// `Options::compiles`
+    compiles: bool,
+    /// `Options::keeps_function_directives`
+    keeps_function_directives: bool,
+    /// `Options::skips_function_blocks`
+    skips_function_blocks: bool,
 }
 
 /// True if `path` ends in `.json` and no `script_kind` overrides that.
@@ -253,6 +263,9 @@ fn parse_file_as(
         dialect,
         part: None,
         attach_comments: how.attach_comments,
+        compiles: how.compiles,
+        keeps_function_directives: how.keeps_function_directives,
+        skips_function_blocks: how.skips_function_blocks,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -286,6 +299,10 @@ fn parse_file_as(
     };
     let is_flow = dialect.flow && is_js;
     let parsed = attempt(options, scratch).or_else(|rejection| {
+        // The caller parses the file whole.
+        if how.skips_function_blocks {
+            return Err(rejection);
+        }
         COUNTS.refused[rejection.0 as usize].fetch_add(1, Relaxed);
         // No parser recovers from an error in Flow.
         if is_flow {
@@ -305,12 +322,32 @@ fn parse_file_as(
         })?;
         // TypeScript's parser accepts `var;`, `class {}` and `catch (a = 1)` and leaves them to its
         // checker. acorn and Babel reject them, and only the parser without recovery knows that.
-        let is_an_error = matches!(rejection.0, Rejection::Syntax | Rejection::Reported);
-        if is_ecmascript && is_an_error && file.diagnostics.is_empty() {
-            scratch.recycle(file);
-            return Err(rejection);
+        let is_an_error = |why: Rejection| matches!(why, Rejection::Syntax | Rejection::Reported);
+        let has_error = compile::has_reported_error(&file, how.compiles);
+        if !is_ecmascript || !is_an_error(rejection.0) || has_error {
+            return Ok(file);
         }
-        Ok(file)
+        // A malformed JSDoc comment is rejected too, and says nothing about the code.
+        let reads_jsdoc = false;
+        let without_jsdoc = Options {
+            reads_jsdoc,
+            ..options
+        };
+        let code = match options.reads_jsdoc {
+            true => attempt(without_jsdoc, scratch),
+            false => Err(rejection),
+        };
+        match code {
+            Err(rejection) if is_an_error(rejection.0) => {
+                scratch.recycle(file);
+                Err(rejection)
+            }
+            Err(_) => Ok(file),
+            Ok(valid) => {
+                scratch.recycle(valid);
+                Ok(file)
+            }
+        }
     });
     let mut file = match parsed {
         Ok(file) => file,
@@ -388,11 +425,51 @@ pub fn summarize<'s>(
         every_file_is_a_module,
         jsdoc: JsDoc::Read,
         attach_comments: false,
+        compiles: false,
+        keeps_function_directives: false,
+        skips_function_blocks: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();
         parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
     })
+}
+
+/// [`summarize`] for a caller that reads the top level of a TypeScript file alone: the functions have empty bodies wherever their blocks could be stepped over.
+pub fn summarize_top_level<'s>(
+    arena: &'s Arena,
+    path: &[u8],
+    script_kind: Option<ScriptKind>,
+    text: &[u8],
+    atoms: &Interner<'s>,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+) -> Option<File<'s>> {
+    let kind = script_kind.or_else(|| ScriptKind::from_file_name(path))?;
+    if kind.is_javascript()
+        || is_json(path, script_kind)
+        || bun_sema::resolve::is_declaration_file_name(path)
+    {
+        return None;
+    }
+    let how = ParseSettings {
+        dialect: Dialect::default(),
+        path,
+        script_kind,
+        experimental_decorators,
+        every_file_is_a_module,
+        jsdoc: JsDoc::Read,
+        attach_comments: false,
+        compiles: false,
+        keeps_function_directives: false,
+        skips_function_blocks: true,
+    };
+    let file = SCRATCH.with_borrow_mut(|all| {
+        let scratch = all[0].get_or_insert_default();
+        parse_into_arena(scratch, how, (arena, atoms.session()), text, atoms)
+    });
+    (!file.has_errors && !file.has_parse_diagnostics && !file.has_parse_or_grammar_diagnostics())
+        .then_some(file)
 }
 
 /// [`summarize`] for a tool that follows a parser other than `tsc`'s and doesn't read types from JSDoc comments.
@@ -438,6 +515,9 @@ pub fn summarize_in<'s>(
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
         attach_comments: false,
+        compiles: false,
+        keeps_function_directives: false,
+        skips_function_blocks: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         parse_into_arena(all[0].get_or_insert_default(), how, memory, text, atoms)
@@ -528,6 +608,9 @@ pub fn with_summary_in_place<'s, R>(
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
         attach_comments,
+        compiles: false,
+        keeps_function_directives: false,
+        skips_function_blocks: false,
     };
     // `then` may parse another text.
     let mut scratch = take_scratch();

@@ -1,0 +1,22 @@
+{
+  "buffer-prototype-sloppy.import.mjs": {
+    "output": "exit code 1\nTypeError: Cannot assign to Buffer.prototype.toString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
+  },
+  "buffer-prototype-strict.import.mjs": {
+    "errors": "error: TS100014: this assignment always throws: built-in objects are read-only in a compiled executable\n"
+  },
+  "buffer-static-sloppy.import.mjs": {
+    "output": "exit code 1\nTypeError: Cannot assign to Buffer.from because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)\n"
+  },
+  "buffer-static-strict.import.mjs": {
+    "errors": "error: TS100014: this assignment always throws: built-in objects are read-only in a compiled executable\n"
+  },
+  "require-cache-sloppy.import.mjs": "compiled",
+  "require-cache-strict.import.mjs": "compiled",
+  "url-global-classes-sloppy.import.mjs": {
+    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\",\"mock\",1]\n"
+  },
+  "url-global-classes-strict.import.mjs": {
+    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\",\"mock\",1]\n"
+  }
+}

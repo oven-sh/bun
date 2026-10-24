@@ -2,47 +2,15 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
-interface HTTPParserError extends Error {
-  bytesParsed: number;
-  code: string;
-  reason: string;
-}
-
-interface HTTPParser {
-  _headers: string[];
-  _url: string;
-  socket: import("node:stream").Duplex | null;
-  incoming: import("node:http").IncomingMessage | null;
-  outgoing: import("node:http").ClientRequest | null;
-  maxHeaderPairs: number;
-  _consumed: boolean;
-  onIncoming: ((incoming: import("node:http").IncomingMessage, shouldKeepAlive: boolean) => number) | null;
-  joinDuplicateHeaders: boolean | null;
-  [callback: number]: Function | null;
-  close(): void;
-  free(): void;
-  remove(): void;
-  execute(data: ArrayBufferView): number | HTTPParserError | undefined;
-  finish(): HTTPParserError | undefined;
-  initialize(
-    type: number,
-    resource: object,
-    maxHeaderSize?: number,
-    lenientFlags?: number,
-    connections?: object | null,
-  ): void;
-  pause(): void;
-  resume(): void;
-  consume(handle: object): void;
-  unconsume(): void;
-  getCurrentBuffer(): Buffer | undefined;
-  duration(): number | undefined;
-  headersCompleted(): boolean | undefined;
-}
+const http = require("internal/http");
+// A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
+const kIncomingMessage: typeof http.kIncomingMessage = http.kIncomingMessage;
+const kSkipPendingData: typeof http.kSkipPendingData = http.kSkipPendingData;
+const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
 
 interface HTTPParserConstructor {
-  new (): HTTPParser;
-  readonly prototype: HTTPParser;
+  new (): $Node.HTTPParser;
+  readonly prototype: any;
   readonly REQUEST: number;
   readonly RESPONSE: number;
   readonly kOnMessageBegin: number;
@@ -76,14 +44,13 @@ interface HTTPParserBinding {
 
 const { methods, allMethods, HTTPParser } = process.binding("http_parser") as HTTPParserBinding;
 const incoming = require("node:_http_incoming");
-const { kHeaderSource } = require("internal/http");
 
 const { IncomingMessage, readStart, readStop } = incoming;
 
-const RegExpPrototypeExec = RegExp.prototype.exec;
+const RegExpPrototypeExec = RegExp.prototype.exec as (this: RegExp, text: unknown) => RegExpExecArray | null;
 
-let strictHeaderCharRegex;
-let lenientHeaderCharRegex;
+let strictHeaderCharRegex: RegExp | undefined;
+let lenientHeaderCharRegex: RegExp | undefined;
 
 /**
  * True if val contains an invalid header value character.
@@ -95,23 +62,40 @@ let lenientHeaderCharRegex;
  * (https://fetch.spec.whatwg.org/#header-value): only NUL, CR, LF and
  * characters above 0xff are rejected.
  */
-function checkInvalidHeaderChar(val: string, lenient: boolean = false) {
+function checkInvalidHeaderChar(val: $Node.HttpHeaderValue | Buffer, lenient: boolean = false) {
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
+  if (typeof val === "string" && val.length <= 32) {
+    const length = val.length;
+    if (lenient) {
+      for (let i = 0; i < length; i++) {
+        const code = val.charCodeAt(i);
+        if (code === 0x00 || code === 0x0a || code === 0x0d || code > 0xff) return true;
+      }
+    } else {
+      for (let i = 0; i < length; i++) {
+        const code = val.charCodeAt(i);
+        if (code < 0x20 ? code !== 0x09 : code === 0x7f || code > 0xff) return true;
+      }
+    }
+    return false;
+  }
   if (lenient) {
     // eslint-disable-next-line no-control-regex
     lenientHeaderCharRegex ??= /[\x00\x0a\x0d]|[^\x00-\xff]/;
     return RegExpPrototypeExec.$call(lenientHeaderCharRegex, val) !== null;
   }
   strictHeaderCharRegex ??= /[^\t\x20-\x7e\x80-\xff]/;
+  // Nearly always a string. `exec` converts what is none.
   return RegExpPrototypeExec.$call(strictHeaderCharRegex, val) !== null;
 }
 
-const validateHeaderName = (name, label?) => {
+const validateHeaderName = (name: string, label?: string) => {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
     throw $ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
   }
 };
 
-const validateHeaderValue = (name, value) => {
+const validateHeaderValue = (name: string, value: $Node.HttpHeaderValue) => {
   if (value === undefined) {
     throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
   }
@@ -122,10 +106,8 @@ const validateHeaderValue = (name, value) => {
 
 // Node's `getOptionValue('--insecure-http-parser')`. The flag is fixed during
 // CLI parsing, so reading it once here is equivalent.
-const insecureHTTPParser = $bindgen("node_http_binding.bind.ts", "insecureHTTPParser");
+const insecureHTTPParser = $bindgen("node_http_binding.bind.ts", "insecureHTTPParser") as boolean;
 
-const kIncomingMessage = Symbol("IncomingMessage");
-const kSkipPendingData = Symbol("SkipPendingData");
 const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
 const kOnHeaders = HTTPParser.kOnHeaders | 0;
 const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
@@ -141,7 +123,7 @@ const MAX_HEADER_PAIRS = 2000;
 // across multiple TCP packets or too large to be
 // processed in a single run. This method is also
 // called to process trailing HTTP headers.
-function parserOnHeaders(headers, url) {
+function parserOnHeaders(this: $Node.HTTPParser, headers: string[], url: string) {
   // Once we exceeded headers limit - stop collecting them
   const capacity = this.maxHeaderPairs - this._headers.length;
   if (this.maxHeaderPairs <= 0 || capacity >= headers.length) {
@@ -157,15 +139,16 @@ function parserOnHeaders(headers, url) {
 // `url` is not set for response parsers but that's not applicable here since
 // all our parsers are request parsers.
 function parserOnHeadersComplete(
-  versionMajor,
-  versionMinor,
-  headers,
-  method,
-  url,
-  statusCode,
-  statusMessage,
-  upgrade,
-  shouldKeepAlive,
+  this: $Node.HTTPParser,
+  versionMajor: number,
+  versionMinor: number,
+  headers: string[] | undefined,
+  method: number | undefined,
+  url: string | undefined,
+  statusCode: number | undefined,
+  statusMessage: string | undefined,
+  upgrade: boolean,
+  shouldKeepAlive: boolean,
 ) {
   const parser = this;
   const { socket } = parser;
@@ -183,7 +166,7 @@ function parserOnHeadersComplete(
   // Parser is also used by http client
   const ParserIncomingMessage = socket?.server?.[kIncomingMessage] || IncomingMessage;
 
-  const incoming = (parser.incoming = new ParserIncomingMessage(socket));
+  const incoming: $Node.IncomingMessage = (parser.incoming = new ParserIncomingMessage(socket));
   incoming[kHeaderSource] = null;
   incoming.httpVersionMajor = versionMajor;
   incoming.httpVersionMinor = versionMinor;
@@ -205,14 +188,14 @@ function parserOnHeadersComplete(
     incoming.method = allMethods[method];
   } else {
     // client only
-    incoming.statusCode = statusCode;
-    incoming.statusMessage = statusMessage;
+    incoming.statusCode = statusCode!;
+    incoming.statusMessage = statusMessage!;
   }
 
-  return parser.onIncoming(incoming, shouldKeepAlive);
+  return parser.onIncoming!(incoming, shouldKeepAlive);
 }
 
-function parserOnBody(b) {
+function parserOnBody(this: $Node.HTTPParser, b: Buffer) {
   const stream = this.incoming;
 
   // If the stream has already been removed, then drop it.
@@ -225,7 +208,7 @@ function parserOnBody(b) {
   }
 }
 
-function parserOnMessageComplete() {
+function parserOnMessageComplete(this: $Node.HTTPParser) {
   const parser = this;
   const stream = parser.incoming;
 
@@ -261,7 +244,7 @@ const parsers = new FreeList("parsers", 1000, function parsersCb() {
   return parser;
 });
 
-function closeParserInstance(parser) {
+function closeParserInstance(parser: $Node.HTTPParser) {
   parser.close();
 }
 
@@ -272,7 +255,11 @@ function closeParserInstance(parser) {
 // up by doing `parser.data = {}`, which should
 // be done in FreeList.free.  `parsers.free(parser)`
 // should be all that is needed.
-function freeParser(parser, req, socket) {
+function freeParser(
+  parser: $Node.HTTPParser | null | undefined,
+  req: $Node.ClientRequest | $Node.IncomingMessage | null | undefined,
+  socket: $Node.HttpSocket | null | undefined,
+) {
   if (parser) {
     if (parser._consumed) parser.unconsume();
     parser.remove();
@@ -295,7 +282,7 @@ function freeParser(parser, req, socket) {
   }
 }
 
-function cleanParser(parser) {
+function cleanParser(parser: $Node.HTTPParser) {
   parser._headers = [];
   parser._url = "";
   parser.socket = null;
@@ -310,7 +297,11 @@ function cleanParser(parser) {
   parser.joinDuplicateHeaders = null;
 }
 
-function prepareError(err, parser, rawPacket) {
+function prepareError(
+  err: Error & { rawPacket?: Buffer | Uint8Array; reason?: string },
+  parser: $Node.HTTPParser,
+  rawPacket: Buffer | Uint8Array | null | undefined,
+) {
   err.rawPacket = rawPacket || parser.getCurrentBuffer();
   const reason = err.reason;
   if (typeof reason === "string") err.message = `Parse Error: ${reason}`;
@@ -330,7 +321,10 @@ const kLenientNone = HTTPParser.kLenientNone | 0;
 const kLenientAll = HTTPParser.kLenientAll | 0;
 const kLenientHeaderValueRelaxed = HTTPParser.kLenientHeaderValueRelaxed | 0;
 
-function calculateLenientFlags(httpValidation, insecureHTTPParserOption) {
+function calculateLenientFlags(
+  httpValidation: "strict" | "relaxed" | "insecure" | undefined,
+  insecureHTTPParserOption: boolean | undefined,
+) {
   if (httpValidation === "strict") {
     return kLenientNone;
   } else if (httpValidation === "relaxed") {
@@ -360,4 +354,4 @@ export default {
   calculateLenientFlags,
   prepareError,
   MAX_HEADER_PAIRS,
-};
+} as const;

@@ -117,6 +117,11 @@ impl CompileTarget {
         self.os == host.os && self.arch == host.arch && self.libc == host.libc
     }
 
+    /// This bun itself: the host platform at this version. x64 ships as one build, which `-baseline` names too.
+    pub fn is_this_bun(&self) -> bool {
+        self.is_host_platform() && self.version.eql(CompileTarget::default().version)
+    }
+
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {

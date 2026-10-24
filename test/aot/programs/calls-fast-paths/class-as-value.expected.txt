@@ -1,0 +1,8 @@
+heap cells of six kinds, more than at the line before
+declared: Function 0, NativeExecutable 0, Structure 0, PropertyTable 0, GetterSetter 0, Object 0
+60 classes as values: Function 0, NativeExecutable 0, Structure 0, PropertyTable 0, GetterSetter 0, Object 0
+C.prototype as a value: Function 60, NativeExecutable 0, Structure 61, PropertyTable 60, GetterSetter 0, Object 60
+new C through the value, instanceof: Function 0, NativeExecutable 0, Structure 60, PropertyTable 0, GetterSetter 0, Object 60
+30 of them looked at: Function 30, NativeExecutable 0, Structure 1, PropertyTable 0, GetterSetter 0, Object 1
+all looked at: Function 60, NativeExecutable 0, Structure 0, PropertyTable 0, GetterSetter 0, Object 1
+2475

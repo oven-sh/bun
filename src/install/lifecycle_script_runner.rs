@@ -515,7 +515,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.maybe_finished();
     }
 
+    #[inline(never)]
     fn maybe_finished(&mut self) {
+        bun_removable_features::removable_definition!(Install, Self::maybe_finished);
         if !self.has_called_process_exit || self.remaining_fds != 0 {
             return;
         }

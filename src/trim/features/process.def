@@ -1,0 +1,58 @@
+feature SourceMaps "source maps in stack traces, and node:module's SourceMap and findSourceMap"
+
+feature PackageFiles "run-time loading of package.json and tsconfig.json"
+  entered-from startup
+
+feature PerformanceTimeline "PerformanceObserver, performance.getEntries, node:perf_hooks and the rest of the performance timeline"
+
+feature PerformanceMarks "performance.mark and performance.measure"
+
+feature ProcessReport "process.report"
+
+feature ConsoleTable "console.table and Bun.inspect.table"
+
+feature ProcessBinding "process.binding"
+
+feature ProcessExecArgv "process.execArgv"
+
+feature ProcessUsage "process.memoryUsage, cpuUsage, threadCpuUsage, resourceUsage, uptime, availableMemory and constrainedMemory"
+
+feature Ipc "IPC with a parent or child process"
+
+feature ProcessIpc "process.send, process.disconnect and process.channel"
+
+feature ProcessInformation "process.versions, release, config, features, allowedNodeEnvironmentFlags, revision, mainModule, finalization, assert, ref, unref, loadEnvFile, getBuiltinModule, setSourceMapsEnabled, setUncaughtExceptionCaptureCallback and hasUncaughtExceptionCaptureCallback"
+
+feature ProcessControl "process.chdir, umask, title, getuid, setuid and the other user and group ID functions"
+
+feature ProcessExecve "process.execve"
+
+feature ProcessKill "process.kill"
+
+feature CliOptions "support for --compile-exec-argv and BUN_OPTIONS"
+  entered-from startup
+
+feature HotReload "--watch and --hot"
+  entered-from startup
+
+feature CrashReport "automatic crash reporting"
+  entered-from startup
+
+feature Bunfig "support for bunfig.toml"
+  entered-from startup
+
+feature ProcessStdout "the stream objects behind process.stdout and process.stderr"
+
+feature ProcessOutputStreams "process.stdout and process.stderr"
+
+feature ProcessStdin "process.stdin"
+
+feature ProcessOpenStdin "process.openStdin"
+
+feature ConsoleConstructor "console.Console"
+
+feature ProcessListeners "process.on, once, addListener, prependListener and prependOnceListener"
+
+feature ProcessListenerRemoval "process.off, removeListener and removeAllListeners"
+
+feature ProcessConnected "process.connected"

@@ -1,0 +1,16 @@
+{
+ "constructors-that-meet-setters": "as bun run",
+ "functions-got-at-by-side-roads": "alone: by the stack: \"undefined,undefined\"",
+ "sloppy-assigning-undeclared-names": "as bun run",
+ "sloppy-caller-and-arguments-of-functions": "alone: caller: THROWS TypeError | null | null | \"length,name,prototype\" | \"length,name,prototype\" | THROWS TypeError | null",
+ "sloppy-delete-of-a-name": "as bun run",
+ "sloppy-duplicate-parameters": "alone: duplicates: 2 | undefined | \"3,2,3,1\" | \",2,2,1\" | 2 | 2",
+ "sloppy-eval-and-arguments-as-names": "alone: names: 1 | 2 | 5 | 6 | 7 | 52 | 11",
+ "sloppy-functions-in-blocks": "as the bundle",
+ "sloppy-html-comments-and-legacy-syntax": "as the bundle",
+ "sloppy-mapped-arguments": "as bun run",
+ "sloppy-octal-literals": "alone: octal: 8 | 511 | 9 | 8.5 | 4 | \"A\" | \"\\u0000\" | \"\\u00008\" | \"8\"",
+ "sloppy-stores-that-fail-in-silence": "alone: silence: 1 | undefined | false | 1 | undefined | \"ok\" | \"ok\" | \"ok\" | \"undefined\" | \"NaN:Infinity\" | \"function\"",
+ "sloppy-this-is-the-global-or-a-wrapper": "as bun run",
+ "sloppy-with": "as bun run"
+}

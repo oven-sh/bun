@@ -1198,7 +1198,7 @@ impl JSGlobalObject {
             return Err(self.throw_invalid_property_type_value(field_name, b"integer", value));
         }
         // @floatFromInt — i128→f64 (rounds beyond 2^53; bounds are already clamped to safe-integer range).
-        if f64_val < (min_t as f64) || f64_val > (max_t as f64) {
+        if f64_val < (min_t as i64 as f64) || f64_val > (max_t as i64 as f64) {
             return Err(self.throw_range_error(
                 f64_val,
                 bun_fmt::OutOfRangeOptions {

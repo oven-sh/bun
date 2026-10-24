@@ -183,9 +183,64 @@ describe("fetch compress option", () => {
     expect(json.rawLength).toBeLessThan(big.length);
   });
 
-  // >512 KiB takes the streaming-zlib slow path; verify it produces a
-  // zlib-wrapped (RFC 1950) stream, not raw deflate.
-  test.concurrent("deflate body larger than the shared buffer (zlib streaming)", async () => {
+  test.concurrent(
+    "a compressible body larger than the shared buffer is compressed by the library that compresses a small one",
+    async () => {
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const raw = Buffer.from(await req.arrayBuffer());
+          return Response.json({
+            operatingSystem: raw[9],
+            isSame:
+              gunzipSync(raw).toString() === req.headers.get("x-unit")!.repeat(Number(req.headers.get("x-count"))),
+          });
+        },
+      });
+      const send = async (count: number) => {
+        const res = await fetch(server.url, {
+          method: "POST",
+          body: "abcdefghij".repeat(count),
+          compress: "gzip",
+          headers: { "x-unit": "abcdefghij", "x-count": String(count) },
+        });
+        return (await res.json()) as { operatingSystem: number; isSame: boolean };
+      };
+      const small = await send(100);
+      const large = await send(400 * 1024);
+      expect(small.isSame).toBe(true);
+      expect(large).toEqual(small);
+    },
+  );
+
+  // zlib has no level above 9. The HTTP thread compresses, so how long a large body takes is how long every other request waits.
+  test.concurrent.each(["gzip", "deflate"] as const)(
+    "%s: a body larger than the shared buffer is the same bytes at levels 9 to 12",
+    async encoding => {
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const raw = Buffer.from(await req.arrayBuffer());
+          const decoded = encoding === "gzip" ? gunzipSync(raw) : inflateSync(raw);
+          return Response.json({ hash: Bun.hash(raw).toString(), decoded: Bun.hash(decoded).toString() });
+        },
+      });
+      const body = Buffer.from(
+        Array.from({ length: 60_000 }, (_, i) => `{"id":${i},"name":"item ${i * 7919}","ok":${i % 3 === 0}}`).join(","),
+      );
+      expect(body.length).toBeGreaterThan(2 * 1024 * 1024);
+      const send = async (level: number) => {
+        const res = await fetch(server.url, { method: "POST", body, compress: { encoding, level } });
+        return (await res.json()) as { hash: string; decoded: string };
+      };
+      const atNine = await send(9);
+      expect(atNine.decoded).toBe(Bun.hash(body).toString());
+      expect(await Promise.all([10, 11, 12].map(send))).toEqual([atNine, atNine, atNine]);
+    },
+  );
+
+  // HTTP "deflate" is the zlib-wrapped (RFC 1950) stream, not raw deflate.
+  test.concurrent("deflate body larger than the shared buffer", async () => {
     using server = makeServer();
     const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
     const res = await fetch(server.url, { method: "POST", body: big, compress: "deflate" });

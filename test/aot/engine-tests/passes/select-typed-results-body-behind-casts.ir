@@ -1,0 +1,78 @@
+# Between x.json() and its await stands the cast that carried the expected class of the promise, and flow states what the promise holds: the await is found through the casts, what is checked or expected behind it is the type of the body, and the casts go, because they speak of the promise of json() and not of the promise of bytes()
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 2
+# STATISTIC: ParsersCreated = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+# CHECK-NEXT: decline TypedResultNotSelected f2 v1 None [0] reason=PromiseIsNotAwaitedAtOnce
+# CHECK-NEXT: decline TypedResultNotSelected f3 v1 None [0] reason=NoTarget
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+
+function f0 name="castBeforeAwait" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = Upcast v1 castType=anything
+    v3 = Await v2
+    v4 = Check v3 castType=undefined|null|L0
+    Return v4
+}
+# CHECK-LABEL: function f0 name="castBeforeAwait"
+# CHECK: b0(v0: Response):
+# CHECK-NEXT: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
+# CHECK-NEXT: [[bytes0]]:{{*}}= Await v1
+# CHECK-NEXT: [[open0]]: boolean = JSONSourceOpen [[bytes0]]
+# CHECK: [[done0]](v3:{{*}}):
+# CHECK-NEXT: v4:{{*}}= Check v3 castType=undefined|null|L0
+# CHECK: = JSONDecodeBytes [[bytes0]]
+# CHECK: = CallDirect {{*}} function=[[parser]]
+# CHECK-NOT: ResponsePrototypeJson
+
+function f1 name="twoCastsBeforeAwait" flags=[IsAsync] parameters=[{type=Request}] results=[{type=Promise}] {
+  b0(v0: Request):
+    v1 = CallBuiltin v0 overload=RequestPrototypeJson/0
+    v2 = AssumeType v1 castType=Promise<undefined|null|object, proven>
+    v3 = Upcast v2 castType=anything
+    v4 = Await v3
+    v5 ~ undefined|null|L0 = Upcast v4 castType=anything
+    Return v5
+}
+# CHECK-LABEL: function f1 name="twoCastsBeforeAwait"
+# CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
+# CHECK-NEXT: [[bytes1]]:{{*}}= Await v1
+# CHECK-NEXT: = JSONSourceOpen [[bytes1]]
+# CHECK: = CallDirect {{*}} function=[[parser]]
+
+function f2 name="castPromiseHasAnotherUse" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = Upcast v1 castType=anything
+    v3 = Await v2
+    v4 = Check v3 castType=undefined|null|L0
+    v5 = NewArray v2, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f2 name="castPromiseHasAnotherUse"
+# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeJson/0
+# CHECK-NEXT: v2:{{*}}= Upcast v1 castType=anything
+# CHECK-NEXT: v3:{{*}}= Await v2
+
+function f3 name="checkBehindSecondAwait" flags=[IsAsync] parameters=[{type=Response}] results=[{type=Promise}] {
+  b0(v0: Response):
+    v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
+    v2 = Upcast v1 castType=anything
+    v3 = Await v2
+    v4 = Await v3
+    v5 = Check v4 castType=undefined|null|L0
+    Return v5
+}
+# CHECK-LABEL: function f3 name="checkBehindSecondAwait"
+# CHECK: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeJson/0
+# CHECK-NEXT: v2:{{*}}= Upcast v1 castType=anything
+# CHECK-NEXT: v3:{{*}}= Await v2
+# CHECK-NEXT: v4:{{*}}= Await v3
+# CHECK: function [[parser]] {{*}}role=Parser

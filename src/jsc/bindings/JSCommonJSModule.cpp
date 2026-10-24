@@ -39,6 +39,7 @@
 #include "root.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "headers-handwritten.h"
+#include "Path.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
@@ -83,8 +84,10 @@
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
 #include "JSCommonJSExtensions.h"
+#include "BunCompiledModules.h"
 
 #include "ErrorCode.h"
+#include "GeneratedJest.h"
 #include "WebCoreJSBuiltins.h"
 
 namespace Bun {
@@ -292,7 +295,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     args.append(filename); // filename
     args.append(dirname); // dirname
 
-    if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn)) {
+    if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn); jsFunction && !jsFunction->isHostFunction()) {
         if (jsFunction->jsExecutable()->parameterCount() > 5) {
             // it expects ImportMetaObject
             auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename);
@@ -361,7 +364,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     }
 
     JSValue returnValue = jsNull();
-    if (referrer) [[likely]] {
+    // See requireCompiledModule().
+    if (referrer && moduleObject->compiledModule == JSCommonJSModule::noCompiledModule) [[likely]] {
         if (referrer->m_childrenValue) [[unlikely]] {
             // It's too hard to append from native code:
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
@@ -536,6 +540,12 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
     return prototype;
 }
 
+// No file of an ahead-of-time executable is in the require map.
+JSC_DEFINE_CUSTOM_GETTER(jsRequireMainOfExecutableGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return JSValue::encode(Bun::mainModuleOfExecutable(uncheckedDowncast<Zig::GlobalObject>(globalObject)));
+}
+
 void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -543,6 +553,10 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
     auto* globalObject = this->globalObject();
 
     Bun::reifyStaticPropertyTable(vm, info(), RequireFunctionPrototypeValues, *this);
+    if (Bun::hasCompiledModules()) {
+        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
+        return;
+    }
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
         globalObject,
@@ -599,6 +613,13 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     if (thisObject->m_parent) {
         auto* parent = thisObject->m_parent.get();
         return JSValue::encode(parent);
+    }
+
+    auto* parentOfCompiledModule = Bun::parentOfCompiledModule(thisObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (parentOfCompiledModule) {
+        thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
+        return JSValue::encode(parentOfCompiledModule);
     }
 
     // initialize parent by checking if it is the main module. we do this lazily because most people
@@ -678,8 +699,15 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         return JSValue::encode(jsUndefined());
     }
 
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (mod->compiledModule != JSCommonJSModule::noCompiledModule) [[unlikely]] {
+        bool areShown = Bun::appendNewChildrenOfCompiledModule(globalObject, mod);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!areShown)
+            return JSValue::encode(jsUndefined());
+    }
+
     if (!mod->m_childrenValue) {
-        auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
         MarkedArgumentBuffer children;
         children.ensureCapacity(mod->m_children.size());
 
@@ -863,12 +891,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
         WTF::TextPosition(),
         JSC::SourceProviderSourceType::Program);
 
-    EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
-#if OS(WINDOWS)
-    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
-#else
-    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
-#endif
+    JSValue dirnameValue = Bun::pathDirname(globalObject, filenameValue);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);
@@ -989,9 +1012,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
     JSValue object = callframe->uncheckedArgument(1);
     JSValue hasEvaluated = callframe->uncheckedArgument(2);
     ASSERT(hasEvaluated.isBoolean());
-    JSValue parent = callframe->uncheckedArgument(3);
+    JSValue requirer = callframe->uncheckedArgument(3);
+    JSValue parent = Bun::parentSeenBy(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, requirer);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent)));
+    auto* module = JSCommonJSModule::create(uncheckedDowncast<Zig::GlobalObject>(globalObject), id, object, hasEvaluated.isTrue(), parent);
+    RETURN_IF_EXCEPTION(scope, {});
+    // The require cache holds a module that requires another. What stands in for a file of the executable is in no cache, so the module that has it for a parent holds it.
+    if (parent != requirer)
+        module->m_overriddenParent.set(JSC::getVM(globalObject), module, parent);
+    return JSValue::encode(module);
 }
 
 JSCommonJSModule* JSCommonJSModule::create(
@@ -1020,11 +1050,13 @@ JSCommonJSModule* JSCommonJSModule::create(
         globalObject->CommonJSModuleObjectStructure(),
         requireMapKey, requireMapKey, dirname, SourceCode());
 
-    out->putDirect(
-        vm,
-        WebCore::clientData(vm)->builtinNames().exportsPublicName(),
-        exportsObject,
-        0);
+    if (exportsObject) {
+        out->putDirect(
+            vm,
+            WebCore::clientData(vm)->builtinNames().exportsPublicName(),
+            exportsObject,
+            0);
+    }
     out->hasEvaluated = hasEvaluated;
     if (parent && parent.isCell()) {
         if (auto* parentModule = dynamicDowncast<JSCommonJSModule>(parent)) {
@@ -1478,6 +1510,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     return throwVMError(globalObject, throwScope, "Failed to fetch builtin module"_s);
 }
 
+// require("bun:test") when the name is known only at run time: what Bun.jest(filename) answers.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireTestModule, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    static constexpr auto specifier = "bun:test"_s;
+    if (Bun__throwIfModuleIsRemoved(globalObject, static_cast<uint16_t>(Bun::Feature::Test), specifier.characters(), specifier.length(), ErrorCode::MODULE_NOT_FOUND)) [[unlikely]]
+        return {};
+    return JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::Abort, Bun::Bindgen::Generated::Jest::jsJest>(globalObject, callFrame);
+}
+
 void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -1762,7 +1803,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }
 
-JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph)
+JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph, JSCommonJSModule* requestingModule)
 {
     ASSERT(!pathString.startsWith("file://"_s));
 
@@ -1779,10 +1820,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         dirname = jsEmptyString(vm);
     }
 
-    auto moduleObject = Bun::JSCommonJSModule::create(
-        vm,
-        globalObject->CommonJSModuleObjectStructure(),
-        filename, filename, dirname, SourceCode(), graph);
+    auto moduleObject = requestingModule ? requestingModule : Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), filename, filename, dirname, SourceCode(), graph);
 
     SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 

@@ -1,0 +1,1 @@
+TypeError: SyntaxError: The module .. was compiled ahead of time and can't be imported inside a ShadowRealm (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)

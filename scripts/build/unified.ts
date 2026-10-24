@@ -61,6 +61,14 @@ const noUnify: readonly string[] = [
   // No longer heavy; kept standalone so webcore bundle composition stays put.
   "src/jsc/bindings/webcore/HTTPParsers.cpp",
 
+  // The ahead-of-time compiler's files: standalone, so that they move no other file into another bundle.
+  "src/jsc/bindings/BunAOTCompile.cpp",
+  "src/jsc/bindings/BunAOTRuntime.cpp",
+  "src/jsc/bindings/BunCompiledEntryPoint.cpp",
+  "src/jsc/bindings/BunCompiledModules.cpp",
+  "src/jsc/bindings/BunCompilers.cpp",
+  "src/jsc/bindings/RemovedFeature.cpp",
+
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
   // both end up in the same bundle. TODO: extract helpers to a shared header.
   "src/jsc/bindings/webcore/JSMIMEType.cpp",

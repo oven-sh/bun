@@ -1,0 +1,12 @@
+{
+ "at-the-stacks-end-a-class": "as bun run",
+ "at-the-stacks-end-a-function-too": "as bun run",
+ "at-the-stacks-end-a-side-effect": "alone: string string threw RangeError true\ntrue string",
+ "at-the-stacks-end-it-requires-another": "as bun run",
+ "at-the-stacks-end-only-values": "as bun run",
+ "it-throws-after-exports-dot": "as bun run",
+ "it-throws-after-module-exports-is-stored": "as bun run",
+ "it-throws-at-its-first-statement": "as bun run",
+ "it-throws-before-module-exports-is-stored": "as bun run",
+ "it-throws-in-a-function-it-calls": "as bun run"
+}

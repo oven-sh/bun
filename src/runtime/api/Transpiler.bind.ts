@@ -65,9 +65,20 @@ export const Transpiler = b.class({
     length: 0,
   },
   proto: {
-    scan: { ...method, args: { code, loader }, expected: expected("scan") },
-    scanImports: { ...method, args: { code, loader }, expected: expected("scanImports") },
-    transform: { ...method, args: { code, loader }, expected: expected("transform"), passThis: true },
+    scan: { ...method, args: { code, loader }, expected: expected("scan"), returns: b.any.returning("object") },
+    scanImports: {
+      ...method,
+      args: { code, loader },
+      expected: expected("scanImports"),
+      returns: b.any.returning("Array"),
+    },
+    transform: {
+      ...method,
+      args: { code, loader },
+      expected: expected("transform"),
+      returns: b.any.returning("Promise"),
+      passThis: true,
+    },
     transformSync: {
       ...method,
       args: { code, loaderOrContext: b.any, context: b.any },

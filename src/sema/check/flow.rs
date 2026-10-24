@@ -4731,7 +4731,10 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_automatic_type(declared) && !self.is_evolving_array_operation_target(file, e) {
             // These types only occur under `noImplicitAny`. `checkWithStatement` doesn't check the
             // body.
-            if self.is_automatic_type(ty) && !hir.is_in_with(hir[e].pos) {
+            if self.is_automatic_type(ty)
+                && !hir.is_in_with(hir[e].pos)
+                && self.module_options(file).no_implicit_any
+            {
                 let args = [Arg::Sym(sym), Arg::Type(ty)];
                 if let Some(name) = self.span_of_symbol(sym) {
                     self.error_at(name, 7034, &args);
@@ -4841,8 +4844,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getFlowTypeOfAccessExpression`'s `assumeUninitialized`, for the access `e` to `prop`.
     fn assumes_uninitialized(&self, file: FileId, e: ExprId, prop: &Prop) -> bool {
-        let options = &self.p.files.options;
-        if !options.strict_null_checks {
+        let options = self.module_options(file);
+        if !self.reports_null_checks(file) {
             return false;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -5482,7 +5485,10 @@ impl<'p, 's> Checker<'p, 's> {
                         && e.0 > hir[d].init.0
                         && stmt.is_some()
                         && match bound.parent_of_stmt(stmt) {
-                            Parent::Stmt(owner) => matches!(hir[owner].kind, StmtKind::Block(_)),
+                            Parent::Stmt(owner) => matches!(
+                                hir[owner].kind,
+                                StmtKind::Block(_) | StmtKind::With { .. }
+                            ),
                             Parent::FnBody(_) | Parent::File | Parent::Module(_) => true,
                             _ => false,
                         }
@@ -5930,7 +5936,7 @@ impl<'p, 's> Checker<'p, 's> {
         let reference = Reference::synthetic(file, Root::This, path, parent);
         let mut walk = Walk::new(reference, TypeId::AUTO, initial, Crossing::No);
         let ty = self.get_flow_type_of_reference(&mut walk, exit);
-        if self.p.files.options.no_implicit_any && self.is_automatic_type(ty) {
+        if self.module_options(file).no_implicit_any && self.is_automatic_type(ty) {
             let at = self.span_of_untyped_property(file, value_declaration);
             // `symbolToString`
             let symbol_text = match value_declaration {
@@ -7026,7 +7032,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.get_type_of_destructured_spread_expression(parent_type)
                 } else {
                     let index = (elem.0 - elems.start) as usize;
-                    self.get_type_of_destructured_array_element(parent_type, index)
+                    self.get_type_of_destructured_array_element(file, parent_type, index)
                 };
                 (ty, hir[elem].default)
             }
@@ -7073,7 +7079,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::Array(elements) => {
                     let ty = self.get_assigned_type(file, parent, in_loop);
                     match hir.ids(elements).position(|element| element == node) {
-                        Some(index) => self.get_type_of_destructured_array_element(ty, index),
+                        Some(index) => self.get_type_of_destructured_array_element(file, ty, index),
                         None => TypeId::ERROR,
                     }
                 }
@@ -7130,18 +7136,23 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getTypeOfDestructuredArrayElement`
-    fn get_type_of_destructured_array_element(&mut self, ty: TypeId, index: usize) -> TypeId {
+    fn get_type_of_destructured_array_element(
+        &mut self,
+        file: FileId,
+        ty: TypeId,
+        index: usize,
+    ) -> TypeId {
         if self.parts(ty).iter().all(|&t| self.is_tuple_like(t))
-            && let Some(element_type) = self.get_tuple_element_type(ty, index)
+            && let Some(element_type) = self.get_tuple_element_type(file, ty, index)
         {
             return element_type;
         }
         let element_type = self.iterated_type_of_destructuring_in_flow(ty);
-        self.include_undefined_in_index_signature(element_type)
+        self.include_undefined_in_index_signature(file, element_type)
     }
 
     /// `getTupleElementType`
-    fn get_tuple_element_type(&mut self, ty: TypeId, index: usize) -> Option<TypeId> {
+    fn get_tuple_element_type(&mut self, file: FileId, ty: TypeId, index: usize) -> Option<TypeId> {
         let name = self.number_name(index as f64);
         if let Some(prop_type) = self.type_of_property_of_type(ty, name) {
             return Some(prop_type);
@@ -7150,7 +7161,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let undefined_like_type =
-            (self.p.files.options.no_unchecked_indexed_access).then_some(TypeId::UNDEFINED);
+            (self.module_options(file).no_unchecked_indexed_access).then_some(TypeId::UNDEFINED);
         Some(self.get_tuple_element_type_out_of_start_count(ty, index, undefined_like_type))
     }
 
@@ -7181,8 +7192,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `includeUndefinedInIndexSignature`
-    fn include_undefined_in_index_signature(&mut self, ty: TypeId) -> TypeId {
-        if self.p.files.options.no_unchecked_indexed_access {
+    fn include_undefined_in_index_signature(&mut self, file: FileId, ty: TypeId) -> TypeId {
+        if self.module_options(file).no_unchecked_indexed_access {
             self.with_missing(ty)
         } else {
             ty
@@ -7226,7 +7237,7 @@ impl<'p, 's> Checker<'p, 's> {
             .members_for_index_infos(ty)
             .and_then(|members| self.applicable_index_info_for_name(&members, text));
         match index_info {
-            Some(info) => self.include_undefined_in_index_signature(info.value),
+            Some(info) => self.include_undefined_in_index_signature(file, info.value),
             None => TypeId::ERROR,
         }
     }
@@ -7856,11 +7867,14 @@ impl<'p, 's> Checker<'p, 's> {
         // statements has that many in a row, so here these invocations wait in a list, outermost
         // first.
         let mut shared: SmallVec<[(FlowId, Memoizable); 2]> = SmallVec::new();
+        // The type at a compound assignment asks at each assignment on its way back: each walk starts one node in front of the last one and passes the same nodes again: the cube of their number, all told.
+        const LONG_WALK: u32 = 256;
+        let keeps_every_node = reduced.is_empty() && bound.flow_depth >= LONG_WALK;
         let reachable = loop {
             if (file, flow) == (self.last_flow_node.0, self.last_flow_node.1) {
                 break self.last_flow_node.2;
             }
-            if bound.is_shared(flow) {
+            if keeps_every_node || bound.is_shared(flow) {
                 if let Some(cached_reachable) =
                     self.p.flow_node_reachable.get(&self.task, &(file, flow))
                 {

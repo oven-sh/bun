@@ -1,0 +1,45 @@
+Uint8Array at 30 10 30 undefined 10 undefined 10 10 20 30 undefined undefined 20 10 10 10 20 20 undefined undefined
+Float64Array at NaN 1.5 NaN undefined 1.5 undefined 1.5 1.5 -0 NaN undefined undefined -0 1.5 1.5 1.5 -0 -0 undefined undefined
+BigInt64Array at 3 1 3 undefined 1 undefined 1 1 -2 3 undefined undefined -2 1 1 1 -2 -2 undefined undefined
+Uint8Array at undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined
+at without an argument 7
+at with a BigInt threw TypeError: Conversion from 'BigInt' to 'number' is not allowed.
+at with a symbol threw TypeError: Cannot convert a symbol to a number
+at on an array threw TypeError: Receiver should be a typed array view
+at on undefined threw TypeError: Receiver should be a typed array view
+at after the index shrinks the buffer undefined
+at after the index detaches the buffer undefined
+toLocaleString of numbers 1,234.5,0.25,NaN,-0,∞
+toLocaleString with options 1.234,50,0,25
+toLocaleString of BigInts 1,234,567,-8
+toLocaleString of nothing ""
+toLocaleString with a locale that does not exist threw RangeError: invalid language tag: not a locale
+toLocaleString on an array threw TypeError: Receiver should be a typed array view
+length of toLocaleString and at 0,1
+toLocaleString calls what the program put on Number.prototype threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+toLocaleString converts what the method answers threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+toLocaleString does not convert a symbol threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+toLocaleString skips the elements that the method removes threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+dispose runs last in, first out deferred adopted value used | undefined true
+dispose of many 329776
+dispose keeps every error threw SuppressedError(error: RangeError: first; suppressed: SuppressedError(error: RangeError: third; suppressed: undefined))
+third second first
+a callback sees the stack disposed threw ReferenceError: DisposableStack.prototype.defer requires that |this| be a pending DisposableStack object
+move takes the resources along [] [moved] true true
+use after dispose threw ReferenceError: DisposableStack.prototype.use requires that |this| be a pending DisposableStack object
+use of a number threw TypeError: Disposable value must be an object
+use of an object without the method threw TypeError: @@dispose must not be undefined or null
+use of an object whose method is no function threw TypeError: @@dispose must be callable
+defer of no function threw TypeError: DisposableStack.prototype.defer requires that onDispose argument be a callable
+adopt of no function threw TypeError: DisposableStack.prototype.adopt requires that onDispose argument be a callable
+dispose on an object threw TypeError: DisposableStack.prototype.dispose requires that |this| be a DisposableStack object
+dispose on an AsyncDisposableStack threw TypeError: DisposableStack.prototype.dispose requires that |this| be a DisposableStack object
+the method is read once, when the resource is added 1 first method
+the receiver of the method is the resource  true
+disposeAsync waits for each deferred returned adopted value synchronous first begins first ends | undefined true undefined
+disposeAsync of null alone still waits one turn disposed
+disposeAsync keeps every error threw SuppressedError(error: RangeError: thrown; suppressed: SuppressedError(error: TypeError: rejected; suppressed: EvalError: thrown by the asynchronous method))
+thrown
+disposeAsync of many 341494
+disposeAsync on an object rejects threw TypeError: AsyncDisposableStack.prototype.disposeAsync requires that |this| be a AsyncDisposableStack object
+move takes the asynchronous resources along [] [moved begins moved ends]

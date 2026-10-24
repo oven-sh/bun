@@ -1,0 +1,6 @@
+error: TS100107: JSON.parse<NumberKeys>() cannot validate 'NumberKeys'. Only types that JSON can represent can be validated.
+error: TS100107: JSON.parse<SymbolKeys>() cannot validate 'SymbolKeys'. Only types that JSON can represent can be validated.
+error: TS100107: JSON.parse<PatternKeys>() cannot validate 'PatternKeys'. Only types that JSON can represent can be validated.
+error: TS100107: JSON.parse<TwoSignatures>() cannot validate 'TwoSignatures'. Only types that JSON can represent can be validated.
+error: TS100107: JSON.parse<Holder>() cannot validate 'byIndex: NumberKeys'. Only types that JSON can represent can be validated.
+error: TS100107: validate<NumberKeys[]>() cannot validate '[number]: NumberKeys'. Only types that JSON can represent can be validated.

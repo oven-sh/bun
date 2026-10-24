@@ -1,0 +1,16 @@
+# In a checked file a parameter, a variable and a result keep the checker's type: a value is tested against it where it arrives. What the uses say is expected of expressions and of `this` only.
+typescript.ts:0 role `` = Checked
+typescript.ts:5 parameter `a: any` = any
+typescript.ts:5 predicted `a` = number
+typescript.ts:8 parameter `item` = any
+typescript.ts:8 predicted `item` = { id?: any; }
+typescript.ts:10 parameter `text` = string
+typescript.ts:13 binding `written` = any
+typescript.ts:15 binding `unwritten` = any
+typescript.ts:17 predicted `unwritten` = { id?: any; }
+typescript.ts:20 returns `result` = any
+typescript.ts:22 predicted `result(values)` = { id?: any; }
+typescript.ts:25 binding `at` = number
+typescript.ts:27 predicted `at` = int32
+# Nothing tests the `this` of a function that is no member of a class. `noImplicitThis` reports this one, which changes no answer.
+typescript.ts:31 signature `Counter` = () this unwritten checked { count?: number; } returns unwritten checked void

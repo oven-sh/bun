@@ -9,7 +9,8 @@
 //   bun scripts/verify-baseline.ts --binary ./bun --arch x64 --emulator /usr/bin/qemu-x86_64
 //   bun scripts/verify-baseline.ts --binary ./bun.exe --arch x64 --emulator ./sde.exe
 
-import { readdirSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { markBuildkiteStepReported } from "./buildkite.ts";
 
@@ -106,6 +107,7 @@ interface RunTestOptions {
   cwd?: string;
   /** Tee output live to the console while still capturing it for analysis */
   live?: boolean;
+  executable?: string;
 }
 
 /** Read a stream, write each chunk to a writable, and return the full text. */
@@ -123,7 +125,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
 
   const start = performance.now();
   const live = options?.live ?? false;
-  const proc = Bun.spawn([...config.runnerCmd, binary, ...binaryArgs], {
+  const proc = Bun.spawn([...config.runnerCmd, options?.executable ?? binary, ...binaryArgs], {
     // config.cwd takes priority — SDE on Windows must run from its own directory for Pin DLL resolution
     cwd: config.cwd ?? options?.cwd,
     stdout: "pipe",
@@ -236,6 +238,13 @@ if (values["skip-emulation"]) {
   // Phase 1: SIMD code path verification
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
   await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
+
+  const aotDir = mkdtempSync(join(tmpdir(), "verify-baseline-aot-"));
+  const aotProgram = join(aotDir, "baseline-cpu.ts");
+  const aotExecutable = join(aotDir, isWindows ? "baseline-cpu.exe" : "baseline-cpu");
+  copyFileSync(join(repoRoot, "test", "aot", "programs", "language", "baseline-cpu.ts"), aotProgram);
+  if (await runTest("Ahead-of-time compiler", ["build", "--compile", "--aot", aotProgram, "--outfile", aotExecutable]))
+    await runTest("Ahead-of-time compiled program", [], { executable: aotExecutable });
 }
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)

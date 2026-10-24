@@ -1,0 +1,1 @@
+The bundler takes the class out as an export that nobody names, with --aot and without it, and with the class the TypeError of making it: "reached", "ran to its end reached" for "caught TypeError".

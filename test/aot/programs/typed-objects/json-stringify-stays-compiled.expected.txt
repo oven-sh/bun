@@ -1,0 +1,8 @@
+a flat record: 3700 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+records and lists inside: 17000 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+a list of records: 34700 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+a property that the type does not name: 18400 characters, 0 texts finished by compiled code, 0 values handed to the runtime
+such a property one level down: 18200 characters, 100 texts finished by compiled code, 100 values handed to the runtime
+a member of unknown type: 2500 characters, 100 texts finished by compiled code, 100 values handed to the runtime
+16-bit text: 3800 characters, 100 texts finished by compiled code, 0 values handed to the runtime
+an object without a type: 3700 characters, 0 texts finished by compiled code, 0 values handed to the runtime

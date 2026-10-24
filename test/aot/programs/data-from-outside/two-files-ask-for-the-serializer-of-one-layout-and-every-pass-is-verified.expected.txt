@@ -1,0 +1,25 @@
+2
+3
+2
+1
+1
+6
+2147483649.5
+1e+300
+7
+TypeError
+TypeError
+TypeError
+TypeError
+TypeError
+1432371606480.5
+1:Ada:admin:a+b:London:- true London
+Ada,Ada,Bob,Cy,guest 1:Ada:admin:a+b:London:-|1:Ada:admin:a+b:London:-
+{"id":3,"name":"Cy","tags":["c"],"address":{"city":"Paris","zip":"75"},"role":"user","extra":true,"active":true} 0:guest:user::-:-
+2:Bob:user::-:- fast=true,safe=false 10 undefined 1:Ada:admin:a+b:London:-
+3:Cy:user:c:Paris:75
+error no user 9
+2:Bob:user::-:- 3:Cy:user:c:Paris:75 0:guest:user::-:- miss
+joined 3:Cy:user:c:Paris:75; left 2 no reason true Cy
+1:Ada:admin:a+b:London:-|2:Bob:user::-:-|3:Cy:user:c:Paris:75 false
+1:Ada:admin:a+b:London:- 1:Ada L:admin:a+b+z:Turin:- id,name,tags,address,role

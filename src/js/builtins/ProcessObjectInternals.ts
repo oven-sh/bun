@@ -30,15 +30,34 @@ const enum BunProcessStdinFdType {
   socket = 2,
 }
 
+/** `process.stdout` and `process.stderr`: a `tty.WriteStream` or an `fs.WriteStream`. */
+interface StdioWriteStream extends $Node.Writable {
+  readable: boolean;
+  fd: number;
+  _type: "tty" | "fs";
+  _isStdio: boolean;
+  /** `tty.WriteStream` only. */
+  _refreshSize(): void;
+  destroySoon: $Node.Writable["destroy"];
+  [Symbol.asyncIterator]?(): AsyncGenerator<never, void, unknown>;
+}
+
+/** `process.stdin`: a `tty.ReadStream` or an `fs.ReadStream`. */
+interface StdinStream extends $Node.Readable {
+  fd: number;
+  ref?(): this;
+  unref?(): this;
+}
+
 export function getStdioWriteStream(
-  process: typeof globalThis.process,
+  process: NodeJS.Process,
   fd: number,
   isTTY: boolean,
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 1 || fd === 2, `Expected fd to be 1 or 2, got ${fd}`);
 
-  let stream;
+  let stream: StdioWriteStream;
   if (isTTY) {
     const tty = require("node:tty");
     stream = new tty.WriteStream(fd);
@@ -75,7 +94,7 @@ export function getStdioWriteStream(
 
   if (fd === 1 || fd === 2) {
     stream.destroySoon = stream.destroy;
-    stream._destroy = function (err, cb) {
+    stream._destroy = function (this: StdioWriteStream, err: Error | null, cb: $Node.ErrorCallback) {
       cb(err);
       this._undestroy();
 
@@ -97,7 +116,7 @@ export function getStdioWriteStream(
 
 // node:worker_threads worker: process.stdout/stderr write to the parent Worker over a
 // MessagePort; process.stdin reads from one for { stdin: true }, else is already ended.
-export function getNodeWorkerStdioStream(process: typeof globalThis.process, fd: number, ports: any) {
+export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, ports: $Node.WorkerStdioPorts) {
   const stdio = require("internal/worker/stdio");
   if (fd === 0) {
     return ports.stdin ? stdio.makePortReadable(ports.stdin, true) : stdio.makeEndedReadable();
@@ -109,17 +128,12 @@ export function getNodeWorkerStdioStream(process: typeof globalThis.process, fd:
   return stream;
 }
 
-export function getStdinStream(
-  process: typeof globalThis.process,
-  fd: number,
-  isTTY: boolean,
-  fdType: BunProcessStdinFdType,
-) {
+export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(fd === 0);
-  const native = Bun.stdin.stream();
-  const source = native.$bunNativePtr;
+  const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
+  const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
 
-  var reader: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
+  var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   let needsInternalReadRefresh = false;
   // if true, while the stream is own()ed it will not
@@ -155,13 +169,13 @@ export function getStdinStream(
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(null, { fd, autoClose: false });
+  const stream: StdinStream = new ReadStream(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
 
   let stream_destroyed = false;
   let stream_reachedEof = false;
-  stream.addListener = stream.on = function (event, listener) {
+  stream.addListener = stream.on = function (this: StdinStream, event: $Node.EventName, listener: $Node.Listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
     //
@@ -182,13 +196,13 @@ export function getStdinStream(
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
   if (isTTY || fdType !== BunProcessStdinFdType.file) {
-    stream.ref = function () {
+    stream.ref = function (this: StdinStream) {
       forceUnref = false;
       own();
       return this;
     };
 
-    stream.unref = function () {
+    stream.unref = function (this: StdinStream) {
       forceUnref = true;
       source?.updateRef?.(false);
       return this;
@@ -196,18 +210,18 @@ export function getStdinStream(
   }
 
   const originalPause = stream.pause;
-  stream.pause = function () {
+  stream.pause = function (this: StdinStream) {
     return originalPause.$call(this);
   };
 
   const originalResume = stream.resume;
-  stream.resume = function () {
+  stream.resume = function (this: StdinStream) {
     own();
     return originalResume.$call(this);
   };
 
   const originalRead = stream.read;
-  stream.read = function (size) {
+  stream.read = function (this: StdinStream, size?: number) {
     const ret = originalRead.$call(this, size);
     // An explicit read() must acquire the native reader: _read() without one only
     // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
@@ -218,11 +232,11 @@ export function getStdinStream(
     return ret;
   };
 
-  function rethrowUncaught(err) {
+  function rethrowUncaught(err: unknown) {
     throw err;
   }
 
-  async function internalRead(stream) {
+  async function internalRead(stream: StdinStream) {
     $debug("internalRead();");
     // The reader this read belongs to. releaseLock() rejects the in-flight read(); by the
     // time that rejection lands, own() may already have acquired a NEW reader, so the catch
@@ -240,7 +254,7 @@ export function getStdinStream(
         triggerRead.$call(stream, undefined);
         return;
       }
-      stream.destroy(err);
+      stream.destroy(err as Error);
       return;
     }
 
@@ -264,7 +278,7 @@ export function getStdinStream(
     }
   }
 
-  function triggerRead(_size) {
+  function triggerRead(this: StdinStream, _size?: number) {
     $debug("_read();", reader);
 
     if (reader) {
@@ -320,126 +334,29 @@ export function getStdinStream(
 
   return stream;
 }
-export function initializeNextTickQueue(process: typeof globalThis.process, nextTickQueue, drainMicrotasksFn) {
-  var queue;
-  var tickInitHooks;
-  var process: typeof globalThis.process;
-  var nextTickQueue = nextTickQueue;
-  var drainMicrotasks = drainMicrotasksFn;
+// JSNextTickQueue: whether ticks are queued, the queue, the function that runs it.
+type NextTickQueue = InternalFieldObject<[number, unknown, (() => void) | undefined]>;
+type DrainMicrotasks = () => void;
 
-  const { validateFunction } = require("internal/validators");
-
-  var setup;
-  setup = () => {
-    const { FixedQueue } = require("internal/fixed_queue");
-    queue = new FixedQueue();
-    tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
-
-    function processTicksAndRejections() {
-      var tock;
-      do {
-        while ((tock = queue.shift()) !== null) {
-          var callback = tock.callback;
-          var args = tock.args;
-          var frame = tock.frame;
-          var restore = $getInternalField($asyncContext, 0);
-          $putInternalField($asyncContext, 0, frame);
-          // No catch and no finally: what a tick throws leaves this function as it was thrown, with
-          // the tick's frame still current. JSNextTickQueue::drain reports it there (so an
-          // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
-          // async context back, and calls in again for the ticks after it.
-          if (args === undefined) {
-            callback();
-          } else {
-            switch (args.length) {
-              case 1:
-                callback(args[0]);
-                break;
-              case 2:
-                callback(args[0], args[1]);
-                break;
-              case 3:
-                callback(args[0], args[1], args[2]);
-                break;
-              case 4:
-                callback(args[0], args[1], args[2], args[3]);
-                break;
-              default:
-                callback(...args);
-                break;
-            }
-          }
-          $putInternalField($asyncContext, 0, restore);
-        }
-
-        drainMicrotasks();
-      } while (!queue.isEmpty());
-      // Without this, every checkpoint after the first tick calls this function to find an empty queue.
-      $putInternalField(nextTickQueue, 0, 0);
-    }
-
-    $putInternalField(nextTickQueue, 0, 0);
-    $putInternalField(nextTickQueue, 1, queue);
-    $putInternalField(nextTickQueue, 2, processTicksAndRejections);
-    setup = undefined;
-  };
-
-  function nextTick(cb, ...args) {
-    validateFunction(cb, "callback");
-    if (setup) {
-      setup();
-      process = globalThis.process;
-    }
-    if (process._exiting) return;
-
-    const tock = {
-      callback: cb,
-      // We want to avoid materializing the args if there are none because it's
-      // a waste of memory and Array.prototype.slice shows up in profiling.
-      args: $argumentCount() > 1 ? args : undefined,
-      frame: $getInternalField($asyncContext, 0),
-    };
-    if (tickInitHooks.length !== 0) {
-      // node fires one TickObject init per process.nextTick() call, at
-      // construction time (before the callback runs).
-      const asyncHooksTick = require("internal/async_hooks_tick");
-      const asyncId = asyncHooksTick.newAsyncId();
-      // Snapshot: enable()/disable() from inside a hook must not affect the
-      // in-flight dispatch (node stages such mutations in tmp_array until
-      // the emit completes).
-      const hooks = tickInitHooks.slice();
-      for (let i = 0; i < hooks.length; i++) {
-        try {
-          hooks[i](asyncId, "TickObject", 0, tock);
-        } catch (err) {
-          // node: a throwing init hook is fatal (fatalError: print + exit 1),
-          // never surfaced to the process.nextTick() caller. console is a
-          // user-mutable global, so shield the print; exit regardless.
-          try {
-            console.error(
-              typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
-            );
-          } catch {}
-          process.exit(1);
-        }
-      }
-    }
-    queue.push(tock);
-    $putInternalField(nextTickQueue, 0, 1);
-  }
-
-  return nextTick;
+export function initializeNextTickQueue(
+  process: NodeJS.Process,
+  nextTickQueue: NextTickQueue,
+  drainMicrotasksFn: DrainMicrotasks,
+) {
+  return require("internal/process/next_tick_queue").initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn);
 }
 
 type InternalEnvMap = Record<string, string>;
 type EditWindowsEnvVarCb = (key: string, value: null | string) => void;
+type CoerceEnvVarForWrite = (key: string, value: unknown) => string;
+type ResetEnvVarForDelete = (key: string) => void;
 
 export function windowsEnv(
   internalEnv: InternalEnvMap,
   envMapList: Array<string>,
   editWindowsEnvVar: EditWindowsEnvVarCb,
-  coerceForWrite,
-  resetForDelete,
+  coerceForWrite: CoerceEnvVarForWrite,
+  resetForDelete: ResetEnvVarForDelete,
 ) {
   (internalEnv as any)[Bun.inspect.custom] = () => {
     let o = {};
@@ -598,7 +515,7 @@ export function windowsEnv(
 
 export function getChannel() {
   const EventEmitter = require("node:events");
-  const setRef = $bindgen("node_cluster_binding.bind.ts", "setRef");
+  const setRef: (enabled: boolean) => void = $bindgen("node_cluster_binding.bind.ts", "setRef");
   return new (class Control extends EventEmitter {
     constructor() {
       super();
@@ -614,6 +531,7 @@ export function getChannel() {
   })();
 }
 
+$overriddenName = "";
 export function rawDebug() {
   // util.format straight to fd 2, bypassing process.stderr (which may be
   // hijacked or broken). os.EOL, not "\n": Node's _rawDebug writes through
@@ -631,17 +549,24 @@ export function rawDebug() {
 // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
-export function createOnWarning(process, redirectPath, disabledArr) {
-  const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
+type WriteWarning = (message: string) => void;
+
+export function createOnWarning(
+  process: NodeJS.Process,
+  redirectPath: string | undefined,
+  disabledArr: string[] | undefined,
+  writeWarning: WriteWarning,
+) {
+  const fs = redirectPath ? require("internal/fs/binding") : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
   const disabled = disabledArr && disabledArr.length ? new Set(disabledArr) : null;
   let traceWarningHelperShown = false;
 
-  function writeOut(message) {
-    if (appendFileSync) {
+  function writeOut(message: string) {
+    if (fs) {
       try {
-        appendFileSync(redirectPath, message + "\n");
+        fs.appendFileSync(redirectPath!, message + "\n");
         return;
       } catch {
         // Simplification vs Node's writeToFile (single fd, async): open per-write and
@@ -650,9 +575,8 @@ export function createOnWarning(process, redirectPath, disabledArr) {
     }
     // process.stderr.write, not console.error: under an inspector Session console.* emits
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
-    // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
-    // a reassigned process.stderr is honored and stderr is not materialized when redirected.
-    process.stderr.write(message + "\n");
+    // so console.error would re-enter and loop. writeWarning (BunProcess.cpp) reads process.stderr per call, as Node does.
+    writeWarning(message + "\n");
   }
 
   interface ProcessWarning extends Error {
@@ -692,7 +616,7 @@ export function createOnWarning(process, redirectPath, disabledArr) {
   };
 }
 
-export function loadEnvFile(path) {
+export function loadEnvFile(path?: string) {
   // process.loadEnvFile(path = ".env"): parse a dotenv file and apply it to
   // process.env. Reading with fs gives the Node-shaped ENOENT error
   // ({ code, syscall: "open", path }) for missing files.
@@ -715,20 +639,22 @@ export function loadEnvFile(path) {
   }
 }
 
-export function createProcessFinalization(process) {
-  let entries: Array<{ ref: WeakRef<object>; fn: Function; evt: string }> = [];
+export function createProcessFinalization(process: NodeJS.Process) {
+  type FinalizationEvent = "exit" | "beforeExit";
+  type FinalizationCallback = (obj: object, event: FinalizationEvent) => void;
+  let entries: Array<{ ref: WeakRef<object>; fn: FinalizationCallback; evt: FinalizationEvent }> = [];
   let installed = false;
 
   // Node uses validateObject(obj, "obj", kValidateObjectAllowFunction): the
   // ref may be a function (any WeakRef-compatible target), and the argument
   // is named "obj" in error messages.
-  function validateRef(obj) {
+  function validateRef(obj: unknown): asserts obj is object {
     if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) {
       throw $ERR_INVALID_ARG_TYPE("obj", "object", obj);
     }
   }
 
-  function runFinalization(event) {
+  function runFinalization(event: FinalizationEvent) {
     // Node clears refs[event] before invoking, so each registration fires
     // at most once even if beforeExit runs again. Splitting first also lets
     // a callback re-register for a later event without re-firing now.
@@ -754,7 +680,7 @@ export function createProcessFinalization(process) {
     process.on("beforeExit", () => runFinalization("beforeExit"));
   }
 
-  function registerWithEvent(ref, fn, evt) {
+  function registerWithEvent(ref: unknown, fn: FinalizationCallback, evt: FinalizationEvent) {
     validateRef(ref);
     // Node does not validate `fn` here; a non-callable fn only throws at
     // exit/beforeExit time when it's invoked.
@@ -763,13 +689,13 @@ export function createProcessFinalization(process) {
   }
 
   return {
-    register(ref, fn) {
+    register(ref: unknown, fn: FinalizationCallback) {
       registerWithEvent(ref, fn, "exit");
     },
-    registerBeforeExit(ref, fn) {
+    registerBeforeExit(ref: unknown, fn: FinalizationCallback) {
       registerWithEvent(ref, fn, "beforeExit");
     },
-    unregister(ref) {
+    unregister(ref: unknown) {
       validateRef(ref);
       // Node also drops entries whose target was already collected, so a dead
       // registration stops pinning its callback.
@@ -828,7 +754,8 @@ export function buildAllowedNodeEnvironmentFlags() {
       return false;
     }
     clear() {}
-    has(key) {
+    // Any value. Written as a union so that the assignments below narrow it.
+    has(key: string | number | bigint | boolean | symbol | object | null | undefined) {
       if (typeof key === "string") {
         key = key.replaceAll("_", "-");
         if (/^--?[^-]/.test(key)) {
@@ -842,7 +769,7 @@ export function buildAllowedNodeEnvironmentFlags() {
       }
       return false;
     }
-    forEach(callback, thisArg) {
+    forEach(callback: (value: string, key: string, set: Set<string>) => void, thisArg?: unknown) {
       for (const flag of canonical) {
         callback.$call(thisArg, flag, flag, this);
       }

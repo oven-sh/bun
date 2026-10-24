@@ -1,0 +1,10 @@
+structuredClone: 0 differ
+structuredClone of each item: 0 differ
+spread: 0 differ
+Object.assign: 0 differ
+Object.entries: 0 differ
+for in: 0 differ
+own property descriptors: 0 differ
+frozen, then spread: 0 differ
+validate: 0 differ
+rest: 0 differ

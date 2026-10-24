@@ -1,0 +1,1 @@
+object-model-cliffs: a delete of a field of a known layout has no compiled form: every one is a call of the run time (about 470 instructions) and a look-up by name behind it

@@ -1,0 +1,27 @@
+# handedOver(process); unknown[key] = 1
+# `process` is in unknown hands, so the store may hit any of its members. It names none of them. What hangs on process.send in the table (the modules of the channel) comes into the image for a program
+# that names process.send, not for this store. store-under-a-key-nobody-knows-is-a-store-to-a-host-built-in-that-is-named.ir is that program
+# LIBRARY: own
+# RUN: valueflow-why escaped-builtin=Process used-builtin=ProcessSend used-builtin=ProcessChannel
+# CHECK: escaped-builtin=Process
+# CHECK-NEXT: n0 escaped
+# CHECK: used-builtin=ProcessSend
+# CHECK-NEXT: not held
+# CHECK-NEXT: used-builtin=ProcessChannel
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedOver" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = Call v1, -, v2
+    v4 = Builtin builtin=DateNow
+    v5 = Call v4
+    v6 = ToString v5
+    v7 = Integer integer=1
+    ElemSet v3, v6, v7
+    Return
+}

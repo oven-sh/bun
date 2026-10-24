@@ -463,7 +463,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets.
-# (280 symbols)
+# (286 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun10N_AVX3_SPR11MemRMemImplEPKhmS2_m                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
@@ -481,6 +481,7 @@ _ZN3bun10N_AVX3_SPR13CountCharImplEPKhmh                                       [
 _ZN3bun10N_AVX3_SPR18IndexOfNotCharImplEPKhmh                                  [AVX, AVX512BW]
 _ZN3bun10N_AVX3_SPR19LastIndexOfCharImplEPKhmh                                 [AVX, AVX512BW]
 _ZN3bun10N_AVX3_SPR22LastIndexOfAnyCharImplEPKhmS2_m                           [AVX, AVX512BW, AVX512F]
+_ZN3bun10N_AVX3_SPR22IndexOfUntidySlashImplEPKhm                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 _ZN3bun10N_AVX3_SPR16LowerAscii16ImplEPKtmPt                                  [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun10N_AVX3_SPR18EncodeHexLowerImplEPKhmPh                                 [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
 _ZN3bun10N_AVX3_SPR18FirstNonAscii8ImplEPKhm                                   [AVX, AVX512BW]
@@ -524,6 +525,7 @@ _ZN3bun11N_AVX3_ZEN413CountCharImplEPKhmh                                      [
 _ZN3bun11N_AVX3_ZEN418IndexOfNotCharImplEPKhmh                                 [AVX, AVX512BW]
 _ZN3bun11N_AVX3_ZEN419LastIndexOfCharImplEPKhmh                                [AVX, AVX512BW]
 _ZN3bun11N_AVX3_ZEN422LastIndexOfAnyCharImplEPKhmS2_m                          [AVX, AVX512BW, AVX512F]
+_ZN3bun11N_AVX3_ZEN422IndexOfUntidySlashImplEPKhm                              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 _ZN3bun11N_AVX3_ZEN416LowerAscii16ImplEPKtmPt                                 [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun11N_AVX3_ZEN418EncodeHexLowerImplEPKhmPh                                [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
 _ZN3bun11N_AVX3_ZEN418FirstNonAscii8ImplEPKhm                                  [AVX, AVX512BW]
@@ -567,6 +569,7 @@ _ZN3bun6N_AVX213CountCharImplEPKhmh                                            [
 _ZN3bun6N_AVX218IndexOfNotCharImplEPKhmh                                       [AVX, AVX2]
 _ZN3bun6N_AVX219LastIndexOfCharImplEPKhmh                                      [AVX, AVX2]
 _ZN3bun6N_AVX222LastIndexOfAnyCharImplEPKhmS2_m                                [AVX, AVX2]
+_ZN3bun6N_AVX222IndexOfUntidySlashImplEPKhm                                    [AVX, AVX2, BMI1]
 _ZN3bun6N_AVX216LowerAscii16ImplEPKtmPt                                       [AVX, AVX2]
 _ZN3bun6N_AVX218EncodeHexLowerImplEPKhmPh                                      [AVX, AVX2]
 _ZN3bun6N_AVX218FirstNonAscii8ImplEPKhm                                        [AVX, AVX2]
@@ -610,6 +613,7 @@ _ZN3bun6N_AVX313CountCharImplEPKhmh                                            [
 _ZN3bun6N_AVX318IndexOfNotCharImplEPKhmh                                       [AVX, AVX512BW]
 _ZN3bun6N_AVX319LastIndexOfCharImplEPKhmh                                      [AVX, AVX512BW]
 _ZN3bun6N_AVX322LastIndexOfAnyCharImplEPKhmS2_m                                [AVX, AVX512BW, AVX512F]
+_ZN3bun6N_AVX322IndexOfUntidySlashImplEPKhm                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 _ZN3bun6N_AVX316LowerAscii16ImplEPKtmPt                                       [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun6N_AVX318EncodeHexLowerImplEPKhmPh                                      [AVX, AVX2, AVX512BW, AVX512F]
 _ZN3bun6N_AVX318FirstNonAscii8ImplEPKhm                                        [AVX, AVX512BW]
@@ -647,6 +651,7 @@ _ZN3bun9N_AVX10_213CountCharImplEPKhmh                                         [
 _ZN3bun9N_AVX10_218IndexOfNotCharImplEPKhmh                                    [AVX, AVX512BW]
 _ZN3bun9N_AVX10_219LastIndexOfCharImplEPKhmh                                   [AVX, AVX512BW]
 _ZN3bun9N_AVX10_222LastIndexOfAnyCharImplEPKhmS2_m                             [AVX, AVX512BW, AVX512F]
+_ZN3bun9N_AVX10_222IndexOfUntidySlashImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 _ZN3bun9N_AVX10_216LowerAscii16ImplEPKtmPt                                    [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun9N_AVX10_218EncodeHexLowerImplEPKhmPh                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
 _ZN3bun9N_AVX10_218FirstNonAscii8ImplEPKhm                                     [AVX, AVX512BW]
@@ -699,6 +704,7 @@ _ZN3bun9N_AVX3_DL13CountCharImplEPKhmh                                         [
 _ZN3bun9N_AVX3_DL18IndexOfNotCharImplEPKhmh                                    [AVX, AVX512BW]
 _ZN3bun9N_AVX3_DL19LastIndexOfCharImplEPKhmh                                   [AVX, AVX512BW]
 _ZN3bun9N_AVX3_DL22LastIndexOfAnyCharImplEPKhmS2_m                             [AVX, AVX512BW, AVX512F]
+_ZN3bun9N_AVX3_DL22IndexOfUntidySlashImplEPKhm                                 [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1]
 _ZN3bun9N_AVX3_DL16LowerAscii16ImplEPKtmPt                                    [AVX, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL18EncodeHexLowerImplEPKhmPh                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]
 _ZN3bun9N_AVX3_DL18FirstNonAscii8ImplEPKhm                                     [AVX, AVX512BW]
@@ -1397,3 +1403,12 @@ _ZN3bun10N_AVX3_SPR13OddBlocksImplEPKhmPm          [AVX, AVX2, AVX512BW, AVX512D
 _ZN3bun11N_AVX3_ZEN419ScannerRunStopsImplEPKhmPhm  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN414LineStartsImplEPKhmPj        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN413OddBlocksImplEPKhmPm         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's count of instructions per pass. Gate: cap_user_rdpmc
+# of the perf_event_open() page, which the kernel sets where user code may read the
+# counter; otherwise the count comes from read(). Every x86-64 processor has RDPMC.
+# (1 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOT17InstructionCounts15ofCurrentThreadEv  [RDPMC]

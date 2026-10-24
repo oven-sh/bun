@@ -1,0 +1,300 @@
+trim-feature cli : Tools Lint Fmt Check Install TestCommand BuildCommand AotCompiler Repl Create Upgrade ImageCompiler
+  about "The whole `bun` command line: the package manager, the test runner, `bun build`, `bun lint`, `bun fmt`, `bun check` and the ahead-of-time compiler. Includes `\"lint\"`, `\"fmt\"`, `\"check\"`, `\"install\"`, `\"aot\"`, `\"repl\"`, `\"create\"`, `\"upgrade\"` and `\"run\"`. An executable only uses it with `BUN_BE_BUN=1`, with `--help` in `BUN_OPTIONS`, or when it calls `Bun.build()` with `check` or `compile.aot`."
+  saves 47.4 44.8
+
+trim-feature lint : Lint
+  about "`bun lint`. Included in `\"cli\"`."
+  saves 12.2 11.9
+
+trim-feature fmt : Fmt
+  about "`bun fmt`. Included in `\"cli\"`. It shares about 8 MB of code with `\"lint\"`, so keeping either one keeps that code."
+  saves 0.2 0.0
+
+trim-feature check : Check
+  about "`bun check`, `--check`, and type checking and declaration files in `bun build` and `Bun.build()`. Included in `\"cli\"`. It shares the type checker with `\"lint\"` and `\"aot\"`, so keeping any of the three keeps the type checker."
+  saves 0.3 0.3
+
+trim-feature install : Install
+  about "The package manager: `bun install`, `add`, `remove`, `update`, `link`, `unlink`, `pm` and its subcommands, `patch`, `outdated`, `publish`, `audit`, `why`, `prune`, `dedupe`, `info` and `bunx`. Included in `\"cli\"`. `-i`, `--install` and `install.auto` in `bunfig.toml` need it."
+  saves 1.8 1.6
+
+trim-feature aot : AotCompiler ImageCompiler
+  about "The ahead-of-time compiler: `bun compile`, `bun build --compile --aot`, `bun run --aot` and `compile.aot` in `Bun.build()`. Included in `\"cli\"`. An executable built with `aot` doesn't need it to run."
+  saves 9.6 9.3
+
+trim-feature repl : Repl
+  about "`bun repl`. Included in `\"cli\"`."
+  saves 0.0 0.0
+
+trim-feature create : Create
+  about "`bun create` and `bun init`. Included in `\"cli\"`."
+  saves 0.0 0.0
+
+trim-feature upgrade : Upgrade
+  about "`bun upgrade`. Included in `\"cli\"`."
+  saves 0.0 0.0
+
+trim-feature run : Tools
+  about "The rest of the command line: `bun run` with `package.json` scripts and `--filter`, `bun exec`, `--help` and shell completions. Included in `\"cli\"`. The executable doesn't need it to run its own program."
+  saves 0.6 0.3
+
+trim-feature spawn : ChildProcess Spawn Shell Cron WebView OpenInEditor Terminal NodeCluster ProcessExecve HotReload CrashReport InternalForTesting BunSpawn
+  about "Everything that starts a process: `Bun.spawn()`, `Bun.spawnSync()`, `node:child_process`, `node:cluster`, `Bun.$`, `Bun.cron`, `Bun.WebView`, `Bun.Terminal`, `Bun.openInEditor()`, `process.execve()`, `--watch`, `--hot` and automatic crash reporting. Includes `\"shell\"`, `\"cron\"`, `\"webview\"` and `\"terminal\"`."
+  also "`bun` commands that start processes, such as `bun run` and `bunx`"
+  saves 1.8 1.3
+
+trim-feature process-kill : ProcessKill
+  about "`process.kill()`. Without it, the executable can't send a signal to any process, including itself."
+  saves 0.0 0.0
+
+trim-feature process-report : ProcessReport
+  about "`process.report`, the Node.js diagnostic report. It lists environment variables, loaded libraries and network interfaces."
+  saves 0.0 0.0
+
+trim-feature dialogs : Dialogs
+  about "`alert()`, `confirm()` and `prompt()`, which read from the terminal."
+  saves 0.0 0.0
+
+trim-feature ipc : Ipc ProcessIpc
+  about "IPC with the parent process that started the executable with `ipc` or `fork()`: `process.send()`, `process.disconnect()`, `process.channel`, `process.connected`, and the `\"message\"` and `\"disconnect\"` events. Without it, the executable runs as if it was started without an IPC channel."
+  saves 0.0 0.0
+
+trim-feature native-code : Ffi NativeAddons SqliteExtensions
+  about "Everything that loads native code: `bun:ffi`, `process.dlopen()`, `.node` addons, and `Database.loadExtension()` in `bun:sqlite`. Includes `\"ffi\"` and `\"native-addons\"`. Without it, `loadExtension()` throws an `SQLiteError`. On macOS, `\"sqlite\"` loads native code too: the system's SQLite library."
+  saves 0.7 0.5
+
+trim-feature jit : JIT
+  about "The JIT compilers for JavaScript, regular expressions and WebAssembly. An executable built with `aot` never starts them, so `trim` removes them. Without `aot`, `trim` keeps them."
+  saves 14.1 14.2
+
+trim-feature interpreter : RuntimeTranspiler DataFileLoaders Interpreter BuiltinSourceText
+  about "Everything that runs code that isn't in the executable: the JavaScript parser, the interpreter and the transpiler. `eval()`, `new Function()`, `import()` and `require()` of files that weren't compiled into the executable, `Bun.Transpiler`, `Bun.plugin()`, and built-in modules that your code doesn't import all need it. `trim` only removes it from an executable built with `aot`."
+  saves 3.7 2.7
+
+trim-feature bundler : Bundler CssParser ReactCompiler InternalForTesting BuildCommand
+  about "`bun build`, `Bun.build()`, HTML imports and the development server in `Bun.serve()`, with the CSS parser and the React Compiler. `Bun.Transpiler` doesn't need it, and neither does importing TypeScript or JSX files at run time."
+  saves 6.0 2.5
+
+trim-feature test : Test InternalForTesting TestCommand
+  about "`bun test`, `bun:test` and `node:test`: the test runner, `expect()` and its matchers, mocks and snapshots."
+  saves 2.1 1.8
+
+trim-feature inspector : Inspector
+  about "The debugger: `--inspect`, `BUN_INSPECT` and `node:inspector`. An executable built with `aot` also needs `compile.inspector` before a debugger can attach."
+  saves 0.6 0.7
+
+trim-feature profiler : Profilers
+  about "The CPU and heap profilers, heap snapshots and code coverage: `--cpu-prof`, `--heap-prof`, `Bun.generateHeapSnapshot()`, `v8.writeHeapSnapshot()` and the profiling functions in `bun:jsc`."
+  saves 0.3 0.4
+
+trim-feature source-maps : SourceMaps
+  about "Source maps: the ones that the `sourcemap` option embeds in the executable, which stack traces use, and `SourceMap` and `findSourceMap()` in `node:module`."
+  saves 0.0 0.0
+
+trim-feature image : Image
+  about "`Bun.Image` and `.image()` on a `Blob`."
+  saves 1.3 0.9
+
+trim-feature archive : Archive Libarchive
+  about "`Bun.Archive`, and everything else that reads or writes a tar archive."
+  also "unpacking packages in `bun install`, and `bun pm pack`"
+  also "unpacking a template in `bun create`"
+  also "installing a missing package during `bun build` or `bun compile`"
+  saves 0.0 0.0
+
+trim-feature sqlite : Sqlite SqliteExtensions
+  about "`bun:sqlite`, `node:sqlite` and imports with `type: \"sqlite\"`. On macOS, Bun loads the system's SQLite, so this is only the bindings and the loader."
+  also "`Bun.SQL` with a `sqlite:` URL"
+  saves 1.9 0.0
+
+trim-feature sql : Sql
+  about "`Bun.sql` and `Bun.SQL` for PostgreSQL and MySQL."
+  saves 0.3 0.3
+
+trim-feature redis : Valkey
+  about "`Bun.redis`, `Bun.RedisClient` and `--redis-preconnect`."
+  saves 0.3 0.3
+
+trim-feature s3 : S3Responses S3Client
+  about "`Bun.s3`, `Bun.S3Client`, and `s3:` URLs in `Bun.file()`, `Bun.write()` and `fetch()`. Without it, an `s3:` URL throws an `Error` whose `code` is `\"ERR_FEATURE_REMOVED\"`."
+  also "writing a `Bun.Image` to S3"
+  also "receiving an S3 file from another process"
+  saves 0.1 0.0
+
+trim-feature html-rewriter : HtmlRewriter
+  about "`HTMLRewriter`."
+  saves 0.0 0.0
+
+trim-feature ffi : Ffi
+  about "`bun:ffi` and its C compiler. Included in `\"native-code\"`."
+  saves 0.7 0.5
+
+trim-feature native-addons : NativeAddons
+  about "Native addons: `.node` files, `process.dlopen()`, N-API, and the V8 and libuv symbols that addons link against. Included in `\"native-code\"`."
+  saves 0.0 0.0
+
+trim-feature webassembly : WebAssembly
+  about "`WebAssembly`, `node:wasi` and imports of `.wasm` files."
+  saves 1.0 1.1
+
+trim-feature shell : Shell
+  about "`Bun.$`, the shell. Included in `\"spawn\"`."
+  saves 0.4 0.4
+
+trim-feature webview : WebView
+  about "`Bun.WebView`. Included in `\"spawn\"`."
+  saves 0.0 0.0
+
+trim-feature fetch : HttpClient Fetch
+  about "Bun's HTTP client: `fetch()`, `Bun.fetch()` and `Bun.FetchSession`. `Request`, `Response` and `Headers` don't need it. Neither does `http.request()` in `node:http`, which needs `\"sockets\"`."
+  saves 0.3 0.0
+
+trim-feature serve : Serve BunInfo
+  about "`Bun.serve()`, and the `node:http` and `node:https` servers, which are built on it. Without it, their `listen()` emits an `\"error\"` event. `fetch()`, `http.request()`, `node:net` and `node:http2` don't need it."
+  saves 0.4 0.3
+
+trim-feature sockets : Sockets
+  about "`Bun.listen()` and `Bun.connect()`, and everything that opens or accepts a connection through `node:net`: `net.connect()`, `net.createServer().listen()`, `node:tls`, `node:http2`, `http.request()` and `https.request()`. `fetch()`, `WebSocket`, `Bun.serve()`, `Bun.SQL` and `Bun.redis` don't need it."
+  saves 0.0 0.0
+
+trim-feature dns : Dns
+  about "`Bun.dns` and `node:dns`. Without it, `fetch()`, `Bun.connect()` and `node:net` still resolve host names, but `node:net` doesn't emit `lookup` and `node:dgram` only takes IP addresses."
+  saves 0.3 0.3
+
+trim-feature http2 : NodeHttp2 ServeHttp2
+  about "`node:http2`, and HTTP/2 and HTTP/3 in `Bun.serve()`."
+  saves 0.3 0.0
+
+trim-feature http3 : Http3 NodeQuic
+  about "HTTP/3 in `Bun.serve()`, and `node:quic`."
+  also "`fetch()` over HTTP/3"
+  saves 0.5 0.0
+
+trim-feature websocket : WebSocket
+  about "The `WebSocket` client. WebSockets in `Bun.serve()` don't need it."
+  saves 0.2 0.0
+
+trim-feature udp : Udp
+  about "`Bun.udpSocket()` and `node:dgram`."
+  saves 0.0 0.0
+
+trim-feature worker : Worker WorkerConstructor
+  about "`Worker` and `node:worker_threads`."
+  saves 0.0 0.0
+
+trim-feature node-vm : NodeVm
+  about "`node:vm`."
+  saves 0.1 0.0
+
+trim-feature node-crypto : NodeCrypto
+  about "`node:crypto`."
+  saves 0.4 0.0
+
+trim-feature web-crypto : WebCrypto
+  about "`crypto.subtle`, `SubtleCrypto` and `CryptoKey`. `crypto.getRandomValues()` and `crypto.randomUUID()` don't need it."
+  also "receiving a `CryptoKey` from another process"
+  saves 0.2 0.0
+
+trim-feature password : Password
+  about "`Bun.password`."
+  saves 0.0 0.0
+
+trim-feature brotli : BrotliEncoder BrotliDecoder
+  about "Brotli in `node:zlib`, `CompressionStream`, `DecompressionStream` and `fetch`. Without it, `fetch` doesn't offer `br` in `Accept-Encoding`."
+  saves 0.4 0.3
+
+trim-feature intl : IntlSegmenter IntlDisplayNames IntlOther IntlCollation IntlUnits IntlDateTimeFormat IntlNumberFormat IntlLocale IntlPluralRules
+  about "All of `Intl`, plus `localeCompare()`, `toLocaleString()`, `toLocaleDateString()` and `toLocaleTimeString()`, with their locale data. Includes `\"intl-segmenter\"`. On macOS, Bun uses the system's ICU, so this is only the bindings."
+  saves 10.5 0.0
+
+trim-feature intl-segmenter : IntlSegmenter
+  about "`Intl.Segmenter` and its dictionaries. Included in `\"intl\"`. On macOS, the dictionaries come with the system."
+  saves 3.1 0.0
+
+trim-feature temporal : Temporal
+  about "`Temporal` and `Date.prototype.toTemporalInstant()`."
+  saves 0.5 0.5
+
+trim-feature bun-jsc : BunJsc
+  about "`bun:jsc` and `node:v8`."
+  saves 0.0 0.0
+
+trim-feature plugin : Plugin
+  about "`Bun.plugin()`."
+  saves 0.0 0.0
+
+trim-feature fs-router : FileSystemRouter
+  about "`Bun.FileSystemRouter`."
+  saves 0.0 0.0
+
+trim-feature terminal : Terminal
+  about "`Bun.Terminal` and the `terminal` option of `Bun.spawn()`. Included in `\"spawn\"`."
+  saves 0.0 0.0
+
+trim-feature cron : Cron
+  about "`Bun.cron()`. Included in `\"spawn\"`."
+  saves 0.0 0.0
+
+trim-feature secrets : Secrets
+  about "`Bun.secrets`."
+  saves 0.0 0.0
+
+trim-feature markdown : Markdown
+  about "`Bun.markdown`. Importing a `.md` file doesn't need it."
+  saves 0.0 0.0
+
+trim-feature yaml : Yaml
+  about "`Bun.YAML`. Importing a `.yaml` file doesn't need it."
+  saves 0.0 0.0
+
+trim-feature toml : Toml
+  about "`Bun.TOML`. Importing a `.toml` file doesn't need it."
+  saves 0.0 0.0
+
+trim-feature json5 : Json5
+  about "`Bun.JSON5`. Importing a `.json5` file doesn't need it."
+  saves 0.0 0.0
+
+trim-feature jsonc : Jsonc
+  about "`Bun.JSONC`. Importing a `.jsonc` file doesn't need it."
+  saves 0.0 0.0
+
+trim-feature jsonl : Jsonl
+  about "`Bun.JSONL`."
+  saves 0.0 0.0
+
+trim-feature xml : Xml
+  about "`Bun.XML`. Importing an `.xml` file doesn't need it."
+  saves 0.0 0.0
+
+trim-feature glob : Glob
+  about "`Bun.Glob`."
+  saves 0.0 0.0
+
+trim-feature semver : Semver
+  about "`Bun.semver`."
+  saves 0.0 0.0
+
+trim-feature color : Color
+  about "`Bun.color()`."
+  saves 0.0 0.0
+
+trim-feature cookie : Cookie
+  about "`Bun.Cookie`, `Bun.CookieMap` and `request.cookies` in `Bun.serve()`."
+  saves 0.0 0.0
+
+trim-feature csrf : Csrf
+  about "`Bun.CSRF`."
+  saves 0.0 0.0
+
+trim-feature hash : Hash Hashers
+  about "`Bun.hash()`, `Bun.sha()` and the hash classes from `Bun.MD4` to `Bun.SHA512_256`. `Bun.CryptoHasher` has its own name, `\"crypto-hasher\"`."
+  saves 0.0 0.0
+
+trim-feature crypto-hasher : CryptoHasher
+  about "`Bun.CryptoHasher`."
+  saves 0.0 0.0
+
+trim-feature url-pattern : UrlPattern
+  about "`URLPattern`."
+  saves 0.0 0.0

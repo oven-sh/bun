@@ -1,0 +1,23 @@
+# No test finds what a native binding answers, so a Check that names such a built-in would leave the typed code with every value of its type. A TypeTest may name it: it does not pass
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badCheckOfNativeBinding" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=builtin(NativeBindgenNode_fs_bindingBindTsBinding)
+    Return
+}
+function f1 name="badCheckOfUnion" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=number|builtin(GlobalThis)|builtin(NativeBindgenNode_fs_bindingBindTsBinding)
+    Return
+}
+function f2 name="goodTestAndProof" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=builtin(NativeBindgenNode_fs_bindingBindTsBinding)
+    v2 = Check v0 castType=object
+    v3 = AssumeType v2 castType=builtin(NativeBindgenNode_fs_bindingBindTsBinding)
+    Return
+}

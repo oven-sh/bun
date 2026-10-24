@@ -1,0 +1,26 @@
+# Programs that heat.py does not judge: at which heat (hot, cold, neither or both), and why.
+arrays/sort-by-key    hot    asks whether a sort went by key in the runtime, which a short array of numbers does not need
+untyped-code/constructor-predicted-then-mispredicted    hot    counts calls into the runtime
+untyped-code/stores-to-adjacent-names    hot    counts calls into the runtime
+untyped-code/typed-class-methods-from-runtime-code    hot    counts calls into the runtime
+untyped-code/json-stringify-fresh-literal-operation-count    cold    counts calls into the runtime
+typed-objects/json-stringify-optional-members    cold    counts calls into the runtime
+untyped-code/symbol-stores-cached-once    cold    counts calls into the runtime
+literal-strings/string-lookup-counts    cold    counts calls into the runtime
+escape-analysis/write-only-object    cold    asserts that an object is not allocated, which takes a copy of the callee in the caller
+async-and-generators/suspended-async-keeps-alive    cold    asks what a suspended function keeps alive
+async-and-generators/object-read-after-await    cold    asks what a suspended function keeps alive
+async-and-generators/suspended-generator-partial-reads    cold    asks what a suspended function keeps alive
+type-rules/type-error-position-after-named-read    cold    the TypeError for an argument is thrown in the callee, not at the call
+runtime-caches/site-cache-refill    cold    counts fills and refills of site caches, which only the hottest functions have
+runtime-caches/site-cache-refill    neither    counts fills and refills of site caches, which only the hottest functions have
+runtime-caches/site-cache-access-kinds    cold    counts fills and refills of site caches, which only the hottest functions have
+runtime-caches/site-cache-access-kinds    neither    counts fills and refills of site caches, which only the hottest functions have
+runtime-caches/flattened-dictionary    cold    counts the site caches that flattening a dictionary clears, which only the hottest functions have
+runtime-caches/flattened-dictionary    neither    counts the site caches that flattening a dictionary clears, which only the hottest functions have
+writes-to-host-objects/the-global-object-as-this-this-is-used-in-front-of-the-test    both    keeps `console` beside an object of its own; the shell's console is a plain object, which compiled code takes for the program's object
+writes-to-host-objects/the-global-object-a-bound-definition-replaces-a-global    both    keeps `console` beside an object of its own; the shell's console is a plain object, which compiled code takes for the program's object
+classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it    hot    TODO: the build stops: a guard does not prove what a read of a field relies on
+objects/own-accessors-whose-getters-nobody-can-list    hot    TODO: in the shell it ends with "TypeError: undefined is not a function"; an executable built at that heat answers as plain Bun does
+objects/own-accessors-whose-getters-nobody-can-list    cold    TODO: in the shell it ends with "TypeError: undefined is not a function"; an executable built at that heat answers as plain Bun does
+untyped-stress/builtin-method-results-in-conditions    hot    hot code takes an object for true and does not ask whether it masquerades as undefined: only the shell's makeMasquerader() makes such an object

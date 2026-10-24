@@ -1,0 +1,56 @@
+# node:path: const kHandle = Symbol("handle"); export { METHODS, kHandle }
+# node:readline: const path = require("node:path"); const kHandle = path.kHandle; function mark(holder) { holder[kHandle] = 2 }  mark({ a: 1 })
+# main.js: require("node:readline"); Function("text")()
+# Unseen code may load node:path by its name and store into what it exports, so nobody knows what the read of path.kHandle answers.
+# exports-of-an-internal-library-module-stay-known-where-unseen-code-runs.ir has the module that no name loads
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Holder" fields=[{key="a"
+# CHECK-NOT: symbol("handle")@m1:100 declared
+# CHECK: variable g1 name="kHandle" module=m2 declared={type=anything}
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+module m1 path="node:path" displayPath="node:path" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f1
+module m2 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f2
+entry module=m0
+layout L0 name="Holder" fields=[{key="a" declared={type=number}}]
+layout L1 module=m1 fields=[{key="METHODS" declared={type=anything}}, {key="kHandle" declared={type=anything}}]
+variable g0 name="kHandle" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 name="kHandle" module=m2 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m0 specifier="node:readline"
+    v1 = Builtin builtin=Function
+    v2 = String string="text"
+    v3 = Call v1, -, v2
+    v4 = Call v3, -
+    Return v0
+}
+function f1 name="path" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="handle"
+    v2 = Call v0, -, v1 @100
+    PutModuleVariable v2 variable=g0
+    v4 = Integer integer=1
+    v5 = GetModuleVariable variable=g0
+    v6 = NewObject -, v4, v5 layout=L1 fields=[0, 1]
+    Return v6
+}
+function f2 name="readline" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m2 specifier="node:path"
+    v1 = PropGet v0 key="METHODS"
+    v2 = PropGet v0 key="kHandle"
+    PutModuleVariable v2 variable=g1
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = CallDirect v5 function=f3
+    Return v5
+}
+function f3 name="mark" module=m2 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Integer integer=2
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}

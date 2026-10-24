@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "files": ["main.ts", "globals.ts"],
+  "compilerOptions": { "strict": true }
+}

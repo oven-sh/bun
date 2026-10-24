@@ -1,0 +1,6 @@
+{
+  "env": {
+    "JSC_useConcurrentGC": "1",
+    "JSC_slowPathAllocsBetweenGCs": "20"
+  }
+}

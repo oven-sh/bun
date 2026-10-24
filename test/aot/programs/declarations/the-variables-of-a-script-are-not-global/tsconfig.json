@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "files": ["main.ts", "never-runs.ts"],
+  "compilerOptions": { "strict": true }
+}

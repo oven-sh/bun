@@ -1,0 +1,12 @@
+{
+ "escape-a-failure-half-way": "alone: exit code 1: error",
+ "escape-by-the-cache": "as the bundle",
+ "escape-exports-replaced-through-the-cache": "as the bundle",
+ "escape-top-level-await-on-the-road": "as bun run",
+ "keys-at-the-stacks-end": "as bun run",
+ "keys-imported-by-es-modules": "as bun run",
+ "keys-lazy-at-the-bottom-of-a-recursion": "as bun run",
+ "keys-through-the-parents-children": "as bun run",
+ "keys-trap-a-setter-on-module-cache": "as the bundle",
+ "keys-trap-children-push-throws": "alone: no throw\nkept undefined early symbol again symbol"
+}

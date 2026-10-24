@@ -1,0 +1,1 @@
+It ends with an error where the jsc shell has what it asks for: TypeError: undefined is not a function

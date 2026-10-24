@@ -1,0 +1,11 @@
+import type { S1 } from "./s1";
+import type { S2 } from "./s2";
+import type { S3 } from "./s3";
+import type { S4 } from "./s4";
+import type { S5 } from "./s5";
+import type { S6 } from "./s6";
+import type { S7 } from "./s7";
+import type { S8 } from "./s8";
+export type Any3 = S1 | S2 | S3;
+export type Any5 = S1 | S2 | S3 | S4 | S5;
+export type Any8 = S1 | S2 | S3 | S4 | S5 | S6 | S7 | S8;

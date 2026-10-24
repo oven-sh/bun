@@ -10,6 +10,7 @@ macro_rules! cat {
 }
 
 mod alias;
+pub mod aot;
 mod call;
 mod check_order;
 mod check_source_file;
@@ -103,6 +104,7 @@ use crate::table::{FileLocal, OfExpressions};
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
+use aot::DiagnosticClass;
 use bun_threading::Guarded;
 use errors_aliases::SpecifierSite;
 use errors_names_and_exports::{root_declaration, root_pattern};
@@ -225,6 +227,11 @@ pub struct Program<'s> {
     auto_array_type: TypeId,
     /// See `Services::file_info`. Built on first use.
     package_names_of_linked_files: std::sync::OnceLock<FxHashMap<FileId, Vec<u8>>>,
+    /// See `Checker::modules_that_export`. Built on first use.
+    exporting_modules: std::sync::OnceLock<errors_declaration_emit::ExportingModules>,
+    aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
+    aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
+    aot_prototype_links: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::PrototypeLinks<'s>>]>,
     pub files: &'s Files<'s>,
     pub types: TypeStore<'s>,
 
@@ -520,6 +527,7 @@ pub struct Spare<'s> {
     signature_links: signature_links::SignatureLinks,
     widened_types: shortcuts::TypeMap<TypeId>,
     apparent_types_of_intersections: shortcuts::TypeMap<TypeId>,
+    aot_answers: aot::KeptAnswers,
 }
 
 /// `Checker::rechecked_exprs` and `Checker::rechecked_members`.
@@ -592,6 +600,10 @@ impl<'s> Program<'s> {
             properties_referenced_before: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
+            exporting_modules: Default::default(),
+            aot_symbols: Default::default(),
+            aot_store_indexes: Default::default(),
+            aot_prototype_links: Default::default(),
             types,
             expr_types: ByNode::new_in(&exprs, session),
             type_node_types: ByNode::new_in(&type_nodes, session),
@@ -690,6 +702,7 @@ impl<'s> Program<'s> {
         self.commits.release();
         *self.serial_variances.get_mut() = FxHashMap::default();
         *self.global_errors.get_mut() = Default::default();
+        self.exporting_modules = Default::default();
         self.call_diagnostics = ByNodeIndirect::new_in(&no_nodes, session);
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
         self.key_properties = ByIdIndirect::new_in(session);
@@ -748,6 +761,7 @@ impl<'s> Program<'s> {
             signature_links: Default::default(),
             widened_types: Default::default(),
             apparent_types_of_intersections: Default::default(),
+            aot_answers: Default::default(),
         })
     }
 
@@ -866,6 +880,7 @@ impl<'s> Program<'s> {
             limits_in_earlier_files: 0,
             comparisons_of_deeply_nested_types: 0,
             relations_of_this_task: Default::default(),
+            relations_of_query: Default::default(),
             stores_relations_per_task: false,
             constraints_of_this_task: Default::default(),
             constraint_cuts: Default::default(),
@@ -877,6 +892,10 @@ impl<'s> Program<'s> {
             enum_literal_types: Default::default(),
             task_facts: spare.task_facts,
             relation_sizes: [0; 6],
+            relation_entries_for_query: None,
+            is_comparing_for_query: false,
+            size_refusals_in_queries: 0,
+            write_constraints_refused_for_size: Default::default(),
             variances_cut_short: Default::default(),
             free_relaters: Vec::new(),
             spare_inferences: Vec::new(),
@@ -904,6 +923,9 @@ impl<'s> Program<'s> {
             reported: Vec::new(),
             is_checking_in_flow_loop: false,
             never_checked: Default::default(),
+            left_out: Default::default(),
+            file_with_early_error: None,
+            dead_code: Default::default(),
             never_in_progress: Vec::new(),
             reduced_unions: spare.reduced_unions,
             union_members: Default::default(),
@@ -944,7 +966,6 @@ impl<'s> Program<'s> {
             rejected_at: 0,
             enclosing_module_specifier_mode: None,
             emit_resolver_links: Default::default(),
-            exporting_modules: None,
             expected: Requested::All,
             declaration_file: None,
             declaration_indent: None,
@@ -1032,6 +1053,7 @@ impl<'s> Program<'s> {
             scopes_begun: 0,
             work_trap: WORK_TRAP_DISARMED,
             rejected_expressions: Vec::new(),
+            aot_answers: spare.aot_answers,
             side_effect_free: Default::default(),
             context_sensitive_functions: Default::default(),
             context_sensitivity_visits: Default::default(),
@@ -1355,6 +1377,8 @@ pub enum Requested {
     Declaration,
     /// .. and `getBindAndCheckDiagnostics`.
     All,
+    /// `Syntactic`, and every diagnostic of class `EarlyError`. It computes no type.
+    EarlyErrors,
 }
 
 pub struct Checker<'p, 's> {
@@ -1631,6 +1655,8 @@ pub struct Checker<'p, 's> {
     /// the first result would win for every task. See `known_relation`. It lives as long as the task, like
     /// everything the task has derived from it.
     relations_of_this_task: FxHashMap<relate::Key, u8>,
+    /// What the comparison that answers a question of `aot::Queries` has settled: see `Relater::is_for_query`. Empty otherwise.
+    relations_of_query: FxHashMap<relate::Key, u8>,
     /// True if `insert_relation` stores in `relations_of_this_task`.
     stores_relations_per_task: bool,
     /// The same for base constraints that were cut short, or that follow from one that was. Where
@@ -1661,6 +1687,14 @@ pub struct Checker<'p, 's> {
     /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task has
     /// stored. The entries from files that a single checker would have checked earlier aren't counted.
     relation_sizes: [i32; 6],
+    /// `Some`: the next call of `related` answers a question of `aot::Queries`, which no check of the program asks, with this much `relationCount`.
+    relation_entries_for_query: Option<i32>,
+    /// A comparison that answers such a question is in progress, with whatever it evaluates on the way.
+    is_comparing_for_query: bool,
+    /// How many times `refuse_cross_product_of_two_unions` has left the task as it is.
+    size_refusals_in_queries: u64,
+    /// The arguments of `Checker::write_constraint` for which the answer is the error type, for no other reason than such a refusal.
+    write_constraints_refused_for_size: crate::util::FxHashSet<(TypeId, TypeId, u16)>,
     variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
     #[expect(
         clippy::vec_box,
@@ -1728,6 +1762,11 @@ pub struct Checker<'p, 's> {
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
+    /// The functions that a build leaves out of the executable, which `check_file` does not check.
+    left_out: aot::LeftOutOfCheck<'p>,
+    /// The last file of a build in which `check_file` found an early error.
+    file_with_early_error: Option<FileId>,
+    dead_code: aot::DeadCodeRanges,
     /// The intersections being tested for being uninhabited.
     pub(super) never_in_progress: Vec<TypeId>,
     /// `resolvedReducedType` of a union, once the answer for every member is final.
@@ -1815,8 +1854,6 @@ pub struct Checker<'p, 's> {
     /// while the name of an import or an export is printed.
     enclosing_module_specifier_mode: Option<ResolutionMode>,
     emit_resolver_links: errors_declaration_emit::EmitResolverLinks,
-    /// See `Checker::modules_that_export`. Unlike `emit_resolver_links`, it's the same for every file.
-    exporting_modules: Option<std::rc::Rc<errors_declaration_emit::ExportingModules>>,
     expected: Requested,
     /// The output `get_declaration_diagnostics` leaves for `checked`.
     declaration_file: Option<Vec<u8>>,
@@ -2055,6 +2092,7 @@ pub struct Checker<'p, 's> {
     /// The file, start and end of the expressions in which a query was rejected for lack of native
     /// stack. See `reject_for_lack_of_stack`.
     rejected_expressions: Vec<(FileId, u32, u32)>,
+    aot_answers: aot::KeptAnswers,
     /// `is_side_effect_free` of the binary expressions with a long chain of binary expressions on their left.
     side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
     /// `isContextSensitive` of the functions in a long chain where each function returns nothing but the next one.
@@ -2221,6 +2259,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// Sets which diagnostics `check_file` computes from now on.
     pub fn set_requested(&mut self, expected: Requested) {
         self.expected = expected;
+    }
+
+    /// Sets how much stack the thread has from here on. Queries that need more yield "unresolved".
+    pub fn set_stack_limit(&mut self, bytes: usize) {
+        self.stack_base = stack_pointer();
+        self.stack_limit = bytes;
     }
 
     /// True if there's little stack left for recursion.
@@ -3144,6 +3188,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// it would, so that results computed from it are recorded in turn.
     fn cut_short_again(&mut self) {
         self.times_cut_short.set(self.times_cut_short.get() + 1);
+        // Every other cut discards the task.
+        if self.is_comparing_for_query {
+            self.task.stop_writing_immediately();
+            return self.mark_rejected_from(0);
+        }
         self.bailed_out();
     }
 
@@ -3156,6 +3205,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// `bailed_out` for the case where the frame at `from` makes the query again. See `starts_over_from_lower`.
     fn bailed_out_from(&mut self, from: usize) {
         self.note_gave_up();
+        self.mark_rejected_from(from);
+    }
+
+    /// What `bailed_out_from` leaves in the checker.
+    fn mark_rejected_from(&mut self, from: usize) {
         self.mark_tainted_from(from);
         self.note_cycle();
         self.rejected_at = self.work;
@@ -3378,12 +3432,31 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns false if there's no node to report at. Nothing in progress is stored then.
     fn report_at_current_node(&mut self, code: u32) -> bool {
         self.note_gave_up();
+        self.report_limit_at_current_node(code)
+    }
+
+    /// `error_at_current_node(2590)` for the intersection of two unions, neither of which has primitive types alone.
+    #[cold]
+    fn refuse_cross_product_of_two_unions(&mut self) {
+        if !self.is_comparing_for_query || self.span_to_report_limit_at().is_some() {
+            return self.error_at_current_node(2590);
+        }
+        self.size_refusals_in_queries += 1;
+        self.note_state_was_read();
+        self.task.stop_writing_immediately();
+        self.report_limit_at_current_node(2590);
+    }
+
+    /// Where `report_at_current_node` reports. `None`: nowhere.
+    fn span_to_report_limit_at(&self) -> Option<(FileId, u32, u32)> {
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
-        let is_reported = self.eager.is_empty();
+        if !self.eager.is_empty() {
+            return None;
+        }
         // Outside of an expression, `c.currentNode` is the statement or declaration that `checkSourceElement`
         // is at. The checks after `check_source_file` don't know it. The `errorNode` of their comparison
         // begins at the same position for an assignment, a variable declaration and a `return` statement.
-        let at = match self.current_node() {
+        match self.current_node() {
             Some(current) => Some(self.span_of_current_node(current)),
             // A comparison without an `errorNode` that `check_source_file` makes: of a rest
             // parameter with an array type (2370), of the two types of an assertion.
@@ -3391,11 +3464,15 @@ impl<'p, 's> Checker<'p, 's> {
                 let current = self.current_source_element?;
                 Some(self.span_of_current_node(current))
             }),
-        };
-        let Some(at) = at.filter(|_| is_reported) else {
+        }
+    }
+
+    /// `report_at_current_node`, but for what becomes of the task.
+    fn report_limit_at_current_node(&mut self, code: u32) -> bool {
+        let Some(at) = self.span_to_report_limit_at() else {
             // The result is the error type, to which everything is related, and tsgo reports 2589.
             // The count is reset as in tsgo, so the file isn't reported as clean.
-            if is_reported && self.instantiation_count >= 5_000_000 {
+            if self.eager.is_empty() && self.instantiation_count >= 5_000_000 {
                 self.ran_out_of_stack.set(true);
             }
             self.note_limit();
@@ -3900,7 +3977,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// comparison limit (2859), for lack of native stack, or at a depth at which a query is rejected. The
     /// result then isn't a function of the question alone. How far from the limit a computation begins, and
     /// how much of it is left to do, depends on what was computed before, which for a task that sees commits
-    /// includes what it found there. Such a task is discarded.
+    /// includes what it found there. Such a task is discarded. The one exception is `refuse_cross_product_of_two_unions`.
     #[cold]
     #[inline(never)]
     pub(super) fn note_gave_up(&self) {

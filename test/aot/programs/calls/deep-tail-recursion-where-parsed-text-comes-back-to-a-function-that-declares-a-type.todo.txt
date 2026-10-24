@@ -1,0 +1,1 @@
+It prints RangeError. Nothing proves that the parsed value is a number, so its type is tested behind the call; a test behind a call ends the tail call, and the stack grows. The test belongs where the cycle of tail calls is left.

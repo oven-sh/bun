@@ -1,0 +1,6 @@
+a string: 1800 characters, 100 texts finished by compiled code
+a string with quotes: 2000 characters, 100 texts finished by compiled code
+16-bit text: 1900 characters, 100 texts finished by compiled code
+a string or undefined: 1800 characters, 100 texts finished by compiled code
+a value without a type: 1800 characters, 0 texts finished by compiled code
+a String object without a type: 1800 characters, 0 texts finished by compiled code

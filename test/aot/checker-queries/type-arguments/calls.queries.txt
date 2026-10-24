@@ -1,0 +1,30 @@
+# A call lists each type parameter of a compiled file together with what the call puts in its place: its own, and those of the receiver's class.
+calls.ts:17 call type argument `wrap(item)` = T = Item
+calls.ts:18 call type argument `wrap(1)` = T = 1
+calls.ts:19 call type argument `wrap<Other>(other)` = T = Other
+ordered: calls.ts:20 call type argument `pair(item, other)` = A = Item
+ordered: calls.ts:20 call type argument `pair(item, other)` = B = Other
+
+# A default stands in for an argument that nothing gives. Without one the checker says `unknown`, which is no argument.
+calls.ts:21 call type argument `create()` = D = Item
+calls.ts:22 call type argument `create<Other>()` = D = Other
+absent: calls.ts:23 call type argument `empty()` = N = unknown
+
+# An argument can be a type parameter itself.
+calls.ts:10 call type argument `wrap(value)` = T = P
+calls.ts:14 call type argument `new Box(change(this.get()))` = V = R
+absent: calls.ts:14 call type argument `this.get()` = V = V
+
+# A construction has the type parameters of the class, with a constructor or without one.
+calls.ts:24 call type argument `new Box(item)` = V = Item
+calls.ts:25 call type argument `new Bare<Other>()` = W = Other
+
+# A method has those of the receiver's class in front of its own. The `this` type of the class is no type parameter.
+calls.ts:26 call type argument `box.get()` = V = Item
+absent: calls.ts:26 call type argument `box.get()` = this = Box<Item>
+ordered: calls.ts:27 call type argument `box.map(() => other)` = V = Item
+ordered: calls.ts:27 call type argument `box.map(() => other)` = R = Other
+
+# A type parameter of a declaration file has no layout to fill.
+absent: calls.ts:28 call type argument `new Map<string, Item>()` = K = string
+absent: calls.ts:28 call type argument `new Map<string, Item>()` = V = Item

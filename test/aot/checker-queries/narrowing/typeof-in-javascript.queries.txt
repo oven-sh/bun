@@ -1,0 +1,5 @@
+# The checker narrows in an inferred file too.
+typeof-in-javascript.js:0 role `` = Inferred
+typeof-in-javascript.js:3 type `x` = any
+typeof-in-javascript.js:4 type `x` = string
+typeof-in-javascript.js:6 type `x` = any

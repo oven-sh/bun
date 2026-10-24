@@ -12,12 +12,16 @@ use crate::token::T;
 use bun_core::lexer::{
     is_identifier_part, is_identifier_start, is_white_space_like, is_white_space_single_line,
 };
-use bun_core::strings::{self, is_js_line_terminator, push_codepoint_wtf8_joined};
+use bun_core::strings::{
+    self, CodepointIterator, Cursor, is_js_line_terminator, push_codepoint_wtf8_joined, push_wtf8,
+};
 use bun_highway::ScannerStops;
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{
     Comment, CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind, NodeOrName,
 };
+
+mod runtime_text;
 
 pub(crate) struct Lexer<'a> {
     pub(crate) src: &'a [u8],
@@ -50,6 +54,10 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_ecmascript: bool,
     /// The goal symbol is Script.
     pub(crate) is_script: bool,
+    /// The file is JavaScript parsed for `bun compile`.
+    pub(crate) compiles: bool,
+    /// `Options::compiles`: text that is not UTF-8 is read as `bun run` reads it, so the value of every token is WTF-8, and the lines of JSX text are trimmed as `bun run` trims them.
+    pub(crate) decodes_ill_formed_text: bool,
     /// `Dialect::typescript_5`
     pub(crate) is_typescript_5: bool,
     /// `Dialect::babel`
@@ -81,6 +89,8 @@ pub(crate) struct Lexer<'a> {
     /// Errors that TypeScript's scanner reports about syntax ECMAScript allows outside strict mode: the message code,
     /// start and end. Only filled in with `is_ecmascript`. Otherwise the text is rejected.
     pub(crate) flagged: Vec<(u32, u32, u32)>,
+    /// `hir::rare::LEGACY_OCTAL`
+    pub(crate) has_legacy_octal: bool,
     /// `Options::recovers`
     pub(crate) recovers: bool,
     /// The errors that [`Lexer::error`] reported and the parser hasn't taken yet (`Parser::take_scanner_errors`), in
@@ -278,6 +288,8 @@ impl<'a> Lexer<'a> {
             is_jsx: false,
             is_ecmascript: false,
             is_script: false,
+            compiles: false,
+            decodes_ill_formed_text: false,
             is_typescript_5: false,
             is_babel: false,
             is_oxc: false,
@@ -293,6 +305,7 @@ impl<'a> Lexer<'a> {
             attach_comments: false,
             max_relevant_node_start: 0,
             flagged: Vec::new(),
+            has_legacy_octal: false,
             recovers: false,
             errors: Vec::new(),
             skips_jsdoc_asterisks: false,
@@ -440,9 +453,10 @@ impl<'a> Lexer<'a> {
     /// Adds an entry to `flagged`. Returns false if the caller has to reject the text instead.
     #[cold]
     fn flag(&mut self, code: u32, start: usize, end: usize) -> bool {
-        if self.is_ecmascript {
+        if self.is_ecmascript && !self.compiles {
             self.flagged.push((code, start as u32, end as u32));
         }
+        self.has_legacy_octal |= self.compiles;
         self.is_ecmascript
     }
 
@@ -508,7 +522,7 @@ impl<'a> Lexer<'a> {
         let rest = self.src.get(self.end as usize..).unwrap_or_default();
         match *rest {
             // `<!--` starts a comment.
-            _ if self.is_script => 0,
+            _ if self.reads_html_comments() => 0,
             [b' ', b'/' | b'\\', ..] | [b'/' | b'\\', ..] => 0,
             [b' ', first @ b'!'..=b'~', ..] | [first @ b'!'..=b'~', ..] => first,
             _ => 0,
@@ -623,7 +637,8 @@ impl<'a> Lexer<'a> {
                         self.set(T::LessThanSlash, pos, pos + 2);
                     }
                     (b'!', b'-')
-                        if (self.is_script || self.records_html_opens) && at(pos + 3) == b'-' =>
+                        if (self.reads_html_comments() || self.records_html_opens)
+                            && at(pos + 3) == b'-' =>
                     {
                         return self.scan_at_html_open(pos);
                     }
@@ -644,7 +659,8 @@ impl<'a> Lexer<'a> {
                 First::Minus => match (at(next), at(next + 1)) {
                     // Only whitespace and comments precede it on its line.
                     (b'-', b'>')
-                        if self.is_script && (self.newline_before || self.full_start == 0) =>
+                        if self.reads_html_comments()
+                            && (self.newline_before || self.full_start == 0) =>
                     {
                         return self.scan_after_comments(pos);
                     }
@@ -789,6 +805,9 @@ impl<'a> Lexer<'a> {
                 b' ' | b'\t' | 0x0B | 0x0C => Some(pos + 1),
                 b'<' | b'-' | b'#' => match self.end_of_html_or_hashbang_comment(pos) {
                     Some(end) => {
+                        if self.compiles && self.at(pos) == b'<' && !self.html_open_error(pos) {
+                            return;
+                        }
                         // A formatter has to print `<!-- comment` and `--> comment` too.
                         if self.attach_comments && self.at(pos) != b'#' {
                             self.note_comment(pos, end, CommentForm::Line);
@@ -813,7 +832,7 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn scan_at_html_open(&mut self, pos: usize) {
-        if self.is_script {
+        if self.reads_html_comments() {
             return self.scan_after_comments(pos);
         }
         self.html_opens.first.get_or_insert(pos as u32);
@@ -865,7 +884,7 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn end_of_html_or_hashbang_comment(&self, pos: usize) -> Option<usize> {
         let rest = &self.src[pos..];
-        let is_comment = match self.is_script {
+        let is_comment = match self.reads_html_comments() {
             true if rest.starts_with(b"<!--") => true,
             // Only whitespace and comments precede it on its line.
             true if rest.starts_with(b"-->") => self.newline_before || self.full_start == 0,
@@ -1535,15 +1554,16 @@ impl<'a> Lexer<'a> {
         Some(pos + 2)
     }
 
-    /// `scanEscapeSequence`, at a backslash before a byte that isn't valid UTF-8. Go decodes it as U+FFFD.
+    /// `scanEscapeSequence`, at a backslash before a byte that isn't valid UTF-8.
     #[cold]
     #[inline(never)]
     fn escaped_byte(&self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
         if !self.recovers {
             return None;
         }
-        push_codepoint_wtf8_joined(text, 0xFFFD);
-        Some(pos + 2)
+        let (c, len) = self.decode_escaped_byte(pos + 1);
+        push_codepoint_wtf8_joined(text, c);
+        Some(pos + 1 + len)
     }
 
     #[cold]
@@ -1585,7 +1605,7 @@ impl<'a> Lexer<'a> {
                     let end = self.end_of_run_before(pos + 1, [quote, b'\\', b'\n', b'\r']);
                     let raw = src.get(pos..end).unwrap_or_default();
                     is_ascii &= raw.is_ascii();
-                    text.extend_from_slice(raw);
+                    self.push_written(raw, &mut text);
                     pos = end;
                 }
             }
@@ -1733,7 +1753,7 @@ impl<'a> Lexer<'a> {
                     let end = self.end_of_run_before(pos + 1, *b"`$\\\r");
                     let raw = src.get(pos..end).unwrap_or_default();
                     is_ascii &= raw.is_ascii();
-                    text.extend_from_slice(raw);
+                    self.push_written(raw, &mut text);
                     pos = end;
                 }
             }
@@ -2328,7 +2348,8 @@ impl Lexer<'_> {
             return self.unterminated_jsx_string(before, start);
         };
         let text = &src[start + 1..start + 1 + len];
-        if core::str::from_utf8(text).is_err() && !self.recovers {
+        let is_well_formed = core::str::from_utf8(text).is_ok();
+        if !is_well_formed && !self.recovers {
             return self.reject(Rejection::NotUtf8);
         }
         if start != before
@@ -2337,8 +2358,7 @@ impl Lexer<'_> {
         {
             return;
         }
-        let text = Text::from_source(src, start + 1, start + 1 + len);
-        self.atom = self.names.atom(text, self.atoms);
+        self.atom = self.atom_of_written(start + 1, start + 1 + len, is_well_formed);
         self.set(T::String, start, start + len + 2);
     }
 
@@ -2446,10 +2466,7 @@ impl Lexer<'_> {
                 Some(_) => false,
             };
             if is_only_whitespace && has_line_break {
-                debug_assert!(
-                    core::str::from_utf8(&src[start..end])
-                        .is_ok_and(|it| fix_whitespace_and_decode_jsx_entities(it).is_empty())
-                );
+                debug_assert!(self.jsx_text_value(&src[start..end]).is_empty());
                 newline_before = true;
                 start = end;
                 continue;
@@ -2467,9 +2484,6 @@ impl Lexer<'_> {
                 return;
             }
             self.newline_before = newline_before;
-            let Ok(valid) = core::str::from_utf8(text) else {
-                return self.jsx_text_with_invalid_utf8(start, text);
-            };
             let needs_fixing = text
                 .iter()
                 .any(|&c| matches!(c, b'&' | b'\n' | b'\r' | 0x80..));
@@ -2478,7 +2492,13 @@ impl Lexer<'_> {
                 self.atom = self.names.atom(text, self.atoms);
                 return self.set(T::JsxText, start, start + len);
             }
-            let fixed = fix_whitespace_and_decode_jsx_entities(valid);
+            let fixed = match core::str::from_utf8(text) {
+                Ok(_) => self.jsx_text_value(text),
+                Err(_) => match self.decode_ill_formed_jsx_text(text) {
+                    Some(decoded) => self.jsx_text_value(&decoded),
+                    None => return,
+                },
+            };
             if fixed.is_empty() {
                 newline_before = true;
                 start += len;
@@ -2528,18 +2548,19 @@ impl Lexer<'_> {
         true
     }
 
-    /// Scans the JSX text `text` at `start`, which isn't valid UTF-8.
+    /// Returns the JSX text `text`, which isn't valid UTF-8, as WTF-8. `None`: the file's text is rejected.
     #[cold]
     #[inline(never)]
     #[track_caller]
-    fn jsx_text_with_invalid_utf8(&mut self, start: usize, text: &[u8]) {
+    fn decode_ill_formed_jsx_text(&mut self, text: &[u8]) -> Option<Vec<u8>> {
         if !self.recovers {
-            return self.reject(Rejection::NotUtf8);
+            self.reject(Rejection::NotUtf8);
+            return None;
         }
-        let read = with_replacement_characters(text);
-        let fixed = fix_whitespace_and_decode_jsx_entities(&read);
-        self.atom = (self.names).atom(Text::not_in_source(self.src, &fixed), self.atoms);
-        self.set(T::JsxText, start, start + text.len());
+        Some(match self.decodes_ill_formed_text {
+            true => runtime_text::read_as_bun_run(text),
+            false => with_replacement_characters(text).into_bytes(),
+        })
     }
 }
 
@@ -2554,21 +2575,20 @@ fn with_replacement_characters(mut text: &[u8]) -> String {
     read
 }
 
-/// Returns the value of the JSX text `text`: lines are trimmed and joined with a space, whitespace-only lines are
-/// dropped, and entities are decoded.
-fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
+/// Returns the value of the JSX text `text`, which is WTF-8: lines are trimmed and joined with a space, whitespace-only lines are dropped, and entities are decoded.
+fn fix_whitespace_and_decode_jsx_entities(text: &[u8], is_white_space: fn(i32) -> bool) -> Vec<u8> {
     let mut decoded = Vec::new();
     let mut after_last_non_whitespace = None;
     // Leading whitespace on the first line is kept.
     let mut first_non_whitespace = Some(0);
-    for (at, c) in text.char_indices() {
-        let (is_line_break, is_whitespace) = match c {
-            '!'..='~' => (false, false),
-            ' ' | '\t' => (false, true),
-            c => (
-                is_js_line_terminator(u32::from(c)),
-                bun_core::lexer::is_white_space_single_line(c as i32),
-            ),
+    let code_points = CodepointIterator::init(text);
+    let mut cursor = Cursor::default();
+    while code_points.next(&mut cursor) {
+        let at = cursor.i as usize;
+        let (is_line_break, is_whitespace) = match cursor.c {
+            0x21..=0x7E => (false, false),
+            0x20 | 0x09 => (false, true),
+            c => (is_js_line_terminator(c as u32), is_white_space(c)),
         };
         if is_line_break {
             if let (Some(start), Some(end)) = (first_non_whitespace, after_last_non_whitespace) {
@@ -2579,7 +2599,7 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
             }
             first_non_whitespace = None;
         } else if !is_whitespace {
-            after_last_non_whitespace = Some(at + c.len_utf8());
+            after_last_non_whitespace = Some(at + usize::from(cursor.width));
             first_non_whitespace.get_or_insert(at);
         }
     }
@@ -2593,23 +2613,23 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
     decoded
 }
 
-fn decode_jsx_entities(mut text: &str, decoded: &mut Vec<u8>) {
-    while let Some(at) = bun_core::strings::index_of_char_usize(text.as_bytes(), b'&') {
-        decoded.extend_from_slice(&text.as_bytes()[..at]);
+fn decode_jsx_entities(mut text: &[u8], decoded: &mut Vec<u8>) {
+    while let Some(at) = bun_core::strings::index_of_char_usize(text, b'&') {
+        push_wtf8(decoded, &text[..at]);
         text = &text[at + 1..];
-        let entity = bun_core::strings::index_of_char_usize(text.as_bytes(), b';')
+        let entity = bun_core::strings::index_of_char_usize(text, b';')
             .map(|len| &text[..len])
             .filter(|entity| !entity.is_empty());
-        let c = entity.and_then(|entity| match entity.strip_prefix('#') {
+        let c = entity.and_then(|entity| match entity.strip_prefix(b"#") {
             Some(number) => {
-                let parsed = match number.strip_prefix('x').filter(|_| number.len() > 1) {
+                let parsed = match number.strip_prefix(b"x").filter(|_| number.len() > 1) {
                     Some(hex) => parse_entity_number(hex, 16),
                     None => parse_entity_number(number, 10),
                 };
                 Some(parsed.unwrap_or(0xFFFD))
             }
             None => bun_ast::lexer_tables::JSX_ENTITY
-                .get(entity.as_bytes())
+                .get(entity)
                 .map(|&c| c as u32),
         });
         match (c, entity) {
@@ -2620,12 +2640,12 @@ fn decode_jsx_entities(mut text: &str, decoded: &mut Vec<u8>) {
             _ => decoded.push(b'&'),
         }
     }
-    decoded.extend_from_slice(text.as_bytes());
+    push_wtf8(decoded, text);
 }
 
 /// Returns the code point for the digits of `&#..;`.
-fn parse_entity_number(digits: &str, radix: u8) -> Option<u32> {
-    let number = bun_core::parse_int::<i32>(digits.as_bytes(), radix).ok()?;
+fn parse_entity_number(digits: &[u8], radix: u8) -> Option<u32> {
+    let number = bun_core::parse_int::<i32>(digits, radix).ok()?;
     u32::try_from(number).ok().filter(|&c| c <= 0x10_FFFF)
 }
 

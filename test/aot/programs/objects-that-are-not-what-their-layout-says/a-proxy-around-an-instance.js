@@ -1,0 +1,27 @@
+// A proxy around an instance answers for the late field by itself. A function reads a field that most objects get late, and then relies on what lies above the object or beside the slot.
+class A { constructor() { this.x = 1; } m() { return "A.m"; } get g() { return "A.g"; } }
+const handler = { get(target, key, receiver) { return key === "extra" ? "trapped" : Reflect.get(target, key, receiver); }, has(target, key) { return key === "missing" || Reflect.has(target, key); } };
+const readers = [
+  ["late field, then a method", function (o) { return o.extra + " " + o.m(); }],
+  ["late field, then a getter", function (o) { return o.extra + " " + o.g; }],
+  ["late field, then an absent name", function (o) { return o.extra + " " + o.missing; }],
+  ["late field, then another late field", function (o) { return o.extra + " " + o.second; }],
+  ["late field, then `in`", function (o) { return o.extra + " " + ("missing" in o) + " " + ("extra" in o); }],
+  ["late field twice round a method", function (o) { return o.extra + " " + o.m() + " " + o.extra; }],
+  ["a method, then the late field", function (o) { return o.m() + " " + o.extra; }],
+  ["an absent name, then the late field", function (o) { return o.missing + " " + o.extra; }],
+  ["two late fields, then a method and a field of the constructor", function (o) { return o.extra + " " + o.second + " " + o.m() + " " + o.x; }],
+  ["late field, then a store that creates a field", function (o) { const before = o.extra; o.third = 3; return before + " " + o.third + " " + Object.keys(o).join(); }],
+];
+const states = ["filled", "empty", "holds undefined", "deleted"];
+function fill(o, state) {
+  try {
+    if (state !== "empty") { o.extra = state === "filled" ? 7 : undefined; o.second = state === "filled" ? "two" : undefined; }
+    if (state === "deleted") { delete o.extra; delete o.second; }
+  } catch {}
+  return o;
+}
+function tell(reader, o) { try { return reader(o); } catch (error) { return error.constructor.name; } }
+for (const [title, reader] of readers)
+  for (const state of states)
+    console.log(title + ", " + state + ": " + tell(reader, fill(new A(), state)) + " | " + tell(reader, fill(new Proxy(new A(), handler), state)));

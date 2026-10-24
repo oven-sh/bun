@@ -1,0 +1,3 @@
+# With `experimentalDecorators` `bun run` takes any call chain as a decorator and runs a decorated class with a static private name: both errors are TypeScript's own.
+main.ts:3 diagnostic TS1497 = TypeScriptGrammar StopsBuild
+main.ts:4 diagnostic TS18036 = TypeScriptGrammar StopsBuild

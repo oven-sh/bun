@@ -17,5 +17,5 @@
     "verbatimModuleSyntax": true
   },
   "include": ["./**/*.ts", "../build.ts", "../glob-sources.ts", "../prefetch-deps.ts"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "trim/profile-runner.ts"]
 }

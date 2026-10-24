@@ -1,0 +1,19 @@
+join untouched here
+resolve untouched here
+join untouched, out of the folder and back here
+join untouched, out of the folder of another file here
+join untouched, a slash at the end the folder
+join untouched, no slash at the end the file
+join untouched, the folder alone and a text here
+join untouched, through a constant here
+join untouched, import here
+join untouched, require.resolve true
+join replaced throws MODULE_NOT_FOUND
+resolve replaced throws MODULE_NOT_FOUND
+join replaced while a constant is made, and put back before the load throws MODULE_NOT_FOUND
+join replaced, import throws ERR_MODULE_NOT_FOUND
+join replaced, require.resolve throws MODULE_NOT_FOUND
+join replaced by a function that gives no text throws MODULE_NOT_FOUND
+join replaced by a function that gives the same text here
+join replaced, the function taken out before that here
+join replaced, a text joined by hand here

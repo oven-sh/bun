@@ -1,0 +1,2 @@
+# A call of `any` resolves to no target.
+untyped-call.ts:3 call `anything(1)` = none

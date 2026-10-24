@@ -1,0 +1,23 @@
+# The same function in a file that the checker has not held against its types: a type there was inferred from what the body does, and says nothing about what the host passes.
+# LIBRARY: own
+# RUN: valueflow-why values=f1:v1
+# CHECK: values=f1:v1
+# CHECK: operand 0 {{*}} unknown
+
+typesite w0 module=m0 position=1 kind=Parameter
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65559 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="send"
+    v2 = String string="careful"
+    v3 = Call v1, v0, v2
+    Return
+}
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65559 parameters=[{type=string site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

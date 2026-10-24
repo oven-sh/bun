@@ -1,0 +1,41 @@
+// A Worker whose script the compiler cannot see.
+if (!Bun.isMainThread) { postMessage("the entry point ran again in a worker"); process.exit(0); }
+const text = "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)";
+function listen(worker) { worker.onmessage = event => { console.log(event.data); worker.terminate(); }; worker.onerror = event => { console.log("error", event.message); }; }
+//// blob-url
+//@ not-seen
+listen(new Worker(URL.createObjectURL(new Blob([text], { type: "application/javascript" }))));
+//// data-url
+//@ not-seen
+listen(new Worker("data:application/javascript," + encodeURIComponent(text)));
+//// computed-path
+//@ file cwd/w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
+listen(new Worker(process.cwd() + "/w.js"));
+//// worker-threads-eval
+//@ not-seen
+import { Worker as NodeWorker } from "node:worker_threads";
+const worker = new NodeWorker("require('node:worker_threads').parentPort.postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)", { eval: true });
+worker.on("message", message => { console.log(message); worker.terminate(); });
+worker.on("error", error => console.log("error", error.message));
+//// globalThis-Worker
+//@ not-seen
+listen(new globalThis.Worker("data:application/javascript," + encodeURIComponent(text)));
+//// Reflect-construct
+//@ not-seen
+listen(Reflect.construct(Worker, ["data:application/javascript," + encodeURIComponent(text)]));
+//// alias
+//@ not-seen
+const W = Worker;
+listen(new W("data:application/javascript," + encodeURIComponent(text)));
+//// own-file
+//@ file w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
+//@ build ./w.js
+console.log("started");
+listen(new Worker(new URL("./w.js", import.meta.url).href));
+//// own-file-literal
+//@ file w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
+//@ build ./w.js
+console.log("started");
+listen(new Worker("./w.js"));
+//// typeof-Worker
+console.log(typeof Worker, Worker.name, Worker.length);

@@ -1,0 +1,11 @@
+# Unused names, unreachable code, implicit returns and implicit `any` are Style. Their neighbors, which no option turns on, are Semantic.
+main.ts:1 diagnostic TS6133 = Style StopsBuild
+main.ts:2 diagnostic TS6196 = Style StopsBuild
+main.ts:3 diagnostic TS7027 = Style StopsBuild
+main.ts:5 diagnostic TS7030 = Style StopsBuild
+main.ts:8 diagnostic TS7010 = Style StopsBuild
+main.ts:9 diagnostic TS7032 = Style StopsBuild
+
+main.ts:6 diagnostic TS2355 = Semantic StopsBuild
+main.ts:7 diagnostic TS2534 = Semantic StopsBuild
+main.ts:10 diagnostic TS2842 = Semantic StopsBuild

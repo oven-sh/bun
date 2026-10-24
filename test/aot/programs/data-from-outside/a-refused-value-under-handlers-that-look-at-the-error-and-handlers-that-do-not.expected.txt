@@ -1,0 +1,372 @@
+validate
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+validate in a function
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+parse
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  sku: expected string to have >=1 characters
+  inner
+  TypeError: sku: expected string to have >=1 characters | 1
+  TypeError: sku: expected string to have >=1 characters | 1
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  finally,finally
+parse in a function
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  sku: expected string to have >=1 characters
+  inner
+  TypeError: sku: expected string to have >=1 characters | 1
+  TypeError: sku: expected string to have >=1 characters | 1
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  finally,finally
+a text that is broken behind the refusal
+  caught
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  JSON Parse error: Expected '}'
+  inner
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  caught
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  finally,finally
+in a callback of a built-in
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a callback of sort
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a getter
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a constructor
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a generator
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a reviver
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in toString
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+validate
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+validate in a function
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+parse
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  sku: expected string to have >=1 characters
+  inner
+  TypeError: sku: expected string to have >=1 characters | 1
+  TypeError: sku: expected string to have >=1 characters | 1
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  finally,finally
+parse in a function
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  sku: expected string to have >=1 characters
+  inner
+  TypeError: sku: expected string to have >=1 characters | 1
+  TypeError: sku: expected string to have >=1 characters | 1
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  finally,finally
+a text that is broken behind the refusal
+  caught
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  JSON Parse error: Expected '}'
+  inner
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  caught
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  finally,finally
+in a callback of a built-in
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a callback of sort
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a getter
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a constructor
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a generator
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a reviver
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in toString
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+validate
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+validate in a function
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+parse
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  sku: expected string to have >=1 characters
+  inner
+  TypeError: sku: expected string to have >=1 characters | 1
+  TypeError: sku: expected string to have >=1 characters | 1
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  finally,finally
+parse in a function
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  sku: expected string to have >=1 characters
+  inner
+  TypeError: sku: expected string to have >=1 characters | 1
+  TypeError: sku: expected string to have >=1 characters | 1
+  caught
+  TypeError: sku: expected string to have >=1 characters | 1
+  finally,finally
+a text that is broken behind the refusal
+  caught
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  JSON Parse error: Expected '}'
+  inner
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  caught
+  SyntaxError: JSON Parse error: Expected '}' | no issues
+  finally,finally
+in a callback of a built-in
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a callback of sort
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a getter
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a constructor
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a generator
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in a reviver
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+in toString
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  quantity: expected number to be >=1
+  inner
+  TypeError: quantity: expected number to be >=1 | 1
+  TypeError: quantity: expected number to be >=1 | 1
+  caught
+  TypeError: quantity: expected number to be >=1 | 1
+  finally,finally
+-TypeError: quantity: expected number to be >=1 | 1;-TypeError: sku: expected string to have >=1 characters | 1;-TypeError: quantity: expected number to be >=1 | 1;-TypeError: sku: expected string to have >=1 characters | 1;-TypeError: quantity: expected number to be >=1 | 1;-TypeError: sku: expected string to have >=1 characters | 1;
+TypeError: quantity: expected number to be >=1 | 1
+TypeError: sku: expected string to have >=1 characters | 1
+caught
+caught
+TypeError: quantity: expected number to be >=1 | 1
+TypeError: sku: expected string to have >=1 characters | 1
+TypeError: quantity: expected number to be >=1 | 1
+caught TypeError: sku: expected string to have >=1 characters | 1
+nobody handled TypeError: quantity: expected number to be >=1 | 1
+nobody caught TypeError: quantity: expected number to be >=1 | 1
+nobody caught TypeError: sku: expected string to have >=1 characters | 1

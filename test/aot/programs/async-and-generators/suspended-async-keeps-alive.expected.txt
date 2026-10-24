@@ -1,0 +1,23 @@
+a local: collected, 632
+a field of a record: collected, 632
+a field of an instance: collected, 632
+an instance whose method is called after the await: collected, 752
+a destructured parameter: collected, 632
+a record read in a finally block: collected, 632
+a record read in a catch block: collected, 632
+a record read again on one branch: collected, 632
+a field that is dead at the second await: collected, 632
+the result of an earlier await: collected, 632
+a record in a record: collected, 648
+a tuple: collected, 632
+a record stored to after the await: collected, 648
+the rest of a record: collected, 632
+a record in every round of a loop: collected, 1264
+a field that is cleared: collected, 632
+an arrow function: collected, 632
+a method: collected, 632
+an untyped record: collected, 632
+a field read after the await: collected, 632
+a record that may escape after the await: kept, 632
+a record that escaped before the await: kept, 632
+a field read in a catch block: kept, 632

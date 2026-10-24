@@ -1,0 +1,15 @@
+{"who":{"name":"n","nickname":"k"},"home":{"street":"s","zip":"z"}}
+TypeError: title: expected string, received undefined (and 3 more)
+TypeError: street: expected string, received undefined (and 1 more) | TypeError: [0].street: expected string, received undefined (and 1 more)
+TypeError: who: expected object, received undefined (and 1 more)
+{"title":"t","office":{"street":"s","zip":"z"},"branches":[{"street":"s","zip":"z"},{"street":"s2","zip":"z2"}],"owner":{"name":"o"}}
+TypeError: street: expected string, received undefined (and 1 more) | TypeError: [0].street: expected string, received undefined (and 1 more)
+TypeError: who.nickname: expected undefined | string, received number
+TypeError: title: expected string, received undefined (and 3 more)
+TypeError: street: expected string, received undefined (and 1 more) | TypeError: [0].street: expected string, received undefined (and 1 more)
+TypeError: who: expected object, received undefined (and 1 more)
+TypeError: branches[1].zip: expected string, received undefined
+TypeError: street: expected string, received undefined (and 1 more) | TypeError: [0].street: expected string, received undefined (and 1 more)
+TypeError: who: expected object, received undefined (and 1 more)
+TypeError: title: expected string, received undefined (and 3 more)
+{"street":"s","zip":"z"} | [{"street":"s","zip":"z"}]

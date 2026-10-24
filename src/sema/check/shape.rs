@@ -2895,6 +2895,28 @@ impl<'p, 's> Checker<'p, 's> {
         self.members(part)
     }
 
+    // Nothing says which members such a class has.
+    pub(super) fn stands_below_undeclared_class(&mut self, class: Sym) -> bool {
+        self.lacks_bun_types() && self.has_base_type_among(class, &[TypeId::ANY])
+    }
+
+    pub(super) fn is_of_class_below_undeclared_class(&mut self, ty: TypeId) -> bool {
+        match *self.data(ty) {
+            TypeData::Ref { target: class, .. }
+            | TypeData::Anon {
+                origin: Origin::ClassStatic(class),
+                ..
+            } => self.stands_below_undeclared_class(class),
+            TypeData::Union(ref parts) => {
+                (parts.iter()).all(|&part| self.is_of_class_below_undeclared_class(part))
+            }
+            TypeData::Intersection(ref parts) => {
+                (parts.iter()).any(|&part| self.is_of_class_below_undeclared_class(part))
+            }
+            _ => false,
+        }
+    }
+
     fn has_base_type_among(&mut self, sym: Sym, types: &[TypeId]) -> bool {
         for &base in self.base_types(sym).iter() {
             let is_among = types.contains(&base)
@@ -3679,6 +3701,9 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let hir = self.hir(file);
         let constructor = self.base_constructor_type_of_class(class);
+        if for_default_constructor && constructor == TypeId::ANY && self.lacks_bun_types() {
+            return (true, vec![self.construct_signature_of_undeclared_class()]);
+        }
         let sigs = self.signatures(constructor, true);
         // `getDefaultConstructSignatures` returns before `getTypeArgumentsFromNode`.
         if for_default_constructor && sigs.is_empty() {
@@ -3694,6 +3719,26 @@ impl<'p, 's> Checker<'p, 's> {
                 for_default_constructor && hir.is_js,
             ),
         )
+    }
+
+    /// `new (...args: any[]) => any`
+    fn construct_signature_of_undeclared_class(&mut self) -> SigId {
+        let params = [SigParam {
+            name: known::args,
+            ty: self.array_of(TypeId::ANY),
+            optional: false,
+            is_required_rest: false,
+            rest: true,
+            declaration: None,
+        }];
+        self.types().intern_sig(SigData::Synth {
+            type_params: ArenaBox::empty(),
+            params: self.list(&params),
+            ret: TypeId::ANY,
+            this: None,
+            of: ArenaBox::empty(),
+            is_union: true,
+        })
     }
 
     /// `getInstantiatedConstructorsForTypeArguments` for the `extends` clause of `class`: the candidates of `super(..)`, and the
@@ -5586,7 +5631,8 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let ty = if prop.flags.contains(PropFlags::WIDEN) {
             cold_path();
-            self.get_widened_type(ty)
+            let widened = self.get_widened_type(ty);
+            self.widened_type_of_literal_member(prop, widened)
         } else if prop.flags.contains(PropFlags::REGULAR) {
             cold_path();
             self.regular_type_of_resolved_object_literal(ty)
@@ -5699,7 +5745,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `reportImplicitAny` for a property whose type resolves to `ty`.
     fn report_implicit_any(&mut self, file: FileId, declaration: UntypedProperty, ty: TypeId) {
-        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let no_implicit_any = self.module_options(file).no_implicit_any;
         if self.hir(file).is_js && !self.is_check_js(file)
             || !no_implicit_any && !self.captures_suggestions()
         {
@@ -5811,6 +5857,10 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some((of, e)) = assignment_declaration(declaration) else {
                         continue;
                     };
+                    // An assignment that the build has folded away stores nothing, and what it names may not be in the program: `if (process.env.NODE_ENV === "production") module.exports = require(a); else module.exports = require(b);`
+                    if self.is_dead_expression(of, e) {
+                        continue;
+                    }
                     let hir = self.hir(of);
                     // `declaration.Type()`: the first annotated declaration decides.
                     let annotation = hir.jsdoc_type(JsDocTypeOwner::Assign(e));
@@ -6527,14 +6577,17 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     let widened = self.get_widened_type(ty);
                     // `widenTypeForVariableLikeDeclaration`
-                    if reports_errors && self.report_errors_from_widening(ty) {
+                    if reports_errors
+                        && self.module_options(file).no_implicit_any
+                        && self.report_errors_from_widening(ty)
+                    {
                         self.report_implicit_any(file, UntypedProperty::Member(first), widened);
                     }
                     return widened;
                 }
                 // `getTypeForVariableLikeDeclaration`: when an implicit `any` is an error, the
                 // assignments to it are inspected first.
-                if self.p.files.options.no_implicit_any
+                if self.follows_untyped_variables(file)
                     && let MemberOwner::Class(c) = owner
                     // `declaration.Symbol()` is the binder's symbol, and no reference and no
                     // property of a base class is named `InternalSymbolNameComputed`.

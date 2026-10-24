@@ -199,7 +199,7 @@ impl<'p> Checker<'p, '_> {
     /// node of the tree, whether or not the checker does. `parsePrivateIdentifier`: it's an expression, the name in
     /// `a.#x`, or the name of a member, an object literal property, the property a binding element reads, or an enum
     /// member.
-    fn check_private_identifiers(&mut self, file: FileId) {
+    pub(super) fn check_private_identifiers(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // "Report error only if there are no parse errors in file"
         if has_parse_diagnostics(hir) {
@@ -243,14 +243,14 @@ impl<'p> Checker<'p, '_> {
             .chain(enum_members);
         for (pos, is_bound) in names {
             if is_bound && is_private_constructor_name(&hir.text, pos) {
-                self.error_at((file, pos, 0), 18012, &[]);
+                self.early_error_at((file, pos, 0), 18012, &[]);
             }
         }
     }
 
     /// Reports misplaced private names: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18024
     /// (`checkEnumMember`).
-    fn check_private_names(&mut self, file: FileId) {
+    pub(super) fn check_private_names(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `checkEnumMember`: a plain error.
         for (i, member) in hir.enum_members.iter().enumerate() {
@@ -269,7 +269,7 @@ impl<'p> Checker<'p, '_> {
                 continue;
             }
             if self.enclosing_classes(file, e).is_empty() {
-                self.error_at((file, pos, 0), 18016, &[]);
+                self.early_error_at((file, pos, 0), 18016, &[]);
                 continue;
             }
             // Parentheses count as a separate parent node.
@@ -291,7 +291,7 @@ impl<'p> Checker<'p, '_> {
                     _ => false,
                 };
             if !is_allowed {
-                self.error_at((file, pos, 0), 1451, &[]);
+                self.early_error_at((file, pos, 0), 1451, &[]);
             }
         }
     }
@@ -330,7 +330,8 @@ impl<'p> Checker<'p, '_> {
         {
             let suggestion = self.name_of_unread_property(suggestion);
             let args = [Arg::Atom(name), Arg::Type(object), Arg::Bytes(&suggestion)];
-            self.error_at(at_index, 2551, &args);
+            let subject = self.member_container_of_type(object);
+            self.error_at(at_index, 2551, &args).subject = subject;
         } else if self.has_accessor_method_for(object, key, is_target) {
             let method: &[u8] = if is_target { b"set" } else { b"get" };
             let call = match self.access_to_string(file, self.hir(file).child(obj)) {
@@ -938,12 +939,14 @@ impl<'p> Checker<'p, '_> {
             _ => false,
         };
         let mut chain = None;
+        let mut subject = self.member_container_of_type(containing);
         if !is_private && !self.is_boolean(containing) && !is_enum && self.is_union(containing) {
             for &subtype in self.parts(containing) {
                 let apparent = self.apparent_type(subtype);
                 if self.type_of_property(apparent, name).is_none() {
                     let args = [Arg::Bytes(&missing), Arg::Type(subtype)];
                     chain = Some(self.new_diagnostic_chain(None, at, 2339, &args));
+                    subject = self.member_container_of_type(subtype);
                     break;
                 }
             }
@@ -952,7 +955,7 @@ impl<'p> Checker<'p, '_> {
         let container = self.type_to_string(container);
         let args = [Arg::Bytes(&missing), Arg::Bytes(&container)];
         let apparent = self.apparent_type(containing);
-        let diagnostic = if !is_private && self.static_side_has(containing, name) {
+        let mut diagnostic = if !is_private && self.static_side_has(containing, name) {
             let member = cat!(container, b".", missing);
             let args = [args[0], args[1], Arg::Bytes(&member)];
             self.new_diagnostic_chain(chain, at, 2576, &args)
@@ -984,6 +987,7 @@ impl<'p> Checker<'p, '_> {
             };
             self.new_diagnostic_chain(chain, at, code, &args)
         };
+        diagnostic.subject = subject;
         self.reporting_nonexistent.pop();
         self.reprinting = reprinting;
         // A query re-entered while building the message is no reason to roll back the message.
@@ -1238,7 +1242,12 @@ impl<'p> Checker<'p, '_> {
             return true;
         }
         let class = self.class_sym(declared_in, type_class);
-        self.error_at(at, 18013, &[Arg::Bytes(&diag_name), Arg::Sym(class)]);
+        let args = [Arg::Bytes(&diag_name), Arg::Sym(class)];
+        if lexical.is_none() {
+            self.early_error_at(at, 18013, &args);
+        } else {
+            self.error_at(at, 18013, &args);
+        }
         true
     }
     /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` applied repeatedly: the classes in which

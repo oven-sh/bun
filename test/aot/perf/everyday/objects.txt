@@ -1,0 +1,540 @@
+//// literal-made-and-read
+function turn(i: number): number {
+  const point = { x: i, y: i + 1, z: 2 };
+  return point.x + point.y + point.z;
+}
+//// literal-returned
+function make(i: number) {
+  return { id: i, name: "row", done: false };
+}
+function turn(i: number): number {
+  const row = make(i);
+  return row.done ? 0 : row.id + row.name.length;
+}
+//// literal-kept-in-an-array
+type Row = { id: number; score: number };
+const rows: Row[] = [];
+function turn(i: number): number {
+  rows[i & 63] = { id: i, score: i * 2 };
+  return rows[(i >> 1) & 63]?.score ?? 0;
+}
+//// nested-literal
+function turn(i: number): number {
+  const user = { id: i, address: { city: "Oslo", zip: i & 1023 }, tags: ["a", "b"] };
+  return user.address.zip + user.tags.length + user.address.city.length;
+}
+//// shorthand-properties
+function turn(i: number): number {
+  const width = i & 255;
+  const height = (i >> 8) & 255;
+  const size = { width, height };
+  return size.width * size.height;
+}
+//// spread-with-an-override
+const base = { a: 1, b: 2, c: 3, d: 4 };
+function turn(i: number): number {
+  const next = { ...base, b: i };
+  return next.a + next.b + next.c + next.d;
+}
+//// spread-of-two-objects
+const defaults = { host: "localhost", port: 80, secure: false };
+const given = { port: 8080, path: "/" };
+function turn(i: number): number {
+  const options = { ...defaults, ...given, retries: i & 3 };
+  return options.port + options.retries + options.host.length + options.path.length;
+}
+//// spread-of-a-parameter
+type Options = { depth?: number; width?: number; label?: string };
+function withDefaults(options: Options) {
+  return { depth: 1, width: 2, label: "none", ...options };
+}
+function turn(i: number): number {
+  const options = withDefaults(i & 1 ? { depth: i & 7 } : { width: 5, label: "x" });
+  return options.depth + options.width + options.label.length;
+}
+//// state-updated-by-spread
+type State = { count: number; total: number; last: string };
+let state: State = { count: 0, total: 0, last: "" };
+function turn(i: number): number {
+  state = { ...state, count: state.count + 1, total: (state.total + i) & 0xffff };
+  return state.total;
+}
+//// destructuring-a-parameter
+function area({ width, height }: { width: number; height: number }): number {
+  return width * height;
+}
+function turn(i: number): number {
+  return area({ width: i & 31, height: 3 });
+}
+//// destructuring-with-defaults
+function open({ port = 80, host = "localhost", secure = false }: { port?: number; host?: string; secure?: boolean } = {}): number {
+  return port + host.length + (secure ? 1 : 0);
+}
+function turn(i: number): number {
+  return open(i & 1 ? { port: i & 1023 } : undefined) + open({ host: "example.com", secure: true });
+}
+//// destructuring-with-a-rest
+const record = { id: 7, name: "seven", secret: "x", age: 30 };
+function turn(i: number): number {
+  const { secret, ...visible } = record;
+  return visible.id + visible.age + visible.name.length + secret.length + (i & 1);
+}
+//// destructuring-nested
+const response = { status: 200, body: { user: { id: 5, roles: ["admin", "dev"] } } };
+function turn(i: number): number {
+  const {
+    status,
+    body: {
+      user: { id, roles },
+    },
+  } = response;
+  return status + id + roles.length + (i & 1);
+}
+//// destructuring-renamed
+const pair = { first: 3, second: 4 };
+function turn(i: number): number {
+  const { first: a, second: b } = pair;
+  return a * b + (i & 3);
+}
+//// optional-chaining-present
+type Node = { next?: Node; value: number };
+const chain: Node = { value: 1, next: { value: 2, next: { value: 3 } } };
+function turn(i: number): number {
+  return (chain.next?.next?.value ?? 0) + (i & 1);
+}
+//// optional-chaining-absent-half-of-the-time
+type User = { profile?: { age: number } };
+const users: User[] = [{ profile: { age: 30 } }, {}, { profile: { age: 20 } }, {}];
+function turn(i: number): number {
+  return users[i & 3]!.profile?.age ?? -1;
+}
+//// optional-call
+type Hooks = { before?: (n: number) => number; after?: (n: number) => number };
+const hooks: Hooks = { before: n => n + 1 };
+function turn(i: number): number {
+  return (hooks.before?.(i) ?? 0) + (hooks.after?.(i) ?? 0);
+}
+//// nullish-default-of-a-field
+type Config = { limit?: number | null; name?: string };
+const configs: Config[] = [{ limit: 5 }, { limit: null }, {}, { limit: 0, name: "z" }];
+function turn(i: number): number {
+  const config = configs[i & 3]!;
+  return (config.limit ?? 10) + (config.name ?? "anonymous").length;
+}
+//// or-default-of-a-field
+const settings: { size?: number; title?: string }[] = [{ size: 4 }, {}, { title: "t" }, { size: 0 }];
+function turn(i: number): number {
+  const setting = settings[i & 3]!;
+  return (setting.size || 8) + (setting.title || "untitled").length;
+}
+//// nullish-assignment
+const cache: { value?: number } = {};
+function turn(i: number): number {
+  cache.value ??= 41;
+  return cache.value + (i & 1);
+}
+//// computed-key-in-a-literal
+const keys = ["alpha", "beta", "gamma", "delta"];
+function turn(i: number): number {
+  const key = keys[i & 3]!;
+  const entry = { [key]: i, fixed: 1 };
+  return entry[key]! + entry.fixed;
+}
+//// read-by-one-of-four-keys
+const table: Record<string, number> = { alpha: 1, beta: 2, gamma: 3, delta: 4 };
+const names = ["alpha", "beta", "gamma", "delta"];
+function turn(i: number): number {
+  return table[names[i & 3]!]!;
+}
+//// store-by-one-of-four-keys
+const totals: Record<string, number> = { alpha: 0, beta: 0, gamma: 0, delta: 0 };
+const names = ["alpha", "beta", "gamma", "delta"];
+function turn(i: number): number {
+  const name = names[i & 3]!;
+  totals[name] = (totals[name]! + i) & 0xffff;
+  return totals[name]!;
+}
+//// counting-by-string-key
+const words = ["the", "quick", "brown", "fox", "jumps", "over", "the", "lazy", "dog", "the", "end", "fox"];
+const counts: Record<string, number> = {};
+function turn(i: number): number {
+  const word = words[i % 12]!;
+  counts[word] = (counts[word] ?? 0) + 1;
+  return counts[word]! & 255;
+}
+//// grouping-by-string-key
+const kinds = ["fruit", "tool", "fruit", "toy", "tool", "fruit"];
+function turn(i: number): number {
+  const groups: Record<string, number[]> = {};
+  for (let k = 0; k < kinds.length; k++) (groups[kinds[k]!] ??= []).push(k + i);
+  return groups.fruit!.length + groups.tool!.length + groups.toy![0]!;
+}
+//// dictionary-built-and-dropped
+function turn(i: number): number {
+  const seen: Record<string, boolean> = {};
+  seen["a" + (i & 7)] = true;
+  seen["b" + (i & 3)] = true;
+  return "a3" in seen ? 1 : 0;
+}
+//// object-without-a-prototype-as-a-dictionary
+const index: Record<string, number> = Object.create(null);
+const ids = ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8"];
+function turn(i: number): number {
+  const id = ids[i & 7]!;
+  index[id] = i;
+  return index[ids[(i + 3) & 7]!] ?? 0;
+}
+//// in-operator
+const features = { fast: true, small: true };
+const asked = ["fast", "cheap", "small", "good"];
+function turn(i: number): number {
+  return asked[i & 3]! in features ? 1 : 0;
+}
+//// has-own
+const inventory: Record<string, number> = { apple: 1, pear: 2 };
+const wanted = ["apple", "plum", "pear", "toString"];
+function turn(i: number): number {
+  return Object.hasOwn(inventory, wanted[i & 3]!) ? 1 : 0;
+}
+//// has-own-property-method
+const stock: Record<string, number> = { apple: 1, pear: 2 };
+const wanted = ["apple", "plum", "pear", "toString"];
+function turn(i: number): number {
+  return stock.hasOwnProperty(wanted[i & 3]!) ? 1 : 0;
+}
+//// delete-a-fixed-name
+function turn(i: number): number {
+  const message: { id: number; draft?: boolean; text: string } = { id: i, draft: true, text: "hi" };
+  delete message.draft;
+  return message.id + message.text.length + ("draft" in message ? 1 : 0);
+}
+//// delete-by-key
+const sessions: Record<string, number> = {};
+function turn(i: number): number {
+  const key = "s" + (i & 15);
+  sessions[key] = i;
+  delete sessions["s" + ((i + 8) & 15)];
+  return sessions[key]!;
+}
+//// getter-in-a-literal
+const rectangle = {
+  width: 3,
+  height: 4,
+  get area() {
+    return this.width * this.height;
+  },
+};
+function turn(i: number): number {
+  rectangle.width = i & 15;
+  return rectangle.area;
+}
+//// setter-in-a-literal
+const thermometer = {
+  kelvin: 0,
+  set celsius(value: number) {
+    this.kelvin = value + 273;
+  },
+  get celsius() {
+    return this.kelvin - 273;
+  },
+};
+function turn(i: number): number {
+  thermometer.celsius = i & 127;
+  return thermometer.kelvin;
+}
+//// method-in-a-literal
+const counter = {
+  count: 0,
+  add(n: number) {
+    this.count = (this.count + n) & 0xffff;
+    return this.count;
+  },
+};
+function turn(i: number): number {
+  return counter.add(i);
+}
+//// define-property
+function turn(i: number): number {
+  const target: { hidden?: number; shown: number } = { shown: 1 };
+  Object.defineProperty(target, "hidden", { value: i, enumerable: false });
+  return target.hidden! + target.shown;
+}
+//// keys
+const shape = { a: 1, b: 2, c: 3, d: 4, e: 5 };
+function turn(i: number): number {
+  return Object.keys(shape).length + (i & 1);
+}
+//// keys-then-read
+const prices: Record<string, number> = { tea: 3, milk: 2, bread: 4, salt: 1 };
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const key of Object.keys(prices)) sum += prices[key]!;
+  return sum;
+}
+//// values-summed
+const marks = { math: 5, art: 3, music: 4 };
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const mark of Object.values(marks)) sum += mark;
+  return sum;
+}
+//// entries-destructured
+const weights = { iron: 7, gold: 19, tin: 7 };
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const [name, weight] of Object.entries(weights)) sum += weight + name.length;
+  return sum;
+}
+//// entries-mapped-and-back
+const cents = { tea: 300, milk: 200, bread: 400 };
+function turn(i: number): number {
+  const scaled = Object.fromEntries(Object.entries(cents).map(([name, value]) => [name, value + (i & 3)]));
+  return scaled.tea! + scaled.bread!;
+}
+//// from-entries-of-pairs
+const pairs: [string, number][] = [["x", 1], ["y", 2], ["z", 3]];
+function turn(i: number): number {
+  const object = Object.fromEntries(pairs);
+  return object.x! + object.z! + (i & 1);
+}
+//// for-in
+const sizes = { small: 1, medium: 2, large: 3 };
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const key in sizes) sum += sizes[key as keyof typeof sizes];
+  return sum;
+}
+//// for-in-over-a-dictionary
+const votes: Record<string, number> = {};
+for (let k = 0; k < 12; k++) votes["candidate" + k] = k;
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const name in votes) sum += votes[name]!;
+  return sum;
+}
+//// assign-into-a-new-object
+const first = { a: 1, b: 2 };
+const second = { c: 3 };
+function turn(i: number): number {
+  const merged = Object.assign({}, first, second, { d: i & 7 });
+  return merged.a + merged.b + merged.c + merged.d;
+}
+//// assign-onto-an-instance
+class Task {
+  id = 0;
+  title = "";
+  done = false;
+  constructor(fields: Partial<Task>) {
+    Object.assign(this, fields);
+  }
+}
+function turn(i: number): number {
+  const task = new Task({ id: i, title: "write" });
+  return task.id + task.title.length + (task.done ? 1 : 0);
+}
+//// freeze-a-literal
+function turn(i: number): number {
+  const constant = Object.freeze({ low: i, high: i + 10 });
+  return constant.high - constant.low;
+}
+//// read-of-a-frozen-table
+const Level = Object.freeze({ debug: 0, info: 1, warn: 2, error: 3 });
+function turn(i: number): number {
+  return i & 1 ? Level.warn : Level.error;
+}
+//// is-frozen
+const sealed = Object.freeze({ a: 1 });
+const open = { a: 1 };
+function turn(i: number): number {
+  return Object.isFrozen(i & 1 ? sealed : open) ? 1 : 0;
+}
+//// create-from-a-prototype
+const animal = {
+  legs: 4,
+  describe() {
+    return this.legs * 2;
+  },
+};
+function turn(i: number): number {
+  const dog = Object.create(animal);
+  dog.legs = i & 7;
+  return dog.describe();
+}
+//// get-prototype-of
+class Base {}
+class Derived extends Base {}
+const instances = [new Base(), new Derived()];
+function turn(i: number): number {
+  return Object.getPrototypeOf(instances[i & 1]!) === Derived.prototype ? 1 : 0;
+}
+//// symbol-key
+const tag = Symbol("tag");
+const tagged = { [tag]: 5, plain: 1 };
+function turn(i: number): number {
+  return tagged[tag] + tagged.plain + (i & 1);
+}
+//// symbol-key-stored
+const mark = Symbol("mark");
+type Marked = { [mark]?: number; id: number };
+function turn(i: number): number {
+  const item: Marked = { id: i };
+  item[mark] = 2;
+  return item.id + item[mark]!;
+}
+//// to-primitive-by-value-of
+const money = {
+  cents: 250,
+  valueOf() {
+    return this.cents;
+  },
+};
+function turn(i: number): number {
+  return +money + (i & 1);
+}
+//// shallow-equality
+function same(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const key of keys) if (a[key] !== b[key]) return false;
+  return true;
+}
+const left = { a: 1, b: "x", c: true };
+const right = { a: 1, b: "x", c: true };
+function turn(i: number): number {
+  return same(left, right) ? 1 + (i & 1) : 0;
+}
+//// pick-some-keys
+function pick<T extends object, K extends keyof T>(source: T, ...keys: K[]): Pick<T, K> {
+  const picked = {} as Pick<T, K>;
+  for (const key of keys) picked[key] = source[key];
+  return picked;
+}
+const person = { name: "Ann", age: 40, email: "a@b.c", city: "Rome" };
+function turn(i: number): number {
+  const brief = pick(person, "name", "age");
+  return brief.age + brief.name.length + (i & 1);
+}
+//// fields-added-one-by-one
+function turn(i: number): number {
+  const built: Record<string, number> = {};
+  built.a = i;
+  built.b = i + 1;
+  built.c = i + 2;
+  return built.a + built.b + built.c;
+}
+//// field-added-on-a-condition
+function turn(i: number): number {
+  const reply: { ok: boolean; error?: string; value?: number } = { ok: (i & 1) === 0 };
+  if (reply.ok) reply.value = i;
+  else reply.error = "odd";
+  return (reply.value ?? 0) + (reply.error?.length ?? 0);
+}
+//// objects-of-four-shapes-read-at-one-place
+const mixed: { size: number }[] = [{ size: 1 }, { size: 2, a: 1 } as any, { b: 1, size: 3 } as any, { c: 1, d: 2, size: 4 } as any];
+function turn(i: number): number {
+  return mixed[i & 3]!.size;
+}
+//// union-told-apart-by-a-tag
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number } | { kind: "box"; width: number; height: number };
+const shapes: Shape[] = [{ kind: "circle", radius: 2 }, { kind: "square", side: 3 }, { kind: "box", width: 2, height: 5 }, { kind: "square", side: 1 }];
+function area(shape: Shape): number {
+  switch (shape.kind) {
+    case "circle":
+      return 3 * shape.radius * shape.radius;
+    case "square":
+      return shape.side * shape.side;
+    case "box":
+      return shape.width * shape.height;
+  }
+}
+function turn(i: number): number {
+  return area(shapes[i & 3]!);
+}
+//// result-or-error-object
+type Result = { ok: true; value: number } | { ok: false; error: string };
+function parse(i: number): Result {
+  return i & 3 ? { ok: true, value: i } : { ok: false, error: "multiple of four" };
+}
+function turn(i: number): number {
+  const result = parse(i);
+  return result.ok ? result.value : result.error.length;
+}
+//// two-results-in-an-object
+function bounds(a: number, b: number) {
+  return a < b ? { low: a, high: b } : { low: b, high: a };
+}
+function turn(i: number): number {
+  const { low, high } = bounds(i & 255, (i >> 3) & 255);
+  return high - low;
+}
+//// structured-clone-of-a-small-object
+const original = { id: 1, tags: ["a", "b"], nested: { deep: true } };
+function turn(i: number): number {
+  const copy = structuredClone(original);
+  return copy.id + copy.tags.length + (copy.nested.deep ? 1 : 0) + (i & 1);
+}
+//// copy-by-json
+const source = { id: 1, tags: ["a", "b"], nested: { deep: true } };
+function turn(i: number): number {
+  const copy = JSON.parse(JSON.stringify(source)) as typeof source;
+  return copy.id + copy.tags.length + (i & 1);
+}
+//// typeof-checks
+const values: unknown[] = [1, "two", true, null, undefined, {}, () => 1, 2.5];
+function turn(i: number): number {
+  const value = values[i & 7];
+  if (typeof value === "number") return value | 0;
+  if (typeof value === "string") return value.length;
+  if (typeof value === "function") return 7;
+  if (typeof value === "object" && value !== null) return 9;
+  return 0;
+}
+//// global-this-read
+(globalThis as any).sharedLimit = 12;
+function turn(i: number): number {
+  return (globalThis as any).sharedLimit + (i & 1);
+}
+//// an-object-made-two-steps-below-a-literal-is-read-and-written-through-the-members-of-the-literal
+const answers: any = {
+  get sent() { return this.res.sent; },
+  has(name: string) { return this.res.names === name; },
+  get status() { return this.res.code; },
+  set status(code: number) {
+    if (this.sent) return;
+    this.hasOwnStatus = true;
+    this.res.code = code;
+  },
+  get body() { return this.held; },
+  set body(value: string) {
+    const before = this.held;
+    this.held = value;
+    if (!this.hasOwnStatus) this.status = 200;
+    if (!this.has("b")) this.length = value.length;
+    if (before !== undefined) this.res.code = 0;
+  },
+  set length(n: number) { this.res.size = n; },
+  get length() { return this.res.size; },
+};
+class Application {
+  answers: any;
+  constructor() { this.answers = Object.create(answers); }
+  create(req: { url: string }, res: { sent: boolean; names: string; code: number; size: number }): any {
+    const made = Object.create(this.answers);
+    made.app = this;
+    made.req = req;
+    made.res = res;
+    return made;
+  }
+}
+const application = new Application();
+const suffix = process.argv.length > 9 ? "x" : "";
+function handle(answer: any): number {
+  answer.body = "Hello";
+  return answer.status + answer.length;
+}
+(globalThis as any)["handle" + suffix] = handle;
+const request = { url: "/" };
+function turn(i: number): number {
+  const res = { sent: false, names: "a", code: 404, size: i & 1 };
+  return (globalThis as any)["handle" + suffix](application.create(request, res));
+}

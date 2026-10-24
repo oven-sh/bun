@@ -487,6 +487,136 @@ size_t LastIndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len,
     return text_len;
 }
 
+// --- node:path (src/node_path/tidy.rs) ---------------------------------------
+
+// Whether the part of `path` that starts at `start` is empty, "." or "..". A part ends in front of a '/' or where `path` ends.
+static HWY_INLINE bool IsUntidyPathPartAt(const uint8_t* HWY_RESTRICT path, size_t len, size_t start)
+{
+    if (path[start] != '.') return path[start] == '/';
+    if (start + 1 == len || path[start + 1] == '/') return true;
+    return path[start + 1] == '.' && (start + 2 == len || path[start + 2] == '/');
+}
+
+// `path` has more bytes than `d` has lanes.
+template<class D>
+static HWY_INLINE size_t IndexOfUntidySlashBy(D d, const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const size_t N = hn::Lanes(d);
+    const auto slash = hn::Set(d, uint8_t { '/' });
+    const auto lowest_bit = hn::Set(d, uint8_t { 1 });
+    // The last block ends with the path, so it may overlap the one before it.
+    const size_t last = len - N - 1;
+    size_t at = 0;
+    while (true) {
+        // A '/' with a '/' or a '.' after it. '.' is '/' without its lowest bit.
+        const auto suspects = hn::And(hn::Eq(hn::LoadU(d, path + at), slash),
+            hn::Eq(hn::Or(hn::LoadU(d, path + at + 1), lowest_bit), slash));
+        if (HWY_UNLIKELY(!hn::AllFalse(d, suspects))) {
+            for (uint64_t bits = hn::BitsFromMask(d, suspects); bits != 0; bits &= bits - 1) {
+                const size_t found = at + hwy::Num0BitsBelowLS1Bit_Nonzero64(bits);
+                if (IsUntidyPathPartAt(path, len, found + 1)) return found;
+            }
+        }
+        if (at == last) return len;
+        at = HWY_MIN(at + N, last);
+    }
+}
+
+// Index of the first '/' in front of a part that is empty, "." or "..", or `len` if there is none.
+size_t IndexOfUntidySlashImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::CappedTag<uint8_t, 32> d32;
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    if (len > hn::Lanes(d32)) return IndexOfUntidySlashBy(d32, path, len);
+    if (hn::Lanes(d16) < hn::Lanes(d32) && len > hn::Lanes(d16)) return IndexOfUntidySlashBy(d16, path, len);
+    if (len > hn::Lanes(d8)) return IndexOfUntidySlashBy(d8, path, len);
+    for (size_t at = 0; at + 1 < len; ++at) {
+        if (path[at] == '/' && IsUntidyPathPartAt(path, len, at + 1)) return at;
+    }
+    return len;
+}
+
+// Entered only at the target the build is compiled for: see highway_last_index_of_slash.
+#if HWY_TARGET == HWY_STATIC_TARGET
+
+// Index of the last byte that is `a` or `b`, or `len` if there is none. It is expected near the end.
+template<uint8_t a, uint8_t b>
+static HWY_INLINE size_t LastIndexOfEitherNearEnd(const uint8_t* HWY_RESTRICT text, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t end = len;
+    while (end >= hn::Lanes(d16)) {
+        end -= hn::Lanes(d16);
+        const auto bytes = hn::LoadU(d16, text + end);
+        const intptr_t at = hn::FindLastTrue(d16, hn::Or(hn::Eq(bytes, hn::Set(d16, a)), hn::Eq(bytes, hn::Set(d16, b))));
+        if (at >= 0) return end + static_cast<size_t>(at);
+    }
+    if (end >= hn::Lanes(d8)) {
+        end -= hn::Lanes(d8);
+        const auto bytes = hn::LoadU(d8, text + end);
+        const intptr_t at = hn::FindLastTrue(d8, hn::Or(hn::Eq(bytes, hn::Set(d8, a)), hn::Eq(bytes, hn::Set(d8, b))));
+        if (at >= 0) return end + static_cast<size_t>(at);
+    }
+    while (end-- > 0) {
+        if (text[end] == a || text[end] == b) return end;
+    }
+    return len;
+}
+
+size_t LastIndexOfSlashImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return LastIndexOfEitherNearEnd<'/', '/'>(path, len);
+}
+
+size_t LastIndexOfSlashOrDotImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return LastIndexOfEitherNearEnd<'/', '.'>(path, len);
+}
+
+// How many of their first `len` bytes `a` and `b` have in common.
+size_t CommonPrefixLengthImpl(const uint8_t* HWY_RESTRICT a, const uint8_t* HWY_RESTRICT b, size_t len)
+{
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t at = 0;
+    for (; at + hn::Lanes(d16) <= len; at += hn::Lanes(d16)) {
+        const intptr_t differs = hn::FindFirstTrue(d16, hn::Ne(hn::LoadU(d16, a + at), hn::LoadU(d16, b + at)));
+        if (differs >= 0) return at + static_cast<size_t>(differs);
+    }
+    if (at + hn::Lanes(d8) <= len) {
+        const intptr_t differs = hn::FindFirstTrue(d8, hn::Ne(hn::LoadU(d8, a + at), hn::LoadU(d8, b + at)));
+        if (differs >= 0) return at + static_cast<size_t>(differs);
+        at += hn::Lanes(d8);
+    }
+    while (at < len && a[at] == b[at])
+        ++at;
+    return at;
+}
+
+// CountCharImpl of '/' for a few dozen bytes.
+size_t CountSlashesImpl(const uint8_t* HWY_RESTRICT text, size_t len)
+{
+    constexpr uint8_t needle = '/';
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    size_t count = 0;
+    size_t at = 0;
+    for (; at + hn::Lanes(d16) <= len; at += hn::Lanes(d16)) {
+        count += hn::CountTrue(d16, hn::Eq(hn::LoadU(d16, text + at), hn::Set(d16, needle)));
+    }
+    if (at + hn::Lanes(d8) <= len) {
+        count += hn::CountTrue(d8, hn::Eq(hn::LoadU(d8, text + at), hn::Set(d8, needle)));
+        at += hn::Lanes(d8);
+    }
+    for (; at < len; ++at)
+        count += text[at] == needle ? 1 : 0;
+    return count;
+}
+
+#endif // HWY_TARGET == HWY_STATIC_TARGET
+
 // Index of the first byte that HTML-escapes: one of " & ' < >.
 // Returns text_len if none are present.
 size_t IndexOfHTMLEscapeChar8Impl(const uint8_t* HWY_RESTRICT text, size_t text_len)
@@ -2522,6 +2652,7 @@ HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfNotCharImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
+HWY_EXPORT(IndexOfUntidySlashImpl);
 HWY_EXPORT(LastIndexOfAnyCharImpl);
 HWY_EXPORT(LastIndexOfCharImpl);
 HWY_EXPORT(LineStartsImpl);
@@ -2621,6 +2752,36 @@ size_t highway_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t text_l
 size_t highway_last_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
 {
     return BUN_HWY_DISPATCH(LastIndexOfAnyCharImpl)(text, text_len, chars, chars_len);
+}
+
+// Up to 32 bytes no target has a wider vector to use, and the call through the table is what would cost.
+size_t highway_index_of_untidy_slash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    if (len <= 32) return HWY_STATIC_DISPATCH(IndexOfUntidySlashImpl)(path, len);
+    return BUN_HWY_DISPATCH(IndexOfUntidySlashImpl)(path, len);
+}
+
+// These look at one or two vectors of 16 bytes: the name at the end of a path, what two paths start with, the folders
+// to leave. A call through the table would double that, so they enter the kernel of the target that the build is
+// compiled for, and LTO inlines it into the caller.
+size_t highway_last_index_of_slash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(LastIndexOfSlashImpl)(path, len);
+}
+
+size_t highway_last_index_of_slash_or_dot(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(LastIndexOfSlashOrDotImpl)(path, len);
+}
+
+size_t highway_common_prefix_length(const uint8_t* HWY_RESTRICT a, const uint8_t* HWY_RESTRICT b, size_t len)
+{
+    return HWY_STATIC_DISPATCH(CommonPrefixLengthImpl)(a, b, len);
+}
+
+size_t highway_count_slashes(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return HWY_STATIC_DISPATCH(CountSlashesImpl)(path, len);
 }
 
 size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,

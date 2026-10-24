@@ -1010,12 +1010,18 @@ const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
 const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
 
-const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
-{
-    ACCEPT_ENCODING_HEADER_NO_COMPRESSION
-} else {
-    ACCEPT_ENCODING_HEADER_COMPRESSION
-};
+const ACCEPT_ENCODING_HEADER_WITHOUT_BROTLI: picohttp::Header =
+    picohttp::Header::new(b"Accept-Encoding", b"gzip, deflate, zstd");
+
+fn accept_encoding_header() -> picohttp::Header {
+    if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT {
+        ACCEPT_ENCODING_HEADER_NO_COMPRESSION
+    } else if bun_removable_features::is_removed(bun_removable_features::Feature::BrotliDecoder) {
+        ACCEPT_ENCODING_HEADER_WITHOUT_BROTLI
+    } else {
+        ACCEPT_ENCODING_HEADER_COMPRESSION
+    }
+}
 
 fn get_user_agent_header() -> picohttp::Header {
     let ua = OVERRIDDEN_DEFAULT_USER_AGENT.get().copied().unwrap_or(b"");
@@ -2635,7 +2641,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if !override_accept_encoding && !self.flags.disable_decompression {
-            request_headers_buf[header_count] = ACCEPT_ENCODING_HEADER;
+            request_headers_buf[header_count] = accept_encoding_header();
             header_count += 1;
         }
 

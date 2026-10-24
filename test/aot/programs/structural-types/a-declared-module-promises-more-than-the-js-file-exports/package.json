@@ -1,0 +1,7 @@
+{
+  "name": "a-declared-module-promises-more-than-the-js-file-exports",
+  "type": "module",
+  "imports": {
+    "#toolkit": "./toolkit.js"
+  }
+}

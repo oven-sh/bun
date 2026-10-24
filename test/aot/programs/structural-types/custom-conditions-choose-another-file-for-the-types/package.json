@@ -1,0 +1,10 @@
+{
+  "name": "conditional-app",
+  "type": "module",
+  "imports": {
+    "#env": {
+      "development": "./src/env-development.ts",
+      "default": "./src/env-production.ts"
+    }
+  }
+}

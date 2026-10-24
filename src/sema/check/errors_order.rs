@@ -176,7 +176,9 @@ impl Checker<'_, '_> {
             2448
         } else if flags.contains(SymFlags::CLASS) {
             2449
-        } else if flags.contains(SymFlags::REGULAR_ENUM) || self.p.files.options.isolated_modules {
+        } else if flags.contains(SymFlags::REGULAR_ENUM)
+            || self.module_options(file).isolated_modules
+        {
             2450
         } else {
             return;
@@ -211,8 +213,8 @@ impl Checker<'_, '_> {
         usage: Node,
     ) -> bool {
         let hir = self.hir(file);
-        let emits_standard_class_fields = self.p.files.options.emit_standard_class_fields;
-        let has_legacy_decorators = self.p.files.options.experimental_decorators;
+        let emits_standard_class_fields = self.module_options(file).emit_standard_class_fields;
+        let has_legacy_decorators = self.module_options(file).experimental_decorators;
         let container = hir.get_enclosing_block_scope_container(declaration);
         if hir.is_in_jsdoc(hir.start(usage))
             || hir.is_in_type_query(usage)
@@ -525,7 +527,7 @@ impl Checker<'_, '_> {
         let code = if is_in_initializer
             && !is_optional
             && !(kind == Kind::MethodDeclaration && flags.contains(Flags::STATIC))
-            && (self.p.files.options.use_define_for_class_fields
+            && (self.module_options(file).use_define_for_class_fields
                 || !self.is_property_declared_in_ancestor_class(file, declaration, name))
         {
             2729

@@ -406,14 +406,20 @@ fn end_vm(frees: bool) {
     unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr()) };
 }
 
-/// Startup state that all VMs share.
-#[derive(Default)]
+/// Startup state that all VMs of the process share. The first VM freezes JSC's options, so they are set once, whatever
+/// [`Engines`] the VM belongs to.
 struct Start {
     initialize: std::sync::Once,
     /// Set if the run won't have more than a few VMs. Stays unset if a VM starts before the files are known.
     is_for_few: AtomicBool,
     memory: std::sync::OnceLock<usize>,
 }
+
+static START: Start = Start {
+    initialize: std::sync::Once::new(),
+    is_for_few: AtomicBool::new(false),
+    memory: std::sync::OnceLock::new(),
+};
 
 impl Start {
     /// [`memory_for_engines`]
@@ -658,6 +664,8 @@ struct CrewState {
     is_done_with_heavy: bool,
     /// The member that should run its `exit` handlers now.
     ends: Option<usize>,
+    /// `free_all` was called: every member frees its VM and its thread ends, and no member is started anymore.
+    is_released: bool,
     memory: Memory,
 }
 
@@ -673,6 +681,11 @@ impl CrewState {
     fn heavy_vms(&self) -> usize {
         usize::from(self.shared.is_some() && !self.is_done_with_heavy)
     }
+
+    /// True if a member is going to take work: one that isn't about to free its VM.
+    fn has_takers(&self) -> bool {
+        self.all.iter().any(|it| !it.is_freed)
+    }
 }
 
 /// A member's next task.
@@ -686,7 +699,6 @@ enum Next {
 /// The threads that have a VM. Each is only started when it's needed.
 #[derive(Default)]
 struct Crew {
-    start: Start,
     demand: Demand,
     state: Guarded<CrewState>,
     /// A copy of `CrewState::pending` that can be read without the lock.
@@ -725,6 +737,9 @@ impl Crew {
     /// Starts members while there's work that no member is going to take soon, and another VM is worth it and fits.
     /// `Err` if a thread couldn't be started.
     fn start_more(crew: &Arc<Crew>, state: &mut CrewState) -> Result<(), Vec<u8>> {
+        if state.is_released {
+            return Err(b"The plugins have been stopped.".to_vec());
+        }
         loop {
             let free = |it: &&Member| !it.is_freed && (it.is_idle || it.is_starting());
             let light = state.posted.iter().filter(|it| it.size < HEAVY).count();
@@ -735,7 +750,7 @@ impl Crew {
                 false => has_files || light > state.all.iter().filter(free).count(),
             };
             let vms = state.vms();
-            let planned = crew.start.memory();
+            let planned = START.memory();
             if !is_needed
                 || !(state.memory).has_room_for_another(planned, crew.demand.left(), vms)
                 || !crew.demand.is_worth_another(vms.count, state.heavy_vms())
@@ -810,11 +825,11 @@ impl Crew {
     }
 
     /// The thread function of the member `at`. The thread is never joined: once it's done with its VM it waits until
-    /// the process exits.
-    fn run_member(crew: &Arc<Crew>, at: usize) -> ! {
+    /// the process exits, unless [`Crew::free_all`] released it.
+    fn run_member(crew: &Arc<Crew>, at: usize) {
         name_this_thread(at);
         bun_sema_driver::run_regions_inline_on_this_thread();
-        let failure = crew.start.start_vm().err();
+        let failure = START.start_vm().err();
         {
             let mut state = crew.state.lock();
             state.all[at].thread = Some(std::thread::current().id());
@@ -844,8 +859,14 @@ impl Crew {
                 }
                 Next::End { frees } => {
                     end_vm(frees);
-                    crew.state.lock().all[at].is_gone = true;
+                    let mut state = crew.state.lock();
+                    state.all[at].is_gone = true;
+                    let is_released = state.is_released;
+                    drop(state);
                     crew.is_over.notify_all();
+                    if is_released {
+                        return;
+                    }
                     break;
                 }
             }
@@ -885,7 +906,7 @@ impl Crew {
         }
         let mut state = crew.state.lock();
         state.all[at].is_in_use = false;
-        let (planned, vms) = (crew.start.memory(), state.vms());
+        let (planned, vms) = (START.memory(), state.vms());
         (state.memory).note_file(planned, &crew.demand, vms.loaded);
         // Never the first member, which has the heavy files, and never the last one besides it.
         if at != 0
@@ -918,7 +939,7 @@ impl Crew {
             ticket: Arc::clone(&ticket),
         });
         let started = Crew::start_more(crew, &mut state);
-        if state.all.is_empty() {
+        if !state.has_takers() {
             state.posted.pop_back();
             return started;
         }
@@ -950,7 +971,7 @@ impl Crew {
         state.pending = state.vms().count;
         crew.busy.store(state.pending, Ordering::Relaxed);
         let started = Crew::start_more(crew, &mut state);
-        let is_empty = state.all.is_empty();
+        let has_takers = state.has_takers();
         drop(state);
         crew.is_posted.notify_all();
         meanwhile();
@@ -959,9 +980,9 @@ impl Crew {
             crew.is_over.wait_guarded(&mut state);
         }
         state.shared = None;
-        match is_empty {
-            true => started,
-            false => Ok(()),
+        match has_takers {
+            true => Ok(()),
+            false => started,
         }
     }
 
@@ -976,9 +997,25 @@ impl Crew {
             }
         }
     }
+
+    /// Makes every member free its VM and end its thread, and waits until they have. Nothing is being linted anymore,
+    /// and nothing will be: a later request for a VM fails. Members that [`Crew::end_all`] has already ended keep
+    /// their VM.
+    fn free_all(&self) {
+        let mut state = self.state.lock();
+        state.is_released = true;
+        for member in state.all.iter_mut() {
+            member.is_freed = true;
+        }
+        self.is_posted.notify_all();
+        while state.all.iter().any(|it| !it.is_gone) {
+            self.is_over.wait_guarded(&mut state);
+        }
+    }
 }
 
-/// The VMs of a run.
+/// The VMs of a run. A process can have several, one after the other or at once, each with threads of its own; what
+/// JSC needs once per process is in [`START`].
 #[derive(Default)]
 pub(crate) struct Engines(Arc<Crew>);
 
@@ -986,6 +1023,12 @@ impl Engines {
     /// Runs the `exit` handlers of every VM. Nothing is being linted anymore.
     pub(crate) fn end_all(&self) {
         self.0.end_all();
+    }
+
+    /// Frees every VM and ends its thread. Nothing is being linted anymore, and nothing more will be: this is for a
+    /// run that is over while the process goes on.
+    pub(crate) fn free_all(&self) {
+        self.0.free_all();
     }
 }
 
@@ -1043,7 +1086,7 @@ impl Engine for Engines {
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {
-        self.0.start.expect(&self.0.demand, size, most);
+        START.expect(&self.0.demand, size, most);
     }
 }
 

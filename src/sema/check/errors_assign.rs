@@ -1312,7 +1312,8 @@ impl Checker<'_, '_> {
         if self.try_is_type_related_to(source, target, Relation::Assignable, false) == Ok(true) {
             return true;
         }
-        if error_node.is_none() {
+        // Nothing a discarded task reports is kept.
+        if error_node.is_none() || self.task.was_discarded() {
             return false;
         }
         let output = diagnostic_output.as_deref_mut();

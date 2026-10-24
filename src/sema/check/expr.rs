@@ -771,17 +771,20 @@ impl<'p, 's> Checker<'p, 's> {
         let is_pushed_with_type_variables = |info: &&ContextualInfo| {
             info.file == file && info.t.is_some_and(|t| self.has_type_variables(t))
         };
-        let pushed_with_type_variables: SmallVec<[ExprId; 4]> = (self.contextual.iter())
+        let mut pushed_with_type_variables: SmallVec<[ExprId; 4]> = (self.contextual.iter())
             .filter(is_pushed_with_type_variables)
             .map(|info| info.node)
             .collect();
+        pushed_with_type_variables.sort_unstable();
+        let mut levels = 0;
         loop {
             // `isValidConstAssertionArgument`. The contextual type isn't requested for anything
             // else.
             if self.is_valid_const_assertion_argument(file, top) {
                 highest = top;
-                may_be_expected |= pushed_with_type_variables.contains(&top);
+                may_be_expected |= pushed_with_type_variables.binary_search(&top).is_ok();
             }
+            levels += 1;
             top = match self.const_context_parent(file, top) {
                 ControlFlow::Continue(outer) => outer,
                 ControlFlow::Break(true) => return true,
@@ -796,10 +799,20 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
+        // A literal that's being checked has its contextual type on the stack. `find_contextual_node` searches the
+        // stack, which is as deep as the literals nest, and here it would do so for every level.
+        let mut pushed = crate::util::FxHashMap::default();
+        if levels > 16 && !self.hir(file).is_in_with(self.hir(file)[e].pos) {
+            let of_file = self.contextual.iter().filter(|info| info.file == file);
+            pushed.extend(of_file.rev().map(|info| (info.node, info.t)));
+        }
         let mut at = e;
         loop {
             if self.is_valid_const_assertion_argument(file, at) {
-                let expected = self.contextual_type(file, at, ContextFlags::empty());
+                let expected = match pushed.get(&at) {
+                    Some(&expected) => expected,
+                    None => self.contextual_type(file, at, ContextFlags::empty()),
+                };
                 if expected.is_some_and(|c| self.is_const_type_variable(c, 0)) {
                     return true;
                 }

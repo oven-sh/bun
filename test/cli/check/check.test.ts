@@ -31110,6 +31110,17 @@ describe.concurrent("--check", () => {
       ],
       ["nested object literals", size, n => `export const r = ${repeat("{ a: ", n)}1${repeat(" }", n)};`],
       [
+        // Past 100 levels, the comparison of the argument with the parameter's type is cut short. And every literal
+        // asks whether it's in a `const` context, which depends on the literals around it.
+        "nested object literals as the argument of a generic call",
+        isDebug || isASAN ? 50 : 1200,
+        n =>
+          `declare function f<T>(x: T): T;\nexport const r = f(${repeat(
+            "{ b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, h: 7, i: 8, a: ",
+            n,
+          )}0${repeat(" }", n)});`,
+      ],
+      [
         // Reachability of the function's end is computed from the end, and the walk back is as long as the function.
         "thousands of `if` statements that return",
         isDebug || isASAN ? 10_000 : 20_000,

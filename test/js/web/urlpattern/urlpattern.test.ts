@@ -262,4 +262,23 @@ describe("URLPattern", () => {
       exitCode: 0,
     });
   });
+
+  // A quantifier count that no string can satisfy is valid. That part of the group never matches, the
+  // rest of it does. JavaScriptCore refused such a group, at creation or at the first match.
+  describe("regexp group that needs more input than a string can hold", () => {
+    test.each([
+      ["(?:z)?x{4294967295}", "zx", false],
+      ["a{4294967295}b", "ab", false],
+      ["c|a{4294967295}b", "c", true],
+      ["(?<!a{4294967295})b", "b", true],
+    ])("pathname /(%s) on /%s", (group, segment, matches) => {
+      const url = `https://example.com/${segment}`;
+      const first = new URLPattern({ pathname: `/(${group})` });
+      expect(first.test(url)).toBe(matches);
+      // The same group again: JavaScriptCore gives the second pattern the RegExp that ran the match above.
+      // With the SyntaxError of a refused match in that RegExp, this pattern could not be created.
+      const second = new URLPattern({ pathname: `/(${group})` });
+      expect(second.exec(url)?.pathname.groups).toEqual(matches ? { "0": segment } : undefined);
+    });
+  });
 });

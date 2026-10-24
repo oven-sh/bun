@@ -70,6 +70,28 @@ describe("bundler", () => {
       stdout: "HELLO WORLD",
     },
   });
+  // The bundler compiles a filter by itself, from the source of the RegExp. A count that no path is long enough
+  // for is valid there too: that alternative never matches, and the other one selects the file.
+  for (const [id, source] of [
+    ["plugin/LoadFilterUnmatchableFirstAlternative", "(?:z)?x{4294967295}|\\.magic$"],
+    ["plugin/LoadFilterUnmatchableLastAlternative", "\\.magic$|a{4294967295}b"],
+  ]) {
+    itBundled(id, {
+      files: loadFixture,
+      plugins(builder) {
+        builder.onLoad({ filter: new RegExp(source) }, async args => {
+          const text = await Bun.file(args.path).text();
+          return {
+            contents: `export const foo = ${JSON.stringify(text.toUpperCase())};`,
+            loader: "ts",
+          };
+        });
+      },
+      run: {
+        stdout: "HELLO WORLD",
+      },
+    });
+  }
 
   itBundled("plugin/LoadXmlLoader", {
     files: {

@@ -1318,6 +1318,14 @@ pub struct Store {
 }
 
 #[cfg(not(windows))]
+impl Drop for Store {
+    fn drop(&mut self) {
+        // A parked poll has no other owner, and its loop dispatches no ready event after this.
+        self.process_deferred_frees();
+    }
+}
+
+#[cfg(not(windows))]
 impl Store {
     pub fn init() -> Store {
         Store {

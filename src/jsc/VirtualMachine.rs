@@ -5722,6 +5722,9 @@ impl VirtualMachine {
             );
             drop(rare);
         }
+        // The slot's ctx was the poll store that `rare` owned.
+        self.after_event_loop_callback = None;
+        self.after_event_loop_callback_ctx = None;
 
         // Drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.

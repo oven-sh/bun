@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -331,3 +331,39 @@ it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number us
     exitCode: 0,
   });
 });
+
+// A poll that a loop has watched goes back to the VM's pool from a list, which the thread's loop empties each time it
+// turns. spawnSync waits on a loop of its own, so the polls of these calls (two pipes and the process each) stay on
+// the list, and past the pool's 128 slots a poll is a heap allocation that only the list names. The pool was freed
+// with the VM and the list was not. LeakSanitizer reports that on the ASAN lane. The calls are made in a callback
+// because leaksan.supp hides what module evaluation allocates.
+it.skipIf(!isASAN || isWindows)(
+  "polls left by spawnSync are freed when a VM ends before its loop turns",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        setImmediate(() => {
+          for (let i = 0; i < 70; i++) Bun.spawnSync({ cmd: ["true"], stdio: ["ignore", "pipe", "pipe"] });
+          console.log("ok");
+          process.exit(0);
+        });
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  // When there is a leak, LeakSanitizer symbolizes its report, which alone can take longer than the default timeout.
+  60_000,
+);

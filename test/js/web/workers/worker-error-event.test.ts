@@ -282,4 +282,47 @@ describe("Worker 'error' event", () => {
     expect(output).toContain("(fail) a worker runs");
     expect(exitCode).toBe(1);
   });
+
+  // The test runner takes the uncaught errors of the thread that runs the tests. A worker keeps its
+  // own process listeners and its exit code, as under bun run.
+  test("under bun test, a worker handles its own errors as it does under bun run", async () => {
+    using dir = tempDir("worker-error-bun-test-own", {
+      "takes-exception.mjs": `
+        process.on("uncaughtException", err => { postMessage("took " + err.message); setTimeout(() => postMessage("alive"), 1); });
+        setTimeout(() => { throw new Error("THROWN") }, 1);`,
+      "takes-rejection.mjs": `
+        const keep = setInterval(() => {}, 1000);
+        process.on("unhandledRejection", err => { clearInterval(keep); postMessage("took " + err.message); setTimeout(() => postMessage("alive"), 1); });
+        setTimeout(() => { Promise.reject(new Error("REJECTED")) }, 1);`,
+      "dies.mjs": `setTimeout(() => { throw new Error("NOBODY") }, 1);`,
+      "worker.test.ts": `
+        import { test } from "bun:test";
+        test.each([["takes-exception", false], ["takes-rejection", false], ["dies", true]])("%s", async (name, listen) => {
+          const worker = new Worker(new URL("./" + name + ".mjs", import.meta.url));
+          const seen = { name, messages: [], errors: 0 };
+          worker.onmessage = event => seen.messages.push(event.data);
+          if (listen) worker.addEventListener("error", () => seen.errors++);
+          seen.close = await new Promise(resolve => worker.addEventListener("close", event => resolve(event.code)));
+          console.log(JSON.stringify(seen));
+        });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./worker.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const seen = (stdout + stderr)
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line));
+    expect(seen).toEqual([
+      { name: "takes-exception", messages: ["took THROWN", "alive"], errors: 0, close: 0 },
+      { name: "takes-rejection", messages: ["took REJECTED", "alive"], errors: 0, close: 0 },
+      { name: "dies", messages: [], errors: 1, close: 1 },
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });

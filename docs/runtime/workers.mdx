@@ -141,6 +141,8 @@ worker.addEventListener("error", event => {
 
 Register an `"error"` listener on every `Worker`. If the event fires and no listener receives it, Bun reports the error as an uncaught error of the thread that created the worker: Bun calls that thread's `process.on("uncaughtException")` listeners, or prints the error and exits with code 1. If that thread is itself a worker, the report repeats one level up.
 
+A `"close"` listener does not take the place of an `"error"` listener. When Bun prints the error and exits, it does not wait for the `"close"` event of the worker.
+
 A listener takes the error whether or not it calls `event.preventDefault()`. An `"error"` listener on the worker's own global scope (`self.addEventListener("error", ...)` or `self.onerror`) also takes it. Bun drops an error that arrives after `worker.terminate()`.
 
 ## Messages with `postMessage`

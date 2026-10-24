@@ -2160,7 +2160,8 @@ impl VirtualMachine {
             return true;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        // The test runner takes the errors of the thread that runs the tests. A worker keeps its own.
+        if self.is_main_thread() && isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, err);
             return true;
@@ -4500,7 +4501,7 @@ impl VirtualMachine {
             return;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        if self.is_main_thread() && isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;

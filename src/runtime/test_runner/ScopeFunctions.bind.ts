@@ -35,11 +35,13 @@ export const DescriptionOrCallback = b.union({
   number: b.f64,
   other: b.any,
 });
+/** `parse_arguments` throws for `other`, because its error message names the function that was called. */
 export const CallbackOrOptions = b.union({
   none: b.null,
   callback: b.callable,
   timeout: b.f64,
   options: BunTestOptions,
+  other: b.any,
 });
 
 /**
@@ -50,10 +52,6 @@ export const callAsFunction = b.fn({
   export: "Bun__ScopeFunctions__callAsFunction",
   passThis: true,
   args: { first: DescriptionOrCallback.withValue, second: CallbackOrOptions, third: CallbackOrOptions },
-  expected: {
-    second: "The second argument must be a function, number, or object",
-    third: "The third argument must be a function, number, or object",
-  },
   capability: "js",
   throws: true,
 });

@@ -52,18 +52,11 @@ export const getState = b.fn({ ...ofContext("getState"), returns: b.any });
 export const setState = b.fn({ ...ofContext("setState"), args: { state: b.any } });
 /** `skip(note?)` or `skip(condition, note?)` */
 export const skip = b.fn({ ...ofContext("skip"), args: { condition: b.any, note: b.any } });
-/** Takes what a hook does. */
-const deferred = (name: string) =>
-  b.fn({
-    ...ofContext(name),
-    args: { first: DescriptionOrCallback, second: CallbackOrOptions, third: CallbackOrOptions },
-    expected: {
-      second: `${name}() expects a number or object as the second argument`,
-      third: `${name}() expects a number or object as the third argument`,
-    },
-  });
-export const onTestFinished = deferred("onTestFinished");
-export const onTestFailed = deferred("onTestFailed");
+/** `onTestFinished` and `onTestFailed` are both bound to this, with `onlyIfFailed` as the first argument. The other arguments are a hook's. */
+export const deferHook = b.fn({
+  ...ofContext("deferHook"),
+  args: { onlyIfFailed: b.bool, first: DescriptionOrCallback, second: CallbackOrOptions, third: CallbackOrOptions },
+});
 /** `annotate(message, type?, attachment?)` or `annotate(message, attachment?)` */
 export const annotate = b.fn({
   ...ofContext("annotate"),

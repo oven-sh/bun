@@ -14,7 +14,7 @@ use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::CommandLineReporter;
 use crate::generated_bindgen::bun_test::{
-    Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
+    Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
 use super::execution::TimespecExt as _;
 use super::test_context::{self, Deferred, TestContext};
@@ -418,37 +418,51 @@ pub(crate) mod js_fns {
         result
     }
 
-    /// One for each hook of `BunTest.bind.ts`.
-    pub(crate) mod generic_hook {
-        use super::*;
-        macro_rules! hook {
-            ($name:ident, $tag:ident, $flavor:ident) => {
-                pub(crate) fn $name<'a>(
-                    cx: &mut JsScope<'a>,
-                    this_value: JsLocal<'a>,
-                    first: DescriptionOrCallback<'a>,
-                    second: CallbackOrOptions<'a>,
-                    third: CallbackOrOptions<'a>,
-                ) -> JsResult<()> {
-                    super::generic_hook_impl(GenericHookTag::$tag, Flavor::$flavor, cx.global(), this_value, first, second, third)
-                }
-            };
+    /// Indexed by discriminant.
+    const TAGS: [GenericHookTag; 8] = [
+        GenericHookTag::BeforeAll,
+        GenericHookTag::BeforeEach,
+        GenericHookTag::AfterEach,
+        GenericHookTag::AfterAll,
+        GenericHookTag::AroundEach,
+        GenericHookTag::AroundAll,
+        GenericHookTag::OnTestFinished,
+        GenericHookTag::OnTestFailed,
+    ];
+
+    /// Every hook is `hook()` with its first argument bound. A separate native function per hook added 42 KB.
+    pub(crate) fn create_hook(
+        global_this: &JSGlobalObject,
+        tag: GenericHookTag,
+        flavor: Flavor,
+        this_value: JSValue,
+    ) -> JsResult<JSValue> {
+        unsafe extern "C" {
+            safe fn Bun__JSBoundFunction__setName(bound_function: JSValue, global: &JSGlobalObject, name: &bun_core::String);
         }
-        hook!(before_all, BeforeAll, Jest);
-        hook!(before_each, BeforeEach, Jest);
-        hook!(after_each, AfterEach, Jest);
-        hook!(after_all, AfterAll, Jest);
-        hook!(around_each, AroundEach, Jest);
-        hook!(around_all, AroundAll, Jest);
-        hook!(on_test_finished, OnTestFinished, Jest);
-        hook!(vitest_before_all, BeforeAll, Vitest);
-        hook!(vitest_before_each, BeforeEach, Vitest);
-        hook!(vitest_after_each, AfterEach, Vitest);
-        hook!(vitest_after_all, AfterAll, Vitest);
-        hook!(vitest_around_each, AroundEach, Vitest);
-        hook!(vitest_around_all, AroundAll, Vitest);
-        hook!(vitest_on_test_finished, OnTestFinished, Vitest);
-        hook!(vitest_on_test_failed, OnTestFailed, Vitest);
+        let name: &'static str = tag.into();
+        let name_string = bun_core::String::static_(name);
+        let hook = jsc::JSFunction::create(global_this, name, Bun__BunTest__hook, 1, Default::default()).bind(
+            global_this,
+            this_value,
+            &name_string,
+            1.0,
+            &[JSValue::js_number_from_int32(tag as i32 * 2 + flavor as i32)],
+        )?;
+        Bun__JSBoundFunction__setName(hook, global_this, &name_string);
+        Ok(hook)
+    }
+
+    pub(crate) fn hook<'a>(
+        cx: &mut JsScope<'a>,
+        this_value: JsLocal<'a>,
+        hook: u8,
+        first: DescriptionOrCallback<'a>,
+        second: CallbackOrOptions<'a>,
+        third: CallbackOrOptions<'a>,
+    ) -> JsResult<()> {
+        let flavor = if hook % 2 == 0 { Flavor::Jest } else { Flavor::Vitest };
+        generic_hook_impl(TAGS[usize::from(hook / 2)], flavor, cx.global(), this_value, first, second, third)
     }
 }
 

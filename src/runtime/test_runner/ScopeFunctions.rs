@@ -6,13 +6,12 @@ use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
-use crate::generated_bindgen::bun_test as generic_hook;
 use crate::generated_bindgen::jest::js_ScopeFunctions as js;
 use crate::generated_bindgen::scope_functions::{
     Bun__ScopeFunctions__callAsFunction, CallbackOrOptions, DescriptionOrCallback, Retry,
 };
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, Calling, DescribeScope, Flavor};
-use crate::test_runner::bun_test::js_fns::Signature;
+use crate::test_runner::bun_test::js_fns::{GenericHookTag, Signature, create_hook};
 use crate::test_runner::test_context;
 use crate::test_runner::test_context_fixtures::TestFixtures;
 use crate::test_runner::test_context_parameter::{ContextParameter, SharedContextParameter};
@@ -204,34 +203,30 @@ impl ScopeFunctions {
         TestFixtures::define(global, arguments, signature, self.fixtures, active_scope, is_top_level, is_override)
     }
 
-    fn hook(&self, global: &JSGlobalObject, name: &'static str, jest: bun_jsc::JSHostFn, vitest: bun_jsc::JSHostFn) -> JsResult<JSValue> {
+    fn hook(&self, global: &JSGlobalObject, tag: GenericHookTag) -> JsResult<JSValue> {
         if self.mode == Mode::Describe {
             return Ok(JSValue::UNDEFINED);
         }
-        let hook = if self.cfg.flavor == Flavor::Vitest { vitest } else { jest };
-        let hook = bun_jsc::JSFunction::create(global, name, hook, 1, Default::default());
-        if self.fixtures.is_empty() {
-            return Ok(hook);
-        }
-        JSValueTestExt::bind(hook, global, self.fixtures, &BunString::static_(name), 1.0, &[])
+        let this_value = if self.fixtures.is_empty() { JSValue::UNDEFINED } else { self.fixtures };
+        create_hook(global, tag, self.cfg.flavor, this_value)
     }
     pub(crate) fn get_before_all(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "beforeAll", generic_hook::Bun__BunTest__beforeAll, generic_hook::Bun__BunTest__vitestBeforeAll)
+        self.hook(cx.global(), GenericHookTag::BeforeAll)
     }
     pub(crate) fn get_before_each(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "beforeEach", generic_hook::Bun__BunTest__beforeEach, generic_hook::Bun__BunTest__vitestBeforeEach)
+        self.hook(cx.global(), GenericHookTag::BeforeEach)
     }
     pub(crate) fn get_after_each(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "afterEach", generic_hook::Bun__BunTest__afterEach, generic_hook::Bun__BunTest__vitestAfterEach)
+        self.hook(cx.global(), GenericHookTag::AfterEach)
     }
     pub(crate) fn get_after_all(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "afterAll", generic_hook::Bun__BunTest__afterAll, generic_hook::Bun__BunTest__vitestAfterAll)
+        self.hook(cx.global(), GenericHookTag::AfterAll)
     }
     pub(crate) fn get_around_each(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "aroundEach", generic_hook::Bun__BunTest__aroundEach, generic_hook::Bun__BunTest__vitestAroundEach)
+        self.hook(cx.global(), GenericHookTag::AroundEach)
     }
     pub(crate) fn get_around_all(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "aroundAll", generic_hook::Bun__BunTest__aroundAll, generic_hook::Bun__BunTest__vitestAroundAll)
+        self.hook(cx.global(), GenericHookTag::AroundAll)
     }
     pub(crate) fn get_describe(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         if self.mode == Mode::Describe {
@@ -911,6 +906,16 @@ pub(crate) fn parse_arguments<'a>(
         });
     }
 
+    for (argument, ordinal) in [(&second, "second"), (&third, "third")] {
+        if matches!(argument, CallbackOrOptions::Other(_)) {
+            return Err(if cfg.kind == FunctionKind::TestOrDescribe {
+                global.throw_invalid_arguments(format_args!("The {} argument must be a function, number, or object", ordinal))
+            } else {
+                global.throw_invalid_arguments(format_args!("{} expects a number or object as the {} argument", signature, ordinal))
+            });
+        }
+    }
+
     let mut is_first_the_name = !matches!((&second, &third), (CallbackOrOptions::None, CallbackOrOptions::None));
     let (description, callback, options) = match (first, second, third) {
         // callback
@@ -960,7 +965,7 @@ pub(crate) fn parse_arguments<'a>(
     let mut shuffle_option: Option<bool> = None;
 
     match options {
-        CallbackOrOptions::None => {}
+        CallbackOrOptions::None | CallbackOrOptions::Other(_) => {}
         CallbackOrOptions::Timeout(timeout) => timeout_option = Some(timeout),
         CallbackOrOptions::Callback(_) => {
             return Err(global.throw(format_args!(

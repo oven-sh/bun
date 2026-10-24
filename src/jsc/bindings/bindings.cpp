@@ -7031,6 +7031,17 @@ CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JSValue__bind(JS
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(boundFunction));
 }
 
+// JSC names a bound function "bound " + name.
+extern "C" void Bun__JSBoundFunction__setName(JSC::EncodedJSValue boundFunction, JSC::JSGlobalObject* globalObject, const BunString* name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* object = JSC::JSValue::decode(boundFunction).getObject();
+    JSC::PropertyDescriptor descriptor(JSC::jsString(vm, name->toWTFString()), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+    object->methodTable()->defineOwnProperty(object, globalObject, vm.propertyNames->name, descriptor, false);
+    scope.assertNoException();
+}
+
 CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JSBoundFunction__boundThis(JSC::EncodedJSValue value)
 {
     auto* boundFunction = dynamicDowncast<JSC::JSBoundFunction>(JSC::JSValue::decode(value));

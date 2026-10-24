@@ -16,7 +16,6 @@ use bun_jsc::{
 use crate::timer::ElTimespec;
 
 pub(crate) use super::bun_test;
-use crate::generated_bindgen::bun_test as generic_hook;
 use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
 use crate::generated_bindgen::jest::{Bun__Jest__returnUndefined, Bun__Jest__setDefaultTimeout};
 use super::pretty_format::{self, JestPrettyFormat};
@@ -24,6 +23,7 @@ use super::scope_functions::{create_bound, Mode as ScopeKind, ScopeFunctions};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
 use super::{vi_utils, vi_wait};
+use bun_test::js_fns::{GenericHookTag, create_hook};
 use bun_test::{BaseScopeCfg, Flavor, RefDataValue, ScopeMode};
 
 #[derive(Default)]
@@ -434,28 +434,17 @@ pub(crate) mod Jest {
         let xdescribe_scope_functions = scope_functions(ScopeKind::Describe, ScopeMode::Skip, "xdescribe")?;
         module.put(global_object, b"xdescribe", xdescribe_scope_functions);
 
-        let hooks: [(&'static str, jsc::JSHostFn); 7] = match flavor {
-            Flavor::Jest => [
-                ("beforeEach", generic_hook::Bun__BunTest__beforeEach),
-                ("beforeAll", generic_hook::Bun__BunTest__beforeAll),
-                ("afterAll", generic_hook::Bun__BunTest__afterAll),
-                ("afterEach", generic_hook::Bun__BunTest__afterEach),
-                ("aroundEach", generic_hook::Bun__BunTest__aroundEach),
-                ("aroundAll", generic_hook::Bun__BunTest__aroundAll),
-                ("onTestFinished", generic_hook::Bun__BunTest__onTestFinished),
-            ],
-            Flavor::Vitest => [
-                ("beforeEach", generic_hook::Bun__BunTest__vitestBeforeEach),
-                ("beforeAll", generic_hook::Bun__BunTest__vitestBeforeAll),
-                ("afterAll", generic_hook::Bun__BunTest__vitestAfterAll),
-                ("afterEach", generic_hook::Bun__BunTest__vitestAfterEach),
-                ("aroundEach", generic_hook::Bun__BunTest__vitestAroundEach),
-                ("aroundAll", generic_hook::Bun__BunTest__vitestAroundAll),
-                ("onTestFinished", generic_hook::Bun__BunTest__vitestOnTestFinished),
-            ],
-        };
-        for (name, hook) in hooks {
-            module.put(global_object, name, jsc::JSFunction::create(global_object, name, hook, 1, Default::default()));
+        for tag in [
+            GenericHookTag::BeforeEach,
+            GenericHookTag::BeforeAll,
+            GenericHookTag::AfterAll,
+            GenericHookTag::AfterEach,
+            GenericHookTag::AroundEach,
+            GenericHookTag::AroundAll,
+            GenericHookTag::OnTestFinished,
+        ] {
+            let name: &'static str = tag.into();
+            module.put(global_object, name, create_hook(global_object, tag, flavor, JSValue::UNDEFINED)?);
         }
 
         match flavor {
@@ -473,7 +462,7 @@ pub(crate) mod Jest {
                 module.put(
                     global_object,
                     b"onTestFailed",
-                    jsc::JSFunction::create(global_object, "onTestFailed", generic_hook::Bun__BunTest__vitestOnTestFailed, 1, Default::default()),
+                    create_hook(global_object, GenericHookTag::OnTestFailed, flavor, JSValue::UNDEFINED)?,
                 );
                 module.put(global_object, b"suite", describe_scope_functions);
                 module.put(global_object, b"TestRunner", crate::test_runner::test_context::create_test_runner(global_object));

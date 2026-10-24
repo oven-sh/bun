@@ -326,15 +326,30 @@ impl TestContext {
     }
 
     pub(crate) fn get_on_test_finished(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        bound(cx.global(), this_value.to_js(), "onTestFinished", 2, generated::Bun__TestContext__onTestFinished)
+        Self::defer_hook_function(cx.global(), this_value.to_js(), "onTestFinished", false)
     }
 
     pub(crate) fn get_on_test_failed(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        bound(cx.global(), this_value.to_js(), "onTestFailed", 2, generated::Bun__TestContext__onTestFailed)
+        Self::defer_hook_function(cx.global(), this_value.to_js(), "onTestFailed", true)
     }
 
     pub(crate) fn get_annotate(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         bound(cx.global(), this_value.to_js(), "annotate", 3, generated::Bun__TestContext__annotate)
+    }
+
+    fn defer_hook_function(
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        name: &'static str,
+        only_if_failed: bool,
+    ) -> JsResult<JSValue> {
+        JSFunction::create(global, name, generated::Bun__TestContext__deferHook, 2, Default::default()).bind(
+            global,
+            this_value,
+            &BunString::static_(name),
+            2.0,
+            &[JSValue::from(only_if_failed)],
+        )
     }
 
     #[optimize(size)]
@@ -448,26 +463,20 @@ pub(crate) fn skip(
     Err(global.throw(format_args!("test is skipped; abort execution")))
 }
 
-pub(crate) fn on_test_finished<'a>(
+pub(crate) fn defer_hook<'a>(
     cx: &mut JsScope<'a>,
     this_value: JsLocal<'a>,
+    only_if_failed: bool,
     first: DescriptionOrCallback<'a>,
     second: CallbackOrOptions<'a>,
     third: CallbackOrOptions<'a>,
 ) -> JsResult<()> {
     let arguments = (first, second, third);
-    TestContext::defer_call(cx.global(), this_value, arguments, Deferred::OnTestFinished, "onTestFinished", b"onTestFinished()")
-}
-
-pub(crate) fn on_test_failed<'a>(
-    cx: &mut JsScope<'a>,
-    this_value: JsLocal<'a>,
-    first: DescriptionOrCallback<'a>,
-    second: CallbackOrOptions<'a>,
-    third: CallbackOrOptions<'a>,
-) -> JsResult<()> {
-    let arguments = (first, second, third);
-    TestContext::defer_call(cx.global(), this_value, arguments, Deferred::OnTestFailed, "onTestFailed", b"onTestFailed()")
+    if only_if_failed {
+        TestContext::defer_call(cx.global(), this_value, arguments, Deferred::OnTestFailed, "onTestFailed", b"onTestFailed()")
+    } else {
+        TestContext::defer_call(cx.global(), this_value, arguments, Deferred::OnTestFinished, "onTestFinished", b"onTestFinished()")
+    }
 }
 
 #[optimize(size)]

@@ -231,7 +231,9 @@ impl Watcher {
             return;
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.report_truncations(event_count);
+        if self.report_truncations(event_count) {
+            return;
+        }
         let events = &mut self.watch_events[..event_count];
         let changed = &self.changed_filepaths[..changed_count];
         WatcherTrace::write_events(&self.watchlist, events, changed);
@@ -239,9 +241,15 @@ impl Watcher {
     }
 
     /// kqueue reports a truncation as `NOTE_ATTRIB` alone, like `chmod`: a changed size is a write.
+    /// Returns true when it holds an event. The kqueue loop then ends the hold and dispatches again.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    fn report_truncations(&mut self, event_count: usize) {
+    fn report_truncations(&mut self, event_count: usize) -> bool {
+        let mut held = false;
         for event in &mut self.watch_events[..event_count] {
+            if event.size_check != SizeCheck::Due {
+                continue;
+            }
+            event.size_check = SizeCheck::Done;
             let index = event.index as usize;
             // `index` is the kevent's udata, which can outlive a `swap_remove` in `flush_evictions`.
             if index >= self.watchlist.len()
@@ -254,14 +262,19 @@ impl Watcher {
                 continue;
             };
             let sizes = self.watchlist.items_mut::<"size", u64>();
-            if sizes[index] != size {
-                sizes[index] = size;
-                // 0 is the `open(O_TRUNC)` of a save: its `write()` follows and is reported.
-                if size != 0 {
-                    event.op |= Op::WRITE;
-                }
+            if sizes[index] == size {
+                continue;
             }
+            // A save that empties the file, or the `open(O_TRUNC)` of a save in place before its `write()`.
+            if size == 0 && !event.op.intersects(Op::WRITE | Op::DELETE | Op::RENAME) {
+                event.size_check = SizeCheck::Held;
+                held = true;
+                continue;
+            }
+            sizes[index] = size;
+            event.op |= Op::WRITE;
         }
+        held
     }
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
@@ -1041,6 +1054,22 @@ pub struct WatchEvent {
     pub op: Op,
     pub(crate) name_off: u8,
     pub(crate) name_len: u8,
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub(crate) size_check: SizeCheck,
+}
+
+const _: () = assert!(size_of::<WatchEvent>() == 8);
+
+/// What `Watcher::report_truncations` did with a kqueue event.
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum SizeCheck {
+    /// It did not compare the size of the file yet.
+    #[default]
+    Due,
+    /// The file is empty and the event has no write: it waits for the write of a save in place.
+    Held,
+    Done,
 }
 
 impl WatchEvent {
@@ -1122,7 +1151,7 @@ pub struct WatchItem {
     pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
-    /// The size of the file at the last read, or 0 when the first read failed. See `Watcher::report_truncations`.
+    /// The size of the file when it was added, then at each reported change. 0 when the first read failed. See `Watcher::report_truncations`.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub size: u64,
 }

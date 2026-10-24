@@ -3414,14 +3414,14 @@ private:
 
     JSValue readHistogram()
     {
-        VM& vm = m_lexicalGlobalObject->vm();
+        VM& vm = m_globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         uint64_t id;
         if (!read(id)) {
             fail();
             return JSValue();
         }
-        JSValue histogram = JSValue::decode(Histogram__fromStructuredClone(m_lexicalGlobalObject, id));
+        JSValue histogram = JSValue::decode(Histogram__fromStructuredClone(m_globalObject, id));
         RETURN_IF_EXCEPTION(scope, JSValue());
         // Empty: no message in flight has this id.
         if (histogram.isEmpty()) {
@@ -3429,7 +3429,7 @@ private:
             return JSValue();
         }
         // The classes are written in JavaScript.
-        auto* globalObject = defaultGlobalObject(m_lexicalGlobalObject);
+        auto* globalObject = defaultGlobalObject(m_globalObject);
         JSValue module = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalPerfHooksHistogram);
         RETURN_IF_EXCEPTION(scope, JSValue());
         JSValue adopt = module.get(globalObject, Identifier::fromString(vm, "adopt"_s));

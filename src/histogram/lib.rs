@@ -119,22 +119,31 @@ impl Histogram {
     /// Makes room for `index`, which is past the end of `counts`.
     #[cold]
     fn grow(&mut self, index: usize) {
-        // Twice as much as before, so that rising values do not copy the counts each time, but no slot that no value
-        // can reach.
+        /// 64 KiB of slots.
+        const LARGE: usize = 8192;
+        // Every slot that a value can reach.
         let whole = self.index_of(self.highest_trackable_value) + 1;
-        self.counts = self.copy_of_counts((index + 1).max(self.counts.len() * 2).min(whole));
+        // Twice as much as before, so that rising values do not copy the counts each time.
+        let len = (index + 1).max(self.counts.len() * 2);
+        // Memory that is not written to costs nothing (see `copy_of_counts`), so large counts grow only once.
+        let len = if len > LARGE { whole } else { len.min(whole) };
+        self.counts = self.copy_of_counts(len);
     }
 
     /// `len` is at least that of `counts`.
     fn copy_of_counts(&self, len: usize) -> Vec<u64> {
-        // The allocator has zeroed memory that the system only backs with pages once they are written to. So only
-        // the slots in use are written: the counts of a few values far apart take a few pages, however long they are.
+        // The allocator has zeroed memory that the system only backs with pages once they are written to. So no zero
+        // is written: the counts of a few values far apart take a few pages, however long they are.
         let mut counts = vec![0; len];
         let occupied = self.first..=self.last;
         if let (Some(to), Some(from)) =
             (counts.get_mut(occupied.clone()), self.counts.get(occupied))
         {
-            to.copy_from_slice(from);
+            for (to, &from) in to.iter_mut().zip(from) {
+                if from != 0 {
+                    *to = from;
+                }
+            }
         }
         counts
     }

@@ -82,17 +82,11 @@ pub(crate) mod fallbacks_gated {
         use css::css_values::color::ColorFallbackKind;
         use css::css_values::image::Image;
         // Determine what vendor prefixes and color fallbacks are needed.
-        // Unlike lightningcss, an unprefixed layer is rewritten by its own need, not by the union.
         let mut prefixes = css::VendorPrefix::default();
-        let mut unprefixed_needs = css::VendorPrefix::default();
         let mut fallbacks = ColorFallbackKind::default();
         let mut res: Vec<SmallList<T, 1>> = Vec::new();
         for item in this.slice() {
-            let need = item.get_image().get_necessary_prefixes(targets);
-            prefixes.insert(need);
-            if need.contains(css::VendorPrefix::NONE) {
-                unprefixed_needs.insert(need);
-            }
+            prefixes.insert(item.get_image().get_necessary_prefixes(targets));
             fallbacks.insert(item.get_necessary_fallbacks(targets));
         }
 
@@ -140,13 +134,22 @@ pub(crate) mod fallbacks_gated {
             alloc: &bun_alloc::Arena,
             targets: &css::targets::Targets,
         ) {
+            let mut changed = false;
             let mut images = SmallList::<T, 1>::init_capacity(pfi.len());
             for i in 0..pfi.len() {
                 let in_ = pfi.at(i);
                 let image = in_.get_image();
-                // A gradient with an author prefix takes this one too: the prefixed syntaxes match.
-                let rewrite = image.get_necessary_prefixes(targets).contains(prefix)
-                    || (matches!(image, Image::Gradient(_)) && image.has_vendor_prefix());
+                let need = image.get_necessary_prefixes(targets);
+                // lightningcss prefixes every layer, but `-webkit-radial-gradient(circle at 0 0, ..)` is invalid.
+                let rewrite = need.contains(prefix)
+                    || match image {
+                        // Another vendor's prefix makes the declaration invalid, and the prefixed syntaxes match.
+                        Image::Gradient(_) => !need.contains(css::VendorPrefix::NONE),
+                        // No browser that uses a `-webkit-` declaration has the unprefixed `image-set()` (target Chrome 20).
+                        Image::ImageSet(_) => prefix == css::VendorPrefix::WEBKIT,
+                        _ => false,
+                    };
+                changed |= rewrite && image.get_vendor_prefix() != prefix;
                 let image = if rewrite {
                     image.get_prefixed(alloc, prefix)
                 } else {
@@ -154,15 +157,18 @@ pub(crate) mod fallbacks_gated {
                 };
                 images.append(in_.with_image(alloc, image));
             }
-            r.push(images);
+            if changed {
+                r.push(images);
+            }
         }
 
+        let first_prefixed = res.len();
         for prefix in [
             css::VendorPrefix::WEBKIT,
             css::VendorPrefix::MOZ,
             css::VendorPrefix::O,
         ] {
-            if unprefixed_needs.contains(prefix) {
+            if prefixes.contains(prefix) {
                 prefix_helper(prefix, prefix_images, &mut res, arena, targets);
             }
         }
@@ -190,8 +196,13 @@ pub(crate) mod fallbacks_gated {
                     drop(old);
                 }
             }
+        } else if res.len() > first_prefixed
+            && let Some(the_last) = res.pop()
+        {
+            // The written list mixes the functions of two vendors, so the last prefixed list replaces it.
+            *this = the_last;
         } else if let Some(r) = rgb {
-            // Every layer has an author prefix, and prefixed properties only support RGB.
+            // Every layer has the same author prefix, and prefixed properties only support RGB.
             *this = r;
         }
         res

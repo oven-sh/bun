@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
@@ -3420,8 +3421,8 @@ describe("css tests", () => {
       },
     );
 
-    // A fallback declaration for a vendor prefix leaves an unprefixed layer alone when that layer
-    // does not need the prefix.
+    // A fallback declaration for a vendor prefix leaves an unprefixed gradient alone when that
+    // gradient does not need the prefix.
     describe("vendor prefixes of an image layer list", () => {
       // The targets of `bun build` for the browser.
       const defaults = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
@@ -3434,6 +3435,17 @@ describe("css tests", () => {
           .foo {
             background-image: radial-gradient(circle at 0 0, red, #00f), -webkit-image-set(url("a.png") 1x);
             background-image: radial-gradient(circle at 0 0, red, #00f), image-set("a.png" 1x);
+          }
+        `,
+        defaults,
+      );
+      // The 2011 grammar has no color hint either.
+      prefix_test(
+        `.foo { background-image: linear-gradient(red, 30%, blue), image-set("a.png" 1x) }`,
+        indoc`
+          .foo {
+            background-image: linear-gradient(red, 30%, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: linear-gradient(red, 30%, #00f), image-set("a.png" 1x);
           }
         `,
         defaults,
@@ -3584,32 +3596,59 @@ describe("css tests", () => {
         `,
         defaults,
       );
-      prefix_test(
-        `.foo { background-image: -webkit-linear-gradient(left, red, blue), -moz-linear-gradient(left, red, blue) }`,
-        indoc`
-          .foo {
-            background-image: -webkit-linear-gradient(left, red, #00f), -moz-linear-gradient(left, red, #00f);
-          }
-        `,
-        defaults,
-      );
+      // Author prefixes of two kinds: each prefix still gets a declaration in which every gradient
+      // has it. Without an unprefixed layer, the last one replaces the written list.
       prefix_test(
         `.foo { background-image: -webkit-linear-gradient(left, lab(50% 20 30), blue), -moz-linear-gradient(left, red, blue) }`,
         indoc`
           .foo {
-            background-image: -webkit-linear-gradient(left, #a16945, #00f), -moz-linear-gradient(left, red, #00f);
+            background-image: -webkit-linear-gradient(left, #a16945, #00f), -webkit-linear-gradient(left, red, #00f);
+            background-image: -moz-linear-gradient(left, #a16945, #00f), -moz-linear-gradient(left, red, #00f);
           }
         `,
         defaults,
       );
-      // No targets, as in `bun build --target=bun`.
+      prefix_test(
+        `.foo { background-image: -webkit-linear-gradient(left, red, blue), -moz-linear-gradient(left, red, blue), url(a.png) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-linear-gradient(left, red, #00f), -webkit-linear-gradient(left, red, #00f), url("a.png");
+            background-image: -moz-linear-gradient(left, red, #00f), -moz-linear-gradient(left, red, #00f), url("a.png");
+            background-image: -webkit-linear-gradient(left, red, #00f), -moz-linear-gradient(left, red, #00f), url("a.png");
+          }
+        `,
+        defaults,
+      );
+      // No targets, as in `bun build --target=bun`. `image-set()` has no `-moz-` form.
       cssTest(
         `.foo { background-image: -moz-linear-gradient(left, red, blue), -webkit-image-set(url(a.png) 1x) }`,
         indoc`
           .foo {
-            background-image: -moz-linear-gradient(left, red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: -webkit-linear-gradient(left, red, #00f), -webkit-image-set(url("a.png") 1x);
           }
         `,
+      );
+      // A browser that uses a `-webkit-` declaration has no unprefixed `image-set()`. So that
+      // declaration has `-webkit-image-set()` with any targets, here with none.
+      cssTest(
+        `.foo { background-image: -webkit-linear-gradient(left, red, blue), image-set("a.png" 1x) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-linear-gradient(left, red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: -webkit-linear-gradient(left, red, #00f), image-set("a.png" 1x);
+          }
+        `,
+      );
+      // Chrome 20 has no `image-set()` in any form, so this target gives it no prefix.
+      prefix_test(
+        `.foo { background-image: linear-gradient(red, blue), image-set("a.png" 1x) }`,
+        indoc`
+          .foo {
+            background-image: -webkit-linear-gradient(red, #00f), -webkit-image-set(url("a.png") 1x);
+            background-image: linear-gradient(red, #00f), image-set("a.png" 1x);
+          }
+        `,
+        { chrome: 20 << 16 },
       );
 
       // The gradient needs all three prefixes. `image-set()` only has a `-webkit-` form.
@@ -3648,15 +3687,14 @@ describe("css tests", () => {
         { chrome: 25 << 16 },
       );
 
-      // Chrome 8 reads the `-webkit-gradient()` declaration. That declaration keeps a `-webkit-gradient()`
-      // that the author wrote, and leaves out a gradient that has no such form.
+      // Chrome 8 also gets a `-webkit-gradient()` declaration. The prefix rule does not apply to it.
       prefix_test(
-        `.foo { background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(blue)), radial-gradient(20px, red, blue) }`,
+        `.foo { background: linear-gradient(red, blue), image-set("a.png" 1x) gray }`,
         indoc`
           .foo {
-            background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)), -webkit-gradient(radial, center center, 0, center center, 20, from(red), to(#00f));
-            background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)), -webkit-radial-gradient(20px, red, #00f);
-            background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)), radial-gradient(20px, red, #00f);
+            background: -webkit-gradient(linear, 0 0, 0 100%, from(red), to(#00f)), gray image-set("a.png" 1x);
+            background: -webkit-linear-gradient(red, #00f), gray -webkit-image-set(url("a.png") 1x);
+            background: linear-gradient(red, #00f), gray image-set("a.png" 1x);
           }
         `,
         { chrome: 8 << 16 },
@@ -3706,6 +3744,77 @@ describe("css tests", () => {
         `,
         { chrome: 8 << 16, firefox: 4 << 16, opera: (11 << 16) | (5 << 8) },
       );
+
+      // Every pair of these layers: a generated declaration changes a layer, so none is printed twice.
+      const layers = [
+        `url(a.png)`,
+        `linear-gradient(to right, red, blue)`,
+        `radial-gradient(circle at top left, red, blue)`,
+        `conic-gradient(red, blue)`,
+        `linear-gradient(lab(50% 20 30), blue)`,
+        `image-set("a.png" 1x)`,
+        `-webkit-image-set(url(a.png) 1x)`,
+        `-webkit-linear-gradient(left, red, blue)`,
+        `-moz-linear-gradient(left, red, blue)`,
+        `-o-linear-gradient(left, red, blue)`,
+        `-webkit-gradient(linear, left top, left bottom, from(red), to(blue))`,
+      ];
+      for (const [name, targets] of [
+        ["the default targets", defaults],
+        ["targets that need three prefixes", { firefox: 15 << 16, chrome: 25 << 16, opera: 12 << 16 }],
+      ] as const) {
+        for (const property of ["background-image", "background"]) {
+          test(`${property} with ${name} prints no declaration twice and no -moz- or -o-image-set()`, () => {
+            const broken: string[] = [];
+            for (const first of layers) {
+              for (const second of layers) {
+                const output: string = cssInternals.prefixTest(
+                  `.foo { ${property}: ${first}, ${second} }`,
+                  "",
+                  targets,
+                );
+                const declarations = output.split("\n").filter(line => line.includes(`${property}:`));
+                if (
+                  declarations.length === 0 ||
+                  new Set(declarations).size !== declarations.length ||
+                  /-(moz|o)-image-set\(/.test(output)
+                ) {
+                  broken.push(output);
+                }
+              }
+            }
+            expect(broken).toEqual([]);
+          });
+        }
+      }
+
+      test("bun build keeps a gradient beside image-set() unprefixed", async () => {
+        const image = `"data:image/png;base64,AA=="`;
+        using dir = tempDir("css-image-layer-prefixes", {
+          "a.css": `a{background-image:radial-gradient(circle at top left,red,blue),image-set(${image} 1x)}`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "a.css", "--outdir=out"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const css = exitCode === 0 ? await Bun.file(join(String(dir), "out", "a.css")).text() : "";
+        expect({
+          css: css
+            .replace(/\/\*.*?\*\/\n/g, "")
+            .replace(/\s+/g, " ")
+            .trim(),
+          stderr,
+          exitCode,
+        }).toEqual({
+          css: `a { background-image: radial-gradient(circle at 0 0, red, #00f), -webkit-image-set(url(${image}) 1x); background-image: radial-gradient(circle at 0 0, red, #00f), image-set(${image} 1x); }`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 
@@ -5211,10 +5320,11 @@ describe("css tests", () => {
         { chrome: 8 << 16 },
       );
     }
-    // A layer list gets a prefixed copy when one of its unprefixed layers needs the prefix.
-    // Chrome 25 needs `-webkit-` for the gradient and for `image-set()`. These rows pin the
-    // direction of each layer of such a copy.
+    // A layer list gets a prefixed copy when one of its unprefixed layers needs the prefix, as
+    // the gradient and `image-set()` do with Chrome 25. A list in two author prefixes gets a copy
+    // per prefix with any targets. These rows pin the direction of each layer of such a copy.
     const chrome25 = { chrome: 25 << 16 };
+    const defaultTargets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
     prefix_test(
       `.foo { background-image: linear-gradient(red, blue), image-set("a.png" 1x) }`,
       `.foo {
@@ -5232,12 +5342,12 @@ describe("css tests", () => {
       chrome25,
     );
     prefix_test(
-      `.foo { background-image: -moz-linear-gradient(bottom, red, blue), linear-gradient(to right, yellow, green) }`,
+      `.foo { background-image: -moz-linear-gradient(bottom, red, blue), -webkit-linear-gradient(left, yellow, green) }`,
       `.foo {
         background-image: -webkit-linear-gradient(bottom, red, #00f), -webkit-linear-gradient(left, #ff0, green);
-        background-image: -moz-linear-gradient(bottom, red, #00f), linear-gradient(to right, #ff0, green);
+        background-image: -moz-linear-gradient(bottom, red, #00f), -moz-linear-gradient(left, #ff0, green);
       }`,
-      chrome25,
+      defaultTargets,
     );
     prefix_test(
       `.foo { background: -webkit-linear-gradient(left, red, blue), linear-gradient(to right, yellow, green) }`,

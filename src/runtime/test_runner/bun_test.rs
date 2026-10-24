@@ -900,7 +900,12 @@ impl BunTest {
     }
 
     pub(crate) fn add_result(&mut self, result: RefDataValue) {
-        let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
+        // Stamped here, not read in `Execution::step`: other callbacks may block before the queue is drained.
+        let arrived_at = match result {
+            RefDataValue::Execution { entry_data: Some(_), .. } => Timespec::now_force_real_time(),
+            _ => Timespec::EPOCH,
+        };
+        let _ = self.result_queue.write_item(QueuedResult { data: result, arrived_at }); // OOM/capacity: fire-and-forget
     }
 
     pub(crate) fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -935,8 +940,8 @@ impl BunTest {
             global_this.clear_termination_exception();
             // SAFETY: `UnsafeCell`-derived `*mut`; short-lived field read between re-entrant calls.
             let step_result: StepResult = match unsafe { (*this).phase } {
-                Phase::Collection => Collection::step(this_strong, global_this, &result)?,
-                Phase::Execution => Execution::Execution::step(this_strong, global_this, &result)?,
+                Phase::Collection => Collection::step(this_strong, global_this, &result.data)?,
+                Phase::Execution => Execution::Execution::step(this_strong, global_this, &result.data, result.arrived_at)?,
                 Phase::Done => StepResult::Complete,
             };
             match step_result {
@@ -1552,7 +1557,15 @@ pub enum HandleUncaughtExceptionResult {
     ShowUnhandledErrorInDescribe,
 }
 
-pub(crate) type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
+#[derive(Clone, Copy)]
+pub(crate) struct QueuedResult {
+    pub(crate) data: RefDataValue,
+    /// When `add_result` ran. `EPOCH` unless `data` is the completion of an entry.
+    pub(crate) arrived_at: Timespec,
+}
+const _: () = assert!(core::mem::size_of::<QueuedResult>() <= 56);
+
+pub(crate) type ResultQueue = LinearFifo<QueuedResult, bun_collections::linear_fifo::DynamicBuffer<QueuedResult>>;
 // bun.LinearFifo(.Dynamic) → second generic is the buffer strategy.
 
 pub(crate) enum StepResult {
@@ -1928,10 +1941,12 @@ impl ExecutionEntry {
         entry
     }
 
+    /// `callback_completed`: the callback already finished, so the missing-`done()` hint does not apply.
     pub(crate) fn evaluate_timeout(
         &self,
         sequence: &mut Execution::ExecutionSequence,
         now: &Timespec,
+        callback_completed: bool,
     ) -> bool {
         if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
             // timed out
@@ -1939,13 +1954,14 @@ impl ExecutionEntry {
             let is_test_entry = sequence
                 .test_entry
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
+            let waiting_for_done = self.has_done_parameter && !callback_completed;
             sequence.result = if is_test_entry {
-                if self.has_done_parameter {
+                if waiting_for_done {
                     Execution::Result::FailBecauseTimeoutWithDoneCallback
                 } else {
                     Execution::Result::FailBecauseTimeout
                 }
-            } else if self.has_done_parameter {
+            } else if waiting_for_done {
                 Execution::Result::FailBecauseHookTimeoutWithDoneCallback
             } else {
                 Execution::Result::FailBecauseHookTimeout

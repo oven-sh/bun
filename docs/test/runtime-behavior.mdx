@@ -48,6 +48,10 @@ TZ=America/New_York bun test
 
 Each test has a default timeout of 5000ms (5 seconds). Tests that exceed it fail.
 
+The timeout is wall-clock time from the moment the test starts. Bun does not interrupt JavaScript that is running. A test that blocks the thread past its timeout, for example with a busy loop or `Bun.sleepSync()`, runs until its callback returns, and then fails.
+
+Time in which the test does not run also counts: a callback that an earlier test left behind, or a machine too busy to schedule the test process. Leave room between a timeout and the time the test needs.
+
 ### Global Timeout
 
 Change the timeout globally with the `--timeout` flag:

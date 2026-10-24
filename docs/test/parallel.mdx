@@ -114,6 +114,8 @@ test.serial("resets the database", async () => {
 
 Concurrent tests share a thread and a global; this is cooperative concurrency for I/O-bound tests, not extra CPU cores. `expect.assertions()` and other per-test global state need care under concurrency — see [Concurrent test execution](/test/index#concurrent-test-execution).
 
+Each test's [timeout](/test/runtime-behavior#test-timeouts) counts wall-clock time from its own start. A concurrent test that blocks the thread, for example with `Bun.spawnSync()` or `execSync()`, also uses up the time of every other test that is running, and those tests can time out. Mark tests that block with `test.serial`.
+
 ## Splitting a suite across CI machines with `--shard`
 
 ```sh terminal icon="terminal"

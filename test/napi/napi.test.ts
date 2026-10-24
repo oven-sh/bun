@@ -71,7 +71,8 @@ beforeAll(async () => {
 }, 300_000);
 
 describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
-  describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
+  // Serial: these call spawnSync, which would block every other test of the concurrent group while a child runs.
+  describe.serial.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {
         await using dir = tempDir("node-file-cli", {

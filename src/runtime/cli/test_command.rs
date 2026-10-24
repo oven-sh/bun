@@ -2743,7 +2743,7 @@ impl TestCommand {
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
             // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_natural_exit() });
         }
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so

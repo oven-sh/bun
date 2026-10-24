@@ -335,26 +335,27 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
+// Returns whether an 'exit' listener was called.
+static bool dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
     if (process->m_isExiting)
-        return;
+        return false;
     process->m_isExiting = true;
     auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
-        return;
+        return false;
 
     putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
     auto event = Identifier::fromString(vm, "exit"_s);
     if (!emitter.hasEventListeners(event)) {
-        return;
+        return false;
     }
 
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    return emitter.emit(event, arguments);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -862,16 +863,22 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
 }
 
-extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+extern "C" bool Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
-        return;
+        return false;
     }
 
     auto* process = globalObject->processObject();
     if (exitCode > 0)
         process->m_isExitCodeObservable = true;
-    dispatchExitInternal(globalObject, process, exitCode);
+    return dispatchExitInternal(globalObject, process, exitCode);
+}
+
+// Whether `process.exitCode` reads as a number.
+extern "C" bool Bun__Process__hasExitCode(Zig::GlobalObject* globalObject)
+{
+    return globalObject->hasProcessObject() && globalObject->processObject()->m_isExitCodeObservable;
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

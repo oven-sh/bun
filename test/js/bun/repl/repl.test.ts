@@ -961,6 +961,24 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("-e runs the promise jobs of a process.on('exit') listener", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        "process.on('exit', async () => { console.log('listener'); await null; console.log('after await'); })",
+      ]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "listener\nafter await\n", stderr: "", exitCode: 0 });
+    });
+
+    test("-e reports a rejection that a process.on('exit') listener leaves", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        "process.on('exit', async () => { throw new Error('the clean-up failed') })",
+      ]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("error: the clean-up failed");
+      expect(exitCode).toBe(1);
+    });
+
     test("-e drains event loop (timers fire before exit)", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "setTimeout(() => console.log('from timer'), 50)"]);
       expect(stdout).toBe("from timer\n");

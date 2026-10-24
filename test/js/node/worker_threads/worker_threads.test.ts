@@ -3147,6 +3147,118 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
   });
 });
 
+// A worker whose event loop ran dry emits 'exit' as Node's MakeCallback does: the promise jobs that the
+// listeners queued run after the last listener, and what they throw or leave rejected is the worker's
+// 'error'. process.exit() and terminate() can still stop the worker there. After process.exit() or an
+// uncaught error, nothing runs after the listeners.
+describe("a worker's 'exit' listeners, and their promise jobs", () => {
+  const STEPS = ["", "listener", "second listener", "job", "after await", "after process.exit()", "later job"];
+  // The worker records its steps in shared memory, and the parent reads them once the worker is gone.
+  const prelude = `
+    const { workerData, parentPort } = require("node:worker_threads");
+    const STEPS = ${JSON.stringify(STEPS)};
+    const put = step => Atomics.store(workerData, Atomics.add(workerData, 0, 1) + 1, STEPS.indexOf(step));
+  `;
+
+  async function run(body: string, arm: (w: Worker) => void = () => {}) {
+    const log = new Int32Array(new SharedArrayBuffer(4 * 64));
+    const w = new Worker(prelude + body, { eval: true, workerData: log });
+    const errors: string[] = [];
+    w.on("error", e => errors.push((e as Error).message));
+    arm(w);
+    // Not events.once(): it rejects on the 'error' that some of these workers report.
+    const code = await new Promise<number>(resolve => w.on("exit", resolve));
+    const steps = Array.from(log.subarray(1, 1 + Atomics.load(log, 0)), step => STEPS[step]);
+    return { steps, errors, code };
+  }
+
+  test("the jobs run after the last listener, and an exit code that a job assigns is the worker's", async () => {
+    expect(
+      await run(`
+        process.on("exit", async () => {
+          put("listener");
+          queueMicrotask(() => put("job"));
+          await null;
+          put("after await");
+          process.exitCode = 9;
+        });
+        process.on("exit", () => put("second listener"));`),
+    ).toEqual({ steps: ["listener", "second listener", "job", "after await"], errors: [], code: 9 });
+  });
+
+  test("a rejection that a listener leaves is the worker's 'error'", async () => {
+    const { steps, errors } = await run(`
+      process.on("exit", async () => {
+        put("listener");
+        await null;
+        put("after await");
+        throw new Error("boom");
+      });`);
+    expect({ steps, errors }).toEqual({ steps: ["listener", "after await"], errors: ["boom"] });
+  });
+
+  test("an error that a listener throws is the worker's 'error'", async () => {
+    const { steps, errors } = await run(`
+      process.on("exit", () => {
+        put("listener");
+        throw new Error("boom");
+      });`);
+    expect({ steps, errors }).toEqual({ steps: ["listener"], errors: ["boom"] });
+  });
+
+  test("process.exit() in a job stops the worker there, with that code", async () => {
+    expect(
+      await run(`
+        process.on("exit", () => {
+          put("listener");
+          queueMicrotask(() => {
+            put("job");
+            process.exit(3);
+            put("after process.exit()");
+          });
+          queueMicrotask(() => {
+            put("later job");
+            process.exitCode = 9;
+          });
+        });`),
+    ).toEqual({ steps: ["listener", "job"], errors: [], code: 3 });
+  });
+
+  test("terminate() stops a job that never ends", async () => {
+    expect(
+      await run(
+        `process.on("exit", () => {
+          put("listener");
+          parentPort.postMessage("looping");
+          (function loop() { Promise.resolve().then(loop); })();
+        });`,
+        w => w.once("message", () => w.terminate()),
+      ),
+    ).toEqual({ steps: ["listener"], errors: [], code: 1 });
+  });
+
+  test("no job runs after process.exit()", async () => {
+    expect(
+      await run(`
+        process.on("exit", () => {
+          put("listener");
+          queueMicrotask(() => put("job"));
+        });
+        process.exit(4);`),
+    ).toEqual({ steps: ["listener"], errors: [], code: 4 });
+  });
+
+  test("no job runs after an uncaught error", async () => {
+    const { steps, errors } = await run(`
+      process.on("exit", () => {
+        put("listener");
+        queueMicrotask(() => put("job"));
+      });
+      throw new Error("fatal");`);
+    expect({ steps, errors }).toEqual({ steps: ["listener"], errors: ["fatal"] });
+  });
+});
+
 // Once a worker's VM has been stopped — by its own process.exit(), from a timer, from a subprocess
 // onExit callback (a foreign trampoline), or by the parent's terminate() landing mid-callback —
 // nothing it had queued may run: not the rest of the callback, not a nextTick, not a microtask.

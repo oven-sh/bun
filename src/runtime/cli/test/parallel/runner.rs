@@ -694,7 +694,7 @@ pub(crate) fn run_as_worker(
     vm_ref.run_with_api_lock(|| {
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
         unsafe {
-            (*vm).on_exit();
+            (*vm).on_natural_exit();
             (*vm).global_exit()
         }
     });

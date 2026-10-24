@@ -4133,6 +4133,11 @@ void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
     return uncheckedDowncast<Zig::GlobalObject>(arg0)->handleRejectedPromises();
 }
 
+bool JSC__JSGlobalObject__hasRejectedPromises(JSC::JSGlobalObject* arg0)
+{
+    return uncheckedDowncast<Zig::GlobalObject>(arg0)->hasRejectedPromises();
+}
+
 #pragma mark - JSC::JSValue
 
 JSC::JSString* JSC__JSValue__asString(JSC::EncodedJSValue JSValue0)

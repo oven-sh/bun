@@ -1868,6 +1868,42 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    // The end of a node test file is the natural end of a node process: the promise jobs of its 'exit' listeners run.
+    test("run their promise jobs once a node:test API registers a test", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "node-async-listener.test.ts",
+        `
+          import { test } from "node:test";
+          process.on("exit", async code => {
+            console.log("exit listener ran with", code);
+            await null;
+            console.log("exit listener ran to its end");
+            process.exitCode = 7;
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).toContain("exit listener ran with 0\nexit listener ran to its end\n");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(7);
+    });
+
+    test("a rejection that a listener leaves fails the run once a node:test API registers a test", async () => {
+      const { stderr, exitCode } = await runFile(
+        "node-rejecting-listener.test.ts",
+        `
+          import { test } from "node:test";
+          process.on("exit", async () => {
+            throw new Error("the clean-up failed");
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("the clean-up failed");
+      expect(exitCode).toBe(1);
+    });
+
     test("run when --bail stops a file that registered a node:test test", async () => {
       const { stdout, stderr, exitCode } = await runFiles(
         {

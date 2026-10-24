@@ -1104,6 +1104,11 @@ impl JSGlobalObject {
         crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
     }
 
+    /// Whether a promise that was rejected with no handler still waits for [`Self::handle_rejected_promises`].
+    pub fn has_rejected_promises(&self) -> bool {
+        JSC__JSGlobalObject__hasRejectedPromises(self)
+    }
+
     // The `readableStreamTo*` consumers throw `ERR_INVALID_ARG_TYPE` when
     // `value` is not a `ReadableStream` and propagate what the consumer throws.
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JsResult<JSValue> {
@@ -1463,6 +1468,7 @@ unsafe extern "C" {
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;
 
     safe fn JSC__JSGlobalObject__handleRejectedPromises(this: &JSGlobalObject);
+    safe fn JSC__JSGlobalObject__hasRejectedPromises(this: &JSGlobalObject) -> bool;
 
     safe fn ZigGlobalObject__readableStreamToArrayBuffer(
         this: &JSGlobalObject,

@@ -221,6 +221,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             vm.global_exit();
         }
 
+        let mut loop_ran_dry = false;
         if !this.eval_script.is_empty() || this.eval_and_print {
             // Non-interactive: evaluate the -e/--eval or -p/--print script,
             // drain the event loop, and exit
@@ -234,6 +235,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
                 // Fire process.on("beforeExit") and re-drain as needed
                 // (matches bun -e / Node.js semantics).
                 vm.on_before_exit();
+                loop_ran_dry = vm.unhandled_error_counter == 0;
             }
         } else {
             // Interactive: run the REPL loop
@@ -242,8 +244,12 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         }
 
-        // Clean up
-        vm.on_exit();
+        // Clean up. An interactive session ends through `process.exit()`, as Node's does.
+        if loop_ran_dry {
+            vm.on_natural_exit();
+        } else {
+            vm.on_exit();
+        }
         vm.global_exit();
     }
 

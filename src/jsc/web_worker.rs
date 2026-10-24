@@ -985,7 +985,8 @@ impl WebWorker {
             }
         );
 
-        if !self.has_requested_terminate() && !stopped_by_entry {
+        let loop_ran_dry = !self.has_requested_terminate() && !stopped_by_entry;
+        if loop_ran_dry {
             // Only emit 'beforeExit' on a natural drain, not on terminate().
             // TODO: is this able to allow the event loop to continue?
             vm.as_mut().on_before_exit();
@@ -1001,6 +1002,10 @@ impl WebWorker {
         drop(entry_promise);
 
         self.flush_logs(vm);
+        // `shutdown()` unpublishes the VM first: from there `process.exit()` and `terminate()` stop no script.
+        if loop_ran_dry && !self.has_requested_terminate() {
+            vm.as_mut().emit_natural_exit();
+        }
         self.shutdown();
     }
 
@@ -1228,7 +1233,7 @@ fn on_unhandled_rejection(
     // they may change process.exitCode). Run them before arming termination — a pending
     // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
     // and its processIsExiting guard stops shutdown() from running them twice.
-    virtual_machine::ExitHandler::dispatch_on_exit(vm);
+    virtual_machine::ExitHandler::dispatch_on_exit(vm, virtual_machine::ExitKind::Requested);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy

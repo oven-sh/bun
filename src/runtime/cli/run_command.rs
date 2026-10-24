@@ -1711,14 +1711,21 @@ impl Run<'_> {
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         let _ = vm.global().handle_rejected_promises();
+        let printed_before_exit = ANY_UNHANDLED.load(Ordering::Relaxed);
         // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
         if vm.unhandled_error_counter > 0 {
             vm.exit_handler.requested = true;
+            vm.on_exit();
+        } else {
+            vm.on_natural_exit();
         }
-        vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
-            print_unhandled_version_note(vm);
+            // An error that an 'exit' listener left got its exit code in `on_natural_exit`.
+            if printed_before_exit {
+                vm.exit_handler.exit_code = 1;
+            }
+            print_unhandled_version_note();
         }
 
         // These create undefined references to externally-defined C symbols
@@ -1814,15 +1821,14 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
 }
 
 /// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean
-/// exit: bump the exit code and print the sourcemap note + version string.
+/// exit: print the sourcemap note + version string.
 #[cold]
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn print_unhandled_version_note(vm: &mut VirtualMachine) {
-    vm.exit_handler.exit_code = 1;
+fn print_unhandled_version_note() {
     bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
     pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
 }

@@ -390,6 +390,8 @@ pub struct VirtualMachine {
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
     /// reason as [`Self::is_inside_deferred_task_queue`].
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
+    /// Set when an error reaches `uncaught_exception`, handled or not. `ExitHandler::dispatch_on_natural_exit` clears and reads it.
+    pub(crate) saw_uncaught_exception: Cell<bool>,
 
     pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: bool,
@@ -499,7 +501,8 @@ unsafe extern "C" {
     ) -> bool;
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
-    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8) -> bool;
+    safe fn Bun__Process__hasExitCode(global: &JSGlobalObject) -> bool;
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -778,6 +781,15 @@ pub struct ExitHandler {
     pub requested: bool,
 }
 
+/// Which of Node's two routes emits 'exit'. Only the natural one runs the listeners' promise jobs and looks at their rejections.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExitKind {
+    /// `process.exit()`, a fatal error, a stopped worker, or a run that ends before its program does.
+    Requested,
+    /// The program ended by itself: its event loop ran dry, or `bun test` finished a run whose 'exit' listeners it calls.
+    Natural,
+}
+
 impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__getExitCode(vm: &VirtualMachine) -> u8 {
@@ -823,14 +835,60 @@ impl ExitHandler {
     /// parent via `container_of` would escape the provenance of `&mut self`
     /// (which only covers the `ExitHandler` field). Callers pass the VM
     /// reference instead; the body re-enters JS so no `&mut` is held.
-    pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
+    pub(crate) fn dispatch_on_exit(vm: &VirtualMachine, kind: ExitKind) {
         let exit_code = vm.exit_handler.exit_code;
         // `process.on('exit')` handlers are user script (see `on_exit`).
         if vm.script_allowed() && !vm.exit_handler.skip_exit_listeners {
-            Process__dispatchOnExit(vm.global(), exit_code);
+            match kind {
+                ExitKind::Requested => {
+                    Process__dispatchOnExit(vm.global(), exit_code);
+                }
+                ExitKind::Natural => Self::dispatch_on_natural_exit(vm, exit_code),
+            }
         }
         if vm.worker.is_none() {
             Bun__WebView__closeAllForTermination();
+        }
+    }
+
+    /// Node's `MakeCallback` around the 'exit' of a natural end: the listeners, then what they left queued or rejected.
+    fn dispatch_on_natural_exit(vm: &VirtualMachine, exit_code: u8) {
+        let global = vm.global();
+        // A rejection that already waits is older than 'exit': a report after the listeners is not Node's order.
+        let unreported = global.has_rejected_promises();
+        vm.saw_uncaught_exception.set(false);
+        // Held so that a native call from a listener or a job is not the outermost `exit()`, which is a checkpoint.
+        let _entered = vm.enter_event_loop_scope_without_checkpoint();
+        let fired = Process__dispatchOnExit(global, exit_code);
+        // Node runs no checkpoint after a listener that threw.
+        if fired && !unreported && !vm.saw_uncaught_exception.get() && vm.script_allowed() {
+            Self::close_natural_exit(vm);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn close_natural_exit(vm: &VirtualMachine) {
+        let global = vm.global();
+        let unhandled = vm.unhandled_error_counter;
+        loop {
+            // Promise jobs only: `process.nextTick` queues nothing after 'exit', so a queued tick is older than the listeners.
+            if jsc::from_js_host_call_generic(global, || vm.jsc_vm().drain_microtasks()).is_err() {
+                return;
+            }
+            if !global.has_rejected_promises() {
+                break;
+            }
+            if global.handle_rejected_promises().is_err() {
+                return;
+            }
+        }
+        // As in Node, an assigned `process.exitCode` stands, and a worker keeps its exit code.
+        if vm.unhandled_error_counter > unhandled
+            && vm.is_main_thread()
+            && !Bun__Process__hasExitCode(global)
+        {
+            vm.as_mut().exit_handler.exit_code = 1;
         }
     }
 
@@ -2152,6 +2210,7 @@ impl VirtualMachine {
         if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
             return true;
         }
+        self.saw_uncaught_exception.set(true);
 
         // An exception thrown by a Bun.ModuleGraph's module code is that graph's to
         // handle, ahead of the test runner and the thread-wide path. (A rejection
@@ -2310,6 +2369,21 @@ impl VirtualMachine {
     }
 
     pub fn on_exit(&mut self) {
+        self.on_exit_as(ExitKind::Requested);
+    }
+
+    /// [`on_exit`](Self::on_exit) for a program that ended by itself: see [`ExitKind::Natural`].
+    pub fn on_natural_exit(&mut self) {
+        self.on_exit_as(ExitKind::Natural);
+    }
+
+    /// The 'exit' listeners of a worker whose loop ran dry, emitted before `shutdown()` so that the worker can still be stopped.
+    pub(crate) fn emit_natural_exit(&mut self) {
+        self.write_profiles();
+        ExitHandler::dispatch_on_exit(self, ExitKind::Natural);
+    }
+
+    fn on_exit_as(&mut self, kind: ExitKind) {
         // Decide once whether the exit sequence may run script. It can be
         // entered with an exception pending: `process.exit()` from inside a
         // throwing/catching callback (an ordinary exception — cleared here, as
@@ -2334,7 +2408,7 @@ impl VirtualMachine {
         // Write profiles before any shutdown begins.
         self.write_profiles();
 
-        ExitHandler::dispatch_on_exit(self);
+        ExitHandler::dispatch_on_exit(self, kind);
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {

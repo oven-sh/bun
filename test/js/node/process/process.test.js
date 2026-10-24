@@ -1244,6 +1244,171 @@ describe.concurrent(() => {
       expect(stderr).not.toInclude("error: boom");
       expect(exitCode).toBe(0);
     });
+
+    // Node emits the 'exit' of a program that ended by itself through MakeCallback: the promise jobs
+    // that the listeners queued run after the last listener, and a rejection that they left is reported.
+    // process.exit() and a fatal error emit it from JavaScript, and nothing runs after the listeners.
+    describe("promise jobs and rejections of the listeners", () => {
+      const cases = [
+        {
+          name: "the jobs run after the last listener, and no tick does",
+          script: `
+            process.on("exit", async code => {
+              console.log("first listener", code);
+              Promise.resolve().then(() => console.log("then"));
+              queueMicrotask(() => console.log("queueMicrotask"));
+              process.nextTick(() => console.log("nextTick"));
+              await null;
+              console.log("after the first await");
+              await null;
+              process.exitCode = 9;
+              process.stdout.write("after the second await\\n");
+            });
+            process.on("exit", () => console.log("second listener"));`,
+          stdout:
+            "first listener 0\nsecond listener\nthen\nqueueMicrotask\nafter the first await\nafter the second await\n",
+          exitCode: 9,
+        },
+        {
+          name: "a native call in a listener does not run the jobs in the middle of the listener",
+          script: `
+            process.on("exit", () => {
+              Promise.resolve().then(() => console.log("job"));
+              require("node:fs").watch(require("node:os").tmpdir()).close();
+              console.log("after close()");
+            });`,
+          stdout: "after close()\njob\n",
+        },
+        {
+          name: "a rejection that a listener leaves is reported",
+          script: `
+            process.on("exit", async () => { await null; throw new Error("boom"); });
+            process.on("exit", () => console.log("second listener"));`,
+          stdout: "second listener\n",
+          stderr: "error: boom",
+          exitCode: 1,
+        },
+        {
+          name: "an assigned process.exitCode stands when the rejection is reported",
+          script: `process.on("exit", () => { process.exitCode = 5; Promise.reject(new Error("boom")); });`,
+          stderr: "error: boom",
+          exitCode: 5,
+        },
+        {
+          name: "an 'unhandledRejection' listener takes the rejection, and its jobs run",
+          script: `
+            process.on("unhandledRejection", reason => {
+              console.log("unhandledRejection", reason.message);
+              queueMicrotask(() => console.log("job of the listener"));
+            });
+            process.on("exit", () => { Promise.reject(new Error("boom")); });`,
+          stdout: "unhandledRejection boom\njob of the listener\n",
+        },
+        {
+          name: "a rejection that a job handles is not reported",
+          script: `
+            process.on("exit", () => {
+              const rejected = Promise.reject(new Error("boom"));
+              queueMicrotask(() => rejected.catch(error => console.log("caught", error.message)));
+            });`,
+          stdout: "caught boom\n",
+        },
+        {
+          name: "an error that a job throws is an uncaught exception",
+          script: `
+            process.on("exit", () => {
+              queueMicrotask(() => { throw new Error("boom"); });
+              queueMicrotask(() => console.log("later job"));
+            });`,
+          stderr: "error: boom",
+          exitCode: 1,
+        },
+        {
+          name: "an 'uncaughtException' listener takes the error of a job, and the later jobs run",
+          script: `
+            process.on("uncaughtException", (error, origin) => console.log(origin, error.message));
+            process.on("exit", () => {
+              queueMicrotask(() => { throw new Error("boom"); });
+              queueMicrotask(() => console.log("later job"));
+            });`,
+          stdout: "uncaughtException boom\nlater job\n",
+        },
+        {
+          name: "process.exit() in a job ends the process there, without a second 'exit'",
+          script: `
+            process.on("exit", code => {
+              console.log("listener", code);
+              queueMicrotask(() => process.exit(3));
+              queueMicrotask(() => console.log("later job"));
+            });`,
+          stdout: "listener 0\n",
+          exitCode: 3,
+        },
+        {
+          name: "no job runs after a listener that threw",
+          script: `
+            process.on("uncaughtException", error => console.log("uncaughtException", error.message));
+            process.on("exit", () => {
+              queueMicrotask(() => console.log("job"));
+              throw new Error("boom");
+            });`,
+          stdout: "uncaughtException boom\n",
+        },
+        {
+          name: "no job runs after process.exit()",
+          script: `
+            process.on("exit", code => {
+              console.log("listener", code);
+              queueMicrotask(() => console.log("job"));
+              Promise.reject(new Error("boom"));
+            });
+            process.exit(4);`,
+          stdout: "listener 4\n",
+          exitCode: 4,
+        },
+        {
+          name: "no job runs after an uncaught exception",
+          script: `
+            process.on("exit", code => {
+              console.log("listener", code);
+              queueMicrotask(() => console.log("job"));
+            });
+            throw new Error("fatal");`,
+          stdout: "listener 1\n",
+          stderr: "error: fatal",
+          exitCode: 1,
+        },
+        {
+          name: "no job runs after an unhandled rejection ended the event loop",
+          script: `
+            process.on("exit", () => {
+              console.log("listener");
+              queueMicrotask(() => console.log("job"));
+            });
+            setImmediate(() => Promise.reject(new Error("fatal")));`,
+          stdout: "listener\n",
+          stderr: "error: fatal",
+          exitCode: 1,
+        },
+      ];
+
+      for (const { name, script, stdout = "", stderr, exitCode = 0 } of cases) {
+        it(name, async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", script],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const result = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout: result[0], stderr: result[1], exitCode: result[2] }).toEqual({
+            stdout,
+            stderr: stderr === undefined ? "" : expect.stringContaining(stderr),
+            exitCode,
+          });
+        });
+      }
+    });
   });
 
   it("process.memoryUsage", () => {

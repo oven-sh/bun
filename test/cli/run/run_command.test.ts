@@ -234,8 +234,9 @@ describe.concurrent("bun version check", () => {
       [["run", "--parallel", "--filter", "*", "--if-present", "nope"]],
     ])("bun %j is silent", async cmd => {
       using dir = workspace();
-      const { stderr, exitCode } = await run(String(dir), cmd);
-      expect(count(stderr)).toBe(0);
+      const { stdout, stderr, exitCode } = await run(String(dir), cmd);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("");
       expect(exitCode).toBe(0);
     });
   });

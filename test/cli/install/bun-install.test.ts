@@ -16902,7 +16902,7 @@ describe.concurrent("bun version check", () => {
     [["outdated"], 0],
   ])("bun %j warns %i times", async (cmd, times) => {
     using dir = project({ packageManager: "bun@0.0.1" }, { dep: "./dep" });
-    await bunIn(String(dir), ["install", "--ignore-engines"]);
+    expect((await bunIn(String(dir), ["install", "--ignore-engines"])).exitCode).toBe(0);
     const { stderr, exitCode } = await bunIn(String(dir), cmd);
     expect(count(stderr)).toBe(times);
     expect(stderr).not.toContain("error:");

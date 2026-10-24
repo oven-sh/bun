@@ -550,14 +550,26 @@ impl ReadableStream {
                 reader.context.setup(blob, recommended_chunk_size);
                 reader.to_readable_stream(cx)
             }
-            webcore::blob::store::Data::File(_) => {
+            webcore::blob::store::Data::File(file) => {
+                // stdin shares its position with the process that started this one, so a read
+                // that starts at byte 0 continues from the position and advances it.
+                let from_position = blob.offset.get() == 0
+                    && matches!(
+                        &file.pathlike,
+                        webcore::node_types::PathOrFileDescriptor::Fd(fd)
+                            if fd.stdio_tag() == Some(syscall::Stdio::StdIn)
+                    );
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             cx.vm().as_mut().event_loop().cast(),
                         )),
-                        start_offset: Some(blob.offset.get() as usize),
+                        start_offset: if from_position {
+                            None
+                        } else {
+                            Some(blob.offset.get() as usize)
+                        },
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
                             Some(blob.size.get() as usize)
                         } else {

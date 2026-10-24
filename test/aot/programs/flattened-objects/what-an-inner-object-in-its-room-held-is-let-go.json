@@ -1,11 +1,5 @@
 {
   "build": [
     "--aot-testing=FlattenUntilHeldWhereverLegal"
-  ],
-  "skipInVariant": {
-    "wherever-legal-and-validated": "TODO: the check of a container's contents in a validating build stops the program though nothing is wrong; fixed in the engine behind the build that this Bun pins",
-    "validate": "TODO: the check of a container's contents in a validating build stops the program though nothing is wrong; fixed in the engine behind the build that this Bun pins",
-    "validate-collecting": "TODO: the check of a container's contents in a validating build stops the program though nothing is wrong; fixed in the engine behind the build that this Bun pins",
-    "predictions-fail-one-time-in-seven-validated": "TODO: the check of a container's contents in a validating build stops the program though nothing is wrong; fixed in the engine behind the build that this Bun pins"
-  }
+  ]
 }

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunExe, isASAN, isCI, isDebug, isWindows } from "harness";
+import { bunExe, isASAN, isCI, isDebug } from "harness";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { run as runCommand } from "../../../../aot/harness/run";
@@ -159,9 +159,8 @@ describe.concurrent("node:http behaves as recorded", () => {
           .sort()
           .join("");
       const expected = new Set(digests[expectedName]!.match(/.{8}/g));
-      // On Windows how much of two large writes the socket has taken when write() returns differs from run to run.
-      const isUnsteady = (name: string) =>
-        isWindows && /70000.*, write\(body\), write\(body\), end\(body\)$/.test(name);
+      // How much of two large writes the socket has taken when write() returns is up to the kernel's buffers.
+      const isUnsteady = (name: string) => /70000.*, write\(body\), write\(body\), end\(body\)$/.test(name);
       const changed = cases.filter(each => !expected.has(each.digest));
       const changedOrGone =
         expected.difference(new Set(cases.map(each => each.digest))).size -

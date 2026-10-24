@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { run as spawned } from "./harness/run";
-import { withoutCoreDump } from "./run-programs";
+import { withoutCoreDump, withoutCrashReport } from "./run-programs";
 import { describe, test } from "./supported";
 
 // --aot-testing=CheckProofsAtRunTime builds the product's code and asks at run time what that code takes on trust. These tests plant false proofs to see that it finds them:
@@ -50,7 +50,7 @@ async function buildAndRun(cwd: string, name: string, flags: string[]) {
   );
   expect(built.stderr).not.toContain("error:");
   expect(built.exitCode).toBe(0);
-  return spawned(withoutCoreDump([join(cwd, name)]), cwd);
+  return spawned(withoutCoreDump([join(cwd, name)]), cwd, { ...bunEnv, ...withoutCrashReport });
 }
 
 describe.concurrent.each(Object.entries(programs))(

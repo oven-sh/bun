@@ -93,16 +93,18 @@ impl<S: Storage> FileIn<S> {
                 let is_ambient = |it: VarDeclId| self[it].flags.contains(Flags::AMBIENT);
                 !declarations.is_empty() && declarations.iter().all(is_ambient)
             }
-            StmtKind::Fn(function) => {
-                self[function].flags.contains(Flags::AMBIENT) || !has_body(&self[function])
+            // A declaration past the deepest nesting that is parsed is none.
+            StmtKind::Fn(function) => (self.fns.get(function.idx()))
+                .is_some_and(|it| it.flags.contains(Flags::AMBIENT) || !has_body(it)),
+            StmtKind::Class(class) => {
+                (self.classes.get(class.idx())).is_some_and(|it| it.flags.contains(Flags::AMBIENT))
             }
-            StmtKind::Class(class) => self[class].flags.contains(Flags::AMBIENT),
-            StmtKind::Enum(enumeration) => self[enumeration].flags.contains(Flags::AMBIENT),
-            StmtKind::Module(module) => {
-                let flags = self[module].flags;
-                flags.intersects(Flags::AMBIENT | Flags::REPARSED)
+            StmtKind::Enum(enumeration) => (self.enums.get(enumeration.idx()))
+                .is_some_and(|it| it.flags.contains(Flags::AMBIENT)),
+            StmtKind::Module(module) => self.modules.get(module.idx()).is_some_and(|it| {
+                it.flags.intersects(Flags::AMBIENT | Flags::REPARSED)
                     || self.declares_only_types(module)
-            }
+            }),
             _ => false,
         }
     }
@@ -111,19 +113,23 @@ impl<S: Storage> FileIn<S> {
     fn declares_only_types(&self, namespace: ModuleId) -> bool {
         let mut namespaces = vec![namespace];
         while let Some(namespace) = namespaces.pop() {
-            let Module {
+            let Some(&Module {
                 name: ModuleName::Ident(_),
                 has_body: true,
                 body,
                 ..
-            } = self[namespace]
+            }) = self.modules.get(namespace.idx())
             else {
                 return false;
             };
             for statement in self.ids(body) {
-                match self[statement].kind {
-                    StmtKind::Interface(_) | StmtKind::TypeAlias(_) => {}
-                    StmtKind::Module(inner) if !self[inner].flags.contains(Flags::AMBIENT) => {
+                // Half-written code has statements that are none.
+                match self.stmts.get(statement.idx()).map(|it| it.kind) {
+                    Some(StmtKind::Interface(_) | StmtKind::TypeAlias(_)) => {}
+                    Some(StmtKind::Module(inner))
+                        if (self.modules.get(inner.idx()))
+                            .is_some_and(|it| !it.flags.contains(Flags::AMBIENT)) =>
+                    {
                         namespaces.push(inner);
                     }
                     _ => return false,

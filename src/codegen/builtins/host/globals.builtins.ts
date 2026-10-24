@@ -34,6 +34,7 @@ const scheduled = (times: b.CallbackTimes) => ({
     b.called({
       afterwards: "TouchesOnlyWhatRowNames",
       times,
+      args: [],
       this: b.result,
       spreadArgs: b.operand("passed"),
       result: "Ignored",
@@ -203,6 +204,7 @@ const eventHandlerAttribute = (eventTarget: b.TableType) =>
           b.called({
             afterwards: "TouchesOnlyWhatRowNames",
             times: "PerEvent",
+            args: [],
             this: eventTarget,
             spreadArgs: b.any,
             result: "Escapes",
@@ -645,7 +647,7 @@ const webSocketHandlersCalledByMethods = ["open", "close", "error"];
 
 const webSocketHandlersUnder = (options: string) =>
   Object.entries(webSocketHandlerArguments).flatMap(([handler, args]) => [
-    b.memberCalled([options, handler], { times: "PerEvent", args, result: "Ignored" }),
+    b.memberCalled([options, handler], { times: "PerEvent", this: b.undefined, args, result: "Ignored" }),
     ...(webSocketHandlersCalledByMethods.includes(handler)
       ? [b.memberStoredIn([options, handler], b.nativeCell(webSocketHandlerCell(handler)))]
       : []),
@@ -670,7 +672,12 @@ const serverOptions = (server: b.PlaceLike) => {
     b.createdIn(b.instance("ServerWebSocket").fresh, webSocket),
     b.memberCalled(["fetch"], calledWith(b.instance("Request").fresh)),
     b.memberStoredIn(["fetch"], b.nativeCell(requestHandlerCell)),
-    b.memberCalled(["onNodeHTTPRequest"], { times: "PerEvent", args: nodeRequestHandlerArguments, result: "Escapes" }),
+    b.memberCalled(["onNodeHTTPRequest"], {
+      times: "PerEvent",
+      this: b.undefined,
+      args: nodeRequestHandlerArguments,
+      result: "Escapes",
+    }),
     // `this` is undefined once the server object has been collected.
     b.memberCalled(["error"], { times: "PerEvent", this: b.any, args: [b.any], result: "Escapes" }),
     ...routeHandlersUnder("routes", routed),
@@ -856,6 +863,7 @@ const closesConnections = [
   ...serverState,
   b.keptCalled(webSocketHandlerCell("close"), {
     times: "Repeatedly",
+    this: b.undefined,
     args: webSocketHandlerArguments.close,
     result: "Ignored",
   }),
@@ -885,8 +893,18 @@ const serverMembers = {
     uses: {
       this: [
         ...serverState,
-        b.keptCalled(webSocketHandlerCell("open"), { times: "Once", args: [webSocket], result: "Ignored" }),
-        b.keptCalled(webSocketHandlerCell("error"), { times: "Once", args: [b.any, webSocket], result: "Ignored" }),
+        b.keptCalled(webSocketHandlerCell("open"), {
+          times: "Once",
+          this: b.undefined,
+          args: [webSocket],
+          result: "Ignored",
+        }),
+        b.keptCalled(webSocketHandlerCell("error"), {
+          times: "Once",
+          this: b.undefined,
+          args: [b.any, webSocket],
+          result: "Ignored",
+        }),
       ],
       request: [b.readsContents(), b.writesContents()],
       options: [
@@ -1033,7 +1051,13 @@ const cron: b.FunctionField[] = [
     throws: true,
     uses: {
       handler: [
-        b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "PerEvent", this: b.result, result: "Escapes" }),
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "PerEvent",
+          args: [],
+          this: b.result,
+          result: "Escapes",
+        }),
       ],
       options: membersInspected("tz"),
     },
@@ -1667,6 +1691,7 @@ export default b.declarations(
           b.called({
             afterwards: "TouchesOnlyWhatRowNames",
             times: "PerEvent",
+            args: [],
             this: b.operand("this"),
             spreadArgs: b.nativeCell(timerArgumentsCell),
             result: "Ignored",
@@ -1708,7 +1733,17 @@ export default b.declarations(
   b.fn("queueMicrotask", {
     args: { callback: b.callable },
     capability: "heap",
-    uses: { callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", result: "Ignored" })] },
+    uses: {
+      callback: [
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Later",
+          this: b.undefined,
+          args: [],
+          result: "Ignored",
+        }),
+      ],
+    },
     reads: externalState,
     writes: externalState,
     implementation: b.hostCall,

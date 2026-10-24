@@ -11,7 +11,7 @@
 // process: the same at any load. A cost under half an instruction counts as half. Collections and the most memory resident are those of the long run.
 //
 // --out writes a row an idiom; --against reads such a file of an earlier build and lists what came under 1.2 times, what went over it, and what a compiled form gained
-// or lost by over 10% and 3 instructions. --write-behind rewrites ./behind-the-jit.<os>-<arch>.json and ./typed-dearer-than-untyped.<os>-<arch>.json, the idioms that ./idioms-against-the-jit.test.ts lists as todo.
+// or lost by over 10% and 3 instructions, and where the JIT's own number moved. --write-behind rewrites ./behind-the-jit.<os>-<arch>.json and ./typed-dearer-than-untyped.<os>-<arch>.json, the idioms that ./idioms-against-the-jit.test.ts lists as todo.
 // --keep leaves the programs' sources in the folder. Each --build-flag goes to every `bun build --compile --aot`: with --against, what an option of the compiler is worth.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -98,7 +98,7 @@ if (options.against) {
     const then = before.get(row.name);
     if (!then) return [];
     const [was, is] = [Math.max(then.typed, then.untyped), Math.max(row.typed.instructions, row.untyped.instructions)];
-    return [{ name: row.name, was, is, ratioWas: was / then.jit, ratioIs: ratioOf(row) }];
+    return [{ name: row.name, was, is, ratioWas: was / then.jit, ratioIs: ratioOf(row), jitWas: then.jit, jitIs: row.jit.instructions }];
   });
   const list = (title: string, of: typeof moved) => {
     console.log(`\n${of.length} ${title}`);
@@ -110,6 +110,9 @@ if (options.against) {
   list("went over 1.2 times", moved.filter(row => row.ratioWas <= 1.2 && row.ratioIs > 1.2).sort((a, b) => byGain(b, a)));
   list("take over 10% fewer instructions", moved.filter(row => row.is < row.was * 0.9 && row.is < row.was - 3).sort(byGain));
   list("take over 10% more instructions", moved.filter(row => row.is > row.was * 1.1 && row.is > row.was + 3).sort((a, b) => byGain(b, a)));
+  const yardstick = moved.filter(row => Math.abs(row.jitIs - row.jitWas) > 3 && (row.jitIs > row.jitWas * 1.25 || row.jitIs < row.jitWas * 0.8));
+  console.log(`\n${yardstick.length} whose JIT moved by over a quarter: there the ratio says nothing of the compiler`);
+  for (const { name, jitWas, jitIs } of yardstick.slice(0, Number(options.rows))) console.log(`  ${jitWas.toFixed(1).padStart(9)} > ${jitIs.toFixed(1).padStart(9)}  ${name}`);
 }
 
 console.log(`\n${heading}`);

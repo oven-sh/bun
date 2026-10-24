@@ -147,6 +147,8 @@ console.log(greet({ name: "Ada", times: 2 }));
 bun compile ./app.ts && ./app
 ```
 
+The build starts with a note:
+
 ```txt
 note: "greeter" 1.0.0 is compiled from its typed version in node_modules/greeter
 hello Ada hello Ada
@@ -382,6 +384,8 @@ If your build only removes the types from your TypeScript files, each source fil
 
 A bundler or a minifier rewrites the code, so its input no longer matches its output. `bun compile --library` and `bun build --dts` bundle, and write the typed file of the bundle.
 
+Bun looks for a `tsconfig.json` from the typed file's folder up to the folder that has the `package.json`, and type checks the typed files under it. Without one, they're checked as `strict`, with `"lib": ["esnext"]`.
+
 ### What a typed file can contain
 
 When Bun compiles a program, it compares the code of `index.aot.ts`, without its types, with the code of the installed `index.js`. White space and comments don't count. If the two differ, Bun prints a warning and compiles `index.js` without types.
@@ -489,7 +493,7 @@ warn: TS100056: The typed version of "each-row" in .sound/each-row can't be used
 
 A typed version only replaces files that the package has. It can't add one. Bun compares each file under `lay` with the installed file, as it does for a typed file that a package ships: without its types, it has to be the same code. That rules out TypeScript syntax that turns into code, such as an `enum`, a `namespace`, a parameter property or a decorator. [What a typed file can contain](#what-a-typed-file-can-contain) has the list.
 
-Bun type checks a typed version at build time. If it has a type error, the package is compiled without its types and the build warns you with the first error, as it does for a package that ships TypeScript. What your `tsconfig.json` asks for beyond `strict`, and its `lib`, `target` and `types`, don't apply to it.
+Bun type checks a typed version at build time. If it has a type error, the package is compiled without its types and the build warns you with the first error, as it does for a package that ships TypeScript. It's checked as a project of its own, as `strict`: your `tsconfig.json` doesn't apply to it.
 
 An [`int32`](/bundler/aot-types#32-bit-integers) in your own code stops the build if Bun can't prove it, because you can fix it. In a typed version, or in a package that ships TypeScript, you can't. There the build continues and warns you: every `int32` that the file declares is tested when the program runs, instead of being taken for granted.
 

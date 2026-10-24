@@ -71,6 +71,20 @@ const sourceInLoopOfModule =
   source.slice(0, source.indexOf("function spread")) +
   turns("const { low, high } = bounds(data);\n  total += high - low;");
 
+// Each element is read once and compared twice, and a second loop compares the elements with a constant.
+const sourceWithElementsReadOnce =
+  `function bounds(list: number[]) {
+  let low = 1000, high = -1000;
+  for (let i = 0; i < list.length; i++) {
+    const value = list[i];
+    if (value < low) low = value;
+    if (value > high) high = value;
+  }
+  for (let i = 0; i < list.length; i++) if (list[i] === 99) high = 99;
+  return { low, high };
+}
+` + turns("const { low, high } = bounds(data);\n  total += high - low;");
+
 describe("compile/aot/results read by their parts", () => {
   for (const [title, text, run] of [
     ["the object is made on no way that runs often", source, test],
@@ -81,6 +95,7 @@ describe("compile/aot/results read by their parts", () => {
     ["the pair of a small function", sourceWithSmallFunction, test],
     ["a list of numbers that is only read", sourceWithLocalList, test],
     ["the object that the loop of the module takes apart", sourceInLoopOfModule, test],
+    ["the object of a function that reads each element once", sourceWithElementsReadOnce, test],
   ] as const)
     run(title, () =>
       slot(async () => {

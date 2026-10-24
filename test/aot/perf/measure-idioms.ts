@@ -81,6 +81,7 @@ export function idiomsAgainstTheJit(bun: string, folder: string, { collections =
   }
 
   // As many turns as make 800 million instructions. A turn that mostly waits, for a timer say, executes little: of those, as many as take twenty seconds.
+  // Half a millisecond a turn is two seconds between the two runs: more than a busy machine adds by chance. Too few turns would leave the JIT's compiling inside what is measured.
   async function planFor(executable: string): Promise<Turns> {
     const began = performance.now();
     const few = await counted([executable], { turns: 1000, warmUp: 20 });
@@ -88,7 +89,7 @@ export function idiomsAgainstTheJit(bun: string, folder: string, { collections =
     const more = await counted([executable], { turns: 5000, warmUp: 20 });
     const aTurn = Math.max(1, (more.instructions - few.instructions) / 4000);
     const secondsATurn = (performance.now() - between - (between - began)) / 1000 / 4000;
-    const waits = secondsATurn > 50e-6 && secondsATurn > (20 * aTurn) / 1e9;
+    const waits = secondsATurn > 500e-6 && secondsATurn > (20 * aTurn) / 1e9;
     const clamp = (value: number, least: number, most: number) => Math.round(Math.min(most, Math.max(least, value)));
     return { turns: clamp(waits ? 20 / secondsATurn : 800e6 / aTurn, 8000, 20e6), warmUp: clamp(waits ? 0 : 10e6 / aTurn, 100, 5000) };
   }

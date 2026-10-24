@@ -13,7 +13,14 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../run-programs";
 import { apiRoutes, type Route } from "./answers";
-import { filterRequested, installPackages, requestedServers, startServer } from "./run-servers";
+import {
+  filterRequested,
+  installPackages,
+  moreEnvironment,
+  moreFlags,
+  requestedServers,
+  startServer,
+} from "./run-servers";
 
 const servers = filterRequested(["api-bun", "api-thin", "api-hono"]);
 
@@ -53,7 +60,7 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/api", (
   describe.each(servers)("%s", name => {
     const executable = join(app, `${name}-compiled${isWindows ? ".exe" : ""}`);
     const startCompiled = (env: Record<string, string> = {}) =>
-      startServer([executable], app, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
+      startServer([executable], app, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...moreEnvironment, ...env });
 
     beforeAll(async () => {
       built(
@@ -63,6 +70,7 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/api", (
             "build",
             "--compile",
             "--aot",
+            ...moreFlags,
             "--define",
             'process.env.NODE_ENV="production"',
             "--target=bun",

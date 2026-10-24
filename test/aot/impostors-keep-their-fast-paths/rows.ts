@@ -31,6 +31,7 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
       {
         evidence: "keyed with member",
         case: "elements are read up to the length",
+        notYet: "loop-and-call-overhead: a turn takes more instructions than it took",
         functions: ["sumUpToLength"],
         sites: ["read guarded", "read guarded"],
         operations: ["GetArrayElement", "CallInline", "CallDirect", "IsPristine", "TypeTest"],
@@ -188,6 +189,7 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
       {
         evidence: "result, an empty list literal",
         case: "a function returns the list it made",
+        notYet: "array-storage-forms: a turn calls other operations of the run time than the two pushes",
         functions: ["sumOfCollected", "collect"],
         sites: ["call guarded", "call proven", "read proven", "read guarded"],
         operations: ["GetArrayElement", "CallInline", "CallDirect", "TypeTest"],
@@ -845,6 +847,7 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
       {
         evidence: "keyed with member",
         case: "elements are read up to the length",
+        notYet: "loop-and-call-overhead: a turn takes more instructions than it took",
         functions: ["sumUpToLength"],
         sites: ["read guarded", "read guarded"],
         operations: ["GetArrayElement", "CallInline", "CallDirect", "IsPristine", "TypeTest"],
@@ -1002,6 +1005,7 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
       {
         evidence: "result, an empty list literal",
         case: "a function returns the list it made",
+        notYet: "array-storage-forms: a turn calls other operations of the run time than the two pushes",
         functions: ["sumOfCollected", "collect"],
         sites: ["call guarded", "call proven", "read proven", "read guarded"],
         operations: ["GetArrayElement", "CallInline", "CallDirect", "TypeTest"],

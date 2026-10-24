@@ -166,6 +166,8 @@ jobs:
           bun test ./test/aot/a-switch-of-the-compiler-names-every-enumerator.test.ts ./test/aot/lists-of-operations-in-the-compiler-only-shrink.test.ts ./test/aot/every-field-of-flows-results-is-written-and-read.test.ts ./test/aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test.ts
 
       - name: cargo test
+        # A red step in front of this one does not hide what these tests say.
+        if: ${{ !cancelled() }}
         # ir_tests.rs skips the engine's half of every test when TESTAOT is
         # unset. Here a build without testaot has to fail the job.
         # The skipped test of bun_sema_standalone fails without this branch too.

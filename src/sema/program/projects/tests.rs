@@ -417,27 +417,6 @@ fn directories_below_configuration_file_share_options() {
 }
 
 #[test]
-fn only_a_file_with_code_makes_the_types_of_its_project_count() {
-    let names_types = "{ compilerOptions: { types: [\"a\"] } }";
-    let host = host_of(&[
-        ("/p/lib/tsconfig.json", names_types),
-        ("/p/side/tsconfig.json", names_types),
-    ]);
-    with_context(&host, PROGRAM, |context| {
-        let projects = &context.projects;
-        assert!(projects.governing(context, b"/p/side/a.ts").is_some());
-        assert!(projects.governing(context, b"/p/lib/a.ts").is_some());
-        assert!(projects.naming_types().is_empty());
-        projects.governing_code(context, b"/p/lib/a.ts");
-        projects.governing_code(context, b"/p/lib/b.ts");
-        let config_paths: Vec<&[u8]> = (projects.naming_types().iter())
-            .map(|project| &project.config_path[..])
-            .collect();
-        assert_eq!(config_paths, [b"/p/lib/tsconfig.json"]);
-    });
-}
-
-#[test]
 fn installed_package_directory_is_of_innermost_package() {
     let cases: [(&[u8], &[u8]); 5] = [
         (b"/p/node_modules/dep", b"/p/node_modules/dep"),

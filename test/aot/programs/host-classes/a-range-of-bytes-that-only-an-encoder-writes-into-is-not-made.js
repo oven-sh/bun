@@ -1,6 +1,6 @@
 // IR= 1 madeInLoop CompilerHelpersEncodeIntoRangeOfBytes
 // IR= 1 madeInLoop CompilerHelpersStartOfRangeOfBytes
-// IR= 2 writeHeld CompilerHelpersEncodeIntoRangeOfBytes
+// IR= 1 writeHeld CompilerHelpersEncodeIntoRangeOfBytes
 // IR= 1 writeHeld CompilerHelpersStartOfRangeOfBytes
 // IR= 2 intoOrKept CompilerHelpersRangeOfBytes
 // IR= 0 twice CompilerHelpers

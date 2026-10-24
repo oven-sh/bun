@@ -79,9 +79,9 @@ declare module "bun" {
     type Below<N extends number> = { readonly "bun.below"?: N };
     /** `number & MultipleOf<5>` */
     type MultipleOf<N extends number> = { readonly "bun.multipleOf"?: N };
-    /** `string & MinLength<1>` */
+    /** `string & MinLength<1>`: at least 1 character. A character is a Unicode code point, so `"🍞"` is one, though its `length` is 2. */
     type MinLength<N extends number> = { readonly "bun.minLength"?: N };
-    /** `string & MaxLength<100>` */
+    /** `string & MaxLength<100>`: at most 100 characters, counted like {@link MinLength}. */
     type MaxLength<N extends number> = { readonly "bun.maxLength"?: N };
     /** `string[] & MinItems<1>` */
     type MinItems<N extends number> = { readonly "bun.minItems"?: N };

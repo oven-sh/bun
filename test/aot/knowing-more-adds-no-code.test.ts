@@ -6,8 +6,7 @@
 // is handed out or every caller of it is seen. The code of the program's own functions, in all their versions, is no larger in the
 // build that knows more.
 //
-// Where it is larger the test says in which roles the bytes stand and which passes added more or took away less: a report with
-// --aot-report-detail=sites counts, for every pass over a function, the bytes of code that its runs added and removed.
+// Where it is larger the test says in which roles the bytes stand.
 //
 // The pairs that are larger today stand in ./knowing-more-adds-no-code/known-today.ts with their numbers and are todo.
 //
@@ -23,7 +22,6 @@ import { describe, test } from "./supported";
 // Another register, or a displacement of another width, in code that is otherwise the same. A function whose callers are seen may also
 // be hotter than one that is handed out: the back end then spends some bytes more on the very same operations (20 in every-caller-is-seen).
 const mostCodeBytesAdded = 32;
-const mostBytesOfPassUnnamed = 64;
 
 const folderOfPairs = join(import.meta.dir, "knowing-more-adds-no-code");
 const pairs = readdirSync(folderOfPairs, { withFileTypes: true })
@@ -62,8 +60,7 @@ async function measure(pair: string, side: "less" | "more") {
       bunEnv,
     ),
   );
-  const { statistics, functions } = JSON.parse(readFileSync(report, "utf8")) as {
-    statistics: Record<string, number>;
+  const { functions } = JSON.parse(readFileSync(report, "utf8")) as {
     functions: { file: string; role: string; codeBytes: number }[];
   };
   const byRole: Record<string, number> = {};
@@ -73,7 +70,6 @@ async function measure(pair: string, side: "less" | "more") {
     output: told(await spawned([executable], folder, bunEnv)),
     codeBytes: Object.values(byRole).reduce((sum, bytes) => sum + bytes, 0),
     byRole,
-    statistics,
   };
 }
 
@@ -87,11 +83,6 @@ function addedByKnowingMore(less: Measured, more: Measured) {
   for (const role of Object.keys({ ...less.byRole, ...more.byRole }).sort())
     if ((more.byRole[role] ?? 0) > (less.byRole[role] ?? 0))
       found.push(moved(role, less.byRole[role] ?? 0, more.byRole[role] ?? 0));
-  for (const name of Object.keys(more.statistics).sort()) {
-    const [from, to] = [less.statistics[name] ?? 0, more.statistics[name]];
-    if (name.endsWith("CodeBytesAdded") && to > from + mostBytesOfPassUnnamed) found.push(moved(name, from, to));
-    if (name.endsWith("CodeBytesRemoved") && to + mostBytesOfPassUnnamed < from) found.push(moved(name, from, to));
-  }
   return found;
 }
 

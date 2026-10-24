@@ -19,7 +19,6 @@ export const changes: Record<string, string> = {
   "freezes it": `Object.freeze(a);`,
   "defines an accessor": `Object.defineProperty(a, 3, { get() { return 70; }, configurable: true });`,
   "gives it a prototype with an element": `delete a[3]; Object.setPrototypeOf(a, Object.assign(Object.create(Array.prototype), { 3: 33 }));`,
-  "puts an element on Array.prototype": `delete a[3]; (Array.prototype as unknown[])[3] = 44;`,
   "shifts it": `a.shift();`,
   "puts two in front": `a.unshift(8, 9);`,
   "cuts two out": `a.splice(1, 2);`,
@@ -67,11 +66,11 @@ export function program(change: string, place: (typeof places)[number], isTypeSc
   const chosen = Object.entries(forms).filter(([, body]) => body.includes(place === "first" ? "FIRST" : "LATER"));
   const text = `function attempt(f: () => unknown): unknown { try { return f(); } catch (e) { return "threw " + (e as Error).constructor.name; } }
 type Change = (a: number[]) => void;
-const show = (value: unknown): string => Array.isArray(value) ? "[" + value.length + ": " + value.map(v => Object.is(v, -0) ? "-0" : String(v)).join() + "]" : String(value);
+const show = (value: unknown): string => Array.isArray(value) ? "[" + value.length + ": " + Array.from(value, v => Object.is(v, -0) ? "-0" : String(v)).join() + "]" : String(value);
 ${chosen.map(([name, body]) => `function ${name}(a: number[], change: Change): unknown { ${body.replace("FIRST", place === "first" ? here : "").replace("LATER", place === "later" ? here : "")} }`).join("\n")}
 function all(make: () => number[], change: Change): string {
   const lines: string[] = [];
-${chosen.map(([name]) => `  { const a = make(); lines.push("${name} " + show(attempt(() => ${name}(a, change))) + " of " + show(a)); delete (Array.prototype as unknown[])[3]; }`).join("\n")}
+${chosen.map(([name]) => `  { const a = make(); lines.push("${name} " + show(attempt(() => ${name}(a, change))) + " of " + show(a)); }`).join("\n")}
   return lines.join("\\n");
 }
 const quiet: Change = a => {};

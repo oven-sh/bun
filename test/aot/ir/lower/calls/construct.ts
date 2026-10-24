@@ -13,7 +13,7 @@
 // CHECK-NOT: calleeName
 // CHECK-LABEL: function {{*}}name="member"
 // CHECK: b0([[o]]: anything, [[x]]: anything):
-// CHECK: [[convertedO]] = Convert [[o]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
+// CHECK: [[convertedO]] = Convert [[o]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
 // CHECK-NEXT: [[constructorRead]] = PropGet [[convertedO]] key="C"
 // CHECK-NEXT: [[constructor]] = Convert [[constructorRead]] declared={type=undefined|null|function flags=[IsExpected]}
 // CHECK-NEXT: = Construct [[constructor]], -, [[x]] calleeName="o.C"

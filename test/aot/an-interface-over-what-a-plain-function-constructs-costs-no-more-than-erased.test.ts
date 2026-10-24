@@ -15,8 +15,8 @@ const whyNotCounted = unsupported
     ? "the counts are those of a release build"
     : await whyInstructionsCannotBeCounted();
 
-// A turn of the typed build costs 1.59 times the instructions of the erased build. The share may not pass this. It belongs near 1: the todo test.
-const known = { instructionsOfATurn: 1.65 };
+// A turn of the typed build costs 1.03 times the instructions of the erased build: where the erased build has proven what arrives, the typed build tests for it once. It belongs at 1: the todo test.
+const known = { instructionsOfATurn: 1.05 };
 
 describe.skipIf(!!unsupported)(
   "compile/aot/an-interface-over-what-a-plain-function-constructs-costs-no-more-than-erased",
@@ -97,6 +97,6 @@ describe.skipIf(!!unsupported)(
     test.skipIf(!!whyNotCounted)("the instructions of a turn have not risen against the erased build", () =>
       expectAtMost(known.instructionsOfATurn),
     );
-    test.todo("a turn costs at most a twentieth more with its types than without them", () => expectAtMost(1.05));
+    test.todo("a turn costs no more with its types than without them", () => expectAtMost(1));
   },
 );

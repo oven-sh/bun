@@ -147,7 +147,9 @@ export const acceptedOrders: Record<string, string> = {
   "a coupon of 16 characters": JSON.stringify({ ...order, coupon: "c".repeat(16) }),
   "a name of one character": withCustomer({ name: "Z" }),
   "a name of 100 characters": withCustomer({ name: "z".repeat(100) }),
-  "a name of 50 characters outside the basic plane": withCustomer({ name: "\u{1F35E}".repeat(50) }),
+  // Both count code points: these are 200 and 64 UTF-16 units.
+  "a name of 100 characters outside the basic plane": withCustomer({ name: "\u{1F35E}".repeat(100) }),
+  "a sku of 32 characters outside the basic plane": withFirst({ sku: "\u{1F35E}".repeat(32) }),
   "the largest safe id": withCustomer({ id: Number.MAX_SAFE_INTEGER }),
   "an id with an exponent": text.replace('"id":4711', '"id":4.711e3'),
   "an id that is written twice": text.replace('"id":4711', '"id":0,"id":4711'),
@@ -168,6 +170,7 @@ export const expectedReceipt = (body: string) => receiptFor(JSON.parse(body));
 export const refusedOrders: Record<string, string> = {
   "an empty name": withCustomer({ name: "" }),
   "a name of 101 characters": withCustomer({ name: "z".repeat(101) }),
+  "a name of 101 characters outside the basic plane": withCustomer({ name: "\u{1F35E}".repeat(101) }),
   "an id of zero": withCustomer({ id: 0 }),
   "an id that is negative": withCustomer({ id: -4711 }),
   "an id that is text": withCustomer({ id: "4711" }),
@@ -199,12 +202,6 @@ export const refusedOrders: Record<string, string> = {
   "a body that is text": '"order"',
   "an empty body": "",
   "an order and more text": text + "{}",
-};
-
-/** zod counts code points and accepts these. The generated checks count UTF-16 units and refuse them. */
-export const longerForZodThanForTheType: Record<string, string> = {
-  "a name of 51 characters outside the basic plane": withCustomer({ name: "\u{1F35E}".repeat(51) }),
-  "a sku of 32 characters outside the basic plane": withFirst({ sku: "\u{1F35E}".repeat(32) }),
 };
 
 function summary(id: number) {

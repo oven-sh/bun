@@ -36,6 +36,8 @@ use std::num::NonZeroUsize;
 pub enum EntryPoints<'a> {
     Written(&'a [Vec<u8>]),
     Resolved(&'a [Vec<u8>]),
+    /// Under that configuration file and no other. Without one: the options of a project that has none.
+    Configured(&'a [Vec<u8>], Option<&'a [u8]>),
 }
 
 pub struct CompileRequest<'a, 's> {

@@ -4,7 +4,7 @@
 // `--aot-sabotage=<name>` (hidden) breaks one thing in a build on purpose: an emitter leaves out a barrier, the collector's visit leaves out a field. An ordinary build holds
 // none of it. `bun compile --aot-list=registry` lists the names. For each name the table below has the programs that must notice, and this test passes only if
 // AT LEAST ONE RUN OF THEM DIFFERS FROM PLAIN BUN OR DIES. A sabotage that nothing sees fails here, and so does a name that the table lacks: each says which program is still to be written.
-// The row `none` is the control: the same programs in the same environments without a sabotage, all as plain Bun.
+// A run that notices has its control: the same program in the same environment without the sabotage, as plain Bun.
 //
 //   bun test test/aot/sabotages                          all
 //   AOT_SABOTAGE=<text> bun test test/aot/sabotages      the names that contain the text
@@ -13,7 +13,16 @@ import { rmSync } from "fs";
 import { bunEnv, bunExe, isArm64, isASAN, isGlibc, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { registry } from "./harness/registry";
-import { built, slot, spawned, told, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
+import {
+  built,
+  slot,
+  spawned,
+  told,
+  unsupported,
+  withoutCoreDump,
+  withoutCrashReport,
+  withoutDebugInformation,
+} from "./run-programs";
 import { describe, test } from "./supported";
 
 type Environment = Record<string, string>;
@@ -121,8 +130,8 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
   const root = join(import.meta.dir, "programs");
   let executables = 0;
 
-  /** The environments in which the program, built with the flags, does something else than plain Bun does. */
-  async function departures(program: string, flags: string[], stopsAtTheFirst: boolean): Promise<string[]> {
+  /** The first of the environments in which the program, built with the flags, does something else than plain Bun does. */
+  async function departure(program: string, flags: string[], environments: Environment[]) {
     const path = join(root, program);
     const executable = join(folder, `program-${executables++}${isWindows ? ".exe" : ""}`);
     const plain = await spawned([bunExe(), "run", path], dirname(path), bunEnv);
@@ -134,20 +143,21 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
         bunEnv,
       ),
     );
-    const departing: string[] = [];
     try {
-      for (const environment of underCollections) {
-        const ran = await spawned(withoutCoreDump([executable]), dirname(path), { ...bunEnv, ...environment });
+      for (const environment of environments) {
+        const ran = await spawned(withoutCoreDump([executable]), dirname(path), {
+          ...bunEnv,
+          ...withoutCrashReport,
+          ...environment,
+        });
         // The runner's own clock has ended it: that says nothing, neither in a control nor under a sabotage.
         if (ran.signal === "SIGKILL") continue;
         if (!ran.signal && Bun.deepEquals(told(ran), told(plain))) continue;
-        departing.push(`${program} ${JSON.stringify(environment)}: ${ran.signal ?? "another answer"}`);
-        if (stopsAtTheFirst) break;
+        return { environment, how: ran.signal ?? "another answer" };
       }
     } finally {
       rmSync(executable, { force: true });
     }
-    return departing;
   }
 
   test("every sabotage has programs that must notice it", () => {
@@ -179,19 +189,6 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
     });
   });
 
-  const controls = [
-    ...new Set(
-      Object.values(noticedBy).flatMap(row =>
-        row.programs.map(program => JSON.stringify([`${row.folder}/${program}`, row.flags])),
-      ),
-    ),
-  ].map(text => JSON.parse(text) as [string, string[]]);
-  test.concurrent.each(controls.filter(() => "none".includes(wanted)))(
-    "none: %s %j",
-    (program, flags) => slot(async () => expect(await departures(program, flags, false)).toEqual([])),
-    900_000,
-  );
-
   // TODO: the build of its one program lays no inner object into a room any more, so there is no room to leave as it is.
   const noticedByNobodyToday = ["RoomsLeftEmptyAreNotZeroed"];
   for (const name of noticedByNobodyToday) test.todo(name);
@@ -205,7 +202,13 @@ describe.skipIf(!listed)("compile/aot/sabotages", () => {
       const seen = (
         await Promise.all(
           programs.map(program =>
-            slot(() => departures(`${topic}/${program}`, [...flags, `--aot-sabotage=${name}`], true)),
+            slot(async () => {
+              const path = `${topic}/${program}`;
+              const noticed = await departure(path, [...flags, `--aot-sabotage=${name}`], underCollections);
+              if (!noticed) return [];
+              expect({ path, control: await departure(path, flags, [noticed.environment]) }).toEqual({ path });
+              return [`${path} ${JSON.stringify(noticed.environment)}: ${noticed.how}`];
+            }),
           ),
         )
       ).flat();

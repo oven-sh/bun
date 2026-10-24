@@ -901,6 +901,164 @@ console.log(width(mine), width(row(2)), mine.stamp + 1, row(3).stamp + 1, joined
   );
 
   scene(
+    "what is a string to the package, kept where the program declares a number",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(
+        compiled([note("stamps")], "NaN 0 s01,h01,s01,a1,s11,h11,s11,b1,s21,h21,s21,a1 string,string,string NaN\n"),
+      );
+    },
+    {
+      ...libraryOf(
+        "stamps",
+        `type Stamp = typeof globalThis extends { onlyInTheProgram: infer _ } ? number : string;
+export interface Row {
+  stamp: Stamp;
+  id: number;
+}
+export class Holder {
+  stamp: Stamp;
+  constructor(id: number) {
+    this.stamp = "h" + id;
+  }
+}
+export function row(id: number): Row {
+  return { stamp: "s" + id, id };
+}
+export function stampOf(row: Row): Stamp {
+  return row.stamp;
+}
+export const stamps: Stamp[] = ["a", "b"];
+`,
+      ),
+      ...applicationWith(
+        {},
+        `import { Holder, row, stampOf, stamps } from "stamps";
+declare global {
+  var onlyInTheProgram: number;
+}
+declare const process: { argv: string[] };
+interface Mine {
+  n: number;
+  label: string;
+}
+const all: Mine[] = [];
+const numbers: number[] = [];
+const count = process.argv.length + 1;
+for (let i = 0; i < count; i++) {
+  all.push({ n: stampOf(row(i)), label: "x" + i });
+  numbers.push(stampOf(row(i)), new Holder(i).stamp, row(i).stamp, stamps[i % 2]!);
+}
+let sum = 0;
+for (const mine of all) sum += mine.n * 2;
+let bits = 0;
+for (const n of numbers) bits ^= n | 0;
+console.log(sum, bits, numbers.map(n => n + 1).join(), all.map(mine => typeof mine.n).join(), Math.max(...numbers));
+`,
+      ),
+    },
+  );
+
+  scene(
+    "members that the program adds to an interface and a class, stored in objects that the package made",
+    async root => {
+      await install(root);
+      expect(await compile(root)).toEqual(
+        compiled(
+          [note("grown")],
+          `179 m0m1m2m3m4m5m6m7mine 48 60 undefined undefined name,times,extra,more count,label,added,tail {"name":"n1","times":1,"extra":2,"more":"m1","deep":{"value":1}}\n`,
+        ),
+      );
+    },
+    {
+      ...libraryOf(
+        "grown",
+        `export interface Options {
+  name: string;
+  times: number;
+}
+export class Counter {
+  count: number = 1;
+  label: string = "c";
+  bump(): number {
+    return ++this.count;
+  }
+}
+export function total(list: Options[]): number {
+  let n = 0;
+  for (const options of list) n += options.times + options.name.length;
+  return n;
+}
+export function make(name: string, times: number): Options {
+  return { name, times };
+}
+export function many(count: number): Options[] {
+  const list: Options[] = [];
+  for (let i = 0; i < count; i++) list.push({ name: "n" + i, times: i });
+  return list;
+}
+export function counters(count: number): Counter[] {
+  const list: Counter[] = [];
+  for (let i = 0; i < count; i++) list.push(new Counter());
+  return list;
+}
+`,
+      ),
+      ...applicationWith(
+        {},
+        `import { counters, make, many, total, type Counter, type Options } from "grown";
+declare module "grown" {
+  interface Options {
+    extra: number;
+    more: string;
+    deep?: { value: number };
+  }
+  interface Counter {
+    added: number;
+    tail: string;
+  }
+}
+declare const process: { argv: string[] };
+const count = process.argv.length + 6;
+const list: Options[] = many(count);
+for (let i = 0; i < list.length; i++) {
+  const each = list[i]!;
+  each.extra = i * 2;
+  each.more = "m" + i;
+  if (i & 1) each.deep = { value: i };
+}
+list.push({ name: "own", times: 1, extra: 100, more: "mine", deep: { value: 7 } });
+let sum = 0;
+let text = "";
+for (const each of list) {
+  sum += each.extra + (each.deep ? each.deep.value : 0);
+  text += each.more;
+}
+const all: Counter[] = counters(count);
+for (let i = 0; i < all.length; i++) {
+  all[i]!.added = i;
+  all[i]!.tail = "t" + i;
+}
+let added = 0;
+for (const each of all) added += each.added + each.bump() + each.tail.length;
+const fresh = make("z", 3);
+console.log(
+  sum,
+  text,
+  total(list),
+  added,
+  fresh.extra,
+  fresh.more,
+  Object.keys(list[0]!).join(),
+  Object.keys(all[1]!).join(),
+  JSON.stringify(list[1]),
+);
+`,
+      ),
+    },
+  );
+
+  scene(
     "no null checks in the program, whose callbacks return null where the package expects a number or an object",
     async root => {
       await install(root);
@@ -951,7 +1109,9 @@ console.log(fold(list, item => item.name.length), fold(list, nothing), threw, na
     "no null checks in the package, which returns and stores null where the program expects a string",
     async root => {
       await install(root);
-      expect(await compile(root)).toEqual(compiled([note("finds")], "2 b null null 1\n"));
+      expect(await compile(root)).toEqual(
+        compiled([note("finds")], "2 b null null 1\n5 2,,1,1,,,4 2:true,null:null,1:true 3,1,2,2,1,NaN,5\n"),
+      );
     },
     {
       ...libraryOf(
@@ -967,12 +1127,19 @@ export function find(list: string[], text: string): string {
 export function found(text: string): Found {
   return { text: text === "" ? null : text, next: null };
 }
+export function size(text: string): number {
+  return text ? text.length : null;
+}
+export function flag(text: string): boolean {
+  return text ? true : null;
+}
+export const sizes: number[] = [1, null, undefined, 4];
 `,
         { strict: false },
       ),
       ...applicationWith(
         {},
-        `import { find, found, type Found } from "finds";
+        `import { find, flag, found, size, sizes, type Found } from "finds";
 let threw = 0;
 try {
   console.log(find([], "a").length);
@@ -986,6 +1153,20 @@ try {
   threw++;
 }
 console.log(threw, find(["b"], "b"), empty.text, found("c").next, found("c").text.length);
+interface Mine {
+  n: number;
+  on: boolean;
+}
+const all: Mine[] = [];
+const numbers: number[] = [];
+for (const text of ["ab", "", "c"]) {
+  all.push({ n: size(text), on: flag(text) });
+  numbers.push(size(text));
+}
+for (const each of sizes) numbers.push(each);
+let sum = 0;
+for (const mine of all) sum += mine.n + (mine.on ? 1 : 0);
+console.log(sum, numbers.join(), all.map(mine => mine.n + ":" + mine.on).join(), numbers.map(n => n + 1).join());
 `,
       ),
     },
@@ -1120,6 +1301,12 @@ describe.concurrent("bun compile finds the typed file of a package.json that was
     "under require, in a package that has ES modules and CommonJS",
     async root => expect(await compile(root, ".", "app.cjs")).toEqual(compiled([note], "cjs Ada\n")),
     dual,
+  );
+
+  scene(
+    "under require, with a tsconfig.json beside the typed files",
+    async root => expect(await compile(root, ".", "app.cjs")).toEqual(compiled([note], "cjs Ada\n")),
+    { ...dual, "node_modules/dual/dist/tsconfig.json": tsconfig },
   );
 
   scene(

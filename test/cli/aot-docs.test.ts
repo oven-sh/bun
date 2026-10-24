@@ -55,7 +55,8 @@ function examplesOf(page: string) {
 
 const withoutTimes = (text: string) =>
   text
-    .trim()
+    .replace(/^\n+/, "")
+    .trimEnd()
     .split("\n")
     .map(line => line.replace(/ *\[\d+(\.\d+)?m?s\]/, "").trimEnd());
 

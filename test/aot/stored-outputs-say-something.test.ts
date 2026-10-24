@@ -5,7 +5,7 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { dirname, join } from "path";
 import { generators } from "./generate";
-import { pathOfWrittenProgram, slot, spawned, told } from "./run-programs";
+import { pathOfWrittenProgram, slot, spawned, told, withoutCoreDump, withoutCrashReport } from "./run-programs";
 import { describe, test } from "./supported";
 
 const root = join(import.meta.dir, "programs");
@@ -61,7 +61,14 @@ async function saysNothing(name: string): Promise<boolean> {
   const options = existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")) : {};
   // There the reference is an executable without --aot, which a build has to make: the runner of the folder compares with it.
   if (options.reference === "compiled") return false;
-  const plain = told(await spawned([bunExe(), "run", path], dirname(path), { ...bunEnv, ...options.env }));
+  // Some of these environments hold BUN_JSC_crashIfInterpreterIsUsed=1, which is meant for the executable: plain Bun ends at its first function.
+  const plain = told(
+    await spawned(withoutCoreDump([bunExe(), "run", path]), dirname(path), {
+      ...bunEnv,
+      ...withoutCrashReport,
+      ...options.env,
+    }),
+  );
   const text = plain.stdout + (plain.exitCode ? `exit code ${plain.exitCode}\n${plain.stderr}\n` : plain.stderr);
   return text === readFileSync(beside + ".expected.txt", "utf8");
 }

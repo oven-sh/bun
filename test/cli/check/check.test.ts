@@ -7029,6 +7029,23 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
+    // Which part of the parser finds that too little stack is left depends on where the nesting starts.
+    test("reports that classes in the methods of classes are nested too deeply", async () => {
+      const names = Array.from({ length: 16 }, (_, blocks) => `a${blocks}.ts`);
+      using dir = project(
+        Object.fromEntries(
+          names.map((name, blocks) => [name, `${repeat("{", blocks)}${repeat("class C{m(){", 20_000)}\n`]),
+        ),
+      );
+      const { stderr, exitCode } = await check(dir);
+      expect(stderr.split("\n").slice(0, names.length).sort()).toEqual(
+        names
+          .map(name => `error: the code in ${name} is nested too deeply: errors in this file may be missing.`)
+          .sort(),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test.each(["a.js", "a.ts"])("warns about a deeply nested %s when another file has a syntax error", async name => {
       using dir = project({
         "tsconfig.json": JSON.stringify({
@@ -24866,6 +24883,9 @@ describe.concurrent("--check", () => {
       "():{(",
       "declare function f<T>(): void; f<{ a b: any }>();",
       "type T = { m(: string): any };",
+      "namespace N { a b }",
+      "namespace N { interface I {} namespace M { type T = 1; static x } }",
+      "function f() { namespace N { a b } }",
     ];
     const files: Record<string, string> = {};
     const add = (name: string, text: string) => (files[`${name}.ts`] = `${text}\nconst canary_${name}: string = 1;\n`);
@@ -24951,6 +24971,30 @@ describe.concurrent("--check", () => {
     expect(parsed.length).toBeLessThan(names.length / 2);
     writeFileSync(join(String(dir), "tsconfig.json"), JSON.stringify({ ...JSON.parse(tsconfig), files: parsed }));
     expect(await withoutErrors(parsed)).toEqual([]);
+  });
+
+  test("a program is checked with a stray token anywhere in it, and up to any character", async () => {
+    // Declarations that come first in a file, a namespace and a function.
+    const programs = [
+      `namespace A { interface I { a: string } type T = I; namespace B { type U = T; interface V {} } }\n"use strict";`,
+      `namespace C { export class D<T> extends Object { static x = 1; m(a: T) { "use strict"; return a; } } enum E { a, b = 2 } }`,
+      `function f() { namespace G { type H = 1 } "use strict"; abstract class J { abstract k(): void } }`,
+      `declare class K { l: number } declare enum M { n } declare function o(): void; import type { P } from "./q"; export type { P }; "use strict";`,
+      `interface R {} type S = R; declare namespace T { const u: S } declare var v: S, w: S; function x(): void; function x() {}`,
+    ];
+    const stray = ["q", "static q", "@", "(", ")", "{", "}", "=>", "export", "declare", "class", "namespace", "<", "`"];
+    const files: Record<string, string> = {};
+    programs.forEach((text, index) => {
+      for (let length = 1; length <= text.length; length++) {
+        files[`p${index}_${length}.ts`] = text.slice(0, length);
+        if (text[length] !== " ") continue;
+        stray.forEach((token, nth) => {
+          files[`p${index}_${length}_${nth}.ts`] = `${text.slice(0, length)} ${token}${text.slice(length)}`;
+        });
+      }
+    });
+    using dir = project(files);
+    expect((await check(dir)).exitCode).toBe(1);
   });
 
   // Nothing here is slow or deep unless the cost of a construct grows faster than its size. An exponential walk doesn't

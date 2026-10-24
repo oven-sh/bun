@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { withoutCoreDump } from "./run-programs";
+import { withoutCoreDump, withoutCrashReport } from "./run-programs";
 import { test } from "./supported";
 
 const folder = join(import.meta.dir, "programs", "flattened-objects");
@@ -39,6 +39,7 @@ test.each([
       });
       const { stderr, exitCode } = await run(withoutCoreDump([executable]), folder, {
         ...bunEnv,
+        ...withoutCrashReport,
         BUN_JSC_verifyGC: "1",
       });
       if (!flags.length) {

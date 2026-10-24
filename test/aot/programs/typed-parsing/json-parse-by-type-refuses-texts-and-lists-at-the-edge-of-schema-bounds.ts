@@ -36,6 +36,7 @@ function expect(documented: "value" | "TypeError" | "SyntaxError" | "RangeError"
 
 type NotEmpty = string & Schema.MinLength<1>;
 type Short = string & Schema.MaxLength<3>;
+type AtLeastThree = string & Schema.MinLength<3>;
 type Lower = string & Schema.Pattern<"^[a-z]+$">;
 type SomeItems = number[] & Schema.MinItems<1>;
 type FewItems = number[] & Schema.MaxItems<2>;
@@ -47,6 +48,9 @@ function rows(label: string, parse: (text: string) => unknown, accepted: string[
 
 rows("not empty", text => JSON.parse<NotEmpty>(text), ['"a"', '" "', '"\\u0000"', '"\\ud800"'], ['""', "null", "1", "[]"]);
 rows("at most 3", text => JSON.parse<Short>(text), ['""', '"abc"', '"\\u0061\\u0062\\u0063"', '"日本語"', '"\\n\\n\\n"'], ['"abcd"', '"\\u0061\\u0062\\u0063\\u0064"', '"日本語語"', '"    "']);
+rows("at most 3, in code points", text => JSON.parse<Short>(text), ['"🍞🍞🍞"', '"a🍞b"', '"\\ud83c\\udf5e\\ud83c\\udf5e\\ud83c\\udf5e"', '"\\ud800\\ud800\\ud800"', '"\\udf5e\\ud83c\\udf5e\\ud83c"'], ['"🍞🍞🍞🍞"', '"ab🍞c"', '"\\ud800\\ud800\\ud800\\ud800"', '"\\udf5e\\ud83c\\ud83c\\udf5e\\ud83c"']);
+rows("at least 3, in code points", text => JSON.parse<AtLeastThree>(text), ['"abc"', '"abcd"', '"abcde"', '"🍞🍞🍞"', '"a🍞b"', '"\\ud800\\ud800\\ud800"', '"\\udf5e\\ud83c\\udf5e\\ud83c"'], ['""', '"ab"', '"🍞"', '"🍞🍞"', '"a🍞"', '"\\ud83c\\udf5e\\ud83c\\udf5e"']);
+rows("at least 3 in a member", text => JSON.parse<{ name: AtLeastThree & Schema.MaxLength<4> }>('{"name":' + text + "}"), ['"abc"', '"🍞🍞🍞🍞"'], ['"🍞🍞"', '"🍞🍞🍞🍞🍞"', '"abcde"']);
 rows("lower case", text => JSON.parse<Lower>(text), ['"a"', '"abc"', '"\\u0061"'], ['""', '"A"', '"a1"', '"a b"', '"a\\nb"', '"é"', '"a\\u0000"', '" a"']);
 rows("some items", text => JSON.parse<SomeItems>(text), ["[1]", "[1,2,3]"], ["[]", "null", "{}", '["a"]']);
 rows("few items", text => JSON.parse<FewItems>(text), ["[]", "[1]", "[1,2]"], ["[1,2,3]", "[1,2,null]"]);

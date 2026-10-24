@@ -1,6 +1,6 @@
 use super::program_reach::LeftOutCode;
 use super::runtime_reach::{ReachInput, find_reached_runtime_code};
-use super::{BoundBuild, Build, LoadedBuild, LoadedProject};
+use super::{BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
 use crate::diagnostics::{DiagnosticBuffer, InternalError};
 use crate::ir::generated::FunctionRole;
 use crate::ir::{FunctionId, FunctionKey, Id};
@@ -11,7 +11,7 @@ use crate::lower::{
     DefinedObjectTypes, FileInputs, LibraryFunctions, LoweredFile, LoweringInputs, LoweringOptions,
     lower_file,
 };
-use crate::modules::{Library, LinkedProject, ModuleGraph};
+use crate::modules::{Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
 use crate::package_diagnostics::{PackageView, report_package_errors, report_used_versions};
 use crate::report;
 use crate::statistics::{Counters, Stage, StatisticId};
@@ -51,6 +51,7 @@ struct DecidedProject {
 struct WorldToLower<'a, 's> {
     session: &'s Session,
     index: usize,
+    config_path: Option<&'a [u8]>,
     // Of the application.
     files: &'a [FileId],
 }
@@ -162,8 +163,7 @@ impl Build<'_> {
         loaded: &LoadedBuild<'_, '_>,
         bound: &BoundBuild<'_>,
     ) -> Vec<LinkUnit> {
-        let left_out_of_application = &bound.projects.application.left_out;
-        let worlds = self.lower_worlds(loaded, left_out_of_application);
+        let worlds = self.lower_worlds(loaded, &bound.projects.application);
         self.checked_elsewhere.clone_from(&worlds.lowered);
         self.clock.start(Stage::Check);
         let decided = loaded.projects.as_ref().map(|id, project| {
@@ -268,35 +268,39 @@ impl Build<'_> {
     }
 
     /// A typed package is checked and lowered by a program of its own: the `tsconfig.json` beside its typed files, its
-    /// `lib`, its globals. Nothing of the application's configuration reaches it. Packages that say the same share one.
-    fn lower_worlds(&mut self, loaded: &LoadedBuild<'_, '_>, left_out: &LeftOutCode) -> Worlds {
+    /// `lib`, its globals. Nothing of the application's configuration reaches it. Packages that say the same share one,
+    /// and so do those that have no `tsconfig.json`. Which variables a CommonJS file exports into is decided by who
+    /// requires it, so it stays in the application's program.
+    fn lower_worlds(&mut self, loaded: &LoadedBuild<'_, '_>, bound: &BoundProject<'_>) -> Worlds {
+        let left_out = &bound.left_out;
         let application = loaded.project(ProjectId::Application);
         let (files, host) = (application.loaded.files(), application.host);
-        let mut groups: BTreeMap<Vec<u8>, Vec<FileId>> = BTreeMap::new();
+        let mut groups: BTreeMap<Vec<u8>, (Option<Vec<u8>>, Vec<FileId>)> = BTreeMap::new();
         for &file in files.compiled_files() {
-            let is_typed =
-                (files.compiled(file)).is_some_and(|compiled| compiled.typed_source_path.is_some());
-            if !is_typed
-                || files.role(file) != FileRole::Checked
+            let Some(typed) = (files.compiled(file)).and_then(|it| it.typed_source_path) else {
+                continue;
+            };
+            if files.role(file) != FileRole::Checked
+                || bound.graph.shape(ModuleRef::File(file)) != Shape::EsModule
                 || files.hir(file).check_directive == Some(false)
                 || left_out.files.binary_search(&file).is_ok()
             {
                 continue;
             }
-            let directory = host.directory_of(files.module(file).file_name());
-            if let Some(config_path) = config::find_config(host, &directory) {
-                let key = world_key(&host.read_source(&config_path), &config_path);
-                groups.entry(key).or_default().push(file);
-            }
+            let config_path = config::find_config_of_package(host, &host.directory_of(typed));
+            let key = (config_path.as_ref()).map(|path| world_key(&host.read_source(path), path));
+            let group = groups.entry(key.unwrap_or_default());
+            group.or_insert((config_path, Vec::new())).1.push(file);
         }
         let mut worlds = Worlds::default();
-        for (index, group) in groups.into_values().enumerate() {
+        for (index, (config_path, group)) in groups.into_values().enumerate() {
             let Some(session) = loaded.world_sessions.get(index) else {
                 break;
             };
             let world = WorldToLower {
                 session,
                 index,
+                config_path: config_path.as_deref(),
                 files: &group,
             };
             self.lower_world(loaded, left_out, &world, &mut worlds);
@@ -319,7 +323,7 @@ impl Build<'_> {
             .map(|&file| files.module(file).file_name().to_vec())
             .collect();
         let request = CompileRequest {
-            entry_points: EntryPoints::Resolved(&paths),
+            entry_points: EntryPoints::Configured(&paths, world.config_path),
             project_origin: FileOrigin::DependencySource,
             left_out_bodies: None,
             ..*application.request

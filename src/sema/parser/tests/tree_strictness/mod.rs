@@ -30,6 +30,15 @@ const STRINGS_OUTSIDE_PROLOGUES: &[(&str, &str)] = &[
     (DEFAULT_PATH, r#"x; "use strict";"#),
     (DEFAULT_PATH, r#"{ "use strict"; }"#),
     ("a.ts", r#"namespace N { "use strict"; }"#),
+    ("a.ts", r#"namespace N { a b } "use strict";"#),
+    (
+        "a.ts",
+        r#"namespace N { interface I {} namespace M { static x } } "use strict";"#,
+    ),
+    (
+        "a.ts",
+        r#"function f() { namespace N { a b } "use strict"; }"#,
+    ),
 ];
 
 const STRICTNESS: &[(&str, &str, bool, &[FunctionName<'static>])] = &[

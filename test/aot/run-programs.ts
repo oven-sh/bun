@@ -87,6 +87,7 @@ import { availableParallelism, tmpdir } from "os";
 import { join, relative, sep } from "path";
 import { describedRows, readTable, type Row } from "./built-ins-alone/table";
 import { findBuiltinTable, generators, writeGroups, writeProgram, type WrittenProgram } from "./generate";
+import { locksEnvironment } from "./hardened";
 
 const root = join(import.meta.dir, "programs");
 // A debug or ASAN build of Bun is many times slower, so it runs the quick subset unless told otherwise.
@@ -310,6 +311,8 @@ const collectsAtEveryAllocation = (env: Record<string, string | undefined>) => N
 const collectsEveryMillisecond = (env: Record<string, string | undefined>) => env.BUN_JSC_collectContinuously === "1";
 
 export const withoutCoreDump = (cmd: string[]) => (isWindows ? cmd : ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...cmd]);
+/** For a process that is meant to end by a signal. CI's runner books a report that a passing file leaves on the next file that fails. */
+export const withoutCrashReport: Record<string, string> = { BUN_ENABLE_CRASH_REPORTING: "0", ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }) };
 
 /** The parts of a run's result that must be equal between two ways of running a program. */
 export function told(run: { stdout: string; stderr: string; exitCode: number }) {

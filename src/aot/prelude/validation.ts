@@ -81,30 +81,42 @@ type PlanNode = {
 
 type Plan = PlanNode[];
 
+// What is made of the text of a plan or of a rule, once. Reporting adds nodes for optional members.
+interface Prepared {
+  parsed: any;
+  optionalUnions: Map<number, number>;
+  expressions: Map<string, RegExp>;
+}
+
 interface Run {
   nodes: Plan;
   refused: object;
   verdicts: Map<object, unknown[]> | undefined;
   remainingIssues: number;
   reported: Map<object, unknown[]> | undefined;
-  optionalUnions: Map<number, number> | undefined;
+  optionalUnions: Map<number, number>;
   expressions: Map<string, RegExp>;
   copies: Set<object>;
+}
+
+function prepare(text: string): Prepared {
+  return { parsed: $jsonParse(text), optionalUnions: new $Map(), expressions: new $Map() };
 }
 
 function maxIssueCount(): number {
   return 100;
 }
 
-function createRun(nodes: Plan): Run {
+function createRun(plan: string): Run {
+  const prepared = prepare(plan);
   return {
-    nodes,
+    nodes: prepared.parsed,
     refused: {},
     verdicts: undefined,
     remainingIssues: maxIssueCount(),
     reported: undefined,
-    optionalUnions: undefined,
-    expressions: new $Map(),
+    optionalUnions: prepared.optionalUnions,
+    expressions: prepared.expressions,
     copies: new $Set(),
   };
 }
@@ -204,16 +216,39 @@ function matchesTemplate(texts: string[], placeholders: string, value: string): 
   return matchesPlaceholder(placeholders[last - 1], value.slice(position, end));
 }
 
-function expressionOf(run: Run, source: string): RegExp {
-  let expression = run.expressions.get(source);
+function expressionOf(expressions: Map<string, RegExp>, source: string): RegExp {
+  let expression = expressions.get(source);
   if (expression === undefined) {
     expression = new RegExp(source);
-    run.expressions.set(source, expression);
+    expressions.set(source, expression);
   }
   return expression;
 }
 
-function holds(run: Run, rule: PlanRule, value: any): boolean {
+// A surrogate pair is one character. A surrogate without its other half is one too.
+export function countCodePoints(text: string): number {
+  const units = text.length;
+  let count = units;
+  for (let i = 1; i < units; i++) {
+    if ((text.charCodeAt(i) & 0xfc00) !== 0xdc00 || (text.charCodeAt(i - 1) & 0xfc00) !== 0xd800) continue;
+    count--;
+    i++;
+  }
+  return count;
+}
+
+// A string has at most as many characters as UTF-16 units, and at least half as many.
+function hasAtLeast(value: any, length: number): boolean {
+  const units = value.length;
+  if (units < length) return false;
+  return typeof value !== "string" || units >= 2 * length - 1 || countCodePoints(value) >= length;
+}
+
+function hasAtMost(value: any, length: number): boolean {
+  return value.length <= length || (typeof value === "string" && countCodePoints(value) <= length);
+}
+
+function holds(expressions: Map<string, RegExp>, rule: PlanRule, value: any): boolean {
   switch (rule.rule) {
     case "Integer":
       return $numberIsInteger(value);
@@ -228,13 +263,13 @@ function holds(run: Run, rule: PlanRule, value: any): boolean {
     case "MultipleOf":
       return value % rule.divisor! === 0;
     case "MinimumLength":
-      return value.length >= rule.length!;
+      return hasAtLeast(value, rule.length!);
     case "MaximumLength":
-      return value.length <= rule.length!;
+      return hasAtMost(value, rule.length!);
     case "Pattern":
-      return expressionOf(run, rule.source!).test(value);
+      return expressionOf(expressions, rule.source!).test(value);
     case "Format":
-      return rule.source ? expressionOf(run, rule.source).test(value) : $urlCanParse(value);
+      return rule.source ? expressionOf(expressions, rule.source).test(value) : $urlCanParse(value);
     case "Template":
       return matchesTemplate(rule.texts!, rule.placeholders!, value);
     case "Message":
@@ -250,7 +285,7 @@ function allHold(run: Run, node: PlanNode, value: any): boolean {
   const rules = node.rules;
   if (rules === undefined) return true;
   for (let i = 0; i < rules.length; i++) {
-    if (!holds(run, rules[i], value)) return false;
+    if (!holds(run.expressions, rules[i], value)) return false;
   }
   return true;
 }
@@ -529,7 +564,7 @@ function reportRules(run: Run, node: PlanNode, value: any, path: any[], issues: 
   const isArray = $isArray(value);
   for (let i = 0; i < rules.length; i++) {
     const rule = rules[i];
-    if (holds(run, rule, value)) continue;
+    if (holds(run.expressions, rule, value)) continue;
     let code = "invalid_format";
     let expected = "";
     switch (rule.rule) {
@@ -624,7 +659,7 @@ function createOptionalArms(run: Run, undefinedArm: number, arms: number[]): num
 }
 
 function optionalUnionOf(run: Run, at: number): number {
-  const unions = (run.optionalUnions ??= new $Map());
+  const unions = run.optionalUnions;
   const known = unions.get(at);
   if (known !== undefined) return known;
   const nodes = run.nodes;
@@ -843,10 +878,13 @@ function addWithWholePaths(found: any[], limit: number, path: any[], issues: any
   }
 }
 
-function errorOf(run: Run, value: any): any {
+function findIssues(run: Run, value: any): any[] {
   const found: any[] = [];
   report(run, 0, value, [], found);
-  if (found.length === 0) add(run, found, createIssue([], "invalid_type", expectedOf(run, 0), value, undefined));
+  return found;
+}
+
+function errorOf(found: any[]): any {
   const issues: any[] = [];
   const summaries: string[] = [];
   addWithWholePaths(found, maxIssueCount(), [], issues, summaries);
@@ -885,22 +923,30 @@ export function validate(value: unknown): unknown {
   return value;
 }
 
-export function validateByPlan(value: unknown, plan: string): unknown {
-  const run = createRun($jsonParse(plan));
+// Compiled code that has refused the value says so, and nothing is built. It may have refused a member that the text has once more, further on: then there is nothing to report.
+export function validateByPlan(value: unknown, plan: string, isRefused: boolean): unknown {
+  const run = createRun(plan);
   const held = heldRoot(run, value);
+  if (isRefused) {
+    const found = findIssues(run, held);
+    if (found.length !== 0) throw errorOf(found);
+  }
   const result = build(run, 0, held);
   if (result !== run.refused) return result;
-  throw errorOf(run, held);
+  const found = findIssues(run, held);
+  if (found.length === 0) add(run, found, createIssue([], "invalid_type", expectedOf(run, 0), held, undefined));
+  throw errorOf(found);
 }
 
 export function interpretNode(value: unknown, plan: string): [boolean, unknown] {
-  const run = createRun($jsonParse(plan));
+  const run = createRun(plan);
   const result = build(run, 0, heldRoot(run, value));
   return result === run.refused ? [false, undefined] : [true, result];
 }
 
 export function holdsRule(value: unknown, rule: string): boolean {
-  return holds(createRun([]), $jsonParse(rule), value);
+  const prepared = prepare(rule);
+  return holds(prepared.expressions, prepared.parsed, value);
 }
 
 export function copyOwnProperties(value: object): object {

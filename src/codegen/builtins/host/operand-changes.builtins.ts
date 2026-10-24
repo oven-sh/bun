@@ -179,7 +179,7 @@ const addressNames = b.keysNamed("family", "address", "port");
 
 const keepsDataOfSocket = b.memberStoredIn(["data"], b.nativeCell(socketDataCell));
 
-type HandlerCall = Pick<b.CallbackOptions, "this" | "args">;
+type HandlerCall = Pick<b.HandlerOptions, "this" | "args">;
 
 // Native code keeps what is stored under the name and calls it for each event. The getter answers what is kept.
 const keptHandler = (path: b.BuiltinPath, cell: string, call: HandlerCall) =>
@@ -291,7 +291,10 @@ export default b.declarations(
       implementation: b.hostCall,
     }),
   ),
-  responseHandler("ondata", { args: [b.union(b.instance("Buffer").fresh, b.undefined), b.bool, b.i32] }),
+  responseHandler("ondata", {
+    this: b.undefined,
+    args: [b.union(b.instance("Buffer").fresh, b.undefined), b.bool, b.i32],
+  }),
   responseHandler("onabort", { this: b.operand("this"), args: [b.i32] }),
   // node_zlib_binding.rs emit_error: the message, the number of the error and its code. Only a function is kept.
   compressors.flatMap(className =>
@@ -303,7 +306,7 @@ export default b.declarations(
   handlerOf("Bun.RedisClient.prototype.onconnect", { this: b.undefined, args: [b.operand("this"), b.any] }),
   handlerOf("Bun.RedisClient.prototype.onclose", { this: b.operand("this"), args: [b.any] }),
   // It also answers the callback of a write that has not gone out whole, which was handed over like any operand.
-  responseHandler("onwritable", { args: [b.f64] }),
+  responseHandler("onwritable", { this: b.undefined, args: [b.f64] }),
   // What the callback writes goes out in one piece when it returns.
   b.method("%NodeHTTPResponse%.prototype.cork", {
     args: { callback: b.callable },
@@ -312,7 +315,15 @@ export default b.declarations(
     throws: true,
     uses: {
       this: handedOver,
-      callback: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Once", args: [], result: "Returned" })],
+      callback: [
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Once",
+          this: b.undefined,
+          args: [],
+          result: "Returned",
+        }),
+      ],
     },
     implementation: b.hostCall,
   }),

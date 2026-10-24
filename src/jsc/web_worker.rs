@@ -891,7 +891,8 @@ impl WebWorker {
             Ok(p) => p,
             Err(_) => {
                 // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // Nor is the parent's terminate() the entry's failure.
+                if !self.exit_called.load(Ordering::Relaxed) && !self.was_terminated_by_parent() {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -1083,6 +1084,13 @@ impl WebWorker {
             exit_code,
             self.stopped_by_parent(),
         );
+    }
+
+    /// `request_termination` publishes the flag first and says whose stop it is
+    /// second, both under the handle's lock.
+    fn was_terminated_by_parent(&self) -> bool {
+        let _published = self.vm_handle.lock();
+        self.terminated_by_parent.load(Ordering::Relaxed)
     }
 
     /// worker.terminate() from the parent, and the worker did not also exit on

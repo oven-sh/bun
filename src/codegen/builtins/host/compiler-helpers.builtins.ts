@@ -31,6 +31,7 @@ const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLik
   b.called({
     afterwards: "TouchesOnlyWhatRowNames",
     times: "Repeatedly",
+    this: b.undefined,
     args: [element, b.length, ...others],
     result: "Stored",
     resultTo: b.resultSlot("element"),
@@ -309,7 +310,14 @@ export default b.declarations(
         index: kept,
         decorator: [
           b.retained,
-          b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", spreadArgs: b.any, result: "Escapes" }),
+          b.called({
+            afterwards: "TouchesOnlyWhatRowNames",
+            times: "Later",
+            this: b.undefined,
+            args: [],
+            spreadArgs: b.any,
+            result: "Escapes",
+          }),
         ],
       },
       defineMetadata: { key: kept, value: kept },
@@ -405,10 +413,16 @@ export default b.declarations(
       "prelude/validation",
       b.any,
       {
-        validateByPlan: { value: validated, plan: b.inspected },
+        validateByPlan: { value: validated, plan: b.inspected, isRefused: b.inspected },
         interpretNode: { value: validated, plan: b.inspected },
         copyOwnProperties: { value: copied("OwnKeys", "OwnValues") },
       },
+      usesOnlyFixedBuiltins,
+    ),
+    ...helpersIn(
+      "prelude/validation",
+      b.int(0, 2 ** 31 - 1),
+      { countCodePoints: { text: b.inspected } },
       usesOnlyFixedBuiltins,
     ),
     ...helpersIn(

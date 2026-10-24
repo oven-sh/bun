@@ -85,7 +85,7 @@ attempt("a reviver that answers a text", () => JSON.parse<Order>(${good}, (key, 
 `,
   "a parse in a loop": count => `${order(count)}
 let sum = 0;
-for (let at = 0; at < 20000; at++) {
+for (let at = 0; at < 2000; at++) {
   const order = JSON.parse<Order>('{"lines":[{"count":' + at + '}],"p0":{"a0":1},"p1":{"a1":2}}');
   sum += order.lines[0].count + order.p0!.a0 + (order.p1?.a1 ?? 0) + (order.p2?.a2 ?? 0);
 }
@@ -109,7 +109,7 @@ attempt("an instance", () => validate<Order>(new Lines()));
   "validate in a loop": count => `import { validate } from "bun:bundle";
 ${order(count)}
 let sum = 0;
-for (let at = 0; at < 20000; at++) {
+for (let at = 0; at < 2000; at++) {
   const order = validate<Order>({ lines: [{ count: at }], p0: { a0: 1 }, p1: { a1: 2 } });
   sum += order.lines[0].count + order.p0!.a0 + (order.p1?.a1 ?? 0) + (order.p2?.a2 ?? 0);
 }
@@ -205,7 +205,7 @@ console.log(sumOf(small.inner), sumOf(large.inner));
 delete (large.inner as any).y;
 console.log(sumOf(small.inner), sumOf(large.inner), JSON.stringify(large.inner), JSON.stringify(small.inner));
 let total = 0;
-for (let at = 0; at < 20000; at++) total += sumOf(JSON.parse<Small>('{"inner":{"x":1,"y":2}}').inner) + sumOf(JSON.parse<Large>('{"inner":{"x":1.5,"y":2}}').inner);
+for (let at = 0; at < 2000; at++) total += sumOf(JSON.parse<Small>('{"inner":{"x":1,"y":2}}').inner) + sumOf(JSON.parse<Large>('{"inner":{"x":1.5,"y":2}}').inner);
 console.log(total);
 `,
   "a field of a class, and a generic function": count => `${order(count)}

@@ -17,7 +17,6 @@ import {
   expectedReceipt,
   invalidOrderBody,
   invalidOrders,
-  longerForZodThanForTheType,
   refusedOrders,
   refusedRoutes,
   routes,
@@ -114,21 +113,6 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/validat
           status: 400,
           body: invalidOrderBody,
         });
-    });
-
-    // zod 4.6 and JSON Schema count the code points of a string. Schema.MinLength and Schema.MaxLength count UTF-16 units, like `length`.
-    test.todo("counts the characters of a string like zod", async () => {
-      using server = await start(name);
-      using reference = await start(withZod);
-      for (const [description, order] of Object.entries(longerForZodThanForTheType)) {
-        const expected = await sendOrder(reference.origin, zodRoute, order);
-        for (const route of validatedRoutes)
-          expect({ route: route.name, description, ...(await sendOrder(server.origin, route, order)) }).toEqual({
-            route: route.name,
-            description,
-            ...expected,
-          });
-      }
     });
 
     test.each([

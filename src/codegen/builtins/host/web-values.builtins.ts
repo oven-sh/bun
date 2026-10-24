@@ -236,8 +236,18 @@ const binaryMessage = readsState;
 
 // A socket that is closed inside a call has its close handler called before the call returns, and the error handler with what that one throws. close and terminate close this socket.
 const mayClose = (socket: b.PlaceLike) => [
-  b.keptCalled(webSocketHandlerCell("close"), { times: "Once", args: [socket, b.f64, b.string], result: "Ignored" }),
-  b.keptCalled(webSocketHandlerCell("error"), { times: "Once", args: [b.any, socket], result: "Ignored" }),
+  b.keptCalled(webSocketHandlerCell("close"), {
+    times: "Once",
+    this: b.undefined,
+    args: [socket, b.f64, b.string],
+    result: "Ignored",
+  }),
+  b.keptCalled(webSocketHandlerCell("error"), {
+    times: "Once",
+    this: b.undefined,
+    args: [b.any, socket],
+    result: "Ignored",
+  }),
 ];
 const writesToSocket = [...changesState, ...mayClose(b.operand("this"))];
 const writesToSubscribers = [...writesToSocket, ...mayClose(b.nativeCell(webSocketsCell))];

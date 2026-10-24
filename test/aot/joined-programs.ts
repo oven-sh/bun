@@ -283,9 +283,9 @@ async function compareWays(folder: string, carrier: string[], group: number | st
 
 /**
  * A limit decides how fast and how large the code is, never what a program prints. Most limits are so high that only a large program meets them, and no small program runs
- * what lies beyond. Here each is lowered to 0, 1 and 2, one in a build, so that every program is beyond it. Each program prints what it prints in plain Bun.
+ * what lies beyond. Here each is lowered to 0, 1 and 2, one in a build, and all of them together (All), so that every program is beyond it. Each program prints what it prints in plain Bun.
  *
- * A run that is told nothing takes one group of its part and one in `oneIn` of the limits, which ones follows from the revision. AOT_SHARE=all takes all.
+ * A run that is told nothing takes one group of its part, All, and one in `oneIn` of the limits, which ones follows from the revision. AOT_SHARE=all takes all.
  * AOT_WAYS=<regular expression> takes the limits whose <name>:<value> it matches, AOT_GROUPS=<i>/<n> every n-th group from the i-th, AOT_BUILD_FLAGS=<flags> go to
  * every build. AOT_WAYS_REPORT=<file> gets a line for each build, AOT_WAYS_KEEP=<folder> the programs that print something else. AOT_WAYS_FILE=<file> holds other ways to build and run in place of the limits: [{ name, flags, env }].
  */
@@ -302,7 +302,7 @@ export function joinedWithLimitsLowered(part = 1, parts = 1, oneIn = isASAN ? 96
     for (let group = first - 1; group < groups.length; group += step) {
       const listed = groups[group];
       const nameOf = (path: string) => inPrograms(path).replaceAll("\\", "/");
-      const waysOf = (group: string) => ways.filter(way => wanted || inShare(`${group} ${way.name}`, oneIn, true));
+      const waysOf = (group: string) => ways.filter(way => wanted || way.name.startsWith("All:") || inShare(`${group} ${way.name}`, oneIn, true));
       test(`group ${group}: ${nameOf(listed[0])} to ${nameOf(listed.at(-1)!)}`, () => compareWays(folder, carrier, group, listed, waysOf), 900_000 + (process.env.AOT_SHARE === "all" ? 86_400_000 : 0));
     }
     if (first > groups.length) test.skip("no group selected", () => {});

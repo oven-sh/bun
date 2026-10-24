@@ -132,7 +132,7 @@ export const crypto = b.namespace({
   randomFillSync: {
     args: { buf: b.bufferSource.allowShared, offset: b.f64.default(0), size: b.f64.optional },
     expected: { buf: bufferNames, offset: ["number"], size: ["number"] },
-    returns: b.bufferSource,
+    returns: b.bufferSource.allowShared,
     length: 3,
     capability: "heap",
     throws: true,

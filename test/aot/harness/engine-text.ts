@@ -1,6 +1,10 @@
 // The text of the engine's compiler (Source/JavaScriptCore/aot but its tests), for the tests that go by it.
+import { setDefaultTimeout } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+// Each test reads every source of the compiler, beside whatever else the machine is doing.
+setDefaultTimeout(120_000);
 
 export const sources = [
   process.env.AOT_ENGINE_DIRECTORY,

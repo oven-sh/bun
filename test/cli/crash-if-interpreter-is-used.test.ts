@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "../aot/harness/run";
-import { unsupported, withoutCoreDump } from "../aot/run-programs";
+import { unsupported, withoutCoreDump, withoutCrashReport } from "../aot/run-programs";
 
 test.skipIf(!!unsupported)("BUN_JSC_crashIfInterpreterIsUsed names the code and crashes", async () => {
   const { stderr, exitCode } = await run(withoutCoreDump([bunExe(), "-e", "console.log(1)"]), undefined, {
     ...bunEnv,
+    ...withoutCrashReport,
     BUN_JSC_crashIfInterpreterIsUsed: "1",
   });
   expect(stderr).toContain("crashIfInterpreterIsUsed: ");

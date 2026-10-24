@@ -405,7 +405,7 @@ impl<'a> Build<'a> {
             Err(failure) => {
                 let entry_point_names = match request.entry_points {
                     EntryPoints::Written(specifiers) => specifiers,
-                    EntryPoints::Resolved(paths) => paths,
+                    EntryPoints::Resolved(paths) | EntryPoints::Configured(paths, _) => paths,
                 };
                 self.diagnostics
                     .add_load_failure(failure, entry_point_names);

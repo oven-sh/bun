@@ -193,6 +193,8 @@ interface Order {
 | `{ id: number } & Schema.Strict`                        | has no property that the type doesn't declare                                     |
 | `Schema.DeepStrict`                                     | the same, for every object type inside the type too                               |
 
+`MinLength` and `MaxLength` count Unicode code points, like JSON Schema and zod. `"🍞".length` is 2, but it's one character here. Half of a surrogate pair on its own counts as one.
+
 ## What a type means
 
 The check is a little stricter than TypeScript. Some values that you can assign to `T` don't pass.

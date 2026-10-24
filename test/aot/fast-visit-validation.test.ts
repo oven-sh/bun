@@ -2,7 +2,7 @@ import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runProcess } from "./harness/run";
-import { withoutCoreDump } from "./run-programs";
+import { withoutCoreDump, withoutCrashReport } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
 // In an executable built with --aot-validate the collector visits a cell twice: as its marking loop does, without the method table,
@@ -33,7 +33,6 @@ console.log("sum", sum);
 
 // Only the collector's own visitor compares, and only while the program is stopped: with these two every marked cell is compared.
 const everyCellIsCompared = { BUN_JSC_numberOfGCMarkers: "1", BUN_JSC_useConcurrentGC: "0" };
-const withoutCrashReport = { BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
 
 describe("validation of the collector's fast visits", () => {
   const dir = tempDir("fast-visit-validation", { "main.ts": program });

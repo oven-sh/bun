@@ -3,6 +3,7 @@ use bun_sema::bind::{BindingInitializer, BindingKind, SymbolId};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{BinOp, CallId, Chain, ExprId, ExprKind, UnOp};
 use bun_sema::module_format::main_module_operand;
+use smallvec::SmallVec;
 
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Intrinsic, Resolved};
@@ -67,8 +68,67 @@ pub(super) fn classify_test(
     }
     match find_equality(op) {
         Some(equality) => classify_equality(lowering, op, equality, left, right),
-        None => LeafTest::Comparison { op, left, right },
+        None => classify_typeof_order(lowering, op, left, right).unwrap_or(LeafTest::Comparison {
+            op,
+            left,
+            right,
+        }),
     }
+}
+
+/// `typeof value > "u"`, as minifiers write `typeof value === "undefined"`: an order that one of the eight names alone passes, or alone fails, asks for that name.
+fn classify_typeof_order(
+    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
+    op: BinOp,
+    left: ExprId,
+    right: ExprId,
+) -> Option<LeafTest> {
+    let file = &*lowering.file;
+    let (operand, bound, is_typeof_on_the_left) = match find_typeof_operand(lowering, left) {
+        Some(operand) => (operand, right, true),
+        None => (find_typeof_operand(lowering, right)?, left, false),
+    };
+    let Some(Constant::String(bound)) = find_constant(file, bound) else {
+        return None;
+    };
+    let bound = file.queries.atom_bytes(bound);
+    let passes = |name: &Atom| {
+        let order = file.queries.atom_bytes(*name).cmp(bound);
+        let order = if is_typeof_on_the_left {
+            order
+        } else {
+            order.reverse()
+        };
+        match op {
+            BinOp::Lt => order.is_lt(),
+            BinOp::Le => order.is_le(),
+            BinOp::Gt => order.is_gt(),
+            BinOp::Ge => order.is_ge(),
+            _ => false,
+        }
+    };
+    let (passing, failing): (SmallVec<[Atom; 8]>, SmallVec<[Atom; 8]>) =
+        TYPEOF_NAMES.into_iter().partition(passes);
+    match (&passing[..], &failing[..]) {
+        (&[name], _) => typeof_test(operand, name, false),
+        (_, &[name]) => typeof_test(operand, name, true),
+        _ => None,
+    }
+}
+
+fn typeof_test(operand: ExprId, name: Atom, is_negated: bool) -> Option<LeafTest> {
+    Some(match typeof_name(name)? {
+        TypeofName::Type(tested) => LeafTest::Type {
+            operand,
+            is_typeof: true,
+            tested,
+            is_negated,
+        },
+        TypeofName::Object => LeafTest::TypeofObject {
+            operand,
+            is_negated,
+        },
+    })
 }
 
 fn find_equality(op: BinOp) -> Option<Equality> {
@@ -102,19 +162,11 @@ fn classify_equality(
         let Some(Constant::String(name)) = find_constant(file, other) else {
             continue;
         };
-        return match typeof_name(name) {
-            Some(TypeofName::Type(tested)) => LeafTest::Type {
-                operand,
-                is_typeof: true,
-                tested,
-                is_negated,
-            },
-            Some(TypeofName::Object) => LeafTest::TypeofObject {
-                operand,
-                is_negated,
-            },
-            None => LeafTest::Comparison { op, left, right },
-        };
+        return typeof_test(operand, name, is_negated).unwrap_or(LeafTest::Comparison {
+            op,
+            left,
+            right,
+        });
     }
     for (side, other) in sides {
         let Some(tested) = find_nullish_type(file, side, equality.is_loose) else {
@@ -206,6 +258,17 @@ fn find_nullish_type(
         }
     }
 }
+
+const TYPEOF_NAMES: [Atom; 8] = [
+    known::undefined,
+    known::boolean,
+    known::number,
+    known::string,
+    known::symbol,
+    known::bigint,
+    known::function,
+    known::object,
+];
 
 pub(super) fn typeof_name(name: Atom) -> Option<TypeofName> {
     if name == known::undefined {

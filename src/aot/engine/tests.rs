@@ -8,6 +8,7 @@ use super::ResultSection as Section;
 use super::testing::{Sections, bytes_of, with_result};
 use super::*;
 use crate::ir::generated::{Architecture, CheckSet, StatisticId};
+use crate::statistics::can_be_lowered;
 
 const IDENTITY: ExecutableIdentity = ExecutableIdentity(*b"0123456789abcdef");
 const THREAD_COUNT: NonZeroUsize = NonZeroUsize::new(7).unwrap();
@@ -317,6 +318,24 @@ fn limit_values_apply_lowered_limit() {
         let expected = match limit {
             LimitId::MaxTypeNodes => 3,
             _ => limit.value(Architecture::X86_64),
+        };
+        assert_eq!(limits.get(limit), expected, "{limit:?}");
+    }
+}
+
+#[test]
+fn all_lowers_each_limit_to_no_less_than_its_smallest() {
+    let mut record: CompileOptions = zeroed();
+    record.target.architecture = Architecture::X86_64;
+    record.lowered_limit = LimitId::All;
+    record.lowered_limit_value = 2;
+    let limits = with_record(record).limit_values();
+    for limit in LimitId::ALL {
+        let usual = limit.value(Architecture::X86_64);
+        let expected = if can_be_lowered(limit) {
+            usual.min(limit.smallest().max(2))
+        } else {
+            usual
         };
         assert_eq!(limits.get(limit), expected, "{limit:?}");
     }

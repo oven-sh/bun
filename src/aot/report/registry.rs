@@ -48,6 +48,7 @@ fn write_limits(json: &mut JsonWriter, limits: &LimitValues) {
         json.string("stage", limit.stage().name().as_bytes());
         json.string("protects", &lower_camel_case(limit.protects().name()));
         json.string("degradesTo", &lower_camel_case(limit.degrades_to().name()));
+        json.number("smallest", limit.smallest());
         json.end_object();
     }
     json.end_array();

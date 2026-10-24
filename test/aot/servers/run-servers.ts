@@ -12,6 +12,11 @@ export function filterRequested(names: string[]) {
   return names.filter(name => !requestedServers || requestedServers === "1" || requestedServers.split(",").includes(name.split(".")[0]));
 }
 
+/** AOT_SERVERS_FLAGS="--aot-heat=everything-is-hot": more flags for every build with --aot. What a server answers does not depend on them. */
+export const moreFlags = (process.env.AOT_SERVERS_FLAGS ?? "").split(" ").filter(Boolean);
+/** AOT_SERVERS_ENVIRONMENT="A=1 B=2": more variables for every run of an executable that was built with --aot. */
+export const moreEnvironment = Object.fromEntries((process.env.AOT_SERVERS_ENVIRONMENT ?? "").split(" ").filter(Boolean).map(pair => pair.split("="))); // prettier-ignore
+
 /** Runs `bun install` in the folder, or links AOT_SERVERS_MODULES as its node_modules. */
 export async function installPackages(folder: string) {
   if (process.env.AOT_SERVERS_MODULES) return symlinkSync(process.env.AOT_SERVERS_MODULES, join(folder, "node_modules"));

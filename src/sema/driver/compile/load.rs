@@ -30,11 +30,12 @@ pub fn load_program<'s>(
     use_dedicated_pool("Bun Compile");
     let entry_paths = match request.entry_points {
         EntryPoints::Written(specifiers) => resolve_entry_points(host, request.code, specifiers)?,
-        EntryPoints::Resolved(paths) => paths.to_vec(),
+        EntryPoints::Resolved(paths) | EntryPoints::Configured(paths, _) => paths.to_vec(),
     };
     debug_assert!(!entry_paths.is_empty());
     let mut project = find_project(host, request, &entry_paths)?;
-    if request.code.tsconfig_override.is_none() {
+    let is_configured = matches!(request.entry_points, EntryPoints::Configured(..));
+    if request.code.tsconfig_override.is_none() && !is_configured {
         add_files_of_other_projects(host, &mut project, &entry_paths);
     }
     if request.code.transpiles_by_working_directory && request.code.tsconfig_override.is_none() {
@@ -218,10 +219,11 @@ fn find_project(
     entry_paths: &[Vec<u8>],
 ) -> Result<config::Project, LoadFailure> {
     let code = request.code;
-    let config_path = match &code.tsconfig_override {
-        Some(path) if host.is_dir(path) => Some(join(path, b"tsconfig.json")),
-        Some(path) => Some(path.clone()),
-        None => {
+    let config_path = match (request.entry_points, &code.tsconfig_override) {
+        (EntryPoints::Configured(_, config_path), _) => config_path.map(<[u8]>::to_vec),
+        (_, Some(path)) if host.is_dir(path) => Some(join(path, b"tsconfig.json")),
+        (_, Some(path)) => Some(path.clone()),
+        (_, None) => {
             let directory = match entry_paths.first() {
                 Some(path) => host.directory_of(path),
                 None => Cow::Borrowed(&code.working_directory[..]),

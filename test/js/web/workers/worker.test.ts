@@ -555,6 +555,16 @@ describe("web worker", () => {
       expect(() => w.postMessage("late")).not.toThrow();
     });
 
+    test.each([
+      ["while its entry runs", `postMessage("up"); for (;;) {}`],
+      ["behind its entry", `onmessage = () => {}; setTimeout(() => postMessage("up"), 20);`],
+    ])("terminate() %s closes with 0", async (_, src) => {
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      w.onmessage = () => w.terminate();
+      const [ev] = await once(w, "close");
+      expect(ev.code).toBe(0);
+    });
+
     // A data: URL is the module itself and never a path (no length limit).
     test("a long data: URL worker", async () => {
       const pad = "/*" + Buffer.alloc(4000, "x").toString() + "*/";

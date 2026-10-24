@@ -26,10 +26,17 @@ impl LimitValues {
         self.values[limit as usize]
     }
 
-    pub fn lower(&mut self, limit: LimitId, value: u64) {
-        assert!(can_be_lowered(limit), "{limit:?}");
-        assert!(value <= self.get(limit), "{limit:?}");
-        self.values[limit as usize] = value;
+    /// `LimitId::All` lowers every limit that can be lowered, each to no less than its smallest value.
+    pub fn lower(&mut self, lowered: LimitId, value: u64) {
+        assert!(can_be_lowered(lowered), "{lowered:?}");
+        assert!(value <= self.get(lowered), "{lowered:?}");
+        for limit in LimitId::ALL {
+            if limit == lowered {
+                self.values[limit as usize] = value;
+            } else if lowered == LimitId::All && can_be_lowered(limit) {
+                self.values[limit as usize] = self.get(limit).min(value.max(limit.smallest()));
+            }
+        }
     }
 }
 

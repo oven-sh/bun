@@ -197,7 +197,7 @@ function signatureOf(accessor: BufferAccessor): b.SignatureOptions {
         ...shared,
         args: { value: movesBigInt ? b.bigint : b.f64.loose, offset: offsetType },
         returns: b.int(byteCount, maximumBufferLength),
-        uses: { this: [b.writesContents()] },
+        uses: { this: [b.readsContents(), b.writesContents()] },
       };
   }
 }

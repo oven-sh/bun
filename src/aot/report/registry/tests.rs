@@ -32,11 +32,11 @@ fn limits_list_every_limit_once() {
     }
     assert_eq!(count_of(&document, r#"{"name":"#), LimitId::COUNT - 1);
     assert!(document.starts_with(br#"{"limits":[{"name":""#));
-    assert!(document.ends_with(br#""}]}"#));
+    assert!(document.ends_with(br#"}]}"#));
 }
 
 #[test]
-fn limit_has_five_members_in_order() {
+fn limit_has_six_members_in_order() {
     let limits = LimitValues::for_host();
     let document = object_with(|json| write_limits(json, &limits));
     for limit in LimitId::ALL
@@ -47,13 +47,14 @@ fn limit_has_five_members_in_order() {
         let element = format!(
             concat!(
                 r#"{{"name":"{}","value":{},"stage":"{}","#,
-                r#""protects":"{}","degradesTo":"{}"}}"#,
+                r#""protects":"{}","degradesTo":"{}","smallest":{}}}"#,
             ),
             limit.name(),
             limits.get(limit),
             limit.stage().name(),
             protects_word(limit.protects()),
             degrades_to,
+            limit.smallest(),
         );
         assert_eq!(count_of(&document, &element), 1, "{limit:?}");
     }

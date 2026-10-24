@@ -94,9 +94,13 @@
     }
   },
   "class/default-on-the-prototype-read-in-function": {
-    "typed": 150,
-    "untyped": 146.8,
-    "jit": 28.2
+    "typed": 158.9,
+    "untyped": 176.8,
+    "jit": 28.2,
+    "best": {
+      "typed": 150,
+      "untyped": 146.8
+    }
   },
   "class/instanceof-a-function-that-stands-under-another": {
     "typed": 404.3,
@@ -421,9 +425,13 @@
     "jit": 87.1
   },
   "host-classes/instanceof-response": {
-    "typed": 28.2,
-    "untyped": 28.2,
-    "jit": 25.5
+    "typed": 33.2,
+    "untyped": 37.2,
+    "jit": 25.5,
+    "best": {
+      "typed": 28.2,
+      "untyped": 28.2
+    }
   },
   "host-classes/url-pathname": {
     "typed": 844,
@@ -1132,9 +1140,13 @@
     "jit": 15
   },
   "array/pairs-of-a-constant-table": {
-    "typed": 24,
-    "untyped": 24,
-    "jit": 50
+    "typed": 29,
+    "untyped": 32,
+    "jit": 50,
+    "best": {
+      "typed": 24,
+      "untyped": 24
+    }
   },
   "array/map-filter-reduce-over-constant-lists": {
     "typed": 186.1,
@@ -1207,9 +1219,13 @@
     "jit": 269.7
   },
   "built-in/byte-length-of-chunks-written-to-a-view": {
-    "typed": 293.5,
-    "untyped": 264.7,
-    "jit": 143
+    "typed": 307.6,
+    "untyped": 295.6,
+    "jit": 143,
+    "best": {
+      "typed": 293.5,
+      "untyped": 264.7
+    }
   },
   "function/names-put-on-a-closure-just-made": {
     "typed": 274.4,
@@ -1297,9 +1313,13 @@
     "jit": 5.9
   },
   "guess/store-to-one-receiver-right": {
-    "typed": 10,
+    "typed": 17,
     "untyped": 8,
-    "jit": 10.1
+    "jit": 10.1,
+    "best": {
+      "typed": 10,
+      "untyped": 8
+    }
   },
   "guess/store-to-one-receiver-wrong": {
     "typed": 39,

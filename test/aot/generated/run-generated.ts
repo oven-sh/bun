@@ -12,7 +12,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { built, inShare, wanted as programsWanted, slot, spawned, unsupported, withoutCoreDump } from "../run-programs";
+import { built, inShare, wanted as programsWanted, slot, spawned, unsupported, withoutCoreDump, withoutCrashReport } from "../run-programs";
 
 export type Generated = {
   name: string;
@@ -117,7 +117,7 @@ export function generated(title: string, programs: Generated[]) {
               }
               expect({ departing, signal: compiled.signal, exitCode: compiled.exitCode, lines: ours.length }).toEqual({ departing: [], signal: null, exitCode, lines: theirs.length });
               for (const under of program.alsoUnder ?? []) {
-                const again = await spawned(program.mayStopOutOfMemory ? withoutCoreDump([executable]) : [executable], folder, { ...bunEnv, ...under });
+                const again = await spawned(program.mayStopOutOfMemory ? withoutCoreDump([executable]) : [executable], folder, { ...bunEnv, ...(program.mayStopOutOfMemory && withoutCrashReport), ...under });
                 if (program.mayStopOutOfMemory && again.stderr.includes("FATAL: out of memory")) continue;
                 expect({ under, stdout: again.stdout, signal: again.signal, exitCode: again.exitCode }).toEqual({ under, stdout: plain.stdout, signal: null, exitCode });
               }

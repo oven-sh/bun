@@ -16,6 +16,7 @@ const self = b.operand("this");
 const calledWithEvents = b.called({
   afterwards: "TouchesOnlyWhatRowNames",
   times: "PerEvent",
+  args: [],
   this: self,
   spreadArgs: b.any,
   result: "Ignored",
@@ -37,12 +38,15 @@ const calledWithSignal = b.called({
 const calledWithUncaughtException = b.called({
   afterwards: "TouchesOnlyWhatRowNames",
   times: "PerEvent",
+  this: b.any,
   args: [b.any, b.string],
   result: "Ignored",
 });
 const calledOnNextTick = b.called({
   afterwards: "TouchesOnlyWhatRowNames",
   times: "Later",
+  this: b.undefined,
+  args: [],
   spreadArgs: b.operand("passed"),
   result: "Ignored",
 });
@@ -261,6 +265,7 @@ const highResolutionTimeSince = [
 // While an init hook of node:async_hooks is enabled, the callback and its arguments go to the function of the library that shows them to the hooks. node:async_hooks hands that function over with the first hook.
 const shownToInitHooks = b.keptCalled(tickShownToHooksCell, {
   times: "Once",
+  this: b.undefined,
   args: [b.operand("callback"), newArrayOf(b.operand("passed")).or(b.undefined), b.nativeMemory],
   result: "Ignored",
 });

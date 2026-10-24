@@ -376,7 +376,13 @@ function leavesCellsAlone(type: Type, converted: TypeSpec): boolean {
   return isImmediate(converted) || (type.isReadInPlace && Bun.deepEquals(converted, type.directForm?.type));
 }
 
-function capabilityOf({ args, capability }: Signature, result: TypeSpec, converted: readonly TypeSpec[]): Capability {
+// The wrapper goes over a list by the @@iterator that the operand has.
+const iteratesOperand = ({ args }: Signature): boolean =>
+  args.some(({ type }) => findContainers(type).some(container => container instanceof ArrayType));
+
+function capabilityOf(signature: Signature, result: TypeSpec, converted: readonly TypeSpec[]): Capability {
+  const { args, capability } = signature;
+  if (iteratesOperand(signature)) return "js";
   const touchesNoCell =
     isImmediate(result) && args.every(({ type }, index) => leavesCellsAlone(type, converted[index]));
   return capability === "none" && !touchesNoCell ? "heap" : capability;
@@ -417,6 +423,8 @@ function createField(
       result,
       args.map(({ type }) => type.parameterType.converted),
     ),
+    runsOnlyOperandCode:
+      columns.runsOnlyOperandCode ?? ((capability !== "js" && iteratesOperand(signature)) || undefined),
     throws: signature.throws || signature.requiredArguments > 0 || args.some(({ type }) => type.canRefuse),
     uses,
     reads: columns.reads ?? (isOfClass && capability === "js" ? undefined : externalState),
@@ -772,7 +780,6 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
       cachedField === null
         ? columns.implementation
         : { how: "CachedGetter", cppClass: type.cpp, member: `m_${cachedField}` },
-    mutability: columns.mutability ?? (cachedField !== null && !isLocked(type) ? "ConstantUnlessWritten" : undefined),
   });
 }
 

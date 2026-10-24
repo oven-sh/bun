@@ -822,8 +822,10 @@ class Comparison {
     if (!repeated || (repeated.kind === "Returned" && Object.is(repeated.value, result))) return;
     const { entry, mode } = this.call;
     const outcome = repeated.kind === "Threw" ? "threw" : `gave ${this.describeValue(repeated.value)} after ${this.describeValue(result)}`;
-    // What a native binding answers is made by each evaluation and read from no location.
-    const readsLocation = mode === "Get" && entry.kind !== "NativeBinding";
+    // What a native binding answers is made by each evaluation and read from no location. The location of an accessor holds the
+    // getter: what that answers to another object than its holder is said by the columns of the overload.
+    const isAskedOfHolder = entry.holder !== null && this.run.receiver === this.realm.valueOf(entry.holder);
+    const readsLocation = mode === "Get" && entry.kind !== "NativeBinding" && (entry.kind !== "Accessor" || isAskedOfHolder);
     if (readsLocation && entry.mutability !== "ChangesOnItsOwn" && this.run.log.events.length === 0) {
       this.report("mutability", `${entry.mutability}, and a second read ${outcome}`);
     }

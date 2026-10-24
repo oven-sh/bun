@@ -14,7 +14,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned, withoutCoreDump } from "./run-programs";
+import { slot, spawned, withoutCoreDump, withoutCrashReport } from "./run-programs";
 import { test } from "./supported";
 
 // Between them they held about thirty such references when this was written, out of six operations: Compress, GetEnvironmentField, GetModuleVariable, GetSlot, GetSlotOrUndefined, Parameter.
@@ -82,7 +82,7 @@ test.skipIf(!!skipReason).concurrent.each(programs)(
     };
     const run = async (executable: string, env: Record<string, string>) => {
       const { stdout, exitCode, signal } = await slot(() =>
-        spawned(withoutCoreDump([executable]), String(folder), { ...bunEnv, ...stress, ...env }),
+        spawned(withoutCoreDump([executable]), String(folder), { ...bunEnv, ...withoutCrashReport, ...stress, ...env }),
       );
       return { stdout, exitCode, signal };
     };

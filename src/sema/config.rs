@@ -367,10 +367,13 @@ pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     find_config_below(host, dir, |_| false)
 }
 
-/// `find_config`, no further up than the directory that has the `package.json`. What's above it configures another
-/// project, which the package is published without.
+/// `find_config`, no further up than the directory that has the `package.json`, or the `sound.json` of a typed version.
+/// What's above it configures another project, which the package is published without.
 pub fn find_config_of_package(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
-    find_config_below(host, dir, |dir| host.is_file(&join(dir, b"package.json")))
+    let has = |dir: &[u8], name: &[u8]| host.is_file(&join(dir, name));
+    find_config_below(host, dir, |dir| {
+        has(dir, b"package.json") || has(dir, b"sound.json")
+    })
 }
 
 fn find_config_below(

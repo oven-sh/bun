@@ -14,7 +14,14 @@ import { cpSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../run-programs";
-import { filterRequested, installPackages, requestedServers, startServer } from "./run-servers";
+import {
+  filterRequested,
+  installPackages,
+  moreEnvironment,
+  moreFlags,
+  requestedServers,
+  startServer,
+} from "./run-servers";
 
 type RequestSpec = [method: string, path: string, headers?: Record<string, string>, body?: string];
 
@@ -375,6 +382,7 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/feature
               "build",
               "--compile",
               ...flags,
+              ...(flags.length ? moreFlags : []),
               "--define",
               'process.env.NODE_ENV="production"',
               "--target=bun",
@@ -388,7 +396,11 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/feature
         );
         executables.push(executable);
       }
-      using aot = await startServer([executables[0]], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+      using aot = await startServer([executables[0]], folder, {
+        ...bunEnv,
+        BUN_JSC_crashIfInterpreterIsUsed: "1",
+        ...moreEnvironment,
+      });
       using aotWithoutRegExpJIT = await startServer([executables[0]], folder, {
         ...bunEnv,
         BUN_JSC_crashIfInterpreterIsUsed: "1",

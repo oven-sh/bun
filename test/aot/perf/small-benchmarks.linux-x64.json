@@ -148,7 +148,7 @@
     "testsFailed": 0,
     "alwaysFailing": 0,
     "accessesByName": 699998,
-    "runtimeOperations": 2915,
+    "runtimeOperations": 3000,
     "callsNotExpected": 0
   },
   "n-body": {

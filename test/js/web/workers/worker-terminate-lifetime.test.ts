@@ -1401,49 +1401,71 @@ test(
     const proc = Bun.spawn({
       cmd: [bunExe(), "main.mjs"],
       cwd: String(dir),
-      // verboseOSR logs every JIT decision. The DFG is off so its log (and a debug-only crash in the
-      // DFG's logging when the worker is torn down) stays out of the way; the Wasm tiers do not need it.
-      env: { ...bunEnv, BUN_JSC_verboseOSR: "1", BUN_JSC_useDFGJIT: "0" },
+      // verboseOSR logs every JIT decision and logPhaseTimes every finished B3 and Air phase. The DFG
+      // is off so its log (and a debug-only crash in the DFG's logging when the worker is torn down)
+      // stays out of the way, and so that every B3 line comes from the Wasm compile.
+      env: { ...bunEnv, BUN_JSC_verboseOSR: "1", BUN_JSC_logPhaseTimes: "1", BUN_JSC_useDFGJIT: "0" },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
     const stdout = proc.stdout.text();
 
-    // Terminate the worker as soon as the OMG compile of function 0 is queued. The compiler thread
-    // picks it up at once, and the compile takes far longer than the round trip through this test.
+    // Terminate the worker as soon as the OMG compile of function 0 is queued. The compiler thread picks
+    // it up at once, and the compile takes far longer than the round trip through this test. The
+    // "Total OMG compilation" line at the end proves it: a plan cancelled while still queued never
+    // starts and never logs it, and a compile that ran to the end would have kept the process alive
+    // past the deadline.
     const trigger = "triggerOMGReplacement for 0";
     const triggered = Promise.withResolvers<boolean>();
+    // The JIT log runs to megabytes. Keep the last part for the assertions and a failure report.
+    let stderrTail = "";
     const stderrDone = (async () => {
-      const decoder = new TextDecoder();
-      let pending = "";
-      let sent = false;
-      for await (const chunk of proc.stderr) {
-        // The Wasm tiers keep logging after the trigger. Drain the pipe, but stop collecting.
-        if (sent) continue;
-        pending += decoder.decode(chunk, { stream: true });
-        if (pending.includes(trigger)) {
+      try {
+        const decoder = new TextDecoder();
+        let sent = false;
+        for await (const chunk of proc.stderr) {
+          stderrTail = (stderrTail + decoder.decode(chunk, { stream: true })).slice(-65536);
+          if (sent || !stderrTail.includes(trigger)) continue;
           sent = true;
           proc.stdin.write("go");
           await proc.stdin.end();
           triggered.resolve(true);
         }
+        triggered.resolve(false);
+      } catch (error) {
+        triggered.reject(error);
       }
-      triggered.resolve(false);
     })();
-    expect(await Promise.race([triggered.promise, proc.exited])).toBe(true);
 
-    // The process must exit soon after the terminate: the worker's ~VM waits only until the cancelled
-    // compile reaches its next check. Without the fix it waits for the whole compile.
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<"did not exit">(resolve => {
-      timer = setTimeout(() => resolve("did not exit"), slow ? 60_000 : 10_000);
-    });
-    const exited = await Promise.race([proc.exited, deadline]);
-    clearTimeout(timer);
-    if (exited === "did not exit") proc.kill();
-    await stderrDone;
-    expect({ stdout: await stdout, exited }).toEqual({ stdout: "terminated\n", exited: 0 });
+    try {
+      expect(await Promise.race([triggered.promise, proc.exited])).toBe(true);
+
+      // The process must exit soon after the terminate: the worker's ~VM waits only until the cancelled
+      // compile reaches its next check. Without the fix it waits for the whole compile: 17 s in release
+      // and a few times that under ASAN, so a debug build is the only one that needs the long window.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<"did not exit">(resolve => {
+        timer = setTimeout(() => resolve("did not exit"), isDebug ? 60_000 : 10_000);
+      });
+      const exited = await Promise.race([proc.exited, deadline]);
+      clearTimeout(timer);
+      if (exited === "did not exit") proc.kill();
+      await stderrDone;
+      if (exited !== 0) console.error(stderrTail);
+      expect({
+        stdout: await stdout,
+        exited,
+        compiled: stderrTail.includes("[B3] Total OMG compilation took"),
+      }).toEqual({
+        stdout: "terminated\n",
+        exited: 0,
+        compiled: true,
+      });
+    } finally {
+      proc.kill();
+      await stderrDone.catch(() => {});
+    }
   },
   slow ? 120_000 : 40_000,
 );

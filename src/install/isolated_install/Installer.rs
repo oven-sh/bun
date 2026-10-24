@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::io::Write as _;
 
 use bun_ast::Log;
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::fmt::EscapeControlChars;
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
@@ -2380,7 +2380,7 @@ impl<'a> Installer<'a> {
         Ok(BinLinks {
             node_modules_path,
             is_behind_link,
-            seen: StringHashMap::default(),
+            seen: bin::SeenBins::default(),
             abs_target_buf: paths::path_buffer_pool::get(),
             abs_dest_buf: paths::path_buffer_pool::get(),
             rel_buf: paths::path_buffer_pool::get(),
@@ -2935,7 +2935,7 @@ struct BinLinks {
     node_modules_path: DefaultAbsPath,
     /// See `bin::Linker::is_behind_link`.
     is_behind_link: Option<bool>,
-    seen: StringHashMap<()>,
+    seen: bin::SeenBins,
     abs_target_buf: paths::path_buffer_pool::Guard,
     abs_dest_buf: paths::path_buffer_pool::Guard,
     rel_buf: paths::path_buffer_pool::Guard,

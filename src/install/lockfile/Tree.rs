@@ -148,6 +148,11 @@ impl Tree {
 enum HoistDependencyResult {
     DependencyLoop,
     Hoisted,
+    /// The package's own `node_modules` has the row of a name that differs from this one only in
+    /// case. The two would be one folder on a case-insensitive volume.
+    SameFolder {
+        dep_id: DependencyID,
+    },
     /// `Filter` only: the same package lists this name in another dependency group, which resolves
     /// to a different package and already has the name's row in tree `id`.
     Contested {
@@ -705,7 +710,8 @@ impl PeerProbes {
             let (peer_dep_id, provided, owner_copy) = self.0[i];
             let peer = &deps[peer_dep_id as usize];
             let Some(held) = placed
-                .get(&(tree_id, peer.name_hash))
+                .get(&(tree_id, folded_name_hash(peer, buf)))
+                .filter(|&&row| deps[row as usize].name_hash == peer.name_hash)
                 .map(|&row| resolutions[row as usize])
                 .filter(|&res_id| res_id != invalid_package_id)
             else {
@@ -970,6 +976,12 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 #[derive(Default, Clone, Copy)]
 pub(crate) struct PlaceContext;
 
+/// The name half of a `Placed` key. Two names that differ only in case get the same key, because
+/// they are one folder on a case-insensitive volume. See `dependency::folded_name_hash`.
+pub(crate) fn folded_name_hash(dep: &Dependency, buf: &[u8]) -> PackageNameHash {
+    crate::dependency::folded_name_hash(dep.name.slice(buf), dep.name_hash)
+}
+
 impl bun_collections::HashContext<(Id, PackageNameHash)> for PlaceContext {
     #[inline]
     fn ctx_hash(key: &(Id, PackageNameHash)) -> u64 {
@@ -981,6 +993,7 @@ impl bun_collections::HashContext<(Id, PackageNameHash)> for PlaceContext {
     }
 }
 
+/// Maps `(tree, folded_name_hash)` to the first row of that name in the tree.
 pub(crate) type Placed =
     bun_collections::HashMap<(Id, PackageNameHash), DependencyID, PlaceContext>;
 
@@ -1090,6 +1103,7 @@ impl LinkedRows<'_> {
     /// and `older_layout_can_differ`. Names are resolved as Node does, so this runs after hoisting.
     fn walk(&mut self) -> (Option<RowMap>, bool) {
         let (dependencies, trees, lists) = (self.dependencies, self.trees, self.resolution_lists);
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
 
         // Indexed by dependency id. Each dependency belongs to exactly one package.
         let mut left_out = vec![false; dependencies.len()];
@@ -1130,10 +1144,11 @@ impl LinkedRows<'_> {
                 if target == invalid_package_id || (!shipped && left_out[dep_id as usize]) {
                     continue;
                 }
+                let folded = folded_name_hash(dep, buf);
 
                 if pkg_id == 0
                     && dep.behavior.is_workspace()
-                    && self.placed.get(&(0, dep.name_hash)) != Some(&dep_id)
+                    && self.placed.get(&(0, folded)) != Some(&dep_id)
                 {
                     let own = own_folder.get(0, dep_id).unwrap_or(0);
                     todo.push((own, target, false));
@@ -1144,10 +1159,11 @@ impl LinkedRows<'_> {
                 let row = loop {
                     // Skip a row from another dependency group of the same package, and a bundled
                     // row. Both were placed after this dependency found its package higher up.
-                    if let Some(&row) = self.placed.get(&(tree_id, dep.name_hash))
+                    if let Some(&row) = self.placed.get(&(tree_id, folded))
+                        && dependencies[row as usize].name_hash == dep.name_hash
                         && (self.resolutions[row as usize] == target
                             || !list.contains(row)
-                            || self.contested.contains_key(&(tree_id, dep.name_hash)))
+                            || self.contested.contains_key(&(tree_id, folded)))
                         && (shipped
                             || dep.behavior.is_bundled()
                             || (dep.behavior.is_peer()
@@ -1205,6 +1221,7 @@ impl LinkedRows<'_> {
         if self.replaced_row || !self.contested.is_empty() {
             return true;
         }
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
         for (pkg_id, list) in self.resolution_lists.iter().enumerate() {
             for dep_id in list.begin() as usize..list.end() as usize {
                 if !walked[pkg_id] {
@@ -1225,7 +1242,7 @@ impl LinkedRows<'_> {
             has_kept_row[tree_id as usize] = true;
         }
         let mut in_the_way: Vec<PackageNameHash> = Vec::new();
-        for (&(tree_id, name_hash), &row) in self.placed.iter() {
+        for (&(tree_id, folded), &row) in self.placed.iter() {
             let target = self.resolutions[row as usize] as usize;
             if target >= walked.len() || kept.get(tree_id, row).is_some() {
                 continue;
@@ -1234,14 +1251,14 @@ impl LinkedRows<'_> {
                 return true;
             }
             if tree_id == 0 || has_kept_row[tree_id as usize] {
-                in_the_way.push(name_hash);
+                in_the_way.push(folded);
             }
         }
         in_the_way.sort_unstable();
         !in_the_way.is_empty()
             && kept.rows().any(|(_, row)| {
                 in_the_way
-                    .binary_search(&self.dependencies[row as usize].name_hash)
+                    .binary_search(&folded_name_hash(&self.dependencies[row as usize], buf))
                     .is_ok()
             })
     }
@@ -1506,6 +1523,10 @@ impl Tree {
             let bound_by_version = builder.bind_peer(dep_id);
             let pkg_id = builder.resolutions[dep_id as usize];
             let dependency = &dependencies[dep_id as usize];
+            let dependency_name = dependency
+                .name
+                .slice(lockfile.buffers.string_bytes.as_slice());
+            let folded = crate::dependency::folded_name_hash(dependency_name, dependency.name_hash);
 
             // Unresolved packages already had their chance to resolve. Bundled ones are still kept.
             if METHOD == BuilderMethod::Filter
@@ -1529,6 +1550,7 @@ impl Tree {
                     hoist_root_id,
                     pkg_id,
                     dep_id,
+                    folded,
                     resolution_list,
                     builder,
                 )
@@ -1545,6 +1567,7 @@ impl Tree {
                             hoist_root_id,
                             res_id,
                             dep_id,
+                            folded,
                             resolution_list,
                             builder,
                         ),
@@ -1603,6 +1626,27 @@ impl Tree {
             match hoisted {
                 HoistDependencyResult::DependencyLoop | HoistDependencyResult::Hoisted => continue,
 
+                HoistDependencyResult::SameFolder { dep_id: other } => {
+                    if first_walk {
+                        let buf = lockfile.buffers.string_bytes.as_slice();
+                        builder.log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "dependency names \"{}\" and \"{}\" of {} differ only in case and cannot share a node_modules folder",
+                                bun_core::fmt::for_terminal(bstr::BStr::new(dependency_name)),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(
+                                    dependencies[other as usize].name.slice(buf)
+                                )),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(
+                                    pkgs.items_name()[parent_pkg_id as usize].slice(buf)
+                                )),
+                            ),
+                        );
+                    }
+                    continue;
+                }
+
                 HoistDependencyResult::Served(res_id) => {
                     // A dependency has one resolution, however many times its package is placed.
                     // The first placement decides it, as in `Rebind`.
@@ -1611,7 +1655,7 @@ impl Tree {
                     }
                 }
                 HoistDependencyResult::Contested { id } => {
-                    builder.contested.insert((id, dependency.name_hash), ());
+                    builder.contested.insert((id, folded), ());
                     // The dependency gets no row but still gets a tree, so its own dependencies are
                     // placed in case `keep_linked_rows` picks it.
                     if builder.contested_rows.insert((id, dep_id), ()).is_none()
@@ -1655,7 +1699,7 @@ impl Tree {
                             *placed_dep_id = dep_id;
                         }
                     }
-                    if let Some(placed) = builder.placed.get_mut(&(id, dependency.name_hash))
+                    if let Some(placed) = builder.placed.get_mut(&(id, folded))
                         && *placed == replaced
                     {
                         *placed = dep_id;
@@ -1726,9 +1770,6 @@ impl Tree {
                     }
                     // Only a placed row becomes a folder name. For an unresolved dependency,
                     // enqueue already reported the name.
-                    let dependency_name = dependency
-                        .name
-                        .slice(lockfile.buffers.string_bytes.as_slice());
                     if pkg_id != invalid_package_id
                         && !dependency_name.is_empty()
                         && !crate::package_installer::alias_is_safe_install_target(dependency_name)
@@ -1744,7 +1785,7 @@ impl Tree {
                         continue 'dep;
                     }
                     builder.list.items_dependencies_mut()[id as usize].push(dep_id);
-                    let placed = builder.placed.get_or_put((id, dependency.name_hash))?;
+                    let placed = builder.placed.get_or_put((id, folded))?;
                     if !placed.found_existing {
                         *placed.value_ptr = dep_id;
                     }
@@ -1784,6 +1825,7 @@ impl Tree {
         hoist_root_id: Id,
         package_id: PackageID,
         input_dep_id: DependencyID,
+        folded: PackageNameHash,
         input_dep_range: DependencyIDSlice,
         builder: &mut Builder<'_, METHOD>,
     ) -> HoistDependencyResult {
@@ -1807,14 +1849,24 @@ impl Tree {
             return HoistDependencyResult::DependencyLoop; // 3
         }
         debug_assert_eq!(
-            builder.placed.get(&(this.id, dependency.name_hash)),
+            builder.placed.get(&(this.id, folded)),
             this_deps
                 .iter()
-                .find(|&&dep_id| deps[dep_id as usize].name_hash == dependency.name_hash),
+                .find(|&&dep_id| folded_name_hash(&deps[dep_id as usize], builder.buf()) == folded),
         );
-        if let Some(&dep_id) = builder.placed.get(&(this.id, dependency.name_hash)) {
+        if let Some(&dep_id) = builder.placed.get(&(this.id, folded)) {
             let dep = &deps[dep_id as usize];
             let res_id = builder.resolutions[dep_id as usize];
+
+            // The row has a name that differs from this one only in case. That is one folder on a
+            // case-insensitive volume, so it is taken, whatever package it holds.
+            if dep.name_hash != dependency.name_hash {
+                return if AS_DEFINED {
+                    HoistDependencyResult::SameFolder { dep_id }
+                } else {
+                    HoistDependencyResult::DependencyLoop // 3
+                };
+            }
 
             // A dependency that Bun installs never resolves to a row that a tarball ships. The
             // exception is a peer, which shares the bundled copy.
@@ -1829,7 +1881,7 @@ impl Tree {
 
             if !builder.contested.is_empty()
                 && !input_dep_range.contains(dep_id)
-                && (builder.contested).contains_key(&(this.id, dependency.name_hash))
+                && (builder.contested).contains_key(&(this.id, folded))
             {
                 return HoistDependencyResult::DependencyLoop; // 3
             }
@@ -2007,6 +2059,7 @@ impl Tree {
                 hoist_root_id,
                 package_id,
                 input_dep_id,
+                folded,
                 input_dep_range,
                 builder,
             );

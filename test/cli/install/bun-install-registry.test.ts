@@ -5913,6 +5913,39 @@ describe.concurrent("binaries", () => {
       }
     });
 
+    // On a case-insensitive volume `WHAT-BIN` and `what-bin` are one entry, so the second one linked
+    // would replace the first. The name is taken on every platform, as a package folder's is.
+    test.each(["hoisted", "isolated"])("is not linked under a name that differs only in case (%s)", async linker => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "foo", dependencies: { ...direct, zzz: "file:./zzz" } })),
+        write(
+          join(packageDir, "zzz", "package.json"),
+          JSON.stringify({ name: "zzz", version: "1.0.0", bin: { "WHAT-BIN": "claim.js" } }),
+        ),
+        write(join(packageDir, "zzz", "claim.js"), "#!/usr/bin/env node\n"),
+      ]);
+
+      for (const run of ["fresh", "again"]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        const names = await readdirSorted(join(packageDir, "node_modules", ".bin"));
+        expect({ run, names: [...new Set(names.map(name => name.replace(/\.(bunx|exe)$/, "")))] }).toEqual({
+          run,
+          names: ["what-bin"],
+        });
+        expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(registryBin);
+        expect({ run, exitCode }).toEqual({ run, exitCode: 0 });
+      }
+    });
+
     test("is linked to the registry package once it's added next to a workspace package", async () => {
       const { packageDir, packageJson, env } = await setupTest();
       const bin = join(packageDir, "node_modules", ".bin", "what-bin");

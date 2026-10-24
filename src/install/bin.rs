@@ -2,7 +2,7 @@ use core::fmt;
 
 use crate::Error;
 use bun_alloc::AllocError;
-use bun_collections::{DynamicBitSet, StringHashMap, VecExt};
+use bun_collections::{DynamicBitSet, VecExt};
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;
@@ -743,6 +743,11 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 // Min-heap keyed by `LinkOrder`.
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
+/// The destinations taken in one `.bin` folder. Keyed without ASCII case: two names that differ
+/// only in case are one entry on a case-insensitive volume, so the first one linked wins on every
+/// platform.
+pub(crate) type SeenBins = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<()>;
+
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 fn normalized_bin_name(name: &[u8]) -> &[u8] {
     let name = match strings::last_index_of_any(name, b"/\\:") {
@@ -834,9 +839,9 @@ pub struct Linker<'a> {
     /// Used to support native bin linking.
     pub target_package_name: strings::StringOrTinyString,
 
-    // Hash map of seen destination paths for this `node_modules/.bin` folder. PackageInstaller will reset it before
-    // linking each tree.
-    pub seen: Option<&'a mut StringHashMap<()>>,
+    // Seen destination paths for this `node_modules/.bin` folder. PackageInstaller will reset it
+    // before linking each tree.
+    pub seen: Option<&'a mut SeenBins>,
 
     pub node_modules_path: &'a mut AbsPath,
 
@@ -976,7 +981,8 @@ impl<'a> Linker<'a> {
         }
 
         if let Some(seen) = self.seen.as_deref() {
-            // Skip seen destinations for this tree
+            // Skip seen destinations for this tree, as npm's link-gently does. Unlike npm's set,
+            // the map folds ASCII case, so `TSC` is taken once `tsc` is linked on every platform.
             // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
             if seen.contains_key(abs_dest.as_bytes()) {
                 // The name is taken, and `bunx <this package>` starts the file itself.
@@ -993,7 +999,7 @@ impl<'a> Linker<'a> {
         }
 
         if let Some(seen) = self.seen.as_deref_mut() {
-            // StringHashMap::get_or_put boxes the key on insert.
+            // The key is boxed on insert.
             let _ = seen.get_or_put(abs_dest.as_bytes());
         }
 
@@ -1021,7 +1027,7 @@ impl<'a> Linker<'a> {
                     .then_some(&b""[..]),
             );
             if let Some(seen) = self.seen.as_deref_mut() {
-                seen.remove(abs_dest.as_bytes());
+                seen.swap_remove(abs_dest.as_bytes());
             }
             return;
         }
@@ -1898,7 +1904,7 @@ pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr)
 
 /// Adds every entry of the `bin_path` folder to `seen`. The linker skips destinations in `seen`,
 /// so it leaves those entries untouched.
-fn see_names_in(bin_path: &[u8], seen: &mut StringHashMap<()>) -> sys::Maybe<()> {
+fn see_names_in(bin_path: &[u8], seen: &mut SeenBins) -> sys::Maybe<()> {
     let bin_path = strings::without_trailing_slash(bin_path);
     let bin_dir = sys::Dir::open(bin_path)?;
     let mut iter = sys::iterate_dir(bin_dir.fd());
@@ -1914,7 +1920,7 @@ fn see_names_in(bin_path: &[u8], seen: &mut StringHashMap<()>) -> sys::Maybe<()>
 }
 
 /// Calls `see_names_in` on the `.bin` folder of `node_modules`. A missing `.bin` adds nothing.
-pub(crate) fn see_linked_names(node_modules: &[u8], seen: &mut StringHashMap<()>) {
+pub(crate) fn see_linked_names(node_modules: &[u8], seen: &mut SeenBins) {
     let node_modules = strings::without_trailing_slash(node_modules);
     let _ = see_names_in(&[node_modules, &[SEP][..], &b".bin"[..]].concat(), seen);
 }
@@ -1940,7 +1946,7 @@ pub(crate) fn link_free_bins(
         return;
     };
 
-    let mut seen: StringHashMap<()> = StringHashMap::default();
+    let mut seen = SeenBins::default();
     match global_bin_path {
         // The linker creates a missing `.bin`, but never a missing global bin folder.
         Some(bin_path) if see_names_in(bin_path.as_bytes(), &mut seen).is_err() => return,

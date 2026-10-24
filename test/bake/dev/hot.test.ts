@@ -843,7 +843,9 @@ devTest("an empty ES module can get code and lose it again", {
     await c.expectMessage("value=undefined");
     await dev.write("dep.mjs", `export const value = 1;`);
     await c.expectMessage("value=1");
-    await dev.write("dep.mjs", ``);
+    // One byte of white space, not zero bytes: the watcher on macOS does not see a
+    // save that only truncates the file.
+    await dev.write("dep.mjs", "\n", { dedent: false });
     await c.expectMessage("value=undefined");
   },
 });

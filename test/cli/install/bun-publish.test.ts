@@ -504,15 +504,23 @@ describe.concurrent("otp", () => {
       stdin: Buffer.from(otp + "\nfor the script\n"),
       env,
     });
-    const [out, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(out).toContain("Enter OTP: ");
     expect(mock.requests).toEqual([
       request("PUT", "/otp-pkg-8"),
       request("PUT", "/otp-pkg-8", { authType: "legacy", otp }),
     ]);
-    expect(await file(join(String(dir), "stdin.txt")).text()).toBe("for the script\n");
-    expect(exitCode).toBe(0);
+    expect({
+      err,
+      asked: out.includes("Enter OTP: "),
+      stdin: existsSync(join(String(dir), "stdin.txt")) ? await file(join(String(dir), "stdin.txt")).text() : null,
+      exitCode,
+    }).toEqual({
+      err: `$ ${bunExe()} save-stdin.js\n`,
+      asked: true,
+      stdin: "for the script\n",
+      exitCode: 0,
+    });
   });
 
   test("an OTP line that is too long is taken whole", async () => {

@@ -1373,3 +1373,92 @@ describe.concurrent("where the scanner is looked up", () => {
     expect(await install(files)).toEqual({ ran: "the project", exitCode: 0 });
   });
 });
+
+describe("the question about warnings on a terminal", () => {
+  /** Types `answer` at the question, and then "sentinel" at a `prompt()` that runs after `bun install`. */
+  async function answerOnTerminal(answer: string) {
+    const ctx = await createTestContext();
+    try {
+      setContextHandler(ctx, dummyRegistryForContext(ctx, []));
+      const bunfig = await Bun.file(join(ctx.package_dir, "bunfig.toml")).text();
+      await Bun.write(join(ctx.package_dir, "bunfig.toml"), `${bunfig}\n[install.security]\nscanner = "./scanner.ts"`);
+      await Bun.write(
+        join(ctx.package_dir, "scanner.ts"),
+        `export const scanner = {
+           version: "1",
+           scan: async ({ packages }) => [
+             { package: packages[0].name, description: "a warning", level: "warn", url: "https://example.com" },
+           ],
+         };`,
+      );
+      await Bun.write(join(ctx.package_dir, "package.json"), JSON.stringify({ name: "my-app", version: "1.0.0" }));
+
+      let output = "";
+      let waiting: ({ text: string } & PromiseWithResolvers<void>) | undefined;
+      const decoder = new TextDecoder();
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const install = Bun.spawnSync({
+             cmd: [process.execPath, "install", "bar"],
+             stdio: ["inherit", "inherit", "inherit"],
+           });
+           const next = prompt("next?");
+           console.log("RESULT:" + JSON.stringify({ exitCode: install.exitCode, next }) + "DONE");
+           alert("");`,
+        ],
+        cwd: ctx.package_dir,
+        env: bunEnv,
+        terminal: {
+          cols: 200,
+          rows: 50,
+          data(_, chunk) {
+            output += decoder.decode(chunk, { stream: true });
+            if (waiting && Bun.stripANSI(output).includes(waiting.text)) waiting.resolve();
+          },
+        },
+      });
+      const exited = proc.exited.then(exitCode => {
+        waiting?.reject(new Error(`exited with code ${exitCode} before ${JSON.stringify(waiting.text)}:\n${output}`));
+        return exitCode;
+      });
+      const waitFor = async (text: string) => {
+        waiting = { text, ...Promise.withResolvers<void>() };
+        if (Bun.stripANSI(output).includes(text)) waiting.resolve();
+        await waiting.promise;
+        waiting = undefined;
+      };
+      await waitFor("Continue anyway? [y/N]");
+      proc.terminal!.write(answer + "\r");
+      await waitFor("next?");
+      proc.terminal!.write("sentinel\r");
+      await waitFor("DONE");
+      const result = Bun.stripANSI(output).match(/RESULT:(.*?)DONE/)?.[1];
+      proc.terminal!.write("\r");
+      return {
+        result,
+        installed: existsSync(join(ctx.package_dir, "node_modules", "bar")),
+        exitCode: await exited,
+      };
+    } finally {
+      destroyTestContext(ctx);
+    }
+  }
+
+  it.concurrent.each([
+    ["y", 0, true],
+    ["n", 1, false],
+    ["yes", 1, false],
+  ])(
+    "%j takes the whole line and nothing of the next one",
+    async (answer, exitCode, installed) => {
+      expect(await answerOnTerminal(answer)).toEqual({
+        result: JSON.stringify({ exitCode, next: "sentinel" }),
+        installed,
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+});

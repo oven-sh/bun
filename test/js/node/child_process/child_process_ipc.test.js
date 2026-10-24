@@ -22,11 +22,10 @@ test("child_process ipc", async () => {
 describe("a 'message' that arrives while there is no 'message' listener is not lost", () => {
   const children = new Set();
   afterAll(() => children.forEach(child => child.kill("SIGKILL")));
-  // fd 3 carries a byte when the child is ready, and fd 4 the channel.
   function ipcChild(script, options) {
     const child = spawn(bunExe(), ["-e", script], {
       env: bunEnv,
-      stdio: ["pipe", "pipe", "inherit", "pipe", "ipc"],
+      stdio: ["pipe", "pipe", "inherit", "ipc"],
       ...options,
     });
     children.add(child);
@@ -43,9 +42,10 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
       child.kill();
     }
   }
-  // The child writes to fd 3 after it sent its messages, so they are in the channel by then.
-  const ready = child => once(child.stdio[3], "data");
-  const burst = `for (let i = 0; i < 3; i++) process.send({ i }); require("fs").writeSync(3, "R");`;
+  // An 'internalMessage' never waits. When it arrives, the messages in front of it are read, and they wait if no listener took them.
+  const go = { cmd: "NODE_TEST_GO" };
+  const burst = `for (let i = 0; i < 3; i++) process.send({ i }); process.send(${JSON.stringify(go)});`;
+  const ready = child => once(child, "internalMessage");
   const three = [{ i: 0 }, { i: 1 }, { i: 2 }];
   // "pong" answers a message that is sent once the listener is added, so it arrives behind the messages under test.
   const untilPong = (target, got = []) => {
@@ -54,8 +54,6 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
     target.send("ping");
     return promise;
   };
-  // An 'internalMessage' never waits, so it tells a child to go on while the messages in front of it still wait.
-  const go = { cmd: "NODE_TEST_GO" };
   const lines = child => createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   // One question to the child, one line back from its stdout. Each question turns both event loops.
   function asker(child, ask = question => child.send(question)) {
@@ -348,12 +346,12 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
 
     // The ack of the handle is behind the three messages, and passes them: they wait for a listener, and the ack does not.
     test("the ack of a sent handle passes the messages that wait", async () => {
-      const child = ipcChild(
-        `${burst} process.on("message", (m, server) => (m === "ping" ? process.send("pong") : server.close()));`,
-      );
       const server = net.createServer();
       await once(server.listen(0, "127.0.0.1"), "listening");
       try {
+        const child = ipcChild(
+          `${burst} process.on("message", (m, server) => (m === "ping" ? process.send("pong") : server.close()));`,
+        );
         await withChild(child, async () => {
           await ready(child);
           const { promise: acked, resolve } = Promise.withResolvers();
@@ -535,21 +533,27 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
         ${onLine}
         process.send("ready");
         onLine(line => {
-          if (line !== "send") return console.log(line);
-          process.send("late", () => {});
+          if (line === "?") return console.log(line);
+          if (line === "send") process.send("late", () => {});
           untilClosed(() => console.log(process.connected));
         });
       `);
       await withChild(child, async () => {
         expect((await once(child, "message"))[0]).toBe("ready");
         const turn = asker(child, onStdin(child));
-        let sent = 0;
-        flood(child, () => sent++);
-        await untilStalled(async () => (await turn("?"), sent));
-        // The write comes after the close, or the unread "late" would reset the channel of the child.
+        if (isWindows) {
+          // disconnect() waits there for a write that is in flight, so nothing is left to write: one message of twice what the channel holds.
+          const chunk = Buffer.alloc(512 * 1024, "x").toString();
+          await new Promise(resolve => child.send({ chunk }, resolve));
+        } else {
+          let sent = 0;
+          flood(child, () => sent++);
+          await untilStalled(async () => (await turn("?"), sent));
+        }
         child.disconnect();
         await once(child, "disconnect");
-        expect(await turn("send")).toBe("false");
+        // A pipe that is not read on Windows does not report the close: the child finds out when it writes.
+        expect(await turn(isWindows ? "send" : "closed")).toBe("false");
       });
     });
 

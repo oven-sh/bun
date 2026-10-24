@@ -14,7 +14,7 @@ import {
   tmpdirSync,
   unprivilegedSpawnOptions,
 } from "harness";
-import { cpSync, mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join } from "path";
 import { TestRegistry } from "registry";
 import {
@@ -154,9 +154,8 @@ it("should list all dependencies", async () => {
 });
 
 // A tarball package's label is the URL it was installed from, which has no length
-// limit. `--all` prints a label in two places: the header of a package that has its own
-// nested node_modules (moo, whose bar/baz conflict with the root's), and the line of a
-// package that has none (bar).
+// limit. One long label is on a package that has its own nested node_modules (moo, whose
+// bar/baz conflict with the root's), the other on a package that has none (bar).
 it("should list all dependencies when a resolution is longer than 512 bytes", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.2": {}, "0.0.3": {}, "0.0.5": {}, latest: "0.0.3" }));
@@ -504,6 +503,324 @@ describe.concurrent("bun pm ls lists what's on disk", () => {
     ];
     const results = await Promise.all(cases.map(([cmd]) => bun(...cmd.split(" "))));
     expect(results.map((result, i) => [cases[i][0], result])).toEqual(cases);
+  });
+});
+
+// With no node_modules, `bun pm ls` lists the tree that bun hoists from bun.lock, or the tree that a bun.lockb holds.
+describe.concurrent("bun pm ls --all lists a package's own node_modules under the package", () => {
+  type Manifest = {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+  };
+  // An entry of "packages" in bun.lock for a package from the registry.
+  const npm = (id: string, info: Manifest = {}) => [id, "", info, ""];
+  function lockfileOnly({
+    packages,
+    workspaces,
+    ...root
+  }: Manifest & { packages: Record<string, unknown[]>; workspaces?: Record<string, object> }) {
+    return {
+      "package.json": JSON.stringify({ name: "root", workspaces: workspaces && Object.keys(workspaces), ...root }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "root", ...root }, ...workspaces },
+        packages,
+      }),
+    };
+  }
+  async function bun(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.replaceAll(cwd, "<dir>"), stderr, exitCode };
+  }
+  const listed = (...lines: string[]) => ({
+    stdout: ["<dir> node_modules", ...lines].join("\n") + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+
+  // z-dep sorts after each of these names. The z-dep that the package depends on cannot hoist.
+  test.each(["node_modules-x", "my-node_modules", "xnode_modulesx", "@node_modules/x", "@x/node_modules-y"])(
+    "a package named %s",
+    async name => {
+      using dir = tempDir(
+        "pm-ls-tree",
+        lockfileOnly({
+          dependencies: { [name]: "1.0.0", "z-dep": "1.0.0" },
+          packages: {
+            [name]: npm(`${name}@1.0.0`, { dependencies: { "z-dep": "2.0.0" } }),
+            "z-dep": npm("z-dep@1.0.0"),
+            [`${name}/z-dep`]: npm("z-dep@2.0.0"),
+          },
+        }),
+      );
+      expect(await bun(String(dir), "pm", "ls", "--all")).toEqual(
+        listed(`├── ${name}@1.0.0`, "│   └── z-dep@2.0.0", "└── z-dep@1.0.0"),
+      );
+    },
+  );
+
+  // A row two levels down is under a package that has more rows after it, or has none, at each of the two levels.
+  test("packages named like node_modules at two depths", async () => {
+    const my2 = npm("my-node_modules@2.0.0", { dependencies: { "z-dep": "3.0.0" } });
+    const z2 = npm("z-dep@2.0.0", { dependencies: { "my-node_modules": "3.0.0" } });
+    using dir = tempDir(
+      "pm-ls-tree",
+      lockfileOnly({
+        dependencies: {
+          "@node_modules/x": "1.0.0",
+          "my-node_modules": "1.0.0",
+          "z-dep": "1.0.0",
+          "znode_modules": "1.0.0",
+        },
+        packages: {
+          "@node_modules/x": npm("@node_modules/x@1.0.0", {
+            dependencies: { "my-node_modules": "2.0.0", "z-dep": "2.0.0" },
+          }),
+          "my-node_modules": npm("my-node_modules@1.0.0"),
+          "z-dep": npm("z-dep@1.0.0"),
+          "znode_modules": npm("znode_modules@1.0.0", {
+            dependencies: { "my-node_modules": "2.0.0", "z-dep": "2.0.0" },
+          }),
+          "@node_modules/x/my-node_modules": my2,
+          "@node_modules/x/z-dep": z2,
+          "znode_modules/my-node_modules": my2,
+          "znode_modules/z-dep": z2,
+          "@node_modules/x/my-node_modules/z-dep": npm("z-dep@3.0.0"),
+          "@node_modules/x/z-dep/my-node_modules": npm("my-node_modules@3.0.0"),
+          "znode_modules/my-node_modules/z-dep": npm("z-dep@3.0.0"),
+          "znode_modules/z-dep/my-node_modules": npm("my-node_modules@3.0.0"),
+        },
+      }),
+    );
+    const tree = listed(
+      "├── @node_modules/x@1.0.0",
+      "│   ├── my-node_modules@2.0.0",
+      "│   │   └── z-dep@3.0.0",
+      "│   └── z-dep@2.0.0",
+      "│       └── my-node_modules@3.0.0",
+      "├── my-node_modules@1.0.0",
+      "├── z-dep@1.0.0",
+      "└── znode_modules@1.0.0",
+      "    ├── my-node_modules@2.0.0",
+      "    │   └── z-dep@3.0.0",
+      "    └── z-dep@2.0.0",
+      "        └── my-node_modules@3.0.0",
+    );
+    expect(await Promise.all([bun(String(dir), "pm", "ls", "--all"), bun(String(dir), "list", "--all")])).toEqual([
+      tree,
+      tree,
+    ]);
+  });
+
+  // The tree has the optional z before b in the node_modules of node_modules-x.
+  test("a node_modules that bun.lock does not keep in name order", async () => {
+    using dir = tempDir(
+      "pm-ls-tree",
+      lockfileOnly({
+        dependencies: { b: "1.0.0", "node_modules-x": "1.0.0", q: "1.0.0", z: "1.0.0" },
+        packages: {
+          b: npm("b@1.0.0"),
+          "node_modules-x": npm("node_modules-x@1.0.0", {
+            dependencies: { b: "2.0.0" },
+            optionalDependencies: { z: "2.0.0" },
+          }),
+          q: npm("q@1.0.0"),
+          z: npm("z@1.0.0"),
+          "node_modules-x/b": npm("b@2.0.0", { dependencies: { q: "3.0.0" } }),
+          "node_modules-x/z": npm("z@2.0.0", { dependencies: { q: "4.0.0" } }),
+          "node_modules-x/b/q": npm("q@3.0.0"),
+          "node_modules-x/z/q": npm("q@4.0.0"),
+        },
+      }),
+    );
+    expect(await bun(String(dir), "pm", "ls", "--all")).toEqual(
+      listed(
+        "├── b@1.0.0",
+        "├── node_modules-x@1.0.0",
+        "│   ├── b@2.0.0",
+        "│   │   └── q@3.0.0",
+        "│   └── z@2.0.0",
+        "│       └── q@4.0.0",
+        "├── q@1.0.0",
+        "└── z@1.0.0",
+      ),
+    );
+  });
+
+  test.each([
+    { lockfile: "bun.lock", saveTextLockfile: true },
+    { lockfile: "bun.lockb", saveTextLockfile: false },
+  ])("an installed package named node_modules-x ($lockfile)", async ({ lockfile, saveTextLockfile }) => {
+    using dir = tempDir("pm-ls-tree", {
+      "bunfig.toml": `[install]\nsaveTextLockfile = ${saveTextLockfile}\n`,
+      "package.json": JSON.stringify({
+        name: "root",
+        dependencies: { "node_modules-x": "file:./local/node_modules-x", dep: "file:./local/dep-v1" },
+      }),
+      local: {
+        "node_modules-x": {
+          "package.json": JSON.stringify({
+            name: "node_modules-x",
+            version: "1.0.0",
+            dependencies: { dep: "file:../dep-v2" },
+          }),
+        },
+        "dep-v1": { "package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+        "dep-v2": { "package.json": JSON.stringify({ name: "dep", version: "2.0.0" }) },
+      },
+    });
+    expect(await bun(String(dir), "install", "--linker=hoisted")).toMatchObject({ exitCode: 0 });
+    expect({
+      lockfile: await exists(join(String(dir), lockfile)),
+      nested: await exists(join(String(dir), "node_modules", "node_modules-x", "node_modules", "dep")),
+    }).toEqual({ lockfile: true, nested: true });
+
+    expect(await bun(String(dir), "pm", "ls", "--all")).toEqual(
+      listed(
+        `├── dep@${join("local", "dep-v1")}`,
+        `└── node_modules-x@${join("local", "node_modules-x")}`,
+        `    └── dep@${join("local", "dep-v2")}`,
+      ),
+    );
+  });
+
+  // --production does not list dev. other@2.0.0 stays installed for prod.
+  test("the node_modules of a package that is not listed", async () => {
+    using dir = tempDir(
+      "pm-ls-tree",
+      lockfileOnly({
+        dependencies: { other: "1.0.0", prod: "1.0.0" },
+        devDependencies: { dev: "1.0.0" },
+        packages: {
+          dev: npm("dev@1.0.0", { dependencies: { other: "2.0.0" } }),
+          other: npm("other@1.0.0"),
+          prod: npm("prod@1.0.0", { dependencies: { other: "2.0.0" } }),
+          "dev/other": npm("other@2.0.0"),
+          "prod/other": npm("other@2.0.0"),
+        },
+      }),
+    );
+    expect(await bun(String(dir), "pm", "ls", "--all")).toEqual(
+      listed("├── dev@1.0.0", "│   └── other@2.0.0", "├── other@1.0.0", "└── prod@1.0.0", "    └── other@2.0.0"),
+    );
+    expect(await bun(String(dir), "pm", "ls", "--all", "--production")).toEqual(
+      listed("├── other@1.0.0", "└── prod@1.0.0", "    └── other@2.0.0"),
+    );
+  });
+
+  test.each(["app", "node_modules-x", "@node_modules/x"])("a workspace named %s", async name => {
+    using dir = tempDir(
+      "pm-ls-tree",
+      lockfileOnly({
+        dependencies: { "z-dep": "1.0.0" },
+        workspaces: { "packages/app": { name, version: "0.0.1", dependencies: { "z-dep": "2.0.0" } } },
+        packages: {
+          [name]: [`${name}@workspace:packages/app`],
+          "z-dep": npm("z-dep@1.0.0"),
+          [`${name}/z-dep`]: npm("z-dep@2.0.0"),
+        },
+      }),
+    );
+    expect(await bun(String(dir), "pm", "ls", "--all")).toEqual(
+      listed(`├── ${name}@workspace:${join("packages", "app")}`, "│   └── z-dep@2.0.0", "└── z-dep@1.0.0"),
+    );
+  });
+
+  // The workspace's node_modules is inside the workspace, so no row of the root owns it.
+  test("a workspace whose name a dependency of the root took", async () => {
+    using dir = tempDir(
+      "pm-ls-tree",
+      lockfileOnly({
+        dependencies: { "a-dep": "1.0.2", "no-deps": "^2" },
+        workspaces: { "packages/no-deps": { name: "no-deps", version: "0.0.1", dependencies: { "a-dep": "1.0.1" } } },
+        packages: {
+          "a-dep": npm("a-dep@1.0.2"),
+          "no-deps": npm("no-deps@2.0.0"),
+          "./no-deps/a-dep": npm("a-dep@1.0.1"),
+        },
+      }),
+    );
+    expect(await bun(String(dir), "pm", "ls", "--all")).toEqual(listed("├── a-dep@1.0.2", "└── no-deps@2.0.0"));
+    // The workspace's a-dep is in the tree.
+    expect(await bun(String(dir), "pm", "ls", "--all", "a-dep")).toEqual(listed("├── a-dep@1.0.2", "└── a-dep@1.0.1"));
+  });
+
+  // Such a workspace can be any folder, so its node_modules can have the path of a package's own node_modules:
+  // here the node_modules of a's b, then the node_modules of a.
+  test.each([
+    { workspace: "node_modules/a/node_modules/b", inA: "b", everyQ: ["├── q@1.0.0", "└── q@3.0.0"] },
+    { workspace: "node_modules/a", inA: "q", everyQ: ["├── q@1.0.0", "├── q@3.0.0", "└── q@2.0.0"] },
+  ])("a workspace at $workspace whose name a dependency of the root took", async ({ workspace, inA, everyQ }) => {
+    using dir = tempDir(
+      "pm-ls-tree",
+      lockfileOnly({
+        dependencies: { a: "1.0.0", b: "1.0.0", q: "1.0.0" },
+        workspaces: { [workspace]: { name: "b", version: "0.0.1", dependencies: { q: "3.0.0" } } },
+        packages: {
+          a: npm("a@1.0.0", { dependencies: { [inA]: "2.0.0" } }),
+          b: npm("b@1.0.0"),
+          q: npm("q@1.0.0"),
+          [`a/${inA}`]: npm(`${inA}@2.0.0`),
+          "./b/q": npm("q@3.0.0"),
+        },
+      }),
+    );
+    expect(await bun(String(dir), "pm", "ls", "--all")).toEqual(
+      listed("├── a@1.0.0", `│   └── ${inA}@2.0.0`, "├── b@1.0.0", "└── q@1.0.0"),
+    );
+    // The workspace's q is in the tree.
+    expect(await bun(String(dir), "pm", "ls", "--all", "q")).toEqual(listed(...everyQ));
+  });
+
+  // Bun v1.4.4 wrote this bun.lockb. dualbundle-1.0.0.tgz bundles inner and twin, and lists each in two groups:
+  // inner@3.0.0 and the optional inner@4.0.0, twin@1.0.0 and the peer twin@*. inner@3.0.0 and twin@1.0.0 depend
+  // on bar@0.0.3.
+  test("a package that bundles a dependency it lists in two groups", async () => {
+    using dir = tempDir("pm-ls-tree", {
+      "package.json": JSON.stringify({ name: "root", dependencies: { dualbundle: "file:dualbundle-1.0.0.tgz" } }),
+      "bun.lockb": readFileSync(join(import.meta.dir, "fixtures", "bundled-in-two-groups.lockb")),
+    });
+    expect(await bun(String(dir), "pm", "ls", "--all")).toEqual(
+      listed(
+        "└── dualbundle@dualbundle-1.0.0.tgz",
+        "    ├── bar@0.0.2",
+        "    ├── inner@4.0.0",
+        "    ├── inner@3.0.0",
+        "    │   └── bar@0.0.3",
+        "    ├── twin@1.0.0",
+        "    │   └── bar@0.0.3",
+        "    └── twin@1.0.0",
+        "        └── bar@0.0.3",
+      ),
+    );
+  });
+
+  // Bun v1.3.14 wrote this bun.lockb with `bun install --lockfile-only`. local/nm is named node_modules and depends
+  // on z-dep with file:../z2.
+  test("a package named node_modules in a bun.lockb", async () => {
+    using dir = tempDir("pm-ls-tree", {
+      "package.json": JSON.stringify({
+        name: "root",
+        dependencies: { node_modules: "file:./local/nm", "z-dep": "file:./local/z1" },
+      }),
+      "bun.lockb": readFileSync(join(import.meta.dir, "fixtures", "dependency-named-node_modules.lockb")),
+    });
+    expect(await bun(String(dir), "pm", "ls", "--all")).toEqual(
+      listed(
+        `├── node_modules@${join("local", "nm")}`,
+        `│   └── z-dep@${join("local", "z2")}`,
+        `└── z-dep@${join("local", "z1")}`,
+      ),
+    );
   });
 });
 

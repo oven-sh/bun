@@ -1,5 +1,5 @@
 use core::cmp::Ordering;
-use std::io::Write as _;
+use core::ops::Range;
 
 use bun_collections::DynamicBitSet;
 use bun_core::fmt::PathSep;
@@ -11,7 +11,7 @@ use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
     package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
 };
-use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
+use bun_install::{DependencyID, PackageManager, ResolutionTag, migration};
 use bun_paths::{self as Path, AutoAbsPath};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
@@ -32,10 +32,10 @@ use bun_collections::index_sort;
 pub(crate) use crate::cli::pack_command::PackCommand;
 pub(crate) use crate::cli::scan_command::ScanCommand;
 
-// An owned `tree::IteratorNext`, which borrows the iterator's path buffer.
+/// The rows of one `node_modules` folder that `bun pm ls` lists, as a range of the rows of all folders.
 struct NodeModulesFolder {
-    relative_path: Box<[u8]>,
-    dependencies: Box<[DependencyID]>,
+    tree_id: tree::Id,
+    rows: Range<usize>,
 }
 
 /// `bun pm ls` lists what's on disk. The lockfile also has optional dependencies that were never
@@ -666,56 +666,33 @@ impl PackageManagerCommand {
             let mut iterator =
                 tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
 
-            let mut max_depth: usize = 0;
-            let mut installed_count: usize = 0;
-
-            let mut directories: Vec<NodeModulesFolder> = Vec::new();
+            let mut rows: Vec<DependencyID> =
+                Vec::with_capacity(lockfile.buffers.hoisted_dependencies.len());
+            let mut folders: Vec<NodeModulesFolder> = Vec::new();
             while let Some(node_modules) = iterator.next(None) {
                 let dir = node_modules.relative_path.as_bytes();
-                let mut dependencies = node_modules.dependencies.to_vec();
-                dependencies.retain(|&dep_id| {
+                let start = rows.len();
+                rows.extend(node_modules.dependencies.iter().copied().filter(|&dep_id| {
                     wanted.is_set_allow_out_of_bound(resolutions[dep_id as usize] as usize, false)
                         && is_installed(dir, dep_id, true)
-                });
-                installed_count += dependencies.len();
-                max_depth = max_depth.max(node_modules.depth + 1);
-
-                directories.push(NodeModulesFolder {
-                    relative_path: dir.into(),
-                    dependencies: dependencies.into(),
+                }));
+                folders.push(NodeModulesFolder {
+                    tree_id: node_modules.tree_id,
+                    rows: start..rows.len(),
                 });
             }
 
-            if directories.is_empty() {
+            if folders.is_empty() {
                 return Ok(());
-            }
-
-            let first_directory = directories.remove(0);
-
-            let mut more_packages: Box<[bool]> = vec![false; max_depth].into_boxed_slice();
-            if first_directory.dependencies.len() > 1 {
-                more_packages[0] = true;
             }
 
             let found = if all {
                 if trusted_only || !names.is_empty() {
                     // `--trusted` and package names select by name, not by position in the tree. A
                     // flat list shows a selected package even when its parent is not selected.
-                    print_selected_dependencies_flat(
-                        &first_directory,
-                        &directories,
-                        lockfile,
-                        selected,
-                    )
+                    print_selected_dependencies_flat(&rows, lockfile, selected)
                 } else {
-                    print_node_modules_folder_structure(
-                        &first_directory,
-                        None,
-                        0,
-                        &mut directories,
-                        lockfile,
-                        &mut more_packages,
-                    );
+                    print_node_modules_tree(&folders, &mut rows, lockfile);
                     true
                 }
             } else {
@@ -723,7 +700,7 @@ impl PackageManagerCommand {
                 Output::println(format_args!(
                     "{} node_modules ({} installed)",
                     bstr::BStr::new(cwd_or_exit(&mut cwd_buf)),
-                    installed_count,
+                    rows.len(),
                 ));
                 let root_deps = lockfile.packages.items_dependencies()[0];
                 let mut sorted_dependencies: Vec<DependencyID> =
@@ -855,144 +832,92 @@ impl PackageManagerCommand {
     }
 }
 
-fn print_node_modules_folder_structure(
-    directory: &NodeModulesFolder,
-    directory_package_id: Option<PackageID>,
-    depth: usize,
-    directories: &mut Vec<NodeModulesFolder>,
+/// Prints the rows of the first folder, and under each row the folder of the row's package.
+fn print_node_modules_tree(
+    folders: &[NodeModulesFolder],
+    rows: &mut [DependencyID],
     lockfile: &Lockfile,
-    more_packages: &mut [bool],
 ) {
-    let resolutions = lockfile.packages.items_resolution();
     let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let name_of = |dep_id: DependencyID| dependencies[dep_id as usize].name.slice(string_bytes);
+    let package_of = |dep_id: DependencyID| lockfile.buffers.resolutions[dep_id as usize];
 
-    for i in 0..depth {
-        if i == depth - 1 {
-            if more_packages[i] {
-                bun_core::pretty!("<d>├──<r>");
-            } else {
-                bun_core::pretty!("<d>└──<r>");
-            }
-        } else if more_packages[i] {
-            bun_core::pretty!("<d>│<r>   ");
-        } else {
-            bun_core::pretty!("    ");
+    for folder in folders {
+        index_sort::sort_indices_unstable(&mut rows[folder.rows.clone()], &mut |a, b| {
+            cmp_dependency_names(lockfile, a, b).then(a.cmp(&b))
+        });
+    }
+
+    // For each row, the index in `folders` of the folder of its package.
+    let mut own_folder: Vec<Option<usize>> = vec![None; rows.len()];
+    for (index, folder) in folders.iter().enumerate() {
+        let Some((parent_id, owner)) = tree::owner_of(lockfile, folder.tree_id) else {
+            continue;
+        };
+        // `folders` is in tree id order, and a parent has a lower id.
+        let Ok(parent) = folders[..index].binary_search_by_key(&parent_id, |it| it.tree_id) else {
+            continue;
+        };
+        let siblings = folders[parent].rows.clone();
+        let (name, package_id) = (name_of(owner), package_of(owner));
+        let first = siblings.start
+            + rows[siblings.clone()].partition_point(|&dep_id| name_of(dep_id) < name);
+        // Two rows can have one name, and one package too: a package can bundle a dependency that
+        // it lists twice. A workspace that lost its row to a dependency of its name has no row.
+        let row = (first..siblings.end)
+            .take_while(|&row| name_of(rows[row]) == name)
+            .find(|&row| package_of(rows[row]) == package_id && own_folder[row].is_none());
+        if let Some(row) = row {
+            own_folder[row] = Some(index);
         }
     }
 
-    if let Some(id) = directory_package_id {
-        let mut path: &[u8] = &directory.relative_path;
-
-        if depth != 0 {
-            bun_core::pretty!(" ");
-            for _ in 0..depth {
-                if let Some(j) = strings::index_of(path, b"node_modules") {
-                    path = &path[j + b"node_modules".len() + 1..];
-                }
-            }
-        }
-        let directory_version =
-            bun_fmt::for_terminal(resolutions[id as usize].fmt(string_bytes, PathSep::Auto));
-        if let Some(j) = strings::index_of(path, b"node_modules") {
-            path = &path[0..j - 1];
-        }
-        let path = bun_fmt::escape_control_chars(path);
-        bun_core::prettyln!("{}<d>@{}<r>", path, directory_version);
-    } else {
+    {
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let path = cwd_or_exit(&mut cwd_buf);
         Output::println(format_args!("{} node_modules", bstr::BStr::new(path)));
     }
 
-    let mut sorted_dependencies: Vec<DependencyID> = directory.dependencies.to_vec();
-    index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| {
-        cmp_dependency_names(lockfile, a, b)
-    });
-
-    let sorted_len = sorted_dependencies.len();
-    for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
-        let package_name = lockfile.buffers.dependencies[dependency_id as usize]
-            .name
-            .slice(string_bytes);
-        let mut possible_path: Vec<u8> = Vec::new();
-        write!(
-            &mut possible_path,
-            "{}{}{}{}node_modules",
-            bstr::BStr::new(&directory.relative_path),
-            bun_paths::SEP_STR,
-            bstr::BStr::new(package_name),
-            bun_paths::SEP_STR,
-        )
-        .expect("unreachable");
-
-        if index + 1 == sorted_len {
-            more_packages[depth] = false;
-        }
-
-        let package_id = lockfile.buffers.resolutions[dependency_id as usize];
-
-        let mut dir_index: usize = 0;
-        let mut found_node_modules = false;
-        while dir_index < directories.len() {
-            // A node_modules is removed from the list before it is printed.
-            if strings::eql_long(&possible_path, &directories[dir_index].relative_path, true) {
-                found_node_modules = true;
-                let next = directories.remove(dir_index);
-
-                let mut new_depth: usize = 0;
-                let mut temp_path: &[u8] = &possible_path;
-                while let Some(j) =
-                    strings::index_of(&temp_path[b"node_modules".len()..], b"node_modules")
-                {
-                    new_depth += 1;
-                    temp_path = &temp_path[j + b"node_modules".len()..];
-                }
-
-                more_packages[new_depth] = true;
-                print_node_modules_folder_structure(
-                    &next,
-                    Some(package_id),
-                    new_depth,
-                    directories,
-                    lockfile,
-                    more_packages,
-                );
-            }
-            dir_index += 1;
-        }
-
-        if found_node_modules {
+    let resolutions = lockfile.packages.items_resolution();
+    // The rows left to print in each folder, from the first folder to the one of the current row.
+    let mut open: Vec<Range<usize>> = vec![folders[0].rows.clone()];
+    while let Some((current, outer)) = open.split_last_mut() {
+        let Some(row) = current.next() else {
+            open.pop();
             continue;
-        }
-
-        for i in 0..depth {
-            if more_packages[i] {
-                bun_core::pretty!("<d>│<r>   ");
-            } else {
+        };
+        for folder in outer.iter() {
+            if folder.is_empty() {
                 bun_core::pretty!("    ");
+            } else {
+                bun_core::pretty!("<d>│<r>   ");
             }
         }
-
-        if more_packages[depth] {
-            bun_core::pretty!("<d>├──<r> ");
-        } else {
+        if Range::is_empty(current) {
             bun_core::pretty!("<d>└──<r> ");
+        } else {
+            bun_core::pretty!("<d>├──<r> ");
         }
 
+        let dep_id = rows[row];
         bun_core::prettyln!(
             "{}<d>@{}<r>",
-            bun_fmt::escape_control_chars(package_name),
+            bun_fmt::escape_control_chars(name_of(dep_id)),
             bun_fmt::for_terminal(
-                resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)
+                resolutions[package_of(dep_id) as usize].fmt(string_bytes, PathSep::Auto)
             ),
         );
+
+        if let Some(folder) = own_folder[row] {
+            open.push(folders[folder].rows.clone());
+        }
     }
 }
 
 /// Returns whether any package was listed.
 fn print_selected_dependencies_flat(
-    first_directory: &NodeModulesFolder,
-    directories: &[NodeModulesFolder],
+    rows: &[DependencyID],
     lockfile: &Lockfile,
     selected: impl Fn(DependencyID) -> bool,
 ) -> bool {
@@ -1002,13 +927,11 @@ fn print_selected_dependencies_flat(
 
     let mut seen = bun_core::handle_oom(DynamicBitSet::init_empty(lockfile.packages.len()));
     let mut listed: Vec<DependencyID> = Vec::new();
-    for folder in core::iter::once(first_directory).chain(directories) {
-        for &dep_id in folder.dependencies.iter() {
-            let package_id = lockfile.buffers.resolutions[dep_id as usize] as usize;
-            if !seen.is_set(package_id) && selected(dep_id) {
-                seen.set(package_id);
-                listed.push(dep_id);
-            }
+    for &dep_id in rows {
+        let package_id = lockfile.buffers.resolutions[dep_id as usize] as usize;
+        if !seen.is_set(package_id) && selected(dep_id) {
+            seen.set(package_id);
+            listed.push(dep_id);
         }
     }
 

@@ -207,7 +207,7 @@ pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
 pub struct IteratorNext<'a> {
     pub relative_path: &'a ZStr,
     pub dependencies: &'a [DependencyID],
-    pub(crate) tree_id: Id,
+    pub tree_id: Id,
 
     /// depth of the node_modules folder in the tree
     ///
@@ -425,6 +425,14 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     let rel = ZStr::from_buf(path_buf, path_written);
 
     (rel, depth)
+}
+
+/// Tree `tree_id` is the `node_modules` of a package in the hoisted tree. Returns its parent tree,
+/// and a dependency that resolves to the package and has the name of the package's folder. `None`
+/// for the root tree.
+pub fn owner_of(lockfile: &Lockfile, tree_id: Id) -> Option<(Id, DependencyID)> {
+    let tree = lockfile.buffers.trees.get(tree_id as usize)?;
+    (tree.parent != INVALID_ID).then_some((tree.parent, tree.dependency_id))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

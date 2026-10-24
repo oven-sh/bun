@@ -854,6 +854,10 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
                 && i < rules.len()
                 && let CssRule::Style(other) = &rules[i]
                 && (!context.css_modules || source_index == other.loc.source_index)
+                // Stricter than lightningcss: a target may not parse this rule and need `other`.
+                && let CssRule::Style(later) = &rules[idx]
+                && (context.targets.browsers.is_none()
+                    || later.declarations.eql(&other.declarations))
             {
                 rules[i] = CssRule::Ignored;
             }

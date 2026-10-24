@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -6549,6 +6550,148 @@ describe("css tests", () => {
     error_test("@media (1px <= scan <= 2px) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
     error_test("@media (grid: 10) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
     error_test("@media (prefers-color-scheme = dark) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
+  });
+
+  // A rule is removed when a later rule in the same list has the same selectors
+  // and declares the same properties. A browser that cannot parse a value of
+  // the later rule still applies the earlier rule.
+  describe("duplicate rules", () => {
+    // The browser targets of `bun build`. None of them parses `dvh`, `round()`,
+    // `overflow: clip` or `anchor-size()`.
+    const targets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+
+    describe("browser targets: a rule with another declaration block stays", () => {
+      test.each([
+        ".a{width:100vh}.b{color:red}.a{width:100dvh}",
+        ".d{gap:15px}.e{color:red}.d{gap:round(1em,5px)}",
+        // bun has no support data for these values.
+        ".a{overflow:hidden}.b{color:red}.a{overflow:clip}",
+        ".a{width:100px}.b{color:red}.a{width:anchor-size(width)}",
+        // Every target parses the later value. The check does not ask.
+        ".a{color:red}.b{color:green}.a{color:pink}",
+        ".a{height:100vh}.b{top:0}.c{top:1px}.d{top:2px}.e{top:3px}.f{top:4px}.g{top:5px}.a{height:100dvh}",
+        // Chrome 80 has no `:where()`, so these neighbours are not merged into one rule.
+        ":where(.x){width:100vh}:where(.x){width:100dvh}",
+        "@media print{.a{width:100vh}.b{color:red}.a{width:100dvh}}",
+        "@supports (display:grid){.a{width:100vh}.b{color:red}.a{width:100dvh}}",
+        "@layer x{.a{width:100vh}.b{color:red}.a{width:100dvh}}",
+        // The blocks differ after the first declaration, or in the `!important` list.
+        ".a{color:red;overflow:hidden}.b{top:0}.a{color:red;overflow:clip}",
+        ".a{overflow:hidden!important}.b{top:0}.a{overflow:clip!important}",
+        ".a{color:red!important;overflow:hidden!important}.b{top:0}.a{color:red!important;overflow:clip!important}",
+        ".a{width:1px!important}.b{color:red}.a{width:2px}",
+        // Custom properties with other names.
+        ".a{--x:1}.b{color:red}.a{--y:2}",
+        // https://github.com/oven-sh/bun/issues/44704
+        ":where(.x){--a:1}:where(.x){--b:2}",
+        ":where(.x) .y{--a:1}:where(.x) .y{--b:2}",
+        // https://github.com/oven-sh/bun/issues/45730
+        ".tag{--h-xs:1px}.tag.xs{--h:var(--h-xs)}.tag{--h-sm:2px}",
+        // The last rule differs from the one before it. The first rule is not compared again.
+        ".a{width:1px}.b{top:0}.a{width:2px}.c{top:0}.a{width:1px}",
+      ])("%s", source => {
+        expect(cssInternals.minifyTest(source, "", targets)).toBe(source);
+      });
+
+      test.each([
+        [".p{.a{width:100vh}.b{color:red}.a{width:100dvh}}", ".p .a{width:100vh}.p .b{color:red}.p .a{width:100dvh}"],
+        [
+          "@media print{.a{width:100vh}}@media print{.b{color:red}}@media print{.a{width:100dvh}}",
+          "@media print{.a{width:100vh}.b{color:red}.a{width:100dvh}}",
+        ],
+        // https://github.com/oven-sh/bun/issues/45258
+        [":root{&{--a:2}&{--b:2}}", ":root{--a:2}:root{--b:2}"],
+      ])("%s", (source, expected) => {
+        expect(cssInternals.minifyTest(source, "", targets)).toBe(expected);
+      });
+
+      test("targets that parse the later value", () => {
+        const source = ".a{width:100vh}.b{color:red}.a{width:100dvh}";
+        expect(cssInternals.minifyTest(source, "", { chrome: 120 << 16 })).toBe(source);
+      });
+    });
+
+    describe("browser targets: a rule with an equal declaration block is removed", () => {
+      test.each([
+        [".a{color:red}.b{color:green}.a{color:#f00}", ".b{color:green}.a{color:red}"],
+        [".a{width:100dvh}.b{color:red}.a{width:100dvh}", ".b{color:red}.a{width:100dvh}"],
+        [".a{color:red;overflow:clip}.b{top:0}.a{color:red;overflow:clip}", ".b{top:0}.a{color:red;overflow:clip}"],
+        [".a{overflow:clip!important}.b{top:0}.a{overflow:clip!important}", ".b{top:0}.a{overflow:clip!important}"],
+        [".a{width:1px}.b{top:0}.a{width:2px}.c{top:0}.a{width:2px}", ".a{width:1px}.b{top:0}.c{top:0}.a{width:2px}"],
+      ])("%s", (source, expected) => {
+        expect(cssInternals.minifyTest(source, "", targets)).toBe(expected);
+      });
+    });
+
+    describe("no browser targets: the earlier rule is removed", () => {
+      test.each([
+        [".a{width:100vh}.b{color:red}.a{width:100dvh}", ".b{color:red}.a{width:100dvh}"],
+        [".a{color:red}.b{color:green}.a{color:pink}", ".b{color:green}.a{color:pink}"],
+        [".a{overflow:hidden}.b{color:red}.a{overflow:clip}", ".b{color:red}.a{overflow:clip}"],
+      ])("%s", (source, expected) => {
+        expect(cssInternals.minifyTest(source, "")).toBe(expected);
+      });
+    });
+
+    // The same comparison decides whether two neighbours share one rule.
+    describe("neighbours with another declaration block are not merged", () => {
+      test.each([
+        ".a{color:red;overflow:hidden}.c{color:red;overflow:clip}",
+        ".a{color:red!important}.c{color:pink!important}",
+      ])("%s", source => {
+        expect(cssInternals.minifyTest(source, "", targets)).toBe(source);
+      });
+    });
+
+    test.concurrent("bun build keeps the earlier rule for a browser, and removes it for --target bun", async () => {
+      using dir = tempDir("css-duplicate-rules", {
+        "in.css": [
+          ".a{width:100vh}",
+          ".b{color:red}",
+          ".a{width:100dvh}",
+          ".d{gap:15px}",
+          ".e{color:blue}",
+          ".d{gap:round(1em,5px)}",
+          "",
+        ].join("\n"),
+        // A type selector: in a CSS module the check compares rules of one file.
+        "styles.module.css": ["div{width:100vh}", "span{color:red}", "div{width:100dvh}", ""].join("\n"),
+        "entry.js": `import "./styles.module.css";\n`,
+      });
+      // The CSS is stdout, or the file `outfile` for a build with --outdir.
+      const build = async (args: string[], outfile?: string) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        if (exitCode !== 0) return { css: "", stderr, exitCode };
+        return { css: (outfile ? await Bun.file(join(String(dir), outfile)).text() : stdout).trim(), exitCode };
+      };
+
+      const [browser, bun, module, pretty] = await Promise.all([
+        build(["./in.css", "--minify"]),
+        build(["./in.css", "--minify", "--target", "bun"]),
+        build(["./entry.js", "--minify", "--outdir", "out"], "out/entry.css"),
+        // The check also runs without --minify.
+        build(["./in.css"]),
+      ]);
+      expect([browser, bun, module, { ...pretty, css: pretty.css.replace(/\/\*.*?\*\/|\s/g, "") }]).toEqual([
+        {
+          css: ".a{width:100vh}.b{color:red}.a{width:100dvh}.d{gap:15px}.e{color:#00f}.d{gap:round(1em,5px)}",
+          exitCode: 0,
+        },
+        { css: ".b{color:red}.a{width:100dvh}.e{color:#00f}.d{gap:round(1em,5px)}", exitCode: 0 },
+        { css: "div{width:100vh}span{color:red}div{width:100dvh}", exitCode: 0 },
+        {
+          css: ".a{width:100vh;}.b{color:red;}.a{width:100dvh;}.d{gap:15px;}.e{color:#00f;}.d{gap:round(1em,5px);}",
+          exitCode: 0,
+        },
+      ]);
+    });
   });
 
   describe("transition", () => {

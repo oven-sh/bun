@@ -53,11 +53,17 @@ const script = `
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
     ],
+    "different-valued-duplicates": [
+      Array.from({ length: n }, (_, i) => \`.a{width:\${i + 1}dvh}.b\${i}{color:red}\`).join(""),
+      { chrome: 80 << 16 },
+      // Chrome 80 has no dvh, so every .a rule stays as the fallback of the next one.
+      out => ":" + (out.split(".a {").length - 1),
+    ],
   };
-  for (const [name, [src, targets]] of Object.entries(floods)) {
+  for (const [name, [src, targets, count]] of Object.entries(floods)) {
     const out = targets === undefined ? c.minifyTest(src, "") : c._test(src, "", targets);
     if (typeof out !== "string" || out.length === 0) throw new Error(name + " produced no output");
-    console.log("OK:" + name);
+    console.log("OK:" + name + (count ? count(out) : ""));
   }
 `;
 
@@ -85,6 +91,7 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:clamp",
       "OK:distinct-custom-props",
       "OK:distinct-selectors",
+      "OK:different-valued-duplicates:2000",
       "",
     ].join("\n"),
     stderr: "",

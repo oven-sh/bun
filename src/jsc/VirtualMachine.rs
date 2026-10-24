@@ -6159,8 +6159,7 @@ impl VirtualMachine {
         self.default_tls_reject_unauthorized = None;
         self.default_verbose_fetch.set(None);
         if let Some(tz) = self.test_isolation_state.time_zone.as_deref() {
-            let _ = self
-                .global()
+            self.global()
                 .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
         }
         if let Some(snapshot) = self.test_isolation_state.proxy_env.as_ref() {

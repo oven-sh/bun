@@ -2018,8 +2018,7 @@ impl TestCommand {
         }
 
         if !tz_name.is_empty() {
-            _ = vm
-                .global()
+            vm.global()
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
         if vm.test_isolation_enabled {

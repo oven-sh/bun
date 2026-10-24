@@ -113,6 +113,30 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // "MSK-3" is a TZ that ICU has no name for: Bun translates it at the start of the run, and again for each file.
+  test("with --isolate, a POSIX TZ of the run is put back before the next file", async () => {
+    using dir = tempDir("isolate-posix-tz", {
+      "a-tz.test.ts": `
+        import { test, expect } from "bun:test";
+        process.env.TZ = "Asia/Tokyo";
+        test("the write applies to this file", () => {
+          expect(new Date(0).getTimezoneOffset()).toBe(-540);
+        });
+      `,
+      "b-tz.test.ts": `
+        import { test, expect } from "bun:test";
+        test("Date is back on the runner's TZ", () => {
+          expect(process.env.TZ).toBe("MSK-3");
+          expect(new Date(0).getTimezoneOffset()).toBe(-180);
+        });
+      `,
+    });
+    const files = ["./a-tz.test.ts", "./b-tz.test.ts"];
+    const result = await runTests(String(dir), ["--isolate"], files, { ...bunEnv, TZ: "MSK-3" });
+    expect(normalizeBunSnapshot(result.stderr, dir)).toContain("2 pass");
+    expect(result.exitCode).toBe(0);
+  });
+
   // TZ, NODE_TLS_REJECT_UNAUTHORIZED, BUN_CONFIG_VERBOSE_FETCH and the proxy
   // keys have process.env setters with a native side effect outside the global
   // (the WTF time zone override, per-VM caches, the env map the next

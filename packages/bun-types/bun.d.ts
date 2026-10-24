@@ -776,6 +776,10 @@ declare module "bun" {
     NODE_ENV?: string;
     /**
      * Set to change the default timezone at runtime
+     *
+     * The value is a time zone name such as `"America/New_York"`, the same
+     * with a colon before it, or a POSIX value of whole hours such as
+     * `"MSK-3"` (three hours east of UTC).
      */
     TZ?: string;
   }

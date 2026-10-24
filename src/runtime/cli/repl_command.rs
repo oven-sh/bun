@@ -271,7 +271,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
         if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
-                let _ = vm.global().set_time_zone(&EncodedSlice::from_bytes(tz));
+                vm.global().set_time_zone(&EncodedSlice::from_bytes(tz));
             }
         }
 

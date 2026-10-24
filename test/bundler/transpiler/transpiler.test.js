@@ -1580,9 +1580,12 @@ function foo() {}
           build.exited,
         ]);
         expect({ runOut, runErr, runCode }).toEqual({ runOut: "[100,101,200,201]\n", runErr: "", runCode: 0 });
-        expect(buildOut).toContain('Status[Status["Created"] = 101] = "Created"');
-        expect(buildOut).toContain('Status[Status["After"] = 201] = "After"');
-        expect({ buildErr, buildCode }).toEqual({ buildErr: "", buildCode: 0 });
+        expect({ buildOut, buildErr, buildCode }).toEqual({
+          buildOut:
+            'const base = 100;\nvar Status;\n((Status) => {\n  Status[Status["Ok"] = 100] = "Ok";\n  Status[Status["Created"] = 101] = "Created";\n  Status[Status["Gone"] = 200] = "Gone";\n  Status[Status["After"] = 201] = "After";\n})(Status ||= {});\nconsole.log(JSON.stringify([100 /* Ok */, 101 /* Created */, 200 /* Gone */, 201 /* After */]));\n',
+          buildErr: "",
+          buildCode: 0,
+        });
       });
 
       // tsc folds each of these too. Bun leaves the name, so the next member has no value. The output is what tsc gives.

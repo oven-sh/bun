@@ -4,7 +4,8 @@
 //! channel itself (one per JS thread) lives here.
 
 use crate::ipc::{
-    self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
+    self as IPC, DecodedIPCMessage, Delivery, Handle, IsInternal, Listeners, SendQueue,
+    SerializeAndSendResult,
 };
 use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
@@ -12,6 +13,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
+use crate::api::bun::subprocess::Subprocess;
 use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
 use crate::socket::Listener;
 
@@ -294,23 +296,24 @@ pub(crate) fn do_send(
     Ok(status == SerializeAndSendResult::Success)
 }
 
+/// `false`: the listener for the message left while the handle was made, so nobody has the handle.
 pub(crate) fn emit_handle_ipc_message<'a>(
     cx: &mut JsScope<'a>,
     target: MessageTarget<'a>,
     message: ReceivedMessage<'a>,
     handle: JsLocal<'a>,
-) -> JsResult<()> {
+) -> JsResult<bool> {
     let global_this = cx.global();
     let handle = handle.to_js();
     let (message, is_object) = match message {
         ReceivedMessage::Object(object) => (object.to_js(), true),
         ReceivedMessage::Primitive(primitive) => (primitive.to_js(), false),
     };
-    match target {
+    let delivery = match target {
         MessageTarget::Subprocess(subprocess) => {
-            subprocess.handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
+            subprocess.handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?
         }
-        MessageTarget::Missing | MessageTarget::Ignored(_) => {}
+        MessageTarget::Missing | MessageTarget::Ignored(_) => Delivery::Taken,
         MessageTarget::ThisProcess => {
             // Cluster-internal replies that carried a descriptor (shared dgram
             // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
@@ -321,27 +324,35 @@ pub(crate) fn emit_handle_ipc_message<'a>(
                     if cmd.is_string() {
                         let cmd_str = cmd.to_bun_string(global_this)?;
                         if cmd_str.eq_ascii(b"NODE_CLUSTER") {
-                            crate::node::node_cluster_binding::handle_internal_message_child(
-                                global_this,
-                                message,
-                                handle,
-                            )?;
-                            return Ok(());
+                            let delivery =
+                                crate::node::node_cluster_binding::handle_internal_message_child(
+                                    global_this,
+                                    message,
+                                    handle,
+                                )?;
+                            return Ok(delivery == Delivery::Taken);
                         }
                     }
                 }
             }
+            let internal = IPC::is_internal_message(message, global_this)?;
             let vm = global_this.bun_vm().as_mut();
             let Some(ipc) = get_ipc_instance(vm) else {
                 // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
-                Process__emitMessageEvent(global_this, message, handle);
-                return Ok(());
+                return Ok(Process__emitMessageEvent(
+                    global_this,
+                    message,
+                    handle,
+                    internal,
+                ));
             };
             // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-            unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
+            unsafe {
+                (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle, internal)
+            }?
         }
-    }
-    Ok(())
+    };
+    Ok(delivery == Delivery::Taken)
 }
 
 pub(crate) fn send<'a>(
@@ -387,7 +398,15 @@ pub(crate) fn send<'a>(
 // `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
 // mutating VM/process state through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    safe fn Process__emitMessageEvent(global: &JSGlobalObject, value: JSValue, handle: JSValue);
+    /// Returns whether a listener took the message. An 'internalMessage' (`internal`) counts as taken with no listener.
+    safe fn Process__emitMessageEvent(
+        global: &JSGlobalObject,
+        value: JSValue,
+        handle: JSValue,
+        internal: bool,
+    ) -> bool;
+    /// Bit 0: `process` has a 'message' listener. Bit 1: it has a 'disconnect' listener.
+    safe fn Process__ipcListeners(global: &JSGlobalObject) -> u8;
     safe fn Process__emitDisconnectEvent(global: &JSGlobalObject);
 }
 
@@ -401,6 +420,84 @@ pub(crate) struct IPCInstance {
 #[thread_local]
 static CHANNEL: core::cell::Cell<Option<core::ptr::NonNull<IPCInstance>>> =
     core::cell::Cell::new(None);
+
+/// node:cluster takes its control messages from the channel through a native callback, so the channel is always read for it.
+#[thread_local]
+static PROCESS_HAS_CLUSTER_HANDLER: core::cell::Cell<bool> = core::cell::Cell::new(false);
+
+pub(crate) fn set_process_cluster_handler() {
+    PROCESS_HAS_CLUSTER_HANDLER.set(true);
+    request_process_ipc_drain();
+}
+
+/// What `process` listens for now.
+pub(crate) fn process_ipc_listeners() -> Listeners {
+    let vm = bun_jsc::virtual_machine::VirtualMachine::get().as_mut();
+    let listeners = Process__ipcListeners(vm.global());
+    Listeners {
+        message: listeners & 1 != 0,
+        // A channel that keeps the process alive has to see its own close.
+        close: listeners & 2 != 0
+            || vm.channel_ref.is_active()
+            || PROCESS_HAS_CLUSTER_HANDLER.get(),
+    }
+}
+
+// HOST_EXPORT(Bun__requestProcessIPCDrain, c)
+pub(crate) fn request_process_ipc_drain() {
+    if let Some(inst) = CHANNEL.get() {
+        // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
+        unsafe { inst.as_ref() }.data().request_drain();
+    }
+}
+
+/// The channel of a `node:child_process` ChildProcess: a 'message' waits for a 'message' listener.
+pub(crate) fn gate_subprocess_ipc(subprocess: Option<&Subprocess>) {
+    if let Some(ipc) = subprocess.and_then(|subprocess| subprocess.ipc()) {
+        ipc.gate();
+    }
+}
+
+/// A ChildProcess got a 'message' or a 'disconnect' listener while its channel held messages back.
+pub(crate) fn request_subprocess_ipc_drain(subprocess: Option<&Subprocess>) {
+    if let Some(ipc) = subprocess.and_then(|subprocess| subprocess.ipc()) {
+        ipc.request_drain();
+    }
+}
+
+/// The next-tick callback of `SendQueue::request_drain`. `owner` is the Subprocess, or nothing for the channel of this process.
+pub(crate) fn drain_ipc(owner: Option<&Subprocess>) {
+    match owner {
+        Some(subprocess) => {
+            if let Some(ipc) = subprocess.ipc() {
+                ipc.drain();
+            }
+        }
+        None => {
+            if let Some(inst) = CHANNEL.get() {
+                // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
+                unsafe { inst.as_ref() }.data().drain();
+            }
+        }
+    }
+}
+
+/// One function for each VM, so a drain request allocates nothing.
+pub(crate) fn drain_function(global: &JSGlobalObject) -> JSValue {
+    let rare = global.bun_vm().as_mut().rare_data();
+    if let Some(function) = rare.ipc_drain_function.get() {
+        return function;
+    }
+    let function = bun_jsc::JSFunction::create(
+        global,
+        "",
+        crate::generated_bindgen::ipc_host::Bun__IPC__drain,
+        1,
+        Default::default(),
+    );
+    rare.ipc_drain_function = bun_jsc::StrongOptional::create(function, global);
+    function
+}
 
 impl IPCInstance {
     pub(crate) fn new(v: IPCInstance) -> *mut IPCInstance {
@@ -426,12 +523,13 @@ impl IPCInstance {
         }
     }
 
-    /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
+    /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners. `internal`: a `Data` message is for 'internalMessage'.
     pub(crate) fn handle_ipc_message(
         &self,
         message: &DecodedIPCMessage,
         handle: JSValue,
-    ) -> JsResult<()> {
+        internal: bool,
+    ) -> JsResult<Delivery> {
         // SAFETY: VM singleton + its event loop are process-lifetime.
         let vm = bun_jsc::virtual_machine::VirtualMachine::get().as_mut();
         let global_this = vm.global();
@@ -444,20 +542,23 @@ impl IPCInstance {
             DecodedIPCMessage::Data(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC message from parent");
                 event_loop.enter();
-                Process__emitMessageEvent(global_this, data, handle);
+                let taken = Process__emitMessageEvent(global_this, data, handle, internal);
                 event_loop.exit();
+                if !taken {
+                    return Ok(Delivery::NotTaken);
+                }
             }
             DecodedIPCMessage::Internal(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
                 let _entered = vm.enter_event_loop_scope();
-                crate::node::node_cluster_binding::handle_internal_message_child(
+                return crate::node::node_cluster_binding::handle_internal_message_child(
                     global_this,
                     data,
                     handle,
-                )?;
+                );
             }
         }
-        Ok(())
+        Ok(Delivery::Taken)
     }
 
     /// Tears down the IPC channel and emits the disconnect events on `process`.

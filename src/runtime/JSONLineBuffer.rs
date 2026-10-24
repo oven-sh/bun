@@ -6,6 +6,7 @@ use bun_core::strings;
 /// - newline_pos: position of first known newline (if any)
 /// - scanned_pos: how far we've scanned (bytes before this have been checked)
 /// - head: offset into the buffer where unconsumed data starts (avoids copying on each consume)
+/// - held: length of the complete lines at head that are kept for later; the scan goes on behind them
 ///
 /// When data arrives, we only scan the NEW bytes.
 /// When we consume a message, we just advance `head` instead of copying.
@@ -14,21 +15,17 @@ use bun_core::strings;
 pub(crate) struct JSONLineBuffer {
     pub(crate) data: Vec<u8>,
     /// Offset into data where unconsumed content starts.
-    pub(crate) head: u32,
-    /// Position of a known upcoming newline relative to head, if any.
-    pub(crate) newline_pos: Option<u32>,
-    /// How far we've scanned for newlines relative to head.
-    pub(crate) scanned_pos: u32,
+    head: u32,
+    /// Length of the complete lines at `head` that are kept. The two positions below are relative to their end.
+    held: u32,
+    /// Position of a known upcoming newline, if any.
+    newline_pos: Option<u32>,
+    /// How far we've scanned for newlines.
+    scanned_pos: u32,
     /// Maximum line length, not counting the newline. Capped so a line plus its newline fits in a `u32`.
     max_line: u32,
     /// True once a line exceeds `max_line`. The buffer is freed and later bytes are dropped.
     too_long: bool,
-}
-
-/// Return type of [`JSONLineBuffer::next`]: a complete message slice plus its newline offset.
-pub(crate) struct Next<'a> {
-    pub(crate) data: &'a [u8],
-    pub(crate) newline_pos: u32,
 }
 
 impl JSONLineBuffer {
@@ -43,9 +40,17 @@ impl JSONLineBuffer {
         }
     }
 
-    /// Get the active (unconsumed) portion of the buffer.
+    /// Get the active portion of the buffer: the unconsumed bytes behind the held lines.
     fn active_slice(&self) -> &[u8] {
-        &self.data.slice()[self.head as usize..]
+        &self.data.slice()[(self.head + self.held) as usize..]
+    }
+
+    pub(crate) fn held_len(&self) -> usize {
+        self.held as usize
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 
     /// True if a line exceeded `max_line`. `next` returns `None` from then on.
@@ -102,19 +107,13 @@ impl JSONLineBuffer {
     }
 
     /// Returns the next complete message (up to and including newline) if available.
-    pub(crate) fn next(&self) -> Option<Next<'_>> {
+    pub(crate) fn next(&self) -> Option<&[u8]> {
         let pos = self.newline_pos?;
-        Some(Next {
-            data: &self.active_slice()[0..(pos as usize) + 1],
-            newline_pos: pos,
-        })
+        Some(&self.active_slice()[0..(pos as usize) + 1])
     }
 
-    /// Consume bytes from the front of the buffer after processing a message.
-    /// Just advances head offset - no copying until compaction threshold is reached.
-    pub(crate) fn consume(&mut self, bytes: u32) {
-        self.head = self.head.saturating_add(bytes);
-
+    /// The scan positions are relative to the start of the next line, which moved `bytes` ahead.
+    fn skip_scanned(&mut self, bytes: u32) {
         // Adjust scanned_pos (subtract consumed bytes, but don't go negative)
         self.scanned_pos = self.scanned_pos.saturating_sub(bytes);
 
@@ -128,7 +127,10 @@ impl JSONLineBuffer {
                 self.newline_pos = Some(pos - bytes);
             }
         }
+    }
 
+    /// Reset once everything is consumed, and compact once head exceeds the threshold.
+    fn reclaim(&mut self) {
         // Check if we've consumed everything
         if self.head as usize >= self.data.len() {
             // Free memory if capacity exceeds threshold, otherwise just reset
@@ -147,6 +149,38 @@ impl JSONLineBuffer {
         if self.head >= Self::COMPACTION_THRESHOLD {
             self.compact();
         }
+    }
+
+    /// Remove the line that `next` returned. With no held lines this just advances head offset - no copying until compaction threshold is reached.
+    pub(crate) fn remove(&mut self, bytes: u32) {
+        if self.held == 0 {
+            self.head = self.head.saturating_add(bytes);
+        } else {
+            let at = (self.head + self.held) as usize;
+            self.data.drain(at..at + bytes as usize);
+        }
+        self.skip_scanned(bytes);
+        self.reclaim();
+    }
+
+    /// Keep the line that `next` returned. The scan goes on behind it.
+    pub(crate) fn hold(&mut self, bytes: u32) {
+        self.held += bytes;
+        self.skip_scanned(bytes);
+    }
+
+    /// The first held line, up to and including its newline.
+    pub(crate) fn first_held(&self) -> Option<&[u8]> {
+        let held = &self.data.slice()[self.head as usize..][..self.held as usize];
+        let newline = strings::index_of_char_usize(held, b'\n')?;
+        Some(&held[..=newline])
+    }
+
+    /// Consume the line that `first_held` returned.
+    pub(crate) fn release(&mut self, bytes: u32) {
+        self.head += bytes;
+        self.held -= bytes;
+        self.reclaim();
     }
 
     /// Notify the buffer that `nread` bytes were written directly into the

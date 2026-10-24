@@ -34,9 +34,9 @@ interface ImportMeta {
   hot: {
     /**
      * Persists state across module instances during hot replacement, so the
-     * previous version of a module can pass data to the next one. Writing to
-     * `import.meta.hot.data` marks the module as self-accepting (equivalent
-     * to calling `accept()`).
+     * previous version of a module can pass data to the next one. Using
+     * `import.meta.hot.data` while the module is evaluated marks the module
+     * as self-accepting (equivalent to calling `accept()`).
      *
      * @example
      * ```ts
@@ -52,6 +52,12 @@ interface ImportMeta {
     /**
      * Indicate that this module can be replaced by re-evaluating the file.
      * After a hot update, Bun patches importers of this module automatically.
+     *
+     * The module also takes the updates of the files that it imports. When
+     * one of them is saved, Bun re-evaluates the saved file, every module
+     * between it and this module, and this module. A module that Bun
+     * re-evaluates starts again with new top-level variables. Keep state in
+     * `import.meta.hot.data`.
      *
      * When `import.meta.hot.accept` is not used, the page reloads when the
      * file updates, and a console message shows which files were checked.
@@ -69,8 +75,10 @@ interface ImportMeta {
 
     /**
      * Indicate that this module can be replaced by evaluating the new module
-     * and then calling the callback with it. In this mode, importers are not
-     * patched. This matches Vite, which cannot patch import statements.
+     * and then calling the callback with it. Bun calls the callback that the
+     * replaced copy of the module registered, and that copy keeps the imports
+     * that it has: read new values from `newModule`. Bun also patches the importers
+     * of this module, as it does for `accept()` without an argument.
      * Prefer `import.meta.hot.accept()` without an argument; it usually makes
      * your code easier to understand.
      *
@@ -95,7 +103,13 @@ interface ImportMeta {
 
     /**
      * Indicate that a dependency's module can be accepted. When the
-     * dependency updates, Bun calls the callback with the new module.
+     * dependency updates, Bun calls the callback with the new module. A save
+     * of a file that the dependency imports also updates the dependency.
+     *
+     * If the same update also reaches this module through an import that it
+     * does not accept, Bun does not call the callback. Bun re-evaluates this
+     * module when a module above it accepts the update, and reloads the page
+     * when none does.
      *
      * When `import.meta.hot.accept` is not used, the page reloads when the
      * file updates, and a console message shows which files were checked.
@@ -115,7 +129,8 @@ interface ImportMeta {
     /**
      * Indicate that the modules of an array of dependencies can be accepted.
      * The callback receives the one updated module and `undefined` for the
-     * rest.
+     * rest. When one update replaces more than one of the dependencies, Bun
+     * calls the callback once for each of them.
      *
      * When `import.meta.hot.accept` is not used, the page reloads when the
      * file updates, and a console message shows which files were checked.
@@ -124,13 +139,16 @@ interface ImportMeta {
 
     /**
      * Attach a callback that Bun calls:
-     * - Just before the module is replaced with another copy (before the next is loaded)
+     * - Just before the module is replaced with another copy (before the next is loaded).
+     *   This includes a module that Bun re-evaluates because a file that it imports was saved.
+     *   A module that only an earlier `import()` call reached gets its next copy at the next import.
      * - After the module is detached (removing all imports to this module)
      *
      * The callback is not called on route navigation or when the browser tab closes.
      *
-     * Returning a promise delays module replacement until the module is
-     * disposed. All dispose callbacks are called in parallel.
+     * If a callback returns a promise, the update waits for it before it
+     * evaluates the new modules. A module that a later `import()` evaluates
+     * does not wait. All dispose callbacks are called in parallel.
      */
     dispose(cb: (data: any) => void | Promise<void>): void;
 

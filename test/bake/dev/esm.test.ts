@@ -362,6 +362,120 @@ devTest("cannot require a module with top level await", {
     });
   },
 });
+devTest("a hot update evaluates a CommonJS module again and gives its importers the new exports", {
+  files: {
+    // between: app -> mid.cjs -> leaf. `mid.cjs` made its export from `leaf`, so it has to run again.
+    "between.html": emptyHtmlFile({ scripts: ["between/app.ts"] }),
+    "between/app.ts": `
+      import { mid } from "./mid.cjs";
+      import.meta.hot.accept();
+      console.log("app " + mid);
+    `,
+    "between/mid.cjs": `
+      exports.mid = "mid(" + require("./leaf.ts").leaf + ")";
+    `,
+    "between/leaf.ts": `
+      export const leaf = "v1";
+    `,
+    // saved: `app` imports two CommonJS modules and a JSON file. It gets what the new copy of each exports.
+    // A key that the new copy does not set is gone.
+    "saved.html": emptyHtmlFile({ scripts: ["saved/app.ts"] }),
+    "saved/app.ts": `
+      import * as named from "./named.cjs";
+      import whole from "./whole.cjs";
+      import json from "./data.json";
+      import.meta.hot.accept();
+      console.log("app " + JSON.stringify({ named: { ...named, default: undefined }, whole, json }));
+    `,
+    "saved/named.cjs": `
+      exports.a = 1;
+      exports.b = 2;
+    `,
+    "saved/whole.cjs": `
+      module.exports = { msg: "one" };
+    `,
+    "saved/data.json": `{ "name": "one" }`,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/between");
+      await c.expectMessage("app mid(v1)");
+      await dev.write("between/leaf.ts", `export const leaf = "v2";`);
+      await c.expectMessage("app mid(v2)");
+      await dev.write("between/leaf.ts", `export const leaf = "v3";`);
+      await c.expectMessage("app mid(v3)");
+    }
+    {
+      await using c = await dev.client("/saved");
+      await c.expectMessage(`app {"named":{"a":1,"b":2},"whole":{"msg":"one"},"json":{"name":"one"}}`);
+      await dev.write("saved/named.cjs", `exports.a = 10;`);
+      await c.expectMessage(`app {"named":{"a":10},"whole":{"msg":"one"},"json":{"name":"one"}}`);
+      await dev.write("saved/whole.cjs", `module.exports = { msg: "two" };`);
+      await c.expectMessage(`app {"named":{"a":10},"whole":{"msg":"two"},"json":{"name":"one"}}`);
+      await dev.write("saved/data.json", `{ "name": "two" }`);
+      await c.expectMessage(`app {"named":{"a":10},"whole":{"msg":"two"},"json":{"name":"two"}}`);
+      await dev.write("saved/data.json", `{ "name": "three" }`);
+      await c.expectMessage(`app {"named":{"a":10},"whole":{"msg":"two"},"json":{"name":"three"}}`);
+    }
+  },
+});
+devTest("a hot update waits for a module with top-level await between the saved file and the module that accepts it", {
+  files: {
+    // between: app -> mid -> leaf. `mid` awaits before it exports.
+    "between.html": emptyHtmlFile({ scripts: ["between/app.ts"] }),
+    "between/app.ts": `
+      import { mid } from "./mid";
+      import.meta.hot.accept();
+      console.log("app " + mid);
+    `,
+    "between/mid.ts": `
+      import { leaf } from "./leaf";
+      console.log("mid start");
+      await Promise.resolve();
+      export const mid = "mid(" + leaf + ")";
+      console.log("mid end");
+    `,
+    "between/leaf.ts": `
+      export const leaf = "v1";
+    `,
+    // shared: app -> a -> t and app -> b -> t. The save gives `t` a top-level await. `a` and `b` run
+    // again. `b` asks for `t` while `t` waits, so `b` has to wait too, or it reads the old `t`.
+    "shared.html": emptyHtmlFile({ scripts: ["shared/app.ts"] }),
+    "shared/app.ts": `
+      import { a } from "./a";
+      import { b } from "./b";
+      import.meta.hot.accept();
+      console.log("app " + a + " " + b);
+    `,
+    "shared/a.ts": `
+      import { t } from "./t";
+      export const a = "a(" + t + ")";
+    `,
+    "shared/b.ts": `
+      import { t } from "./t";
+      export const b = "b(" + t + ")";
+    `,
+    "shared/t.ts": `
+      export const t = "t1";
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/between");
+      await c.expectMessage("mid start", "mid end", "app mid(v1)");
+      await dev.write("between/leaf.ts", `export const leaf = "v2";`);
+      await c.expectMessage("mid start", "mid end", "app mid(v2)");
+    }
+    {
+      await using c = await dev.client("/shared");
+      await c.expectMessage("app a(t1) b(t1)");
+      await dev.write("shared/t.ts", `await Promise.resolve(); export const t = "t2";`);
+      await c.expectMessage("app a(t2) b(t2)");
+      await dev.write("shared/t.ts", `await Promise.resolve(); export const t = "t3";`);
+      await c.expectMessage("app a(t3) b(t3)");
+    }
+  },
+});
 devTest("function that is assigned to should become a live binding", {
   files: {
     "index.html": emptyHtmlFile({

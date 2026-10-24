@@ -35,6 +35,12 @@ let refreshRuntime: any;
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
  * thrown upon first usage. */
 let lazyDynamicImportWithOptions: null | Function = null;
+/** How many `import()` calls are in the synchronous part of their load right now. See `loadModuleAsync`. */
+let dynamicLoads = 0;
+/** Client only. The modules that are held from outside the module graph, such as the page's entry point. */
+const roots = new Set<HMRModule>();
+/** For a module, the self-accept callback that was called last and the evaluation that it got. */
+const delivered = new WeakMap<HMRModule, { cb: HotAcceptFunction; evaluation: number }>();
 
 const enum State {
   Pending,
@@ -52,9 +58,21 @@ const enum ESMProps {
 
 /** Given an Id, return the module namespace object.
  * For use in other functions in the HMR runtime.
- * Registers that module as a root. */
+ * The caller holds the module from outside the module graph. On the client that makes it a root. */
 export async function loadExports<T>(id: Id): Promise<T> {
-  const m = await loadModuleAsync(id, false, null);
+  let loaded: Promise<HMRModule> | HMRModule;
+  if (side === "client") {
+    try {
+      loaded = loadModuleAsync(id, false, null);
+    } finally {
+      // Before the wait, and when the load throws: an update that comes then has to find the mark.
+      const mod = registry.get(id);
+      if (mod) roots.add(mod);
+    }
+  } else {
+    loaded = loadModuleAsync(id, false, null);
+  }
+  const m = await loaded;
   return m.esm ? m.exports : m.cjs.exports;
 }
 
@@ -120,10 +138,18 @@ export class HMRModule {
   selfAccept: HotAcceptFunction | null = null;
   /** When calling `import.meta.hot.accept` on another module */
   depAccepts: Record<Id, HotAccept> | null = null;
-  /** All modules that have imported this module */
-  importers = new Set<HMRModule>();
-  /** import.meta.hot.data rewrites to this */
-  data: any = {};
+  /** The modules that imported this module, each with its `version` then. An entry counts while that is its version. */
+  importers = new Map<HMRModule, number>();
+  /** How many times an update replaced the code of this module */
+  version = 0;
+  /** How many times this module started an evaluation again */
+  evaluation = 0;
+  /** Set by an evaluation that went past a top-level await. `asyncId` is the module that has the `await`. */
+  loading: { promise: Promise<HMRModule>; asyncId: Id } | null = null;
+  /** Kept across evaluations. `import.meta.hot.data` rewrites to `data`. */
+  hotData: any = {};
+  /** An update reached this module. From then on, an importer waits for an evaluation of it that is suspended. */
+  updated = false;
 
   constructor(id: Id, isCommonJS: boolean) {
     this.id = id;
@@ -135,6 +161,16 @@ export class HMRModule {
           require: this.require.bind(this),
         }
       : null;
+  }
+
+  // A body that uses `import.meta.hot.data` while it is evaluated takes its updates itself, like `accept()`.
+  get data() {
+    if (this.state === State.Pending) this.selfAccept ??= implicitAcceptFunction;
+    return this.hotData;
+  }
+  set data(value: any) {
+    if (this.state === State.Pending) this.selfAccept ??= implicitAcceptFunction;
+    this.hotData = value;
   }
 
   // Module Ids are pre-resolved by the bundler
@@ -156,7 +192,13 @@ export class HMRModule {
 
   /** Lowered from `.e_import` (import(id)) */
   dynamicImport(id: Id, opts?: ImportCallOptions) {
-    const found = loadModuleAsync(id, true, this);
+    dynamicLoads++;
+    let found: ReturnType<typeof loadModuleAsync<true>>;
+    try {
+      found = loadModuleAsync(id, true, this);
+    } finally {
+      dynamicLoads--;
+    }
     if (found) {
       if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
       return (found as Promise<HMRModule>).then(getEsmExports);
@@ -187,9 +229,7 @@ export class HMRModule {
   }
 
   // Bundler rewrites all import.meta.hot.* to access the corresponding methods
-  // on HMRModule directly.  The following code implements that interface. Data
-  // is an opaque property, which is preserved simply by the fact HMRModule is
-  // not destructed.
+  // on HMRModule directly. The following code implements that interface.
 
   accept(
     arg1?: string | readonly string[] | HotAcceptFunction,
@@ -299,14 +339,18 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
   // First, try and re-use an existing module.
   let mod = registry.get(id);
   if (mod) {
-    if (mod.state === State.Error) throw mod.failure;
+    if (mod.state === State.Error) {
+      // The update that fixes `mod` finds this importer through the edge.
+      if (importer) addImporter(mod, importer);
+      throw mod.failure;
+    }
     if (mod.state === State.Stale) {
-      mod.state = State.Pending;
       isUserDynamic = false;
     } else {
-      if (importer) {
-        mod.importers.add(importer);
-      }
+      if (importer) addImporter(mod, importer);
+      const { loading } = mod;
+      // As in `loadModuleAsync`: a load that an `import()` started gets the module as it is.
+      if (loading !== null && dynamicLoads === 0 && isSuspended(mod)) throw new AsyncImportError(loading.asyncId);
       return mod;
     }
   }
@@ -315,30 +359,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
 
   if (typeof loadOrEsmModule === "function") {
     // CommonJS
-    if (!mod) {
-      mod = new HMRModule(id, true);
-      registry.set(id, mod);
-    } else if (mod.esm) {
-      mod.esm = false;
-      mod.cjs = {
-        id,
-        exports: {},
-        require: mod.require.bind(mod),
-      };
-      mod.exports = null;
-    }
-    if (importer) {
-      mod.importers.add(importer);
-    }
-    try {
-      const cjs = mod.cjs;
-      loadOrEsmModule(mod, cjs, cjs.exports);
-    } catch (e) {
-      mod.state = State.Stale;
-      mod.cjs.exports = {};
-      throw e;
-    }
-    mod.state = State.Loaded;
+    if (mod) beginEvaluation(mod);
+    mod = evaluateCommonJS(id, mod, loadOrEsmModule, importer);
   } else {
     // ESM
     if (IS_BUN_DEVELOPMENT) {
@@ -357,6 +379,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (isAsync) {
       throw new AsyncImportError(id);
     }
+    // After the refusal above, so that the module stays Stale for the async loader.
+    if (mod) beginEvaluation(mod);
     if (!mod) {
       mod = new HMRModule(id, false);
       registry.set(id, mod);
@@ -365,9 +389,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs = null;
       mod.exports = null;
     }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    if (importer) addImporter(mod, importer);
 
     let depsList: HMRModule[];
     try {
@@ -379,6 +401,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     const exportsBefore = mod.exports;
     mod.imports = depsList.map(getEsmExports);
+    clearHooks(mod);
     try {
       load(mod);
     } catch (e) {
@@ -387,9 +410,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       throw e;
     }
     mod.imports = depsList;
-    if (mod.exports === exportsBefore) mod.exports = {};
-    mod.cjs = null;
-    mod.state = State.Loaded;
+    finishEvaluation(mod, exportsBefore);
   }
 
   return mod;
@@ -409,15 +430,21 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   let mod = registry.get(id)!;
   if (mod) {
     const { state } = mod;
-    if (state === State.Error) throw mod.failure;
+    if (state === State.Error) {
+      // The update that fixes `mod` finds this importer through the edge.
+      if (importer) addImporter(mod, importer);
+      throw mod.failure;
+    }
     if (state === State.Stale) {
-      mod.state = State.Pending;
+      beginEvaluation(mod);
       isUserDynamic = false as IsUserDynamic;
     } else {
-      if (importer) {
-        mod.importers.add(importer);
-      }
-      return mod;
+      if (importer) addImporter(mod, importer);
+      const { loading } = mod;
+      // `loading` is null for a module with no top-level await in it or below it: the common exit.
+      if (loading === null || !isSuspended(mod)) return mod;
+      // No wait in a load that `import()` started: the suspended module can be the one that awaits that `import()`.
+      return importer && dynamicLoads > 0 ? mod : loading.promise;
     }
   }
   const loadOrEsmModule = unloadedModuleRegistry[id];
@@ -428,31 +455,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
   if (typeof loadOrEsmModule === "function") {
     // CommonJS
-    if (!mod) {
-      mod = new HMRModule(id, true);
-      registry.set(id, mod);
-    } else if (mod.esm) {
-      mod.esm = false;
-      mod.cjs = {
-        id,
-        exports: {},
-        require: mod.require.bind(mod),
-      };
-      mod.exports = null;
-    }
-    if (importer) {
-      mod.importers.add(importer);
-    }
-    try {
-      const cjs = mod.cjs;
-      loadOrEsmModule(mod, cjs, cjs.exports);
-    } catch (e) {
-      mod.state = State.Stale;
-      mod.cjs.exports = {};
-      throw e;
-    }
-    mod.state = State.Loaded;
-    return mod;
+    return evaluateCommonJS(id, mod, loadOrEsmModule, importer);
   } else {
     // ESM
     if (IS_BUN_DEVELOPMENT) {
@@ -467,7 +470,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         throw e;
       }
     }
-    const [deps /* exports */ /* stars */, , , load /* isAsync */] = loadOrEsmModule;
+    const [deps /* exports */ /* stars */, , , load, isAsync] = loadOrEsmModule;
 
     if (!mod) {
       mod = new HMRModule(id, false);
@@ -477,69 +480,186 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.exports = null;
       mod.cjs = null;
     }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    if (importer) addImporter(mod, importer);
+    const { evaluation } = mod;
 
-    let list: (HMRModule | Promise<HMRModule>)[], isAsync: boolean;
+    let list: (HMRModule | Promise<HMRModule>)[], asyncId: Id | null;
     try {
-      ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
+      ({ list, asyncId } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
     } catch (e) {
       // A dependency threw before this module's body ran, so the next load evaluates it again.
       mod.state = State.Stale;
       throw e;
     }
     DEBUG.ASSERT(
-      isAsync //
+      asyncId !== null //
         ? list.some(x => x instanceof Promise)
         : list.every(x => x instanceof HMRModule),
     );
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
-    return isAsync
-      ? Promise.all(list).then(
-          list => finishLoadModuleAsync(mod, load, list),
-          e => {
-            mod.state = State.Stale;
-            throw e;
-          },
-        )
-      : finishLoadModuleAsync(
-          mod,
-          load,
-          list as HMRModule[], // no promises as by assert above
-        );
+    const result =
+      asyncId !== null
+        ? Promise.all(list).then(
+            list => finishLoadModuleAsync(mod, load, list, evaluation, isAsync),
+            e => {
+              if (isReplaced(mod, evaluation)) return loadReplacement(mod);
+              mod.state = State.Stale;
+              throw e;
+            },
+          )
+        : finishLoadModuleAsync(
+            mod,
+            load,
+            list as HMRModule[], // no promises as by assert above
+            evaluation,
+            isAsync,
+          );
+    if (result !== mod) {
+      // The sync loader names the module's own `await` before an import's. Same here.
+      mod.loading = { promise: result as Promise<HMRModule>, asyncId: isAsync ? id : asyncId! };
+    }
+    return result;
   }
 }
 
-function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
+/** The CommonJS arm of both loaders. */
+function evaluateCommonJS(id: Id, mod: HMRModule | undefined, load: UnloadedCommonJS, importer: HMRModule | null) {
+  if (!mod) {
+    mod = new HMRModule(id, true);
+    registry.set(id, mod);
+  } else {
+    // As on a first load: a new `module` object, and no ESM view of the exports of the last body.
+    mod.esm = false;
+    mod.cjs = {
+      id,
+      exports: {},
+      require: mod.require.bind(mod),
+    };
+    mod.exports = null;
+  }
+  if (importer) addImporter(mod, importer);
+  clearHooks(mod);
+  try {
+    const cjs = mod.cjs;
+    load(mod, cjs, cjs.exports);
+  } catch (e) {
+    mod.state = State.Stale;
+    mod.cjs.exports = {};
+    throw e;
+  }
+  // A module in an import cycle can take the ESM view before the body has set `module.exports`.
+  mod.exports = null;
+  mod.state = State.Loaded;
+  patchImporters(mod);
+  return mod;
+}
+
+/** The one place where a module that was evaluated before starts again. */
+function beginEvaluation(mod: HMRModule) {
+  mod.evaluation++;
+  mod.state = State.Pending;
+  mod.loading = null;
+  // The body that is replaced keeps the imports that it has. `patchImporters` is for the new body.
+  mod.imports = null;
+  mod.updateImport = null;
+}
+
+function addImporter(mod: HMRModule, importer: HMRModule) {
+  mod.importers.set(importer, importer.version);
+}
+
+/** Right before a body runs. A module whose imports fail to load keeps the hooks of its last body. */
+function clearHooks(mod: HMRModule) {
+  mod.selfAccept = null;
+  mod.depAccepts = null;
+}
+
+/** For a module that has `loading`: whether importers wait for it. Only after an update reached it, not on a first load. */
+function isSuspended(mod: HMRModule) {
+  return mod.state === State.Pending && mod.updated;
+}
+
+/** Whether an update marked `mod` Stale, or a new evaluation of it began, while evaluation `evaluation` waited. */
+function isReplaced(mod: HMRModule, evaluation: number) {
+  return mod.evaluation !== evaluation || mod.state !== State.Pending;
+}
+
+/** What a replaced evaluation hands to the ones that wait for it: the module as its new code leaves it. */
+function loadReplacement(mod: HMRModule) {
+  return loadModuleAsync(mod.id, false, null);
+}
+
+/** The end of the body of an ES module, in both loaders. */
+function finishEvaluation(mod: HMRModule, exportsBefore: any) {
+  if (mod.exports === exportsBefore) mod.exports = {};
+  mod.cjs = null;
+  mod.state = State.Loaded;
+  patchImporters(mod);
+}
+
+// Not `dispose`: what a replaced body made after its await has to be released too.
+const replacedHooks = new Set<PropertyKey>(["accept", "acceptSpecifiers", "on", "reactRefreshAccept"]);
+function replacedHook() {}
+
+/** What a body with top-level await gets as `hmr`: a body that an update replaced cannot write exports or add hooks. */
+function evaluationView(mod: HMRModule, evaluation: number): HMRModule {
+  const isBodyReplaced = () => mod.evaluation !== evaluation || mod.state === State.Stale;
+  return new Proxy(mod, {
+    get(target, key) {
+      if (isBodyReplaced()) {
+        if (key === "data") return target.hotData;
+        if (replacedHooks.has(key)) return replacedHook;
+      }
+      const value = target[key as keyof HMRModule];
+      // The methods take the module itself, not this view, as the importer and as the owner of the hooks.
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+    set(target, key, value) {
+      if (isBodyReplaced()) {
+        if (key === "exports") return true;
+        if (key === "data") {
+          target.hotData = value;
+          return true;
+        }
+      }
+      return Reflect.set(target, key, value);
+    },
+  });
+}
+
+function finishLoadModuleAsync(
+  mod: HMRModule,
+  load: UnloadedESM[3],
+  modules: HMRModule[],
+  evaluation: number,
+  isAsync: boolean,
+) {
+  if (isReplaced(mod, evaluation)) return loadReplacement(mod);
   try {
     const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
-    const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
-    const p = load(mod);
+    clearHooks(mod);
+    // A Proxy, so only for the bodies that can be replaced while they run.
+    const p = load(isAsync ? evaluationView(mod, evaluation) : mod);
     mod.imports = modules;
     if (p) {
       return p.then(
         () => {
-          mod.state = State.Loaded;
-          if (mod.exports === exportsBefore) mod.exports = {};
-          mod.cjs = null;
-          if (shouldPatchImporters) patchImporters(mod);
+          if (isReplaced(mod, evaluation)) return loadReplacement(mod);
+          finishEvaluation(mod, exportsBefore);
           return mod;
         },
         e => {
+          if (isReplaced(mod, evaluation)) return loadReplacement(mod);
           mod.state = State.Error;
           mod.failure = e;
           throw e;
         },
       );
     }
-    if (mod.exports === exportsBefore) mod.exports = {};
-    mod.cjs = null;
-    if (shouldPatchImporters) patchImporters(mod);
-    mod.state = State.Loaded;
+    finishEvaluation(mod, exportsBefore);
     return mod;
   } catch (e) {
     mod.state = State.Error;
@@ -557,14 +677,24 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
 ) {
   let i = 0;
   let list: ReturnType<T>[] = [];
-  let isAsync = false;
+  /** The module with the top-level await that the first import to return a promise waits on. */
+  let asyncId: Id | null = null;
   const { length } = deps;
   while (i < length) {
     const dep = deps[i] as string;
     DEBUG.ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
     DEBUG.ASSERT(typeof deps[i + 1] === "number");
-    const promiseOrModule = enqueueModuleLoad(dep, false, parent);
+    let promiseOrModule: any;
+    try {
+      promiseOrModule = enqueueModuleLoad(dep, false, parent);
+    } catch (e) {
+      // Nothing waits for the imports before this one any more. One of them can still reject.
+      for (const earlier of list as unknown[]) {
+        if (earlier instanceof Promise) earlier.catch(() => {});
+      }
+      throw e;
+    }
     list.push(promiseOrModule);
 
     const unloadedModule = unloadedModuleRegistry[dep];
@@ -578,7 +708,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         DEBUG.ASSERT(typeof key === "string");
         i++;
       }
-      isAsync ||= promiseOrModule instanceof Promise;
+      if (promiseOrModule instanceof Promise) asyncId ??= registry.get(dep)!.loading!.asyncId;
     } else {
       DEBUG.ASSERT(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
@@ -588,7 +718,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       }
     }
   }
-  return { list, isAsync };
+  return { list, asyncId };
 }
 
 function getEsmExports(m: HMRModule) {
@@ -617,19 +747,13 @@ type HMREvent =
 export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
   Object.assign(unloadedModuleRegistry, modules);
 
-  emitEvent("bun:beforeUpdate", null);
+  /** Server only. What failed in this update. See `attempt`. */
+  const errors: unknown[] = [];
 
-  type ToAccept = {
-    cb: HotAccept;
-    key: Id;
-  };
-  const toReload = new Set<HMRModule>();
-  const toAccept: ToAccept[] = [];
-  let failures: Set<Id> | null = null;
-  const toDispose: HMRModule[] = [];
+  attempt(errors, emitEvent, "bun:beforeUpdate", null);
 
-  // Discover all HMR boundaries
-  outer: for (const key of Object.keys(modules)) {
+  const keys = Object.keys(modules);
+  for (const key of keys) {
     // Unref old source maps, and track new ones
     if (side === "client") {
       DEBUG.ASSERT(sourceMapId);
@@ -637,137 +761,201 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       if (existingSourceMapId) derefMapping(existingSourceMapId);
       registrySourceMapIds.set(key, sourceMapId);
     }
+  }
 
+  /** Every module that the update reaches, with the module the walk came from. Each of them is replaced. */
+  const reached = new Map<HMRModule, HMRModule | null>();
+  /** Where the loads start, each with the self-accept callback of the body that is replaced. */
+  const boundaries = new Map<HMRModule, HotAcceptFunction | null>();
+  /** The `accept(dep)` registrations that the walk found, each with the accepted modules that are replaced. */
+  const toAccept = new Map<HotAccept, { importer: HMRModule; keys: Set<Id> }>();
+  /** Client only. A changed module, with the path from it to a root that does not accept. */
+  let failures: Map<Id, Id[]> | null = null;
+  /** Client only. The roots that pass the update to their importers. */
+  let importedRoots: HMRModule[] | null = null;
+  /** The importers that did not load, of the modules that take the update themselves. */
+  let revive: HMRModule[] | null = null;
+
+  // Discover all HMR boundaries
+  for (const key of keys) {
     const existing = registry.get(key);
-    if (!existing) continue;
+    if (!existing || reached.has(existing)) continue;
 
-    toReload.add(existing);
-
-    // Discover all HMR boundaries
-    const visited = new Set<HMRModule>();
+    reached.set(existing, null);
     const queue: HMRModule[] = [existing];
-    visited.add(existing);
     while (true) {
       const mod = queue.shift();
       if (!mod) break;
 
-      // Stop propagation if the module is self-accepting
-      let hadSelfAccept = true;
-      if (mod.selfAccept) {
-        toReload.add(mod);
-        visited.add(mod);
-        hadSelfAccept = false;
-        if (mod.onDispose) {
-          toDispose.push(mod);
+      // A self-accepting module takes the update. Every other module passes it to its importers.
+      const propagates = !mod.selfAccept;
+      if (!propagates) boundaries.set(mod, mod.selfAccept);
+
+      let hasImporter = false;
+      for (const [importer, version] of mod.importers) {
+        if (version !== importer.version) {
+          mod.importers.delete(importer);
+          continue;
         }
-      }
-      // Modules that mutate data are implied to handle updates via reusing their `data` property
-      else if (Object.keys(mod.data).length > 0) {
-        mod.selfAccept ??= implicitAcceptFunction;
-        toReload.add(mod);
-        visited.add(mod);
-        hadSelfAccept = false;
-        if (mod.onDispose) {
-          toDispose.push(mod);
+        hasImporter = true;
+        // Like Vite, an importer accepts the module that it imports, not only the file that changed.
+        const accept = importer.depAccepts?.[mod.id];
+        // An importer in State.Error or State.Stale did not load. It has no body that can take the callback.
+        const didNotLoad = importer.state === State.Error || importer.state === State.Stale;
+        if (accept && !didNotLoad) {
+          let entry = toAccept.get(accept);
+          if (!entry) toAccept.set(accept, (entry = { importer, keys: new Set() }));
+          entry.keys.add(mod.id);
+        } else if (propagates) {
+          if (!reached.has(importer)) {
+            reached.set(importer, mod);
+            queue.push(importer);
+          }
+        } else if (didNotLoad) {
+          (revive ??= []).push(importer);
         }
       }
 
-      // All importers will be visited
-      if (hadSelfAccept && mod.importers.size === 0) {
-        failures ??= new Set();
-        failures.add(key);
-        continue outer;
-      }
-
-      for (const importer of mod.importers) {
-        const cb = importer.depAccepts?.[key];
-        if (cb) {
-          toAccept.push({ cb, key });
-        } else if (hadSelfAccept) {
-          if (visited.has(importer)) continue;
-          visited.add(importer);
-          queue.push(importer);
+      // A server has no page to reload: what nothing accepts there stays Stale until a request needs it.
+      if (side === "client" && propagates && roots.has(mod)) {
+        if (hasImporter) {
+          (importedRoots ??= []).push(mod);
+        } else {
+          const path: Id[] = [];
+          for (let m: HMRModule | null | undefined = mod; m; m = reached.get(m)) path.unshift(m.id);
+          (failures ??= new Map()).set(key, path);
         }
       }
     }
   }
 
+  // Modules that did not load above a self-accepting module can have failed with its old code: their next load runs them.
+  if (revive) {
+    for (let i = 0; i < revive.length; i++) {
+      const mod = revive[i];
+      if (reached.has(mod)) continue;
+      reached.set(mod, null);
+      for (const [importer, version] of mod.importers) {
+        if (version !== importer.version) continue;
+        if (importer.state === State.Error || importer.state === State.Stale) revive.push(importer);
+      }
+    }
+  }
+
+  // An `accept(dep)` counts only when the update does not evaluate its importer again. The loads then start at `dep`.
+  for (const [accept, { importer, keys }] of toAccept) {
+    if (reached.has(importer)) {
+      toAccept.delete(accept);
+      continue;
+    }
+    for (const key of keys) {
+      const accepted = registry.get(key)!;
+      if (!boundaries.has(accepted)) boundaries.set(accepted, null);
+    }
+  }
+
+  // Only a reload evaluates a root again, unless a boundary imports it. A root in an import cycle has importers too.
+  if (importedRoots) {
+    for (const root of importedRoots) {
+      if (!boundaries.has(root) && !isBelowBoundary(root, boundaries)) {
+        (failures ??= new Map()).set(root.id, [root.id]);
+      }
+    }
+    // A boundary can import a root from a function that runs later, so the loads start at the root too.
+    if (!failures) {
+      for (const root of importedRoots) {
+        if (!boundaries.has(root)) boundaries.set(root, null);
+      }
+    }
+  }
+
   // If roots were hit, print a nice message before reloading.
-  if (failures) {
+  if (side === "client" && failures) {
     let message =
       "[Bun] Hot update was not accepted because it or its importers do not call `import.meta.hot.accept`. To prevent full page reloads, call `import.meta.hot.accept` in one of the following files to handle the update:\n\n";
 
-    // For each failed boundary, re-compute the path to the root.
-    for (const boundary of failures) {
-      const path: Id[] = [];
-      let current = registry.get(boundary)!;
+    for (const [boundary, path] of failures) {
       DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
-      DEBUG.ASSERT(current);
-      DEBUG.ASSERT(current.selfAccept === null);
-      if (current.importers.size === 0) {
+      if (path.length === 1) {
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
       }
-      outer: while (current.importers.size > 0) {
-        path.push(current.id);
-        inner: for (const importer of current.importers) {
-          if (importer.selfAccept) continue inner;
-          if (importer.depAccepts?.[boundary]) continue inner;
-          current = importer;
-          continue outer;
-        }
-        DEBUG.ASSERT(false);
-        break;
-      }
-      path.push(current.id);
-      DEBUG.ASSERT(path.length > 0);
-      message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 1 ? "," : "."}\n`;
+      message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 2 ? "," : "."}\n`;
       for (let i = 2, len = path.length; i < len; i++) {
         const isLast = i === len - 1;
         message += `${isLast ? "└" : "├"} imported by "${path[i]}"${isLast ? "." : ","}\n`;
       }
     }
     message = message.trim();
-    if (side === "client") {
-      sessionStorage?.setItem?.(
-        "bun:hmr:message",
-        JSON.stringify?.({
-          message,
-          kind: "warn",
-        }),
-      );
-      fullReload();
-    } else {
-      console.warn(message);
-    }
+    sessionStorage?.setItem?.(
+      "bun:hmr:message",
+      JSON.stringify?.({
+        message,
+        kind: "warn",
+      }),
+    );
+    // Nothing is disposed of or evaluated in the page that is left.
+    fullReload();
+    return;
   }
 
-  // Dispose all modules
-  if (toDispose.length > 0) {
-    const disposePromises: Promise<void>[] = [];
-    for (const mod of toDispose) {
-      mod.state = State.Stale;
-      for (const fn of mod.onDispose!) {
-        const p = fn(mod.data);
-        if (p && p instanceof Promise) {
-          disposePromises.push(p);
-        }
+  let disposing: HMRModule[] = [];
+  for (const mod of reached.keys()) {
+    if (mod.onDispose) disposing.push(mod);
+  }
+  if (disposing.length > 1) {
+    // A module is disposed of before its imports. The importer entries have every kind of import, so they give the order.
+    const inOrder: HMRModule[] = (disposing = []);
+    const ordered = new Set<HMRModule>();
+    const order = (mod: HMRModule) => {
+      ordered.add(mod);
+      for (const importer of mod.importers.keys()) {
+        if (reached.has(importer) && !ordered.has(importer)) order(importer);
       }
-      mod.onDispose = null;
-    }
-    if (disposePromises.length > 0) {
-      await Promise.all(disposePromises);
+      if (mod.onDispose) inOrder.push(mod);
+    };
+    for (const mod of reached.keys()) {
+      if (!ordered.has(mod)) order(mod);
     }
   }
 
-  // Reload all modules
-  const promises: Promise<HMRModule>[] = [];
-  for (const mod of toReload) {
-    mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
-    mod.selfAccept = null;
-    mod.depAccepts = null;
+  const disposePromises: Promise<void>[] = [];
+  for (const mod of disposing) {
+    const onDispose = mod.onDispose!;
+    mod.onDispose = null;
+    for (const fn of onDispose) {
+      const p = attempt(errors, fn, mod.hotData);
+      if (p && p instanceof Promise) {
+        disposePromises.push(p);
+      }
+    }
+  }
 
+  // Stale only now: a dispose callback that loads a reached module gets the old copy, a load during the wait the new code.
+  for (const mod of reached.keys()) {
+    mod.state = State.Stale;
+    mod.updated = true;
+  }
+  // Only now: the walk and the dispose order still count the imports that the replaced code made. See `importers`.
+  for (const key of keys) {
+    const existing = registry.get(key);
+    if (existing) existing.version++;
+  }
+  if (disposePromises.length > 0) {
+    await settle(disposePromises, errors);
+  }
+
+  // Reload all modules from the boundaries, in first-load order: the loader evaluates Stale imports before importers.
+  let starts: Iterable<HMRModule> = boundaries.keys();
+  if (boundaries.size > 1) {
+    const inLoadOrder: HMRModule[] = (starts = []);
+    for (const mod of registry.values()) {
+      if (boundaries.has(mod)) inLoadOrder.push(mod);
+    }
+  }
+  const promises: Promise<HMRModule>[] = [];
+  for (const mod of starts) {
+    const selfAccept = boundaries.get(mod);
     let modOrPromise: HMRModule | Promise<HMRModule>;
     try {
       modOrPromise = loadModuleAsync(mod.id, false, null);
@@ -777,51 +965,93 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       continue;
     }
     if (modOrPromise === mod) {
-      if (selfAccept) {
-        selfAccept(getEsmExports(mod));
-      }
+      if (selfAccept) deliver(errors, mod, selfAccept);
     } else {
       DEBUG.ASSERT(modOrPromise instanceof Promise);
       promises.push(
         (modOrPromise as Promise<HMRModule>).then(mod => {
-          if (selfAccept) {
-            selfAccept(getEsmExports(mod));
-          }
+          if (selfAccept) deliver(errors, mod, selfAccept);
           return mod;
         }),
       );
     }
   }
   if (promises.length > 0) {
-    await Promise.all(promises);
-  }
-  for (const mod of toReload) {
-    const { selfAccept } = mod;
-    if (selfAccept && selfAccept !== implicitAcceptFunction) continue;
-    patchImporters(mod);
+    await settle(promises, errors);
   }
 
-  // Call all accept callbacks
-  for (const { cb: cbEntry, key } of toAccept) {
-    const { cb: cbFn, modules, single } = cbEntry;
-    cbFn(single ? getEsmExports(registry.get(key)!) : createAcceptArray(modules, key));
+  // Call all accept callbacks, once for each accepted module that was replaced.
+  for (const [{ cb, modules: accepted, single }, { keys }] of toAccept) {
+    for (const key of keys) {
+      // Server only: the load of the accepted module can have failed.
+      if (registry.get(key)!.state !== State.Loaded) continue;
+      attempt(errors, cb, single ? getEsmExports(registry.get(key)!) : createAcceptArray(accepted, key));
+    }
   }
 
   if (refreshRuntime) {
     refreshRuntime.performReactRefresh();
   }
 
-  emitEvent("bun:afterUpdate", null);
+  attempt(errors, emitEvent, "bun:afterUpdate", null);
+
+  if (errors.length > 0) {
+    throw errors.length === 1 ? errors[0] : new AggregateError(errors, "Errors in a hot update");
+  }
+}
+
+/** Calls a self-accept callback. An update that overlaps this one can have given it this evaluation already. */
+function deliver(errors: unknown[], mod: HMRModule, cb: HotAcceptFunction) {
+  const { evaluation } = mod;
+  const last = delivered.get(mod);
+  if (last && last.cb === cb && last.evaluation === evaluation) return;
+  delivered.set(mod, { cb, evaluation });
+  attempt(errors, cb, getEsmExports(mod));
+}
+
+/** Calls a callback of a hot update. The client rethrows, and the page reloads. The server keeps the error and goes on. */
+function attempt<A, B>(errors: unknown[], fn: (a: A, b: B) => unknown, a: A, b?: B) {
+  try {
+    return fn(a, b as B);
+  } catch (error) {
+    if (side === "client") throw error;
+    errors.push(error);
+  }
+}
+
+/** The same rule as `attempt`, for promises: the client rejects with the first rejection, the server waits for all. */
+function settle(promises: Promise<unknown>[], errors: unknown[]): Promise<unknown> {
+  if (side === "client") return Promise.all(promises);
+  return Promise.allSettled(promises).then(results => {
+    for (const result of results) {
+      if (result.status === "rejected") errors.push(result.reason);
+    }
+  });
+}
+
+/** Whether a boundary imports `root`, directly or through other modules. The walk already dropped expired importers. */
+function isBelowBoundary(root: HMRModule, boundaries: Map<HMRModule, unknown>) {
+  const seen = new Set([root]);
+  const stack = [root];
+  while (stack.length > 0) {
+    for (const importer of stack.pop()!.importers.keys()) {
+      if (boundaries.has(importer)) return true;
+      if (!seen.has(importer)) {
+        seen.add(importer);
+        stack.push(importer);
+      }
+    }
+  }
+  return false;
 }
 
 function patchImporters(mod: HMRModule) {
-  const { importers } = mod;
-  const exports = getEsmExports(mod);
-  for (const importer of importers) {
-    if (!importer.esm || !importer.updateImport) continue;
+  for (const importer of mod.importers.keys()) {
+    // A Stale importer still has the `updateImport` of the body that is replaced. That body keeps its imports.
+    if (!importer.esm || !importer.updateImport || importer.state === State.Stale) continue;
     const index = importer.imports!.indexOf(mod);
     if (index === -1) continue; // require or dynamic import
-    importer.updateImport![index](exports);
+    importer.updateImport![index](getEsmExports(mod));
   }
 }
 
@@ -837,9 +1067,16 @@ function createAcceptArray(modules: string[], key: Id) {
 export function emitEvent(event: HMREvent, data: any) {
   const handlers = eventHandlers[event];
   if (!handlers) return;
+  // A handler that throws does not skip the others. The first error is thrown when all have run.
+  let first: { error: unknown } | undefined;
   for (const handler of handlers) {
-    handler(data);
+    try {
+      handler(data);
+    } catch (error) {
+      first ??= { error };
+    }
   }
+  if (first) throw first.error;
 }
 
 export function onEvent(event: HMREvent, cb) {

@@ -86,7 +86,9 @@ export function getNegativeCount() {
 }
 ```
 
-This call creates a hot-reloading boundary for all of the files that `index.ts` imports. Whenever you save `foo.ts` or any of its dependencies, the update bubbles up to `index.ts`, which re-evaluates. Bun then patches the files that import `index.ts` to import the new version of `getNegativeCount()`. If you update only `index.ts`, Bun re-evaluates only that one file, and the counter in `foo.ts` is reused.
+This call creates a hot-reloading boundary for all of the files that `index.ts` imports. Whenever you save `foo.ts` or any of its dependencies, the update bubbles up to `index.ts`. Bun re-evaluates the saved file, every module between it and `index.ts`, and `index.ts` itself. Bun then patches the files that import `index.ts` to import the new version of `getNegativeCount()`. If you update only `index.ts`, Bun re-evaluates only that one file, and the counter in `foo.ts` is reused.
+
+A module that Bun re-evaluates starts again with new top-level variables. If the module changes something outside itself when it runs (it starts a timer, adds a listener, registers a metric), undo that in an `import.meta.hot.dispose()` callback.
 
 Combine this with `import.meta.hot.data` to transfer state from the previous module to the new one.
 
@@ -98,7 +100,7 @@ Combine this with `import.meta.hot.data` to transfer state from the previous mod
 
 ### With callback
 
-When passed a callback, `import.meta.hot.accept` works as it does in Vite. Instead of patching the importers of this module, it calls the callback with the new module.
+When passed a callback, Bun re-evaluates the file and then calls the callback with the new module. The callback that runs is the one that the replaced copy of the module registered, and that copy keeps the imports that it has. Read new values from the `newModule` argument. Bun also patches the importers of this module, as it does for `accept()` without an argument.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 export const count = 0;
@@ -125,7 +127,9 @@ import.meta.hot.accept("./foo", newModule => {
 });
 ```
 
-Indicates that a dependency's module can be accepted. When the dependency is updated, Bun calls the callback with the new module.
+Indicates that a dependency's module can be accepted. When the dependency is updated, Bun calls the callback with the new module. A save of a file that the dependency imports also updates the dependency: Bun re-evaluates the saved file, the dependency and every module between them, then calls the callback.
+
+If the same update also reaches this module through an import that it does not accept, Bun does not call the callback. Bun re-evaluates this module when a module above it accepts the update, and reloads the page when none does.
 
 ### With multiple dependencies
 
@@ -136,11 +140,11 @@ import.meta.hot.accept(["./foo", "./bar"], newModules => {
 });
 ```
 
-This variant accepts an array of dependencies. The callback receives an array with the updated module at its index and `undefined` for the other dependencies.
+This variant accepts an array of dependencies. The callback receives an array with the updated module at its index and `undefined` for the other dependencies. When one update replaces more than one of the dependencies, Bun calls the callback once for each of them.
 
 ## import.meta.hot.data
 
-`import.meta.hot.data` carries state from the previous version of a module to the new one across a hot replacement. Writing to `import.meta.hot.data` also marks the module as self-accepting (equivalent to calling `import.meta.hot.accept()`).
+`import.meta.hot.data` carries state from the previous version of a module to the new one across a hot replacement. A module that uses `import.meta.hot.data` while it is evaluated is also marked as self-accepting (equivalent to calling `import.meta.hot.accept()`). A use that only happens later, such as in a `dispose` callback or an event handler, does not mark the module.
 
 ```tsx title="index.tsx" icon="/icons/typescript.svg"
 import { createRoot } from "react-dom/client";
@@ -160,7 +164,7 @@ In production, Bun inlines `data` as `{}`, so you cannot use it as a state holde
 
 Attaches an on-dispose callback. Bun calls it:
 
-- Just before the module is replaced with another copy (before the next is loaded)
+- Just before the module is replaced with another copy (before the next is loaded). This includes a module that Bun re-evaluates because a file that it imports was saved. A module that only an earlier `import()` call reached gets its next copy at the next `import()`.
 - After the module is detached (removing all imports to this module, see `import.meta.hot.prune()`)
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
@@ -173,7 +177,7 @@ import.meta.hot.dispose(() => {
 
 <Warning>Bun does not call this callback on route navigation or when the browser tab closes.</Warning>
 
-Returning a promise delays module replacement until the module is disposed. Bun calls all dispose callbacks in parallel.
+If a callback returns a promise, the update waits for it before it evaluates the new modules. A module that a later `import()` evaluates does not wait. Bun calls all dispose callbacks in parallel.
 
 ## import.meta.hot.prune()
 
@@ -215,7 +219,7 @@ When a file is replaced, Bun automatically removes all of its event listeners.
 | Event                  | Emitted when                                                                                    |
 | ---------------------- | ----------------------------------------------------------------------------------------------- |
 | `bun:beforeUpdate`     | before a hot update is applied.                                                                 |
-| `bun:afterUpdate`      | after a hot update is applied.                                                                  |
+| `bun:afterUpdate`      | after a hot update is applied. Bun does not emit it when no module accepts the update.          |
 | `bun:beforeFullReload` | before a full page reload happens.                                                              |
 | `bun:beforePrune`      | before prune callbacks are called.                                                              |
 | `bun:invalidate`       | when a module is invalidated with `import.meta.hot.invalidate()`.                               |

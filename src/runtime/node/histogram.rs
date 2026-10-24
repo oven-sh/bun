@@ -18,6 +18,15 @@ pub(crate) struct Histogram {
     kind: Kind,
     counts: RefCell<Counts>,
     memory: Arc<Memory>,
+    /// Whether `HELD` counts this object.
+    held: Cell<bool>,
+    /// The bytes of the counts when this object was made, if they were new to its heap.
+    arrived: usize,
+}
+
+thread_local! {
+    /// How many objects in this thread's heap hold each of the counts that are shared, by the address of their `Memory`.
+    static HELD: RefCell<BTreeMap<usize, usize>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// What the garbage collector is told, from its own threads. The numbers are only a hint to it, and nothing is read in
@@ -83,15 +92,12 @@ impl State {
 }
 
 impl Interval {
-    /// Returns the time of the sample.
-    pub(crate) fn sample(&self) -> Timespec {
+    /// Returns the time of the sample, and the bytes it allocated.
+    pub(crate) fn sample(&self) -> (Timespec, usize) {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         let mut state = self.state.lock();
         state.record_delta(now);
-        // The GC sees the new size when it next marks the histogram. That is soon enough for one sample per turn of
-        // the event loop.
-        self.memory.update(&state);
-        now
+        (now, self.memory.update(&state))
     }
 }
 
@@ -105,6 +111,28 @@ impl Memory {
         }
         size.saturating_sub(before)
     }
+
+    /// One more object in this thread's heap holds the counts. Returns whether it is the only one.
+    fn hold(self: &Arc<Self>) -> bool {
+        HELD.with_borrow_mut(|held| {
+            let objects = held.entry(Arc::as_ptr(self).addr()).or_insert(0);
+            *objects += 1;
+            *objects == 1
+        })
+    }
+
+    fn release(self: &Arc<Self>) {
+        // An error: the thread is ending, and `HELD` is gone.
+        let _ = HELD.try_with(|held| {
+            let mut held = held.borrow_mut();
+            if let Some(objects) = held.get_mut(&Arc::as_ptr(self).addr()) {
+                *objects -= 1;
+                if *objects == 0 {
+                    held.remove(&Arc::as_ptr(self).addr());
+                }
+            }
+        });
+    }
 }
 
 impl Histogram {
@@ -114,7 +142,25 @@ impl Histogram {
             kind,
             counts: RefCell::new(counts),
             memory,
+            held: Cell::new(false),
+            arrived: 0,
         }
+    }
+
+    /// A structured clone.
+    fn new_clone(kind: Kind, counts: Counts, memory: Arc<Memory>) -> Self {
+        let mut clone = Self::new(kind, counts, memory);
+        clone.held = Cell::new(true);
+        if clone.memory.hold() {
+            clone.arrived = clone.memory.size.load(Ordering::Relaxed);
+        }
+        clone
+    }
+
+    /// A clone allocates nothing. But if its heap has no other object with these counts, they came from another
+    /// thread: that heap's GC was told of them, and this one now keeps them alive without knowing how large they are.
+    pub(crate) fn allocated_size(&self) -> usize {
+        self.arrived
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
@@ -165,6 +211,9 @@ impl Histogram {
 impl Drop for Histogram {
     fn drop(&mut self) {
         self.memory.owners.fetch_sub(1, Ordering::Relaxed);
+        if self.held.get() {
+            self.memory.release();
+        }
     }
 }
 
@@ -469,6 +518,9 @@ pub(crate) extern "C" fn Histogram__retainForStructuredClone(histogram: JSValue)
     let Some(histogram) = histogram.as_class_ref::<Histogram>() else {
         return 0;
     };
+    if !histogram.held.replace(true) {
+        histogram.memory.hold();
+    }
     let in_flight = InFlight {
         state: histogram.share(),
         memory: Arc::clone(&histogram.memory),
@@ -499,7 +551,7 @@ pub(crate) extern "C" fn Histogram__fromStructuredClone(
             Kind::Plain
         };
         let counts = Counts::Shared(Arc::clone(&found.state));
-        Histogram::new(kind, counts, Arc::clone(&found.memory))
+        Histogram::new_clone(kind, counts, Arc::clone(&found.memory))
     };
     histogram.into_js_wrapper(global).to_js()
 }

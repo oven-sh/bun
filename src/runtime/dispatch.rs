@@ -1165,8 +1165,8 @@ pub(crate) unsafe fn __bun_fire_timer(
                 .run(&mut *vm))
         }
         EventLoopTimerTag::EventLoopDelayMonitor => {
-            timer_arm!(EventLoopDelayMonitor, event_loop_timer, |c, now, _vm| (*c)
-                .on_fire(&*now))
+            timer_arm!(EventLoopDelayMonitor, event_loop_timer, |c, now, vm| (*c)
+                .on_fire(&*now, &*vm))
         }
         EventLoopTimerTag::StatWatcherScheduler => {
             timer_arm!(StatWatcherScheduler, event_loop_timer, |c, _now, _vm| (*c)

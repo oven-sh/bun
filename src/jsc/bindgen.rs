@@ -694,7 +694,7 @@ pub unsafe trait JsPayload: Sized + 'static {
     /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
     #[doc(hidden)]
     unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
-    /// With `estimatedSize`, the extra memory to report to the GC for a new object.
+    /// With `estimatedSize`, the extra memory to report to the GC as allocated for a new object.
     #[doc(hidden)]
     #[inline(always)]
     fn extra_memory_size(&self) -> Option<usize> {

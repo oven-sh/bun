@@ -1768,7 +1768,7 @@ unsafe impl bindgen::JsPayload for ${rustPath} {
         ? `
     #[inline]
     fn extra_memory_size(&self) -> Option<usize> {
-        Some(self.estimated_size())
+        Some(self.${type.allocatedSize ? "allocated_size" : "estimated_size"}())
     }`
         : ""
     }

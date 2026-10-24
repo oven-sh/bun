@@ -390,12 +390,17 @@ impl EventLoopDelayMonitor {
         self.schedule();
     }
 
-    pub(crate) fn on_fire(&mut self, now: &bun_event_loop::EventLoopTimer::Timespec) {
+    pub(crate) fn on_fire(
+        &mut self,
+        now: &bun_event_loop::EventLoopTimer::Timespec,
+        vm: &bun_jsc::virtual_machine::VirtualMachine,
+    ) {
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
         let now = Timespec {
             sec: now.sec,
             nsec: now.nsec,
         };
+        let mut allocated = 0;
         self.enabled.retain_mut(|enabled| {
             let Some(interval) = enabled.interval.upgrade() else {
                 return false;
@@ -404,11 +409,15 @@ impl EventLoopDelayMonitor {
                 // From the time of the sample, which is later than `now` if a timer before this one was slow: the
                 // next sample is then no sooner than the resolution. `All::drain_timers` pops every node due at
                 // or before `now`.
-                enabled.next = interval.sample().add_ms(i64::from(interval.resolution_ms));
+                let (sampled_at, grown) = interval.sample();
+                enabled.next = sampled_at.add_ms(i64::from(interval.resolution_ms));
+                allocated += grown;
             }
             true
         });
         self.schedule();
+        // This can collect, so it comes last.
+        vm.jsc_vm().report_extra_memory(allocated);
     }
 
     /// Arms the timer for the interval that is due first.

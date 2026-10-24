@@ -2469,6 +2469,8 @@ export interface ClassOptions {
   memoryCost?: boolean;
   /** `fn estimated_size(&self) -> usize`: the same for the GC, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
   estimatedSize?: boolean;
+  /** `fn allocated_size(&self) -> usize`: what the GC is told was allocated for a new object, when that is not its `estimated_size`: it shares what it holds. */
+  allocatedSize?: boolean;
   /** Absent: JavaScript cannot construct one, and there is no constructor object. `"illegal"`: there is one, and `new` on it throws `Illegal constructor`. */
   construct?: ConstructOptions | "illegal";
   /** `Name(..)` without `new`, which otherwise throws. The Rust function is `call`. */
@@ -2639,6 +2641,7 @@ export class ClassType extends NamedType {
   readonly call: FunctionDefinition | null;
   readonly memoryCost: boolean;
   readonly estimatedSize: boolean;
+  readonly allocatedSize: boolean;
   readonly overridesToJS: boolean;
   readonly final: boolean;
   readonly rustTraits: readonly string[];
@@ -2695,6 +2698,11 @@ export class ClassType extends NamedType {
     );
     this.memoryCost = options.memoryCost ?? false;
     this.estimatedSize = options.estimatedSize ?? false;
+    this.allocatedSize = options.allocatedSize ?? false;
+    assert(
+      !this.allocatedSize || (this.estimatedSize && !this.refCounted),
+      "allocatedSize goes with estimatedSize, and is not for a refCounted class",
+    );
     this.overridesToJS = options.overridesToJS ?? false;
     assert(this.refCounted || !this.overridesToJS, "overridesToJS is only for a refCounted class");
     this.final = options.final ?? true;

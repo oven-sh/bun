@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "net";
 import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
+import { MessageChannel, receiveMessageOnPort, Worker } from "worker_threads";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
@@ -59,6 +60,60 @@ test("histograms that grew are collected without an explicit GC", () => {
     created += 100;
   } while (created < 2000 && heapStats().objectTypeCounts.Histogram > created / 2);
   expect(created).toBeLessThan(2000);
+});
+
+test("a structured clone in the same thread does not count as an allocation", () => {
+  // 37 MB: a value in each chunk, with 5 figures.
+  const histogram = perf.createHistogram({ figures: 5 });
+  for (let value = 1; value < 2 ** 18; value += 512) histogram.record(value);
+  for (let shift = 2; 2 ** 17 * shift < Number.MAX_SAFE_INTEGER; shift *= 2) {
+    for (let value = 2 ** 17; value < 2 ** 18; value += 512) histogram.record(value * shift);
+  }
+  expect(estimateShallowMemoryUsageOf(histogram)).toBeGreaterThan(37 * 1024 * 1024);
+
+  // They share its buckets. If each counted as a part of the 37 MB, the GC would run every few clones.
+  const before = heapStats().objectTypeCounts.Histogram;
+  for (let i = 0; i < 300; i++) structuredClone(histogram);
+  expect(heapStats().objectTypeCounts.Histogram - before).toBeGreaterThan(150);
+});
+
+test("histograms that arrive from another thread are collected without an explicit GC", async () => {
+  // This thread did not allocate them, but its objects are what keeps them alive once the worker has dropped its own.
+  const { port1, port2 } = new MessageChannel();
+  const turn = new Int32Array(new SharedArrayBuffer(4));
+  const worker = new Worker(
+    `const { workerData: { port, turn, values } } = require("node:worker_threads");
+    const { createHistogram } = require("node:perf_hooks");
+    for (let batch = 1; ; batch++) {
+      Atomics.wait(turn, 0, batch * 2 - 2);
+      if (Atomics.load(turn, 0) < 0) break;
+      for (let i = 0; i < 100; i++) {
+        const histogram = createHistogram();
+        for (const value of values) histogram.record(value);
+        port.postMessage(histogram);
+      }
+      Atomics.store(turn, 0, batch * 2);
+      Atomics.notify(turn, 0);
+    }`,
+    { eval: true, workerData: { port: port2, turn, values: valuesInEveryChunk }, transferList: [port2] },
+  );
+  try {
+    // Without a turn of the event loop, in which an idle GC could run.
+    let received = 0;
+    do {
+      Atomics.add(turn, 0, 1);
+      Atomics.notify(turn, 0);
+      Atomics.wait(turn, 0, (received / 100) * 2 + 1);
+      for (let i = 0; i < 100; i++) expect(receiveMessageOnPort(port1)?.message.count).toBe(valuesInEveryChunk.length);
+      received += 100;
+    } while (received < 2000 && heapStats().objectTypeCounts.Histogram > received / 2);
+    expect(received).toBeLessThan(2000);
+  } finally {
+    Atomics.store(turn, 0, -1);
+    Atomics.notify(turn, 0);
+    await worker.terminate();
+    port1.close();
+  }
 });
 
 test("the prototypes of a histogram can be printed", () => {

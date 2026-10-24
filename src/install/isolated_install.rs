@@ -2437,7 +2437,6 @@ pub(crate) fn install_isolated_packages(
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
                     let needs_install = installer.manager().options.enable.force_install()
-                        || (installer.described.is_some() && installer.reinstalls_unread(pkg_id))
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
@@ -2513,8 +2512,7 @@ pub(crate) fn install_isolated_packages(
                             installer.summary.offline_misses.in_place.push(pkg_id);
                         }
                         if installer.described.is_some() {
-                            let patched = matches!(patch_info, PatchInfo::Patch(_));
-                            installer.describe(pkg_id, PackageJson::Stored { entry_id, patched });
+                            installer.describe(pkg_id, PackageJson::Stored(entry_id));
                         }
                         let mut state = CompleteState::Skipped;
                         if uses_global_store {

@@ -190,29 +190,11 @@ impl PackageManager {
         ZBox::from_bytes(entry.as_bytes())
     }
 
-    /// Returns true if the cache has the bytes that row `id` pins.
-    pub(crate) fn has_pinned_cache_entry(&mut self, id: PackageID) -> bool {
-        let entry = self.pinned_cache_entry(id);
-        let tag = self.lockfile.packages.items_resolution()[id as usize].tag;
-        !entry.is_empty()
-            && directories::try_get_cache_directory(self)
-                .is_ok_and(|dir| directories::is_package_in_cache_at(dir, &entry, tag))
-    }
-
     /// `describe` for a package in place: its pinned cache entry, else the copy in `placed`.
-    pub(crate) fn describe_placed(
-        &mut self,
-        id: PackageID,
-        placed: &[u8],
-        patched: bool,
-    ) -> Option<Described> {
+    pub(crate) fn describe_placed(&mut self, id: PackageID, placed: &[u8]) -> Option<Described> {
         let entry = self.pinned_cache_entry(id);
         if let Some(described) = self.describe_cached(id, &entry) {
             return Some(described);
-        }
-        // A patch can change the package.json of the copy, and the bins are of the published one.
-        if patched {
-            return None;
         }
         // This read follows a link, because `--backend=symlink` places each file as one.
         let path = package_json_in(placed);

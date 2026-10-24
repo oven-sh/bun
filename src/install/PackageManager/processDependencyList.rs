@@ -169,13 +169,15 @@ impl PackageManager {
         {
             *package_id = existing_id;
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
-            // A migration wrote the row without this package.json.
-            if self.lockfile.is_unread(existing_id) {
-                let has_install_script = package.meta.has_install_script();
+            // A migration wrote the row without this package.json, and a save can keep it that way.
+            if existing.bin.tag == crate::bin::Tag::None {
                 existing.bin = package.bin;
-                existing.meta.set_has_install_script(has_install_script);
+                if self.lockfile.is_unread(existing_id) {
+                    let has_install_script = package.meta.has_install_script();
+                    existing.meta.set_has_install_script(has_install_script);
+                    self.lockfile.unread.unset(existing_id as usize);
+                }
                 self.lockfile.packages.set(existing_id as usize, existing);
-                self.lockfile.unread.unset(existing_id as usize);
             }
             let from_lockfile = existing_id < self.lockfile.loaded_package_count;
             let moved = match existing.resolution.tag {

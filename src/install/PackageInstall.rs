@@ -69,6 +69,10 @@ pub struct Summary {
     pub(crate) places: Vec<(u64, PackageID)>,
 
     pub(crate) offline_misses: OfflineMisses,
+
+    /// The download of a `Lockfile::unread` package failed. Only the isolated linker gets to a
+    /// save after a failed download.
+    pub(crate) unread_not_downloaded: bool,
 }
 
 /// Only used with `--offline`. Has one entry per folder. `report_offline_misses` decides which ones

@@ -365,26 +365,14 @@ impl<'a> Installer<'a> {
                     bun_core::ZBox::from_bytes(self.cached_folder_name(entry_id, None).as_bytes());
                 self.manager_mut().describe_cached(pkg_id, &folder)
             }
-            PackageJson::Stored { entry_id, patched } => {
+            PackageJson::Stored(entry_id) => {
                 let mut placed = AutoAbsPath::init_top_level_dir();
                 self.append_real_store_path(&mut placed, entry_id, Which::Final)
                     .ok()
-                    .and_then(|()| {
-                        self.manager_mut()
-                            .describe_placed(pkg_id, placed.slice(), patched)
-                    })
+                    .and_then(|()| self.manager_mut().describe_placed(pkg_id, placed.slice()))
             }
         };
         described.set(pkg_id, package);
-    }
-
-    /// A run that saves the lockfile needs the bytes that an unread row pins, not a copy in place.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn reinstalls_unread(&self, pkg_id: PackageID) -> bool {
-        self.lockfile().is_unread(pkg_id)
-            && self.manager().pins_tarballs()
-            && !self.manager_mut().has_pinned_cache_entry(pkg_id)
     }
 
     /// The `bin` of a package, and the buffers of its strings.
@@ -637,6 +625,8 @@ impl<'a> Installer<'a> {
                         EscapeControlChars(bun_core::fmt::redacted_npm_url(url)),
                     ),
                 );
+                let pkg_id = self.store.ids(entry_id).pkg_id;
+                self.summary.unread_not_downloaded |= self.lockfile().is_unread(pkg_id);
             }
             TaskError::RunScripts(err) => {
                 Output::err(
@@ -1090,11 +1080,8 @@ impl<'a> Installer<'a> {
 pub(crate) enum PackageJson {
     /// The folder of the entry in the cache, which its files are about to be linked from.
     Cached(StoreEntryId),
-    /// An earlier install put the entry into the store. A patch changes the package.json there.
-    Stored {
-        entry_id: StoreEntryId,
-        patched: bool,
-    },
+    /// An earlier install put the entry into the store.
+    Stored(StoreEntryId),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

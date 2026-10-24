@@ -1711,10 +1711,10 @@ impl<'a> PackageInstaller<'a> {
     /// `describe_unread` for a package of the current tree that `verify` accepted in place.
     #[cold]
     #[inline(never)]
-    fn describe_placed(&mut self, package_id: PackageID, alias: &[u8], patched: bool) {
+    fn describe_placed(&mut self, package_id: PackageID, alias: &[u8]) {
         let placed = self.package_path(alias);
         self.describe_unread(package_id, |manager| {
-            manager.describe_placed(package_id, placed.ok()?.slice(), patched)
+            manager.describe_placed(package_id, placed.ok()?.slice())
         });
     }
 
@@ -1736,15 +1736,6 @@ impl<'a> PackageInstaller<'a> {
         self.describe_unread(package_id, |manager| {
             manager.describe_cached(package_id, &entry)
         });
-    }
-
-    /// A run that saves the lockfile needs the bytes that an unread row pins, not a copy in place.
-    #[cold]
-    #[inline(never)]
-    fn reinstalls_unread(&self, package_id: PackageID) -> bool {
-        self.lockfile().is_unread(package_id)
-            && self.manager().pins_tarballs()
-            && !self.manager_mut().has_pinned_cache_entry(package_id)
     }
 
     fn get_installed_package_scripts_count(
@@ -2103,8 +2094,7 @@ impl<'a> PackageInstaller<'a> {
                 &self.metas[package_id as usize].integrity,
                 self.manager().skips_verify(resolution.tag),
                 &self.root_node_modules_folder,
-            )
-            || (self.described.is_some() && self.reinstalls_unread(package_id));
+            );
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
             self.node.complete_one();
@@ -2483,8 +2473,7 @@ impl<'a> PackageInstaller<'a> {
             }
 
             if self.described.is_some() {
-                let patched = patch_contents_hash.is_some();
-                self.describe_placed(package_id, alias.slice(string_buf!()), patched);
+                self.describe_placed(package_id, alias.slice(string_buf!()));
             }
             if self.has_bin(package_id) {
                 self.trees[self.current_tree_id as usize]

@@ -1068,9 +1068,8 @@ pub fn install_with_manager(
                         || load_result.ok().serializer_result.migrated_from_lockb_v2))
                 || manager.lockfile.is_empty()
                 || manager.options.enable.force_save_lockfile()));
-    // The next run migrates again and reads the rows that this failed run left unread.
-    let should_save_lockfile =
-        should_save_lockfile && !(install_summary.fail > 0 && manager.lockfile.unread.count() > 0);
+    // The next run migrates again and reads the package that this run did not download.
+    let should_save_lockfile = should_save_lockfile && !install_summary.unread_not_downloaded;
 
     if should_save_lockfile {
         super::package_json_write_back::write_migrated(manager);

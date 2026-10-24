@@ -6008,16 +6008,22 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
-  test("prettier-plugin-ember-template-tag only adds .gjs and .gts", async () => {
-    const files = {
-      ".prettierrc": '{ "plugins": ["prettier-plugin-ember-template-tag"] }\n',
-      "a.js": ugly,
-      "b.gjs": "<template>b</template>\n",
-      "c.gts": "<template>c</template>\n",
-    };
-    const result = await format(files, [], { reads: ["a.js", "b.gjs", "c.gts"] });
-    expect(result.files).toEqual({ "a.js": formatted, "b.gjs": files["b.gjs"], "c.gts": files["c.gts"] });
-    expect(result.stderr).toContain("does not support their language yet: 1 .gjs, 1 .gts\n");
+  // Each registers a parser and a printer under new names, for these file names only.
+  test.each<[string, string[]]>([
+    ["prettier-plugin-ember-template-tag", [".gjs", ".gts"]],
+    ["@shopify/prettier-plugin-liquid", [".liquid"]],
+    ["prettier-plugin-blade", [".blade.php"]],
+    ["prettier-plugin-edgejs", [".edge"]],
+    ["prettier-plugin-sql-cst", [".sql", ".sqlite", ".bigquery"]],
+    ["prettier-plugin-terraform-formatter", [".tf"]],
+    ["@zackad/prettier-plugin-twig", [".twig"]],
+  ])("%s only adds a language", async (plugin, endings) => {
+    const others = Object.fromEntries(endings.map(ending => [`b${ending}`, "b   b\n"]));
+    const files = { ".prettierrc": JSON.stringify({ plugins: [plugin] }), "a.js": ugly, ...others };
+    const result = await format(files, [], { reads: ["a.js", ...Object.keys(others)] });
+    expect(result.files).toEqual({ "a.js": formatted, ...others });
+    expect(result.stderr).toContain(`Not installed: prettier, ${plugin}\n`);
+    expect(result.stderr).not.toContain("does not include");
     expect(result.exitCode).toBe(2);
   });
 

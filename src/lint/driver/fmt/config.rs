@@ -300,7 +300,7 @@ fn is_built_in(plugin: &Json) -> bool {
 
 /// Plugins that add a language to Prettier and don't affect other languages, each with its file name endings. The rest
 /// of a project is formatted the same without them.
-const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 22] = [
+const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 28] = [
     (b"prettier-plugin-astro", &[b".astro"]),
     (b"@prettier/plugin-pug", &[b".pug", b".jade"]),
     (b"@prettier/plugin-php", &[b".php"]),
@@ -332,6 +332,15 @@ const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 22] = [
     (b"prettier-plugin-ejs", &[b".ejs"]),
     (b"prettier-plugin-elm", &[b".elm"]),
     (b"prettier-plugin-ember-template-tag", &[b".gjs", b".gts"]),
+    (b"@shopify/prettier-plugin-liquid", &[b".liquid"]),
+    (b"prettier-plugin-blade", &[b".blade.php"]),
+    (b"prettier-plugin-edgejs", &[b".edge"]),
+    (
+        b"prettier-plugin-sql-cst",
+        &[b".sql", b".sqlite", b".bigquery"],
+    ),
+    (b"prettier-plugin-terraform-formatter", &[b".tf"]),
+    (b"@zackad/prettier-plugin-twig", &[b".twig"]),
 ];
 
 fn plugin_endings(name: &[u8]) -> Option<&'static [&'static [u8]]> {

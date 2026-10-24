@@ -525,12 +525,6 @@ static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* s
 
     loaded.staleESMEntry = true;
     if (auto* mod = entry->record()) {
-        // The record of a CommonJS module that has not run yet has no exports to patch. It takes them from the
-        // CommonJS module when the graph that imports it evaluates it, so the mock goes there (findLoadedCommonJSModule).
-        if (mod->hasPendingExports()) {
-            loaded.staleESMEntry = false;
-            return;
-        }
         // getModuleNamespace asserts the record has progressed past linking.
         // A previous import that failed during link (e.g. unresolved binding)
         // leaves the record at New/Unlinked; in that case there is no

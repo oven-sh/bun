@@ -562,23 +562,33 @@ globalThis.order.push("early: x=" + require("./lib.cjs").x + " loaded=" + requir
     });
 
     it("when an ES module that runs first deletes or replaces its require.cache entry", async () => {
+      // After the change only the import still has the module that was loaded for it: the
+      // collection must not take it.
       const early = (change: string) => `import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const path = require.resolve("./lib.cjs");
+globalThis.order = ["early"];
 ${change}
-globalThis.order = ["early"];`;
+Bun.gc(true);`;
       const files = {
-        "lib.cjs": `(globalThis.order ??= []).push("lib"); exports.x = "real";`,
+        "lib.cjs": `globalThis.order.push("lib"); exports.x = "real";`,
         "entry.mjs": `import "./early.mjs";\nimport { x } from "./lib.cjs";\nglobalThis.order.push("entry: x=" + x);\n${print}`,
       };
-      const [deleted, replaced] = await Promise.all([
+      const [deleted, replaced, required] = await Promise.all([
         run({ ...files, "early.mjs": early(`delete require.cache[path];`) }),
         run({ ...files, "early.mjs": early(`require.cache[path] = { exports: { x: "fake" } };`) }),
+        run({
+          ...files,
+          "early.mjs": early(`delete require.cache[path];\nglobalThis.order.push("early: x=" + require("./lib.cjs").x);`),
+        }),
       ]);
       // The import evaluates the module that was loaded for it.
       expect(deleted.stdout).toEqual(['["early","lib","entry: x=real"]']);
       expect(replaced.stdout).toEqual(['["early","lib","entry: x=real"]']);
-      expect([deleted.exitCode, replaced.exitCode]).toEqual([0, 0]);
+      // The delete takes effect, as it does for a module that has run: require() loads the file again.
+      expect(required.stdout).toEqual(['["early","lib","early: x=real","lib","entry: x=real"]']);
+      expect([deleted.stderr, replaced.stderr, required.stderr]).toEqual(["", "", ""]);
+      expect([deleted.exitCode, replaced.exitCode, required.exitCode]).toEqual([0, 0, 0]);
     });
 
     it("after the synchronous part of a module with a top-level await that is imported ahead of it", async () => {
@@ -631,6 +641,23 @@ await attempt("require lib", () => require("./lib.cjs"));`,
           "import lib: lib fails",
           "require lib: lib fails",
         ],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("and its import fails when it threw for a require() from an ES module that ran first", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "lib.cjs": `globalThis.runs = (globalThis.runs ?? 0) + 1; console.log("lib run " + globalThis.runs); exports.partial = 1; throw new Error("lib fails");`,
+        "early.mjs": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+try { require("./lib.cjs"); console.log("early: ok"); } catch (e) { console.log("early: " + e.message); }`,
+        "graph.mjs": `import "./early.mjs";\nimport lib from "./lib.cjs";\nconsole.log("not reached: " + JSON.stringify(lib));`,
+        "entry.mjs": `try { await import("./graph.mjs"); console.log("entry: ok"); } catch (e) { console.log("entry: " + e.message); }`,
+      });
+      // The exports of a module that threw are not the import's.
+      expect({ stdout, stderr }).toEqual({
+        stdout: ["lib run 1", "early: lib fails", "entry: Failed to evaluate module"],
         stderr: "",
       });
       expect(exitCode).toBe(0);

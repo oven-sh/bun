@@ -250,6 +250,10 @@ pub mod bun_spawn {
     }
 }
 
+#[expect(
+    clippy::module_inception,
+    reason = "a namespace carried over from the Zig port"
+)]
 pub mod posix_spawn {
     use super::bun_spawn;
     use super::*;

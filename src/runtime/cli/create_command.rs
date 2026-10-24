@@ -723,10 +723,10 @@ impl CreateCommand {
 
                 'read_package_json: {
                     if let Some(ref pkg) = package_json_file {
-                        let size: u64 = 'brk: {
+                        let size: u64 = {
                             #[cfg(windows)]
                             {
-                                break 'brk pkg.get_end_pos()? as u64;
+                                pkg.get_end_pos()? as u64
                             }
                             #[cfg(not(windows))]
                             {
@@ -755,7 +755,7 @@ impl CreateCommand {
                                     break 'read_package_json;
                                 }
 
-                                break 'brk stat.st_size as u64;
+                                stat.st_size as u64
                             }
                         };
 

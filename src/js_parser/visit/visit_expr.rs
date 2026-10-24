@@ -2428,7 +2428,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 if p.options.features.react_fast_refresh {
                     p.handle_react_refresh_hook_call(&mut *e_, original_name);
-                } else if
+                    break 'try_record_hook;
+                }
                 // If we're here it means we're in server component.
                 // Error if the user is using the `useState` hook as it
                 // is disallowed in server components.
@@ -2439,21 +2440,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Why? Because we *don't* want to check for uses of
                 // `useState` _inside_ React, and we know React uses
                 // commonjs so it will never be `.e_import_identifier`.
-                'check_for_usestate: {
-                    if matches!(e_.target.data, Data::EImportIdentifier(..)) {
-                        break 'check_for_usestate true;
-                    }
+                let is_imported = match &e_.target.data {
+                    Data::EImportIdentifier(..) => true,
                     // Also check for `React.useState(...)`
-                    if let Data::EDot(dot) = &e_.target.data {
-                        if let Data::EImportIdentifier(id) = &dot.target.data {
-                            let name = p.symbols[id.ref_.inner_index() as usize]
+                    Data::EDot(dot) => match &dot.target.data {
+                        Data::EImportIdentifier(id) => {
+                            p.symbols[id.ref_.inner_index() as usize]
                                 .original_name
-                                .slice();
-                            break 'check_for_usestate name == b"React";
+                                .slice()
+                                == b"React"
                         }
-                    }
-                    break 'check_for_usestate false;
-                } {
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if is_imported {
                     debug_assert!(p.options.features.server_components.is_server_side());
                     if !strings::starts_with(p.source.path.pretty, b"node_modules")
                         && original_name == b"useState"

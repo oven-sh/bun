@@ -494,7 +494,6 @@ impl SideEffects {
         }
     }
 
-    ///
     fn simplify_unused_binary_comma_expr<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         expr: Expr,

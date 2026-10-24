@@ -99,7 +99,7 @@ use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes
 ///     - Getters use a generated wrapper function `BunObject_lazyPropCb_wrap_<name>`
 /// - Update "BunObject+exports.h"
 /// - Run `bun run build`
-pub(crate) mod bun_object {
+pub(crate) mod lazy_prop_callbacks {
     use super::*;
 
     /// Adapter so `export_lazy_prop_callbacks!` accepts targets returning either

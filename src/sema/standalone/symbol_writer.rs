@@ -253,7 +253,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         declarations.iter().map(bound).collect()
     }
 
-    fn declarations_of_property(&mut self, prop: &Prop, depth: u32) -> Vec<(FileId, Declaration)> {
+    fn declarations_of_property(&mut self, prop: &Prop) -> Vec<(FileId, Declaration)> {
         match &prop.source {
             PropSource::Literal(file, property) => {
                 self.declarations_of_member(*file, Decl::Property(*property))
@@ -264,14 +264,14 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             | PropSource::ReverseMapped(_, parts) => {
                 let mut declarations = Vec::new();
                 for part in parts.iter() {
-                    declarations.extend(self.declarations_of_property(part, depth));
+                    declarations.extend(self.declarations_of_property(part));
                 }
                 declarations
             }
             PropSource::Mapped(..) => {
                 let mut declarations = Vec::new();
                 for part in prop.declared_by_modifiers_property() {
-                    declarations.extend(self.declarations_of_property(part, depth));
+                    declarations.extend(self.declarations_of_property(part));
                 }
                 declarations
             }
@@ -437,7 +437,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             }
             _ => {}
         }
-        let declarations = self.declarations_of_property(prop, 0);
+        let declarations = self.declarations_of_property(prop);
         if let Some(alias) = self
             .c
             .accessible_alias_of_property(prop, Enclosing::at_scope(self.file, at))
@@ -483,7 +483,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         let mut first_value_declaration = None;
         let mut has_non_uniform_value_declaration = false;
         for prop in props {
-            let own = self.declarations_of_property(prop, 0);
+            let own = self.declarations_of_property(prop);
             match (first_value_declaration, own.first()) {
                 (None, Some(&first)) => first_value_declaration = Some(first),
                 (Some(known), Some(&first)) if known != first => {

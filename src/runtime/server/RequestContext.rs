@@ -571,7 +571,6 @@ where
         self.sink.get().map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    ///
     #[inline]
     fn response_mut<'r>(&self) -> Option<&'r mut Response> {
         let ptr = self

@@ -305,7 +305,7 @@ impl WindowsNamedPipeContext {
             (socket, ptr::addr_of_mut!((*this).named_pipe))
         };
         match_socket!(socket, |s: NewSocket<SSL>| {
-            let closed = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
+            let closed = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0);
             // Release the +1 ref taken in `create()`.
             s.get().deref();
             closed

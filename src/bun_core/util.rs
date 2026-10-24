@@ -1105,6 +1105,10 @@ impl Fd {
     /// `uv_open_osfhandle` returns `-1`; the caller decides whether to close
     /// the original handle (see `make_libuv_owned_for_syscall`).
     #[inline]
+    #[expect(
+        clippy::result_unit_err,
+        reason = "`uv_open_osfhandle` says nothing about why it failed"
+    )]
     pub fn make_libuv_owned(self) -> Result<Fd, ()> {
         debug_assert!(self.is_valid());
         #[cfg(not(windows))]

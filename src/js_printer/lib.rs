@@ -786,7 +786,7 @@ pub mod analyze_transpiled_module {
         }
 
         /// find any exports marked as 'local' that are actually 'indirect' and fix them
-        pub fn finalize(&mut self) -> Result<(), ()> {
+        pub fn finalize(&mut self) {
             debug_assert!(!self.finalized);
             #[derive(Clone, Copy)]
             struct LocalImport {
@@ -862,7 +862,6 @@ pub mod analyze_transpiled_module {
                 }
             }
             self.finalized = true;
-            Ok(())
         }
     }
 }
@@ -1742,10 +1741,6 @@ pub(crate) mod __gated_printer {
         W: WriterTrait,
     {
         pub(crate) const MAY_HAVE_MODULE_INFO: bool = IS_BUN_PLATFORM;
-
-        /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
-        // Inherent associated types are unstable; callers can name
-        // `core::convert::Infallible` directly.
 
         /// Reborrow the optional `ModuleInfo` for the duration of `&mut self`.
         /// Callers that need to interleave other `&mut self` calls (e.g.
@@ -7900,12 +7895,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
         && printer.module_info.is_some();
     if have_module_info {
-        printer
-            .module_info
-            .as_mut()
-            .unwrap()
-            .finalize()
-            .map_err(|()| crate::Error::Alloc(bun_alloc::AllocError))?;
+        printer.module_info.as_mut().unwrap().finalize();
     }
 
     let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
@@ -8166,9 +8156,7 @@ pub fn serialize_module_info(
 ) -> Option<Box<[u8]>> {
     let mi = module_info?;
     if !mi.finalized {
-        if mi.finalize().is_err() {
-            return None;
-        }
+        mi.finalize();
     }
     let deserialized = mi.as_deserialized();
     let mut buf: Vec<u8> = Vec::new();

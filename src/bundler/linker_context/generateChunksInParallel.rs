@@ -634,10 +634,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 paths.get(s).map(|path| &path[..])
             });
 
-            if mi.finalize().is_err() {
-                js.module_info = None;
-                continue;
-            }
+            mi.finalize();
             table_ids.push(module_info_strings.intern_all(mi, |s| external_string_table.slot(s)));
         }
 

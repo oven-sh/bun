@@ -1283,7 +1283,7 @@ impl Request {
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(cx.global(), value) {
+                match crate::webcore::response::Init::from_js(cx.global(), value) {
                     Ok(Some(response_init)) => {
                         let header_check = !explicit_check
                             || (explicit_check

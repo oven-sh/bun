@@ -100,23 +100,22 @@ impl DotEnvBehavior {
     /// both specs — the surrounding null/bool/number dispatch and the error
     /// reporting intentionally diverge per call site, so they stay inline there.
     ///
-    /// Returns `Ok((behavior, prefix))` where `prefix` is `Some(&s[..idx])` only for
-    /// `DotEnvBehavior::prefix`; `Err(())` means the string is none of
+    /// Returns `Some((behavior, prefix))` where `prefix` is `Some(&s[..idx])` only for
+    /// `DotEnvBehavior::prefix`; `None` means the string is none of
     /// `"inline"` / `"disable"` / contains-`*`, and the caller emits its own
     /// site-specific diagnostic.
-    pub fn parse_str(s: &[u8]) -> Result<(Self, Option<&[u8]>), ()> {
+    pub fn parse_str(s: &[u8]) -> Option<(Self, Option<&[u8]>)> {
         if s == b"inline" {
-            Ok((Self::load_all, None))
+            Some((Self::load_all, None))
         } else if s == b"disable" {
-            Ok((Self::disable, None))
-        } else if let Some(asterisk) = strings::index_of_char_usize(s, b'*') {
-            if asterisk > 0 {
-                Ok((Self::prefix, Some(&s[..asterisk])))
-            } else {
-                Ok((Self::load_all, None))
-            }
+            Some((Self::disable, None))
         } else {
-            Err(())
+            let asterisk = strings::index_of_char_usize(s, b'*')?;
+            if asterisk > 0 {
+                Some((Self::prefix, Some(&s[..asterisk])))
+            } else {
+                Some((Self::load_all, None))
+            }
         }
     }
 }

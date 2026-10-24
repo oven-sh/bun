@@ -48,6 +48,8 @@ class Histogram {
   }
 
   [Symbol.for("nodejs.util.inspect.custom")](depth: number, options) {
+    // A prototype: `console.log()` calls this for one, `util.inspect()` does not.
+    if (!isHistogram(this)) return this;
     // Node returns `this`, which is then printed like this because it has own properties.
     if (depth < 0) return options.stylize(`[${this.constructor.name}]`, "special");
 

@@ -4,6 +4,9 @@
 //! The layout and the results are those of HdrHistogram, which Node.js uses:
 //! - https://github.com/HdrHistogram/HdrHistogram_c (Michael Barker, CC0 1.0 or BSD 2-Clause)
 //!
+//! They differ on purpose where the library or Node.js overflows or contradicts itself. Each such place says
+//! "Node.js:", and `test/js/bun/perf_hooks/histogram.test.ts` marks its test `notInNode`.
+//!
 //! Values are counted in buckets. Bucket 0 has `sub_bucket_count` slots, each `1 << unit_magnitude` wide. Every later
 //! bucket covers twice the range of the one before it with slots twice as wide, and only its upper half is stored:
 //! the lower half is what the earlier buckets cover. So a value is known to within one slot, and every result
@@ -134,6 +137,8 @@ impl Histogram {
 
     /// Counts everything `other` counted, each value as the lowest of its slot in `other`. All of it is refused if the
     /// count could overflow: adding a part would change the shape of the distribution.
+    ///
+    /// Node.js: a value that does not fit here still adds to `count`, and not to `exceeds`.
     pub fn add(&mut self, other: &Self) {
         self.exceeds = self.exceeds.saturating_add(other.exceeds);
         if self.count.checked_add(other.count).is_none() {
@@ -191,6 +196,8 @@ impl Histogram {
     }
 
     /// NaN if the histogram is empty.
+    ///
+    /// Node.js: the sum is an `i64` and overflows, so the mean of large values can be negative.
     pub fn mean(&self) -> f64 {
         // At most `count * (1 << 63)`.
         let sum: u128 = self
@@ -212,6 +219,8 @@ impl Histogram {
 
     /// The highest value of the slot at or below which `percentile` percent of the values are, or 0 if the histogram
     /// is empty. `percentile` is above 0 and at most 100.
+    ///
+    /// Node.js: the highest value of slot 0 if the histogram is empty, which is 511 with a `lowest` of 1000.
     pub fn value_at_percentile(&self, percentile: f64) -> u64 {
         if self.count == 0 {
             return 0;
@@ -254,6 +263,8 @@ impl Histogram {
     /// The values at 0, 50, 75, 87.5 percent and so on, halving the distance to 100 until the last slot in use is
     /// reached, and then the value at 100. The value at 0 is the minimum, and the others are as
     /// [`Self::value_at_percentile`] rounds them.
+    ///
+    /// Node.js: the lowest value of each slot, so its value at 100 can be below a recorded value and below `max`.
     pub fn percentiles(&self) -> Vec<(f64, u64)> {
         let mut percentiles = Vec::new();
         let mut target = 0.0;

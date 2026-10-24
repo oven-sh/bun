@@ -3421,7 +3421,8 @@ private:
             fail();
             return JSValue();
         }
-        JSValue histogram = JSValue::decode(Histogram__fromStructuredClone(m_globalObject, id));
+        auto* globalObject = defaultGlobalObject(m_globalObject);
+        JSValue histogram = JSValue::decode(Histogram__fromStructuredClone(globalObject, id));
         RETURN_IF_EXCEPTION(scope, JSValue());
         // Empty: no message in flight has this id.
         if (histogram.isEmpty()) {
@@ -3429,7 +3430,6 @@ private:
             return JSValue();
         }
         // The classes are written in JavaScript.
-        auto* globalObject = defaultGlobalObject(m_globalObject);
         JSValue module = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalPerfHooksHistogram);
         RETURN_IF_EXCEPTION(scope, JSValue());
         JSValue adopt = module.get(globalObject, Identifier::fromString(vm, "adopt"_s));
@@ -4860,7 +4860,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
         buffer, context, *sharedBuffers, serializedBlockListRefs, serializedHistogramIds, forStorage, forTransfer);
 
-    auto releaseSerializedBlockListRefs = [&] {
+    auto releaseSerializedRefs = [&] {
         for (auto* ptr : serializedBlockListRefs)
             BlockList__onStructuredCloneDestroy(ptr);
         serializedBlockListRefs.clear();
@@ -4879,7 +4879,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     // If we rethrew an exception just now, or we failed with a status code other than success,
     // we should exit right now.
     if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
-        releaseSerializedBlockListRefs();
+        releaseSerializedRefs();
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
     }
 
@@ -4887,12 +4887,12 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray;
     if (!transferList.isEmpty()) {
         if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
-            releaseSerializedBlockListRefs();
+            releaseSerializedRefs();
             RELEASE_AND_RETURN(scope, WTF::move(*exception));
         }
         auto transferred = transferArrayBuffers(vm, arrayBuffers);
         if (transferred.hasException()) {
-            releaseSerializedBlockListRefs();
+            releaseSerializedRefs();
             RELEASE_AND_RETURN(scope, transferred.releaseException());
         }
         arrayBufferContentsArray = transferred.releaseReturnValue();

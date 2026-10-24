@@ -32,6 +32,7 @@ test("the garbage collector knows the size of a histogram", () => {
     histogram.record(101);
     expect(size()).toBeWithin(table + chunk, table + chunk + 1024);
     histogram.record(Number.MAX_SAFE_INTEGER);
+    histogram.add(histogram);
     expect(size()).toBeWithin(table + 2 * chunk, table + 2 * chunk + 1024);
 
     // A structured clone shares the buckets.
@@ -60,19 +61,19 @@ test("histograms that grew are collected without an explicit GC", () => {
   expect(created).toBeLessThan(2000);
 });
 
-test("a histogram of a few values far apart is small", () => {
-  const before = process.memoryUsage.rss();
-  // All their buckets would take 38 MB each.
-  const histograms = Array.from({ length: 10 }, () => perf.createHistogram({ figures: 5 }));
-  for (const histogram of histograms) {
-    histogram.record(1);
-    histogram.record(2 ** 52);
-    histogram.record(Number.MAX_SAFE_INTEGER);
-    histogram.add(histogram);
+test("the prototypes of a histogram can be printed", () => {
+  const printed: string[] = [];
+  for (const histogram of [perf.createHistogram(), perf.monitorEventLoopDelay()]) {
+    for (let p = Object.getPrototypeOf(histogram); p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+      printed.push(Bun.inspect({ p }).split("\n", 3).join(" "));
+    }
   }
-  const clones = structuredClone(histograms);
-  expect(process.memoryUsage.rss() - before).toBeLessThan(100 * 1024 * 1024);
-  expect(clones.map(clone => clone.count)).toEqual(histograms.map(() => 6));
+  expect(printed).toEqual([
+    "{   p: RecordableHistogram {     record: [Function: record],",
+    "{   p: Histogram {     count: [Getter],",
+    "{   p: ELDHistogram {     enable: [Function: enable],",
+    "{   p: Histogram {     count: [Getter],",
+  ]);
 });
 
 test("doesn't throw", () => {

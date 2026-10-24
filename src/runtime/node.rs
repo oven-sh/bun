@@ -87,9 +87,6 @@ pub(crate) mod win_watcher;
 // Force-references `Bun__UVSignalHandle__init` / `Bun__UVSignalHandle__close`
 // for C++ (`src/jsc/bindings/BunProcess.cpp`). Must be `mod`-declared or the
 // `#[no_mangle]` exports are never compiled into the binary.
-#[path = "node/histogram.rs"]
-pub(crate) mod histogram;
-
 #[path = "node/memory_pressure.rs"]
 pub(crate) mod memory_pressure;
 #[path = "node/node_fs_binding.rs"]
@@ -104,6 +101,9 @@ pub(crate) mod uv_signal_handle_windows;
 
 #[path = "node/buffer.rs"]
 pub(crate) mod buffer;
+
+#[path = "node/histogram.rs"]
+pub(crate) mod histogram;
 
 #[path = "node/node_cluster_binding.rs"]
 pub(crate) mod node_cluster_binding;

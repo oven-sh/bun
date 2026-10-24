@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { spawnSync } from "node:child_process";
 import { describe, test } from "node:test";
 import { inspect } from "node:util";
 import { serialize } from "node:v8";
@@ -849,6 +850,177 @@ describe("Histogram", () => {
     assert.deepStrictEqual([h.mean, h.stddev], [9005000231485440, 0]);
   });
 
+  // The counts are kept 512 buckets at a time, and only where there is a value.
+  describe("values next to each other and far apart", () => {
+    function* spread(n: number) {
+      let x = 12345;
+      for (let i = 0; i < n; i++) {
+        x = (x * 1103515245 + 12345) % 2147483648;
+        yield 1 + Math.floor(2 ** ((x % 5000) / 100));
+      }
+    }
+    const summary = (h: ReturnType<typeof createHistogram>) => ({
+      count: h.count,
+      min: h.min,
+      max: h.max,
+      mean: h.mean,
+      stddev: h.stddev,
+      exceeds: h.exceeds,
+      percentile: [0.001, 1, 10, 25, 50, 75, 90, 99, 99.9, 100].map(p => h.percentile(p)),
+    });
+
+    test("around every 512th bucket", () => {
+      // Below 2048 a bucket is one value wide.
+      const values: number[] = [];
+      for (const edge of [512, 1024, 1536, 2047]) values.push(edge - 1, edge, edge, edge + 1 - (edge % 2));
+      for (const order of [values, values.toReversed()]) {
+        const h = createHistogram();
+        for (const value of order) h.record(value);
+        const sorted = values.toSorted((a, b) => a - b);
+        assert.deepStrictEqual([h.count, h.min, h.max], [sorted.length, sorted[0], sorted.at(-1)]);
+        for (let rank = 1; rank <= sorted.length; rank++) {
+          assert.strictEqual(h.percentile((rank / sorted.length) * 100), sorted[rank - 1], `rank ${rank}`);
+        }
+        assert.strictEqual(h.mean, sorted.reduce((a, b) => a + b) / sorted.length);
+      }
+    });
+
+    test("a percentile past buckets that were never used", () => {
+      const h = createHistogram();
+      for (const [value, times] of [
+        [511, 3],
+        [2 ** 30, 2],
+        [2 ** 50, 1],
+      ]) {
+        for (let i = 0; i < times; i++) h.record(value);
+      }
+      assert.deepStrictEqual(
+        [50, 59, 91, 92, 100].map(p => h.percentile(p)),
+        [511, 1074790399, 1074790399, 1126999418470399, 1126999418470399],
+      );
+    });
+
+    test("3000 values from 2 to 2 ** 50", () => {
+      for (const [options, expected] of [
+        [
+          {},
+          {
+            "count": 3000,
+            "min": 2,
+            "max": 1065426767314943,
+            "mean": 32569055182520.293,
+            "stddev": 129696151529394.95,
+            "exceeds": 0,
+            "percentile": [
+              2, 2, 33, 4839, 36470783, 290715598847, 36180804501503, 807591290601471, 1065426767314943,
+              1065426767314943,
+            ],
+          },
+        ],
+        [
+          { "figures": 1 },
+          {
+            "count": 3000,
+            "min": 2,
+            "max": 1090715534753791,
+            "mean": 32549688639420.12,
+            "stddev": 129759875860503.86,
+            "exceeds": 0,
+            "percentile": [
+              2, 2, 33, 4863, 37748735, 292057776127, 37383395344383, 809240558043135, 1090715534753791,
+              1090715534753791,
+            ],
+          },
+        ],
+        [
+          { "figures": 5 },
+          {
+            "count": 3000,
+            "min": 2,
+            "max": 1065169069277183,
+            "mean": 32567565270515.574,
+            "stddev": 129688797490856.56,
+            "exceeds": 0,
+            "percentile": [
+              2, 2, 33, 4838, 36464895, 290552020991, 36173556744191, 807247693217791, 1065169069277183,
+              1065169069277183,
+            ],
+          },
+        ],
+        [
+          { "lowest": 1000, "highest": 35184372088832, "figures": 2 },
+          {
+            "count": 2696,
+            "min": 0,
+            "max": 34222299414527,
+            "mean": 1146831134140.8665,
+            "stddev": 4255613022877.092,
+            "exceeds": 304,
+            "percentile": [
+              511, 511, 511, 2047, 6193151, 18253611007, 1915555414015, 24601572671487, 34222299414527, 34222299414527,
+            ],
+          },
+        ],
+      ] as const) {
+        const h = createHistogram(options);
+        for (const value of spread(3000)) h.record(value);
+        assert.deepStrictEqual(summary(h), expected);
+      }
+    });
+
+    test("add() from other precisions", () => {
+      const a = createHistogram({ figures: 5 });
+      for (const value of spread(3000)) a.record(value);
+      const b = createHistogram({ figures: 2, highest: 2 ** 40 });
+      for (const value of [3, 70000, 2 ** 39]) b.record(value);
+      const h = createHistogram();
+      h.add(a);
+      h.add(b);
+      assert.deepStrictEqual(summary(h), {
+        "count": 3003,
+        "min": 2,
+        "max": 1065426767314943,
+        "mean": 32536701822137.832,
+        "stddev": 129635389617151.6,
+        "exceeds": 0,
+        "percentile": [
+          2, 2, 33, 4839, 36470783, 290715598847, 36180804501503, 807591290601471, 1065426767314943, 1065426767314943,
+        ],
+      });
+    });
+
+    test("add() to itself", () => {
+      const h = createHistogram();
+      for (const value of spread(3000)) h.record(value);
+      const before = summary(h);
+      h.add(h);
+      assert.deepStrictEqual(summary(h), { ...before, count: 6000 });
+    });
+
+    test("after reset() it is as new", () => {
+      const h = createHistogram();
+      for (const value of spread(3000)) h.record(value);
+      h.reset();
+      assert.deepStrictEqual(h.toJSON(), createHistogram().toJSON());
+      const fresh = createHistogram();
+      for (const value of [1, 513, 2 ** 45]) {
+        h.record(value);
+        fresh.record(value);
+      }
+      assert.deepStrictEqual(h.toJSON(), fresh.toJSON());
+    });
+
+    test("a structured clone sees values in buckets that were not used before", () => {
+      const h = createHistogram();
+      h.record(1);
+      const clone = structuredClone(h);
+      clone.record(2 ** 45);
+      h.record(513);
+      assert.deepStrictEqual(summary(h), summary(clone));
+      assert.deepStrictEqual([h.count, h.min, h.percentile(50), h.max], [3, 1, 513, 35218731827199]);
+    });
+  });
+
   describe("arguments", () => {
     const thrown = (fn: () => unknown) => {
       try {
@@ -1248,26 +1420,31 @@ describe("Histogram", () => {
 
     test("the time it was disabled for is not recorded", notInNode, async ({ signal }) => {
       const h = monitorEventLoopDelay({ resolution: 1 });
+      let enabledAt = performance.now();
       h.enable();
       await samples(h, 1, signal);
       h.disable();
-      h.reset();
+      let enabledFor = performance.now() - enabledAt;
+      const { count } = h;
+
       const disabledAt = performance.now();
       const other = monitorEventLoopDelay({ resolution: 50 });
       other.enable();
       await samples(other, 2, signal);
       other.disable();
       const disabledFor = performance.now() - disabledAt;
+
+      enabledAt = performance.now();
       h.enable();
-      const enabledAt = performance.now();
-      await samples(h, 1, signal);
+      await samples(h, count + 1, signal);
       h.disable();
-      const enabledFor = performance.now() - enabledAt;
+      enabledFor = Math.max(enabledFor, performance.now() - enabledAt);
       assert.ok(disabledFor > 50);
+      // No sample is longer than the time it was enabled for.
       assert.ok(h.max <= (enabledFor + 1) * 1e6, `max is ${h.max} after ${enabledFor} ms`);
     });
 
-    test("does not keep the process alive, and can be disposed", () => {
+    test("can be disposed", () => {
       let disposed;
       {
         using h = monitorEventLoopDelay();
@@ -1275,7 +1452,12 @@ describe("Histogram", () => {
         disposed = h;
       }
       assert.strictEqual(disposed.disable(), false);
-      monitorEventLoopDelay({ resolution: 1 }).enable();
+    });
+
+    test("does not keep the process alive", () => {
+      const script = `require("node:perf_hooks").monitorEventLoopDelay({ resolution: 1 }).enable()`;
+      const { status, signal } = spawnSync(process.execPath, ["-e", script], { stdio: "ignore", timeout: 30_000 });
+      assert.deepStrictEqual({ status, signal }, { status: 0, signal: null });
     });
   });
 

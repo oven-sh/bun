@@ -644,6 +644,24 @@ pub(super) fn finalize_bundle(
         )?;
     }
 
+    // Pass 2 visits all client importers, including each affected framework entry point.
+    for bundle in &mut dev.route_bundles {
+        let route_bundle::Data::Framework(framework) = &bundle.data else {
+            continue;
+        };
+        if bundle.client_bundle.is_none() && framework.cached_client_bundle_url.get().is_none() {
+            continue;
+        }
+        let route = &dev.router.routes[framework.route_index.get() as usize];
+        let Some(client_file) = dev.router.types[route.r#type.get() as usize].client_file else {
+            continue;
+        };
+        let client_file = from_opaque_file_id::<{ bake::Side::Client }>(client_file);
+        if ctx.gts.client_bits.is_set(client_file.get() as usize) {
+            bundle.invalidate_client_bundle(&mut dev.source_maps);
+        }
+    }
+
     // Index all failed files now that the incremental graph has been updated.
     if !dev.incremental_result.failures_removed.is_empty()
         || !dev.incremental_result.failures_added.is_empty()
@@ -1017,6 +1035,12 @@ pub(super) fn finalize_bundle(
 
             // Send the JS chunk
             if dev.client_graph.current_chunk_len > 0 {
+                let cached_modules_start = if dev.incremental_result.had_adjusted_edges {
+                    let mut gts = dev.init_graph_trace_state(0)?;
+                    dev.client_graph.include_cached_imports(&mut gts)?
+                } else {
+                    None
+                };
                 let script_id = 'h: {
                     // Matches the bundler's `ContentHasher` hash (XxHash64).
                     let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
@@ -1069,6 +1093,7 @@ pub(super) fn finalize_bundle(
                     &incremental_graph::TakeJSBundleOptionsClient {
                         kind: crate::bake::dev_server::ChunkKind::HmrChunk,
                         script_id,
+                        cached_modules_start,
                         console_log: dev.should_receive_console_log_from_browser(),
                         ..Default::default()
                     },

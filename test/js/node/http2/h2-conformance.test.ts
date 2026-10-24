@@ -3125,6 +3125,30 @@ describe("inbound stream lifecycle", () => {
     }
   }, 30_000);
 
+  test("maxSessionMemory doesn't hold back a client's own requests", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxSessionMemory: 1 });
+    try {
+      const remoteSettings = once(client, "remoteSettings");
+      await raw.waitFor(f => f.type === FrameType.SETTINGS);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      await remoteSettings;
+      const ids = Array.from({ length: 1600 }, (_, i) => i * 2 + 1);
+      const answered = Promise.all(ids.map(() => once(client.request({ ":path": "/" }).resume(), "response")));
+      // A refused request rejects `answered`, which ends the wait at once.
+      await Promise.race([
+        raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === ids.at(-1), 60_000),
+        answered,
+      ]);
+      raw.socket!.write(Buffer.concat(ids.map(id => encodeFrame(FrameType.HEADERS, 0x5, id, Buffer.from([0x88])))));
+      await answered;
+      expect(raw.frames.filter(f => f.type === FrameType.HEADERS).map(f => f.streamId)).toEqual(ids);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }, 90_000);
+
   // grpc-js passes maxSessionMemory: Number.MAX_SAFE_INTEGER to disable the limit. node keeps the
   // option as a double, so any huge value means "no limit"; it must saturate, not wrap to the
   // 1MB minimum (#41294).
@@ -5015,9 +5039,13 @@ describe("a server stream that ends before respond() (RFC 9113 §8.1)", () => {
         stream.end();
         stream.respond({ ":status": 200 });
       },
-      f => f.type === FrameType.HEADERS,
+      // The request is still open, so a reset follows the complete response.
+      f => f.type === FrameType.RST_STREAM,
     );
-    expect(frames).toEqual([[FrameType.HEADERS, 0x5]]);
+    expect(frames).toEqual([
+      [FrameType.HEADERS, 0x5],
+      ["RST_STREAM", ErrorCode.NO_ERROR],
+    ]);
   });
 });
 

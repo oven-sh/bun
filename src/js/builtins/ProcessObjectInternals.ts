@@ -142,16 +142,18 @@ export function getStdinStream(
 
   function disown() {
     $debug("unref();");
-    source?.setFlowing?.(false);
 
+    // Without a reader of its own, process.stdin didn't start the source, and another reader may have by now.
     if (reader) {
+      source?.setFlowing?.(false);
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();
       reader = undefined;
       $debug("released reader");
     }
-    source?.updateRef?.(false);
+    // A paused source keeps nothing alive; its ref is for the next reader of Bun.stdin.stream().
+    source?.updateRef?.(!forceUnref);
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;

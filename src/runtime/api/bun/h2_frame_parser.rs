@@ -3868,8 +3868,10 @@ impl H2FrameParser {
         }
         let mut flags: u8 = if end_stream { flags::END_STREAM } else { 0 };
 
-        // A server only gets here for a stream that's already open.
-        if !self.engine.is_server.get() && self.engine.is_over_memory_limit(self) {
+        // A server only gets here for a stream that's already open. Like Node, a client's own streams don't count here.
+        if !self.engine.is_server.get()
+            && self.buffered_output() > self.engine.max_session_memory.get()
+        {
             self.rejected_streams.set(self.rejected_streams.get() + 1);
             self.reset_stream(&stream, ErrorCode::ENHANCE_YOUR_CALM, false);
             if self.rejected_streams.get() >= self.max_rejected_streams.get() {

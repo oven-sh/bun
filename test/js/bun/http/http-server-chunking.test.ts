@@ -127,7 +127,9 @@ function chunkedRequest(path = "/") {
 describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
   test.concurrent("writes separated by a loopbackClock() tick arrive as separate reads", async () => {
     // If the writes coalesced, the split-segment cases below would still pass, but on unsplit input.
-    const reads: string[] = [];
+    // The kernel promises no order between two connections, so a round may coalesce. Most must not.
+    const rounds = 10;
+    let reads: string[] = [];
     using listener = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
@@ -144,13 +146,20 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
       socket: { data() {} },
     });
 
-    for (const segment of ["first", "second", "third"]) {
-      socket.write(segment);
-      socket.flush();
-      await clock.tick();
+    let split = 0;
+    for (let round = 0; round < rounds; round++) {
+      reads = [];
+      for (const segment of ["first", "second", "third"]) {
+        socket.write(segment);
+        socket.flush();
+        await clock.tick();
+      }
+      // A late segment must not count for the next round.
+      while (reads.join("") !== "firstsecondthird") await clock.tick();
+      if (reads.length === 3) split++;
     }
 
-    expect(reads).toEqual(["first", "second", "third"]);
+    expect(split).toBeGreaterThan(rounds / 2);
   });
 
   test.concurrent.each([

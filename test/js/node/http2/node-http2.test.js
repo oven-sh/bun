@@ -2775,7 +2775,7 @@ it(
 
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     const port = server.address().port;
-    // The limit applies to both peers, so a closed stream that still counts on either side fails the test.
+    // Both peers get the smallest limit. A closed stream that still counts on the server fails the test.
     const client = http2.connect(`http://127.0.0.1:${port}`, { maxSessionMemory: 1 });
 
     // Fail on a session-level error (e.g. GOAWAY with ENHANCE_YOUR_CALM) instead of hanging until the timeout.
@@ -8299,10 +8299,14 @@ describe("session teardown", () => {
     try {
       const req = client.request({ ":path": "/" });
       await once(req, "data");
-      const closed = once(req, "close");
+      // The client sees the connection end or get reset. Only a reset cancels the request with an error.
+      const errors = [];
+      req.on("error", err => errors.push(err.code));
+      const closed = new Promise(resolve => req.on("close", resolve));
       (await session)[0].destroy();
       await closed;
       expect(req.rstCode).toBe(http2.constants.NGHTTP2_CANCEL);
+      expect(errors.filter(code => code !== "ERR_HTTP2_STREAM_CANCEL")).toEqual([]);
     } finally {
       client.destroy();
       server.close();

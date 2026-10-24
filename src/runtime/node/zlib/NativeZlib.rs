@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int};
-use core::mem;
 
 use bun_zlib as c; // bun.zlib — C zlib FFI (NodeMode, z_stream, ReturnCode, FlushValue, deflate*, inflate*)
 
@@ -214,7 +213,7 @@ pub(crate) use _impl::NativeZlib;
 
 pub(crate) struct Context {
     pub(crate) mode: c::NodeMode,
-    pub(crate) state: c::z_stream,
+    pub(crate) state: c::ZStream,
     pub(crate) err: c::ReturnCode,
     pub flush: c::FlushValue,
     pub dictionary: Vec<u8>,
@@ -225,7 +224,7 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             mode: c::NodeMode::NONE,
-            state: bun_core::ffi::zeroed::<c::z_stream>(),
+            state: c::ZStream::new(),
             err: c::ReturnCode::Ok,
             flush: c::FlushValue::NoFlush,
             dictionary: Vec::new(),
@@ -272,28 +271,14 @@ impl Context {
 
         match self.mode {
             NONE => unreachable!(),
-            // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion() returns a static C string.
-            DEFLATE | GZIP | DEFLATERAW => unsafe {
-                self.err = c::deflateInit2_(
-                    &raw mut self.state,
-                    level,
-                    8,
-                    window_bits_actual,
-                    mem_level,
-                    strategy,
-                    c::zlibVersion().cast(),
-                    c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
-                );
-            },
-            // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion() returns a static C string.
-            INFLATE | GUNZIP | UNZIP | INFLATERAW => unsafe {
-                self.err = c::inflateInit2_(
-                    &raw mut self.state,
-                    window_bits_actual,
-                    c::zlibVersion().cast(),
-                    c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
-                );
-            },
+            DEFLATE | GZIP | DEFLATERAW => {
+                self.err =
+                    self.state
+                        .deflate_init(level, 8, window_bits_actual, mem_level, strategy);
+            }
+            INFLATE | GUNZIP | UNZIP | INFLATERAW => {
+                self.err = self.state.inflate_init(window_bits_actual);
+            }
             BROTLI_DECODE | BROTLI_ENCODE => unreachable!(),
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         }
@@ -320,11 +305,11 @@ impl Context {
         match self.mode {
             // SAFETY: FFI — state is an initialized deflate stream; dict_ptr/dict_len borrow the Context-owned dictionary copy.
             DEFLATE | DEFLATERAW => unsafe {
-                self.err = c::deflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
+                self.err = c::deflateSetDictionary(self.state.as_ptr(), dict_ptr, dict_len);
             },
             // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len borrow the Context-owned dictionary copy.
             INFLATERAW => unsafe {
-                self.err = c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
+                self.err = c::inflateSetDictionary(self.state.as_ptr(), dict_ptr, dict_len);
             },
             _ => {}
         }
@@ -344,7 +329,7 @@ impl Context {
                 // are 0 (next_out non-null) so the internal deflate(Z_BLOCK) returns
                 // Z_BUF_ERROR without touching any previously installed caller buffer.
                 unsafe {
-                    self.err = c::deflateParams(&raw mut self.state, level, strategy);
+                    self.err = c::deflateParams(self.state.as_ptr(), level, strategy);
                 }
             }
             _ => {}
@@ -357,8 +342,8 @@ impl Context {
 
     fn error_for_message(&self, default: &'static core::ffi::CStr) -> Error {
         let mut message: *const c_char = default.as_ptr();
-        if !self.state.err_msg.is_null() {
-            message = self.state.err_msg;
+        if !self.state.err_msg().is_null() {
+            message = self.state.err_msg();
         }
         Error {
             msg: message,
@@ -384,11 +369,11 @@ impl Context {
         match self.mode {
             // SAFETY: FFI — state was initialized as a deflate stream by deflateInit2_.
             DEFLATE | DEFLATERAW | GZIP => unsafe {
-                self.err = c::deflateReset(&raw mut self.state);
+                self.err = c::deflateReset(self.state.as_ptr());
             },
             // SAFETY: FFI — state was initialized as an inflate stream by inflateInit2_.
             INFLATE | INFLATERAW | GUNZIP => unsafe {
-                self.err = c::inflateReset(&raw mut self.state);
+                self.err = c::inflateReset(self.state.as_ptr());
             },
             _ => {}
         }
@@ -399,22 +384,16 @@ impl Context {
     }
 
     pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
-        self.state.avail_in = match &in_ {
-            Some(p) => u32::try_from(p.len()).expect("int cast"),
-            None => 0,
+        let (next_in, avail_in) = match in_ {
+            Some(p) => (p.as_ptr(), u32::try_from(p.len()).expect("int cast")),
+            None => (core::ptr::null(), 0),
         };
-        self.state.next_in = match in_ {
-            Some(p) => p.as_ptr(),
-            None => core::ptr::null(),
+        self.state.set_input(next_in, avail_in);
+        let (next_out, avail_out) = match out {
+            Some(p) => (p.as_mut_ptr(), u32::try_from(p.len()).expect("int cast")),
+            None => (core::ptr::null_mut(), 0),
         };
-        self.state.avail_out = match &out {
-            Some(p) => u32::try_from(p.len()).expect("int cast"),
-            None => 0,
-        };
-        self.state.next_out = match out {
-            Some(p) => p.as_mut_ptr(),
-            None => core::ptr::null_mut(),
-        };
+        self.state.set_output(next_out, avail_out);
     }
 
     pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
@@ -448,8 +427,8 @@ impl Context {
                 return self.do_work_deflate();
             }
             UNZIP => {
-                if self.state.avail_in > 0 {
-                    next_expected_header_byte = Some(self.state.next_in.cast::<u8>());
+                if self.state.avail_in() > 0 {
+                    next_expected_header_byte = Some(self.state.next_in());
                 }
                 if self.gzip_id_bytes_read == 0 {
                     let Some(p) = next_expected_header_byte else {
@@ -461,7 +440,7 @@ impl Context {
                         // SAFETY: advancing within the input buffer; only dereferenced
                         // below after confirming avail_in > 1.
                         next_expected_header_byte = Some(unsafe { p.add(1) });
-                        if self.state.avail_in == 1 {
+                        if self.state.avail_in() == 1 {
                             // The only available byte was already read.
                             return self.do_work_inflate();
                         }
@@ -497,12 +476,12 @@ impl Context {
 
     fn do_work_deflate(&mut self) {
         // SAFETY: FFI — state is an initialized deflate stream.
-        self.err = unsafe { c::deflate(&raw mut self.state, self.flush) };
+        self.err = unsafe { c::deflate(self.state.as_ptr(), self.flush) };
     }
 
     fn do_work_inflate(&mut self) {
         // SAFETY: FFI — state is an initialized inflate stream.
-        self.err = unsafe { c::inflate(&raw mut self.state, self.flush) };
+        self.err = unsafe { c::inflate(self.state.as_ptr(), self.flush) };
 
         if self.mode != c::NodeMode::INFLATERAW
             && self.err == c::ReturnCode::NeedDict
@@ -515,38 +494,38 @@ impl Context {
                 (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
             };
             // SAFETY: FFI — state is an initialized inflate stream; dict is the Context-owned copy.
-            self.err = unsafe { c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len) };
+            self.err = unsafe { c::inflateSetDictionary(self.state.as_ptr(), dict_ptr, dict_len) };
 
             if self.err == c::ReturnCode::Ok {
                 // SAFETY: FFI — state is an initialized inflate stream.
-                self.err = unsafe { c::inflate(&raw mut self.state, self.flush) };
+                self.err = unsafe { c::inflate(self.state.as_ptr(), self.flush) };
             } else if self.err == c::ReturnCode::DataError {
                 self.err = c::ReturnCode::NeedDict;
             }
         }
-        while self.state.avail_in > 0
+        while self.state.avail_in() > 0
             && self.mode == c::NodeMode::GUNZIP
             && self.err == c::ReturnCode::StreamEnd
             // SAFETY: avail_in > 0 ⇒ next_in points to ≥1 readable byte.
-            && unsafe { *self.state.next_in } != 0
+            && unsafe { *self.state.next_in() } != 0
         {
             // Bytes remain in input buffer. Perhaps this is another compressed member in the same archive, or just trailing garbage.
             // Trailing zero bytes are okay, though, since they are frequently used for padding.
             let _ = self.reset();
             // SAFETY: FFI — state was just re-initialized by reset().
-            self.err = unsafe { c::inflate(&raw mut self.state, self.flush) };
+            self.err = unsafe { c::inflate(self.state.as_ptr(), self.flush) };
         }
     }
 
     pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
-        *avail_in = self.state.avail_in;
-        *avail_out = self.state.avail_out;
+        *avail_in = self.state.avail_in();
+        *avail_out = self.state.avail_out();
     }
 
     pub(crate) fn get_error_info(&self) -> Error {
         match self.err {
             c::ReturnCode::Ok | c::ReturnCode::BufError => {
-                if self.state.avail_out != 0 && self.flush == c::FlushValue::Finish {
+                if self.state.avail_out() != 0 && self.flush == c::FlushValue::Finish {
                     return self.error_for_message(c"unexpected end of file");
                 }
             }
@@ -571,11 +550,11 @@ impl Context {
         match self.mode {
             // SAFETY: FFI — state was initialized as a deflate stream by deflateInit2_.
             DEFLATE | DEFLATERAW | GZIP => unsafe {
-                status = c::deflateEnd(&raw mut self.state);
+                status = c::deflateEnd(self.state.as_ptr());
             },
             // SAFETY: FFI — state was initialized as an inflate stream by inflateInit2_.
             INFLATE | INFLATERAW | GUNZIP | UNZIP => unsafe {
-                status = c::inflateEnd(&raw mut self.state);
+                status = c::inflateEnd(self.state.as_ptr());
             },
             NONE => {}
             BROTLI_ENCODE | BROTLI_DECODE => {}

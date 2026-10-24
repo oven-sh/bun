@@ -1024,7 +1024,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // emitRust() reports that.
   const clangMajor = majorOf(toolchain.clangVersion);
   const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
-  if (clangMajor !== undefined && rustLlvmMajor !== undefined && clangMajor !== rustLlvmMajor) {
+  if (abi !== "android" && clangMajor !== undefined && rustLlvmMajor !== undefined && clangMajor !== rustLlvmMajor) {
     throw new BuildError(
       `clang is LLVM ${toolchain.clangVersion} and rustc's LLVM is ${toolchain.rustLlvmVersion}; they have to be the same major version`,
       {

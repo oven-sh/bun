@@ -1529,7 +1529,7 @@ export const linkerFlags: Flag[] = [
  * where `lto` is on, by itself where it is off. ASan builds link machine code.
  */
 export function rustLtoInLink(c: Config): boolean {
-  return c.release && !c.asan;
+  return c.release && !c.asan && c.abi !== "android";
 }
 
 /** The link optimises bitcode: the C/C++'s (`lto`), the Rust crates', or both. */

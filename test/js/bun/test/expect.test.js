@@ -3795,6 +3795,177 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    // https://github.com/oven-sh/bun/issues/3521
+    // toEqual accepts an asymmetric matcher on either side, so every check
+    // below reads the leaf that would have been overwritten and uses toBe.
+    test("does not mutate the received object when an asymmetric matcher matches", () => {
+      const obj = { foo: "foo", bar: "bar" };
+      expect(obj).toMatchObject({ bar: expect.any(String) });
+      expect(obj.bar).toBe("bar");
+      expect(obj).toMatchObject({ bar: expect.any(String) });
+      expect(obj.bar).toBe("bar");
+
+      const nested = { a: { b: { c: 42 } }, d: "keep" };
+      expect(nested).toMatchObject({ a: { b: { c: expect.any(Number) } } });
+      expect(nested.a.b.c).toBe(42);
+
+      const arr = { list: [1, "two", 3] };
+      expect(arr).toMatchObject({ list: [1, expect.any(String), 3] });
+      expect(arr.list[1]).toBe("two");
+
+      // The expected/subset side must also be left alone when the received
+      // side carries the asymmetric matcher.
+      const matcherSentinel = expect.any(String);
+      const matchersFirst = { a: matcherSentinel };
+      const subset = { a: "hello" };
+      expect(matchersFirst).toMatchObject(subset);
+      expect(matchersFirst.a).toBe(matcherSentinel);
+      expect(subset.a).toBe("hello");
+
+      const frozen = Object.freeze({ foo: "foo", bar: "bar" });
+      expect(frozen).toMatchObject({ bar: expect.any(String) });
+      expect(frozen.bar).toBe("bar");
+    });
+
+    test("leaves both operands alone when the match fails, under .not, .resolves and .rejects", async () => {
+      const received = { id: 7, role: "admin" };
+      expect(() => expect(received).toMatchObject({ id: expect.any(Number), role: "user" })).toThrow();
+      expect(received.id).toBe(7);
+
+      expect(() => expect(received).not.toMatchObject({ id: expect.any(Number) })).toThrow();
+      expect(received.id).toBe(7);
+
+      await expect(Promise.resolve(received)).resolves.toMatchObject({ id: expect.any(Number) });
+      expect(received.id).toBe(7);
+      await expect(Promise.reject(received)).rejects.toMatchObject({ id: expect.any(Number) });
+      expect(received.id).toBe(7);
+
+      // The matcher on the received side, a plain value in the pattern.
+      const matcher = expect.any(String);
+      const withMatcher = { a: matcher, role: "admin" };
+      const pattern = { a: "hello", role: "user" };
+      expect(() => expect(withMatcher).toMatchObject(pattern)).toThrow();
+      expect(() => expect(withMatcher).not.toMatchObject({ a: "hello" })).toThrow();
+      expect(pattern.a).toBe("hello");
+      expect(withMatcher.a).toBe(matcher);
+    });
+
+    test("leaves a frozen object, a getter, an inherited key and a typed array alone", () => {
+      const frozen = Object.freeze({ n: 5 });
+      expect(frozen).toMatchObject({ n: expect.any(Number) });
+      expect(Object.isFrozen(frozen)).toBe(true);
+      expect(frozen.n).toBe(5);
+      expect(() => expect(frozen).toEqual({ n: 6 })).toThrow();
+
+      let reads = 0;
+      const withGetter = {
+        get id() {
+          reads++;
+          return 7;
+        },
+      };
+      expect(withGetter).toMatchObject({ id: expect.any(Number) });
+      expect(Object.getOwnPropertyDescriptor(withGetter, "id").get).toBeFunction();
+      expect(reads).toBe(1);
+
+      const inherited = Object.create({ id: 5 });
+      expect(inherited).toMatchObject({ id: expect.any(Number) });
+      expect(Object.hasOwn(inherited, "id")).toBe(false);
+
+      const bytes = new Uint8Array([5, 6]);
+      expect(bytes).toMatchObject({ 0: expect.any(Number) });
+      expect(Array.from(bytes)).toEqual([5, 6]);
+    });
+
+    test("a later assertion reads the value that toMatchObject checked", () => {
+      const o = { id: 1 };
+      expect(o).toMatchObject({ id: expect.any(Number) });
+      expect(() => expect(o).toEqual({ id: 999 })).toThrow();
+
+      const result = { correlationId: "0b8865fe-47aa-4c0f-9b1e-8f3a5a2a1c11", path: "/test" };
+      expect(result).toMatchObject({ correlationId: expect.any(String), path: "/test" });
+      expect(result.correlationId).toMatch(/[a-f0-9-]{36}/i);
+
+      const error = { code: "rate_limited", retryAfterSeconds: 3600 };
+      expect(error).toMatchObject({ code: "rate_limited", retryAfterSeconds: expect.any(Number) });
+      expect(error.retryAfterSeconds).toBeGreaterThanOrEqual(1_800);
+
+      const nested = { data: { cost: { model: "x" }, costMicros: 42 } };
+      expect(nested).toMatchObject({ data: expect.objectContaining({ cost: { model: "x" } }) });
+      expect(JSON.stringify(nested)).toBe('{"data":{"cost":{"model":"x"},"costMicros":42}}');
+
+      const body = { a: 1, list: ["x", "y"] };
+      expect(body).toMatchObject({ list: expect.arrayContaining(["x"]) });
+      expect(Array.isArray(body.list)).toBe(true);
+
+      const r = { message: "needs more" };
+      expect(r).toMatchObject({ message: expect.stringContaining("needs") });
+      expect(typeof r.message).toBe("string");
+    });
+
+    test("a cyclic object matches a cyclic pattern that holds a matcher", () => {
+      const cyclic = { x: 1 };
+      cyclic.self = cyclic;
+      const pattern = { x: expect.any(Number) };
+      pattern.self = pattern;
+      expect(cyclic).toMatchObject(pattern);
+      expect(cyclic.x).toBe(1);
+    });
+
+    test("the diff of a failed match does not mark a matcher that passed before the mismatch", () => {
+      const marked = fn => {
+        try {
+          fn();
+        } catch (e) {
+          return Bun.stripANSI(e.message)
+            .split("\n")
+            .filter(line => line.startsWith("-") || line.startsWith("+"));
+        }
+        throw new Error("expected the assertion to fail");
+      };
+
+      const user = { id: 7, createdAt: "2026-01-01", tags: ["a"], role: "admin" };
+      expect(
+        marked(() =>
+          expect(user).toMatchObject({
+            id: expect.any(Number),
+            createdAt: expect.any(String),
+            tags: expect.arrayContaining(["a"]),
+            role: "user",
+          }),
+        ),
+      ).toEqual(['-   "role": "user",', '+   "role": "admin",', "- Expected  - 1", "+ Received  + 1"]);
+      expect(user.id).toBe(7);
+      expect(Array.isArray(user.tags)).toBe(true);
+
+      // The same for a matcher on the received side.
+      const pattern = { a: "hello", role: "user" };
+      expect(marked(() => expect({ a: expect.any(String), role: "admin" }).toMatchObject(pattern))).toEqual([
+        '-   "role": "user",',
+        '+   "role": "admin",',
+        "- Expected  - 1",
+        "+ Received  + 1",
+      ]);
+      expect(pattern.a).toBe("hello");
+    });
+
+    test("an error thrown while a negated matcher runs ends the match", () => {
+      let laterReads = 0;
+      const received = {
+        a: {
+          get x() {
+            throw new Error("boom");
+          },
+        },
+        get b() {
+          laterReads++;
+          return 1;
+        },
+      };
+      expect(() => expect(received).toMatchObject({ a: expect.not.objectContaining({ x: 1 }), b: 1 })).toThrow("boom");
+      expect(laterReads).toBe(0);
+    });
   });
 
   describe("toMatch()", () => {

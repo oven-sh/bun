@@ -1,6 +1,7 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 use super::DiffFormatter;
+use crate::test_runner::matched_matchers::MatchedMatchers;
 use super::throw;
 use super::{get_signature, Expect};
 
@@ -32,7 +33,7 @@ impl Expect {
             );
         }
 
-        let mut pass = received_object.jest_deep_match(expected, global, true)?;
+        let mut pass = received_object.jest_deep_match(expected, global)?;
 
         if not {
             pass = !pass;
@@ -42,7 +43,16 @@ impl Expect {
         }
 
         // handle failure
-        let diff_formatter = DiffFormatter::new(global, received_object, expected, not)?;
+        // Only here is the walk repeated, to learn which matchers passed
+        // before it stopped. Their lines are common to both sides of the diff.
+        let (_, matched_matchers) = MatchedMatchers::deep_match(received_object, expected, global)?;
+        let diff_formatter = DiffFormatter::with_matched_matchers(
+            global,
+            received_object,
+            expected,
+            not,
+            matched_matchers,
+        )?;
 
         if not {
             let signature: &str = get_signature("toMatchObject", "<green>expected<r>", true);

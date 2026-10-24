@@ -19,6 +19,7 @@ use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
+use super::matched_matchers::MatchedMatchers;
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
@@ -1103,6 +1104,8 @@ impl Expect {
         pretty_value: &mut impl bun_io::Write,
         fn_name: &'static str,
     ) -> JsResult<()> {
+        let mut matched_matchers = MatchedMatchers::default();
+
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
@@ -1111,7 +1114,9 @@ impl Expect {
 
             let prop_matchers = _prop_matchers;
 
-            if !value.jest_deep_match(prop_matchers, global_this, true)? {
+            let matched;
+            (matched, matched_matchers) = MatchedMatchers::deep_match(value, prop_matchers, global_this)?;
+            if !matched {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
@@ -1123,7 +1128,7 @@ impl Expect {
             }
         }
 
-        value.jest_snapshot_pretty_format(pretty_value, global_this)
+        value.jest_snapshot_pretty_format(pretty_value, global_this, matched_matchers)
     }
 
     pub(crate) fn snapshot(

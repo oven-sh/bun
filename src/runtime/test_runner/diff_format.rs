@@ -5,6 +5,7 @@ use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
+use super::matched_matchers::MatchedMatchers;
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
@@ -23,11 +24,24 @@ impl<'a> DiffFormatter<'a> {
         expected: JSValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
+        Self::with_matched_matchers(global_this, received, expected, not, MatchedMatchers::default())
+    }
+
+    /// [`Self::new`] for a failed `toMatchObject`: a matcher that passed
+    /// prints on both sides, so its line is common to them.
+    pub(crate) fn with_matched_matchers(
+        global_this: &JSGlobalObject,
+        received: JSValue,
+        expected: JSValue,
+        not: bool,
+        matched_matchers: MatchedMatchers,
+    ) -> JsResult<DiffFormatter<'static>> {
         let fmt_options = FormatOptions {
             enable_colors: false,
             add_newline: false,
             flush: false,
             quote_strings: true,
+            matched_matchers,
         };
         let mut received_buf: Vec<u8> = Vec::new();
         JestPrettyFormat::format(

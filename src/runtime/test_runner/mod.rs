@@ -141,6 +141,7 @@ cfg_jsc! {
     #[path = "DoneCallback.rs"]   pub(crate) mod done_callback;
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
+    #[path = "matched_matchers.rs"] pub(crate) mod matched_matchers;
     #[path = "Order.rs"]          pub(crate) mod order;
     #[path = "pretty_format.rs"]  pub(crate) mod pretty_format;
     #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;
@@ -194,9 +195,10 @@ pub(crate) mod expect {
 
     use bun_jsc::{JSGlobalObject, JSValue, JsResult};
     use bun_jsc::console_object::Formatter;
+    use super::matched_matchers::MatchedMatchers;
 
     pub(crate) trait JSValueTestExt {
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
+        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject, matched_matchers: MatchedMatchers) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue) -> BigIntCompare;
         fn bind(
@@ -210,13 +212,14 @@ pub(crate) mod expect {
     }
     impl JSValueTestExt for JSValue {
         #[inline]
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
+        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject, matched_matchers: MatchedMatchers) -> JsResult<()> {
             use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
             let fmt_options = FormatOptions {
                 enable_colors: false,
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
+                matched_matchers,
             };
             JestPrettyFormat::format(
                 MessageLevel::Debug,

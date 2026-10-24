@@ -2461,6 +2461,32 @@ impl JSValue {
         unsafe { crate::TopExceptionScope::destroy(scope) };
         result
     }
+    /// [`for_each_property_ordered`](Self::for_each_property_ordered) for the
+    /// bun:test formatter. `matchers` is the non-empty result of
+    /// `Bun__JestMatchedMatchers__of` for `self`: a property it holds is
+    /// visited with its matcher as the value.
+    pub fn for_each_property_ordered_with_matchers(
+        self,
+        global: &JSGlobalObject,
+        matchers: JSValue,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyOrderedWithMatchers(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+                matchers: JSValue,
+            );
+        }
+        debug_assert!(matchers.is_object());
+        crate::top_scope!(scope, global);
+        JSC__JSValue__forEachPropertyOrderedWithMatchers(self, global, ctx, callback, matchers);
+        scope.return_if_exception()
+    }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
     /// handles non-cells (returns false), so no precondition is asserted.
@@ -2719,20 +2745,10 @@ impl JSValue {
         })
     }
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
-    /// snapshot-property-matcher subset comparison.
-    pub fn jest_deep_match(
-        self,
-        subset: JSValue,
-        global: &JSGlobalObject,
-        replace_props_with_asymmetric_matchers: bool,
-    ) -> JsResult<bool> {
+    /// snapshot-property-matcher subset comparison. Writes to neither side.
+    pub fn jest_deep_match(self, subset: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jestDeepMatch(
-                self,
-                subset,
-                global,
-                replace_props_with_asymmetric_matchers,
-            )
+            JSC__JSValue__jestDeepMatch(self, subset, global)
         })
     }
 
@@ -2844,7 +2860,6 @@ unsafe extern "C" {
         this: JSValue,
         subset: JSValue,
         global: &JSGlobalObject,
-        replace_props: bool,
     ) -> bool;
     safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;

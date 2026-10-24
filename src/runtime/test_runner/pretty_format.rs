@@ -10,6 +10,7 @@ use bun_jsc::{
 use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
 use super::expect;
+use super::matched_matchers::{MatchedMatchers, Recorded};
 use crate::generated_bindgen::expect::{
     js_ExpectAny, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher, js_ExpectObjectContaining,
     js_ExpectStringContaining, js_ExpectStringMatching,
@@ -79,6 +80,9 @@ pub(crate) struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+    /// Printed in place of the properties they passed on. Empty for every
+    /// caller but a property-matcher snapshot and a failed `toMatchObject`.
+    pub(crate) matched_matchers: MatchedMatchers,
 }
 
 impl JestPrettyFormat {
@@ -124,6 +128,7 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
+            fmt.matched_matchers = options.matched_matchers;
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -170,6 +175,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
+        fmt.matched_matchers = options.matched_matchers;
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -296,6 +302,9 @@ pub(crate) struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
+    /// See [`FormatOptions::matched_matchers`]. Every keyed read of a printed
+    /// object in `print_as` asks it first.
+    pub(crate) matched_matchers: MatchedMatchers,
 }
 
 impl<'a> Formatter<'a> {
@@ -310,6 +319,7 @@ impl<'a> Formatter<'a> {
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
+            matched_matchers: MatchedMatchers::default(),
         }
     }
 
@@ -1064,6 +1074,8 @@ impl<'a> Formatter<'a> {
             }
         }
 
+        let recorded = self.matched_matchers.of(self.global_this, value);
+
         // Wrap the match in a closure and unconditionally
         // call `self.map.remove(&value)` after it returns (Ok or Err). A scopeguard
         // cannot be used here because it would hold `&mut self` across the match body.
@@ -1324,7 +1336,9 @@ impl<'a> Formatter<'a> {
                     let classname = value.get_class_name(self.global_this)?;
                     let mut message_string = bun_core::String::EMPTY;
 
-                    if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
+                    if let Some(message_prop) = recorded.get_or(self.global_this, "message", || {
+                        value.fast_get(self.global_this, jsc::BuiltinName::Message)
+                    })? {
                         message_string = message_prop.to_bun_string(self.global_this)?;
                     }
 
@@ -1398,7 +1412,8 @@ impl<'a> Formatter<'a> {
                         // a closure and restore unconditionally afterward.
                         let inner: JsResult<()> = (|| {
                             {
-                                let element = value.get_index(self.global_this, 0)?;
+                                let element = recorded
+                                    .index_or(self.global_this, 0, || value.get_index(self.global_this, 0))?;
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 was_good_time = was_good_time
@@ -1437,7 +1452,8 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b"\n");
                                 self.write_indent(writer.ctx).expect("unreachable");
 
-                                let element = value.get_index(self.global_this, i)?;
+                                let element = recorded
+                                    .index_or(self.global_this, i, || value.get_index(self.global_this, i))?;
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
@@ -1560,8 +1576,8 @@ impl<'a> Formatter<'a> {
                         }
                         return Ok(());
                     } else if bun_jsc::DOMFormData::from_js(value).is_some() {
-                        if let Some(to_json_function) = value
-                            .get(self.global_this, "toJSON")?
+                        if let Some(to_json_function) = recorded
+                            .get_or(self.global_this, "toJSON", || value.get(self.global_this, "toJSON"))?
                             .filter(|f| f.is_callable())
                         {
                             self.add_for_new_line(b"FormData (entries) ".len());
@@ -1702,8 +1718,8 @@ impl<'a> Formatter<'a> {
                     );
                 }
                 Tag::Map => {
-                    let length_value = value
-                        .get(self.global_this, "size")?
+                    let length_value = recorded
+                        .get_or(self.global_this, "size", || value.get(self.global_this, "size"))?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
                     let length = if length_value.is_number() {
                         length_value.coerce_to_i32(self.global_this)?
@@ -1750,8 +1766,8 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::Set => {
-                    let length_value = value
-                        .get(self.global_this, "size")?
+                    let length_value = recorded
+                        .get_or(self.global_this, "size", || value.get(self.global_this, "size"))?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
                     let length = if length_value.is_number() {
                         length_value.coerce_to_i32(self.global_this)?
@@ -1797,7 +1813,11 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let str = value.json_stringify(self.global_this, self.indent)?;
+                    let str = if self.matched_matchers.is_empty() {
+                        value.json_stringify(self.global_this, self.indent)?
+                    } else {
+                        self.matched_matchers.json_stringify(value, self.global_this, self.indent)?
+                    };
                     self.add_for_new_line(str.length());
                     if js_type == JSType::JSDate {
                         // in the code for printing dates, it never exceeds this amount
@@ -1831,7 +1851,9 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::Event => {
                     let event_type_value: JSValue = 'brk: {
-                        let value_: JSValue = match value.get(self.global_this, "type")? {
+                        let value_: JSValue = match recorded
+                            .get_or(self.global_this, "type", || value.get(self.global_this, "type"))?
+                        {
                             Some(v) => v,
                             None => break 'brk JSValue::UNDEFINED,
                         };
@@ -1880,9 +1902,9 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                         ));
 
-                        if let Some(message_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Message)?
-                        {
+                        if let Some(message_value) = recorded.get_or(self.global_this, "message", || {
+                            value.fast_get(self.global_this, jsc::BuiltinName::Message)
+                        })? {
                             if message_value.is_string() {
                                 self.write_indent(writer.ctx).expect("unreachable");
                                 writer.print(format_args!(
@@ -1909,8 +1931,10 @@ impl<'a> Formatter<'a> {
                                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 ));
-                                let data: JSValue = value
-                                    .fast_get(self.global_this, jsc::BuiltinName::Data)?
+                                let data: JSValue = recorded
+                                    .get_or(self.global_this, "data", || {
+                                        value.fast_get(self.global_this, jsc::BuiltinName::Data)
+                                    })?
                                     .unwrap_or(JSValue::UNDEFINED);
                                 let tag = Tag::get(data, self.global_this)?;
 
@@ -1920,9 +1944,9 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b", \n");
                             }
                             EventType::ErrorEvent => {
-                                if let Some(data) =
-                                    value.fast_get(self.global_this, jsc::BuiltinName::Error)?
-                                {
+                                if let Some(data) = recorded.get_or(self.global_this, "error", || {
+                                    value.fast_get(self.global_this, jsc::BuiltinName::Error)
+                                })? {
                                     self.write_indent(writer.ctx).expect("unreachable");
                                     writer.print(format_args!(
                                         "{}error{}:{} ",
@@ -1952,6 +1976,15 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"}");
                 }
                 Tag::JSX => {
+                    // `Tag::get` read the real `$$typeof`. With a matcher in its
+                    // place the value is no element.
+                    if recorded.get(self.global_this, "$$typeof").is_some() {
+                        let _ = self.map.remove(&value);
+                        return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
+                            writer.ctx, value, js_type,
+                        );
+                    }
+
                     writer.write_all(pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>").as_bytes());
 
                     writer.write_all(b"<");
@@ -1962,7 +1995,9 @@ impl<'a> Formatter<'a> {
                     let tag_name_slice: Utf8Bytes;
                     let mut is_tag_kind_primitive = false;
 
-                    if let Some(type_value) = value.get(self.global_this, "type")? {
+                    if let Some(type_value) =
+                        recorded.get_or(self.global_this, "type", || value.get(self.global_this, "type"))?
+                    {
                         let _tag = Tag::get(type_value, self.global_this)?;
 
                         if _tag.cell == JSType::Symbol {
@@ -2006,7 +2041,9 @@ impl<'a> Formatter<'a> {
                         );
                     }
 
-                    if let Some(key_value) = value.get(self.global_this, "key")? {
+                    if let Some(key_value) =
+                        recorded.get_or(self.global_this, "key", || value.get(self.global_this, "key"))?
+                    {
                         if !key_value.is_undefined_or_null() {
                             if needs_space {
                                 writer.write_all(b" key=");
@@ -2031,7 +2068,10 @@ impl<'a> Formatter<'a> {
                         }
                     }
 
-                    if let Some(props) = value.get(self.global_this, "props")? {
+                    if let Some(props) =
+                        recorded.get_or(self.global_this, "props", || value.get(self.global_this, "props"))?
+                    {
+                        let props_recorded = self.matched_matchers.of(self.global_this, props);
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
@@ -2050,7 +2090,8 @@ impl<'a> Formatter<'a> {
                             },
                         )?;
 
-                        let children_prop = props.get(self.global_this, "children")?;
+                        let children_prop = props_recorded
+                            .get_or(self.global_this, "children", || props.get(self.global_this, "children"))?;
                         if props_iter.len > 0 {
                             {
                                 self.indent += 1;
@@ -2066,6 +2107,9 @@ impl<'a> Formatter<'a> {
                                     if prop.eq_ascii(b"children") {
                                         continue;
                                     }
+                                    let property_value = props_recorded
+                                        .get_string(self.global_this, &prop)
+                                        .unwrap_or(property_value);
 
                                     let tag = Tag::get(property_value, self.global_this)?;
 
@@ -2194,6 +2238,8 @@ impl<'a> Formatter<'a> {
                                                 if length == 0 {
                                                     break 'print_children;
                                                 }
+                                                let children_recorded =
+                                                    self.matched_matchers.of(self.global_this, children);
                                                 writer.write_all(b">\n");
 
                                                 {
@@ -2206,10 +2252,11 @@ impl<'a> Formatter<'a> {
                                                     let r: JsResult<()> = (|| {
                                                         let mut j: usize = 0;
                                                         while j < length {
-                                                            let child = JSObject::get_index(
-                                                                children,
+                                                            let index = u32::try_from(j).unwrap();
+                                                            let child = children_recorded.index_or(
                                                                 self.global_this,
-                                                                u32::try_from(j).unwrap(),
+                                                                index,
+                                                                || JSObject::get_index(children, self.global_this, index),
                                                             )?;
                                                             self.format::<W, ENABLE_ANSI_COLORS>(
                                                                 Tag::get(child, self.global_this)?,
@@ -2311,11 +2358,21 @@ impl<'a> Formatter<'a> {
                         parent: value,
                     };
 
-                    let result = value.for_each_property_ordered(
-                        global,
-                        (&raw mut iter).cast::<c_void>(),
-                        PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                    );
+                    let ctx = (&raw mut iter).cast::<c_void>();
+                    let result = if recorded.is_empty() {
+                        value.for_each_property_ordered(
+                            global,
+                            ctx,
+                            PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,
+                        )
+                    } else {
+                        value.for_each_property_ordered_with_matchers(
+                            global,
+                            recorded.as_js(),
+                            ctx,
+                            PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,
+                        )
+                    };
 
                     let iter_i = iter.i;
                     let iter_always_newline = iter.always_newline;
@@ -2375,9 +2432,12 @@ impl<'a> Formatter<'a> {
                             writer.write_all(b"\"data\": [");
 
                             self.indent += 1;
-                            for el in slice {
+                            for (i, el) in slice.iter().enumerate() {
                                 writer.write_all(b"\n");
                                 let _ = self.write_indent(writer.ctx);
+                                if self.print_recorded_element::<W, ENABLE_ANSI_COLORS>(writer.ctx, recorded, i)? {
+                                    continue;
+                                }
                                 writer.print(format_args!("{},", el));
                             }
                             self.indent = self.indent.saturating_sub(1);
@@ -2422,9 +2482,12 @@ impl<'a> Formatter<'a> {
                                 )
                             };
                             self.indent += 1;
-                            for el in slice_with_type {
+                            for (i, el) in slice_with_type.iter().enumerate() {
                                 writer.write_all(b"\n");
                                 let _ = self.write_indent(writer.ctx);
+                                if self.print_recorded_element::<W, ENABLE_ANSI_COLORS>(writer.ctx, recorded, i)? {
+                                    continue;
+                                }
                                 writer.print(format_args!("{},", el.get()));
                             }
                             self.indent = self.indent.saturating_sub(1);
@@ -2472,6 +2535,27 @@ impl<'a> Formatter<'a> {
             self.failed = true;
         }
         result
+    }
+
+    /// For the typed array loops, which print bytes and read no property:
+    /// prints `matcher,` and returns true when element `index` has a matcher.
+    fn print_recorded_element<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut W,
+        recorded: Recorded,
+        index: usize,
+    ) -> JsResult<bool> {
+        if recorded.is_empty() {
+            return Ok(false);
+        }
+        let Some(matcher) = u32::try_from(index).ok().and_then(|i| recorded.index(self.global_this, i))
+        else {
+            return Ok(false);
+        };
+        let tag = Tag::get(matcher, self.global_this)?;
+        self.format::<W, ENABLE_ANSI_COLORS>(tag, writer, matcher, self.global_this)?;
+        let _ = writer.write_all(b",");
+        Ok(true)
     }
 
     pub(crate) fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(

@@ -75,3 +75,504 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`property matchers plain object 1`] = `
+{
+  "id": Any<Number>,
+  "name": "ann",
+}
+`;
+
+exports[`property matchers nested object 1`] = `
+{
+  "a": {
+    "b": {
+      "c": {
+        "id": Any<Number>,
+        "name": "ann",
+      },
+    },
+  },
+}
+`;
+
+exports[`property matchers two matchers on one object 1`] = `
+{
+  "a": Any<Number>,
+  "b": Any<String>,
+  "c": 1,
+}
+`;
+
+exports[`property matchers array element 1`] = `
+{
+  "list": [
+    1,
+    Any<Number>,
+    3,
+  ],
+}
+`;
+
+exports[`property matchers array at the root 1`] = `
+[
+  {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+  {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+]
+`;
+
+exports[`property matchers nested arrays 1`] = `
+{
+  "m": [
+    [
+      Any<Number>,
+      1,
+    ],
+    [
+      Any<Number>,
+      2,
+    ],
+  ],
+}
+`;
+
+exports[`property matchers sparse array 1`] = `
+{
+  "a": [
+    undefined,
+    undefined,
+    undefined,
+    Any<Number>,
+  ],
+}
+`;
+
+exports[`property matchers class instance 1`] = `
+User {
+  "id": Any<Number>,
+  "name": "ann",
+}
+`;
+
+exports[`property matchers class instance below a plain object 1`] = `
+{
+  "u": User {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+}
+`;
+
+exports[`property matchers null prototype 1`] = `
+{
+  "id": Any<Number>,
+}
+`;
+
+exports[`property matchers symbol key 1`] = `
+{
+  "a": 1,
+  [Symbol(k)]: Any<Number>,
+}
+`;
+
+exports[`property matchers non-enumerable property 1`] = `
+{
+  "a": 1,
+  "id": Any<Number>,
+}
+`;
+
+exports[`property matchers inherited property 1`] = `
+{
+  "id": Any<Number>,
+}
+`;
+
+exports[`property matchers frozen object 1`] = `
+{
+  "f": {
+    "id": Any<Number>,
+  },
+  "id": Any<Number>,
+}
+`;
+
+exports[`property matchers own getter on another key 1`] = `
+{
+  "id": Any<Number>,
+  "ts": [native code],
+}
+`;
+
+exports[`property matchers own getter with the matcher on its key 1`] = `
+{
+  "id": 1,
+  "ts": Any<Number>,
+}
+`;
+
+exports[`property matchers prototype getter with the matcher below it 1`] = `
+Wrapper {
+  "_user": {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+}
+`;
+
+exports[`property matchers prototype getter with the matcher on its key 1`] = `
+Wrapper {
+  "_user": 7,
+  "user": Any<Number>,
+}
+`;
+
+exports[`property matchers matcher on the received side 1`] = `
+{
+  "a": Any<String>,
+  "k": 1,
+}
+`;
+
+exports[`property matchers objectContaining 1`] = `
+{
+  "k": 1,
+  "u": ObjectContaining {
+    "name": "ann",
+  },
+}
+`;
+
+exports[`property matchers stringMatching 1`] = `
+{
+  "k": 1,
+  "s": StringMatching /^s\\d+$/,
+}
+`;
+
+exports[`property matchers shared object, matcher on one path 1`] = `
+{
+  "a": {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+  "b": {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+}
+`;
+
+exports[`property matchers shared object, matcher on both paths 1`] = `
+{
+  "a": {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+  "b": {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+}
+`;
+
+exports[`property matchers shared object below an object the matchers do not walk 1`] = `
+{
+  "current": {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+  "log": [
+    {
+      "user": {
+        "id": Any<Number>,
+        "name": "ann",
+      },
+    },
+  ],
+}
+`;
+
+exports[`property matchers shared object as a Map value and a Set member 1`] = `
+{
+  "a": {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+  "m": 
+Map {
+    "k" => {
+      "id": Any<Number>,
+      "name": "ann",
+    },
+  }
+,
+  "s":   
+Set {
+    {
+      "id": Any<Number>,
+      "name": "ann",
+    },
+  }
+,
+}
+`;
+
+exports[`property matchers self cycle 1`] = `
+{
+  "id": Any<Number>,
+  "name": "ann",
+  "self": [Circular],
+}
+`;
+
+exports[`property matchers parent cycle 1`] = `
+{
+  "inner": {
+    "id": Any<Number>,
+    "name": "ann",
+    "parent": [Circular],
+  },
+}
+`;
+
+exports[`property matchers Error own property 1`] = `[TypeError: boom]`;
+
+exports[`property matchers Error message 1`] = `[TypeError: [object ExpectAny]]`;
+
+exports[`property matchers Error with a nested object 1`] = `[Error: e]`;
+
+exports[`property matchers Event 1`] = `Event 
+Event {
+  "isTrusted": false,
+  "timeStamp": Any<Number>,
+}
+`;
+
+exports[`property matchers Event type 1`] = `MessageEvent 
+MessageEvent {
+  "isTrusted": false,
+  "type": Any<String>,
+}
+`;
+
+exports[`property matchers MessageEvent data 1`] = `MessageEvent {
+  type: "message",
+  data: Any<String>, 
+}`;
+
+exports[`property matchers ErrorEvent message 1`] = `ErrorEvent {
+  type: "error",
+  error: {
+    "code": 5,
+  }
+}`;
+
+exports[`property matchers ErrorEvent error 1`] = `ErrorEvent {
+  type: "error",
+  message: "m", 
+  error: {
+    "code": Any<Number>,
+  }
+}`;
+
+exports[`property matchers Headers 1`] = `Headers 
+Headers {
+  "append": Any<Function>,
+}
+`;
+
+exports[`property matchers FormData 1`] = `FormData 
+FormData {
+  "toJSON": Any<Function>,
+}
+`;
+
+exports[`property matchers Response keeps its own rendering 1`] = `
+{
+  "r": Response (1 bytes) {
+    ok: true,
+    url: "",
+    status: 201,
+    statusText: "",
+    headers: Headers {},
+    redirected: false,
+    bodyUsed: false,
+    Blob (1 bytes)
+  }Response Response {
+    "status": Any<Number>,
+  },
+}
+`;
+
+exports[`property matchers Map size 1`] = `
+{
+  "m": Map {},
+}
+`;
+
+exports[`property matchers Set size 1`] = `
+{
+  "s":   Set {},
+}
+`;
+
+exports[`property matchers Date with an own property 1`] = `
+{
+  "d": 1970-01-01T00:00:00.000Z,
+}
+`;
+
+exports[`property matchers function with an own property 1`] = `
+{
+  "f": [Function: f],
+}
+`;
+
+exports[`property matchers boxed Number with an own property 1`] = `
+Number {
+  "id": Any<Number>,
+  "info": {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+}
+`;
+
+exports[`property matchers boxed Boolean with an own property 1`] = `
+Boolean {
+  "info": {
+    "id": Any<Number>,
+    "name": "ann",
+  },
+}
+`;
+
+exports[`property matchers React element props 1`] = `<div id=Any<Number>>x</div>`;
+
+exports[`property matchers React element key 1`] = `<div key=Any<String>>x</div>`;
+
+exports[`property matchers React element type 1`] = `<ExpectAny />`;
+
+exports[`property matchers React element children 1`] = `<div />`;
+
+exports[`property matchers React child element 1`] = `<div>
+  <b id=Any<Number> />
+</div>`;
+
+exports[`property matchers React child elements 1`] = `<ul>
+  <li id=Any<Number> />
+  <li id=Any<Number> />
+</ul>`;
+
+exports[`property matchers React children, one of them a matcher 1`] = `<ul>
+  a
+  Any<String>
+</ul>`;
+
+exports[`property matchers Proxy at the root 1`] = `{"user":{"id":{},"name":"ann"}}`;
+
+exports[`property matchers Proxy one level down 1`] = `
+{
+  "state": {
+ "user": {
+  "id": {},
+  "name": "ann"
+ }
+},
+}
+`;
+
+exports[`property matchers Proxy with a BigInt below a matcher 1`] = `{"user":{"big":{}}}`;
+
+exports[`property matchers arguments object 1`] = `{"0":{"user":{"id":{},"name":"ann"}}}`;
+
+exports[`property matchers arguments object with the matcher on its index 1`] = `{"0":{}}`;
+
+exports[`property matchers generator object 1`] = `{"info":{"id":{},"name":"ann"}}`;
+
+exports[`property matchers matcher as the whole propertyMatchers argument 1`] = `
+{
+  "id": 1,
+}
+`;
+
+exports[`property matchers received value is a matcher 1`] = `Any<String>`;
+
+exports[`property matchers recorded where main did not a matcher on a key of a Proxy 1`] = `{"id":{},"name":"ann"}`;
+
+exports[`property matchers recorded where main did not a matcher on an index of a typed array 1`] = `
+{
+  "buffer": {
+    "data": [
+      Any<Number>,
+      6,
+    ],
+    "type": "Buffer",
+  },
+  "bytes": Uint8Array [
+    Any<Number>,
+    6,
+  ],
+  "floats": Float64Array [
+    Any<Number>,
+    2.5,
+  ],
+}
+`;
+
+exports[`property matchers a matcher on a key that selects the rendering 1`] = `Tagged 
+Tagged {
+  [Symbol(Symbol.toStringTag)]: Any<String>,
+  "id": Any<Number>,
+}
+`;
+
+exports[`property matchers a matcher on a key that selects the rendering 2`] = `
+User {
+  "id": Any<Number>,
+  "name": "ann",
+}
+`;
+
+exports[`property matchers a matcher on a key that selects the rendering 3`] = `
+{
+  "$$typeof": Any<Symbol>,
+  "key": null,
+  "props": {
+    "id": Any<Number>,
+  },
+  "ref": null,
+  "type": "div",
+}
+`;
+
+exports[`property matchers toJSON below a Proxy reads the value, not the matcher 1`] = `{"inner":{"id":7}}`;
+
+exports[`property matchers a getter is read once 1`] = `
+{
+  "a": [native code],
+  "untouched": [native code],
+}
+`;
+
+exports[`property matchers a snapshot without matchers, after one with matchers, records the value 1`] = `
+{
+  "id": Any<Number>,
+  "name": "ann",
+}
+`;
+
+exports[`property matchers a snapshot without matchers, after one with matchers, records the value 3`] = `
+{
+  "id": Any<Number>,
+  "name": "ann",
+}
+`;

@@ -3,6 +3,7 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/Identifier.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 #include <set>
@@ -444,6 +445,26 @@ extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::E
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
+namespace Bun {
+/// The asymmetric matchers that passed in one `Bun__deepMatch` walk, with the
+/// object and the property each one was checked against.
+struct MatchedMatchers {
+    JSC::MarkedArgumentBuffer values; // (object, matcher) pairs
+    Vector<JSC::Identifier, 4> keys;
+
+    void append(JSC::JSObject* object, const JSC::Identifier& key, JSC::JSValue matcher)
+    {
+        values.append(object);
+        values.append(matcher);
+        keys.append(key);
+    }
+};
+
+/// `matchers` is what `Bun__JestMatchedMatchers__of` returned for one object.
+/// Empty when `property` of that object has no matcher.
+JSC::JSValue recordedMatcher(JSC::JSGlobalObject*, JSC::JSObject* matchers, JSC::PropertyName property);
+}
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  *
@@ -470,7 +491,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  * @param globalObject
  * @param Scope
  * @param gcBuffer
- * @param replacePropsWithAsymmetricMatchers
+ * @param matchedMatchers when set, receives every matcher that passed. Neither object is written to.
  * @param isMatchingObjectContaining
  *
  * @return true
@@ -485,7 +506,7 @@ bool Bun__deepMatch(
     JSC::JSGlobalObject* globalObject,
     JSC::ThrowScope& throwScope,
     JSC::MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::MatchedMatchers* matchedMatchers,
     bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);

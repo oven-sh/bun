@@ -2945,6 +2945,80 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
 }
 
+// The TC39 structs surface: `Atomics.Mutex`, `Atomics.Condition`, `Reflect.canBeShared` and the global `SharedArray` start
+// as lazy custom values. The first read of any of them loads src/js/internal/structs.ts and puts its exports in place of
+// every one that is still lazy, along with the overloads of `Atomics.load`, `store`, `exchange` and `compareExchange`, which
+// are left alone until then. A program that never reads one of the four never loads the module.
+static bool isStructsLazy(JSC::JSGlobalObject* globalObject, JSC::JSObject* holder, const JSC::Identifier& name)
+{
+    JSC::PropertySlot slot(holder, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+    return holder->methodTable()->getOwnPropertySlot(holder, globalObject, name, slot) && slot.isCustom();
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getStructsSurface, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* realm = defaultGlobalObject(lexicalGlobalObject);
+    JSObject* holder = JSValue::decode(thisValue).getObject();
+    if (!holder) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    JSValue moduleValue = realm->internalModuleRegistry()->requireId(realm, vm, Bun::InternalModuleRegistry::Field::InternalStructs);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* surface = moduleValue.getObject();
+    RELEASE_ASSERT(surface);
+
+    const Identifier mutexName = Identifier::fromString(vm, "Mutex"_s);
+    const Identifier conditionName = Identifier::fromString(vm, "Condition"_s);
+    const Identifier canBeSharedName = Identifier::fromString(vm, "canBeShared"_s);
+    const Identifier sharedArrayName = Identifier::fromString(vm, "SharedArray"_s);
+    bool fromAtomics = property.uid() == mutexName.impl() || property.uid() == conditionName.impl();
+    bool fromReflect = property.uid() == canBeSharedName.impl();
+
+    // The other holders are found by name; one that a script replaced is no longer lazy and is left as it is.
+    JSObject* atomics = nullptr;
+    if (fromAtomics) {
+        atomics = holder;
+    } else {
+        atomics = realm->get(realm, Identifier::fromString(vm, "Atomics"_s)).getObject();
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    JSObject* reflect = nullptr;
+    if (fromReflect) {
+        reflect = holder;
+    } else {
+        reflect = realm->get(realm, Identifier::fromString(vm, "Reflect"_s)).getObject();
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    bool installAtomics = atomics && (isStructsLazy(realm, atomics, mutexName) || isStructsLazy(realm, atomics, conditionName));
+    bool installReflect = reflect && isStructsLazy(realm, reflect, canBeSharedName);
+    bool installGlobal = isStructsLazy(realm, realm, sharedArrayName);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto put = [&](JSObject* target, ASCIILiteral name) {
+        Identifier identifier = Identifier::fromString(vm, name);
+        JSValue value = surface->getDirect(vm, identifier);
+        RELEASE_ASSERT(value);
+        target->putDirect(vm, identifier, value, PropertyAttribute::DontEnum);
+    };
+    if (installAtomics) {
+        put(atomics, "Mutex"_s);
+        put(atomics, "Condition"_s);
+        put(atomics, "load"_s);
+        put(atomics, "store"_s);
+        put(atomics, "exchange"_s);
+        put(atomics, "compareExchange"_s);
+    }
+    if (installReflect)
+        put(reflect, "canBeShared"_s);
+    if (installGlobal)
+        put(realm, "SharedArray"_s);
+
+    return JSValue::encode(surface->getDirect(vm, property));
+}
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3083,6 +3157,24 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
+
+    // The structs surface (see getStructsSurface): lazy until a program reads one of these.
+    JSC::JSObject* atomicsObject = this->get(this, JSC::Identifier::fromString(vm, "Atomics"_s)).getObject();
+    scope.assertNoExceptionExceptTermination();
+    RETURN_IF_EXCEPTION(scope, );
+    JSC::JSObject* reflectObject = this->get(this, JSC::Identifier::fromString(vm, "Reflect"_s)).getObject();
+    scope.assertNoExceptionExceptTermination();
+    RETURN_IF_EXCEPTION(scope, );
+    auto defineStructsLazy = [&](JSC::JSObject* target, ASCIILiteral name) {
+        target->putDirectCustomAccessor(vm, Identifier::fromString(vm, name), CustomGetterSetter::create(vm, getStructsSurface, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+    };
+    if (atomicsObject) {
+        defineStructsLazy(atomicsObject, "Mutex"_s);
+        defineStructsLazy(atomicsObject, "Condition"_s);
+    }
+    if (reflectObject)
+        defineStructsLazy(reflectObject, "canBeShared"_s);
+    defineStructsLazy(this, "SharedArray"_s);
 }
 
 // ===================== start conditional builtin globals =====================

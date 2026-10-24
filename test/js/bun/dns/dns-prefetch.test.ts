@@ -1,6 +1,7 @@
 import { dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, compileFixture, isLinux } from "harness";
+import { join } from "node:path";
 
 // The DNS cache is process-global, so this runs in its own process to get
 // clean counters. Docs promise that a failed connection evicts the host's
@@ -39,6 +40,67 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
     exitCode: 0,
   });
 });
+
+// Every connection to a name joins the entry's lookup while it runs. A caller
+// that gave up on the lookup (here an aborted fetch) used to leave the entry in
+// place, so every later connection to the name waited out the whole lookup.
+// Giving up now invalidates the entry, and the next connection starts a fresh
+// lookup. The fixture is an LD_PRELOAD shim that holds the first getaddrinfo(3)
+// of one name, so this runs on Linux with a C compiler only.
+const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+test.skipIf(!isLinux || !cc)(
+  "a connection that gives up on a running lookup does not hold up the next one",
+  async () => {
+    const shim = compileFixture(join(import.meta.dir, "hold-getaddrinfo-fixture.c"), { flags: ["-ldl"] });
+    const holdMs = 500;
+    const script = `
+    using server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("ok") });
+    const url = "http://held.test:" + server.port + "/";
+    // Abort the first fetch as soon as its lookup is in flight (the first cache miss).
+    const controller = new AbortController();
+    const first = fetch(url, { signal: controller.signal }).then(r => r.status, e => e.name);
+    const deadline = Date.now() + 5_000;
+    while (Bun.dns.getCacheStats().cacheMisses < 1 && Date.now() < deadline) await Bun.sleep(1);
+    controller.abort();
+    await first;
+    const started = performance.now();
+    const second = await fetch(url).then(r => r.status, e => e.name);
+    const secondMs = performance.now() - started;
+    const { size, ...stats } = Bun.dns.getCacheStats();
+    console.log(JSON.stringify({ first: await first, second, secondMs, ...stats }));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
+        HOLD_DNS_NAME: "held.test",
+        HOLD_DNS_MS: String(holdMs),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { secondMs, ...result } = JSON.parse(stdout.trim() || "{}");
+    // The second connection is a fresh lookup (a second cache miss), not an
+    // inflight hit on the held one.
+    expect({ result, stderr, exitCode }).toEqual({
+      result: {
+        first: "AbortError",
+        second: 200,
+        cacheHitsCompleted: 0,
+        cacheHitsInflight: 0,
+        cacheMisses: 2,
+        errors: 0,
+        totalCount: 2,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    // Before the fix, the second fetch waited out the rest of the hold.
+    expect(secondMs).toBeLessThan(holdMs / 2);
+  },
+);
 
 test("dns.getCacheStats returns a new plain object of integers", () => {
   const stats = dns.getCacheStats();

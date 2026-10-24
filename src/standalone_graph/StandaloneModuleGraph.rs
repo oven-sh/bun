@@ -2219,10 +2219,14 @@ pub(crate) fn inject<'a>(
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
             if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
-                if let bun_sys::Result::Ok(res) =
-                    Syscall::open(zname, bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0)
-                {
-                    break 'brk res;
+                // The clone keeps self_exe's mode, which is read-only when bun
+                // is installed that way (e.g. Homebrew's 0o555).
+                let _ = Syscall::chmod(zname, 0o600);
+                match Syscall::open(zname, bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0) {
+                    Ok(res) => break 'brk res,
+                    Err(_) => {
+                        let _ = Syscall::unlink(zname);
+                    }
                 }
             }
         }

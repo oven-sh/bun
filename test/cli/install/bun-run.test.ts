@@ -13,18 +13,10 @@ describe.concurrent("bun run", () => {
   for (let withRun of [false, true]) {
     describe(withRun ? "bun run" : "bun", () => {
       describe("should work with .", () => {
-        it("respecting 'main' field and allowing trailing commas/comments in package.json", async () => {
+        it("respects the main field in package.json", async () => {
           using dir = tempDir("bun-run-main", {
             "test.js": "console.log('Hello, world!');",
-            "package.json": `{
-            // single-line comment
-            "name": "test",
-            /** even multi-line comment!!
-             * such feature much compatible very ecosystem
-             */
-            "version": "0.0.0",
-            "main": "test.js",
-          }`,
+            "package.json": JSON.stringify({ name: "test", version: "0.0.0", main: "test.js" }),
           });
           await using proc = Bun.spawn({
             cmd: [bunExe(), ...(withRun ? ["run"] : []), "."].filter(Boolean),

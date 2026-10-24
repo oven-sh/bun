@@ -129,7 +129,7 @@ struct IDLLooseUTF8String : IDLStrictUTF8String {};
 struct IDLStrictStringOrStringObject : WebCore::IDLDOMString {};
 
 // Bytes that C++ passes to Rust. Nothing converts a JS value to it.
-struct IDLSpan : WebCore::IDLType<std::span<const uint8_t>> {};
+struct IDLByteSpan : WebCore::IDLType<std::span<const uint8_t>> {};
 
 // The characters of a string where they are: no reference is taken, and those of a substring stay in its base.
 template<bool allowStringObject>

@@ -69,7 +69,7 @@ public:
     // enqueueing on the readable.
     // `m_nativeSinkReadyPromise` is the transform-algorithm result returned on
     // sink backpressure; the sink's onReady resolves it.
-    JSC::WriteBarrier<Bun::Bindgen::Generated::JSReadableSinkController> m_nativeSinkController;
+    JSC::WriteBarrier<JSReadableSinkController> m_nativeSinkController;
     JSC::WriteBarrier<JSC::JSPromise> m_nativeSinkReadyPromise;
     // Compression/Decompression only: transform-algorithm promise of a chunk whose codec
     // steps span turns (off-thread, or waiting for the consumer to take the output so far);

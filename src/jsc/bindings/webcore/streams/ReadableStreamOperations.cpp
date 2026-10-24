@@ -459,8 +459,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
         sourceCancelPromise = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->cancelSteps(globalObject, reason);
         break;
     case ControllerKind::NativeSink: {
-        // As the controller's own close(reason): a falsy reason is a clean close.
-        uncheckedDowncast<Bindgen::Generated::JSReadableSinkController>(stream->m_controller.get())->close(globalObject, reason.toBoolean(globalObject) ? reason : JSValue());
+        uncheckedDowncast<JSReadableSinkController>(stream->m_controller.get())->close(globalObject, reason);
         RETURN_IF_EXCEPTION(scope, nullptr);
         sourceCancelPromise = promiseResolvedWith(globalObject, jsUndefined());
         break;

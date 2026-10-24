@@ -14,7 +14,7 @@ export const SinkChunk = b.union({
 export const SinkPath = b.union({ missing: b.undefined, path: b.string.allowStringObject, other: b.any });
 
 const highWaterMark = b.f64.otherAsNull;
-const file = {
+const fileMembers = {
   path: SinkPath,
   /** What `Fd::from_js` takes. */
   fd: b.any.emptyStringAsNull,
@@ -25,10 +25,10 @@ export const ArrayBufferSinkStartOptions = b.dictionary(
   { asUint8Array: b.bool.otherAsNull, stream: b.bool.otherAsNull, highWaterMark },
   ignoresNonObjects,
 );
-export const FileSinkStartOptions = b.dictionary(file, { ...ignoresNonObjects, fromJS: true });
+export const FileSinkStartOptions = b.dictionary(fileMembers, { ...ignoresNonObjects, fromJS: true });
 export const NetworkSinkStartOptions = b.dictionary({ highWaterMark }, ignoresNonObjects);
 /** A `FileSink` uses `path` and `fd`, and every other sink uses `highWaterMark`. */
-export const ReadableSinkControllerStartOptions = b.dictionary({ highWaterMark, ...file }, ignoresNonObjects);
+export const ReadableSinkControllerStartOptions = b.dictionary({ highWaterMark, ...fileMembers }, ignoresNonObjects);
 
 /** `undefined` once the sink is closed, and `null` for a sink that has none. */
 export const SinkFd = b.union({ closed: b.undefined, none: b.null, fd: b.i32 });
@@ -36,7 +36,7 @@ export const SinkFd = b.union({ closed: b.undefined, none: b.null, fd: b.i32 });
 const flush = { ...method, args: { wait: b.bool.otherAsNull }, length: 1 } as const;
 const start = (options: b.Type) => ({ ...js, args: { options: options.nullable.default({}) }, length: 1 }) as const;
 
-const sink = { writable: false, memoryCost: true } as const;
+const sinkClass = { writable: false, memoryCost: true } as const;
 const sinkPrototype = (sinkId: number, startOptions: b.Type) =>
   ({
     close: js,
@@ -51,7 +51,7 @@ const sinkPrototype = (sinkId: number, startOptions: b.Type) =>
   }) as const;
 
 export const ArrayBufferSink = b.class({
-  ...sink,
+  ...sinkClass,
   rustPath: "crate::webcore::sink::JSSink<crate::webcore::sink::ArrayBufferSink>",
   construct: {},
   call: { returns: b.self, capability: "heap" },
@@ -59,14 +59,14 @@ export const ArrayBufferSink = b.class({
 });
 
 export const FileSink = b.class({
-  ...sink,
+  ...sinkClass,
   rustPath: "crate::webcore::sink::JSSink<crate::webcore::FileSink>",
   construct: "illegal",
   proto: sinkPrototype(2, FileSinkStartOptions),
 });
 
 export const NetworkSink = b.class({
-  ...sink,
+  ...sinkClass,
   rustPath: "crate::webcore::sink::JSSink<crate::webcore::streams::NetworkSink>",
   construct: "illegal",
   proto: sinkPrototype(6, NetworkSinkStartOptions),
@@ -74,22 +74,22 @@ export const NetworkSink = b.class({
 
 /** What `pull(controller)` of a `type: "direct"` stream gets when a native sink consumes the stream, and what the pump of any other stream writes to. */
 export const ReadableSinkController = b.class({
-  ...sink,
+  ...sinkClass,
   rustPath: "crate::webcore::sink::ReadableSinkController",
-  internalFields: [
+  internalFields: {
     /** What hears the sink close: a `JSDirectStreamSource` or a `JSReadStreamIntoSinkOperation`. */
-    "source",
+    source: "JSC::JSCell",
     /** Of a direct stream: settles when the controller closes. */
-    "closePromise",
+    closePromise: "JSC::JSPromise",
     /** The first `close(error)`. */
-    "failReason",
-    "readableStream",
+    failReason: "JSC::JSValue",
+    readableStream: "WebCore::JSReadableStream",
     /** A `PipeCell` keeps these two here: the stream its sink ends, and the promise its owner awaits. */
-    "pipeStream",
-    "pipeDone",
-  ],
+    pipeStream: "WebCore::JSReadableStream",
+    pipeDone: "JSC::JSPromise",
+  },
+  headers: ["streams/JSReadableStream.h"],
   proto: {
-    /** C++ passes any `error`, falsy too, for a source that failed. */
     close: { ...js, args: { error: b.any.falsyAsNull }, length: 0, calledFromCpp: true },
     flush,
     end: { ...method, calledFromCpp: true },
@@ -99,8 +99,10 @@ export const ReadableSinkController = b.class({
   },
   calledFromCpp: {
     isAttached: { returns: b.bool },
+    /** The source failed. `reason` can be falsy. */
+    closeWithError: { ...js, args: { reason: b.any } },
     startWithHighWaterMark: { ...js, args: { highWaterMark: b.f64 } },
-    writeBytes: { ...method, args: { bytes: b.span } },
+    writeBytes: { ...method, args: { bytes: b.byteSpan } },
   },
   calledFromRust: {
     /** `undefined`, a promise for the end of the stream, or the `Exception` of a failure. */

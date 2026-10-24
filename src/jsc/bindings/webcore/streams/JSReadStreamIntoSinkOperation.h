@@ -43,7 +43,7 @@ public:
         NativeTransform,
     };
 
-    static JSReadStreamIntoSinkOperation* create(JSC::VM&, JSC::Structure*, JSReadableStream*, JSReadableStreamDefaultReader*, Bun::Bindgen::Generated::JSReadableSinkController* sink, JSC::JSPromise* result);
+    static JSReadStreamIntoSinkOperation* create(JSC::VM&, JSC::Structure*, JSReadableStream*, JSReadableStreamDefaultReader*, JSReadableSinkController* sink, JSC::JSPromise* result);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
@@ -64,7 +64,7 @@ public:
 
     JSReadableStream* stream() const { return uncheckedDowncast<JSReadableStream>(fieldCell(Field::Stream)); }
     JSReadableStreamDefaultReader* reader() const { return uncheckedDowncast<JSReadableStreamDefaultReader>(fieldCell(Field::Reader)); }
-    Bun::Bindgen::Generated::JSReadableSinkController* sink() const { return uncheckedDowncast<Bun::Bindgen::Generated::JSReadableSinkController>(fieldCell(Field::Sink)); }
+    JSReadableSinkController* sink() const { return uncheckedDowncast<JSReadableSinkController>(fieldCell(Field::Sink)); }
     JSC::JSPromise* result() const { return uncheckedDowncast<JSC::JSPromise>(fieldCell(Field::Result)); }
     JSC::JSObject* pendingBatch() const { return uncheckedDowncast<JSC::JSObject>(fieldCell(Field::PendingBatch)); }
     JSTransformStream* nativeTransform() const { return uncheckedDowncast<JSTransformStream>(fieldCell(Field::NativeTransform)); }
@@ -86,7 +86,7 @@ public:
 
 private:
     JSReadStreamIntoSinkOperation(JSC::VM&, JSC::Structure*);
-    void finishCreation(JSC::VM&, JSReadableStream*, JSReadableStreamDefaultReader*, Bun::Bindgen::Generated::JSReadableSinkController* sink, JSC::JSPromise* result);
+    void finishCreation(JSC::VM&, JSReadableStream*, JSReadableStreamDefaultReader*, JSReadableSinkController* sink, JSC::JSPromise* result);
 
     JSC::JSCell* fieldCell(Field field) const
     {

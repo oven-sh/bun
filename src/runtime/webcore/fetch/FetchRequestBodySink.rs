@@ -282,8 +282,8 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 }
 
 impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
-    fn controller_sink(this: core::ptr::NonNull<Self>) -> crate::webcore::sink::ControllerSink {
-        crate::webcore::sink::ControllerSink::FetchRequestBody(this)
+    fn controller_sink(this: core::ptr::NonNull<Self>) -> crate::webcore::sink::AnyControlledSink {
+        crate::webcore::sink::AnyControlledSink::FetchRequestBodySink(this)
     }
 
     fn source(&mut self) -> &mut SourceHandle {

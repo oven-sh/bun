@@ -331,7 +331,7 @@ JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
 
 `b.string.view`, which comes after `.allowStringObject`, is for a body that only reads the
-characters, in Latin-1 or UTF-16: a `bun_core::StringView<'a>`, which an argument of this type alone lends as a `&bun_core::String`. It takes no reference to the
+characters, in Latin-1 or UTF-16: a `bun_core::StringView<'a>`, and a `&bun_core::StringView<'_>` as an argument of this type alone. It takes no reference to the
 storage, and the characters of `text.slice(..)` are read where they are in `text`, where
 `b.string` makes a string of them. The frame holds the JS string, so it is for an argument, alone, in a union or
 with a modifier, and not in an array.
@@ -707,6 +707,22 @@ is not an argument type, has no `estimatedSize`, and does not implement `JsClass
 
 Every field starts empty. A heap snapshot shows what it holds as a property of its name.
 
+In C++ the field is `m_callback`, a `JSC::WriteBarrier<JSC::Unknown>`. A field that holds only cells of one C++ class
+names the class, and C++ reads it without a cast:
+
+```ts
+internalFields: { failReason: "JSC::JSValue", pipeDone: "JSC::JSPromise", readableStream: "WebCore::JSReadableStream" },
+headers: ["streams/JSReadableStream.h"],
+```
+
+```cpp
+JSC::JSPromise* done = sinkController->m_pipeDone.get(); // null if it is empty
+```
+
+`headers` is what declares the classes that are not JSC's. Rust has a `JSValue`, so
+`pipe_done_set_cached` empties the field if the value is not a `JSC::JSPromise`. No getter or `internalField` property
+uses such a field.
+
 A getter with `cache: true` declares a field of its own name, with the same functions, and
 returns it. While the field is empty the getter calls Rust and stores the result, so emptying
 `tag` makes the next read compute it again.
@@ -724,10 +740,11 @@ class. Neither side declares an `extern "C"` function.
 export const ReadableSinkController = b.class({
   proto: {
     end: { returns: b.any, capability: "js", throws: true, calledFromCpp: true },
+    write: { args: { data: SinkChunk }, returns: b.any, capability: "js", throws: true, calledFromCpp: true },
   },
   calledFromCpp: {
     isAttached: { returns: b.bool },
-    writeBytes: { args: { bytes: b.span }, returns: b.any, capability: "js", throws: true },
+    writeBytes: { args: { bytes: b.byteSpan }, returns: b.any, capability: "js", throws: true },
   },
   calledFromRust: {
     onClose: { args: { reason: b.any, sinkClosed: b.bool }, throws: true },
@@ -735,36 +752,39 @@ export const ReadableSinkController = b.class({
 });
 ```
 
-`calledFromCpp: true` on a function of `proto` also makes it a member function, which calls the same Rust function. The
-class's `calledFromCpp` holds functions that are written the same way and are not properties.
+The generated class declares them:
 
 ```cpp
-JSC::JSValue result = controller->end(globalObject);
-RETURN_IF_EXCEPTION(scope, {});
-controller->writeBytes(globalObject, view->span());
-if (controller->isAttached()) ..
+// Written in Rust. A JSValue is empty if it threw.
+JSC::JSValue end(JSC::JSGlobalObject*);
+JSC::JSValue write(JSC::JSGlobalObject*, JSC::JSValue data);
+bool isAttached() const;
+JSC::JSValue writeBytes(JSC::JSGlobalObject*, std::span<const uint8_t> bytes);
+
+// Written in C++, for Rust.
+void onClose(JSC::JSGlobalObject*, JSC::JSValue reason, bool sinkClosed);
 ```
 
-It takes `globalObject`, then each argument as its type converts it: a `JSC::JSValue` for `b.any`, a `double` for `b.f64`,
-the generated struct for a dictionary or a union, which `Bun::convertIDLInto` fills from a JS value. What the schema
-says about a JS value is not applied: an absent `.falsyAsNull` argument is the empty value, and `0` is present. It
-returns a `JSC::JSValue`, empty if the function threw, or nothing. It has no overloads, `.withValue` or `.variadic`.
+`calledFromCpp: true` on a function of `proto` also makes it a member function. It takes a `JSC::JSValue` for each
+argument and converts it as a call from JS does, so `sinkController->write(globalObject, chunk)` is
+`controller.write(chunk)` without the property lookup. It has no overloads or `.variadic`.
 
-`b.span` is bytes that are not in a JS object: a `std::span<const uint8_t>` that Rust gets as `&'a [u8]`. Only a function
-of the class's `calledFromCpp` takes one.
+The class's `calledFromCpp` holds functions that only C++ calls and that are not properties. Nothing is converted: an
+argument is `b.any`, `b.bool`, a number or `b.byteSpan`, and the result is `b.any`, `b.bool`, a number or nothing.
+`globalObject` is a parameter if the function has a `capability` or `throws`. A function that throws returns `b.any` or
+nothing.
 
-A function of the class's `calledFromCpp` that has no `capability`, `throws` or `passThis`, takes numbers and `b.bool`, and
-returns one or nothing, touches no JS value. It does not take `globalObject`, and returns a `bool` or a number as it is.
+`b.byteSpan` is bytes that are not in a JS object: a `std::span<const uint8_t>` that Rust gets as `&'a [u8]`.
 
 `calledFromRust` declares member functions that hand-written C++ defines. An argument is `b.any`, `b.bool` or a number, and
-the result is `b.any` or nothing. The function uses the object's own `globalObject()`.
+the result is `b.any` or nothing.
 
 ```cpp
-void JSReadableSinkController::onClose(JSC::JSValue reason, bool sinkClosed) { .. }
+void JSReadableSinkController::onClose(JSC::JSGlobalObject* globalObject, JSC::JSValue reason, bool sinkClosed) { .. }
 ```
 
-Rust calls it in the module `js_ReadableSinkController`, with the object first. With `throws: true` it also takes the
-global object and returns a `JsResult`.
+Rust calls it in the module `js_ReadableSinkController`, with the object and the global object first. With
+`throws: true` it returns a `JsResult`.
 
 ```rust
 js_ReadableSinkController::on_close(this_value, global, reason, true)?;

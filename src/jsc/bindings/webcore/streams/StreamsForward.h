@@ -36,6 +36,8 @@ class JSReadableSinkController; // a native sink's controller (GeneratedSink.h)
 
 namespace WebCore {
 
+using Bun::Bindgen::Generated::JSReadableSinkController;
+
 class AbortSignal;
 // NOTE: JSDOMGlobalObject is deliberately NOT forward-declared here. In Bun it is not a
 // class but a type alias (`using JSDOMGlobalObject = Zig::GlobalObject;` in

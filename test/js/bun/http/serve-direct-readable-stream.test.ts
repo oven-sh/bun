@@ -61,7 +61,7 @@ test("the controller of a direct stream is of one class, whichever native sink c
   expect([response.sinkId, request.sinkId]).toEqual([4, 7]);
 });
 
-test("a heap snapshot counts the sink with its controller until they part", async () => {
+test("estimateShallowMemoryUsageOf(controller) includes the sink until the controller detaches", async () => {
   let attached = 0;
   let detached = 0;
   using server = Bun.serve({

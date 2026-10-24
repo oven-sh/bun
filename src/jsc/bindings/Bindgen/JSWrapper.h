@@ -49,7 +49,17 @@ inline JSC::GCClient::IsoSubspace* subspaceForClass(JSC::VM& vm, unsigned classI
 }
 
 // Reports a field that holds a cell to a heap snapshot, as a property of that name.
-void analyzeInternalField(JSC::JSCell*, JSC::HeapAnalyzer&, const JSC::WriteBarrier<JSC::Unknown>&, WTF::ASCIILiteral name);
+void analyzeInternalField(JSC::JSCell*, JSC::HeapAnalyzer&, JSC::JSValue field, WTF::ASCIILiteral name);
+
+// For Rust, which has a JSValue: what is not a T empties the field.
+template<typename T>
+void setInternalField(JSC::VM& vm, JSC::JSCell* owner, JSC::WriteBarrier<T>& field, JSC::JSValue value)
+{
+    if constexpr (std::is_same_v<T, JSC::JSCell>)
+        field.setMayBeNull(vm, owner, value && value.isCell() ? value.asCell() : nullptr);
+    else
+        field.setMayBeNull(vm, owner, value ? dynamicDowncast<T>(value) : nullptr);
+}
 
 // The constructor object of every generated class that has one.
 class JSClassConstructor final : public JSC::InternalFunction {

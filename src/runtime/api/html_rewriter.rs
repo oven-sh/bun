@@ -1961,8 +1961,8 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
 }
 
 impl crate::webcore::sink::ControlledSink for RewriterPipe {
-    fn controller_sink(this: NonNull<Self>) -> crate::webcore::sink::ControllerSink {
-        crate::webcore::sink::ControllerSink::HTMLRewriter(this)
+    fn controller_sink(this: NonNull<Self>) -> crate::webcore::sink::AnyControlledSink {
+        crate::webcore::sink::AnyControlledSink::RewriterPipe(this)
     }
 
     unsafe fn close_with_error(

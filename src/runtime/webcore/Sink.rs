@@ -123,7 +123,7 @@ pub(crate) trait JsSinkType: Sized + 'static {
 
 /// A sink that a stream writes to through a [`ReadableSinkController`].
 pub(crate) trait ControlledSink: JsSinkType {
-    fn controller_sink(this: NonNull<Self>) -> ControllerSink;
+    fn controller_sink(this: NonNull<Self>) -> AnyControlledSink;
 
     /// The source failed, so the bytes written so far are a truncated body:
     /// `controller.close(error)` with a truthy argument, or the pump's close
@@ -249,13 +249,6 @@ fn close_sink<T: ControlledSink>(
         Some(reason) => unsafe { T::close_with_error(sink, global, reason) },
     };
     pending_exception_or(global, result)
-}
-
-/// # Safety
-/// As [`JsSinkType::finalize`].
-unsafe fn finalize_sink<T: JsSinkType>(sink: NonNull<T>) {
-    // SAFETY: the caller's contract is the same one.
-    unsafe { T::finalize(sink.as_ptr()) }
 }
 
 fn sink_memory_cost<T: JsSinkType>(sink: NonNull<T>) -> usize {
@@ -457,28 +450,28 @@ impl<T: JsSinkType> Drop for JSSink<T> {
 
 /// The sink of a [`ReadableSinkController`].
 #[derive(Copy, Clone)]
-pub(crate) enum ControllerSink {
-    File(NonNull<FileSink>),
-    HTMLRewriter(NonNull<RewriterPipe>),
-    HTTPResponse(NonNull<HTTPResponseSink>),
-    HTTPSResponse(NonNull<HTTPSResponseSink>),
-    Network(NonNull<NetworkSink>),
-    FetchRequestBody(NonNull<FetchRequestBodySink>),
+pub(crate) enum AnyControlledSink {
+    FileSink(NonNull<FileSink>),
+    RewriterPipe(NonNull<RewriterPipe>),
+    HTTPResponseSink(NonNull<HTTPResponseSink>),
+    HTTPSResponseSink(NonNull<HTTPSResponseSink>),
+    NetworkSink(NonNull<NetworkSink>),
+    FetchRequestBodySink(NonNull<FetchRequestBodySink>),
 }
 
-impl ControllerSink {
+impl AnyControlledSink {
     /// # Safety
     /// The sink is live, and nothing else borrows it.
     unsafe fn source<'a>(self) -> &'a mut SourceHandle {
         // SAFETY: caller contract.
         unsafe {
             match self {
-                Self::File(sink) => (*sink.as_ptr()).source(),
-                Self::HTMLRewriter(sink) => (*sink.as_ptr()).source(),
-                Self::HTTPResponse(sink) => (*sink.as_ptr()).source(),
-                Self::HTTPSResponse(sink) => (*sink.as_ptr()).source(),
-                Self::Network(sink) => (*sink.as_ptr()).source(),
-                Self::FetchRequestBody(sink) => (*sink.as_ptr()).source(),
+                Self::FileSink(sink) => (*sink.as_ptr()).source(),
+                Self::RewriterPipe(sink) => (*sink.as_ptr()).source(),
+                Self::HTTPResponseSink(sink) => (*sink.as_ptr()).source(),
+                Self::HTTPSResponseSink(sink) => (*sink.as_ptr()).source(),
+                Self::NetworkSink(sink) => (*sink.as_ptr()).source(),
+                Self::FetchRequestBodySink(sink) => (*sink.as_ptr()).source(),
             }
         }
     }
@@ -487,11 +480,11 @@ impl ControllerSink {
 /// Writes to a native sink on behalf of a stream: it is the `controller` of a
 /// `type: "direct"` stream, and what the pump of any other stream writes to.
 ///
-/// The bindgen calls what takes `&self`. A sink holds the JS object, as its
+/// The generated code calls what takes `&self`. A sink holds the JS object, as its
 /// `source()` or in its `PipeCell`, and calls what takes `controller`.
 pub(crate) struct ReadableSinkController {
     /// Dangles once detached, which comes before the sink is freed.
-    sink: ControllerSink,
+    sink: AnyControlledSink,
     is_attached: Cell<bool>,
     /// The destination went away (peer abort, write error) before the source closed the controller.
     destination_closed: Cell<bool>,
@@ -527,7 +520,7 @@ impl ReadableSinkController {
         // SAFETY: the caller owns the live sink for this synchronous call.
         *unsafe { Self::from_controller(controller).sink.source() } =
             SourceHandle::JSController(controller);
-        let result = js::assign_to_stream(controller, stream);
+        let result = js::assign_to_stream(controller, global, stream);
         // Nothing will `end()` or `close()` the controller, and `Drop` would finalize a sink that its owner has freed.
         if result.to_error().is_some() {
             crate::dispatch::fold(Self::detach(controller, global));
@@ -555,11 +548,6 @@ impl ReadableSinkController {
         js::on_close(controller, global, reason, true)
     }
 
-    /// The sink can take more.
-    pub(crate) fn on_ready(controller: JSValue, global: &JSGlobalObject) -> JsResult<()> {
-        js::on_ready(controller, global)
-    }
-
     /// The first reason stays.
     pub(crate) fn set_fail_reason(controller: JSValue, global: &JSGlobalObject, reason: JSValue) {
         if js::fail_reason_get_cached(controller).is_none() {
@@ -573,7 +561,7 @@ impl ReadableSinkController {
         unsafe { self.wrapper_value() }
     }
 
-    fn sink(&self) -> Option<ControllerSink> {
+    fn sink(&self) -> Option<AnyControlledSink> {
         self.is_attached.get().then_some(self.sink)
     }
 
@@ -585,22 +573,22 @@ impl ReadableSinkController {
         // SAFETY: the sink is live for as long as the controller is attached.
         unsafe {
             match sink {
-                ControllerSink::File(sink) => {
+                AnyControlledSink::FileSink(sink) => {
                     SinkHandle::FileSink(BackRef::from_raw(sink.as_ptr()))
                 }
-                ControllerSink::HTMLRewriter(sink) => {
+                AnyControlledSink::RewriterPipe(sink) => {
                     SinkHandle::HTMLRewriter(BackRef::from_raw(sink.as_ptr()))
                 }
-                ControllerSink::HTTPResponse(sink) => {
+                AnyControlledSink::HTTPResponseSink(sink) => {
                     SinkHandle::HttpResponse(BackRef::from_raw_mut(sink.as_ptr()))
                 }
-                ControllerSink::HTTPSResponse(sink) => {
+                AnyControlledSink::HTTPSResponseSink(sink) => {
                     SinkHandle::HttpsResponse(BackRef::from_raw_mut(sink.as_ptr()))
                 }
-                ControllerSink::Network(sink) => {
+                AnyControlledSink::NetworkSink(sink) => {
                     SinkHandle::S3Upload(BackRef::from_raw_mut(sink.as_ptr()))
                 }
-                ControllerSink::FetchRequestBody(sink) => {
+                AnyControlledSink::FetchRequestBodySink(sink) => {
                     SinkHandle::FetchRequestBody(BackRef::from_raw_mut(sink.as_ptr()))
                 }
             }
@@ -610,35 +598,35 @@ impl ReadableSinkController {
     pub(crate) fn memory_cost(&self) -> usize {
         match self.sink() {
             None => 0,
-            Some(ControllerSink::File(sink)) => sink_memory_cost(sink),
-            Some(ControllerSink::HTMLRewriter(sink)) => sink_memory_cost(sink),
-            Some(ControllerSink::HTTPResponse(sink)) => sink_memory_cost(sink),
-            Some(ControllerSink::HTTPSResponse(sink)) => sink_memory_cost(sink),
-            Some(ControllerSink::Network(sink)) => sink_memory_cost(sink),
-            Some(ControllerSink::FetchRequestBody(sink)) => sink_memory_cost(sink),
+            Some(AnyControlledSink::FileSink(sink)) => sink_memory_cost(sink),
+            Some(AnyControlledSink::RewriterPipe(sink)) => sink_memory_cost(sink),
+            Some(AnyControlledSink::HTTPResponseSink(sink)) => sink_memory_cost(sink),
+            Some(AnyControlledSink::HTTPSResponseSink(sink)) => sink_memory_cost(sink),
+            Some(AnyControlledSink::NetworkSink(sink)) => sink_memory_cost(sink),
+            Some(AnyControlledSink::FetchRequestBodySink(sink)) => sink_memory_cost(sink),
         }
     }
 
     /// `None`: the destination went away, so `write()` and `flush()` report 0 bytes and the source can stop.
-    fn sink_unless_closed(&self, global: &JSGlobalObject) -> JsResult<Option<ControllerSink>> {
+    fn open_sink(&self, global: &JSGlobalObject) -> JsResult<Option<AnyControlledSink>> {
         if self.is_attached.get() || self.destination_closed.get() {
             return Ok(self.sink());
         }
         Err(throw_already_closed(
             global,
             match self.sink {
-                ControllerSink::File(_) => FileSink::NAME,
-                ControllerSink::HTMLRewriter(_) => RewriterPipe::NAME,
-                ControllerSink::HTTPResponse(_) => HTTPResponseSink::NAME,
-                ControllerSink::HTTPSResponse(_) => HTTPSResponseSink::NAME,
-                ControllerSink::Network(_) => NetworkSink::NAME,
-                ControllerSink::FetchRequestBody(_) => FetchRequestBodySink::NAME,
+                AnyControlledSink::FileSink(_) => FileSink::NAME,
+                AnyControlledSink::RewriterPipe(_) => RewriterPipe::NAME,
+                AnyControlledSink::HTTPResponseSink(_) => HTTPResponseSink::NAME,
+                AnyControlledSink::HTTPSResponseSink(_) => HTTPSResponseSink::NAME,
+                AnyControlledSink::NetworkSink(_) => NetworkSink::NAME,
+                AnyControlledSink::FetchRequestBodySink(_) => FetchRequestBodySink::NAME,
             },
         ))
     }
 
     /// `end()` and `close()` detach before they run any JS: the close handler can re-enter the event loop and free the sink (`handle_resolve_stream` -> `destroy_sink`).
-    fn take_sink(&self) -> Option<ControllerSink> {
+    fn take_sink(&self) -> Option<AnyControlledSink> {
         let sink = self.sink()?;
         self.is_attached.set(false);
         // `SourceHandle::JSController` does not root the controller, so from here on it must not fire. A sink that was assigned to another stream since holds the newer controller.
@@ -647,7 +635,7 @@ impl ReadableSinkController {
         if matches!(*source, SourceHandle::JSController(held) if held == self.this_value()) {
             source.clear();
         }
-        if let ControllerSink::HTMLRewriter(pipe) = sink {
+        if let AnyControlledSink::RewriterPipe(pipe) = sink {
             // SAFETY: as above.
             unsafe { pipe.as_ref() }.release_pump_ref();
         }
@@ -707,28 +695,37 @@ impl ReadableSinkController {
         let global = cx.global();
         let reason = error.map(JsLocal::to_js);
         let result = match sink {
-            ControllerSink::File(sink) => close_sink(sink, global, reason),
-            ControllerSink::HTMLRewriter(sink) => close_sink(sink, global, reason),
-            ControllerSink::HTTPResponse(sink) => close_sink(sink, global, reason),
-            ControllerSink::HTTPSResponse(sink) => close_sink(sink, global, reason),
-            ControllerSink::Network(sink) => close_sink(sink, global, reason),
-            ControllerSink::FetchRequestBody(sink) => close_sink(sink, global, reason),
+            AnyControlledSink::FileSink(sink) => close_sink(sink, global, reason),
+            AnyControlledSink::RewriterPipe(sink) => close_sink(sink, global, reason),
+            AnyControlledSink::HTTPResponseSink(sink) => close_sink(sink, global, reason),
+            AnyControlledSink::HTTPSResponseSink(sink) => close_sink(sink, global, reason),
+            AnyControlledSink::NetworkSink(sink) => close_sink(sink, global, reason),
+            AnyControlledSink::FetchRequestBodySink(sink) => close_sink(sink, global, reason),
         };
         self.detach_after(global, reason, result)
     }
 
+    /// The source failed.
+    pub(crate) fn close_with_error<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        reason: JsLocal<'a>,
+    ) -> JsResult<()> {
+        self.close(cx, Some(reason))
+    }
+
     pub(crate) fn flush(&self, cx: &mut JsScope<'_>, wait: Option<bool>) -> JsResult<JSValue> {
-        let Some(sink) = self.sink_unless_closed(cx.global())? else {
+        let Some(sink) = self.open_sink(cx.global())? else {
             return Ok(JSValue::js_number(0.0));
         };
         let cx = &cx.js_thread();
         match sink {
-            ControllerSink::File(sink) => flush_sink(sink, cx, wait),
-            ControllerSink::HTMLRewriter(sink) => flush_sink(sink, cx, wait),
-            ControllerSink::HTTPResponse(sink) => flush_sink(sink, cx, wait),
-            ControllerSink::HTTPSResponse(sink) => flush_sink(sink, cx, wait),
-            ControllerSink::Network(sink) => flush_sink(sink, cx, wait),
-            ControllerSink::FetchRequestBody(sink) => flush_sink(sink, cx, wait),
+            AnyControlledSink::FileSink(sink) => flush_sink(sink, cx, wait),
+            AnyControlledSink::RewriterPipe(sink) => flush_sink(sink, cx, wait),
+            AnyControlledSink::HTTPResponseSink(sink) => flush_sink(sink, cx, wait),
+            AnyControlledSink::HTTPSResponseSink(sink) => flush_sink(sink, cx, wait),
+            AnyControlledSink::NetworkSink(sink) => flush_sink(sink, cx, wait),
+            AnyControlledSink::FetchRequestBodySink(sink) => flush_sink(sink, cx, wait),
         }
     }
 
@@ -738,12 +735,12 @@ impl ReadableSinkController {
         };
         let cx = &cx.js_thread();
         let result = match sink {
-            ControllerSink::File(sink) => end_sink(sink, cx),
-            ControllerSink::HTMLRewriter(sink) => end_sink(sink, cx),
-            ControllerSink::HTTPResponse(sink) => end_sink(sink, cx),
-            ControllerSink::HTTPSResponse(sink) => end_sink(sink, cx),
-            ControllerSink::Network(sink) => end_sink(sink, cx),
-            ControllerSink::FetchRequestBody(sink) => end_sink(sink, cx),
+            AnyControlledSink::FileSink(sink) => end_sink(sink, cx),
+            AnyControlledSink::RewriterPipe(sink) => end_sink(sink, cx),
+            AnyControlledSink::HTTPResponseSink(sink) => end_sink(sink, cx),
+            AnyControlledSink::HTTPSResponseSink(sink) => end_sink(sink, cx),
+            AnyControlledSink::NetworkSink(sink) => end_sink(sink, cx),
+            AnyControlledSink::FetchRequestBodySink(sink) => end_sink(sink, cx),
         };
         self.detach_after(cx.global(), None, result)
     }
@@ -753,21 +750,21 @@ impl ReadableSinkController {
         cx: &mut JsScope<'_>,
         options: &ReadableSinkControllerStartOptions<'_>,
     ) -> JsResult<()> {
-        let Some(sink) = self.sink_unless_closed(cx.global())? else {
+        let Some(sink) = self.open_sink(cx.global())? else {
             return Ok(());
         };
         let cx = &cx.js_thread();
         let chunk_size = streams::Start::chunk_size(options.high_water_mark);
         match sink {
-            ControllerSink::File(sink) => {
+            AnyControlledSink::FileSink(sink) => {
                 let config = streams::Start::file_sink(&options.path, options.fd);
                 start_sink(sink, cx, config)
             }
-            ControllerSink::HTMLRewriter(sink) => start_sink(sink, cx, chunk_size),
-            ControllerSink::HTTPResponse(sink) => start_sink(sink, cx, chunk_size),
-            ControllerSink::HTTPSResponse(sink) => start_sink(sink, cx, chunk_size),
-            ControllerSink::Network(sink) => start_sink(sink, cx, chunk_size),
-            ControllerSink::FetchRequestBody(sink) => start_sink(sink, cx, chunk_size),
+            AnyControlledSink::RewriterPipe(sink) => start_sink(sink, cx, chunk_size),
+            AnyControlledSink::HTTPResponseSink(sink) => start_sink(sink, cx, chunk_size),
+            AnyControlledSink::HTTPSResponseSink(sink) => start_sink(sink, cx, chunk_size),
+            AnyControlledSink::NetworkSink(sink) => start_sink(sink, cx, chunk_size),
+            AnyControlledSink::FetchRequestBodySink(sink) => start_sink(sink, cx, chunk_size),
         }
     }
 
@@ -784,22 +781,22 @@ impl ReadableSinkController {
     }
 
     pub(crate) fn write<'a>(&self, cx: &mut JsScope<'a>, data: SinkChunk<'a>) -> JsResult<JSValue> {
-        let Some(sink) = self.sink_unless_closed(cx.global())? else {
+        let Some(sink) = self.open_sink(cx.global())? else {
             return Ok(JSValue::js_number(0.0));
         };
         match sink {
-            ControllerSink::File(sink) => write_chunk(sink, cx, data),
-            ControllerSink::HTMLRewriter(sink) => write_chunk(sink, cx, data),
-            ControllerSink::HTTPResponse(sink) => write_chunk(sink, cx, data),
-            ControllerSink::HTTPSResponse(sink) => write_chunk(sink, cx, data),
-            ControllerSink::Network(sink) => write_chunk(sink, cx, data),
-            ControllerSink::FetchRequestBody(sink) => write_chunk(sink, cx, data),
+            AnyControlledSink::FileSink(sink) => write_chunk(sink, cx, data),
+            AnyControlledSink::RewriterPipe(sink) => write_chunk(sink, cx, data),
+            AnyControlledSink::HTTPResponseSink(sink) => write_chunk(sink, cx, data),
+            AnyControlledSink::HTTPSResponseSink(sink) => write_chunk(sink, cx, data),
+            AnyControlledSink::NetworkSink(sink) => write_chunk(sink, cx, data),
+            AnyControlledSink::FetchRequestBodySink(sink) => write_chunk(sink, cx, data),
         }
     }
 
     /// `write` of bytes that are not in a JS object.
     pub(crate) fn write_bytes(&self, cx: &mut JsScope<'_>, bytes: &[u8]) -> JsResult<JSValue> {
-        if self.sink_unless_closed(cx.global())?.is_none() || bytes.is_empty() {
+        if self.open_sink(cx.global())?.is_none() || bytes.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }
         let written = self.handle().write(&Temporary(RawSlice::new(bytes)));
@@ -809,12 +806,12 @@ impl ReadableSinkController {
     /// The `sinkId` of a `FileSink` and a `NetworkSink` in `Sink.bind.ts` are these.
     pub(crate) fn get_sink_id(&self) -> u8 {
         match self.sink {
-            ControllerSink::File(_) => 2,
-            ControllerSink::HTMLRewriter(_) => 3,
-            ControllerSink::HTTPResponse(_) => 4,
-            ControllerSink::HTTPSResponse(_) => 5,
-            ControllerSink::Network(_) => 6,
-            ControllerSink::FetchRequestBody(_) => 7,
+            AnyControlledSink::FileSink(_) => 2,
+            AnyControlledSink::RewriterPipe(_) => 3,
+            AnyControlledSink::HTTPResponseSink(_) => 4,
+            AnyControlledSink::HTTPSResponseSink(_) => 5,
+            AnyControlledSink::NetworkSink(_) => 6,
+            AnyControlledSink::FetchRequestBodySink(_) => 7,
         }
     }
 }
@@ -826,12 +823,14 @@ impl Drop for ReadableSinkController {
         unsafe {
             match sink {
                 // Its controller holds no claim on it.
-                ControllerSink::File(sink) => FileSink::controller_finalize(sink.as_ptr()),
-                ControllerSink::HTMLRewriter(sink) => finalize_sink(sink),
-                ControllerSink::HTTPResponse(sink) => finalize_sink(sink),
-                ControllerSink::HTTPSResponse(sink) => finalize_sink(sink),
-                ControllerSink::Network(sink) => finalize_sink(sink),
-                ControllerSink::FetchRequestBody(sink) => finalize_sink(sink),
+                AnyControlledSink::FileSink(sink) => FileSink::controller_finalize(sink.as_ptr()),
+                AnyControlledSink::RewriterPipe(sink) => JsSinkType::finalize(sink.as_ptr()),
+                AnyControlledSink::HTTPResponseSink(sink) => JsSinkType::finalize(sink.as_ptr()),
+                AnyControlledSink::HTTPSResponseSink(sink) => JsSinkType::finalize(sink.as_ptr()),
+                AnyControlledSink::NetworkSink(sink) => JsSinkType::finalize(sink.as_ptr()),
+                AnyControlledSink::FetchRequestBodySink(sink) => {
+                    JsSinkType::finalize(sink.as_ptr())
+                }
             }
         }
     }

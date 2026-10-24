@@ -53,6 +53,7 @@ using WebCore::JSDirectStreamSource;
 using WebCore::JSNativeStreamSourceAdapter;
 using WebCore::JSPullIntoDescriptor;
 using WebCore::JSReadableByteStreamController;
+using WebCore::JSReadableSinkController;
 using WebCore::JSReadableStream;
 using WebCore::JSReadableStreamAsyncIterator;
 using WebCore::JSReadableStreamBYOBReader;

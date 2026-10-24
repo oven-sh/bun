@@ -17,7 +17,7 @@ use crate::generated_bindgen::file_sink::{
 };
 use crate::webcore::jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsError, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
-use crate::webcore::sink::{ControllerSink, ReadableSinkController};
+use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -1457,8 +1457,8 @@ impl crate::webcore::sink::JsSinkType for FileSink {
 }
 
 impl crate::webcore::sink::ControlledSink for FileSink {
-    fn controller_sink(this: core::ptr::NonNull<Self>) -> ControllerSink {
-        ControllerSink::File(this)
+    fn controller_sink(this: core::ptr::NonNull<Self>) -> AnyControlledSink {
+        AnyControlledSink::FileSink(this)
     }
     /// The JS pump's source failed, or `controller.close(error)`: a piped stream rejects with `reason`.
     unsafe fn close_with_error(

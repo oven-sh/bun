@@ -16,7 +16,7 @@ use crate::generated_bindgen::sink::{
     ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController,
 };
 use crate::webcore::blob::Any as AnyBlob;
-use crate::webcore::sink::{ControllerSink, ReadableSinkController};
+use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // scope statics renamed with `Log` suffix so they don't collide with
@@ -688,13 +688,8 @@ impl PipeCell {
     fn set_slots(&self, stream: JSValue, done: JSValue) {
         let Some(cell) = self.0.get() else { return };
         let global = VirtualMachine::get().global();
-        let stream = if stream.is_object() {
-            stream
-        } else {
-            JSValue::ZERO
-        };
         js_ReadableSinkController::pipe_stream_set_cached(cell, global, stream);
-        self.set_done(done);
+        js_ReadableSinkController::pipe_done_set_cached(cell, global, done);
     }
 
     /// The pipe is over: a controller the user still holds must not keep the stream or the promise alive.
@@ -743,11 +738,6 @@ impl PipeCell {
     pub(crate) fn set_done(&self, done: JSValue) {
         debug_assert!(self.0.has(), "no controller cell to hold the promise");
         if let Some(cell) = self.0.get() {
-            let done = if done.as_promise().is_some() {
-                done
-            } else {
-                JSValue::ZERO
-            };
             js_ReadableSinkController::pipe_done_set_cached(
                 cell,
                 VirtualMachine::get().global(),
@@ -966,7 +956,7 @@ impl SourceHandle {
                 if global.has_exception() {
                     return;
                 }
-                crate::dispatch::fold(ReadableSinkController::on_ready(cpp, global));
+                crate::dispatch::fold(js_ReadableSinkController::on_ready(cpp, global));
             }
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
@@ -2043,11 +2033,11 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
 }
 
 impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritable<SSL> {
-    fn controller_sink(this: NonNull<Self>) -> ControllerSink {
+    fn controller_sink(this: NonNull<Self>) -> AnyControlledSink {
         if SSL {
-            ControllerSink::HTTPSResponse(this.cast())
+            AnyControlledSink::HTTPSResponseSink(this.cast())
         } else {
-            ControllerSink::HTTPResponse(this.cast())
+            AnyControlledSink::HTTPResponseSink(this.cast())
         }
     }
 
@@ -2506,8 +2496,8 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
 }
 
 impl crate::webcore::sink::ControlledSink for NetworkSink {
-    fn controller_sink(this: NonNull<Self>) -> ControllerSink {
-        ControllerSink::Network(this)
+    fn controller_sink(this: NonNull<Self>) -> AnyControlledSink {
+        AnyControlledSink::NetworkSink(this)
     }
 
     unsafe fn close_with_error(

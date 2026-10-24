@@ -70,7 +70,7 @@ fn copy_of(text: &bun_core::String) -> bun_core::String {
     }
 }
 
-pub(crate) fn string_view_echo(text: &bun_core::String) -> bun_core::String {
+pub(crate) fn string_view_echo(text: &bun_core::StringView<'_>) -> bun_core::String {
     copy_of(text)
 }
 
@@ -1061,28 +1061,38 @@ impl TestMemberCalls {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        n: i32,
+        n: JsLocal<'a>,
         fail: bool,
     ) -> JsResult<JSValue> {
-        js_TestMemberCalls::run_in_cpp(this_value.to_js(), cx.global(), n, fail)
+        js_TestMemberCalls::run_in_cpp(this_value.to_js(), cx.global(), n.to_js(), fail)
     }
 
     pub(crate) fn note<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
-        _: &mut JsScope<'a>,
+        cx: &mut JsScope<'a>,
         value: JsLocal<'a>,
     ) -> JSValue {
-        js_TestMemberCalls::note_in_cpp(this_value.to_js(), value.to_js());
-        js_TestMemberCalls::note_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
+        js_TestMemberCalls::note_in_cpp(this_value.to_js(), cx.global(), value.to_js());
+        js_TestMemberCalls::noted_in_cpp(this_value.to_js(), cx.global())
     }
 
-    pub(crate) fn throw_from_cpp<'a>(
+    pub(crate) fn fail<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> JsResult<()> {
-        js_TestMemberCalls::throw_in_cpp(this_value.to_js(), cx.global())
+        js_TestMemberCalls::fail_in_cpp(this_value.to_js(), cx.global())
+    }
+
+    pub(crate) fn promise<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        value: JsLocal<'a>,
+    ) -> JSValue {
+        js_TestMemberCalls::promise_set_cached(this_value.to_js(), cx.global(), value.to_js());
+        js_TestMemberCalls::promise_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
     pub(crate) fn calls(&self) -> u32 {
@@ -1093,7 +1103,7 @@ impl TestMemberCalls {
         bytes.iter().map(|&byte| u32::from(byte)).sum()
     }
 
-    pub(crate) fn fail<'a>(&self, heap: &JsHeap<'a>) -> Result<(), bindgen::Error<'a>> {
+    pub(crate) fn fail_in_rust<'a>(&self, heap: &JsHeap<'a>) -> Result<(), bindgen::Error<'a>> {
         Err(heap.range_error(format_args!("thrown in Rust")))
     }
 }

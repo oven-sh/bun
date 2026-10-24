@@ -5,12 +5,13 @@ import {
   AnyType,
   asciiLiteral,
   Builtin,
-  type CalledFromRust,
+  ByteSpanType,
   type Capability,
   type ClassMember,
   ClassType,
   Constant,
   cppEmplace,
+  type CppMemberFunction,
   cppReturnIfFailed,
   DefaultType,
   DictionaryType,
@@ -29,6 +30,8 @@ import {
   OptionalType,
   type Origin,
   type OverloadDispatch,
+  pascalCase,
+  PrimitiveType,
   refusesNonObjects,
   rustIdent,
   type RustScope,
@@ -631,12 +634,16 @@ const cppHeldValue = (type: Type, variable: string) =>
 /** The C ABI copies an argument that does not fit two registers. */
 const isPassedByPointer = (type: Type) => type.layout().size > 16;
 
-/** Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns, or ends with the lines `finish` makes from that call. */
+/**
+ * Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns, or ends with the lines `finish` makes from that call.
+ * `parameters`: each argument is the `JSValue` of its name instead of the frame's, and a failed conversion returns `failure`.
+ */
 function cppCallBody(
   signature: Signature,
   symbol: string,
   leading: readonly string[] = [],
   finish = (call: string) => [`RELEASE_AND_RETURN(scope, ${call});`],
+  parameters?: { failure: string },
 ): string {
   const lines: string[] = [];
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
@@ -648,13 +655,15 @@ function cppCallBody(
     }
     const { holder, value } = cppHeldValue(type, `argument${i}`);
     lines.push(
-      isIfPassed(type)
-        ? `${holder} argument${i} = callFrame->argumentCount() > ${i} ? callFrame->uncheckedArgument(${i}) : JSC::JSValue();`
-        : `${holder} argument${i} = callFrame->argument(${i});`,
+      parameters
+        ? `${holder} argument${i} = ${name};`
+        : isIfPassed(type)
+          ? `${holder} argument${i} = callFrame->argumentCount() > ${i} ? callFrame->uncheckedArgument(${i}) : JSC::JSValue();`
+          : `${holder} argument${i} = callFrame->argument(${i});`,
     );
     const ctx = cppContext(lines, i, name, expected, value);
     readLast.push(...type.cppReadLast(`converted${i}`, value));
-    lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, "{}"));
+    lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, parameters?.failure ?? "{}"));
   });
   lines.push(...readLast);
   const args = signature.args.map(({ type }, i) => {
@@ -685,11 +694,12 @@ const cppExtern = (
 const symbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}__${member}`;
 const classSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Class__${member}`;
 const protoSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Prototype__${member}`;
-/** Of a function that is not a property. */
-const memberSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Member__${member}`;
+/** Of one of the class's `calledFromCpp` or `calledFromRust`. */
+const memberFunctionSymbolName = (type: ClassType, member: string) =>
+  `Bun__Bindgen__${type.name}MemberFunction__${member}`;
 const methodSymbolName = (type: ClassType, method: Method) => {
-  const fn = type.nativeFunctions.find(fn => fn.signatures.includes(method));
-  if (!fn) return memberSymbolName(type, method.name);
+  if (!method.isProperty) return memberFunctionSymbolName(type, method.name);
+  const fn = type.nativeFunctions.find(fn => fn.signatures.includes(method))!;
   return (method.receiver === "static" ? classSymbolName : protoSymbolName)(
     type,
     memberIdentifier(method.name) + overloadSuffix(fn, method),
@@ -700,13 +710,17 @@ const getterSymbolName = (type: ClassType, getter: Getter) =>
 const setterSymbolName = (type: ClassType, getter: Getter) =>
   `Bun__Bindgen__${type.name}${getter.isStatic ? "Class" : "Prototype"}Setter__${getter.name}`;
 
+/** Of an internal field that holds only cells of one class. */
+const internalFieldSetterSymbolName = (type: ClassType, field: string) => symbolName(type, `set${pascalCase(field)}`);
+
 const classSymbols = (type: ClassType) => [
   ...type.methods.map(method => methodSymbolName(type, method)),
-  ...type.calledFromRust.map(member => memberSymbolName(type, member.name)),
+  ...type.calledFromRust.map(member => memberFunctionSymbolName(type, member.name)),
   ...[...type.getters, ...type.staticGetters].flatMap(getter => [
     getterSymbolName(type, getter),
     setterSymbolName(type, getter),
   ]),
+  ...type.internalFieldClasses.keys().map(field => internalFieldSetterSymbolName(type, field)),
   classSymbolName(type, "construct"),
   classSymbolName(type, "finalize"),
 ];
@@ -731,48 +745,56 @@ function cppExtraMemorySize(type: ClassType, caller: "heapSnapshot" | "gc"): str
   ].join(" + ");
 }
 
-const cppParameters = (parameters: readonly { name: string; type: string }[]) =>
-  parameters.map(parameter => `${parameter.type} ${parameter.name}`).join(", ");
+/** Of an argument or a result that C++ and Rust pass as it is. */
+const cppMemberFunctionType = (type: Type) =>
+  type instanceof UnitType
+    ? "void"
+    : type instanceof PrimitiveType
+      ? type.cppType
+      : type instanceof ByteSpanType
+        ? "std::span<const uint8_t>"
+        : "JSC::JSValue";
 
-/** A member function that C++ calls: `globalObject`, then each argument as `cppCallBody` has it once converted. */
-const cppSignatureCalledFromCpp = (type: ClassType, method: Method, qualifier = "") =>
-  `${method.returns instanceof UnitType ? "void" : type.isPlainCall(method) ? implementationType(method.returns) : "JSC::JSValue"} ${qualifier}${method.name}(${cppParameters(
-    [
-      ...(type.isPlainCall(method) ? [] : [{ name: "globalObject", type: "JSC::JSGlobalObject*" }]),
-      ...method.args.map(({ name, type }) => ({
-        name,
-        type: `${implementationType(type)}${type.rustIsCopy && !isPassedByPointer(type) ? "" : "&"}`,
-      })),
-    ],
-  )})`;
+const takesGlobalObject = (method: Method) => method.isProperty || method.capability !== "none" || method.throws;
 
-const cppSignatureCalledFromRust = (member: CalledFromRust) =>
-  `${member.returnsValue ? "JSC::JSValue" : "void"} ${member.name}(${cppParameters(
-    member.args.map(({ name, type }) => ({ name, type: implementationType(type) })),
-  )})`;
+interface CppMemberFunctionSignature {
+  name: string;
+  returns: string;
+  takesGlobalObject: boolean;
+  parameters: readonly { name: string; type: string }[];
+}
+const cppSignatureCalledFromCpp = (method: Method): CppMemberFunctionSignature => ({
+  name: method.name,
+  returns:
+    method.isProperty && !(method.returns instanceof UnitType) ? "JSC::JSValue" : cppMemberFunctionType(method.returns),
+  takesGlobalObject: takesGlobalObject(method),
+  parameters: method.args.map(({ name, type }) => ({
+    name,
+    type: method.isProperty ? "JSC::JSValue" : cppMemberFunctionType(type),
+  })),
+});
+const cppSignatureCalledFromRust = (member: CppMemberFunction): CppMemberFunctionSignature => ({
+  name: member.name,
+  returns: member.returnsValue ? "JSC::JSValue" : "void",
+  takesGlobalObject: true,
+  parameters: member.args.map(({ name, type }) => ({ name, type: cppMemberFunctionType(type) })),
+});
+/** With `definedIn`, the first line of the definition. */
+const cppMemberFunction = (signature: CppMemberFunctionSignature, definedIn?: ClassType) =>
+  `${signature.returns} ${definedIn ? `${definedIn.cpp}::` : ""}${signature.name}(${[
+    ...(signature.takesGlobalObject ? [`JSC::JSGlobalObject*${definedIn ? " globalObject" : ""}`] : []),
+    ...signature.parameters.map(parameter => `${parameter.type} ${parameter.name}`),
+  ].join(", ")})${signature.takesGlobalObject ? "" : " const"}`;
 
 function cppMemberFunctionDeclarations(type: ClassType): string {
-  const inRust = type.methods
-    .filter(method => method.calledFromCpp)
-    .map(method => cppSignatureCalledFromCpp(type, method));
+  const inRust = type.methods.filter(method => method.calledFromCpp).map(cppSignatureCalledFromCpp);
   const inCpp = type.calledFromRust.map(cppSignatureCalledFromRust);
   return [
-    ...(inRust.length > 0
-      ? ["// Written in Rust. A JSValue is empty if it threw.", ...inRust.map(line => `${line};`), ""]
-      : []),
-    ...(inCpp.length > 0 ? ["// Written in C++, for Rust.", ...inCpp.map(line => `${line};`), ""] : []),
+    ...(inRust.length > 0 ? ["// Written in Rust. A JSValue is empty if it threw.", ...inRust, ""] : []),
+    ...(inCpp.length > 0 ? ["// Written in C++, for Rust.", ...inCpp, ""] : []),
   ]
-    .map(line => (line ? `    ${line}\n` : "\n"))
+    .map(line => (line === "" ? "\n" : `    ${typeof line === "string" ? line : `${cppMemberFunction(line)};`}\n`))
     .join("");
-}
-
-/** The header has a class before the types of its arguments. */
-function cppForwardDeclarations(type: ClassType): string {
-  const named = new Set<NamedType>();
-  for (const method of type.methods.filter(method => method.calledFromCpp))
-    for (const arg of method.args)
-      walk(arg.type, t => void ((t instanceof DictionaryType || t instanceof UnionType) && named.add(t)));
-  return [...named].map(t => `struct ${t.name};\n`).join("");
 }
 
 /** The cell: JSDestructibleObject | the internal fields | the pointer to the struct of a refCounted class, or the struct itself. */
@@ -785,8 +807,13 @@ extern "C" void ${classSymbolName(type, "finalize")}(void*);
 ${(["memoryCost", "estimatedSize"] as const)
   .filter(key => type[key])
   .map(key => `extern "C" size_t ${symbolName(type, key)}(void*);\n`)
-  .join("")}namespace Bun::Bindgen::Generated {
-${cppForwardDeclarations(type)}class JS${name}${type.final ? " final" : ""} : public JSC::JSDestructibleObject {
+  .join("")}${[...Map.groupBy(new Set(type.internalFieldClasses.values()), cpp => cpp.slice(0, cpp.lastIndexOf("::")))]
+    .map(
+      ([namespace, classes]) =>
+        `namespace ${namespace} {\n${classes.map(cpp => `class ${cpp.slice(namespace.length + 2)};\n`).join("")}}\n`,
+    )
+    .join("")}namespace Bun::Bindgen::Generated {
+class JS${name}${type.final ? " final" : ""} : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned classIndex = ${type.classIndex};
@@ -826,7 +853,7 @@ ${
     void* payload() { return this + 1; }`
 }
 
-${cppMemberFunctionDeclarations(type)}${type.internalFields.map(field => `    JSC::WriteBarrier<JSC::Unknown> m_${field};\n`).join("")}
+${cppMemberFunctionDeclarations(type)}${type.internalFields.map(field => `    JSC::WriteBarrier<${type.internalFieldClasses.get(field) ?? "JSC::Unknown"}> m_${field};\n`).join("")}
 ${type.final ? "private" : "protected"}:
     JS${name}(JSC::VM& vm, JSC::Structure* structure${refCounted ? ", void* wrapped" : ""})
         : Base(vm, structure)${refCounted ? "\n        , m_wrapped(wrapped)" : ""}
@@ -912,7 +939,7 @@ void ${cpp}::analyzeHeap(JSC::JSCell* cell, JSC::HeapAnalyzer& analyzer)
     auto* thisObject = uncheckedDowncast<${cpp}>(cell);
     analyzer.setWrappedObjectForCell(cell, thisObject->${payload});
     Base::analyzeHeap(cell, analyzer);
-${type.internalFields.map(field => `    Bun::Bindgen::analyzeInternalField(thisObject, analyzer, thisObject->m_${field}, ${asciiLiteral(field)});\n`).join("")}}
+${type.internalFields.map(field => `    Bun::Bindgen::analyzeInternalField(thisObject, analyzer, thisObject->m_${field}.get(), ${asciiLiteral(field)});\n`).join("")}}
 `;
 }
 
@@ -946,50 +973,65 @@ ${cppHostFunction(
 
 function cppCalledFromCpp(type: ClassType, method: Method): string {
   const symbol = methodSymbolName(type, method);
-  if (type.isPlainCall(method)) {
-    const returns = method.returns instanceof UnitType ? "void" : externType(method.returns);
+  const signature = cppSignatureCalledFromCpp(method);
+  const returnsNothing = method.returns instanceof UnitType;
+  if (method.isProperty)
     return `
-extern "C" ${returns} ${symbol}(${["void*", ...method.args.map(arg => externType(arg.type))].join(", ")});
-${cppSignatureCalledFromCpp(type, method, `${type.cpp}::`)}
+${cppMemberFunction(signature, type)}
 {
-    return ${symbol}(${[type.refCounted ? "wrapped()" : "payload()", ...method.args.map(arg => arg.name)].join(", ")});
+${cppPrologue}
+${cppCallBody(
+  method,
+  symbol,
+  ["this"],
+  call =>
+    returnsNothing ? ["scope.release();", `${call};`] : [`RELEASE_AND_RETURN(scope, JSC::JSValue::decode(${call}));`],
+  { failure: returnsNothing ? "void()" : "{}" },
+)}
 }
 `;
-  }
-  const lines: string[] = [];
-  const args = method.args.map(({ name, type }, i) => {
-    if (!isPassedByPointer(type)) return toExtern(name);
-    lines.push(`auto extern${i} = ${toExtern(name)};`);
-    return `&extern${i}`;
-  });
-  const call = `${symbol}(${["globalObject", "this", ...args].join(", ")})`;
-  lines.push(method.returns instanceof UnitType ? `${call};` : `return JSC::JSValue::decode(${call});`);
+  const isPrimitive = method.returns instanceof PrimitiveType;
+  const call = `${symbol}(${[
+    ...(signature.takesGlobalObject ? ["globalObject", "this"] : ["globalObject()", `const_cast<${type.cpp}*>(this)`]),
+    ...method.args.map(arg => toExtern(arg.name)),
+  ].join(", ")})`;
   return `
-${type.functionsOnlyForCpp.some(fn => fn.signatures.includes(method)) ? `${cppExtern(symbol, method, ["JSC::JSCell*"])}\n` : ""}${cppSignatureCalledFromCpp(type, method, `${type.cpp}::`)}
+${cppExtern(symbol, method, ["JSC::JSCell*"], isPrimitive ? signature.returns : undefined)}
+${cppMemberFunction(signature, type)}
 {
-${lines.map(line => `    ${line}`).join("\n")}
+    ${returnsNothing ? call : `return ${isPrimitive ? call : `JSC::JSValue::decode(${call})`}`};
 }
 `;
 }
 
-function cppCalledFromRust(type: ClassType, member: CalledFromRust): string {
-  const call = `thisObject->${member.name}(${member.args
-    .map(({ name, type }) => (type instanceof AnyType ? `JSC::JSValue::decode(${name})` : name))
-    .join(", ")})`;
+function cppInternalFieldSetterForRust(type: ClassType, field: string): string {
+  return `
+extern "C" void ${internalFieldSetterSymbolName(type, field)}(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value)
+{
+    auto* thisObject = uncheckedDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
+    Bun::Bindgen::setInternalField(JSC::getVM(globalObject), thisObject, thisObject->m_${field}, JSC::JSValue::decode(value));
+}
+`;
+}
+
+function cppCalledFromRust(type: ClassType, member: CppMemberFunction): string {
+  const call = `thisObject->${member.name}(${[
+    "globalObject",
+    ...member.args.map(({ name, type }) => (type instanceof AnyType ? `JSC::JSValue::decode(${name})` : name)),
+  ].join(", ")})`;
   const result = member.returnsValue ? `JSC::JSValue::encode(${call})` : call;
   return `
-extern "C" ${member.returnsValue ? "JSC::EncodedJSValue" : member.throws ? "bool" : "void"} ${memberSymbolName(type, member.name)}(${cppParameters(
-    [
-      { name: "thisValue", type: "JSC::EncodedJSValue" },
-      ...member.args.map(({ name, type }) => ({ name, type: externType(type) })),
-    ],
-  )})
+extern "C" ${member.returnsValue ? "JSC::EncodedJSValue" : member.throws ? "bool" : "void"} ${memberFunctionSymbolName(type, member.name)}(${[
+    "JSC::JSGlobalObject* globalObject",
+    "JSC::EncodedJSValue thisValue",
+    ...member.args.map(({ name, type }) => `${externType(type)} ${name}`),
+  ].join(", ")})
 {
     auto* thisObject = uncheckedDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));
 ${
   !member.throws
     ? `    ${member.returnsValue ? "return " : ""}${result};`
-    : `    auto scope = DECLARE_THROW_SCOPE(thisObject->vm());
+    : `    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
 ${
   member.returnsValue
     ? `    RELEASE_AND_RETURN(scope, ${result});`
@@ -1161,7 +1203,7 @@ ${type.nativeFunctions.map(fn => cppMethod(type, fn)).join("")}${type.methods
     .map(method => cppCalledFromCpp(type, method))
     .join(
       "",
-    )}${type.calledFromRust.map(member => cppCalledFromRust(type, member)).join("")}${type.getters.map(getter => cppGetter(type, getter)).join("")}${type.internalFieldAccessors.map(accessor => cppInternalFieldAccessor(type, accessor)).join("")}${type.staticGetters.map(getter => cppStaticGetter(type, getter)).join("")}
+    )}${type.calledFromRust.map(member => cppCalledFromRust(type, member)).join("")}${[...type.internalFieldClasses.keys()].map(field => cppInternalFieldSetterForRust(type, field)).join("")}${type.getters.map(getter => cppGetter(type, getter)).join("")}${type.internalFieldAccessors.map(accessor => cppInternalFieldAccessor(type, accessor)).join("")}${type.staticGetters.map(getter => cppStaticGetter(type, getter)).join("")}
 ${
   construct && !type.illegalConstructor
     ? `${
@@ -1419,6 +1461,7 @@ export function cppSource(file: SchemaFile): string {
     if (!(type instanceof ClassType)) continue;
     for (const used of type.signatureTypes) used.getHeaders(headers);
     if (type.builtins.length > 0) headers.add("WebCoreJSBuiltins.h");
+    for (const header of type.headers) headers.add(header);
   }
   headers.delete(`Generated${file.origin.namespace}.h`);
   const accepted = file.types.filter(type => type instanceof DictionaryType && type.accepted) as DictionaryType[];
@@ -1429,6 +1472,12 @@ export function cppSource(file: SchemaFile): string {
     ...file.types.flatMap(type => (type instanceof ClassType ? type.nativeFunctions : [])),
   ];
   if (functions.some(fn => fn.signatures[0].rejects)) systemHeaders.push("JavaScriptCore/JSPromise.h");
+  for (const type of file.types)
+    if (type instanceof ClassType)
+      for (const cpp of type.internalFieldClasses.values()) {
+        const header = `JavaScriptCore/${cpp.slice("JSC::".length)}.h`;
+        if (cpp.startsWith("JSC::") && !systemHeaders.includes(header)) systemHeaders.push(header);
+      }
   if (file.types.some(type => type instanceof ClassType)) systemHeaders.unshift("JavaScriptCore/HeapAnalyzer.h");
   if (accepted.some(type => !type.allowArray)) systemHeaders.unshift("JavaScriptCore/ArrayConstructor.h");
   if (file.namespaces.length > 0) systemHeaders.push("JavaScriptCore/ObjectConstructor.h");
@@ -1800,15 +1849,6 @@ ${
   }
 
   for (const method of type.methods) {
-    if (type.isPlainCall(method)) {
-      thunks += `
-#[unsafe(no_mangle)]
-pub extern "C" fn ${methodSymbolName(type, method)}(${[`this: &${method.receiver === "mut" ? "mut " : ""}${rustPath}`, ...rustExternParameters(method, scope)].join(", ")})${method.returns instanceof UnitType ? "" : ` -> ${method.returns.rustExternType(scope)}`} {
-    <${rustPath}>::${method.rustName}(${["this", ...rustArguments(method)].join(", ")})
-}
-`;
-      continue;
-    }
     const isStatic = method.receiver === "static";
     const call = `<${rustPath}>::${method.rustName}(${[
       ...leading(method.receiver, method.passThis, method.capability),
@@ -1817,9 +1857,16 @@ pub extern "C" fn ${methodSymbolName(type, method)}(${[`this: &${method.receiver
     thunks += rustThunk(
       methodSymbolName(type, method),
       [...(isStatic ? [] : ["this: *mut core::ffi::c_void"]), ...rustExternParameters(method, scope)],
-      "JSValue",
-      `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope)}let result = ${infallible(call, method.throws, method.returns)};
+      ...((!method.isProperty && method.returns instanceof PrimitiveType
+        ? [
+            method.returns.rustType(),
+            `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope)}${call}`,
+          ]
+        : [
+            "JSValue",
+            `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope)}let result = ${infallible(call, method.throws, method.returns)};
 bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("value", scope)})`,
+          ]) as [string, string]),
     );
   }
 
@@ -1957,7 +2004,7 @@ function rustForModule(type: ClassType, scope: RustScope): string {
   if (!type.sharedThis && type.internalFields.length === 0 && !type.construct && type.calledFromRust.length === 0)
     return "";
   const fromJS = symbolName(type, "fromJS");
-  const rustParameters = (member: CalledFromRust) =>
+  const rustParameters = (member: CppMemberFunction) =>
     member.args.map(
       arg => `${rustArgumentName(arg)}: ${arg.type instanceof AnyType ? "JSValue" : arg.type.rustType(scope)}`,
     );
@@ -1971,10 +2018,15 @@ ${
         ? `
     safe fn ${fromJS}Direct(value: JSValue) -> *mut core::ffi::c_void;`
         : ""
-    }${type.calledFromRust
+    }${[...type.internalFieldClasses.keys()]
+      .map(
+        field => `
+    fn ${internalFieldSetterSymbolName(type, field)}(global: &JSGlobalObject, this_value: JSValue, value: JSValue);`,
+      )
+      .join("")}${type.calledFromRust
       .map(
         member => `
-    fn ${memberSymbolName(type, member.name)}(${["this_value: JSValue", ...rustParameters(member)].join(", ")})${member.returnsValue ? " -> JSValue" : member.throws ? " -> bool" : ""};`,
+    fn ${memberFunctionSymbolName(type, member.name)}(${["global: &JSGlobalObject", "this_value: JSValue", ...rustParameters(member)].join(", ")})${member.returnsValue ? " -> JSValue" : member.throws ? " -> bool" : ""};`,
       )
       .join("")}
 }`
@@ -2019,6 +2071,7 @@ ${
     .map((field, index) => {
       const id = snakeCase(field);
       const offset = offsetOfInternalField(index);
+      const cpp = type.internalFieldClasses.get(field);
       return `    /// \`None\` if the field is empty.
     #[inline]
     pub fn ${id}_get_cached(this_value: JSValue) -> Option<JSValue> {
@@ -2026,11 +2079,11 @@ ${
         ${safety}
         unsafe { bindgen::internal_field_at(this_value, ${offset}) }
     }
-    #[inline]
+${cpp ? `    /// What is not a \`${cpp}\` empties it.\n` : ""}    #[inline]
     pub fn ${id}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         debug_assert!(!${fromJS}(this_value).is_null());
         ${safety}
-        unsafe { bindgen::set_internal_field_at(this_value, global, ${offset}, value) }
+        unsafe { ${cpp ? `${internalFieldSetterSymbolName(type, field)}(global, this_value, value)` : `bindgen::set_internal_field_at(this_value, global, ${offset}, value)`} }
     }
     /// Reads and clears it.
     #[inline]
@@ -2042,12 +2095,12 @@ ${
     })
     .join("\n")}${type.calledFromRust
     .map(member => {
-      const call = `${memberSymbolName(type, member.name)}(${["this_value", ...member.args.map(rustArgumentName)].join(", ")})`;
+      const call = `${memberFunctionSymbolName(type, member.name)}(${["global", "this_value", ...member.args.map(rustArgumentName)].join(", ")})`;
       const returns = member.returnsValue ? "JSValue" : "()";
       return `
     /// \`${type.cpp.split("::").at(-1)}::${member.name}\`
     #[inline]
-    pub fn ${snakeCase(member.name)}(${["this_value: JSValue", ...(member.throws ? ["global: &JSGlobalObject"] : []), ...rustParameters(member)].join(", ")})${member.throws ? ` -> bun_jsc::JsResult<${returns}>` : member.returnsValue ? " -> JSValue" : ""} {
+    pub fn ${snakeCase(member.name)}(${["this_value: JSValue", "global: &JSGlobalObject", ...rustParameters(member)].join(", ")})${member.throws ? ` -> bun_jsc::JsResult<${returns}>` : member.returnsValue ? " -> JSValue" : ""} {
         debug_assert!(!${fromJS}(this_value).is_null());
         // SAFETY: \`this_value\` is an instance.
         ${

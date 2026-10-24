@@ -978,12 +978,14 @@ describe.concurrent("an async-iterable body that ends by itself", () => {
   // Nothing of a finished body hangs on what return() gave back: one promise that stays pending
   // for the life of the process does not keep the bodies that shared it. text() and arrayBuffer()
   // reach return() from two different places in the pump.
-  test.each(["text", "arrayBuffer"])("is not kept alive by a return() whose promise stays pending: %s()", async consume => {
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `import { heapStats } from "bun:jsc";
+  test.each(["text", "arrayBuffer"])(
+    "is not kept alive by a return() whose promise stays pending: %s()",
+    async consume => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { heapStats } from "bun:jsc";
          const pending = new Promise(() => {});
          const body = () => {
            const chunks = ["chunk"];
@@ -1000,19 +1002,20 @@ describe.concurrent("an async-iterable body that ends by itself", () => {
          Bun.gc(true);
          Bun.gc(true);
          console.log(JSON.stringify({ read, kept: heapStats().objectTypeCounts.AsyncIteratorSourceOperation ?? 0 }));`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const { read, kept } = JSON.parse(stdout);
-    expect(read).toBe(500);
-    // 100 without the fix. Not an exact 0: the count is taken from a live heap.
-    expect(kept).toBeLessThan(10);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  });
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { read, kept } = JSON.parse(stdout);
+      expect(read).toBe(500);
+      // 100 without the fix. Not an exact 0: the count is taken from a live heap.
+      expect(kept).toBeLessThan(10);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // The iterator failed by itself. Like `for await`, nothing more is called on it.

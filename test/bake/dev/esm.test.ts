@@ -453,6 +453,40 @@ devTest("browser field is used", {
   },
 });
 
+devTest("browser field is used when it is a string", {
+  files: {
+    // The runtime reads the package.json first, and its main fields do not include "browser".
+    "bunfig.toml": `
+      preload = [
+        "axios",
+      ]
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "node_modules/axios/package.json": JSON.stringify({
+      name: "axios",
+      version: "1.0.0",
+      main: "./lib/node.js",
+      browser: "./lib/browser.js",
+    }),
+    "node_modules/axios/lib/node.js": `
+      export default "FAIL";
+    `,
+    "node_modules/axios/lib/browser.js": `
+      export default "PASS";
+    `,
+    "index.ts": `
+      import axios from "axios";
+      console.log(axios);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+
 devTest("browser console forwarding strips terminal control bytes", {
   files: {
     "index.html": emptyHtmlFile({

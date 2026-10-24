@@ -1,4 +1,5 @@
 use bun_ast as js_ast;
+use bun_ast::Target;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_core::StackCheck;
@@ -45,7 +46,8 @@ pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
 // borrow kept alive by `PackageJSON::source_contents` (the owning field).
 type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
-type MainFieldMap = StringMap;
+// A slot per `Target::MAIN_FIELD_NAMES`: a string value in the source buffer or the tape, or empty.
+type MainFields = [js_ast::E::Str; Target::MAIN_FIELD_NAMES.len()];
 
 #[derive(Default)]
 pub struct DependencyMap {
@@ -85,7 +87,10 @@ pub struct PackageJSON {
     /// field is what keeps that borrow — and the map values above — alive.)
     pub(crate) source_contents: Box<[u8]>,
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
-    pub(crate) main_fields: MainFieldMap,
+    /// Not only those of the resolver that parses: every resolver shares this, and has its own list.
+    pub(crate) main_fields: MainFields,
+    /// The rows of the root object in `json_tape`. `main_field` finds any other name there.
+    pub(crate) root_rows: core::ops::Range<u32>,
     pub module_type: ModuleType,
     pub version: Box<[u8]>,
 
@@ -145,7 +150,8 @@ impl Default for PackageJSON {
             source: bun_ast::Source::default(),
             source_contents: Box::default(),
             json_tape: None,
-            main_fields: MainFieldMap::default(),
+            main_fields: MainFields::default(),
+            root_rows: 0..0,
             module_type: ModuleType::default(),
             version: Box::default(),
             scripts: None,
@@ -210,12 +216,54 @@ impl PackageJSON {
         })
     }
 
+    /// The file that the main field `name` gives. A resolver asks for the names of its own list.
+    pub(crate) fn main_field(&self, name: &[u8]) -> Option<&[u8]> {
+        let file = match default_main_field(name) {
+            Some(slot) => self.main_fields[slot].slice(),
+            None => self.main_field_outside_defaults(name),
+        };
+        (!file.is_empty()).then_some(file)
+    }
+
+    /// Only `--main-fields` gives a resolver such a name, so it has no slot.
+    #[cold]
+    #[inline(never)]
+    fn main_field_outside_defaults(&self, name: &[u8]) -> &[u8] {
+        let Some(tape) = self.json_tape.as_deref() else {
+            return b"";
+        };
+        string_property(tape.properties(self.root_rows.clone()), name).slice()
+    }
+
+    /// Returns true if `main_field` finds one of `Target::MAIN_FIELD_NAMES`.
+    pub(crate) fn has_default_main_field(&self) -> bool {
+        self.main_fields.iter().any(|file| !file.is_empty())
+    }
+
     /// Normalize path separators to forward slashes for glob matching
     /// This is needed because glob patterns use forward slashes but Windows uses backslashes
     fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
         let mut normalized = path.to_vec();
         bun_paths::slashes_to_posix_in_place(&mut normalized[..]);
         Ok(normalized)
+    }
+}
+
+/// The slot of `name` in `PackageJSON::main_fields`.
+fn default_main_field(name: &[u8]) -> Option<usize> {
+    Target::MAIN_FIELD_NAMES
+        .iter()
+        .position(|default| default.as_bytes() == name)
+}
+
+/// The value of the first of `rows` that has the key `name`, when it is a string. Else empty.
+fn string_property(rows: &[js_ast::E::PropertyJSON], name: &[u8]) -> js_ast::E::Str {
+    match rows.iter().find(|row| row.key.slice() == name) {
+        Some(js_ast::E::PropertyJSON {
+            value: js_ast::E::JsonValue::String(value),
+            ..
+        }) => *value,
+        _ => js_ast::E::Str::EMPTY,
     }
 }
 
@@ -506,12 +554,13 @@ impl PackageJSON {
         };
         let json: js_ast::Expr = parsed_json.root;
 
-        if !json.is_object() {
+        let js_ast::ExprData::EObjectJSON(root) = &json.data else {
             // Invalid package.json in node_modules is noisy.
             // Let's just ignore it.
             // (allocator.free dropped — entry.contents owned by `entry`)
             return None;
-        }
+        };
+        let root = root.get();
 
         let mut package_json = PackageJSON {
             name: Box::default(),
@@ -524,7 +573,8 @@ impl PackageJSON {
             json_tape: None,
             module_type: ModuleType::Unknown,
             browser_map: BrowserMap::default(),
-            main_fields: MainFieldMap::default(),
+            main_fields: MainFields::default(),
+            root_rows: root.rows(),
             scripts: None,
             config: None,
             package_manager_package_id: INVALID_PACKAGE_ID,
@@ -594,18 +644,14 @@ impl PackageJSON {
         }
 
         // Read the "main" fields
-        for main in r.opts.main_fields.iter() {
-            if let Some(main_json) = json.as_property(main) {
-                let expr: &js_ast::Expr = &main_json.expr;
-
-                if let Some(str) = expr.as_utf8_string_literal() {
-                    if !str.is_empty() {
-                        package_json
-                            .main_fields
-                            .put(main, Box::from(str))
-                            .expect("unreachable");
-                    }
-                }
+        for (file, name) in package_json
+            .main_fields
+            .iter_mut()
+            .zip(Target::MAIN_FIELD_NAMES)
+        {
+            // The lookup of the "browser" property below stores the one that is a string.
+            if name != "browser" {
+                *file = string_property(root.properties(), name.as_bytes());
             }
         }
 
@@ -682,6 +728,10 @@ impl PackageJSON {
                             }
                         }
                     }
+                } else if let Some(file) = browser_prop.expr.as_utf8_string_literal()
+                    && let Some(slot) = default_main_field(b"browser")
+                {
+                    package_json.main_fields[slot] = js_ast::E::Str::new(file);
                 }
             }
         }

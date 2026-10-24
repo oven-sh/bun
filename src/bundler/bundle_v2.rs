@@ -2045,6 +2045,8 @@ pub mod bv2_impl {
             // Re-project the resolver subset now that `target`/`conditions` etc.
             // have been overwritten for the browser.
             boxed.sync_resolver_opts();
+            // The list above is the default of a browser, whatever `--main-fields` gave the server.
+            boxed.resolver.opts.main_fields_is_default = true;
             boxed.resolver.env_loader = NonNull::new(this_env.cast());
 
             // Park the owning Box first, then derive both the published `NonNull`

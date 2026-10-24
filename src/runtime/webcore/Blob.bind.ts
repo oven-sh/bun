@@ -57,5 +57,10 @@ export const BunWriteOptions = b.dictionary(
   { createPath: b.bool.emptyStringAsNull, mode: b.f64.nullable },
   { allowArray: true, fromJS: true, reportedAs: "options" },
 );
+/** The `mode` that `BunFile.prototype.write` reads of its options. It does not read one for an S3 file. */
+export const BunWriteMode = b.dictionary(
+  { mode: b.f64.nullable },
+  { allowArray: true, fromJS: true, reportedAs: "options" },
+);
 /** `options` is also what a write to S3 takes. */
 export const write = b.fn({ ...method, args: { destination: b.any, data: b.any, options: b.any } });

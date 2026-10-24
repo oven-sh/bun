@@ -418,6 +418,15 @@ describe("Bun.deepEquals strict mode", () => {
     expect(deepEquals(new String("a"), new S("a"), true, true)).toBe(true);
   });
 
+  it("tells Headers and URLSearchParams from another class when the fourth argument is true", () => {
+    // The fourth argument is not in the public types.
+    const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+    expect(deepEquals(new Headers(), new FormData(), true, true)).toBe(false);
+    expect(deepEquals(new FormData(), new Headers(), true, true)).toBe(false);
+    expect(deepEquals(new URLSearchParams(), new Bun.CookieMap(), true, true)).toBe(false);
+    expect(deepEquals(new Bun.CookieMap(), new URLSearchParams(), true, true)).toBe(false);
+  });
+
   it("is symmetric", () => {
     const a = { entries: [1, 2] };
     const b = { entries: [1, 2], extra: undefined };

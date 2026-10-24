@@ -53,3 +53,40 @@ test("--update-snapshots keeps the old file until the new contents are written",
   expect(await update({ FAIL: "1" })).toEqual({ exitCode: 1, snap: before });
   expect(await update({})).toEqual({ exitCode: 0, snap: header + '\nexports[`one 1`] = `"new"`;\n' });
 });
+
+test("property matchers compare the entries of Headers and URLSearchParams", async () => {
+  const source = `
+    import { test, expect } from "bun:test";
+    test("Headers with another value", () => {
+      expect({ h: new Headers({ a: "1" }) }).toMatchSnapshot({ h: new Headers({ a: "2" }) });
+    });
+    test("URLSearchParams with another value", () => {
+      expect({ p: new URLSearchParams("a=1") }).toMatchInlineSnapshot({ p: new URLSearchParams("a=2") });
+    });
+    test("the same entries", () => {
+      expect({ h: new Headers({ a: "1" }) }).toMatchSnapshot({ h: new Headers({ a: "1" }) });
+    });
+  `;
+  using dir = tempDir("snapshot-property-matcher-entries", { "a.test.ts": source });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test"],
+    cwd: String(dir),
+    env: { ...bunEnv, CI: "false" },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const snap = fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8");
+  expect({
+    mismatches: stderr.split("Expected propertyMatchers to match properties from received object").length - 1,
+    // A matcher that fails writes no snapshot, beside the test file or into it.
+    snapshots: Array.from(snap.matchAll(/^exports\[`(.*)`\]/gm), match => match[1]),
+    source: fs.readFileSync(`${dir}/a.test.ts`, "utf8"),
+    exitCode,
+  }).toEqual({
+    mismatches: 2,
+    snapshots: ["the same entries 1"],
+    source,
+    exitCode: 1,
+  });
+});

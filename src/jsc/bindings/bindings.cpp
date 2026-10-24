@@ -1387,6 +1387,23 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     return std::nullopt;
 }
 
+// Headers and URLSearchParams keep their entries in a native list that no property shows.
+// True when the two cannot be equal. False is no verdict: the caller still compares the properties.
+// Not inlined: Bun__deepMatch recurses, and the locals of the comparison stay out of its frame.
+static NEVER_INLINE bool wrapperEntriesMismatch(JSCell* a, JSCell* b, bool isStrict)
+{
+    if (auto* params = dynamicDowncast<JSURLSearchParams>(a)) {
+        auto* otherParams = dynamicDowncast<JSURLSearchParams>(b);
+        return otherParams ? !params->wrapped().entriesEqual(otherParams->wrapped()) : isStrict;
+    }
+    if (auto* headers = dynamicDowncast<JSFetchHeaders>(a)) {
+        auto* otherHeaders = dynamicDowncast<JSFetchHeaders>(b);
+        return otherHeaders ? headers->wrapped().internalHeaders() != otherHeaders->wrapped().internalHeaders() : isStrict;
+    }
+    // toStrictEqual: one of these classes never equals a value of another class.
+    return isStrict && (b->inherits<JSURLSearchParams>() || b->inherits<JSFetchHeaders>());
+}
+
 struct DeepEqualsMode {
     bool isStrict;
     bool enableAsymmetricMatchers;
@@ -1839,50 +1856,8 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             // It's complicated because it involves Blob.
 
             // node compares no entries of URLSearchParams or Headers. Bun compares them in every mode.
-            {
-                auto urlSearchParams1 = dynamicDowncast<JSURLSearchParams>(c1);
-                auto urlSearchParams2 = dynamicDowncast<JSURLSearchParams>(c2);
-                if (urlSearchParams1 && urlSearchParams2) {
-                    if (!urlSearchParams1->wrapped().entriesEqual(urlSearchParams2->wrapped())) {
-                        return false;
-                    }
-
-                    goto compareAsNormalValue;
-                } else {
-                    if (mode.isStrict) {
-                        // if one is a URLSearchParams and the other is not a URLSearchParams, toStrictEqual should return false.
-                        if ((urlSearchParams2 == nullptr) != (urlSearchParams1 == nullptr)) {
-                            return false;
-                        }
-                    } else {
-                        if ((urlSearchParams1 == nullptr) != (urlSearchParams2 == nullptr)) {
-                            goto compareAsNormalValue;
-                        }
-                    }
-                }
-            }
-
-            {
-                auto headers1 = dynamicDowncast<JSFetchHeaders>(c1);
-                auto headers2 = dynamicDowncast<JSFetchHeaders>(c2);
-                if (headers1 && headers2) {
-                    if (headers1->wrapped().internalHeaders() != headers2->wrapped().internalHeaders()) {
-                        return false;
-                    }
-
-                    goto compareAsNormalValue;
-                } else {
-                    if (mode.isStrict) {
-                        // if one is a FetchHeaders and the other is not a FetchHeaders, toStrictEqual should return false.
-                        if ((headers2 == nullptr) != (headers1 == nullptr)) {
-                            return false;
-                        }
-                    } else {
-                        if ((headers1 == nullptr) != (headers2 == nullptr)) {
-                            goto compareAsNormalValue;
-                        }
-                    }
-                }
+            if (wrapperEntriesMismatch(c1, c2, mode.isStrict)) {
+                return false;
             }
         }
 
@@ -2200,6 +2175,14 @@ bool Bun__deepMatch(
     if (objValue == subsetValue) return true;
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
+
+    // Two Headers or two URLSearchParams: no name collected below shows their entries, so compare them as toEqual does.
+    // The sample of expect.objectContaining stays a subset of properties, as in Jest.
+    uint8_t patternType = subsetObj->type();
+    if ((patternType == JSDOMWrapperType || patternType == JSAsJSONType) && !isMatchingObjectContaining) {
+        if (wrapperEntriesMismatch(subsetObj, obj, /* isStrict */ false))
+            return false;
+    }
 
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);

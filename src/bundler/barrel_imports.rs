@@ -205,13 +205,12 @@ fn apply_barrel_optimization_impl(
         }
     }
 
-    // When HMR is active, ConvertESMExportsForHmr deduplicates import records
-    // by path — two `export { ... } from './utils.js'` blocks get merged into
-    // one record. The surviving record might be the one barrel optimization
-    // would mark as unused (its exports not needed), while the other record
-    // (whose exports ARE needed) gets marked unused by HMR dedup. To prevent
-    // both records from ending up unused, promote needed_records to cover ALL
-    // import records that share a path with any needed record.
+    // Dev server: a re-export is deferred only while no other statement of this
+    // file loads its path. A hot update that starts to use another name of a
+    // loaded module then finds it bound, and a barrel that defers nothing here
+    // is not registered to be parsed and sent again in each build.
+    // `un_defer_same_path` keeps the names bound for a request that arrives
+    // after the barrel is parsed.
     if dev_handle.is_some() {
         // Collect paths of needed records.
         let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::default();
@@ -222,6 +221,26 @@ fn apply_barrel_optimization_impl(
                     ast.import_records.as_slice()[*rec_idx as usize].path.text,
                     (),
                 )?;
+            }
+        }
+
+        // A statement that re-exports no name is never deferred.
+        let mut re_exports = AutoBitSet::init_empty(ast.import_records.len())?;
+        for entry in ast.named_exports.values() {
+            if let Some(imp) = ast.named_imports.get(&entry.ref_) {
+                if (imp.import_record_index as usize) < ast.import_records.len() {
+                    re_exports.set(imp.import_record_index as usize);
+                }
+            }
+        }
+        for (idx, record) in ast.import_records.as_slice().iter().enumerate() {
+            if !re_exports.is_set(idx)
+                && record.kind == ImportKind::Stmt
+                && !record
+                    .flags
+                    .intersects(import_record::Flags::IS_UNUSED | import_record::Flags::IS_INTERNAL)
+            {
+                needed_paths.put(record.path.text, ())?;
             }
         }
 
@@ -299,7 +318,7 @@ fn apply_barrel_optimization_impl(
 
 /// Make a record that `apply_barrel_optimization` deferred live again. Returns true if the
 /// record was un-deferred. A record that is is_unused for another reason (an unused
-/// TypeScript import, a macro import, an HMR duplicate) is not deferred and stays as it is.
+/// TypeScript import, a macro import) is not deferred and stays as it is.
 fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) -> bool {
     if record_idx >= import_records.len() {
         return false;
@@ -311,6 +330,26 @@ fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) 
     rec.flags
         .remove(import_record::Flags::IS_UNUSED | import_record::Flags::IS_BARREL_DEFERRED);
     true
+}
+
+/// Dev server: `record_idx` just went live. The other deferred re-exports of its path
+/// go live with it, see `apply_barrel_optimization`. `went_live` gets every record that
+/// is live because of this request, in ascending order.
+fn un_defer_same_path(
+    import_records: &mut import_record::List,
+    record_idx: u32,
+    went_live: &mut Vec<u32>,
+) {
+    // A record that was deferred is not resolved yet: its path is the specifier.
+    let specifier = import_records.as_slice()[record_idx as usize].path.text;
+    for idx in 0..import_records.len() {
+        if idx == record_idx as usize
+            || (import_records.as_slice()[idx].path.text == specifier
+                && un_defer_record(import_records, idx))
+        {
+            went_live.push(idx as u32);
+        }
+    }
 }
 
 /// The record's patched source_index, or (dev server, where indices are left
@@ -479,33 +518,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // so we can detect bare imports (those with no specific export bindings).
     let mut named_ir_indices = AutoBitSet::init_empty(file_import_records.len())?;
 
-    // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
-    // two `import { X } from 'mod'` statements become one, and the second
-    // record is marked is_unused=true. resolveImportRecords then skips those
-    // records, so their path.text stays as the raw specifier while the
-    // surviving record's path.text becomes the resolved absolute path.
-    // named_imports entries created for the dedup'd record still point at
-    // its index, so the direct path lookup below fails for those entries.
-    // Build a fallback: raw specifier → surviving record's resolved path
-    // text, using non-unused records in this file. See #28886.
-    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
-    if dev_handle.is_some() {
-        for ir_probe in file_import_records.as_slice() {
-            if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
-                || ir_probe.flags.contains(import_record::Flags::IS_INTERNAL)
-            {
-                continue;
-            }
-            if ir_probe.original_path.is_empty() {
-                continue;
-            }
-            if ir_probe.original_path == ir_probe.path.text {
-                continue;
-            }
-            dedup_fallback.put(ir_probe.original_path, ir_probe.path.text)?;
-        }
-    }
-
     // Read-only deref — valid through Phase 2 (see the raw-read note above).
     for ni in file_named_imports.values() {
         if ni.import_record_index as usize >= file_import_records.len() {
@@ -522,25 +534,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
         // and other code (IncrementalGraph, printer) depends on that.
-        // For dedup'd HMR records (is_unused), fall back to a sibling's
-        // resolved path text since the record itself still has the raw
-        // specifier in path.text.
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
-        } else {
-            ir.path.text
-        };
-        let target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let Some(target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
 
@@ -558,7 +552,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }
             // Persist the export request on DevServer so it survives across builds.
             if let Some(dev) = dev_handle {
-                persist_barrel_export(&dev, resolved_path_text, alias);
+                persist_barrel_export(&dev, ir.path.text, alias);
             }
         }
     }
@@ -618,22 +612,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
             continue;
         }
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
-        } else {
-            ir.path.text
-        };
-        let ir_target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let Some(ir_target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
 
@@ -758,6 +737,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     let initial_queue_len = queue.len();
 
     let mut newly_scheduled: i32 = 0;
+    let mut same_path: Vec<u32> = Vec::new();
     let mut qi: usize = 0;
     while qi < queue.len() {
         // Copy item fields out before pushing to `queue` later (borrowck).
@@ -931,12 +911,21 @@ pub(crate) fn schedule_barrel_deferred_imports(
             continue;
         };
 
+        let record_idx = resolution.import_record_index;
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
-        let went_live = un_defer_record(barrel_ir, resolution.import_record_index as usize);
-        if went_live {
+        same_path.clear();
+        // The records that this request takes from deferred to live.
+        let went_live: &[u32] = if !un_defer_record(barrel_ir, record_idx as usize) {
+            &[]
+        } else if dev_handle.is_some() {
+            un_defer_same_path(barrel_ir, record_idx, &mut same_path);
+            &same_path
+        } else {
+            core::slice::from_ref(&record_idx)
+        };
+        if !went_live.is_empty() {
             // Resolve now: propagation below needs the source index.
-            newly_scheduled +=
-                resolve_barrel_records(this, barrel_idx, &[resolution.import_record_index]);
+            newly_scheduled += resolve_barrel_records(this, barrel_idx, went_live);
         }
 
         // `original_alias` is an arena-backed `StoreStr` valid for the
@@ -945,11 +934,15 @@ pub(crate) fn schedule_barrel_deferred_imports(
             Some(p) => p.slice(),
             None => alias,
         };
-        let rec_si = this.graph.ast.items_import_records()[barrel_idx as usize]
-            .as_slice()
-            .get(resolution.import_record_index as usize)
-            .map(|rec| rec.source_index);
-        if let Some(rec_si) = rec_si.filter(|si| si.is_valid()) {
+        let barrel_ir = &this.graph.ast.items_import_records()[barrel_idx as usize];
+        let live_target = |idx: u32| {
+            barrel_ir
+                .as_slice()
+                .get(idx as usize)
+                .map(|rec| rec.source_index)
+                .filter(|si| si.is_valid())
+        };
+        if let Some(rec_si) = live_target(record_idx) {
             // When the barrel re-exports a namespace import (`import * as X; export { X }`),
             // propagate as a star import so the target barrel loads all exports.
             queue.push(BarrelWorkItem {
@@ -957,34 +950,37 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 alias: propagate_alias,
                 is_star: resolution.alias_is_star,
             });
+        }
 
-            // The record just went from deferred to live. Propagate every
-            // other alias this barrel imports through it, exactly as Phase 1
-            // seeding does for a record that is live when the barrel finishes
-            // parsing. Propagating only the alias that triggered the un-defer
-            // makes a downstream barrel's deferral set (and with it the
-            // symbol binding the linker produces) depend on parse completion
-            // order (#40657).
-            if went_live {
-                let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
-                for ni in named_imports.values() {
-                    if ni.import_record_index != resolution.import_record_index {
-                        continue;
-                    }
-                    if ni.alias_is_star {
-                        queue.push(BarrelWorkItem {
-                            barrel_source_index: rec_si.get(),
-                            alias: b"",
-                            is_star: true,
-                        });
-                    } else if let Some(alias_ptr) = ni.alias {
-                        // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
-                        queue.push(BarrelWorkItem {
-                            barrel_source_index: rec_si.get(),
-                            alias: alias_ptr.slice(),
-                            is_star: false,
-                        });
-                    }
+        // A record just went from deferred to live. Propagate every
+        // alias this barrel imports through it, exactly as Phase 1
+        // seeding does for a record that is live when the barrel finishes
+        // parsing. Propagating only the alias that triggered the un-defer
+        // makes a downstream barrel's deferral set (and with it the
+        // symbol binding the linker produces) depend on parse completion
+        // order (#40657).
+        for &live_idx in went_live {
+            let Some(rec_si) = live_target(live_idx) else {
+                continue;
+            };
+            let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
+            for ni in named_imports.values() {
+                if ni.import_record_index != live_idx {
+                    continue;
+                }
+                if ni.alias_is_star {
+                    queue.push(BarrelWorkItem {
+                        barrel_source_index: rec_si.get(),
+                        alias: b"",
+                        is_star: true,
+                    });
+                } else if let Some(alias_ptr) = ni.alias {
+                    // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
+                    queue.push(BarrelWorkItem {
+                        barrel_source_index: rec_si.get(),
+                        alias: alias_ptr.slice(),
+                        is_star: false,
+                    });
                 }
             }
         }

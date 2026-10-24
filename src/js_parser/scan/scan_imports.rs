@@ -778,9 +778,8 @@ impl<'a> ImportScanner<'a> {
                         p.import_records.items_mut()[st.import_record_index as usize]
                             .flags
                             .insert(import_record::Flags::CONTAINS_IMPORT_STAR);
-                    } else if !HOT_MODULE_RELOADING_TRANSFORMATIONS {
+                    } else {
                         // "export * from 'path'"
-                        // (HMR lowering may merge the statement: `convert_stmt` lists the record it keeps)
                         p.export_star_import_records.push(st.import_record_index);
                     }
                 }

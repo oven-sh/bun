@@ -1865,6 +1865,97 @@ describe("bundler", () => {
     run: { stdout: "function" },
   });
 
+  // The import list that the dev server's module format prints for `module`.
+  const bakeDevImportsOf = (output: string, module: string) => {
+    const start = output.indexOf(`${JSON.stringify(module)}: [ [`);
+    if (start === -1) return "module not found";
+    const list = output.slice(output.indexOf("[ [", start) + "[ [".length);
+    return list.slice(0, list.indexOf("]")).trim().split(/\s+/).join(" ");
+  };
+
+  // The dev server's module format keeps one import for each statement. A request
+  // for a name of the second statement of a path must load utils.js through the
+  // import of that statement, whether the request arrives before the barrel is
+  // parsed (the entry asks) or after it (other.js, which only the barrel leads to, asks).
+  for (const [order, entry, other, imports] of [
+    [
+      "Early",
+      `import { b } from 'mylib'; console.log(b);`,
+      `export const o = <<<SYNTAX_ERROR>>>;`,
+      '"node_modules/mylib/utils.js", 1, "b",',
+    ],
+    [
+      "Late",
+      `import { o } from 'mylib'; console.log(o);`,
+      `import { b } from './index.js'; export const o = b;`,
+      '"node_modules/mylib/utils.js", 1, "b", "node_modules/mylib/other.js", 1, "o",',
+    ],
+  ]) {
+    itBundled(`barrel/BakeDevSecondStatementOfPathRequested${order}`, {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.js": entry,
+        "/node_modules/mylib/package.json": JSON.stringify({ name: "mylib", main: "./index.js", sideEffects: false }),
+        "/node_modules/mylib/index.js": /* js */ `
+          export { a } from './utils.js';
+          export { b } from './utils.js';
+          export { o } from './other.js';
+        `,
+        "/node_modules/mylib/utils.js": /* js */ `
+          export const a = "A";
+          export const b = "B";
+        `,
+        "/node_modules/mylib/other.js": other,
+      },
+      onAfterBundle(api) {
+        expect(bakeDevImportsOf(api.readFile("/out.js"), "node_modules/mylib/index.js")).toBe(imports);
+      },
+    });
+  }
+
+  // `import.meta.hot.accept` names the path of the first statement, which stays
+  // deferred. The module is the one that the second statement imports.
+  itBundled("barrel/BakeDevAcceptOfPathWithDeferredFirstStatement", {
+    format: "internal_bake_dev",
+    files: {
+      "/entry.js": `import { b } from 'mylib'; console.log(b);`,
+      "/node_modules/mylib/package.json": JSON.stringify({ name: "mylib", main: "./index.js", sideEffects: false }),
+      "/node_modules/mylib/index.js": /* js */ `
+        export { a } from './utils.js';
+        export { b } from './utils.js';
+        import.meta.hot.accept('./utils.js', () => {});
+      `,
+      "/node_modules/mylib/utils.js": /* js */ `
+        export const a = "A";
+        export const b = "B";
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js").match(/hmr\.acceptSpecifiers\(("[^"]*")/)?.[1]).toBe(
+        '"node_modules/mylib/utils.js"',
+      );
+    },
+  });
+
+  // A name that the module does not export is an error for each statement of the path.
+  for (const [order, statements] of [
+    ["First", `import { typo } from './utils.js'; import { a } from './utils.js';`],
+    ["Second", `import { a } from './utils.js'; import { typo } from './utils.js';`],
+  ]) {
+    itBundled(`barrel/BakeDevMissingNameIn${order}StatementOfPath`, {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.js": `${statements} console.log(a, typo);`,
+        "/utils.js": /* js */ `
+          export const a = "A";
+        `,
+      },
+      bundleErrors: {
+        "/entry.js": ['No matching export in "utils.js" for import "typo"'],
+      },
+    });
+  }
+
   // Regression: barrel-optimized-away imports were being recorded in ESM bytecode
   // ModuleInfo (postProcessJSChunk section 2 scanned original AST, saw the s_import
   // with invalid source_index, and recorded the relative specifier as external).

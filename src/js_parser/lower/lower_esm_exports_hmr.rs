@@ -1,7 +1,5 @@
 #![warn(unused_must_use)]
 use bun_alloc::AllocError;
-use bun_ast::import_record;
-use bun_collections::StringArrayHashMap;
 use bun_collections::VecExt;
 
 use crate::p::P;
@@ -13,26 +11,14 @@ pub(crate) struct ConvertESMExportsForHmr<'a> {
     /// files in node modules will not get hot updates, so the code generation
     /// can be a bit more concise for re-exports
     pub is_in_node_modules: bool,
-    pub imports_seen: StringArrayHashMap<ImportRef>,
     pub export_star_props: Vec<G::Property>,
     pub export_props: Vec<G::Property>,
     pub stmts: Vec<Stmt>,
 }
-// Note: the consumers of the four collections
+// Note: the consumers of the three collections
 // (`Vec::move_from_list` for `export_props`, arena copy for `stmts`) want
 // global-heap `Vec<T>`. Kept as `Vec` so callers can construct via
 // `Default::default()` without needing `&'a Bump`.
-
-#[derive(Default)]
-pub(crate) struct ImportRef {
-    /// Index into ConvertESMExportsForHmr.stmts
-    pub stmt_index: u32,
-}
-
-struct DeduplicatedImportResult {
-    pub namespace_ref: Ref,
-    pub import_record_index: u32,
-}
 
 impl<'a> ConvertESMExportsForHmr<'a> {
     // Note: takes the concrete `P<'p, TS, SCAN>`; `AstBuilder` instead
@@ -296,28 +282,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 return Ok(()); // do not emit a statement here
             }
             js_ast::StmtData::SExportFrom(st) => {
-                let deduped = self.deduplicated_import(
-                    p,
-                    st.import_record_index,
-                    st.namespace_ref,
-                    st.items,
-                    stmt.loc,
-                    None,
-                    stmt.loc,
-                )?;
+                self.push_import(st.import_record_index, st.namespace_ref, st.items, stmt.loc);
                 for item in st.items.slice_mut().iter_mut() {
                     let ref_ = item.name.ref_;
                     let symbol = &mut p.symbols[ref_.inner_index() as usize];
-                    // Always set the namespace alias using the deduplicated import
-                    // record. When two `export { ... } from` statements reference
-                    // the same source, the second import record is marked unused
-                    // and its items are merged into the first. The symbols may
-                    // already have a namespace_alias from ImportScanner pointing at
-                    // the now-unused record, so we must update it.
                     symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
-                        namespace_ref: deduped.namespace_ref,
+                        namespace_ref: st.namespace_ref,
                         alias: item.original_name,
-                        import_record_index: deduped.import_record_index,
+                        import_record_index: st.import_record_index,
                         ..Default::default()
                     }));
                     self.visit_ref_to_export(
@@ -338,15 +310,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 return Ok(());
             }
             js_ast::StmtData::SExportStar(st) => {
-                let deduped = self.deduplicated_import(
-                    p,
+                self.push_import(
                     st.import_record_index,
                     st.namespace_ref,
                     bun_ast::StoreSlice::EMPTY,
                     stmt.loc,
-                    None,
-                    stmt.loc,
-                )?;
+                );
 
                 if let Some(alias) = &st.alias {
                     // 'export * as ns from' creates one named property.
@@ -356,34 +325,17 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             E::EString::init(alias.original_name.slice()),
                             stmt.loc,
                         )),
-                        value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
+                        value: Some(Expr::init_identifier(st.namespace_ref, stmt.loc)),
                         ..Default::default()
                     });
                 } else {
                     // 'export * from' creates a spread, hoisted at the top.
                     self.export_star_props.push(G::Property {
                         kind: G::PropertyKind::Spread,
-                        value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
+                        value: Some(Expr::init_identifier(st.namespace_ref, stmt.loc)),
                         ..Default::default()
                     });
-                    p.export_star_import_records
-                        .push(deduped.import_record_index);
                 }
-                return Ok(());
-            }
-            // De-duplicate import statements. It is okay to disregard
-            // named/default imports here as we always rewrite them as
-            // full qualified property accesses (needed for live-bindings)
-            js_ast::StmtData::SImport(st) => {
-                let _ = self.deduplicated_import(
-                    p,
-                    st.import_record_index,
-                    st.namespace_ref,
-                    st.items,
-                    st.star_name_loc,
-                    st.default_name,
-                    stmt.loc,
-                )?;
                 return Ok(());
             }
             _ => stmt,
@@ -393,125 +345,27 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    /// Deduplicates imports, returning a previously used Ref and import record
-    /// index if present.
-    fn deduplicated_import<'p, const TS: bool, const SCAN: bool>(
+    /// The import statement that a re-export reads its names from. Each statement
+    /// keeps its own import record: barrel optimization defers by record.
+    fn push_import(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
         import_record_index: u32,
         namespace_ref: Ref,
         items: js_ast::StoreSlice<js_ast::ClauseItem>,
-        star_name_loc: bun_ast::Loc,
-        default_name: Option<js_ast::LocRef>,
         loc: bun_ast::Loc,
-    ) -> Result<DeduplicatedImportResult, AllocError> {
-        let path_text = p.import_records.items()[import_record_index as usize]
-            .path
-            .text;
-        let gop = self.imports_seen.get_or_put(path_text)?;
-        if gop.found_existing {
-            let stmt_index = gop.value_ptr.stmt_index;
-            // Disable this one since an older record is getting used.  It isn't
-            // practical to delete this import record entry since an import or
-            // require expression can exist.
-            p.import_records.items_mut()[import_record_index as usize]
-                .flags
-                .insert(import_record::Flags::IS_UNUSED);
-
-            let js_ast::StmtData::SImport(mut stmt) = self.stmts[stmt_index as usize].data else {
-                unreachable!()
-            };
-            // The surviving record may have been marked is_unused by barrel
-            // optimization (when the first export-from statement's exports
-            // were all deferred). Since we are merging new items into it,
-            // clear is_unused so the import is actually emitted.
-            p.import_records.items_mut()[stmt.import_record_index as usize]
-                .flags
-                .remove(import_record::Flags::IS_UNUSED);
-
-            let items_len = items.len();
-            if items_len > 0 {
-                if stmt.items.is_empty() {
-                    stmt.items = items;
-                } else {
-                    // Allocate the concatenated slice in the arena.
-                    // ClauseItem fields are all bitwise-copyable; copy raw to avoid Clone bound.
-                    let prev_len = stmt.items.len();
-                    let concat = p.arena.alloc_slice_fill_with(prev_len + items_len, |_| {
-                        js_ast::ClauseItem::default()
-                    });
-                    // SAFETY: src/dst non-overlapping arena allocations of correct length;
-                    // ClauseItem is POD-shaped.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            stmt.items.as_ptr(),
-                            concat.as_mut_ptr(),
-                            prev_len,
-                        );
-                        core::ptr::copy_nonoverlapping(
-                            items.as_ptr(),
-                            concat.as_mut_ptr().add(prev_len),
-                            items_len,
-                        );
-                    }
-                    stmt.items = bun_ast::StoreSlice::new_mut(concat);
-                }
-            }
-            if namespace_ref.is_valid() {
-                if !stmt.namespace_ref.is_valid() {
-                    stmt.namespace_ref = namespace_ref;
-                    return Ok(DeduplicatedImportResult {
-                        namespace_ref,
-                        import_record_index: stmt.import_record_index,
-                    });
-                } else {
-                    // Erase this namespace ref, but since it may be used in
-                    // existing AST trees, a link must be established.
-                    let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
-                    symbol.use_count_estimate = 0;
-                    symbol.link.set(stmt.namespace_ref);
-                    // Note: the concrete `P` always carries `symbol_uses`;
-                    // once a `ParserLike` trait is introduced for
-                    // AstBuilder, that variant should override this to a no-op.
-                    p.forget_part_use(namespace_ref);
-                }
-            }
-            if stmt.star_name_loc.is_empty() {
-                if let Some(stl) = star_name_loc.to_nullable() {
-                    stmt.star_name_loc = stl;
-                }
-            }
-            if stmt.default_name.is_none() {
-                if let Some(dn) = default_name {
-                    stmt.default_name = Some(dn);
-                }
-            }
-            return Ok(DeduplicatedImportResult {
-                namespace_ref: stmt.namespace_ref,
-                import_record_index: stmt.import_record_index,
-            });
-        }
-
+    ) {
         self.stmts.push(Stmt::alloc(
             S::Import {
                 import_record_index,
                 is_single_line: true,
-                default_name,
+                default_name: None,
                 items,
                 namespace_ref,
-                star_name_loc,
+                star_name_loc: loc,
                 phase_defer: false,
             },
             loc,
         ));
-
-        *gop.value_ptr = ImportRef {
-            stmt_index: u32::try_from(self.stmts.len() - 1).expect("int cast"),
-        };
-        Ok(DeduplicatedImportResult {
-            namespace_ref,
-            import_record_index,
-        })
     }
 
     fn visit_binding_to_export<'p, const TS: bool, const SCAN: bool>(

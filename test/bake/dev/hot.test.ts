@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -103,6 +103,117 @@ devTest("import.meta.hot.accept patches imports", {
     await c.expectMessage("C"); // C self accepted even if the new one doesnt
     expect(await c.js<string>`callFunction()`).toBe("B!2!5");
     expect(await c.js<string>`callFunction()`).toBe("B!3!6");
+  },
+});
+// The importer is not evaluated again. Each of its import statements has a binding
+// of its own, also the one that spells the path in another way.
+devTest("a hot update patches every import statement of the updated module", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value as a } from "./dep";
+      import { value as b } from "./dep";
+      import { value as c } from "./dep.ts";
+      import "./other";
+      console.log("initial: " + a + " " + b + " " + c);
+      import.meta.hot.accept(["./dep", "./other", "./dep.ts"], modules => {
+        console.log("accepted: " + [a, b, c, ...modules.map(module => module?.value)].join(" "));
+      });
+    `,
+    "dep.ts": `export const value = 1;`,
+    "other.ts": `export const value = "other";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("initial: 1 1 1");
+    await dev.write("dep.ts", `export const value = 2;`);
+    await c.expectMessage("accepted: 2 2 2 2  2");
+  },
+});
+devTest("a hot update patches every import statement of the updated module (server)", {
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `export const value = 1;`,
+    "mid.ts": `
+      import { value as a } from './dep';
+      import { value as b } from './dep';
+      import { value as c } from './dep.ts';
+      export { value as d } from './dep';
+      export { value as e } from './dep.ts';
+      globalThis.midEvaluated = (globalThis.midEvaluated ?? 0) + 1;
+      export const read = () => a + ' ' + b + ' ' + c;
+      import.meta.hot.accept('./dep', () => {});
+    `,
+    "routes/index.ts": `
+      import { read, d, e } from '../mid';
+      export default function (req, meta) {
+        return new Response(read() + ' ' + d + ' ' + e + ', mid evaluated ' + globalThis.midEvaluated);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("1 1 1 1 1, mid evaluated 1");
+    await dev.write("dep.ts", `export const value = 2;`);
+    await dev.fetch("/").equals("2 2 2 2 2, mid evaluated 1");
+  },
+});
+// `import.meta.hot.accept` names a path. The first import of that path can be one
+// that loads no module: a type-only import, or a re-export that nothing requests.
+devTest("import.meta.hot.accept of a path whose first import is a dropped type import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { Kind } from "./dep";
+      import { value } from "./dep";
+      const kind: Kind = "kind";
+      console.log("initial: " + value + " " + kind);
+      import.meta.hot.accept("./dep", module => {
+        console.log("accepted: " + value + " " + module.value);
+      });
+    `,
+    "dep.ts": `
+      export type Kind = string;
+      export const value = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("initial: 1 kind");
+    await dev.write("dep.ts", `export type Kind = string; export const value = 2;`);
+    await c.expectMessage("accepted: 2 2");
+  },
+});
+devTest("import.meta.hot.accept of a path whose first re-export is deferred", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { keep } from "./lib/index.ts";
+      console.log("initial: " + keep + " " + (await globalThis.lazy()).first);
+    `,
+    "lib/package.json": JSON.stringify({ name: "lib", sideEffects: false }),
+    // Nothing requests the name of the re-export. The import() is the live import of './dep'.
+    "lib/index.ts": `
+      export { first } from "./dep";
+      export { keep } from "./keep";
+      globalThis.lazy = () => import("./dep");
+      import.meta.hot.accept("./dep", module => {
+        console.log("accepted: " + module.first);
+      });
+    `,
+    "lib/keep.ts": `export const keep = "K";`,
+    "lib/dep.ts": `export const first = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("initial: K 1");
+    await dev.write("lib/dep.ts", `export const first = 2;`);
+    await c.expectMessage("accepted: 2");
   },
 });
 devTest("import.meta.hot.accept specifier", {

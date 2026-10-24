@@ -8842,7 +8842,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
                 last_part,
                 is_in_node_modules: self.source.path.is_node_module(),
-                imports_seen: Default::default(),
                 export_star_props: Vec::new(),
                 export_props: Vec::new(),
                 stmts: Vec::new(),

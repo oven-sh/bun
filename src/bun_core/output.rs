@@ -492,6 +492,28 @@ pub mod windows_stdio {
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
 
+    /// How the console delivers stdin, when stdin is a console.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(super) enum ConsoleInput {
+        NotConsole,
+        /// `ENABLE_LINE_INPUT`: a read returns on Enter, with the line and its CR LF.
+        Line,
+        /// A read returns keys as they are typed, and Enter is a lone CR.
+        Raw,
+    }
+
+    pub(super) fn console_input(fd: Fd) -> ConsoleInput {
+        let mut mode: w::DWORD = 0;
+        if GetConsoleMode(fd.native(), &mut mode) == 0 {
+            return ConsoleInput::NotConsole;
+        }
+        if mode & w::ENABLE_LINE_INPUT != 0 {
+            ConsoleInput::Line
+        } else {
+            ConsoleInput::Raw
+        }
+    }
+
     #[unsafe(no_mangle)]
     extern "C" fn Bun__restoreWindowsStdio() {
         restore();
@@ -553,11 +575,6 @@ pub mod windows_stdio {
         });
         #[cfg(debug_assertions)]
         fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
-
-        // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
-        unsafe {
-            (*BUFFERED_STDIN.get()).fd = Fd::stdin();
-        }
 
         // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
         const CP_UTF8: u32 = 65001;
@@ -2631,159 +2648,166 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
 // ──────────────────────────────────────────────────────────────────────────
 
-static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> = crate::RacyCell::new(BufferedStdin {
-    fd: {
-        #[cfg(windows)]
-        {
-            Fd::INVALID // set in WindowsStdio.init
-        }
-        #[cfg(not(windows))]
-        {
-            Fd::stdin()
-        }
-    },
-    buf: [0; 4096],
-    start: 0,
-    end: 0,
-});
-
-/// `bun.deprecated.BufferedReader(4096, File.Reader)` over the process stdin.
-/// Layout is local to bun_core; bun_sys never casts into this (it only fills
-/// `.fd` during Windows startup).
-#[repr(C)]
-pub struct BufferedStdin {
-    pub(crate) fd: Fd,
-    pub(crate) buf: [u8; 4096],
-    pub(crate) start: usize,
-    pub(crate) end: usize,
-}
-
-impl BufferedStdin {
-    /// Fill `dest` from the buffer, refilling from
-    /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
-    ///
-    /// Matches std `BufferedReader.read` fill-to-completion semantics
-    /// (loops on the underlying fd), not POSIX partial-read.
-    pub fn read(&mut self, dest: &mut [u8]) -> crate::CrateResult<usize> {
-        let mut written: usize = 0;
-        loop {
-            let current = &self.buf[self.start..self.end];
-            if !current.is_empty() {
-                let n = current.len().min(dest.len() - written);
-                dest[written..written + n].copy_from_slice(&current[..n]);
-                self.start += n;
-                written += n;
-                if written == dest.len() {
-                    return Ok(written);
-                }
-            }
-            let remaining = dest.len() - written;
-            if remaining >= self.buf.len() {
-                // Large dest tail: bypass the buffer.
-                let n = output_sink().read(self.fd, &mut dest[written..])?;
-                if n == 0 {
-                    return Ok(written);
-                }
-                written += n;
-                if written == dest.len() {
-                    return Ok(written);
-                }
-                continue;
-            }
-            self.end = output_sink().read(self.fd, &mut self.buf)?;
-            self.start = 0;
-            if self.end == 0 {
-                return Ok(written);
-            }
-        }
-    }
-
-    /// Read one byte — `Err` on I/O error *or* EOF (`EndOfStream`).
-    pub fn read_byte(&mut self) -> crate::CrateResult<u8> {
-        if self.start < self.end {
-            let b = self.buf[self.start];
-            self.start += 1;
-            return Ok(b);
-        }
-        let mut one = [0u8; 1];
-        match self.read(&mut one)? {
-            0 => Err(crate::CrateError::EndOfStream),
-            _ => Ok(one[0]),
-        }
-    }
-
-    /// Appends bytes (not
-    /// including `delimiter`) into `out`; errors with `StreamTooLong`
-    /// semantics if `out.len()` would exceed `max_size`.
-    pub(crate) fn read_until_delimiter_array_list(
-        &mut self,
-        out: &mut Vec<u8>,
-        delimiter: u8,
-        max_size: usize,
-    ) -> crate::CrateResult<()> {
-        out.clear();
-        loop {
-            if out.len() >= max_size {
-                return Err(crate::CrateError::StreamTooLong);
-            }
-            let b = self.read_byte()?;
-            if b == delimiter {
-                return Ok(());
-            }
-            out.push(b);
-        }
-    }
-}
-
-/// Unbuffered stdin byte reader.
-/// Each `take_byte` is a 1-byte blocking read on the process stdin.
+/// Synchronous reader of the process stdin. It keeps no bytes between calls:
+/// what it did not return is still in fd 0 for the next reader of it, in this
+/// process or in a child.
 pub struct StdinReader {
     fd: Fd,
 }
 
 impl StdinReader {
-    /// Read one byte — `Err` on I/O error *or* EOF.
+    /// Read one byte — `Err` on I/O error *or* EOF. For input that is read one key at a time.
     #[inline]
     pub fn take_byte(&mut self) -> crate::CrateResult<u8> {
-        let mut one = [0u8; 1];
-        match output_sink().read(self.fd, &mut one)? {
-            0 => Err(crate::CrateError::EndOfStream),
-            _ => Ok(one[0]),
+        read_stdin_byte(self.fd)
+    }
+
+    /// Appends one line to `out` without its LF, and takes the LF. A line of
+    /// `max` bytes or more is taken whole and reported as `StreamTooLong`.
+    pub fn read_line(&mut self, out: &mut Vec<u8>, max: usize) -> crate::CrateResult<()> {
+        let mut line = StdinLine::begin(self.fd);
+        let start = out.len();
+        loop {
+            if out.len() - start >= max {
+                line.skip_rest();
+                return Err(crate::CrateError::StreamTooLong);
+            }
+            let byte = line.next_byte()?;
+            if byte == b'\n' {
+                return Ok(());
+            }
+            if out.capacity() == 0 {
+                out.reserve(max.min(2048));
+            }
+            out.push(byte);
+        }
+    }
+
+    /// Takes one line, LF included.
+    pub fn skip_line(&mut self) {
+        StdinLine::begin(self.fd).skip_rest();
+    }
+
+    /// Takes one line. True when the line is `y` or `Y`.
+    pub fn read_yes(&mut self) -> bool {
+        let mut line = StdinLine::begin(self.fd);
+        let Ok(first) = line.next_byte() else {
+            return false;
+        };
+        match first {
+            b'\n' => return false,
+            b'\r' => {
+                if matches!(line.next_byte(), Err(_) | Ok(b'\n')) {
+                    return false;
+                }
+            }
+            b'y' | b'Y' => match line.next_byte() {
+                Err(_) => return false,
+                Ok(b'\n') => return true,
+                Ok(b'\r') => match line.next_byte() {
+                    Err(_) => return false,
+                    Ok(b'\n') => return true,
+                    Ok(_) => {}
+                },
+                Ok(_) => {}
+            },
+            _ => {}
+        }
+        line.skip_rejected_answer();
+        false
+    }
+}
+
+#[inline]
+fn read_stdin_byte(fd: Fd) -> crate::CrateResult<u8> {
+    let mut one = [0u8; 1];
+    match output_sink().read(fd, &mut one)? {
+        0 => Err(crate::CrateError::EndOfStream),
+        _ => Ok(one[0]),
+    }
+}
+
+/// Held while a thread takes one line, so that two threads that wait for an
+/// answer at the same time (the main thread and a Worker) each get a whole line.
+static STDIN_LINE_LOCK: crate::Mutex<()> = crate::Mutex::new(());
+
+/// One line of stdin, from its first byte through its LF.
+struct StdinLine {
+    fd: Fd,
+    _lock: crate::MutexGuard<'static, ()>,
+    #[cfg(windows)]
+    console: windows_stdio::ConsoleInput,
+    #[cfg(windows)]
+    chunk: [u8; 4096],
+    #[cfg(windows)]
+    chunk_pos: usize,
+    #[cfg(windows)]
+    chunk_len: usize,
+}
+
+impl StdinLine {
+    fn begin(fd: Fd) -> Self {
+        Self {
+            fd,
+            _lock: STDIN_LINE_LOCK.lock(),
+            #[cfg(windows)]
+            console: windows_stdio::console_input(fd),
+            #[cfg(windows)]
+            chunk: [0; 4096],
+            #[cfg(windows)]
+            chunk_pos: 0,
+            #[cfg(windows)]
+            chunk_len: 0,
+        }
+    }
+
+    fn next_byte(&mut self) -> crate::CrateResult<u8> {
+        // A console in line-input mode returns one typed line per `ReadFile`, so a
+        // block read takes nothing past the line. Console hosts before Windows
+        // Terminal 1.19 also cut a typed line to the size of the request: 254
+        // characters for a request of one byte.
+        #[cfg(windows)]
+        if self.console == windows_stdio::ConsoleInput::Line {
+            if self.chunk_pos == self.chunk_len {
+                self.chunk_len = output_sink().read(self.fd, &mut self.chunk)?;
+                self.chunk_pos = 0;
+                if self.chunk_len == 0 {
+                    return Err(crate::CrateError::EndOfStream);
+                }
+            }
+            let byte = self.chunk[self.chunk_pos];
+            self.chunk_pos += 1;
+            return Ok(byte);
+        }
+        read_stdin_byte(self.fd)
+    }
+
+    fn skip_rest(&mut self) {
+        while !matches!(self.next_byte(), Err(_) | Ok(b'\n')) {}
+    }
+
+    /// Like `skip_rest`, but a terminal in raw mode sends a lone CR for Enter, so
+    /// there a CR ends the answer too.
+    fn skip_rejected_answer(&mut self) {
+        #[cfg(windows)]
+        let cr_ends_answer = self.console == windows_stdio::ConsoleInput::Raw;
+        #[cfg(not(windows))]
+        let cr_ends_answer = is_stdin_tty();
+        loop {
+            match self.next_byte() {
+                Err(_) | Ok(b'\n') => return,
+                Ok(b'\r') if cr_ends_answer => return,
+                Ok(_) => {}
+            }
         }
     }
 }
 
-/// Fresh, unbuffered stdin
-/// reader. Used by `alert()`/`confirm()`/`prompt()`.
+/// A reader of stdin that takes exactly what it returns. Used by `alert()`,
+/// `confirm()`, `prompt()`, `bun init`, `bun publish` and the key-driven menus.
 #[inline]
 pub fn stdin_reader() -> StdinReader {
     StdinReader { fd: Fd::stdin() }
-}
-
-/// `bun.Output.buffered_stdin` — raw pointer to the process-global 4 KiB
-/// buffered stdin. Used by `bun init`/`bun publish` line reads.
-///
-/// Returns `*mut` (not `&'static mut`) to avoid handing out two live aliasing
-/// `&mut` to the same static (PORTING.md §Forbidden); callers materialise the
-/// `&mut` at the use site. Matches the other self-ref escapes in this module
-/// (`writer()`, `error_writer()`, …).
-///
-/// SAFETY: the static is single-threaded by construction (only ever touched
-/// from the main JS/CLI thread while blocked on user input).
-#[inline]
-pub fn buffered_stdin() -> *mut BufferedStdin {
-    BUFFERED_STDIN.get()
-}
-
-/// Convenience for `bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList`.
-#[inline]
-pub fn buffered_stdin_read_until_delimiter(
-    out: &mut Vec<u8>,
-    delimiter: u8,
-    max_size: usize,
-) -> crate::CrateResult<()> {
-    // SAFETY: single-threaded static; only live `&mut` for this call's duration.
-    unsafe { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
 }
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036

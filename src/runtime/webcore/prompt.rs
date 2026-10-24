@@ -1,7 +1,6 @@
 //! Implements prompt, alert, and confirm Web API
 
 use crate::webcore::jsc::{JSValue, JsResult};
-use bun_collections::VecExt as _;
 use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
@@ -45,13 +44,7 @@ pub(crate) fn alert(message: Option<&[u8]>) {
     Output::flush();
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
-    let mut reader = Output::stdin_reader();
-    loop {
-        let Ok(byte) = reader.take_byte() else { break };
-        if byte == b'\n' {
-            break;
-        }
-    }
+    Output::stdin_reader().skip_line();
 
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
     // *  Again, not necessary in a server context.
@@ -92,125 +85,12 @@ pub(crate) fn confirm(message: Option<&[u8]>) -> bool {
     Output::flush();
 
     // 6. Pause until the user responds either positively or negatively.
-    let mut reader = Output::stdin_reader();
-
-    let Ok(first_byte) = reader.take_byte() else {
-        return false;
-    };
-
     // 7. Invoke WebDriver BiDi user prompt closed with this, and true if
     //    the user responded positively or false otherwise.
     // *  Not relevant in a server context.
-
-    match first_byte {
-        b'\n' => return false,
-        b'\r' => {
-            let Ok(next_byte) = reader.take_byte() else {
-                // They may have said yes, but the stdin is invalid.
-                return false;
-            };
-            if next_byte == b'\n' {
-                return false;
-            }
-        }
-        b'y' | b'Y' => {
-            let Ok(next_byte) = reader.take_byte() else {
-                // They may have said yes, but the stdin is invalid.
-
-                return false;
-            };
-
-            if next_byte == b'\n' {
-                // 8. If the user responded positively, return true;
-                //    otherwise, the user responded negatively: return false.
-                return true;
-            } else if next_byte == b'\r' {
-                // Check Windows style
-                let Ok(second_byte) = reader.take_byte() else {
-                    return false;
-                };
-                if second_byte == b'\n' {
-                    return true;
-                }
-            }
-        }
-        _ => {}
-    }
-
-    while let Ok(b) = reader.take_byte() {
-        if b == b'\n' {
-            break;
-        }
-    }
-
     // 8. If the user responded positively, return true; otherwise, the user
     //    responded negatively: return false.
-    false
-}
-
-/// Error set for the read-until-delimiter helpers below.
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ReadError {
-    #[error("StreamTooLong")]
-    StreamTooLong,
-    #[error("Io")]
-    Io,
-}
-
-/// Small trait exposing `read_byte() -> Result<u8, _>`; the only
-/// concrete impl is the unbuffered `StdinReader`.
-pub(crate) trait ReadByte {
-    type Error;
-    fn read_byte(&mut self) -> Result<u8, Self::Error>;
-}
-
-impl ReadByte for bun_core::output::StdinReader {
-    type Error = bun_core::Error;
-    #[inline]
-    fn read_byte(&mut self) -> Result<u8, Self::Error> {
-        self.take_byte()
-    }
-}
-
-/// Reads bytes until `delimiter` (exclusive), erroring with `StreamTooLong`
-/// once `max_size` bytes have been appended.
-pub(crate) fn read_until_delimiter_array_list_append_assume_capacity<R: ReadByte>(
-    reader: &mut R,
-    array_list: &mut Vec<u8>,
-    delimiter: u8,
-    max_size: usize,
-) -> Result<(), ReadError> {
-    loop {
-        if array_list.len() == max_size {
-            return Err(ReadError::StreamTooLong);
-        }
-
-        let byte: u8 = reader.read_byte().map_err(|_| ReadError::Io)?;
-
-        if byte == delimiter {
-            return Ok(());
-        }
-
-        array_list.push(byte);
-    }
-}
-
-/// Reads bytes until `delimiter` (exclusive), appending to `array_list`
-/// with no size limit.
-fn read_until_delimiter_array_list_infinity<R: ReadByte>(
-    reader: &mut R,
-    array_list: &mut Vec<u8>,
-    delimiter: u8,
-) -> Result<(), ReadError> {
-    loop {
-        let byte: u8 = reader.read_byte().map_err(|_| ReadError::Io)?;
-
-        if byte == delimiter {
-            return Ok(());
-        }
-
-        array_list.push(byte);
-    }
+    Output::stdin_reader().read_yes()
 }
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
@@ -284,79 +164,25 @@ pub(crate) fn prompt<'a>(
         });
 
     // 7. Pause while waiting for the user's response.
-    // Unbuffered so nothing past '\n' is pulled out of the pipe.
-    let mut reader = Output::stdin_reader();
-    let mut second_byte: Option<u8> = None;
-    let Ok(first_byte) = reader.read_byte() else {
+    let mut input: Vec<u8> = Vec::new();
+    if Output::stdin_reader()
+        .read_line(&mut input, usize::MAX)
+        .is_err()
+    {
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
         return Ok(JSValue::NULL);
-    };
+    }
 
-    if first_byte == b'\n' {
+    if input.last() == Some(&b'\r') {
+        input.pop();
+    }
+
+    if input.is_empty() {
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
         return Ok(default.unwrap_or(JSValue::NULL));
-    } else if first_byte == b'\r' {
-        let Ok(second) = reader.read_byte() else {
-            return Ok(JSValue::NULL);
-        };
-        second_byte = Some(second);
-        if second == b'\n' {
-            return Ok(default.unwrap_or(JSValue::NULL));
-        }
     }
-
-    let mut input: Vec<u8> = Vec::with_capacity(2048);
-
-    input.push(first_byte);
-    if let Some(second) = second_byte {
-        input.push(second);
-    }
-
-    // All of this code basically just first tries to load the input into a
-    // buffer of size 2048. If that is too small, then increase the buffer
-    // size to 4096. If that is too small, then just dynamically allocate
-    // the rest.
-    if let Err(e) = read_until_delimiter_array_list_append_assume_capacity(
-        &mut reader,
-        &mut input,
-        b'\n',
-        2048,
-    ) {
-        if !matches!(e, ReadError::StreamTooLong) {
-            // 8. Let result be null if the user aborts, or otherwise the string
-            //    that the user responded with.
-            return Ok(JSValue::NULL);
-        }
-
-        input.ensure_total_capacity(4096);
-
-        if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
-            &mut reader,
-            &mut input,
-            b'\n',
-            4096,
-        ) {
-            if !matches!(e2, ReadError::StreamTooLong) {
-                // 8. Let result be null if the user aborts, or otherwise the string
-                //    that the user responded with.
-                return Ok(JSValue::NULL);
-            }
-
-            if read_until_delimiter_array_list_infinity(&mut reader, &mut input, b'\n').is_err() {
-                // 8. Let result be null if the user aborts, or otherwise the string
-                //    that the user responded with.
-                return Ok(JSValue::NULL);
-            }
-        }
-    }
-
-    if !input.is_empty() && input[input.len() - 1] == b'\r' {
-        input.truncate(input.len() - 1);
-    }
-
-    debug_assert!(!input.is_empty());
 
     // 8. Let result be null if the user aborts, or otherwise the string
     //    that the user responded with.

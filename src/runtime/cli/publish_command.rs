@@ -889,7 +889,8 @@ impl PublishCommand {
                 ..Default::default()
             });
 
-        // This runs on its own thread, and `Output::buffered_stdin()` is for the main thread only.
+        // Not `Output::stdin_reader().skip_line()`: when the login completes without Enter this
+        // thread stays in its read, and it would hold the line lock that an OTP question needs.
         let mut input = [0u8; 1024];
         loop {
             match bun_sys::read(Fd::stdin(), &mut input) {

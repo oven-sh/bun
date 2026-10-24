@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "fs";
 import { exists, rm, symlink } from "fs/promises";
 import {
   bunExe,
@@ -473,6 +473,85 @@ describe.concurrent("otp", () => {
       request("PUT", "/otp-pkg-6", { authType: "legacy", otp }),
     ]);
     expect(exitCode).toBe(0);
+  });
+
+  test("the OTP question takes one line of stdin and the lifecycle scripts get the rest", async () => {
+    const otp = "424242";
+    using mock = mockRegistry((req, recorded) => {
+      if (req.method === "PUT") {
+        if (recorded.otp === otp) {
+          return new Response("OK", { status: 200 });
+        }
+        return new Response("{}", { status: 401, headers: { "www-authenticate": "OTP" } });
+      }
+      return new Response("unexpected url", { status: 500 });
+    });
+    using dir = tempDir("publish-otp-stdin", {
+      "package.json": JSON.stringify({
+        name: "otp-pkg-8",
+        version: "8.8.8",
+        scripts: { postpublish: `${bunExe()} save-stdin.js` },
+      }),
+      "save-stdin.js": `const fs = require("fs"); fs.writeFileSync("stdin.txt", fs.readFileSync(0));`,
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: Buffer.from(otp + "\nfor the script\n"),
+      env,
+    });
+    const [out, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(out).toContain("Enter OTP: ");
+    expect(mock.requests).toEqual([
+      request("PUT", "/otp-pkg-8"),
+      request("PUT", "/otp-pkg-8", { authType: "legacy", otp }),
+    ]);
+    expect(await file(join(String(dir), "stdin.txt")).text()).toBe("for the script\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an OTP line that is too long is taken whole", async () => {
+    using mock = mockRegistry(req =>
+      req.method === "PUT"
+        ? new Response("{}", { status: 401, headers: { "www-authenticate": "OTP" } })
+        : new Response("unexpected url", { status: 500 }),
+    );
+    using dir = tempDir("publish-otp-too-long", {
+      "package.json": JSON.stringify({ name: "otp-pkg-9", version: "9.9.9" }),
+      "bunfig.toml": mockBunfig(mock),
+      "stdin.txt": Buffer.alloc(2000, "9").toString() + "\nnext line\n",
+    });
+
+    // The child reads through the offset of this descriptor, so what it left is read from here.
+    const stdin = openSync(join(String(dir), "stdin.txt"), "r");
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), "publish"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin,
+        env,
+      });
+      const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const rest = Buffer.alloc(64);
+      expect({
+        err,
+        rest: rest.toString("utf8", 0, readSync(stdin, rest, 0, rest.length, null)),
+        exitCode,
+      }).toEqual({
+        err: "StreamTooLong: failed to read OTP input\n",
+        rest: "next line\n",
+        exitCode: 1,
+      });
+    } finally {
+      closeSync(stdin);
+    }
   });
 
   test.skipIf(!isLinux)(

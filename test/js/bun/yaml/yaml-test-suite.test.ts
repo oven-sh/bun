@@ -1,6 +1,7 @@
 // Tests translated from official yaml-test-suite
 // Generated from yaml-test-suite commit: 6e6c296ae9c9d2d5c4134b4b64d01b29ac19ff6f
 // Using YAML.parse() with eemeli/yaml package as reference
+// Error tests assert a SyntaxError with the message Bun's parser gave when this file was generated
 // Total: 402 test directories
 
 import { YAML } from "bun";
@@ -36,9 +37,13 @@ test("yaml-test-suite/236B", () => {
 invalid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/26DV", () => {
@@ -111,9 +116,13 @@ test("yaml-test-suite/2CMS", () => {
   invalid: x
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiline implicit key"));
 });
 
 test("yaml-test-suite/2EBW", () => {
@@ -142,9 +151,13 @@ test("yaml-test-suite/2G84/00", () => {
   const input: string = `--- |0
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/2G84/01", () => {
@@ -153,9 +166,13 @@ test("yaml-test-suite/2G84/01", () => {
   const input: string = `--- |10
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/2G84/02", () => {
@@ -341,9 +358,13 @@ key: value
 ... invalid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/3MYT", () => {
@@ -505,9 +526,13 @@ a:
 		c: value
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Tab characters cannot be used as indentation"));
 });
 
 test("yaml-test-suite/4FJ6", () => {
@@ -545,9 +570,13 @@ test("yaml-test-suite/4H7K", () => {
 [ a, b, c ] ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/4HVU", () => {
@@ -559,9 +588,13 @@ test("yaml-test-suite/4HVU", () => {
   - wrong
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/4JVG", () => {
@@ -573,9 +606,13 @@ top2: &node2
   &v2 val2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiple anchors"));
 });
 
 test("yaml-test-suite/4MUZ/00", () => {
@@ -759,9 +796,13 @@ test("yaml-test-suite/55WF", () => {
 "\\."
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/565N", () => {
@@ -903,9 +944,13 @@ test("yaml-test-suite/5LLU", () => {
  invalid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/5MUD", () => {
@@ -957,9 +1002,13 @@ test("yaml-test-suite/5TRB", () => {
 "
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected document start"));
 });
 
 test("yaml-test-suite/5TYM", () => {
@@ -987,9 +1036,13 @@ test("yaml-test-suite/5U3A", () => {
      - b
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/5WE3", () => {
@@ -1018,9 +1071,13 @@ test("yaml-test-suite/62EZ", () => {
 x: { y: z }in: valid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/652Z", () => {
@@ -1184,9 +1241,13 @@ test("yaml-test-suite/6JTT", () => {
 [ [ a, b, c ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/6JWB", () => {
@@ -1288,9 +1349,13 @@ test("yaml-test-suite/6S55", () => {
  invalid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/6SLA", () => {
@@ -1548,9 +1613,13 @@ test("yaml-test-suite/7LBH", () => {
  d": 1
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiline implicit key"));
 });
 
 test("yaml-test-suite/7MNF", () => {
@@ -1561,9 +1630,13 @@ test("yaml-test-suite/7MNF", () => {
 top2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/7T8X", () => {
@@ -1788,9 +1861,13 @@ test("yaml-test-suite/8XDJ", () => {
   word2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/8XYN", () => {
@@ -1918,9 +1995,13 @@ b,
 c]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/9CWY", () => {
@@ -1932,9 +2013,13 @@ test("yaml-test-suite/9CWY", () => {
 invalid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/9DXL", () => {
@@ -1987,9 +2072,13 @@ test("yaml-test-suite/9HCY", () => {
 !foo "bar"
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/9J7A", () => {
@@ -2014,9 +2103,13 @@ test("yaml-test-suite/9JBA", () => {
 [ a, b, c, ]#invalid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/9KAX", () => {
@@ -2075,9 +2168,13 @@ test("yaml-test-suite/9KBC", () => {
     key2: value2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/9MAG", () => {
@@ -2087,9 +2184,13 @@ test("yaml-test-suite/9MAG", () => {
 [ , a, b, c ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/9MMA", () => {
@@ -2098,9 +2199,13 @@ test("yaml-test-suite/9MMA", () => {
   const input: string = `%YAML 1.2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/9MMW", () => {
@@ -2139,9 +2244,13 @@ test("yaml-test-suite/9MQT/01", () => {
 b"
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected document end"));
 });
 
 test("yaml-test-suite/9SA2", () => {
@@ -2374,9 +2483,13 @@ test("yaml-test-suite/B63P", () => {
 ...
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/BD7L", () => {
@@ -2387,9 +2500,13 @@ test("yaml-test-suite/BD7L", () => {
 invalid: x
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/BEC7", () => {
@@ -2416,9 +2533,13 @@ plain: a
        c
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/BS4K", () => {
@@ -2428,9 +2549,13 @@ test("yaml-test-suite/BS4K", () => {
 word2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/BU8L", () => {
@@ -2472,9 +2597,13 @@ test("yaml-test-suite/C2SP", () => {
 ]: 42
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiline implicit key"));
 });
 
 test("yaml-test-suite/C4HZ", () => {
@@ -2559,9 +2688,13 @@ test("yaml-test-suite/CML9", () => {
   word2 ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/CN3R", () => {
@@ -2601,9 +2734,13 @@ test("yaml-test-suite/CQ3W", () => {
 key: "missing closing quote
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected EOF"));
 });
 
 test("yaml-test-suite/CT4Q", () => {
@@ -2628,9 +2765,13 @@ test("yaml-test-suite/CTN5", () => {
 [ a, b, c, , ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/CUP7", () => {
@@ -2658,9 +2799,13 @@ test("yaml-test-suite/CVW2", () => {
 ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/CXX2", () => {
@@ -2669,9 +2814,13 @@ test("yaml-test-suite/CXX2", () => {
   const input: string = `--- &anchor a: b
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/D49Q", () => {
@@ -2682,9 +2831,13 @@ test("yaml-test-suite/D49Q", () => {
  d': 1
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiline implicit key"));
 });
 
 test("yaml-test-suite/D83L", () => {
@@ -2906,9 +3059,13 @@ test("yaml-test-suite/DK4H", () => {
   : value ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiline implicit key"));
 });
 
 test("yaml-test-suite/DK95/00", () => {
@@ -2931,9 +3088,13 @@ test("yaml-test-suite/DK95/01", () => {
 	baz"
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/DK95/02", () => {
@@ -2998,9 +3159,13 @@ test("yaml-test-suite/DK95/06", () => {
   	b: 2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Tab characters cannot be used as indentation"));
 });
 
 test("yaml-test-suite/DK95/07", () => {
@@ -3038,9 +3203,13 @@ test("yaml-test-suite/DMG6", () => {
  wrong: 2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/DWX9", () => {
@@ -3090,9 +3259,13 @@ scalar1 # comment
 scalar2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/EHF6", () => {
@@ -3119,9 +3292,13 @@ test("yaml-test-suite/EW3V", () => {
  k2: v2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/EX5H", () => {
@@ -3378,9 +3555,13 @@ test("yaml-test-suite/G5U8", () => {
 - [-, -]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/G7JE", () => {
@@ -3391,9 +3572,13 @@ c
  d: 1
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiline implicit key"));
 });
 
 test("yaml-test-suite/G992", () => {
@@ -3422,9 +3607,13 @@ seq:
 - b
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/GDY7", () => {
@@ -3434,9 +3623,13 @@ test("yaml-test-suite/GDY7", () => {
 this is #not a: key
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/GH63", () => {
@@ -3461,9 +3654,13 @@ test("yaml-test-suite/GT5M", () => {
 - item2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/H2RW", () => {
@@ -3510,9 +3707,13 @@ test("yaml-test-suite/H7J7", () => {
   a: b
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/H7TQ", () => {
@@ -3522,9 +3723,13 @@ test("yaml-test-suite/H7TQ", () => {
 ---
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/HM87/00", () => {
@@ -3598,9 +3803,13 @@ test("yaml-test-suite/HRE5", () => {
 double: "quoted \\' scalar"
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/HS5T", () => {
@@ -3626,9 +3835,13 @@ test("yaml-test-suite/HU3P", () => {
   no: key
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiline implicit key"));
 });
 
 test("yaml-test-suite/HWV9", () => {
@@ -3803,9 +4016,13 @@ test("yaml-test-suite/JKF3", () => {
 bar": x
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/JQ4R", () => {
@@ -3894,9 +4111,13 @@ key2: "quoted2" no key: nor value
 key3: "quoted3"
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/K3WX", () => {
@@ -4072,9 +4293,13 @@ sequence item
 invalid item
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/KSS4", () => {
@@ -4192,9 +4417,13 @@ test("yaml-test-suite/LHL4", () => {
 !invalid{}tag scalar
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/LP6E", () => {
@@ -4428,9 +4657,13 @@ test("yaml-test-suite/MUS6/00", () => {
 ---
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/MUS6/01", () => {
@@ -4442,9 +4675,13 @@ test("yaml-test-suite/MUS6/01", () => {
 ---
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/MUS6/02", () => {
@@ -4565,9 +4802,13 @@ test("yaml-test-suite/N4JP", () => {
  key2: "bad indentation"
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/N782", () => {
@@ -4579,9 +4820,13 @@ test("yaml-test-suite/N782", () => {
 ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/NAT4", () => {
@@ -4744,9 +4989,13 @@ test("yaml-test-suite/P2EQ", () => {
 - { y: z }- invalid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/P76L", () => {
@@ -4861,9 +5110,13 @@ key2: "quoted2" trailing content
 key3: "quoted3"
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/Q5MG", () => {
@@ -4939,9 +5192,13 @@ b
 c"
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/QF4Y", () => {
@@ -4970,9 +5227,13 @@ c: d
 e: f
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unresolved tag handle"));
 });
 
 test("yaml-test-suite/QT73", () => {
@@ -5035,9 +5296,13 @@ key: value
 ---
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/RLU9", () => {
@@ -5096,9 +5361,13 @@ test("yaml-test-suite/RXY3", () => {
 '
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected document end"));
 });
 
 test("yaml-test-suite/RZP5", () => {
@@ -5210,9 +5479,13 @@ folded: > first line
   second line
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/S4JQ", () => {
@@ -5266,9 +5539,13 @@ test("yaml-test-suite/S98Z", () => {
  # comment
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/S9E8", () => {
@@ -5315,9 +5592,13 @@ test("yaml-test-suite/SF5V", () => {
 ---
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiple YAML directives"));
 });
 
 test("yaml-test-suite/SKE5", () => {
@@ -5367,9 +5648,13 @@ test("yaml-test-suite/SR86", () => {
 key2: &b *a
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/SSW6", () => {
@@ -5391,9 +5676,13 @@ test("yaml-test-suite/SU5Z", () => {
   const input: string = `key: "value"# invalid comment
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/SU74", () => {
@@ -5403,9 +5692,13 @@ test("yaml-test-suite/SU74", () => {
 &b *alias : value2
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/SY6V", () => {
@@ -5414,9 +5707,13 @@ test("yaml-test-suite/SY6V", () => {
   const input: string = `&anchor - sequence entry
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/SYW4", () => {
@@ -5494,9 +5791,13 @@ test("yaml-test-suite/T833", () => {
  bar: 2 }
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/TD5N", () => {
@@ -5507,9 +5808,13 @@ test("yaml-test-suite/TD5N", () => {
 invalid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/TE2A", () => {
@@ -5622,9 +5927,13 @@ test("yaml-test-suite/U44R", () => {
    key2: "bad indentation"
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/U99R", () => {
@@ -5633,9 +5942,13 @@ test("yaml-test-suite/U99R", () => {
   const input: string = `- !!str, xxx
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/U9NS", () => {
@@ -5893,9 +6206,13 @@ v
 }
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/VJP3/01", () => {
@@ -5977,9 +6294,13 @@ block scalar: |
   are invalid
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/WZ62", () => {
@@ -6019,9 +6340,13 @@ test("yaml-test-suite/X4QW", () => {
   scalar
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected character"));
 });
 
 test("yaml-test-suite/X8DW", () => {
@@ -6127,9 +6452,13 @@ test("yaml-test-suite/Y79Y/000", () => {
 bar: 1
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Tab characters cannot be used as indentation"));
 });
 
 test("yaml-test-suite/Y79Y/001", () => {
@@ -6170,9 +6499,13 @@ test("yaml-test-suite/Y79Y/003", () => {
  ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/Y79Y/004", () => {
@@ -6181,9 +6514,13 @@ test("yaml-test-suite/Y79Y/004", () => {
   const input: string = `-	-
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Tab characters cannot be used as indentation"));
 });
 
 test("yaml-test-suite/Y79Y/005", () => {
@@ -6192,9 +6529,13 @@ test("yaml-test-suite/Y79Y/005", () => {
   const input: string = `- 	-
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Tab characters cannot be used as indentation"));
 });
 
 test("yaml-test-suite/Y79Y/006", () => {
@@ -6203,9 +6544,13 @@ test("yaml-test-suite/Y79Y/006", () => {
   const input: string = `?	-
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Tab characters cannot be used as indentation"));
 });
 
 test("yaml-test-suite/Y79Y/007", () => {
@@ -6215,9 +6560,13 @@ test("yaml-test-suite/Y79Y/007", () => {
 :	-
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Tab characters cannot be used as indentation"));
 });
 
 test("yaml-test-suite/Y79Y/008", () => {
@@ -6226,9 +6575,13 @@ test("yaml-test-suite/Y79Y/008", () => {
   const input: string = `?	key:
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Tab characters cannot be used as indentation"));
 });
 
 test("yaml-test-suite/Y79Y/009", () => {
@@ -6238,9 +6591,13 @@ test("yaml-test-suite/Y79Y/009", () => {
 :	key:
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Tab characters cannot be used as indentation"));
 });
 
 test("yaml-test-suite/Y79Y/010", () => {
@@ -6279,9 +6636,13 @@ test("yaml-test-suite/YJV2", () => {
   const input: string = `[-]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/Z67P", () => {
@@ -6319,9 +6680,13 @@ test("yaml-test-suite/ZCZ6", () => {
   const input: string = `a: b: c: d
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/ZF4X", () => {
@@ -6380,9 +6745,13 @@ test("yaml-test-suite/ZL4Z", () => {
 a: 'b': c
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/ZVH3", () => {
@@ -6392,9 +6761,13 @@ test("yaml-test-suite/ZVH3", () => {
  - item1
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Unexpected token"));
 });
 
 test("yaml-test-suite/ZWK4", () => {
@@ -6419,7 +6792,11 @@ test("yaml-test-suite/ZXT5", () => {
   :value ]
 `;
 
-  expect(() => {
-    return YAML.parse(input);
-  }).toThrow();
+  let error: unknown;
+  try {
+    YAML.parse(input);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toEqual(new SyntaxError("YAML Parse error: Multiline implicit key"));
 });

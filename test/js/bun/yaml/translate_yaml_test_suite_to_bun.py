@@ -8,6 +8,7 @@ import subprocess
 import sys
 import re
 import argparse
+import tempfile
 
 def escape_js_string(s):
     """Escape a string for use in JavaScript string literals."""
@@ -434,6 +435,49 @@ try {{
         if os.path.exists(temp_js):
             os.remove(temp_js)
 
+# The bun whose YAML.parse supplies the message that each error test asserts: the debug build of this
+# checkout (`bun bd`), so that the messages come from the parser under test. --bun names another one.
+DEFAULT_BUN = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', '..', 'build', 'debug', 'bun-debug'))
+bun_executable = DEFAULT_BUN
+
+def get_bun_syntax_error_message(yaml_content):
+    """Ask Bun's parser for the message of the SyntaxError it throws for this input.
+
+    Returns None when Bun does not throw a SyntaxError. The error test for that input then fails until Bun does.
+    Exits when the bun cannot be asked. The caller skips a test whose generation raises, and an error test
+    must not leave the output that way.
+    """
+    js_code = f'''
+const input = {format_js_string(yaml_content)};
+
+let message = null;
+try {{
+    Bun.YAML.parse(input);
+}} catch (e) {{
+    if (e instanceof SyntaxError) message = e.message;
+}}
+console.log(JSON.stringify(message));
+'''
+
+    with tempfile.NamedTemporaryFile('w', suffix='.js', encoding='utf-8', delete=False) as f:
+        f.write(js_code)
+        temp_js = f.name
+
+    try:
+        result = subprocess.run([bun_executable, temp_js], capture_output=True, text=True, timeout=60,
+                                env={**os.environ, 'BUN_DEBUG_QUIET_LOGS': '1'})
+        if result.returncode != 0:
+            raise RuntimeError(f"exit code {result.returncode}: {result.stderr}")
+        lines = result.stdout.strip().splitlines()
+        if not lines:
+            raise RuntimeError("it printed nothing")
+        return json.loads(lines[-1])
+    except Exception as e:
+        sys.exit(f"Error: could not get the YAML.parse error message from {bun_executable}: {e}\n"
+                 "Build the debug build (bun bd), or pass --bun.")
+    finally:
+        os.remove(temp_js)
+
 def generate_test(test_dir, test_name, check_ast=True, use_js_yaml=False, use_yaml_pkg=False):
     """Generate a single Bun test case from a yaml-test-suite directory.
 
@@ -519,15 +563,26 @@ test("{test_name}", () => {{
 }});
 '''
         else:
+            # toEqual compares the class and the message of two errors, so one expect() covers both.
+            # CI collects garbage after every expect() (BUN_GARBAGE_COLLECTOR_LEVEL=1).
+            message = get_bun_syntax_error_message(yaml_content)
+            if message is not None:
+                assertion = f'expect(error).toEqual(new SyntaxError("{escape_js_string(message)}"));'
+            else:
+                assertion = 'expect(error).toBeInstanceOf(SyntaxError);'
             return f'''
 test("{test_name}", () => {{
     // {description}
     // Error test - expecting parse to fail
     const input: string = {formatted_content};
 
-    expect(() => {{
-        return YAML.parse(input);
-    }}).toThrow();
+    let error: unknown;
+    try {{
+        YAML.parse(input);
+    }} catch (e) {{
+        error = e;
+    }}
+    {assertion}
 }});
 '''
 
@@ -905,7 +960,13 @@ def main():
                         help='Also generate a companion test file using js-yaml for validation')
     parser.add_argument('--with-yaml', action='store_true',
                         help='Also generate a companion test file using yaml package for validation')
+    parser.add_argument('--bun', default=DEFAULT_BUN,
+                        help='bun executable whose YAML.parse supplies the message that each error test asserts '
+                             '(default: the debug build of this checkout, build/debug/bun-debug)')
     args = parser.parse_args()
+
+    global bun_executable
+    bun_executable = args.bun
 
     check_ast = not args.no_ast_check
     with_js_yaml = args.with_js_yaml
@@ -997,6 +1058,7 @@ def main():
     output = f'''// Tests translated from official yaml-test-suite
 {commit_comment}
 {mode_comment}
+// Error tests assert a SyntaxError with the message Bun's parser gave when this file was generated
 // Total: {len(test_dirs)} test directories
 
 import {{ test, expect }} from "bun:test";

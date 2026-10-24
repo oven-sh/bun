@@ -6954,9 +6954,7 @@ pub mod bv2_impl {
                 let is_in_memory = in_memory_result.is_some();
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
-                    if let Some(mut result) = in_memory_result {
-                        // No tsconfig.json to take these from.
-                        result.jsx = transpiler.options.jsx.clone();
+                    if let Some(result) = in_memory_result {
                         break result;
                     }
                     match transpiler.resolver.resolve_with_framework(
@@ -7346,7 +7344,12 @@ pub mod bv2_impl {
                     target
                 };
 
-                resolve_task.jsx = resolve_result.jsx.clone();
+                // An in-memory file has no tsconfig.json to take these from.
+                resolve_task.jsx = if is_in_memory {
+                    transpiler.options.jsx.clone()
+                } else {
+                    resolve_result.jsx.clone()
+                };
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);

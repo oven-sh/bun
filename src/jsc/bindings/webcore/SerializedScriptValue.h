@@ -176,6 +176,9 @@ private:
     // Raw `*mut BlockList` pointers whose refcount was bumped at serialize
     // time so they outlive the wire buffer; released in the destructor.
     Vector<void*> m_serializedBlockListRefs;
+    // Nonces of the SharedStruct, SharedArray, Mutex and Condition objects this value holds a strong count of (see
+    // src/shared_struct_jsc/structured_clone.rs); released in the destructor.
+    Vector<uint64_t> m_serializedSharedRefs;
 #if ENABLE(WEBASSEMBLY)
     std::unique_ptr<WasmModuleArray> m_wasmModulesArray;
     std::unique_ptr<WasmMemoryHandleArray> m_wasmMemoryHandlesArray;

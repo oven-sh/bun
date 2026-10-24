@@ -185,15 +185,22 @@ fn to_value(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Value>> 
         Value::BigInt(Arc::from(
             String::from_utf8_lossy(digits.to_utf8().slice()).as_ref(),
         ))
-    } else if let Some(block) = block_of(value) {
-        Value::Struct(block)
-    } else if let Some(mutex) = value.as_class_ref::<MutexObject>() {
-        Value::Mutex(mutex.inner.clone())
-    } else if let Some(condition) = value.as_class_ref::<ConditionObject>() {
-        Value::Condition(condition.inner.clone())
     } else {
-        unreachable!("is_shareable")
+        shared_of(value).expect("is_shareable")
     }))
+}
+
+/// The object behind a SharedStruct, SharedArray, Mutex or Condition; `None` for any other value.
+pub(crate) fn shared_of(value: JSValue) -> Option<Value> {
+    if let Some(block) = block_of(value) {
+        Some(Value::Struct(block))
+    } else if let Some(mutex) = value.as_class_ref::<MutexObject>() {
+        Some(Value::Mutex(mutex.inner.clone()))
+    } else {
+        value
+            .as_class_ref::<ConditionObject>()
+            .map(|condition| Value::Condition(condition.inner.clone()))
+    }
 }
 
 /// `to_value`, or a TypeError for a value that cannot be shared.
@@ -212,7 +219,7 @@ fn wrap(global: &JSGlobalObject, block: Arc<SharedBlock>) -> JsResult<JSValue> {
     from_js_host_call(global, || unsafe { Bun__SharedBlock__wrap(global, raw) })
 }
 
-fn to_js(global: &JSGlobalObject, value: Value) -> JsResult<JSValue> {
+pub(crate) fn to_js(global: &JSGlobalObject, value: Value) -> JsResult<JSValue> {
     Ok(match value {
         Value::Undefined => JSValue::UNDEFINED,
         Value::Null => JSValue::NULL,

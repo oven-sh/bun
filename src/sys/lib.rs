@@ -7501,7 +7501,9 @@ pub fn write_nowait(fd: Fd, buf: &[u8]) -> Maybe<Option<usize>> {
     }
 }
 
-/// `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
+/// Reserve blocks for `len` bytes at `offset`. Best-effort, Linux only.
+/// `FALLOC_FL_KEEP_SIZE` leaves the file size to the write that follows, so
+/// an `O_APPEND` write lands at the real end and not after a grown one.
 pub fn preallocate_file(
     fd: FdNative,
     offset: i64,
@@ -7509,12 +7511,22 @@ pub fn preallocate_file(
 ) -> core::result::Result<(), bun_core::Error> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // Result intentionally discarded
-        // — preallocation is best-effort.
-        let _ = safe_libc::fallocate(fd, 0, offset, len);
+        let _ = safe_libc::fallocate(fd, libc::FALLOC_FL_KEEP_SIZE, offset, len);
     }
     let _ = (fd, offset, len);
     Ok(())
+}
+
+/// Free the blocks `preallocate_file` reserved past the end of a file that
+/// came out shorter than `reserved`. Best-effort, Linux only.
+pub fn release_preallocation(fd: Fd, reserved: i64) {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Ok(st) = fstat(fd) {
+        if st.st_size < reserved {
+            let _ = ftruncate(fd, st.st_size);
+        }
+    }
+    let _ = (fd, reserved);
 }
 
 /// `kqueue()` — BSD kernel event queue (Darwin/FreeBSD only).
@@ -7822,14 +7834,13 @@ pub fn move_file_z_with_handle(
                 O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
                 0o644,
             )?;
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            {
-                // Preallocation is best-effort.
-                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
-            }
+            #[cfg(unix)]
+            let _ = preallocate_file(dst.native(), 0, st.st_size);
             // Seek input to 0 — caller may have left offset at EOF after writing.
             let _ = lseek(from_handle, 0, libc::SEEK_SET);
             let r = copy_file(from_handle, dst);
+            #[cfg(unix)]
+            release_preallocation(dst, st.st_size);
             // Only stamp mode/owner on success; on copy error
             // the partially-written dest keeps its openat() defaults.
             #[cfg(unix)]
@@ -9051,13 +9062,12 @@ pub(crate) fn copy_file_z_slow_with_handle(
         O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
         0o644,
     )?;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        // Preallocation is best-effort.
-        let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
-    }
+    #[cfg(unix)]
+    let _ = preallocate_file(dst.native(), 0, st.st_size);
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
     let r = copy_file(in_handle, dst);
+    #[cfg(unix)]
+    release_preallocation(dst, st.st_size);
     // Only stamp mode/owner on success; on copy error the
     // partially-written dest keeps its openat() defaults.
     #[cfg(unix)]

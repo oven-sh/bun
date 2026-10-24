@@ -500,6 +500,18 @@ impl CopyFile {
                 }
             }
         }
+
+        // A short copy leaves the blocks reserved by the preallocation past EOF.
+        if !unknown_size
+            && self.max_length > PREALLOCATE_LENGTH
+            && total_written < self.max_length as u64
+            && matches!(
+                self.destination_file_store.pathlike,
+                PathOrFileDescriptor::Path(_)
+            )
+        {
+            let _ = bun_sys::ftruncate(dest_fd, i64::try_from(total_written).expect("int cast"));
+        }
         Ok(())
     }
 

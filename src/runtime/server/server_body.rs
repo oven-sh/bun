@@ -12,7 +12,7 @@ use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
 };
 use crate::node::types::PathLikeExt as _;
-use crate::socket::listener::ServerNameAnswer;
+use crate::socket::listener::{Connections, ServerNameAnswer};
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
@@ -2376,7 +2376,11 @@ where
                 && !self.flags.get().contains(ServerFlags::TERMINATED)
                 && !self.deinit_running.get())
         {
-            self.stop(abrupt, false);
+            self.stop(if abrupt {
+                Connections::Close
+            } else {
+                Connections::Keep
+            });
         }
 
         rc
@@ -2386,7 +2390,7 @@ where
         if self.has_listener()
             || (!self.flags.get().contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
         {
-            self.stop(true, false);
+            self.stop(Connections::Close);
         }
     }
 

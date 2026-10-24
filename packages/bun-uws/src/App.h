@@ -253,6 +253,19 @@ public:
 
     /* Closes all sockets including listen sockets. `thread_ends`: see us_socket_group_close_all_ex. */
     TemplatedApp &&close(int thread_ends) {
+        if constexpr (SSL) {
+            /* The group's close sends a close_notify ahead of the reset. Not over a response that isn't finished or isn't sent. */
+            std::vector<us_socket_t *> sockets;
+            for (us_socket_t *s = thread_ends ? nullptr : httpContext->getSocketGroup()->head_sockets; s; s = s->next) {
+                sockets.push_back(s);
+            }
+            for (us_socket_t *s : sockets) {
+                auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
+                if (!us_socket_is_closed(s) && ((data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !((AsyncSocket<SSL> *) s)->hasFullyDrained())) {
+                    us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+                }
+            }
+        }
         /* close_all() walks head_listen_sockets first, so listeners are closed
          * here without us holding raw pointers to them across loop ticks. */
         us_socket_group_close_all_ex(httpContext->getSocketGroup(), 1, thread_ends);

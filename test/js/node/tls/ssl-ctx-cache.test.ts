@@ -783,6 +783,29 @@ describe.concurrent("how long the cache keeps a context that nothing else holds"
     });
   });
 
+  test("Bun.serve() with server names doesn't take an error that another call left queued for its own", async () => {
+    expect(
+      await inAFreshProcess(`
+        const serve = () =>
+          Bun.serve({
+            port: 0,
+            fetch: () => new Response(""),
+            tls: [
+              { ...tls, serverName: "a.test" },
+              { ...tls, serverName: "b.test" },
+            ],
+          });
+        serve().stop(true);
+        const algorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
+        result.importKey = await crypto.subtle.importKey("pkcs8", Buffer.alloc(256, 7), algorithm, false, ["sign"]).catch(error => error.name);
+        // The same options again, so the contexts come from the cache.
+        const server = serve();
+        result.listening = server.port > 0;
+        server.stop(true);
+      `),
+    ).toEqual({ result: { importKey: "DataError", listening: true }, stderr: "", exitCode: 0 });
+  });
+
   // It used to be dropped only when the GC finalized the Listener, so a listener the program still
   // references, or any at process exit, kept its CTX alive. A tls.Server's listener serves the
   // Server's own context, which outlives close(). One from Bun.listen() shows its reference in the count.

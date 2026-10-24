@@ -97,9 +97,9 @@ bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, cause| {
     Listener::do_stop(unsafe { &*this }, connections)
 });
 
-/// What stopping a listener does to the connections it accepted.
+/// What stopping a listener or a server does to the connections it accepted.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Connections {
+pub(crate) enum Connections {
     Keep,
     Close,
     CloseAsThreadEnds,

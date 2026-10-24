@@ -4764,6 +4764,7 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     { server: "Bun.serve()", call: "Response(data)", ...timedOut },
     // Nothing is queued here: the rest of the body doesn't exist yet.
     { server: "Bun.serve()", call: "Response(unfinished)", ...timedOut },
+    { server: "Bun.serve()", call: "Response(unfinished)", ...stopped },
     { server: "Bun.listen()", call: "end(data)", ...timedOut },
     // Few enough sweeps that the close which follows isn't cut short by its own timeout.
     { server: "Bun.listen()", call: "write(data)", ...timedOut, leaves: "endInTimeout(socket); sweepSocketTimers(3)" },

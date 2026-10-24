@@ -12,6 +12,8 @@ use bun_uws_sys::app::c as uws_app_c;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
 use bun_ptr::AsCtxPtr;
 
+use crate::socket::listener::Connections;
+
 // ─── httplog ─────────────────────────────────────────────────────────────────
 // Output.scoped(.Server, .visible) — debug-build no-op until bun_output wires.
 macro_rules! httplog {
@@ -194,12 +196,14 @@ bun_jsc::impl_abort_handle_owner!(
     [const SSL: bool, const DEBUG: bool] NewServer<SSL, DEBUG>,
     abort_handle,
     |this, cause| {
-        let thread_ends = matches!(
-            cause,
-            bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
-        );
+        let connections = match cause {
+            bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown) => {
+                Connections::CloseAsThreadEnds
+            }
+            _ => Connections::Close,
+        };
         // SAFETY: trait contract — `this` is live (armed ⇒ not deinit'd).
-        unsafe { &*this }.stop(true, thread_ends)
+        unsafe { &*this }.stop(connections)
     }
 );
 
@@ -1760,18 +1764,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// Abrupt stop: close the listen sockets and every connection of `app`.
-    fn close_app(app: *mut uws_sys::NewApp<SSL>, thread_ends: bool) {
+    fn close_app(app: *mut uws_sys::NewApp<SSL>, connections: Connections) {
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let app = bun_opaque::opaque_deref_mut(app);
-        if thread_ends {
+        if connections == Connections::CloseAsThreadEnds {
             app.close_as_thread_ends();
         } else {
             app.close();
         }
     }
 
-    pub(crate) fn stop_listening(&self, abrupt: bool, thread_ends: bool) {
+    pub(crate) fn stop_listening(&self, connections: Connections) {
         // httplog!("stopListening", .{});
+        let abrupt = connections != Connections::Keep;
 
         // A graceful stop leaves connections open, and this handle is how their context's stop
         // reaches them: it stays until they are gone (`deinit_if_we_can`).
@@ -1819,7 +1824,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.flags.set(self.flags.get() | ServerFlags::TERMINATED);
                 if let Some(app) = self.app.get() {
                     self.deinit_running.set(true);
-                    Self::close_app(app, thread_ends);
+                    Self::close_app(app, connections);
                     self.deinit_running.set(false);
                 }
                 self.config.with_mut(|config| {
@@ -1895,7 +1900,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // guard across the drain so that nested call early-returns —
             // `stop()` runs `deinit_if_we_can` itself right after this returns.
             self.deinit_running.set(true);
-            Self::close_app(self.app.get().unwrap(), thread_ends);
+            Self::close_app(self.app.get().unwrap(), connections);
             self.deinit_running.set(false);
             // Only clear after the drain — `on_close` defers reach
             // `on_websocket_closed` through `handler.server`, so wiping it
@@ -1909,8 +1914,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// `thread_ends`: the abrupt stop of a server whose thread ends (see `thread_ends` in libusockets.h).
-    pub(crate) fn stop(&self, abrupt: bool, thread_ends: bool) {
+    /// `CloseAsThreadEnds`: the abrupt stop of a server whose thread ends (see `thread_ends` in libusockets.h).
+    pub(crate) fn stop(&self, connections: Connections) {
         if self.config.get().allow_hot && !self.config.get().id.is_empty() {
             // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
             unsafe {
@@ -1920,7 +1925,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        self.stop_listening(abrupt, thread_ends);
+        self.stop_listening(connections);
         self.deinit_if_we_can();
     }
 
@@ -3540,6 +3545,8 @@ fn create_ssl_ctx(
     options: &uws_sys::BunSocketContextOptions,
 ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
     let mut err = uws::create_bun_socket_error_t::none;
+    // A context from the cache builds nothing, so an error that another call left queued would pass for this one's.
+    bun_boringssl_sys::ERR_clear_error();
     crate::api::SSLContextCache::SSLContextCache::get_or_create_for_server(options, &mut err)
 }
 

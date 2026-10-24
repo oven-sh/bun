@@ -800,7 +800,17 @@ impl Checker<'_, '_> {
         };
         if let Some(&last) = s.candidates_for_argument_error.last() {
             let from = self.reported.len();
-            self.is_signature_applicable(s, last, Relation::Assignable, CheckMode::empty(), true);
+            self.candidate_errors_from = from;
+            let mode = CheckMode::empty();
+            let is_applicable =
+                self.is_signature_applicable(s, last, Relation::Assignable, mode, true);
+            // What the check of an argument reports isn't an error of the candidate. An argument is checked again
+            // here while a loop is analyzed.
+            let from = match s.node {
+                CallLike::Jsx(_) => from,
+                _ if is_applicable => self.reported.len(),
+                _ => self.candidate_errors_from.max(from),
+            };
             let reported = self.take_reported_from(from);
             let is_overloaded = s.candidates_for_argument_error.len() > 1;
             let related = if reported.is_empty() {
@@ -970,6 +980,7 @@ impl Checker<'_, '_> {
                     }
                     _ => self.span_of_parenthesized_expr(file, this_arg.unwrap_or(e)),
                 };
+                self.candidate_errors_from = self.reported.len();
                 // 2684, or a more specific error. As below, this comparison can succeed.
                 if !self.check_this_assignable(actual, expected, at) {
                     return false;
@@ -1025,6 +1036,7 @@ impl Checker<'_, '_> {
                     _ => None,
                 };
                 let reported = self.reported.len();
+                self.candidate_errors_from = reported;
                 let mut diagnostics = Vec::new();
                 // `elaborateError` has no case for a `SyntheticExpression` or a `SpreadElement`.
                 let is_elaborated = expr.is_none()
@@ -1084,6 +1096,7 @@ impl Checker<'_, '_> {
                         },
                     };
                     let reported = self.reported.len();
+                    self.candidate_errors_from = reported;
                     self.check_assignable_with_end(file, actual, rest, at, end, ExprId::NONE, 2345);
                     self.maybe_add_missing_await_info((file, at, end), actual, rest, reported);
                 }

@@ -11406,6 +11406,118 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    // The pass that reports why the last candidate doesn't fit checks the argument again, and TS2871 with it.
+    test("what an argument's own check reports while a loop is analyzed isn't an error of the overload", async () => {
+      using dir = project({
+        "a.ts": `declare function ov(x: string): number;
+declare function ov(x: number): string;
+declare function one(x: number): string;
+declare function rest(...x: [number]): string;
+declare function rest(...x: [string]): number;
+declare class K { constructor(x: string); constructor(x: number); v: string }
+declare function tag(s: TemplateStringsArray, x: string): number;
+declare function tag(s: TemplateStringsArray, x: number): string;
+declare const o: { m(this: { a: 1 }, x: number): string; m(this: { a: 1 }, x: string): number };
+declare const c: boolean;
+declare const root: {};
+export function overloads(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ov(undefined ?? z);
+  while (c) { x = p; }
+  return x;
+}
+export function single(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = one(undefined ?? z);
+  while (c) { x = p; }
+  return x;
+}
+export function spread(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = rest(undefined ?? z);
+  while (c) { x = p; }
+  return x;
+}
+export function construct(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = new K(undefined ?? z).v;
+  while (c) { x = p; }
+  return x;
+}
+export function template(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = tag\`\${undefined ?? z}\`;
+  while (c) { x = p; }
+  return x;
+}
+export function receiver(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = o.m(undefined ?? z);
+  while (c) { x = p; }
+  return x;
+}
+export function second(p: string | number | undefined) {
+  let x: string | number | undefined = 0;
+  let z: {} | undefined | string = root;
+  while (c) { }
+  try { try { } catch { z; } if (c) return; } finally { }
+  p = ov((null ?? z) === 1 ? z : (undefined ?? z));
+  while (c) { x = p; }
+  return x;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(17,10): error TS2871: This expression is always nullish.
+        a.ts(17,10): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '{}' is not assignable to parameter of type 'number'.
+        a.ts(26,11): error TS2871: This expression is always nullish.
+        a.ts(26,11): error TS2345: Argument of type '{}' is not assignable to parameter of type 'number'.
+        a.ts(35,12): error TS2871: This expression is always nullish.
+        a.ts(35,12): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '{}' is not assignable to parameter of type 'string'.
+        a.ts(44,13): error TS2871: This expression is always nullish.
+        a.ts(44,13): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '{}' is not assignable to parameter of type 'number'.
+        a.ts(53,13): error TS2871: This expression is always nullish.
+        a.ts(53,13): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '{}' is not assignable to parameter of type 'number'.
+        a.ts(62,7): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Property 'a' is missing in type '{ m(this: { a: 1; }, x: number): string; m(this: { a: 1; }, x: string): number; }' but required in type '{ a: 1; }'.
+        a.ts(62,11): error TS2871: This expression is always nullish.
+        a.ts(71,10): error TS2769: No overload matches this call.
+          The last overload gave the following error.
+            Argument of type '{}' is not assignable to parameter of type 'number'.
+        a.ts(71,11): error TS2871: This expression is always nullish.
+        a.ts(71,35): error TS2871: This expression is always nullish."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

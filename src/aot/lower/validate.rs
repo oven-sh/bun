@@ -10,7 +10,6 @@ use bun_sema::check::aot::{GaveUp, WrittenPlace};
 use bun_sema::hir::ExprId;
 use rustc_hash::FxHashMap;
 
-pub(in crate::lower) use self::misuse::report_misused_compiler_functions;
 use super::{CheckerTypeId, FunctionLowering};
 use crate::ir::ExpectedResultId;
 use crate::ir::generated::ValidationNode;
@@ -28,17 +27,17 @@ enum ValidationError {
     GaveUp(GaveUp),
 }
 
-pub(crate) fn find_expected_result(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    call: ExprId,
-) -> Option<ExpectedResultId> {
-    expected_result::find_expected_result(lowering.file, call)
-}
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn find_expected_result(&mut self, call: ExprId) -> Option<ExpectedResultId> {
+        self.file.find_expected_result(call)
+    }
 
-pub(crate) fn note_what_an_awaited_parse_may_build(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    awaiting: ExprId,
-    operand: ExprId,
-) {
-    expected_result::note_what_an_awaited_parse_may_build(lowering.file, awaiting, operand);
+    pub(crate) fn note_what_an_awaited_parse_may_build(
+        &mut self,
+        awaiting: ExprId,
+        operand: ExprId,
+    ) {
+        self.file
+            .note_what_an_awaited_parse_may_build(awaiting, operand);
+    }
 }

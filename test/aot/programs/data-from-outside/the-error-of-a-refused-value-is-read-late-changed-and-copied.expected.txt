@@ -1,16 +1,16 @@
 == validate
-message first: lines[1].sku: expected string to have >=1 characters (and 2 more)
-issues first: [{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"Too small: expected string to have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"Too small: expected number to be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"Too big: expected string to have <=4 characters"}]
-both: [3,"lines[1].sku: expected string to have >=1 characters (and 2 more)",true]
+message first: lines[1].sku must have >=1 characters (and 2 more)
+issues first: [{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"must have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"must be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"must have <=4 characters"}]
+both: [3,"lines[1].sku must have >=1 characters (and 2 more)",true]
 is a TypeError: [true,true,"TypeError"]
-toString: TypeError: lines[1].sku: expected string to have >=1 characters (and 2 more)
-first line of the stack: TypeError: lines[1].sku: expected string to have >=1 characters (and 2 more)
-stringify: {"issues":[{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"Too small: expected string to have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"Too small: expected number to be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"Too big: expected string to have <=4 characters"}]}
+toString: TypeError: lines[1].sku must have >=1 characters (and 2 more)
+first line of the stack: TypeError: lines[1].sku must have >=1 characters (and 2 more)
+stringify: {"issues":[{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"must have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"must be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"must have <=4 characters"}]}
 keys: ["issues"]
 own names: ["message","issues"]
 symbols: 0
 in: [true,true,true,true]
-descriptor of message: {"value":"lines[1].sku: expected string to have >=1 characters (and 2 more)","writable":true,"enumerable":false,"configurable":true}
+descriptor of message: {"value":"lines[1].sku must have >=1 characters (and 2 more)","writable":true,"enumerable":false,"configurable":true}
 descriptor of issues: [3,true,true,true,false]
 spread: ["issues"]
 spread issues: 3
@@ -18,27 +18,27 @@ assign: ["lines",1,"sku"]
 entries: [["issues",3]]
 for in: ["issues"]
 a written message stays: ["mine",3,"mine"]
-written issues stay: ["mine","lines[1].sku: expected string to have >=1 characters (and 2 more)","mine"]
+written issues stay: ["mine","lines[1].sku must have >=1 characters (and 2 more)","mine"]
 deleted: [true,"",true,false,3,""]
-deleted issues: [true,null,"lines[1].sku: expected string to have >=1 characters (and 2 more)",null]
+deleted issues: [true,null,"lines[1].sku must have >=1 characters (and 2 more)",null]
 defined: ["defined",{"value":"defined","writable":true,"enumerable":false,"configurable":true},3]
-frozen: ["lines[1].sku: expected string to have >=1 characters (and 2 more)",3,true]
-inherited: ["lines[1].sku: expected string to have >=1 characters (and 2 more)",3,false]
-cloned: lines[1].sku: expected string to have >=1 characters (and 2 more)
+frozen: ["lines[1].sku must have >=1 characters (and 2 more)",3,true]
+inherited: ["lines[1].sku must have >=1 characters (and 2 more)",3,false]
+cloned: lines[1].sku must have >=1 characters (and 2 more)
 inspected: true
 == parse
-message first: lines[1].sku: expected string to have >=1 characters (and 2 more)
-issues first: [{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"Too small: expected string to have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"Too small: expected number to be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"Too big: expected string to have <=4 characters"}]
-both: [3,"lines[1].sku: expected string to have >=1 characters (and 2 more)",true]
+message first: lines[1].sku must have >=1 characters (and 2 more)
+issues first: [{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"must have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"must be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"must have <=4 characters"}]
+both: [3,"lines[1].sku must have >=1 characters (and 2 more)",true]
 is a TypeError: [true,true,"TypeError"]
-toString: TypeError: lines[1].sku: expected string to have >=1 characters (and 2 more)
-first line of the stack: TypeError: lines[1].sku: expected string to have >=1 characters (and 2 more)
-stringify: {"issues":[{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"Too small: expected string to have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"Too small: expected number to be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"Too big: expected string to have <=4 characters"}]}
+toString: TypeError: lines[1].sku must have >=1 characters (and 2 more)
+first line of the stack: TypeError: lines[1].sku must have >=1 characters (and 2 more)
+stringify: {"issues":[{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"must have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"must be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"must have <=4 characters"}]}
 keys: ["issues"]
 own names: ["message","issues"]
 symbols: 0
 in: [true,true,true,true]
-descriptor of message: {"value":"lines[1].sku: expected string to have >=1 characters (and 2 more)","writable":true,"enumerable":false,"configurable":true}
+descriptor of message: {"value":"lines[1].sku must have >=1 characters (and 2 more)","writable":true,"enumerable":false,"configurable":true}
 descriptor of issues: [3,true,true,true,false]
 spread: ["issues"]
 spread issues: 3
@@ -46,27 +46,27 @@ assign: ["lines",1,"sku"]
 entries: [["issues",3]]
 for in: ["issues"]
 a written message stays: ["mine",3,"mine"]
-written issues stay: ["mine","lines[1].sku: expected string to have >=1 characters (and 2 more)","mine"]
+written issues stay: ["mine","lines[1].sku must have >=1 characters (and 2 more)","mine"]
 deleted: [true,"",true,false,3,""]
-deleted issues: [true,null,"lines[1].sku: expected string to have >=1 characters (and 2 more)",null]
+deleted issues: [true,null,"lines[1].sku must have >=1 characters (and 2 more)",null]
 defined: ["defined",{"value":"defined","writable":true,"enumerable":false,"configurable":true},3]
-frozen: ["lines[1].sku: expected string to have >=1 characters (and 2 more)",3,true]
-inherited: ["lines[1].sku: expected string to have >=1 characters (and 2 more)",3,false]
-cloned: lines[1].sku: expected string to have >=1 characters (and 2 more)
+frozen: ["lines[1].sku must have >=1 characters (and 2 more)",3,true]
+inherited: ["lines[1].sku must have >=1 characters (and 2 more)",3,false]
+cloned: lines[1].sku must have >=1 characters (and 2 more)
 inspected: true
 == validate, getter
-message first: lines[1].sku: expected string to have >=1 characters (and 2 more)
-issues first: [{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"Too small: expected string to have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"Too small: expected number to be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"Too big: expected string to have <=4 characters"}]
-both: [3,"lines[1].sku: expected string to have >=1 characters (and 2 more)",true]
+message first: lines[1].sku must have >=1 characters (and 2 more)
+issues first: [{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"must have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"must be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"must have <=4 characters"}]
+both: [3,"lines[1].sku must have >=1 characters (and 2 more)",true]
 is a TypeError: [true,true,"TypeError"]
-toString: TypeError: lines[1].sku: expected string to have >=1 characters (and 2 more)
-first line of the stack: TypeError: lines[1].sku: expected string to have >=1 characters (and 2 more)
-stringify: {"issues":[{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"Too small: expected string to have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"Too small: expected number to be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"Too big: expected string to have <=4 characters"}]}
+toString: TypeError: lines[1].sku must have >=1 characters (and 2 more)
+first line of the stack: TypeError: lines[1].sku must have >=1 characters (and 2 more)
+stringify: {"issues":[{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"must have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"must be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"must have <=4 characters"}]}
 keys: ["issues"]
 own names: ["message","issues"]
 symbols: 0
 in: [true,true,true,true]
-descriptor of message: {"value":"lines[1].sku: expected string to have >=1 characters (and 2 more)","writable":true,"enumerable":false,"configurable":true}
+descriptor of message: {"value":"lines[1].sku must have >=1 characters (and 2 more)","writable":true,"enumerable":false,"configurable":true}
 descriptor of issues: [3,true,true,true,false]
 spread: ["issues"]
 spread issues: 3
@@ -74,30 +74,30 @@ assign: ["lines",1,"sku"]
 entries: [["issues",3]]
 for in: ["issues"]
 a written message stays: ["mine",3,"mine"]
-written issues stay: ["mine","lines[1].sku: expected string to have >=1 characters (and 2 more)","mine"]
+written issues stay: ["mine","lines[1].sku must have >=1 characters (and 2 more)","mine"]
 deleted: [true,"",true,false,3,""]
-deleted issues: [true,null,"lines[1].sku: expected string to have >=1 characters (and 2 more)",null]
+deleted issues: [true,null,"lines[1].sku must have >=1 characters (and 2 more)",null]
 defined: ["defined",{"value":"defined","writable":true,"enumerable":false,"configurable":true},3]
-frozen: ["lines[1].sku: expected string to have >=1 characters (and 2 more)",3,true]
-inherited: ["lines[1].sku: expected string to have >=1 characters (and 2 more)",3,false]
-cloned: lines[1].sku: expected string to have >=1 characters (and 2 more)
+frozen: ["lines[1].sku must have >=1 characters (and 2 more)",3,true]
+inherited: ["lines[1].sku must have >=1 characters (and 2 more)",3,false]
+cloned: lines[1].sku must have >=1 characters (and 2 more)
 inspected: true
 == what is changed after the refusal is not reported
-message: lines[1].sku: expected string to have >=1 characters (and 2 more)
-issues: [{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"Too small: expected string to have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"Too small: expected number to be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"Too big: expected string to have <=4 characters"}]
+message: lines[1].sku must have >=1 characters (and 2 more)
+issues: [{"path":["lines",1,"sku"],"code":"too_small","expected":"string to have >=1 characters","received":"string","message":"must have >=1 characters"},{"path":["lines",1,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"must be >=1"},{"path":["note"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"must have <=4 characters"}]
 == code of the program runs while the value is validated, and never later
 before the error is read: ["id is read"]
-message: lines[1].sku: expected string to have >=1 characters (and 2 more)
+message: lines[1].sku must have >=1 characters (and 2 more)
 after: ["id is read"]
 == many errors, each read in a loop
-sums: [86645,3999]
+sums: [66650,3999]
 == values that are not copied
-a cycle: lines[1].sku: expected string, received object (and 2 more)
-a function: lines: expected array, received function
-a date: id: expected number, received object
-a hole: lines[0]: expected object, received undefined
-a proxy: lines[1].sku: expected string to have >=1 characters (and 2 more)
-a class: id: expected number, received string
-no object: ["expected object, received number","expected object, received null","expected object, received undefined","expected object, received string"]
-deep: lines[0]: expected object, received array
+a cycle: lines[1].sku must be string, received object (and 2 more)
+a function: lines must be array, received function
+a date: id must be number, received object
+a hole: lines[0] must be object, received undefined
+a proxy: lines[1].sku must have >=1 characters (and 2 more)
+a class: id must be number, received string
+no object: ["value must be object, received number","value must be object, received null","value must be object, received undefined","value must be object, received string"]
+deep: lines[0] must be object, received array
 wide: 100

@@ -28,7 +28,8 @@ const values: [string, string][] = [
   ["[]", "number[]"],
   ["[5]", "number[]"],
   ["{}", "object"],
-  ["{ valueOf() { return 7; } }", "{ valueOf(): number }"],
+  // The text of a function is among what is compared, so the functions here are written as the transpiler prints them.
+  ["{ valueOf: () => 7 }", "{ valueOf(): number }"],
   ["new Date(5)", "Date"],
   ["Symbol.iterator", "symbol"],
   ["() => 1", "() => number"],

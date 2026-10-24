@@ -3,9 +3,6 @@ mod binding;
 
 use bun_sema::hir::{self, Call, ExprKind};
 
-pub(in crate::lower) use self::arguments::create_arguments_object;
-pub(crate) use self::binding::lower_parameters;
-
 pub(in crate::lower) fn literal_argument_position(hir: &hir::File<'_>, call: &Call) -> Option<u32> {
     let mut arguments = hir.ids(call.args);
     let (Some(argument), None) = (arguments.next(), arguments.next()) else {

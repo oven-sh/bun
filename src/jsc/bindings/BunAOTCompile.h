@@ -34,7 +34,6 @@ extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult*, JSC::AOT::Wi
 extern "C" void Bun__AOT__freeResult(BunAOTResult*);
 extern "C" size_t Bun__AOT__imageAlignment();
 extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t address);
-extern "C" JSC::AOT::ImageAddressPlaces Bun__AOT__addressPlacesOfImage(BunAOTBytes image);
 extern "C" size_t Bun__AOT__operationCount();
 extern "C" BunAOTBytes Bun__AOT__operationName(size_t index);
 extern "C" bool Bun__AOT__isOptionalPass(JSC::AOT::Wire::PassID);

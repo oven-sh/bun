@@ -37,7 +37,7 @@ function openInstructionCounter(pid: number) {
 export const measureCheck = (cwd: string, args: string[]) => measureCommand(cwd, [bunExe(), "check", "--aot", ...args]);
 
 /** The instructions that the command and its children execute in user mode, on all their threads, and the most memory it has resident at a time. */
-export async function measureCommand(cwd: string, command: string[], killAfter = killAfterMilliseconds, env: Record<string, string | undefined> = bunEnv): Promise<Cost & { stdout: string; stderr: string }> {
+export async function measureCommand(cwd: string, command: string[], killAfter = killAfterMilliseconds, env: Record<string, string | undefined> = bunEnv, expectedExitCode = 0): Promise<Cost & { stdout: string; stderr: string }> {
   const isDarwin = process.platform === "darwin";
   await using child = Bun.spawn({
     cmd: isDarwin ? ["/usr/bin/time", "-l", ...command] : ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command],
@@ -54,7 +54,7 @@ export async function measureCommand(cwd: string, command: string[], killAfter =
   child.stdin.end();
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   const instructions = isDarwin ? Number(/(\d+)\s+instructions retired/.exec(stderr)?.[1]) || undefined : readInstructions?.();
-  if (exitCode !== 0) throw new Error(`${command.join(" ")}: exit code ${exitCode}, signal ${child.signalCode}\n${stdout}${stderr}`);
+  if (exitCode !== expectedExitCode) throw new Error(`${command.join(" ")}: exit code ${exitCode}, signal ${child.signalCode}\n${stdout}${stderr}`);
   const peakBytes = isDarwin ? Number(/(\d+)\s+maximum resident set size/.exec(stderr)?.[1]) : child.resourceUsage()!.maxRSS;
   return { instructions, peakBytes, stdout, stderr };
 }

@@ -10,7 +10,7 @@ import { generated } from "./generated/run-generated";
 const seeds = Array.from({ length: 40 }, (_, i) => i + 1);
 const plainEnv = { BUN_JSC_useRegExpJIT: "0" };
 // The interpreter, which is the reference, needs more than two minutes for an expression of these.
-const tooSlowForTheInterpreter = [5, 11, 15, 35];
+const tooSlowForTheInterpreter = [5, 11, 15, 17, 35];
 
 generated(
   "regular expressions",

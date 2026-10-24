@@ -35,7 +35,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let argument = (arguments.strip_prefix(b"<"))
             .and_then(|rest| rest.strip_suffix(b">"))
             .map(<[u8]>::trim_ascii);
-        if !matches!(argument, Some(b"any" | b"unknown")) {
+        if matches!(argument, Some(b"any" | b"unknown")) {
+            self.parse_members_without_check.push(member);
+        } else {
             self.parse_members_with_type_arguments.push(member);
         }
     }

@@ -1,6 +1,0 @@
-{
-  "extends": "./config/base.json",
-  "compilerOptions": {
-    "strict": true
-  }
-}

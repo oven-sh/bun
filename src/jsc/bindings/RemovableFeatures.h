@@ -4,13 +4,6 @@
 #include "BunRemovableFeatures.h"
 #include "ErrorCode+List.h"
 
-namespace Bun {
-
-ASCIILiteral textOfRemovableFeature(JSC::RemovableFeature);
-ASCIILiteral trimFeatureNameOf(JSC::RemovableFeature);
-
-}
-
 extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobalObject*, uint16_t feature);
 
 namespace Bun {

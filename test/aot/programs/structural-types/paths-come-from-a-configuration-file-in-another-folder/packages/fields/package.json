@@ -1,6 +1,0 @@
-{
-  "name": "fields",
-  "main": "./lib/index.js",
-  "module": "./esm/index.js",
-  "types": "./types/index.d.ts"
-}

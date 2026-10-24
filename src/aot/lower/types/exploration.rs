@@ -96,87 +96,82 @@ fn leave_type(walk: &mut Walk) {
     }
 }
 
-pub(super) fn explore(file: &mut FileLowering<'_, '_, '_, '_>, root: CheckerTypeId) -> Exploration {
-    debug_assert!(
-        !file.types.mapped.contains_key(&root),
-        "only an unmapped type is explored"
-    );
-    if file.types.exhausted.contains(&root) {
-        return Exploration::Exhausted;
+impl FileLowering<'_, '_, '_, '_> {
+    pub(super) fn explore(&mut self, root: CheckerTypeId) -> Exploration {
+        debug_assert!(
+            !self.types.mapped.contains_key(&root),
+            "only an unmapped type is explored"
+        );
+        if self.types.exhausted.contains(&root) {
+            return Exploration::Exhausted;
+        }
+        let edges = collect_edges(self, root);
+        // Most types have no part, or parts that are mapped: a component by itself, which needs no walk to be found.
+        if edges
+            .iter()
+            .all(|edge| self.types.mapped.contains_key(&edge.target))
+        {
+            let members = smallvec![ExploredType { ty: root, edges }];
+            return Exploration::Complete(smallvec![Component { members }]);
+        }
+        let mut walk = Walk::begin(core::mem::take(&mut self.types.walk));
+        enter_type(&mut walk, root, edges);
+        let is_complete = self.walk_from_root(&mut walk, root);
+        let (tables, components) = walk.end();
+        self.types.walk = tables;
+        match is_complete {
+            true => Exploration::Complete(components),
+            false => Exploration::Exhausted,
+        }
     }
-    let edges = collect_edges(file, root);
-    // Most types have no part, or parts that are mapped: a component by itself, which needs no walk to be found.
-    if edges
-        .iter()
-        .all(|edge| file.types.mapped.contains_key(&edge.target))
-    {
-        let members = smallvec![ExploredType { ty: root, edges }];
-        return Exploration::Complete(smallvec![Component { members }]);
-    }
-    let mut walk = Walk::begin(core::mem::take(&mut file.types.walk));
-    enter_type(&mut walk, root, edges);
-    let is_complete = walk_from_root(file, &mut walk, root);
-    let (tables, components) = walk.end();
-    file.types.walk = tables;
-    match is_complete {
-        true => Exploration::Complete(components),
-        false => Exploration::Exhausted,
-    }
-}
 
-fn walk_from_root(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    walk: &mut Walk,
-    root: CheckerTypeId,
-) -> bool {
-    let limit = file.inputs.limits.get(LimitId::MaxTypeNodes);
-    while let Some(visit) = walk.path.last_mut() {
-        let Some(&edge) = visit.edges.get(visit.next_edge) else {
-            leave_type(walk);
-            continue;
-        };
-        visit.next_edge += 1;
-        if file.types.mapped.contains_key(&edge.target) {
-            continue;
-        }
-        if file.types.exhausted.contains(&edge.target) {
-            let path = walk.path.iter().map(|visit| visit.ty);
-            file.types.exhausted.extend(path);
-            return false;
-        }
-        match walk.states.get(&edge.target).copied() {
-            Some(NodeState::Closed) => {}
-            Some(NodeState::Open { index }) => visit.lowest_link = visit.lowest_link.min(index),
-            None if walk.states.len() as u64 >= limit => {
-                file.types.exhausted.insert(root);
+    fn walk_from_root(&mut self, walk: &mut Walk, root: CheckerTypeId) -> bool {
+        let limit = self.inputs.limits.get(LimitId::MaxTypeNodes);
+        while let Some(visit) = walk.path.last_mut() {
+            let Some(&edge) = visit.edges.get(visit.next_edge) else {
+                leave_type(walk);
+                continue;
+            };
+            visit.next_edge += 1;
+            if self.types.mapped.contains_key(&edge.target) {
+                continue;
+            }
+            if self.types.exhausted.contains(&edge.target) {
+                let path = walk.path.iter().map(|visit| visit.ty);
+                self.types.exhausted.extend(path);
                 return false;
             }
-            None => {
-                let edges = collect_edges(file, edge.target);
-                enter_type(walk, edge.target, edges);
+            match walk.states.get(&edge.target).copied() {
+                Some(NodeState::Closed) => {}
+                Some(NodeState::Open { index }) => visit.lowest_link = visit.lowest_link.min(index),
+                None if walk.states.len() as u64 >= limit => {
+                    self.types.exhausted.insert(root);
+                    return false;
+                }
+                None => {
+                    let edges = collect_edges(self, edge.target);
+                    enter_type(walk, edge.target, edges);
+                }
             }
         }
+        true
     }
-    true
-}
 
-pub(super) fn count_reachable_types(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    root: CheckerTypeId,
-) -> Reach {
-    let limit = file.inputs.limits.get(LimitId::MaxTypeNodes);
-    let mut visited = FxHashSet::default();
-    visited.insert(root);
-    let mut pending = vec![root];
-    while let Some(ty) = pending.pop() {
-        if visited.len() as u64 > limit || file.types.exhausted.contains(&ty) {
-            return Reach::AboveLimit;
-        }
-        for edge in collect_edges(file, ty) {
-            if visited.insert(edge.target) {
-                pending.push(edge.target);
+    pub(super) fn count_reachable_types(&mut self, root: CheckerTypeId) -> Reach {
+        let limit = self.inputs.limits.get(LimitId::MaxTypeNodes);
+        let mut visited = FxHashSet::default();
+        visited.insert(root);
+        let mut pending = vec![root];
+        while let Some(ty) = pending.pop() {
+            if visited.len() as u64 > limit || self.types.exhausted.contains(&ty) {
+                return Reach::AboveLimit;
+            }
+            for edge in collect_edges(self, ty) {
+                if visited.insert(edge.target) {
+                    pending.push(edge.target);
+                }
             }
         }
+        Reach::Within(visited.len() as u32)
     }
-    Reach::Within(visited.len() as u32)
 }

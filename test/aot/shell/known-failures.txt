@@ -473,7 +473,7 @@ data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="Login"
 data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="Nested" .* representation=Typed
 data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="User" .* representation=Typed
 data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="Within" .* representation=Typed
-data-from-outside/validation-error-message-without-its-prefix	// IR= 0 formatPath GetModuleVariable
+data-from-outside/validation-error-message-is-the-path-and-the-first-issue	// IR= 0 formatPath GetModuleVariable
 data-from-outside/validation-issues-from-shared-routine	// IR= 0 report : =?L[0-9]+ = NewObject 
 data-from-outside/validators-shared-between-types	// IR+ JSONStartsWith v\d+ text="\\x22street\\x22:"
 data-from-outside/validators-shared-between-types	// IR+ JSONStartsWith v\d+ text="\\x22zip\\x22:"

@@ -2,15 +2,12 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, StoreKind, SymbolId};
 use bun_sema::hir::{ExprId, ExprKind, NodeData, PatId, PatKind};
 
-use super::{
-    BindingForm, BindingRef, DeadZone, IdentifierTarget, IdentifierTargetKind, bindings, dead_zone,
-    dynamic,
-};
+use super::{BindingForm, BindingRef, DeadZone, IdentifierTarget, IdentifierTargetKind, bindings};
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
 use crate::lower::member::PropertyName;
-use crate::lower::{FileLowering, FunctionLowering, commonjs, expression, member};
+use crate::lower::{FileLowering, FunctionLowering};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum BindingRead {
@@ -18,141 +15,228 @@ pub(super) enum BindingRead {
     TypeOf,
 }
 
-pub(crate) fn lower_identifier(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    identifier: ExprId,
-) -> ValueId {
-    read_identifier(lowering, identifier, BindingRead::Value)
-}
-
-pub(crate) fn lower_identifier_for_typeof(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    identifier: ExprId,
-) -> ValueId {
-    read_identifier(lowering, identifier, BindingRead::TypeOf)
-}
-
-pub(crate) fn lower_identifier_callee(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    identifier: ExprId,
-) -> (ValueId, Option<ValueId>) {
-    if has_dynamic_lookup(lowering.file, identifier) {
-        let found = dynamic::resolve_dynamic_binding(lowering, identifier);
-        let function =
-            dynamic::get_dynamic_value(lowering, identifier, found.holder, BindingRead::Value);
-        return (function, Some(found.with_base));
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn lower_identifier(&mut self, identifier: ExprId) -> ValueId {
+        self.read_identifier(identifier, BindingRead::Value)
     }
-    let Some(container) = find_member_container(lowering.file, identifier) else {
-        return (lower_identifier(lowering, identifier), None);
-    };
-    let name = identifier_name(lowering.file, identifier);
-    let object = bindings::get_container_object(lowering, container);
-    let key = member::name_key(lowering.file, name);
-    let function = member::emit_get(lowering, object, PropertyName::Constant(key));
-    (function, Some(object))
-}
 
-pub(crate) fn delete_identifier(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    identifier: ExprId,
-) -> ValueId {
-    if has_dynamic_lookup(lowering.file, identifier) {
-        return dynamic::delete_dynamic_binding(lowering, identifier);
+    pub(crate) fn lower_identifier_for_typeof(&mut self, identifier: ExprId) -> ValueId {
+        self.read_identifier(identifier, BindingRead::TypeOf)
     }
-    let name = identifier_name(lowering.file, identifier);
-    let binding = lowering.file.bound.binding(identifier);
-    delete_binding(lowering, binding, name)
-}
 
-pub(crate) fn resolve_identifier_target(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    identifier: ExprId,
-) -> IdentifierTarget {
-    IdentifierTarget {
-        kind: resolve_binding(lowering, identifier),
-    }
-}
-
-pub(crate) fn resolve_pattern_target(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    pattern: PatId,
-) -> IdentifierTarget {
-    let name = pattern_name(lowering.file, pattern);
-    let bound = lowering.file.bound;
-    let binding = bound.initialized_binding(pattern);
-    let kind = match bound.dynamic_lookup_scope(NodeData::Pat(pattern)) {
-        Some(start) => IdentifierTargetKind::Dynamic {
-            binding,
-            name,
-            holder: dynamic::resolve_dynamic_name(lowering, start, binding, name).holder,
-        },
-        None => IdentifierTargetKind::Binding {
-            binding,
-            name,
-            is_dead_zone_tested: true,
-        },
-    };
-    IdentifierTarget { kind }
-}
-
-pub(crate) fn get_identifier_target(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    target: &IdentifierTarget,
-) -> ValueId {
-    match target.kind {
-        IdentifierTargetKind::Binding { binding, name, .. } => {
-            bindings::get_binding(lowering, binding, name)
+    pub(crate) fn lower_identifier_callee(
+        &mut self,
+        identifier: ExprId,
+    ) -> (ValueId, Option<ValueId>) {
+        if self.file.has_dynamic_lookup(identifier) {
+            let found = self.resolve_dynamic_binding(identifier);
+            let function = self.get_dynamic_value(identifier, found.holder, BindingRead::Value);
+            return (function, Some(found.with_base));
         }
-        IdentifierTargetKind::Dynamic {
-            binding,
-            name,
-            holder,
-        } => dynamic::get_dynamic_target(lowering, binding, name, holder),
+        let Some(container) = self.file.find_member_container(identifier) else {
+            return (self.lower_identifier(identifier), None);
+        };
+        let name = self.file.identifier_name(identifier);
+        let object = self.get_container_object(container);
+        let key = self.file.name_key(name);
+        let function = self.emit_get(object, PropertyName::Constant(key));
+        (function, Some(object))
     }
-}
 
-pub(crate) fn set_identifier_target(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    target: &IdentifierTarget,
-    value: ValueId,
-    source: Option<ExprId>,
-) {
-    match target.kind {
+    pub(crate) fn delete_identifier(&mut self, identifier: ExprId) -> ValueId {
+        if self.file.has_dynamic_lookup(identifier) {
+            return self.delete_dynamic_binding(identifier);
+        }
+        let name = self.file.identifier_name(identifier);
+        let binding = self.file.bound.binding(identifier);
+        self.delete_binding(binding, name)
+    }
+
+    pub(crate) fn resolve_identifier_target(&mut self, identifier: ExprId) -> IdentifierTarget {
+        IdentifierTarget {
+            kind: self.resolve_binding(identifier),
+        }
+    }
+
+    pub(crate) fn resolve_pattern_target(&mut self, pattern: PatId) -> IdentifierTarget {
+        let name = self.file.pattern_name(pattern);
+        let bound = self.file.bound;
+        let binding = bound.initialized_binding(pattern);
+        let kind = match bound.dynamic_lookup_scope(NodeData::Pat(pattern)) {
+            Some(start) => IdentifierTargetKind::Dynamic {
+                binding,
+                name,
+                holder: self.resolve_dynamic_name(start, binding, name).holder,
+            },
+            None => IdentifierTargetKind::Binding {
+                binding,
+                name,
+                is_dead_zone_tested: true,
+            },
+        };
+        IdentifierTarget { kind }
+    }
+
+    pub(crate) fn get_identifier_target(&mut self, target: &IdentifierTarget) -> ValueId {
+        match target.kind {
+            IdentifierTargetKind::Binding { binding, name, .. } => self.get_binding(binding, name),
+            IdentifierTargetKind::Dynamic {
+                binding,
+                name,
+                holder,
+            } => self.get_dynamic_target(binding, name, holder),
+        }
+    }
+
+    pub(crate) fn set_identifier_target(
+        &mut self,
+        target: &IdentifierTarget,
+        value: ValueId,
+        source: Option<ExprId>,
+    ) {
+        match target.kind {
+            IdentifierTargetKind::Binding {
+                binding,
+                name,
+                is_dead_zone_tested: true,
+            } => self.store_checked_binding(binding, name, value, source),
+            IdentifierTargetKind::Binding {
+                binding,
+                name,
+                is_dead_zone_tested: false,
+            } => bindings::set_binding(self, binding, name, value, source),
+            IdentifierTargetKind::Dynamic {
+                binding,
+                name,
+                holder,
+            } => {
+                self.store_dynamic_binding(binding, name, holder, value);
+            }
+        }
+    }
+
+    pub(crate) fn initialize_pattern_name(
+        &mut self,
+        pattern: PatId,
+        value: ValueId,
+        source: Option<ExprId>,
+    ) {
+        let name = self.file.pattern_name(pattern);
+        let bound = self.file.bound;
+        let binding = bound.initialized_binding(pattern);
+        match bound.dynamic_lookup_scope(NodeData::Pat(pattern)) {
+            Some(start) => {
+                let holder = self.resolve_dynamic_name(start, binding, name).holder;
+                self.store_dynamic_binding(binding, name, holder, value);
+            }
+            None => bindings::initialize_binding(self, binding, name, value, source),
+        }
+    }
+
+    pub(crate) fn read_local(&mut self, symbol: SymbolId) -> ValueId {
+        let local = self.scopes.find_local(BindingRef::Symbol(symbol));
+        let local = local.expect("find_tested_local found the local");
+        self.builder.read_variable(local.variable)
+    }
+
+    pub(crate) fn rebind_local(&mut self, symbol: SymbolId, value: ValueId) {
+        let local = self.scopes.find_local(BindingRef::Symbol(symbol));
+        let local = local.expect("find_tested_local found the local");
+        self.builder.write_variable(local.variable, value);
+    }
+
+    pub(super) fn get_free_name(&mut self, name: Atom, is_for_typeof: bool) -> ValueId {
+        self.emit_free_name_get(name, is_for_typeof)
+    }
+
+    pub(super) fn set_free_name(&mut self, name: Atom, value: ValueId) {
+        self.emit_free_name_set(name, value);
+    }
+
+    pub(super) fn read_binding(
+        &mut self,
+        binding: Binding,
+        name: Atom,
+        read: BindingRead,
+    ) -> ValueId {
+        match read {
+            BindingRead::Value => self.get_binding(binding, name),
+            BindingRead::TypeOf => match bindings::normalize_binding(self.file, binding) {
+                Binding::Free => self.get_free_name(name, true),
+                Binding::CommonJs(variable) => self.get_commonjs_variable_for_typeof(variable),
+                Binding::Symbol(_) | Binding::Arguments(_) => self.get_binding(binding, name),
+            },
+        }
+    }
+
+    pub(super) fn delete_binding(&mut self, binding: Binding, name: Atom) -> ValueId {
+        match bindings::normalize_binding(self.file, binding) {
+            Binding::Free => self.emit_free_name_delete(name),
+            Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => {
+                self.builder.boolean(false)
+            }
+        }
+    }
+
+    fn read_identifier(&mut self, identifier: ExprId, read: BindingRead) -> ValueId {
+        if self.file.has_dynamic_lookup(identifier) {
+            let found = self.resolve_dynamic_binding(identifier);
+            return self.get_dynamic_value(identifier, found.holder, read);
+        }
+        let name = self.file.identifier_name(identifier);
+        let binding = self.file.bound.binding(identifier);
+        match binding {
+            Binding::Free => {
+                if let Some(builtin) = self.file.find_locked_global(identifier) {
+                    return self.emit_locked_builtin(builtin);
+                }
+                let value = self.read_binding(binding, name, read);
+                self.expect_resolved_path(identifier, value)
+            }
+            Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => {
+                self.read_binding(binding, name, read)
+            }
+        }
+    }
+
+    fn resolve_binding(&mut self, identifier: ExprId) -> IdentifierTargetKind {
+        let name = self.file.identifier_name(identifier);
+        let binding = self.file.bound.binding(identifier);
+        if self.file.has_dynamic_lookup(identifier) {
+            let holder = self.resolve_dynamic_binding(identifier).holder;
+            return IdentifierTargetKind::Dynamic {
+                binding,
+                name,
+                holder,
+            };
+        }
+        let is_dead_zone_tested = match binding {
+            Binding::Symbol(symbol) if self.file.is_plain_assignment_target(symbol, identifier) => {
+                self.test_dead_zone_before_value(symbol, name)
+            }
+            Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {
+                false
+            }
+        };
         IdentifierTargetKind::Binding {
             binding,
             name,
-            is_dead_zone_tested: true,
-        } => bindings::store_checked_binding(lowering, binding, name, value, source),
-        IdentifierTargetKind::Binding {
-            binding,
-            name,
-            is_dead_zone_tested: false,
-        } => bindings::set_binding(lowering, binding, name, value, source),
-        IdentifierTargetKind::Dynamic {
-            binding,
-            name,
-            holder,
-        } => {
-            dynamic::store_dynamic_binding(lowering, binding, name, holder, value);
+            is_dead_zone_tested,
         }
     }
-}
 
-pub(crate) fn initialize_pattern_name(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    pattern: PatId,
-    value: ValueId,
-    source: Option<ExprId>,
-) {
-    let name = pattern_name(lowering.file, pattern);
-    let bound = lowering.file.bound;
-    let binding = bound.initialized_binding(pattern);
-    match bound.dynamic_lookup_scope(NodeData::Pat(pattern)) {
-        Some(start) => {
-            let holder = dynamic::resolve_dynamic_name(lowering, start, binding, name).holder;
-            dynamic::store_dynamic_binding(lowering, binding, name, holder, value);
+    fn test_dead_zone_before_value(&mut self, symbol: SymbolId, name: Atom) -> bool {
+        match self.file.scopes.form(symbol) {
+            BindingForm::Import => {
+                self.get_binding(Binding::Symbol(symbol), name);
+                true
+            }
+            BindingForm::Stored if self.is_tested_before_value(symbol) => {
+                self.get_checked(symbol, name);
+                true
+            }
+            _ => false,
         }
-        None => bindings::initialize_binding(lowering, binding, name, value, source),
     }
 }
 
@@ -161,17 +245,17 @@ pub(crate) fn find_tested_local(
     expression: ExprId,
 ) -> Option<SymbolId> {
     let file = &*lowering.file;
-    let mut tested = expression::skip_type_syntax(file, expression);
+    let mut tested = file.skip_type_syntax(expression);
     if let ExprKind::Assign {
         op: None, target, ..
     } = file.hir[tested].kind
     {
-        tested = expression::skip_type_syntax(file, target);
+        tested = file.skip_type_syntax(target);
     }
     let ExprKind::Ident(_) = file.hir[tested].kind else {
         return None;
     };
-    if has_dynamic_lookup(file, tested) {
+    if file.has_dynamic_lookup(tested) {
         return None;
     }
     let symbol = match file.bound.binding(tested) {
@@ -185,197 +269,49 @@ pub(crate) fn find_tested_local(
     }
 }
 
-pub(crate) fn read_local(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    symbol: SymbolId,
-) -> ValueId {
-    let local = lowering.scopes.find_local(BindingRef::Symbol(symbol));
-    let local = local.expect("find_tested_local found the local");
-    lowering.builder.read_variable(local.variable)
-}
-
-pub(crate) fn rebind_local(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    symbol: SymbolId,
-    value: ValueId,
-) {
-    let local = lowering.scopes.find_local(BindingRef::Symbol(symbol));
-    let local = local.expect("find_tested_local found the local");
-    lowering.builder.write_variable(local.variable, value);
-}
-
-pub(super) fn get_free_name(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    name: Atom,
-    is_for_typeof: bool,
-) -> ValueId {
-    expression::emit_free_name_get(lowering, name, is_for_typeof)
-}
-
-pub(super) fn set_free_name(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    name: Atom,
-    value: ValueId,
-) {
-    expression::emit_free_name_set(lowering, name, value);
-}
-
-pub(super) fn read_binding(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    binding: Binding,
-    name: Atom,
-    read: BindingRead,
-) -> ValueId {
-    match read {
-        BindingRead::Value => bindings::get_binding(lowering, binding, name),
-        BindingRead::TypeOf => match bindings::normalize_binding(lowering.file, binding) {
-            Binding::Free => get_free_name(lowering, name, true),
-            Binding::CommonJs(variable) => {
-                commonjs::get_commonjs_variable_for_typeof(lowering, variable)
-            }
-            Binding::Symbol(_) | Binding::Arguments(_) => {
-                bindings::get_binding(lowering, binding, name)
-            }
-        },
-    }
-}
-
-pub(super) fn delete_binding(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    binding: Binding,
-    name: Atom,
-) -> ValueId {
-    match bindings::normalize_binding(lowering.file, binding) {
-        Binding::Free => expression::emit_free_name_delete(lowering, name),
-        Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => {
-            lowering.builder.boolean(false)
-        }
-    }
-}
-
-fn read_identifier(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    identifier: ExprId,
-    read: BindingRead,
-) -> ValueId {
-    if has_dynamic_lookup(lowering.file, identifier) {
-        let found = dynamic::resolve_dynamic_binding(lowering, identifier);
-        return dynamic::get_dynamic_value(lowering, identifier, found.holder, read);
-    }
-    let name = identifier_name(lowering.file, identifier);
-    let binding = lowering.file.bound.binding(identifier);
-    match binding {
-        Binding::Free => {
-            if let Some(builtin) = find_locked_global(lowering.file, identifier) {
-                return expression::emit_locked_builtin(lowering, builtin);
-            }
-            let value = read_binding(lowering, binding, name, read);
-            expression::expect_resolved_path(lowering, identifier, value)
-        }
-        Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => {
-            read_binding(lowering, binding, name, read)
-        }
-    }
-}
-
-fn resolve_binding(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    identifier: ExprId,
-) -> IdentifierTargetKind {
-    let name = identifier_name(lowering.file, identifier);
-    let binding = lowering.file.bound.binding(identifier);
-    if has_dynamic_lookup(lowering.file, identifier) {
-        let holder = dynamic::resolve_dynamic_binding(lowering, identifier).holder;
-        return IdentifierTargetKind::Dynamic {
-            binding,
-            name,
-            holder,
+impl FileLowering<'_, '_, '_, '_> {
+    fn is_plain_assignment_target(&self, symbol: SymbolId, identifier: ExprId) -> bool {
+        let stores = self.bound.stores_to(symbol);
+        let Ok(index) = stores.binary_search_by_key(&identifier, |store| store.target) else {
+            return false;
         };
+        matches!(stores[index].kind, StoreKind::Assign)
     }
-    let is_dead_zone_tested = match binding {
-        Binding::Symbol(symbol)
-            if is_plain_assignment_target(lowering.file, symbol, identifier) =>
-        {
-            test_dead_zone_before_value(lowering, symbol, name)
+
+    fn find_locked_global(&self, identifier: ExprId) -> Option<BuiltinId> {
+        match self.builtins.of_expr(identifier) {
+            Some(Resolved::Builtin(path)) => path.locked_builtin(),
+            Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => None,
         }
-        Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
-    };
-    IdentifierTargetKind::Binding {
-        binding,
-        name,
-        is_dead_zone_tested,
     }
-}
 
-fn test_dead_zone_before_value(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    symbol: SymbolId,
-    name: Atom,
-) -> bool {
-    match lowering.file.scopes.form(symbol) {
-        BindingForm::Import => {
-            bindings::get_binding(lowering, Binding::Symbol(symbol), name);
-            true
+    fn find_member_container(&self, identifier: ExprId) -> Option<SymbolId> {
+        let symbol = match self.bound.binding(identifier) {
+            Binding::Symbol(symbol) => symbol,
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => return None,
+        };
+        match self.scopes.form(symbol) {
+            BindingForm::ContainerMember { container } => Some(container),
+            _ => None,
         }
-        BindingForm::Stored if dead_zone::is_tested_before_value(lowering, symbol) => {
-            dead_zone::get_checked(lowering, symbol, name);
-            true
-        }
-        _ => false,
     }
-}
 
-fn is_plain_assignment_target(
-    file: &FileLowering<'_, '_, '_, '_>,
-    symbol: SymbolId,
-    identifier: ExprId,
-) -> bool {
-    let stores = file.bound.stores_to(symbol);
-    let Ok(index) = stores.binary_search_by_key(&identifier, |store| store.target) else {
-        return false;
-    };
-    matches!(stores[index].kind, StoreKind::Assign)
-}
-
-fn find_locked_global(
-    file: &FileLowering<'_, '_, '_, '_>,
-    identifier: ExprId,
-) -> Option<BuiltinId> {
-    match file.builtins.of_expr(identifier) {
-        Some(Resolved::Builtin(path)) => path.locked_builtin(),
-        Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => None,
+    fn has_dynamic_lookup(&self, identifier: ExprId) -> bool {
+        let start = self.bound.dynamic_lookup_scope(NodeData::Expr(identifier));
+        start.is_some()
     }
-}
 
-fn find_member_container(
-    file: &FileLowering<'_, '_, '_, '_>,
-    identifier: ExprId,
-) -> Option<SymbolId> {
-    let symbol = match file.bound.binding(identifier) {
-        Binding::Symbol(symbol) => symbol,
-        Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => return None,
-    };
-    match file.scopes.form(symbol) {
-        BindingForm::ContainerMember { container } => Some(container),
-        _ => None,
+    fn identifier_name(&self, identifier: ExprId) -> Atom {
+        let ExprKind::Ident(name) = self.hir[identifier].kind else {
+            unreachable!("the expression is an identifier");
+        };
+        name
     }
-}
 
-fn has_dynamic_lookup(file: &FileLowering<'_, '_, '_, '_>, identifier: ExprId) -> bool {
-    let start = file.bound.dynamic_lookup_scope(NodeData::Expr(identifier));
-    start.is_some()
-}
-
-fn identifier_name(file: &FileLowering<'_, '_, '_, '_>, identifier: ExprId) -> Atom {
-    let ExprKind::Ident(name) = file.hir[identifier].kind else {
-        unreachable!("the expression is an identifier");
-    };
-    name
-}
-
-fn pattern_name(file: &FileLowering<'_, '_, '_, '_>, pattern: PatId) -> Atom {
-    let PatKind::Ident(name) = file.hir[pattern].kind else {
-        unreachable!("the pattern is a name");
-    };
-    name
+    fn pattern_name(&self, pattern: PatId) -> Atom {
+        let PatKind::Ident(name) = self.hir[pattern].kind else {
+            unreachable!("the pattern is a name");
+        };
+        name
+    }
 }

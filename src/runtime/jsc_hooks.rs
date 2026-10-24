@@ -4366,7 +4366,8 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
-    // The `JSModuleLoader` that is fetching when it is not the global object's (a `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
+    // The `JSModuleLoader` that is fetching when it is not the global object's (a
+    // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
 ) -> *mut c_void {
     bun_jsc::mark_binding();
@@ -4432,7 +4433,6 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
-    // The `JSModuleLoader` that is fetching when it is not the global object's (a `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;

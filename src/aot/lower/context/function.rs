@@ -14,8 +14,7 @@ use crate::lower::captures;
 use crate::lower::control::ControlState;
 use crate::lower::convert::{self, Int32FlowDescription};
 use crate::lower::generator::CoroutineState;
-use crate::lower::layouts;
-use crate::lower::scope::{self, ScopeState};
+use crate::lower::scope::ScopeState;
 
 pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(crate) file: &'f mut FileLowering<'a, 'c, 'p, 's>,
@@ -94,7 +93,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
     }
 
     pub(crate) fn mode(&self) -> ECMAMode {
-        let is_strict = match scope::innermost_scope(self).some() {
+        let is_strict = match self.innermost_scope().some() {
             Some(innermost) => self.file.bound.is_strict_scope(innermost),
             None => !self
                 .builder
@@ -118,7 +117,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         // The exports of a module are an object that its body makes, or whatever it puts in the place of that.
         let expected = if builtin == BuiltinId::ModuleObjectExports {
             let own_file = self.file.file;
-            match layouts::module_exports_layout(self.file, own_file) {
+            match self.file.module_exports_layout(own_file) {
                 Some(layout) => Type::layout(layout),
                 None => return value,
             }

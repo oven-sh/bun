@@ -121,6 +121,17 @@ impl FunctionKey {
 }
 
 impl LayoutKey {
+    // The layout of a plain object belongs to no file: each file that lists the same names defines it.
+    pub fn has_united_definitions(&self) -> bool {
+        matches!(
+            self,
+            LayoutKey::ObjectType {
+                origin: ObjectOrigin::Computed,
+                ..
+            }
+        )
+    }
+
     pub fn home_file(&self) -> Option<FileId> {
         match *self {
             LayoutKey::Class(class) => Some(class.file),

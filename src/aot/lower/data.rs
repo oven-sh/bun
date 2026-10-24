@@ -18,64 +18,74 @@ pub(crate) struct DataState {
     records: FxHashMap<ExprId, DataId>,
 }
 
-pub(crate) fn lower_decided_data(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) -> ValueId {
-    let data = match lowering.file.modules.data.records.get(&expression).copied() {
-        Some(data) => data,
-        None => {
-            let root = create_root(lowering, expression);
-            literals::convert_int32_members(lowering, expression);
-            add_record(lowering.file, expression, root)
-        }
-    };
-    lowering.builder.data(data)
-}
-
-pub(in crate::lower) fn declare_module_data(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-) -> Option<DataId> {
-    let expression = find_default_export_initializer(file)?;
-    let root = match file.decisions().decision(expression) {
-        Decision::Data(value) => values::create_node(file, value),
-        Decision::DeferredData => values::create_deferred_node(file),
-        Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => return None,
-    };
-    Some(add_record(file, expression, root))
-}
-
-fn find_default_export_initializer(file: &FileLowering<'_, '_, '_, '_>) -> Option<ExprId> {
-    let exports = file.inputs.modules.exports(file.file);
-    let default_export = exports
-        .iter()
-        .find(|export| export.name == known::default)?;
-    let ExportBinding::Variable(symbol) = default_export.binding else {
-        return None;
-    };
-    if symbol.file != file.file {
-        return None;
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn lower_decided_data(&mut self, expression: ExprId) -> ValueId {
+        let data = match self.file.modules.data.records.get(&expression).copied() {
+            Some(data) => data,
+            None => {
+                let root = self.create_root(expression);
+                self.convert_int32_members(expression);
+                add_record(self.file, expression, root)
+            }
+        };
+        self.builder.data(data)
     }
-    match file.bound.binding_initializer(file.hir, symbol.id) {
-        BindingInitializer::Expression(expression) => Some(expression),
-        _ => None,
+
+    fn create_root(&mut self, expression: ExprId) -> DataNode {
+        match self.file.decisions().decision(expression) {
+            Decision::Data(value) => values::create_node(self.file, value),
+            Decision::DeferredData => self.file.create_deferred_node(),
+            Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => {
+                debug_assert!(
+                    self.file.decisions().is_data_literal(expression),
+                    "an expression without a data decision is a data literal"
+                );
+                literals::create_node(self, expression)
+            }
+        }
     }
 }
 
-fn create_root(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) -> DataNode {
-    match lowering.file.decisions().decision(expression) {
-        Decision::Data(value) => values::create_node(lowering.file, value),
-        Decision::DeferredData => values::create_deferred_node(lowering.file),
-        Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => {
-            debug_assert!(
-                lowering.file.decisions().is_data_literal(expression),
-                "an expression without a data decision is a data literal"
-            );
-            literals::create_node(lowering, expression)
+impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn declare_module_data(&mut self) -> Option<DataId> {
+        let expression = self.find_default_export_initializer()?;
+        let root = match self.decisions().decision(expression) {
+            Decision::Data(value) => values::create_node(self, value),
+            Decision::DeferredData => self.create_deferred_node(),
+            Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => return None,
+        };
+        Some(add_record(self, expression, root))
+    }
+
+    fn find_default_export_initializer(&self) -> Option<ExprId> {
+        let exports = self.inputs.modules.exports(self.file);
+        let default_export = exports
+            .iter()
+            .find(|export| export.name == known::default)?;
+        let ExportBinding::Variable(symbol) = default_export.binding else {
+            return None;
+        };
+        if symbol.file != self.file {
+            return None;
         }
+        match self.bound.binding_initializer(self.hir, symbol.id) {
+            BindingInitializer::Expression(expression) => Some(expression),
+            _ => None,
+        }
+    }
+
+    fn enforce_nesting_limit(&mut self, expression: ExprId, root: DataNode) -> DataNode {
+        let maximum = self.inputs.limits.get(LimitId::MaxNestingDepth);
+        if nesting_depth(&root) <= maximum {
+            return root;
+        }
+        let position = self.hir[expression].pos;
+        self.gave_up(LimitId::MaxNestingDepth, position);
+        let span = self.span_at(position);
+        let depth = maximum.to_string();
+        self.diagnostics
+            .report(Code::NestedTooDeeply, span, &[depth.as_bytes()]);
+        DataNode::Undefined
     }
 }
 
@@ -104,30 +114,12 @@ fn nesting_depth(root: &DataNode) -> u64 {
     deepest
 }
 
-fn enforce_nesting_limit(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    expression: ExprId,
-    root: DataNode,
-) -> DataNode {
-    let maximum = file.inputs.limits.get(LimitId::MaxNestingDepth);
-    if nesting_depth(&root) <= maximum {
-        return root;
-    }
-    let position = file.hir[expression].pos;
-    file.gave_up(LimitId::MaxNestingDepth, position);
-    let span = file.span_at(position);
-    let depth = maximum.to_string();
-    file.diagnostics
-        .report(Code::NestedTooDeeply, span, &[depth.as_bytes()]);
-    DataNode::Undefined
-}
-
 fn add_record(
     file: &mut FileLowering<'_, '_, '_, '_>,
     expression: ExprId,
     root: DataNode,
 ) -> DataId {
-    let root = enforce_nesting_limit(file, expression, root);
+    let root = file.enforce_nesting_limit(expression, root);
     let module = Some(file.module_id());
     let data = file.fragment.add_data(Data { root, module });
     file.modules.data.records.insert(expression, data);

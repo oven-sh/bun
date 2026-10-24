@@ -1,7 +1,5 @@
 use smallvec::SmallVec;
 
-use super::exploration::{count_reachable_types, explore};
-use super::shape_table::map_shape;
 use super::{ChildTypes, Component, EdgeKind, Exploration, MappedType, Reach, TypeEdge};
 use crate::ir::generated::LimitId;
 use crate::ir::{Id, Mapped, TypeTable};
@@ -37,87 +35,182 @@ struct ShallowChildren<'x> {
     open: &'x mut OpenTypes,
 }
 
-pub(super) fn ensure_mapped(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    position: u32,
-) -> MappedType {
-    ensure_mapped_within(file, ty, position, &mut OpenTypes::new())
-}
-
-fn ensure_mapped_within(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    position: u32,
-    open: &mut OpenTypes,
-) -> MappedType {
-    if let Some(&entry) = file.types.mapped.get(&ty) {
-        return entry;
+impl FileLowering<'_, '_, '_, '_> {
+    pub(super) fn ensure_mapped(&mut self, ty: CheckerTypeId, position: u32) -> MappedType {
+        self.ensure_mapped_within(ty, position, &mut OpenTypes::new())
     }
-    match explore(file, ty) {
-        Exploration::Complete(components) => {
-            for component in &components {
-                map_component(file, component, position, open);
+
+    fn ensure_mapped_within(
+        &mut self,
+        ty: CheckerTypeId,
+        position: u32,
+        open: &mut OpenTypes,
+    ) -> MappedType {
+        if let Some(&entry) = self.types.mapped.get(&ty) {
+            return entry;
+        }
+        match self.explore(ty) {
+            Exploration::Complete(components) => {
+                for component in &components {
+                    self.map_component(component, position, open);
+                }
+            }
+            Exploration::Exhausted => self.map_exhausted_type(ty, position, open),
+        }
+        self.types.mapped[&ty]
+    }
+
+    fn map_component(&mut self, component: &Component, position: u32, open: &mut OpenTypes) {
+        if self.types.mapped.contains_key(&component.members[0].ty) {
+            return;
+        }
+        let verdict = self.judge_component(component);
+        if verdict.is_oversized {
+            self.gave_up(LimitId::MaxTypeNodes, position);
+        }
+        for member in &component.members {
+            self.map_member(component, verdict, open, member.ty);
+        }
+    }
+
+    fn judge_component(&mut self, component: &Component) -> Verdict {
+        let mut targets: SmallVec<[CheckerTypeId; 8]> = component
+            .members
+            .iter()
+            .flat_map(|member| &member.edges)
+            .map(|edge| edge.target)
+            .filter(|&target| !is_member(component, target))
+            .collect();
+        targets.sort_unstable_by_key(|target| target.0);
+        targets.dedup();
+        let mut weight = u32::try_from(component.members.len()).unwrap_or(u32::MAX);
+        let mut reaches_oversized_type = false;
+        for target in targets {
+            let Some(entry) = self.types.mapped.get(&target) else {
+                debug_assert!(false, "components arrive after what they reach");
+                continue;
+            };
+            weight = weight.saturating_add(entry.weight);
+            reaches_oversized_type |= entry.is_oversized;
+        }
+        if reaches_oversized_type {
+            return Verdict::OVERSIZED;
+        }
+        if u64::from(weight) <= self.inputs.limits.get(LimitId::MaxTypeNodes) {
+            return Verdict {
+                weight,
+                is_oversized: false,
+            };
+        }
+        match self.count_reachable_types(component.members[0].ty) {
+            Reach::Within(count) => Verdict {
+                weight: count,
+                is_oversized: false,
+            },
+            Reach::AboveLimit => Verdict::OVERSIZED,
+        }
+    }
+
+    fn map_member(
+        &mut self,
+        component: &Component,
+        verdict: Verdict,
+        open: &mut OpenTypes,
+        ty: CheckerTypeId,
+    ) -> Mapped {
+        if let Some(entry) = self.types.mapped.get(&ty) {
+            return entry.mapped;
+        }
+        if open.contains(&ty) {
+            return Mapped::UNKNOWN;
+        }
+        open.push(ty);
+        let mut children = ComponentChildren {
+            component,
+            verdict,
+            open: &mut *open,
+        };
+        let mapped = self.map_shape(ty, &mut children);
+        open.pop();
+        let entry = MappedType {
+            mapped,
+            weight: verdict.weight,
+            is_oversized: verdict.is_oversized,
+        };
+        self.finish_type(ty, entry);
+        mapped
+    }
+
+    fn finish_type(&mut self, ty: CheckerTypeId, entry: MappedType) {
+        self.types.mapped.insert(ty, entry);
+        self.record_source(entry.mapped, ty);
+    }
+
+    fn record_source(&mut self, mapped: Mapped, ty: CheckerTypeId) {
+        if mapped.ty.index() >= TypeTable::WELL_KNOWN_COUNT {
+            self.types.sources.entry(mapped.ty).or_insert(ty);
+        }
+    }
+
+    fn map_mapped_child(&mut self, edge: TypeEdge) -> Mapped {
+        // The checker does not memoize a shape it cut short on a low stack, so the table can see an edge that the exploration did not.
+        let Some(&entry) = self.types.mapped.get(&edge.target) else {
+            return Mapped::UNKNOWN;
+        };
+        match edge.kind {
+            EdgeKind::Contents if entry.is_oversized => self.map_shallow(edge.target),
+            EdgeKind::Contents | EdgeKind::Transparent => entry.mapped,
+        }
+    }
+
+    fn map_exhausted_type(&mut self, ty: CheckerTypeId, position: u32, open: &mut OpenTypes) {
+        self.gave_up(LimitId::MaxTypeNodes, position);
+        open.push(ty);
+        let mut children = ExhaustedChildren {
+            position,
+            open: &mut *open,
+        };
+        let mapped = self.map_shape(ty, &mut children);
+        open.pop();
+        let entry = MappedType {
+            mapped,
+            weight: u32::MAX,
+            is_oversized: true,
+        };
+        self.finish_type(ty, entry);
+    }
+
+    fn map_exhausted_contents(&mut self, edge: TypeEdge, position: u32) -> Mapped {
+        if !self.types.mapped.contains_key(&edge.target) {
+            match self.explore(edge.target) {
+                Exploration::Exhausted => return self.map_shallow(edge.target),
+                Exploration::Complete(components) => {
+                    for component in &components {
+                        self.map_component(component, position, &mut OpenTypes::new());
+                    }
+                }
             }
         }
-        Exploration::Exhausted => map_exhausted_type(file, ty, position, open),
+        self.map_mapped_child(edge)
     }
-    file.types.mapped[&ty]
-}
 
-fn map_component(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    component: &Component,
-    position: u32,
-    open: &mut OpenTypes,
-) {
-    if file.types.mapped.contains_key(&component.members[0].ty) {
-        return;
+    pub(super) fn map_shallow(&mut self, ty: CheckerTypeId) -> Mapped {
+        self.map_shallow_within(ty, &mut OpenTypes::new())
     }
-    let verdict = judge_component(file, component);
-    if verdict.is_oversized {
-        file.gave_up(LimitId::MaxTypeNodes, position);
-    }
-    for member in &component.members {
-        map_member(file, component, verdict, open, member.ty);
-    }
-}
 
-fn judge_component(file: &mut FileLowering<'_, '_, '_, '_>, component: &Component) -> Verdict {
-    let mut targets: SmallVec<[CheckerTypeId; 8]> = component
-        .members
-        .iter()
-        .flat_map(|member| &member.edges)
-        .map(|edge| edge.target)
-        .filter(|&target| !is_member(component, target))
-        .collect();
-    targets.sort_unstable_by_key(|target| target.0);
-    targets.dedup();
-    let mut weight = u32::try_from(component.members.len()).unwrap_or(u32::MAX);
-    let mut reaches_oversized_type = false;
-    for target in targets {
-        let Some(entry) = file.types.mapped.get(&target) else {
-            debug_assert!(false, "components arrive after what they reach");
-            continue;
-        };
-        weight = weight.saturating_add(entry.weight);
-        reaches_oversized_type |= entry.is_oversized;
-    }
-    if reaches_oversized_type {
-        return Verdict::OVERSIZED;
-    }
-    if u64::from(weight) <= file.inputs.limits.get(LimitId::MaxTypeNodes) {
-        return Verdict {
-            weight,
-            is_oversized: false,
-        };
-    }
-    match count_reachable_types(file, component.members[0].ty) {
-        Reach::Within(count) => Verdict {
-            weight: count,
-            is_oversized: false,
-        },
-        Reach::AboveLimit => Verdict::OVERSIZED,
+    fn map_shallow_within(&mut self, ty: CheckerTypeId, open: &mut OpenTypes) -> Mapped {
+        if let Some(&mapped) = self.types.shallow.get(&ty) {
+            return mapped;
+        }
+        if open.contains(&ty) {
+            return Mapped::UNKNOWN;
+        }
+        open.push(ty);
+        let mut children = ShallowChildren { open: &mut *open };
+        let mapped = self.map_shape(ty, &mut children);
+        open.pop();
+        self.types.shallow.insert(ty, mapped);
+        mapped
     }
 }
 
@@ -125,92 +218,18 @@ fn is_member(component: &Component, ty: CheckerTypeId) -> bool {
     component.members.iter().any(|member| member.ty == ty)
 }
 
-fn map_member(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    component: &Component,
-    verdict: Verdict,
-    open: &mut OpenTypes,
-    ty: CheckerTypeId,
-) -> Mapped {
-    if let Some(entry) = file.types.mapped.get(&ty) {
-        return entry.mapped;
-    }
-    if open.contains(&ty) {
-        return Mapped::UNKNOWN;
-    }
-    open.push(ty);
-    let mut children = ComponentChildren {
-        component,
-        verdict,
-        open: &mut *open,
-    };
-    let mapped = map_shape(file, ty, &mut children);
-    open.pop();
-    let entry = MappedType {
-        mapped,
-        weight: verdict.weight,
-        is_oversized: verdict.is_oversized,
-    };
-    finish_type(file, ty, entry);
-    mapped
-}
-
-fn finish_type(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId, entry: MappedType) {
-    file.types.mapped.insert(ty, entry);
-    record_source(file, entry.mapped, ty);
-}
-
-fn record_source(file: &mut FileLowering<'_, '_, '_, '_>, mapped: Mapped, ty: CheckerTypeId) {
-    if mapped.ty.index() >= TypeTable::WELL_KNOWN_COUNT {
-        file.types.sources.entry(mapped.ty).or_insert(ty);
-    }
-}
-
 impl ChildTypes for ComponentChildren<'_> {
     fn map_child(&mut self, file: &mut FileLowering<'_, '_, '_, '_>, edge: TypeEdge) -> Mapped {
         if !is_member(self.component, edge.target) {
-            return map_mapped_child(file, edge);
+            return file.map_mapped_child(edge);
         }
         match edge.kind {
             EdgeKind::Transparent => {
-                map_member(file, self.component, self.verdict, self.open, edge.target)
+                file.map_member(self.component, self.verdict, self.open, edge.target)
             }
-            EdgeKind::Contents => map_shallow(file, edge.target),
+            EdgeKind::Contents => file.map_shallow(edge.target),
         }
     }
-}
-
-fn map_mapped_child(file: &mut FileLowering<'_, '_, '_, '_>, edge: TypeEdge) -> Mapped {
-    // The checker does not memoize a shape it cut short on a low stack, so the table can see an edge that the exploration did not.
-    let Some(&entry) = file.types.mapped.get(&edge.target) else {
-        return Mapped::UNKNOWN;
-    };
-    match edge.kind {
-        EdgeKind::Contents if entry.is_oversized => map_shallow(file, edge.target),
-        EdgeKind::Contents | EdgeKind::Transparent => entry.mapped,
-    }
-}
-
-fn map_exhausted_type(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    position: u32,
-    open: &mut OpenTypes,
-) {
-    file.gave_up(LimitId::MaxTypeNodes, position);
-    open.push(ty);
-    let mut children = ExhaustedChildren {
-        position,
-        open: &mut *open,
-    };
-    let mapped = map_shape(file, ty, &mut children);
-    open.pop();
-    let entry = MappedType {
-        mapped,
-        weight: u32::MAX,
-        is_oversized: true,
-    };
-    finish_type(file, ty, entry);
 }
 
 impl ChildTypes for ExhaustedChildren<'_> {
@@ -218,58 +237,18 @@ impl ChildTypes for ExhaustedChildren<'_> {
         match edge.kind {
             EdgeKind::Transparent if self.open.contains(&edge.target) => Mapped::UNKNOWN,
             EdgeKind::Transparent => {
-                ensure_mapped_within(file, edge.target, self.position, self.open).mapped
+                file.ensure_mapped_within(edge.target, self.position, self.open)
+                    .mapped
             }
-            EdgeKind::Contents => map_exhausted_contents(file, edge, self.position),
+            EdgeKind::Contents => file.map_exhausted_contents(edge, self.position),
         }
     }
-}
-
-fn map_exhausted_contents(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    edge: TypeEdge,
-    position: u32,
-) -> Mapped {
-    if !file.types.mapped.contains_key(&edge.target) {
-        match explore(file, edge.target) {
-            Exploration::Exhausted => return map_shallow(file, edge.target),
-            Exploration::Complete(components) => {
-                for component in &components {
-                    map_component(file, component, position, &mut OpenTypes::new());
-                }
-            }
-        }
-    }
-    map_mapped_child(file, edge)
-}
-
-pub(super) fn map_shallow(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> Mapped {
-    map_shallow_within(file, ty, &mut OpenTypes::new())
-}
-
-fn map_shallow_within(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    open: &mut OpenTypes,
-) -> Mapped {
-    if let Some(&mapped) = file.types.shallow.get(&ty) {
-        return mapped;
-    }
-    if open.contains(&ty) {
-        return Mapped::UNKNOWN;
-    }
-    open.push(ty);
-    let mut children = ShallowChildren { open: &mut *open };
-    let mapped = map_shape(file, ty, &mut children);
-    open.pop();
-    file.types.shallow.insert(ty, mapped);
-    mapped
 }
 
 impl ChildTypes for ShallowChildren<'_> {
     fn map_child(&mut self, file: &mut FileLowering<'_, '_, '_, '_>, edge: TypeEdge) -> Mapped {
         match edge.kind {
-            EdgeKind::Transparent => map_shallow_within(file, edge.target, self.open),
+            EdgeKind::Transparent => file.map_shallow_within(edge.target, self.open),
             EdgeKind::Contents => Mapped::UNKNOWN,
         }
     }

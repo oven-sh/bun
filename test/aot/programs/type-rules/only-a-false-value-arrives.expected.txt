@@ -103,9 +103,9 @@ cast | no error: 8
 cast-unused | no error: 1
 cast-constant | no error: 8
 cast-angle | no error: 8
-parse-typed | TypeError: x: expected number, received string
-parse-typed-primitive | TypeError: expected number, received string
-parse-typed-array | TypeError: [0]: expected number, received string
+parse-typed | TypeError: x must be number, received string
+parse-typed-primitive | TypeError: value must be number, received string
+parse-typed-array | TypeError: [0] must be number, received string
 awaited | no error: 8
 enum-value | no error: undefined
 union-argument | no error: string

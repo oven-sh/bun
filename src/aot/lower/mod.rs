@@ -23,7 +23,6 @@ mod known_function;
 mod layouts;
 mod member;
 mod module;
-mod named_entries;
 mod object;
 mod operator;
 mod parameters;
@@ -91,47 +90,49 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
 ) -> Option<LoweredFile> {
     let mut lowering = FileLowering::new(inputs, queries, file);
     lowering.refuse_chains_past_nesting_limit();
-    let roots = module::declare_module_roots(&mut lowering);
+    let roots = lowering.declare_module_roots();
     while let Some(function) = lowering.take_next_function() {
         lowering.queries.note_idle();
         if lowering.queries.is_discarded() {
             return None;
         }
-        lower_function(&mut lowering, function);
+        lowering.lower_function(function);
     }
-    layouts::define_remaining_layouts(&mut lowering);
-    let module = module::finish_module(&mut lowering, roots);
-    function_types::define_signatures(&mut lowering);
+    lowering.define_remaining_layouts();
+    let module = lowering.finish_module(roots);
+    lowering.define_signatures();
     Some(lowering.finish(module))
 }
 
-fn lower_function(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
-    match file.function_key(function) {
-        FunctionKey::ModuleBody(_) => module::lower_module_body(file, function),
-        FunctionKey::WrappedModuleBody(_) => commonjs::lower_wrapped_body(file, function),
-        FunctionKey::FaceBody(_) => module::lower_face_body(file, function),
-        FunctionKey::CheckBody(_) => module::lower_check_body(file, function),
-        FunctionKey::Source(source) => lower_source_body(file, function, source.function),
-        FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) => {
-            unreachable!("a signature has no body")
-        }
-        FunctionKey::ImplicitConstructor(class) => {
-            class::lower_implicit_constructor(file, function, class.class);
-        }
-        FunctionKey::InstanceInitializer(class) => {
-            class::lower_instance_initializer(file, function, class.class);
-        }
-        FunctionKey::StaticInitializer(class) => {
-            class::lower_static_initializer(file, function, class.class);
-        }
-        FunctionKey::AccessorGetter { member, .. } => {
-            class::lower_accessor_function(file, function, member, MethodKind::Getter);
-        }
-        FunctionKey::AccessorSetter { member, .. } => {
-            class::lower_accessor_function(file, function, member, MethodKind::Setter);
-        }
-        FunctionKey::PrivateNameTest { member, .. } => {
-            class::lower_private_name_test(file, function, member);
+impl FileLowering<'_, '_, '_, '_> {
+    fn lower_function(&mut self, function: FunctionId) {
+        match self.function_key(function) {
+            FunctionKey::ModuleBody(_) => self.lower_module_body(function),
+            FunctionKey::WrappedModuleBody(_) => self.lower_wrapped_body(function),
+            FunctionKey::FaceBody(_) => self.lower_face_body(function),
+            FunctionKey::CheckBody(_) => self.lower_check_body(function),
+            FunctionKey::Source(source) => lower_source_body(self, function, source.function),
+            FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) => {
+                unreachable!("a signature has no body")
+            }
+            FunctionKey::ImplicitConstructor(class) => {
+                self.lower_implicit_constructor(function, class.class);
+            }
+            FunctionKey::InstanceInitializer(class) => {
+                self.lower_instance_initializer(function, class.class);
+            }
+            FunctionKey::StaticInitializer(class) => {
+                self.lower_static_initializer(function, class.class);
+            }
+            FunctionKey::AccessorGetter { member, .. } => {
+                self.lower_accessor_function(function, member, MethodKind::Getter);
+            }
+            FunctionKey::AccessorSetter { member, .. } => {
+                self.lower_accessor_function(function, member, MethodKind::Setter);
+            }
+            FunctionKey::PrivateNameTest { member, .. } => {
+                self.lower_private_name_test(function, member);
+            }
         }
     }
 }
@@ -142,7 +143,7 @@ fn lower_source_body(file: &mut FileLowering<'_, '_, '_, '_>, function: Function
         function: source,
     };
     if file.inputs.library_functions.is_left_out(written) {
-        function::lower_left_out_function(file, function);
+        file.lower_left_out_function(function);
         return;
     }
     if file
@@ -151,11 +152,11 @@ fn lower_source_body(file: &mut FileLowering<'_, '_, '_, '_>, function: Function
         .inner_module(file.file, source)
         .is_some()
     {
-        commonjs::lower_inner_module_body(file, function, source);
+        file.lower_inner_module_body(function, source);
         return;
     }
     match file.hir.runtime_function_kind(source) {
-        FnKind::Constructor => class::lower_constructor(file, function, source),
-        _ => function::lower_source_function(file, function, source),
+        FnKind::Constructor => file.lower_constructor(function, source),
+        _ => file.lower_source_function(function, source),
     }
 }

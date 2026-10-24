@@ -103,10 +103,13 @@ declare module "bun" {
     type DeepStrict = { readonly "bun.strict"?: "deep" };
   }
   /**
-   * The global `JSON` (`JSON === globalThis.JSON`), typed so that `JSON.parse<T>(text)` type-checks.
-   * `bun build --compile --aot`, `bun run --aot` and `bun test --aot` compile that call into a parser that validates
-   * the result against `T`. Everywhere else that call is an error, so the check is never skipped by accident.
-   * The type argument of the global `JSON` is erased there like any other type.
+   * `JSON` with a `parse` that validates. `stringify`, `rawJSON` and `isRawJSON` are the global's.
+   * `bun build --compile --aot`, `bun run --aot` and `bun test --aot` compile `JSON.parse<T>(text)` into a parser that
+   * validates the result against `T`. Everywhere else that call is an error, so the check is never skipped by accident.
+   *
+   * `parse` itself throws a `TypeError`. Only a call that has lost its type reaches it: one without a type argument,
+   * one through another name (`const { parse } = JSON`, `.then(JSON.parse)`), or one in the output of a tool that
+   * removes type arguments.
    *
    * ```ts
    * import { JSON, type Schema } from "bun";
@@ -115,7 +118,7 @@ declare module "bun" {
    * ```
    */
   const JSON: JSON;
-  /** The type of the global `JSON`, and the type argument of `parse`. */
+  /** The members of the global `JSON`, and the type argument of `parse`. */
   interface JSON extends globalThis.JSON {
     /**
      * Parses `text` and validates the result against the TypeScript type `T`.
@@ -124,7 +127,7 @@ declare module "bun" {
      * Throws a `SyntaxError` if `text` isn't valid JSON, and a `TypeError` whose `issues` property lists every
      * {@link Bun.Schema.Issue} if the value doesn't match `T`.
      *
-     * `JSON.parse(text)` and `JSON.parse<any>(text)` never validate.
+     * `JSON.parse<any>(text)` doesn't validate. `JSON.parse(text)` is an error.
      */
     parse<T = any>(text: string, reviver?: (this: any, key: string, value: any) => any): T;
     // TypeScript infers (`ReturnType`, `.then(JSON.parse)`) from the last signature, so `JSON.parse(text)` stays `any`.

@@ -1,8 +1,0 @@
-{
-  "extends": "../../tsconfig.json",
-  "compilerOptions": {
-    "strict": true,
-    "typeRoots": ["../../../../../packages", "./types"],
-    "types": ["bun-types", "fake-globals"]
-  }
-}

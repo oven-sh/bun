@@ -48,10 +48,10 @@ bun run --aot user.ts
 
 ```txt
 7 Ada [ "id", "name", "role" ]
-TypeError: id: expected number, received string (and 2 more)
-[ "id" ] invalid_type Invalid input: expected number, received string
-[ "name" ] invalid_type Invalid input: expected string, received undefined
-[ "tags", 1 ] invalid_type Invalid input: expected string, received number
+TypeError: id must be number, received string (and 2 more)
+[ "id" ] invalid_type must be number, received string
+[ "name" ] invalid_type must be string, received undefined
+[ "tags", 1 ] invalid_type must be string, received number
 ```
 
 | Call                    | The text is a `T` | The text is JSON, but not a `T`                | The text isn't JSON    |
@@ -60,9 +60,9 @@ TypeError: id: expected number, received string (and 2 more)
 | `JSON.parse<any>(text)` | Returns the value | Returns the value                              | Throws a `SyntaxError` |
 
 - **The result is what `JSON.parse(text)` returns.** Properties that `T` doesn't declare, such as `role`, are still there. To reject them, use [`T & Schema.Strict`](#rules-that-a-type-cant-express).
-- **`JSON` from `"bun"` is the global `JSON`, typed with the type argument.** It's the same object. The import tells Bun that you count on the check, so the check can't be skipped by accident: [without `--aot`](#where-it-works), `JSON.parse<User>(text)` is an error.
+- **`JSON` from `"bun"` is an object of its own.** Its `stringify`, `rawJSON` and `isRawJSON` are the global's. Its `parse` is only there for the call that Bun compiles. The import tells Bun that you count on the check, so the check can't be skipped by accident: [a call that lost its type throws](#if-the-type-is-lost), and [without `--aot`](#where-it-works), `JSON.parse<User>(text)` is an error.
 - **The global `JSON` validates too, but nothing stops you from running it unchecked.** Without `--aot`, its type argument is erased and `JSON.parse<User>(text)` is `JSON.parse(text)`. See [Types in your editor](#types-in-your-editor).
-- **Only a call with a type argument checks.** `JSON.parse(text)` is the ordinary call and returns `any`. `JSON.parse(text) as User`, `const user: User = ...` and `.then(JSON.parse)` check nothing.
+- **Only a call with a type argument checks.** With `JSON` from `"bun"`, `JSON.parse(text)` is an error, whatever type you write around it: `JSON.parse(text) as User`, `const user: User = JSON.parse(text)`. `.then(JSON.parse)` throws. To parse without a check, say so: `JSON.parse<any>(text)`.
 - **Bun goes by what the name refers to, not by how the call is spelled.** `const { parse } = JSON; parse<User>(text)` checks too.
 - **The reviver runs first.** `JSON.parse<T>(text, reviver)` checks what the reviver returns and hands it to you as it is: an object that the reviver returned is that same object in the result. So `Schema.Default` fills nothing in when you pass a reviver.
 - **`T` can come from anywhere.** Bun's type checker resolves it, so you can import it from another file or from a package, and it can be `Partial<User>`, `Omit<User, "id">` or `Page<User>`.
@@ -123,7 +123,7 @@ bun run --aot login.ts
 ```
 
 ```txt
-TypeError: password: expected string to have >=8 characters
+TypeError: password must have >=8 characters
 ```
 
 `validate` throws the same `TypeError` as `JSON.parse<T>`. If the value matches, it returns a copy. Bun copies the objects and arrays that `T` describes, with all of their keys in the same order, and never changes the value you passed in.
@@ -168,9 +168,9 @@ Bun.serve({
 | `path`                 | `["items", 0, "sku"]`                                                                                                                                |
 | `code`                 | `"invalid_type"`, `"invalid_value"`, `"invalid_union"`, `"too_small"`, `"too_big"`, `"not_multiple_of"`, `"invalid_format"` or `"unrecognized_keys"` |
 | `expected`, `received` | `"number"`, `"string"`                                                                                                                               |
-| `message`              | `"Invalid input: expected number, received string"`                                                                                                  |
+| `message`              | `"must be number, received string"`                                                                                                                  |
 
-The codes and messages are worded like those of zod 4. The message of the `TypeError` describes the first mismatch and counts the rest. `issues` lists them, up to the first 100.
+The codes are those of zod 4. The message of the `TypeError` is the path of the first issue followed by its message, and it counts the rest: `items[0].sku must be string, received number (and 2 more)`. When the value itself is the mismatch, there's no path, and the message says `value`. A message of your own, from [`Schema.Message`](#rules-that-a-type-cant-express), comes first and the path follows it: `Order at least one (at quantity)`. `issues` lists the mismatches, up to the first 100.
 
 ## Rules that a type can't express
 
@@ -259,7 +259,7 @@ If `T` refers to itself and the JSON is nested thousands of levels deep, the cal
 | `bun compile`, `bun build --compile --aot`, `bun run --aot`, `bun test --aot` | Validates                                  | Validates                            | Validates              |
 | `bun run`, `bun test`, `bun build`, `Bun.Transpiler`                          | The call is an error                       | Is `JSON.parse(text)`: no check      | The import is an error |
 
-**Without `--aot`, Bun can't validate, and it says so if you asked it by name.** `JSON.parse<User>(text)` is an error if `JSON` comes from `"bun"`: an import under any name, or `Bun.JSON`. So is the import of `validate`. `JSON.parse<any>(text)` and `JSON.parse<unknown>(text)` check nothing anywhere, so they're fine everywhere.
+**Without `--aot`, Bun can't validate, and it says so if you asked it by name.** `JSON.parse<User>(text)` is an error if `JSON` comes from `"bun"`: an import under any name, or `Bun.JSON`. So is the import of `validate`. `JSON.parse<any>(text)` and `JSON.parse<unknown>(text)` check nothing anywhere: they're the global `JSON.parse(text)`, so they're fine everywhere.
 
 ```ts user.ts icon="/icons/typescript.svg"
 import { JSON } from "bun";
@@ -277,9 +277,20 @@ error: JSON.parse<T>() from "bun" only validates with --aot. Use "bun run --aot"
 
 **The type argument of the global `JSON` is erased.** Bun removes it like any other type, because a program may have declared that type parameter itself, long before Bun gave it a meaning. `JSON.parse<User>(text)` then parses and checks nothing, and nothing says so. If your program relies on the check, import `JSON` from `"bun"`.
 
-**Other tools erase both.** `tsc`, esbuild, swc and Vite remove the type argument whichever `JSON` it is. What they emit checks nothing.
+### If the type is lost
 
-**Bun looks at one file at a time here.** It finds `JSON` from `"bun"` where the file names it. It doesn't follow `const codec = Bun.JSON` or a `JSON` that another file of yours exports again.
+`parse` of the `JSON` from `"bun"` never parses unchecked. Bun replaces each `JSON.parse<T>(text)` that it compiles, so the function itself is only reached by a call that has no type, and it throws:
+
+```txt
+TypeError: JSON.parse() from "bun" has no type to validate against here, so it parsed nothing.
+```
+
+- **Another tool removed the type argument.** `tsc`, esbuild, swc and Vite emit `JSON.parse(text)`. Run under Bun, that call is an error. With the global `JSON` it's an ordinary parse, which is one more reason to import `JSON` from `"bun"`.
+- **The call goes through another name.** Without `--aot`, Bun looks at one file at a time and finds `JSON` from `"bun"` where the file names it. It doesn't follow `const codec = Bun.JSON`, `const { parse } = JSON`, `require("bun").JSON` or a `JSON` that another file of yours exports again. Those calls throw.
+- **`parse` is used as a value.** `JSON.parse.call(JSON, text)`, `texts.map(JSON.parse)` and `.then(JSON.parse)` throw.
+- **The code is text at run time.** `eval`, `new Function` and `node:vm` have no types, so `Bun.JSON.parse(text)` throws there.
+
+You can't assign to `JSON.parse` or to `Bun.JSON`, or delete them.
 
 **A file that an executable loads at run time isn't compiled.** Calls that Bun compiled into the executable validate. A TypeScript file that the executable loads from disk is treated as under `bun run`.
 

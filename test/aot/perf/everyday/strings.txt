@@ -413,3 +413,13 @@ const text = ("line: the quick brown fox { \"key\": [1, 2, 3] } jumps over the l
 function turn(i: number): number {
   return text.replace(/[^\x00-\x7F]/gu, "").length + (i & 1);
 }
+//// a-piece-of-a-query-compared-with-the-state-of-every-row
+const nothing = String(Date.now()).slice(99);
+const query = "status=open&limit=25" + nothing;
+const states: string[] = ["done", "open", "late", "open", "done", "open", "late", "done"];
+function turn(i: number): number {
+  const wanted = query.slice(7, 11);
+  let hits = i & 1;
+  for (const state of states) if (state === wanted) hits++;
+  return hits;
+}

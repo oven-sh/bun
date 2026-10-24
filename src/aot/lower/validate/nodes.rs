@@ -14,15 +14,13 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::ValidationError;
-use super::expected_result::result_type;
-use super::rules::apply_constraint;
-use super::unsupported::{Origin, Step, describe_unsupported};
+use super::unsupported::{Origin, Step};
 use crate::ir::LayoutId;
 use crate::ir::generated::{
     LimitId, TemplatePart, TemplatePlaceholder, UndeclaredMembers, ValidatedPrimitive,
     ValidationMember, ValidationNode, ValidationRule, ValidationShape,
 };
-use crate::lower::{CheckerTypeId, FileLowering, layouts, member};
+use crate::lower::{CheckerTypeId, FileLowering};
 
 const ROOT: u32 = 0;
 const MAX_NESTED_CONSTRAINT_LISTS: usize = 8;
@@ -203,7 +201,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
             return Err(ValidationError::TooLarge);
         }
         let node = self.nodes.len() as u32;
-        let ty = result_type(self.file, ty, self.position);
+        let ty = self.file.result_type(ty, self.position);
         self.nodes.push(ValidationNode {
             shape: ValidationShape::Never,
             ty,
@@ -232,7 +230,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         for constraints in constraint_lists.into_iter().rev() {
             for &constraint in constraints {
                 let node = &mut self.nodes[source.node as usize];
-                apply_constraint(self.file, node, constraint);
+                self.file.apply_constraint(node, constraint);
             }
         }
         Ok(())
@@ -240,7 +238,9 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
 
     fn compute_shape(&mut self, source: Source<'c>) -> Result<ValidationShape, ValidationError> {
         let is_builtin_subtype = self.file.queries.is_builtin_subtype(source.ty);
-        if is_builtin_subtype.map_err(ValidationError::GaveUp)? {
+        if is_builtin_subtype.map_err(ValidationError::GaveUp)?
+            || self.file.queries.says_more_than_its_shape(source.ty)
+        {
             return Err(self.unsupported(source));
         }
         match source.shape.kind {
@@ -365,7 +365,9 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         debug_assert_eq!(tail.len(), types.len(), "a text follows each placeholder");
         let mut parts = Vec::with_capacity(types.len());
         for (&ty, &text) in types.iter().zip(tail) {
-            let Some(placeholder) = placeholder_of(self.shape_of(ty)?.kind) else {
+            let placeholder = placeholder_of(self.shape_of(ty)?.kind)
+                .filter(|_| !self.file.queries.says_more_than_its_shape(ty));
+            let Some(placeholder) = placeholder else {
                 return Err(self.unsupported(source));
             };
             let text = self.file.intern_atom(text);
@@ -404,7 +406,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
     ) -> Result<ValidationShape, ValidationError> {
         let declared = self.file.queries.object_members(source.ty);
         let declared = declared.map_err(ValidationError::GaveUp)?;
-        let layout = layouts::object_type_layout(self.file, source.ty);
+        let layout = self.file.object_type_layout(source.ty);
         let mut members = Vec::with_capacity(declared.len());
         for member in declared {
             members.push(self.compute_member(source, layout, member)?);
@@ -451,7 +453,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
                 return Err(self.unsupported(source));
             }
         };
-        let key = member::name_key(self.file, name);
+        let key = self.file.name_key(name);
         let origin = Origin {
             parent: source.node,
             step: Step::NamedMember(name),
@@ -459,12 +461,9 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         let ty = member.types.checked.map_err(ValidationError::GaveUp)?;
         match member.kind {
             ObjectMemberKind::Method => {
-                return Err(describe_unsupported(
-                    self.file,
-                    &self.origins,
-                    Some(origin),
-                    ty,
-                ));
+                return Err(self
+                    .file
+                    .describe_unsupported(&self.origins, Some(origin), ty));
             }
             ObjectMemberKind::Field
             | ObjectMemberKind::Getter
@@ -472,7 +471,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
             | ObjectMemberKind::GetterAndSetter => {}
         }
         let node = self.ensure(ty, source.is_deep_strict, Some(origin))?;
-        let field = layout.and_then(|layout| layouts::find_field(self.file, layout, key));
+        let field = layout.and_then(|layout| self.file.find_field(layout, key));
         Ok(ValidationMember {
             key,
             node,
@@ -489,6 +488,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
 
     fn unsupported(&mut self, source: Source<'c>) -> ValidationError {
         let origin = self.origins[source.node as usize];
-        describe_unsupported(self.file, &self.origins, origin, source.ty)
+        self.file
+            .describe_unsupported(&self.origins, origin, source.ty)
     }
 }

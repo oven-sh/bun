@@ -3,8 +3,8 @@
 // CHECK-NOT: IsInt32Promise
 // CHECK: results=[{type=i32 site=[[result]]}]
 // CHECK: [[read]] = PropGet [[receiver]] key="x"
-// CHECK-NEXT: [[returned]] = Convert [[read]] declared={type=i32 site=[[result]]} @
-// CHECK-NEXT: Return [[returned]]
+// CHECK-NEXT: [[claimed]] = Convert [[read]] declared={type=i32 site=[[member]]} illTypedCause=Assertion @
+// CHECK-NEXT: Return [[claimed]]
 // CHECK-LABEL: function {{*}}name="methodResult"
 // CHECK: [[call]] = Call [[method]], {{*}}calleeName="p.width"
 // CHECK-NEXT: = Convert [[call]] declared={type=i32 site=w{{*}} flags=[IsInt32Promise]}

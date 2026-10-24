@@ -11,7 +11,6 @@
 #include "JavaScriptCore/ArrayConstructor.h"
 #include <cmath>
 #include <limits>
-#include <optional>
 
 #include "JSAbortSignal.h"
 #include "JSBufferEncodingType.h"

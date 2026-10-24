@@ -1,8 +1,10 @@
-// The programs of modules that are mostly a loop written out: thousands of fields, variables or functions that differ in a number.
+// The programs of modules that are mostly a loop written out: thousands of fields, variables or functions that differ in a number, and graphs of modules that differ in who imports whom.
 import { programsOf, text } from "../generate";
+import { modulesOnCyclesThatThrow } from "./modules-on-cycles-that-throw";
 
 export const programs = () =>
   programsOf({
+    ...modulesOnCyclesThatThrow(),
     "function-export-read-by-name-through-the-caches.json": text(
       `{"build": ["--aot-only-passes=AnalyzeFlow"]}
 `,

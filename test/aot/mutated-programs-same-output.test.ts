@@ -9,11 +9,12 @@
 // A crash of the build or of the compiled program always fails the test. A different output fails it too, except when the compiled
 // program reports a type mismatch: a mutant can type-check and still hand a value to a type it does not fit, through `any` or a cast.
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
 import { freshSeed } from "./fresh-seed";
+import { withPackedPrograms } from "./generate";
 import { unsupported } from "./run-programs";
 
 const programCount = Number(process.env.AOT_FUZZ_PROGRAMS) || 20;
@@ -153,7 +154,8 @@ for (const seed of seeds)
     `mutants of ${programCount} programs print the same compiled and in plain Bun, AOT_FUZZ_SEED=${seed}`,
     async () => {
       using root = tempDir("aot-mutated-programs", {});
-      const programs = singleFilePrograms(join(import.meta.dir, "programs"));
+      const kept = join(import.meta.dir, "programs");
+      const { paths: programs, textOf } = withPackedPrograms(kept, singleFilePrograms(kept), /(?<!\.d)\.ts$/);
       const hashed = programs.map(path => ({
         path,
         hash: Number(Bun.hash.crc32(seed + ":" + path.slice(import.meta.dir.length + 1))),
@@ -163,7 +165,7 @@ for (const seed of seeds)
         .slice(0, programCount)
         .map(({ path, hash }) => {
           const random = mulberry32(hash);
-          const source = readFileSync(path, "utf8");
+          const source = textOf(path);
           return {
             from: path.slice(import.meta.dir.length + 1),
             source,

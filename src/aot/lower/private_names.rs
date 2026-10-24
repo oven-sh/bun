@@ -7,17 +7,10 @@ use smallvec::{SmallVec, smallvec};
 
 use super::call::{self, Arguments, CallSite};
 use super::known_call::PrivateStateAccess;
-use super::{FileLowering, FunctionLowering, class, condition, expression};
+use super::{FileLowering, FunctionLowering, class};
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, Edge, LayoutId, PrivateStatePart, TypeId, TypeTable, ValueId};
 use crate::known_helpers::{FilePrivateStates, PrivateStateKind};
-
-pub(crate) use self::access::lower_private_in;
-pub(in crate::lower) use self::access::{
-    emit_brand_definition, emit_field_definition, emit_name_get, emit_name_set, emit_name_test,
-    emit_storage_definition, emit_storage_get, emit_storage_set,
-};
-pub(in crate::lower) use self::resolve::{resolve_accessor_storage, resolve_private_name};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(in crate::lower) enum PrivateHolder {
@@ -47,38 +40,177 @@ struct StateField {
     field: u32,
 }
 
-pub(crate) fn emit_private_get(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ValueId,
-    access: ExprId,
-) -> ValueId {
-    lowering.set_position(lowering.file.hir[access].pos);
-    match find_referenced_name(lowering, access) {
-        Some(name) => access::emit_name_get(lowering, object, name),
-        None => access::emit_undeclared_name_error(lowering),
-    }
-}
-
-pub(crate) fn emit_private_set(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ValueId,
-    access: ExprId,
-    value: ValueId,
-    source: Option<ExprId>,
-) {
-    match find_referenced_name(lowering, access) {
-        Some(name) => access::emit_name_set(lowering, object, name, value, source),
-        None => {
-            access::emit_undeclared_name_error(lowering);
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn emit_private_get(&mut self, object: ValueId, access: ExprId) -> ValueId {
+        self.set_position(self.file.hir[access].pos);
+        match self.find_referenced_name(access) {
+            Some(name) => self.emit_name_get(object, name),
+            None => self.emit_undeclared_name_error(),
         }
     }
-}
 
-fn find_referenced_name(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-    reference: ExprId,
-) -> Option<PrivateNameId> {
-    lowering.file.bound.private_name_of_reference(reference)
+    pub(crate) fn emit_private_set(
+        &mut self,
+        object: ValueId,
+        access: ExprId,
+        value: ValueId,
+        source: Option<ExprId>,
+    ) {
+        match self.find_referenced_name(access) {
+            Some(name) => self.emit_name_set(object, name, value, source),
+            None => {
+                self.emit_undeclared_name_error();
+            }
+        }
+    }
+
+    fn find_referenced_name(&self, reference: ExprId) -> Option<PrivateNameId> {
+        self.file.bound.private_name_of_reference(reference)
+    }
+
+    fn continue_if(&mut self, condition: ValueId, otherwise: BlockId) {
+        let passed = self.create_block();
+        self.builder
+            .branch(condition, Edge::to(passed), Edge::to(otherwise));
+        self.continue_in(passed);
+    }
+
+    fn continue_if_type(&mut self, value: ValueId, tested: TypeId, otherwise: BlockId) -> ValueId {
+        let split = self.split_on_type(value, tested);
+        self.builder.switch_to(split.not_taken);
+        self.jump(otherwise);
+        self.builder.switch_to(split.taken);
+        split.taken_value
+    }
+
+    fn get_state_token(&mut self, state: SymbolId) -> ValueId {
+        self.get_private_state_slot(state, PrivateStatePart::Token)
+    }
+
+    // A new collection is a new private name, and the fields have room for the entries of one.
+    fn continue_if_recorded(&mut self, access: PrivateStateAccess, otherwise: BlockId) {
+        let collection = self.continue_if_type(access.collection, TypeTable::OBJECT, otherwise);
+        let part = PrivateStatePart::Collection;
+        let recorded = self.get_private_state_slot(access.state, part);
+        let is_recorded = self.builder.strict_eq(collection, recorded);
+        self.continue_if(is_recorded, otherwise);
+    }
+
+    fn emit_entry_of_collection(&mut self, access: PrivateStateAccess, value: Option<ValueId>) {
+        let method = match value {
+            Some(_) => BuiltinId::WeakMapPrototypeSet,
+            None => BuiltinId::WeakSetPrototypeAdd,
+        };
+        let mut arguments: SmallVec<[ValueId; 4]> = smallvec![access.object];
+        arguments.extend(value);
+        let method = self.emit_locked_builtin(method);
+        let arguments = Arguments::Values(arguments);
+        call::emit_call(
+            self,
+            method,
+            Some(access.collection),
+            arguments,
+            CallSite::default(),
+        );
+    }
+
+    // `new WeakMap()` that is stored in a variable of private state.
+    pub(in crate::lower) fn record_state_creation(
+        &mut self,
+        creation: ExprId,
+        constructor: ValueId,
+        collection: ValueId,
+    ) {
+        let created = find_states(self.file).and_then(|states| states.created_by(creation));
+        let Some(created) = created else {
+            return;
+        };
+        let Some(state) = self.file.resolve_state(created.symbol) else {
+            return;
+        };
+        let done = self.create_block();
+        let builtin = match state.kind {
+            PrivateStateKind::Field => BuiltinId::WeakMap,
+            PrivateStateKind::Brand => BuiltinId::WeakSet,
+        };
+        let builtin = self.emit_locked_builtin(builtin);
+        let is_builtin = self.builder.strict_eq(constructor, builtin);
+        self.continue_if(is_builtin, done);
+        let part = PrivateStatePart::Collection;
+        let recorded = self.get_private_state_slot(created.symbol, part);
+        self.continue_if_type(recorded, TypeTable::UNDEFINED, done);
+        let token = self.builder.new_class_token(state.layout);
+        self.set_private_state_slot(created.symbol, PrivateStatePart::Token, token);
+        self.set_private_state_slot(created.symbol, part, collection);
+        self.jump(done);
+        self.continue_in(done);
+    }
+
+    pub(in crate::lower) fn emit_state_test(&mut self, access: PrivateStateAccess) -> ValueId {
+        let Some(state) = self.file.resolve_state(access.state) else {
+            return self.builder.boolean(false);
+        };
+        let result = self.builder.create_variable(None);
+        let done = self.create_block();
+        let is_missing = self.builder.boolean(false);
+        self.builder.write_variable(result, is_missing);
+        self.continue_if_recorded(access, done);
+        let object = self.continue_if_type(access.object, TypeTable::OBJECT, done);
+        let token = self.get_state_token(access.state);
+        let has_entry = self
+            .builder
+            .private_has(object, token, state.layout, state.field);
+        self.builder.write_variable(result, has_entry);
+        self.jump(done);
+        self.continue_in(done);
+        self.builder.read_variable(result)
+    }
+
+    pub(in crate::lower) fn emit_state_get(&mut self, access: PrivateStateAccess) -> ValueId {
+        let Some(state) = self.file.resolve_state(access.state) else {
+            return self.builder.undefined();
+        };
+        let token = self.get_state_token(access.state);
+        self.builder
+            .private_get(access.object, token, state.layout, state.field)
+    }
+
+    pub(in crate::lower) fn emit_state_set(&mut self, access: PrivateStateAccess, value: ValueId) {
+        let Some(state) = self.file.resolve_state(access.state) else {
+            return;
+        };
+        let token = self.get_state_token(access.state);
+        self.builder
+            .private_set(access.object, token, state.layout, state.field, value);
+    }
+
+    pub(in crate::lower) fn emit_state_definition(
+        &mut self,
+        access: PrivateStateAccess,
+        value: Option<ValueId>,
+    ) {
+        let Some(state) = self.file.resolve_state(access.state) else {
+            self.emit_entry_of_collection(access, value);
+            return;
+        };
+        let in_collection = self.create_unlikely_block();
+        let done = self.create_block();
+        self.continue_if_recorded(access, in_collection);
+        let token = self.get_state_token(access.state);
+        let stored = match value {
+            Some(value) => value,
+            None => self.builder.boolean(true),
+        };
+        self.builder
+            .private_define(access.object, token, state.layout, state.field, stored);
+        self.jump(done);
+
+        self.continue_in(in_collection);
+        self.emit_entry_of_collection(access, value);
+        self.jump(done);
+
+        self.continue_in(done);
+    }
 }
 
 fn find_states<'a>(file: &FileLowering<'a, '_, '_, '_>) -> Option<&'a FilePrivateStates> {
@@ -89,192 +221,16 @@ fn find_states<'a>(file: &FileLowering<'a, '_, '_, '_>) -> Option<&'a FilePrivat
         .private_states(files, inputs.modules, file.file)
 }
 
-fn resolve_state(file: &mut FileLowering<'_, '_, '_, '_>, state: SymbolId) -> Option<StateField> {
-    let found = find_states(file)?.state(state)?;
-    let (layout, field) = class::find_private_state_field(file, found.owner, state)?;
-    Some(StateField {
-        kind: found.kind,
-        layout,
-        field,
-    })
-}
-
-fn continue_if(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    condition: ValueId,
-    otherwise: BlockId,
-) {
-    let passed = lowering.create_block();
-    lowering
-        .builder
-        .branch(condition, Edge::to(passed), Edge::to(otherwise));
-    lowering.continue_in(passed);
-}
-
-fn continue_if_type(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    value: ValueId,
-    tested: TypeId,
-    otherwise: BlockId,
-) -> ValueId {
-    let split = condition::split_on_type(lowering, value, tested);
-    lowering.builder.switch_to(split.not_taken);
-    lowering.jump(otherwise);
-    lowering.builder.switch_to(split.taken);
-    split.taken_value
-}
-
-fn get_state_token(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    state: SymbolId,
-) -> ValueId {
-    class::get_private_state_slot(lowering, state, PrivateStatePart::Token)
-}
-
-// A new collection is a new private name, and the fields have room for the entries of one.
-fn continue_if_recorded(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: PrivateStateAccess,
-    otherwise: BlockId,
-) {
-    let collection = continue_if_type(lowering, access.collection, TypeTable::OBJECT, otherwise);
-    let part = PrivateStatePart::Collection;
-    let recorded = class::get_private_state_slot(lowering, access.state, part);
-    let is_recorded = lowering.builder.strict_eq(collection, recorded);
-    continue_if(lowering, is_recorded, otherwise);
-}
-
-fn emit_entry_of_collection(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: PrivateStateAccess,
-    value: Option<ValueId>,
-) {
-    let method = match value {
-        Some(_) => BuiltinId::WeakMapPrototypeSet,
-        None => BuiltinId::WeakSetPrototypeAdd,
-    };
-    let mut arguments: SmallVec<[ValueId; 4]> = smallvec![access.object];
-    arguments.extend(value);
-    let method = expression::emit_locked_builtin(lowering, method);
-    let arguments = Arguments::Values(arguments);
-    call::emit_call(
-        lowering,
-        method,
-        Some(access.collection),
-        arguments,
-        CallSite::default(),
-    );
-}
-
-// `new WeakMap()` that is stored in a variable of private state.
-pub(in crate::lower) fn record_state_creation(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    creation: ExprId,
-    constructor: ValueId,
-    collection: ValueId,
-) {
-    let created = find_states(lowering.file).and_then(|states| states.created_by(creation));
-    let Some(created) = created else {
-        return;
-    };
-    let Some(state) = resolve_state(lowering.file, created.symbol) else {
-        return;
-    };
-    let done = lowering.create_block();
-    let builtin = match state.kind {
-        PrivateStateKind::Field => BuiltinId::WeakMap,
-        PrivateStateKind::Brand => BuiltinId::WeakSet,
-    };
-    let builtin = expression::emit_locked_builtin(lowering, builtin);
-    let is_builtin = lowering.builder.strict_eq(constructor, builtin);
-    continue_if(lowering, is_builtin, done);
-    let part = PrivateStatePart::Collection;
-    let recorded = class::get_private_state_slot(lowering, created.symbol, part);
-    continue_if_type(lowering, recorded, TypeTable::UNDEFINED, done);
-    let token = lowering.builder.new_class_token(state.layout);
-    class::set_private_state_slot(lowering, created.symbol, PrivateStatePart::Token, token);
-    class::set_private_state_slot(lowering, created.symbol, part, collection);
-    lowering.jump(done);
-    lowering.continue_in(done);
-}
-
-pub(in crate::lower) fn emit_state_test(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: PrivateStateAccess,
-) -> ValueId {
-    let Some(state) = resolve_state(lowering.file, access.state) else {
-        return lowering.builder.boolean(false);
-    };
-    let result = lowering.builder.create_variable(None);
-    let done = lowering.create_block();
-    let is_missing = lowering.builder.boolean(false);
-    lowering.builder.write_variable(result, is_missing);
-    continue_if_recorded(lowering, access, done);
-    let object = continue_if_type(lowering, access.object, TypeTable::OBJECT, done);
-    let token = get_state_token(lowering, access.state);
-    let has_entry = lowering
-        .builder
-        .private_has(object, token, state.layout, state.field);
-    lowering.builder.write_variable(result, has_entry);
-    lowering.jump(done);
-    lowering.continue_in(done);
-    lowering.builder.read_variable(result)
-}
-
-pub(in crate::lower) fn emit_state_get(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: PrivateStateAccess,
-) -> ValueId {
-    let Some(state) = resolve_state(lowering.file, access.state) else {
-        return lowering.builder.undefined();
-    };
-    let token = get_state_token(lowering, access.state);
-    lowering
-        .builder
-        .private_get(access.object, token, state.layout, state.field)
-}
-
-pub(in crate::lower) fn emit_state_set(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: PrivateStateAccess,
-    value: ValueId,
-) {
-    let Some(state) = resolve_state(lowering.file, access.state) else {
-        return;
-    };
-    let token = get_state_token(lowering, access.state);
-    lowering
-        .builder
-        .private_set(access.object, token, state.layout, state.field, value);
-}
-
-pub(in crate::lower) fn emit_state_definition(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: PrivateStateAccess,
-    value: Option<ValueId>,
-) {
-    let Some(state) = resolve_state(lowering.file, access.state) else {
-        emit_entry_of_collection(lowering, access, value);
-        return;
-    };
-    let in_collection = lowering.create_unlikely_block();
-    let done = lowering.create_block();
-    continue_if_recorded(lowering, access, in_collection);
-    let token = get_state_token(lowering, access.state);
-    let stored = match value {
-        Some(value) => value,
-        None => lowering.builder.boolean(true),
-    };
-    lowering
-        .builder
-        .private_define(access.object, token, state.layout, state.field, stored);
-    lowering.jump(done);
-
-    lowering.continue_in(in_collection);
-    emit_entry_of_collection(lowering, access, value);
-    lowering.jump(done);
-
-    lowering.continue_in(done);
+impl FileLowering<'_, '_, '_, '_> {
+    fn resolve_state(&mut self, state: SymbolId) -> Option<StateField> {
+        let found = find_states(self)?.state(state)?;
+        let (layout, field) = class::find_private_state_field(self, found.owner, state)?;
+        Some(StateField {
+            kind: found.kind,
+            layout,
+            field,
+        })
+    }
 }
 
 #[cfg(test)]

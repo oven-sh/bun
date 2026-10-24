@@ -254,7 +254,7 @@ bun compile ./checked.ts && ./checked
 
 ```txt
 number Ada
-TypeError: id: expected number, received string
+TypeError: id must be number, received string
 ```
 
 These two do throw. That's what they're for. Only the type checker knows what `T` expands to, so they work where it runs: `bun compile`, `bun run --aot` and `bun test --aot`. Under plain `bun run` both are errors, so the check is never skipped by accident: see [Where it works](/bundler/validate#where-it-works). If the data matches, the compiler trusts the result: `user.id` is one load from a known offset, with no guard.
@@ -346,7 +346,7 @@ Because the build proves every store that it sees, typed code has nothing to che
 
 - **A call that the build can't see gets a guard,** like every other type. `numbers.map(half)` passes `half` around as a value, so the build doesn't know what it's called with. Such a call guards each `int32` argument, and `1.5` takes the slow version of the function. So does a call through an `any` or from a JavaScript file.
 - **Untyped code can store anything in a field.** Storing `1.5` in `cursor.column` through an `any` works as in plain JavaScript, and the field reads `1.5` afterwards. Typed code that reads `cursor.column` from that object falls back to its slow path. [`JSON.parse<T>(text)`](/bundler/validate) checks an `int32` property as a whole number in range.
-- **Declare a member `int32` in every type that the object is used as,** such as a class and the interface it implements. If the interface says `number`, a store through the interface is a store of a `number`, and `1.5` ends up in the field the same way.
+- **Declare a member `int32` in every type that the object is used as,** such as a class and the interface it implements. If the interface says `number`, a store through the interface is a store of a `number`, and `1.5` ends up in the field the same way. The same goes for an object that was created as `{ column: number }` and is then passed as `{ column: int32 }`: TypeScript allows that, and the build doesn't look inside the object.
 - **`int32` only counts when it's the whole type** of a variable, field, parameter or return value. Inside another type, as in `int32[]` or `Map<string, int32>`, it's a `number`. `column?: int32` is an `int32` or `undefined`.
 
 You rarely need `int32` for a local variable. The compiler infers the range of a loop counter by itself. `int32` pays off in the fields of objects that you create by the million, where it halves the size of a number.

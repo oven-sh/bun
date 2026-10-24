@@ -3,7 +3,7 @@ use bun_sema::bind::{Binding, BindingKind, Decl, InitialState, ModuleInstanceSta
 use bun_sema::hir::{self, Flags, ModuleName};
 
 use crate::ir::ValueId;
-use crate::lower::{FunctionLowering, condition, layouts, object, scope, statement};
+use crate::lower::{FunctionLowering, object, scope};
 
 #[derive(Copy, Clone, Debug)]
 pub(super) struct Container {
@@ -24,7 +24,7 @@ pub(super) fn find_container(
     let has_dead_zone = bound.binding_kind(binding) == BindingKind::TypeScriptContainer
         && bound.initial_state(binding) == InitialState::Uninitialized;
     let mut declarations = bound.symbol(binding).decls.iter().copied();
-    let first = declarations.find(|&it| produces_code(lowering, it));
+    let first = declarations.find(|&it| lowering.produces_code(it));
     Container {
         binding,
         merged: bound.export_symbol_of_value_symbol_if_exported(binding),
@@ -33,106 +33,92 @@ pub(super) fn find_container(
     }
 }
 
-fn produces_code(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, declaration: Decl) -> bool {
-    let (hir, bound) = (lowering.file.hir, lowering.file.bound);
-    match declaration {
-        Decl::Enum(it) => !hir[it].flags.contains(Flags::AMBIENT),
-        Decl::Module(it) => {
-            !hir[it].flags.contains(Flags::AMBIENT)
-                && bound.module_instance_state[it.idx()] != ModuleInstanceState::NonInstantiated
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    fn produces_code(&self, declaration: Decl) -> bool {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        match declaration {
+            Decl::Enum(it) => !hir[it].flags.contains(Flags::AMBIENT),
+            Decl::Module(it) => {
+                !hir[it].flags.contains(Flags::AMBIENT)
+                    && bound.module_instance_state[it.idx()] != ModuleInstanceState::NonInstantiated
+            }
+            _ => false,
         }
-        _ => false,
     }
-}
 
-pub(super) fn has_single_declaration(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-    container: Container,
-) -> bool {
-    lowering.file.bound.symbol(container.merged).decls.len() == 1
-}
-
-pub(super) fn initialize_container(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    container: Container,
-    created: ValueId,
-) {
-    if container.merged != container.binding {
-        let merged = Binding::Symbol(container.merged);
-        scope::initialize_binding(lowering, merged, container.name, created);
+    pub(super) fn has_single_declaration(&self, container: Container) -> bool {
+        self.file.bound.symbol(container.merged).decls.len() == 1
     }
-    let binding = Binding::Symbol(container.binding);
-    scope::initialize_binding(lowering, binding, container.name, created);
-}
 
-pub(super) fn ensure_container(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    container: Container,
-) -> ValueId {
-    if has_single_declaration(lowering, container) {
-        let created = allocate_container(lowering, container);
-        initialize_container(lowering, container, created);
-        return created;
-    }
-    let merged = Binding::Symbol(container.merged);
-    if container.ends_dead_zone && container.merged == container.binding {
-        let undefined = lowering.builder.undefined();
-        scope::initialize_binding(lowering, merged, container.name, undefined);
-    }
-    let current = scope::get_binding(lowering, merged, container.name);
-    let join = lowering.create_block();
-    let object = lowering.builder.add_parameter(join, None);
-    let split = condition::split_on_truthiness(lowering, current);
-
-    lowering.builder.switch_to(split.taken);
-    lowering.jump_with(join, &[split.taken_value]);
-
-    lowering.builder.switch_to(split.not_taken);
-    let created = allocate_container(lowering, container);
-    scope::set_binding(lowering, merged, container.name, created);
-    lowering.jump_with(join, &[created]);
-
-    lowering.continue_in(join);
-    if container.merged != container.binding {
+    pub(super) fn initialize_container(&mut self, container: Container, created: ValueId) {
+        if container.merged != container.binding {
+            let merged = Binding::Symbol(container.merged);
+            scope::initialize_binding(self, merged, container.name, created);
+        }
         let binding = Binding::Symbol(container.binding);
-        match container.ends_dead_zone {
-            true => scope::initialize_binding(lowering, binding, container.name, object),
-            false => scope::set_binding(lowering, binding, container.name, object),
+        scope::initialize_binding(self, binding, container.name, created);
+    }
+
+    pub(super) fn ensure_container(&mut self, container: Container) -> ValueId {
+        if self.has_single_declaration(container) {
+            let created = self.allocate_container(container);
+            self.initialize_container(container, created);
+            return created;
         }
-    }
-    object
-}
+        let merged = Binding::Symbol(container.merged);
+        if container.ends_dead_zone && container.merged == container.binding {
+            let undefined = self.builder.undefined();
+            scope::initialize_binding(self, merged, container.name, undefined);
+        }
+        let current = self.get_binding(merged, container.name);
+        let join = self.create_block();
+        let object = self.builder.add_parameter(join, None);
+        let split = self.split_on_truthiness(current);
 
-pub(crate) fn lower_namespace(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    declaration: hir::ModuleId,
-) {
-    let bound = lowering.file.bound;
-    let data = lowering.file.hir[declaration];
-    let name = match data.name {
-        ModuleName::Ident(name) => name,
-        ModuleName::String(_) | ModuleName::Global => return,
-    };
-    if data.flags.contains(Flags::AMBIENT) {
-        return;
-    }
-    match bound.module_instance_state[declaration.idx()] {
-        ModuleInstanceState::NonInstantiated => return,
-        ModuleInstanceState::Instantiated | ModuleInstanceState::ConstEnumOnly => {}
-    }
-    let container = find_container(lowering, Decl::Module(declaration), name);
-    ensure_container(lowering, container);
-    let scope = bound.module_scope[declaration.idx()];
-    scope::enter_scope(lowering, scope);
-    statement::lower_statements(lowering, data.body);
-    scope::leave_scope(lowering, scope);
-}
+        self.builder.switch_to(split.taken);
+        self.jump_with(join, &[split.taken_value]);
 
-fn allocate_container(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    container: Container,
-) -> ValueId {
-    let layout = layouts::container_layout(lowering.file, container.merged);
-    let builder = object::begin_object(lowering, layout);
-    object::finish_object(lowering, builder)
+        self.builder.switch_to(split.not_taken);
+        let created = self.allocate_container(container);
+        scope::set_binding(self, merged, container.name, created);
+        self.jump_with(join, &[created]);
+
+        self.continue_in(join);
+        if container.merged != container.binding {
+            let binding = Binding::Symbol(container.binding);
+            match container.ends_dead_zone {
+                true => scope::initialize_binding(self, binding, container.name, object),
+                false => scope::set_binding(self, binding, container.name, object),
+            }
+        }
+        object
+    }
+
+    pub(crate) fn lower_namespace(&mut self, declaration: hir::ModuleId) {
+        let bound = self.file.bound;
+        let data = self.file.hir[declaration];
+        let name = match data.name {
+            ModuleName::Ident(name) => name,
+            ModuleName::String(_) | ModuleName::Global => return,
+        };
+        if data.flags.contains(Flags::AMBIENT) {
+            return;
+        }
+        match bound.module_instance_state[declaration.idx()] {
+            ModuleInstanceState::NonInstantiated => return,
+            ModuleInstanceState::Instantiated | ModuleInstanceState::ConstEnumOnly => {}
+        }
+        let container = find_container(self, Decl::Module(declaration), name);
+        self.ensure_container(container);
+        let scope = bound.module_scope[declaration.idx()];
+        self.enter_scope(scope);
+        self.lower_statements(data.body);
+        self.leave_scope(scope);
+    }
+
+    fn allocate_container(&mut self, container: Container) -> ValueId {
+        let layout = self.file.container_layout(container.merged);
+        let builder = self.begin_object(layout);
+        object::finish_object(self, builder)
+    }
 }

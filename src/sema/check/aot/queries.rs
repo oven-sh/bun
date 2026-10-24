@@ -23,7 +23,7 @@ use crate::check::{Checker, ContextFlags, Requested, WORK_TRAP_DISARMED};
 use crate::hir::{self, EnumMemberId, ExprId, ExprKind, FnId, ParamId, PatId, TypeNodeId};
 use crate::program::{FileId, FileRole, Files, Sym};
 use crate::session::Arena;
-use crate::types::{EnumValue, SigId, TypeData, TypeId, tf};
+use crate::types::{EnumValue, Origin, SigId, TypeData, TypeId, tf};
 use crate::util::FxHashMap;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -1059,6 +1059,22 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     /// Whether `ty` has the shape of a built-in type that it extends or intersects, so it can have members of its own.
     pub fn is_builtin_subtype(&mut self, ty: TypeId) -> Result<bool, GaveUp> {
         self.ask(|queries| queries.compute_is_builtin_subtype(ty))
+    }
+
+    /// Whether a value of the shape of `ty` need not be a `ty`: `Uppercase<string>` has the shape of a string, and `typeof globalThis`, the type of a module, of a namespace
+    /// or of an enum object that of any object.
+    pub fn says_more_than_its_shape(&self, ty: TypeId) -> bool {
+        match self.c.data(ty) {
+            TypeData::StringMapping { .. } => true,
+            TypeData::Anon { origin, .. } => matches!(
+                origin,
+                Origin::EnumObject(_)
+                    | Origin::Module(_)
+                    | Origin::Namespace { .. }
+                    | Origin::GlobalThis
+            ),
+            _ => false,
+        }
     }
 
     pub fn object_members(&mut self, object_type: TypeId) -> Result<&'c [ObjectMember], GaveUp> {

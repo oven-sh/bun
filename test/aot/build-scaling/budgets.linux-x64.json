@@ -206,5 +206,9 @@
       "instructions": 3.6,
       "peakBytes": 6.5
     }
+  },
+  "a declaration where an expression belongs, nested in itself": {
+    "millionInstructions": 6900,
+    "megabytes": 280
   }
 }

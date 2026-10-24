@@ -296,6 +296,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) whole_imports_of_bun: BumpVec<'a, Ref>,
     /// Where the name stands in each `x.parse<T>` and `x["parse"]<T>`. See `check_type_arguments_of_parse`.
     pub(crate) parse_members_with_type_arguments: BumpVec<'a, bun_ast::Loc>,
+    /// The same for `x.parse<any>` and `x.parse<unknown>`.
+    pub(crate) parse_members_without_check: BumpVec<'a, bun_ast::Loc>,
 
     pub(crate) has_classic_runtime_warned: bool,
     pub(crate) macro_call_count: MacroCallCountType,
@@ -7180,22 +7182,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .is_some_and(|(symbol, _)| self.json_imports_from_bun.contains(&symbol))
     }
 
-    /// Only an ahead-of-time build validates `JSON.parse<T>(text)`. This parser erases `T`, so the
-    /// call would check nothing and say nothing. That's an error for the `JSON` of "bun", which is
-    /// only there for that call. The global `JSON` stays as it was: a program may have declared a
-    /// type parameter for its `parse` itself. `target`, the object, hasn't been visited yet.
-    pub(crate) fn check_type_arguments_of_parse(&mut self, member: bun_ast::Loc, target: Expr) {
-        if self.is_control_flow_dead
-            || !self.parse_members_with_type_arguments.contains(&member)
-            || !self.is_json_of_bun(target)
-        {
+    /// True if this file may name the `JSON` of "bun", so that a member named `parse` is worth a look.
+    pub(crate) fn may_name_json_of_bun(&self) -> bool {
+        !self.json_imports_from_bun.is_empty()
+            || !self.whole_imports_of_bun.is_empty()
+            || !self.parse_members_with_type_arguments.is_empty()
+            || !self.parse_members_without_check.is_empty()
+    }
+
+    /// `parse` of the `JSON` of "bun" throws whenever it's reached at run time: only a call that was
+    /// compiled for its type argument validates. This parser erases `T`, so `JSON.parse<T>(text)` is
+    /// an error here, and so is a call without a type argument. `JSON.parse<any>(text)` asks for no
+    /// check: it becomes the global `JSON.parse(text)`. `target`, the object, hasn't been visited yet.
+    pub(crate) fn visit_parse_of_json(
+        &mut self,
+        member: bun_ast::Loc,
+        target: &mut Expr,
+        is_call_target: bool,
+    ) {
+        if self.is_control_flow_dead || !self.is_json_of_bun(*target) {
             return;
         }
-        self.log().add_error(
-            Some(self.source),
-            member,
-            b"JSON.parse<T>() from \"bun\" only validates with --aot. Use \"bun run --aot\", \"bun test --aot\" or \"bun compile\", or remove the type argument",
-        );
+        if self.parse_members_without_check.contains(&member) {
+            let global = self.store_name_in_ref(b"globalThis");
+            let global = self.new_expr(E::Identifier::init(global), target.loc);
+            *target = self.new_expr(
+                E::Dot {
+                    target: global,
+                    name: b"JSON".into(),
+                    name_loc: target.loc,
+                    ..Default::default()
+                },
+                target.loc,
+            );
+            return;
+        }
+        let message: &[u8] = if self.parse_members_with_type_arguments.contains(&member) {
+            b"JSON.parse<T>() from \"bun\" only validates with --aot. Use \"bun run --aot\", \"bun test --aot\" or \"bun compile\", or remove the type argument"
+        } else if is_call_target {
+            b"JSON.parse() from \"bun\" needs a type argument: JSON.parse<User>(text). Use JSON.parse<any>(text) to skip validation"
+        } else {
+            return;
+        };
+        self.log().add_error(Some(self.source), member, message);
     }
 
     pub(crate) fn is_dot_define_match(&mut self, mut expr: Expr, mut parts: &[Box<[u8]>]) -> bool {
@@ -9808,6 +9837,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             json_imports_from_bun: BumpVec::new_in(arena),
             whole_imports_of_bun: BumpVec::new_in(arena),
             parse_members_with_type_arguments: BumpVec::new_in(arena),
+            parse_members_without_check: BumpVec::new_in(arena),
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),

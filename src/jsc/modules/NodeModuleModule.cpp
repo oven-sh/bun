@@ -187,8 +187,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
             0);
     }
 
-    JSObject* exports = JSC::constructEmptyObject(globalObject);
-    out->putDirect(vm, JSC::Identifier::fromString(vm, "exports"_s), exports, 0);
+    out->putDirect(vm, JSC::Identifier::fromString(vm, "exports"_s),
+        JSC::constructEmptyObject(globalObject), 0);
 
     return JSValue::encode(out);
 }

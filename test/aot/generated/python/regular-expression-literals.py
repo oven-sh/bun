@@ -25,6 +25,24 @@ function all(re, subjects) {
 '''
 
 
+def repeats_a_group_that_holds_a_count(body):
+    """(a*)+, (?:ab?|c)*, ((a{1,3})b){2,}: the ways to divide a subject among the turns of such a group can double with each character."""
+    holds_a_count, i, in_class = [], 0, False
+    while i < len(body):
+        c = body[i]
+        if c == "\\": i += 1
+        elif in_class: in_class = c != "]"
+        elif c == "[": in_class = True
+        elif c == "(":
+            holds_a_count.append(False)
+            if body.startswith("(?", i): i += 1
+        elif c == ")":
+            if holds_a_count.pop() and (body[i + 1:i + 2] in ("*", "+") or body[i + 1:i + 5] in ("{1,}", "{2,}")): return True
+        elif c in "*+?" or (c == "{" and "," in body[i:body.index("}", i)]): holds_a_count = [True] * len(holds_a_count)
+        i += 1
+    return False
+
+
 class Gen:
     def __init__(self, seed):
         self.r = random.Random(seed)
@@ -159,6 +177,7 @@ class Gen:
             flags = "".join(f for f in "gimsy" if r.random() < 0.18)
             if r.random() < 0.08 and "\\0" not in body and "[]" not in body: flags += "u"
             subjects = [self.subject(body) for _ in range(r.randint(4, 9))]
+            if repeats_a_group_that_holds_a_count(body): subjects = [s[:8] for s in subjects]
             L.append(f"try {{ lines.push(\"{k} \" + all(/{body}/{flags}, [{', '.join(self.literal(s) for s in subjects)}])); }} catch (e) {{ lines.push(\"{k} threw \" + e.constructor.name); }}")
         L.append('console.log(lines.join("\\n"));')
         return "\n".join(L) + "\n"

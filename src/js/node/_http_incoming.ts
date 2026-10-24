@@ -1082,8 +1082,8 @@ internals.takeRequestCloseTick = takeCloseTick;
 
 function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): boolean {
   const flags = state[kState];
-  if ((flags & ~kDecoding) !== kBodyResumed || state.length !== 0 || stream._read !== incomingMessageRead) return false;
   const req: $Node.IncomingMessage = stream as any;
+  if ((flags & ~kDecoding) !== kBodyResumed || state.length !== 0 || req._read !== incomingMessageRead) return false;
   const handle = req[kHandle];
   if (
     !handle ||
@@ -1154,7 +1154,8 @@ function takeBodyData(req: $Node.IncomingMessage, chunk: Buffer | undefined, isL
     return onDataIncomingMessage.$call(req, chunk, isLast, aborted);
   }
 
-  const socket = req.socket;
+  // Only the native server hands over a body this way.
+  const socket: $Node.HttpServerSocket | null | undefined = req.socket as any;
   socket?._unrefTimer?.();
 
   state[kState] = flags & ~kReading;
@@ -1332,9 +1333,9 @@ function emitBodyEnd(req: $Node.IncomingMessage, state: $Node.ReadableState) {
 }
 
 function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable): boolean {
-  if ((state[kState] & kDestroysItselfMask) !== kDestroysItself || stream._destroy !== incomingMessageDestroy)
-    return false;
   const req: $Node.IncomingMessage = stream as any;
+  if ((state[kState] & kDestroysItselfMask) !== kDestroysItself || req._destroy !== incomingMessageDestroy)
+    return false;
   const handle = req[kHandle];
   if (
     !handle ||

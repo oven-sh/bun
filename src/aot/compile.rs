@@ -361,10 +361,32 @@ impl Drop for HandsOutLastFreedMemory {
     }
 }
 
-// The allocator gives the free blocks inside pages that are still in use back to the system. That lowers the most memory a
-// build ever holds only while the build stands near it. Further down the stages take the same blocks again a moment later,
-// and every block that is given back interrupts all the threads. What a stage frees when it ends stands right behind a peak:
-// that is given back as ever.
+// The allocator gives free pages, and the free blocks inside pages that are still in use, back to the system. That lowers the
+// most memory a build ever holds only while the build stands near it. Further down the stages take the same memory again a
+// moment later, and all that is given back interrupts all the threads. What a stage frees when it ends stands right behind a
+// peak: that is given back as ever.
+// In milliseconds.
+#[derive(Copy, Clone)]
+struct PaceOfGivingBack {
+    delay: core::ffi::c_long,
+    interval: core::ffi::c_long,
+}
+
+impl PaceOfGivingBack {
+    const NEVER: PaceOfGivingBack = PaceOfGivingBack {
+        delay: 3_600_000,
+        interval: 3_600_000,
+    };
+
+    fn now() -> PaceOfGivingBack {
+        use bun_alloc::mimalloc::{Option, mi_option_get};
+        PaceOfGivingBack {
+            delay: mi_option_get(Option::purge_delay),
+            interval: mi_option_get(Option::purge_holes_min_interval),
+        }
+    }
+}
+
 struct KeepsFreeBlocksBelowThePeak {
     is_over: Arc<AtomicBool>,
     watcher: Option<JoinHandle<()>>,
@@ -373,9 +395,10 @@ struct KeepsFreeBlocksBelowThePeak {
 static BUILDS_THAT_KEEP_FREE_BLOCKS: AtomicUsize = AtomicUsize::new(0);
 
 impl KeepsFreeBlocksBelowThePeak {
-    const PERCENT_OF_PEAK: usize = 85;
+    const PERCENT_OF_PEAK: usize = 95;
     const TIME_BEHIND_THE_PEAK: Duration = Duration::from_millis(1500);
     const TIME_BETWEEN_LOOKS: Duration = Duration::from_millis(20);
+    const TIME_BEHIND_THE_BUILD: Duration = Duration::from_millis(1000);
 
     fn begin() -> KeepsFreeBlocksBelowThePeak {
         let is_over = Arc::new(AtomicBool::new(false));
@@ -391,6 +414,7 @@ impl KeepsFreeBlocksBelowThePeak {
     }
 
     fn watch(is_over: &AtomicBool) {
+        let usual = PaceOfGivingBack::now();
         let mut gives_back = true;
         let mut was_near_peak_at = Instant::now();
         while !is_over.load(Ordering::Acquire) {
@@ -401,16 +425,39 @@ impl KeepsFreeBlocksBelowThePeak {
             let should_give_back = was_near_peak_at.elapsed() < Self::TIME_BEHIND_THE_PEAK;
             if should_give_back != gives_back {
                 gives_back = should_give_back;
-                Self::give_back(gives_back);
+                Self::give_back(gives_back, usual);
             }
             std::thread::park_timeout(Self::TIME_BETWEEN_LOOKS);
         }
-        Self::give_back(true);
+        Self::give_back(true, usual);
+        Self::give_back_what_the_build_frees();
     }
 
-    fn give_back(gives_back: bool) {
-        let option = bun_alloc::mimalloc::Option::purge_holes;
-        bun_alloc::mimalloc::mi_option_set_default(option, gives_back.into());
+    // A process that ends with the build gives its memory back on one thread, and whoever waits for it waits for that too.
+    // While the executable is written most threads have nothing to do.
+    fn give_back_what_the_build_frees() {
+        let began_at = Instant::now();
+        while began_at.elapsed() < Self::TIME_BEHIND_THE_BUILD
+            && BUILDS_THAT_KEEP_FREE_BLOCKS.load(Ordering::Acquire) == 0
+        {
+            bun_alloc::mimalloc::mi_collect(true);
+            std::thread::sleep(Self::TIME_BETWEEN_LOOKS);
+        }
+    }
+
+    fn give_back(gives_back: bool, usual: PaceOfGivingBack) {
+        use bun_alloc::mimalloc::{Option, mi_collect, mi_option_set_default};
+        let pace = match gives_back {
+            true => usual,
+            false => PaceOfGivingBack::NEVER,
+        };
+        mi_option_set_default(Option::purge_holes, gives_back.into());
+        mi_option_set_default(Option::purge_delay, pace.delay);
+        mi_option_set_default(Option::purge_holes_min_interval, pace.interval);
+        // What was freed meanwhile has waited long enough.
+        if gives_back {
+            mi_collect(true);
+        }
     }
 
     fn resident_now_and_at_most() -> (usize, usize) {
@@ -439,7 +486,6 @@ impl Drop for KeepsFreeBlocksBelowThePeak {
         self.is_over.store(true, Ordering::Release);
         if let Some(watcher) = self.watcher.take() {
             watcher.thread().unpark();
-            let _ = watcher.join();
         }
     }
 }

@@ -1,10 +1,10 @@
 # `bun run` runs a CommonJS file that is imported while it links the importer, which has not begun by then: a require() of the importer in that file evaluates the importer there and then, once.
-# So where some require() names an ES module, the CommonJS files that the module imports are evaluated before it begins. Each of them has a state of its own, for the importer comes by twice.
-# Whatever else the module imports is evaluated behind its beginning, as everything is that a module imports which no require() names.
+# So where some require() names an ES module, the CommonJS files that the module imports, itself or through the ES modules that it imports, are evaluated before it begins. Each of them has a state of its own, for the importer comes by twice.
+# Whatever else the module imports is evaluated behind its beginning, as everything is that a module imports which no require() leads to.
 # FORM: AsRead
 # RUN: pipeline CallModules
-# STATISTIC: ModulesWithState = 2
-# STATISTIC: ModulesWithoutState = 2
+# STATISTIC: ModulesWithState = 3
+# STATISTIC: ModulesWithoutState = 1
 
 variable g0 name="value" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="seen" module=m1 declared={type=anything} initialization=Undefined
@@ -16,7 +16,7 @@ entry module=m0
 # CHECK: module m0 {{*}}flags=[KeepsError, EvaluatesItself] body=f0
 # CHECK: module m1 {{*}}flags=[KeepsError, EvaluatesItself] requireResult=ModuleExports body=f1
 # CHECK: module m2 path="/below.mjs" displayPath="below.mjs" flags=[KeepsError] requests=
-# CHECK: module m3 path="/below-that.cjs" displayPath="below-that.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports
+# CHECK: module m3 path="/below-that.cjs" displayPath="below-that.cjs" kind=CommonJs flags=[KeepsError, EvaluatesItself] requireResult=ModuleExports body=f3
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
   b0():
@@ -29,10 +29,10 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 # CHECK-LABEL: function f0 name="main"
 # CHECK-NEXT: b0():
 # CHECK-NEXT: = CallDirect function=f1
+# CHECK-NEXT: = CallDirect function=f3
 # CHECK-NEXT: = BeginModuleEvaluation module=m0
 # CHECK-NEXT: Branch
 # CHECK-NEXT: b1():
-# CHECK-NEXT: = CallDirect function=f3
 # CHECK-NEXT: = CallDirect function=f2
 # CHECK-NEXT: = CallDirect function=f5
 # CHECK-NEXT: FinishModuleEvaluation module=m0

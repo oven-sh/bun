@@ -177,7 +177,7 @@ pub(crate) enum RunTaskResult {
 // shell/bake code, blowing the iTLB fault-around window for `bun <file>`.
 // Keeping `run_task` out-of-line lets `tick_queue_with_count` stay a tight
 // drain-loop wrapper (front-clustered via `src/startup.order`), and the cold
-// Shell* cluster is further hoisted into [`run_shell_task`] so this hot dispatcher stays off its pages.
+// Shell* cluster is further hoisted into [`run_task_cold`] so this hot dispatcher stays off its pages.
 #[inline(never)]
 pub(crate) fn run_task(
     task: Task,
@@ -533,7 +533,7 @@ pub(crate) fn run_task(
             cast!(CppTask).run(global)?;
         }
 
-        // ── shell interpreter (cold — hoisted to `run_shell_task`) ───────
+        // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
         task_tag::ShellAsync
         | task_tag::ShellCondExprStatTask
         | task_tag::ShellCpTask
@@ -545,7 +545,7 @@ pub(crate) fn run_task(
         | task_tag::ShellRmTask
         | task_tag::ShellRmDirTask
         | task_tag::ShellGlobTask
-        | task_tag::ShellYesTask => run_shell_task(task),
+        | task_tag::ShellYesTask => run_task_cold(task),
 
         // ── fetch / S3 ───────────────────────────────────────────────────
         task_tag::FetchTasklet => feature_arm!([Fetch], |tasklet: FetchTasklet| -> JsResult<()> {
@@ -562,7 +562,7 @@ pub(crate) fn run_task(
                 }
             )
         }
-        // The payload is the heap-allocated S3 task; JS-thread dispatch
+        // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
             feature_arm!([S3Client], |request: S3HttpSimpleTask| -> JsResult<()> {
@@ -783,7 +783,7 @@ pub(crate) fn run_task(
                 }
             )
         }
-        // The payload is the heap-allocated task; sole owner.
+        // `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::StreamPending => feature_arm!([WebStreams], |pending: StreamPending| {
             StreamPending::run_from_js_thread(pending);
         }),
@@ -797,16 +797,16 @@ pub(crate) fn run_task(
     Ok(RunTaskResult::Continue)
 }
 
-/// The shell's arms, hoisted out of [`run_task`].
+/// Cold-path arms hoisted out of [`run_task`].
 ///
 /// Shell* tags are never seen during `bun <file>` startup, and `--trim` removes the cluster with the shell.
 ///
-/// Returns `()` — none of these arms can fail or early-return; the caller
+/// Returns `()` — none of the cold arms can fail or early-return; the caller
 /// falls through to `Ok(RunTaskResult::Continue)`.
 #[cold]
 #[inline(never)]
-fn run_shell_task(task: Task) {
-    bun_removable_features::removable_definition!(Shell, run_shell_task);
+fn run_task_cold(task: Task) {
+    bun_removable_features::removable_definition!(Shell, run_task_cold);
     /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
     macro_rules! cast_ptr {
         ($ty:ty) => {
@@ -843,6 +843,7 @@ fn run_shell_task(task: Task) {
     }
 
     match task.tag {
+        // ── shell interpreter ────────────────────────────────────────────
         task_tag::ShellAsync => {
             // SAFETY: §Dispatch — tag identifies pointee.
             let t = unsafe { &mut *cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
@@ -1007,8 +1008,9 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // dispatch.
             unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
         }),
-        // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed by the trailing `deref`, so keep raw provenance end-to-end.
         poll_tag::PROCESS => {
+            // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed
+            // by the trailing `deref`, so keep raw provenance end-to-end.
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr.cast::<Process>()) {
                 // SAFETY: `proc` carries the +1 ref taken at queue time; this drops it.
                 unsafe { Process::on_wait_pid_from_event_loop_task(proc) };

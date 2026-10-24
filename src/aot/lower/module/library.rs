@@ -166,17 +166,34 @@ fn find_runtime_function(
         .then_some(function)
 }
 
-fn classify_library_function(
-    file: &FileLowering<'_, '_, '_, '_>,
-    function: FnId,
-) -> LibraryFunction {
-    let func = &file.hir[function];
-    if !func.flags.contains(Flags::EXPORT) || func.name.is_none() {
-        return LibraryFunction::Local;
+impl FileLowering<'_, '_, '_, '_> {
+    fn classify_library_function(&self, function: FnId) -> LibraryFunction {
+        let func = &self.hir[function];
+        if !func.flags.contains(Flags::EXPORT) || func.name.is_none() {
+            return LibraryFunction::Local;
+        }
+        match find_runtime_function(self, self.queries.atom_bytes(func.name)) {
+            Some(id) => LibraryFunction::RuntimeBuiltin(id),
+            None => LibraryFunction::Local,
+        }
     }
-    match find_runtime_function(file, file.queries.atom_bytes(func.name)) {
-        Some(id) => LibraryFunction::RuntimeBuiltin(id),
-        None => LibraryFunction::Local,
+
+    fn intern_directive_name(
+        &mut self,
+        function: FnId,
+        pending: &PendingDirectives,
+    ) -> Option<StringId> {
+        if pending.is_getter {
+            let name = self.queries.atom_bytes(self.hir[function].name);
+            let getter_name = [b"get ".as_slice(), name].concat();
+            return Some(self.intern_bytes(&getter_name));
+        }
+        pending.overridden_name.map(|name| self.intern_atom(name))
+    }
+
+    fn is_declared_without_name(&self, pending: &PendingDirectives) -> bool {
+        let is_empty = |name: Atom| self.queries.atom_bytes(name).is_empty();
+        !pending.is_getter && pending.overridden_name.is_some_and(is_empty)
     }
 }
 
@@ -184,7 +201,7 @@ pub(super) fn library_function_form(
     file: &FileLowering<'_, '_, '_, '_>,
     function: FnId,
 ) -> Option<LibraryFunctionForm> {
-    match classify_library_function(file, function) {
+    match file.classify_library_function(function) {
         LibraryFunction::RuntimeBuiltin(_) => {}
         LibraryFunction::Local => return None,
     }
@@ -195,27 +212,6 @@ pub(super) fn library_function_form(
         }
         LibraryItem::Function(..) | LibraryItem::TopLevelCode(_) => None,
     })
-}
-
-fn intern_directive_name(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FnId,
-    pending: &PendingDirectives,
-) -> Option<StringId> {
-    if pending.is_getter {
-        let name = file.queries.atom_bytes(file.hir[function].name);
-        let getter_name = [b"get ".as_slice(), name].concat();
-        return Some(file.intern_bytes(&getter_name));
-    }
-    pending.overridden_name.map(|name| file.intern_atom(name))
-}
-
-fn is_declared_without_name(
-    file: &FileLowering<'_, '_, '_, '_>,
-    pending: &PendingDirectives,
-) -> bool {
-    let is_empty = |name: Atom| file.queries.atom_bytes(name).is_empty();
-    !pending.is_getter && pending.overridden_name.is_some_and(is_empty)
 }
 
 fn adjust_header(
@@ -252,10 +248,10 @@ fn adjust_header(
             header.results = vec![DeclaredType::from_compiler(TypeTable::OBJECT)];
         }
     }
-    if is_declared_without_name(file, pending) {
+    if file.is_declared_without_name(pending) {
         header.name = None;
         header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
-    } else if let Some(name) = intern_directive_name(file, function, pending) {
+    } else if let Some(name) = file.intern_directive_name(function, pending) {
         header.name = Some(name);
         header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
     }
@@ -275,7 +271,7 @@ fn declare_library_function(
     function: FnId,
     pending: &PendingDirectives,
 ) {
-    let kind = classify_library_function(file, function);
+    let kind = file.classify_library_function(function);
     let id = function::declare_source_function_with(file, function, &mut |file, header| {
         adjust_header(file, header, function, kind, pending);
     });

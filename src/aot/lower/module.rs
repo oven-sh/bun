@@ -14,7 +14,7 @@ use bun_sema::program::{FileId, Files};
 use core::ops::Range;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::commonjs::{self, CommonJsState};
+use super::commonjs::CommonJsState;
 use super::context::{FileInputs, SourceKind};
 use super::data::DataState;
 use super::validate::ValidationState;
@@ -25,12 +25,7 @@ use crate::ir::{DataId, FunctionId, StringId, ValueId};
 use crate::load::Sources;
 use crate::modules::ImportBinding;
 
-pub(crate) use self::body::{finish_module, lower_export_default, lower_module_body};
-pub(crate) use self::faces::{lower_check_body, lower_face_body};
-pub(crate) use self::imports::{get_import, lower_namespace_member, lower_namespace_receiver};
-pub(crate) use self::loads::{
-    lower_import_call, lower_import_equals_require, try_lower_module_call,
-};
+pub(crate) use self::loads::lower_import_call;
 pub use left_out::LeftOutDeclarations;
 pub(in crate::lower) use library::LibraryFunctionForm;
 
@@ -131,12 +126,14 @@ pub(in crate::lower) fn library_function_form(
     }
 }
 
-pub(crate) fn declare_module_roots(file: &mut FileLowering<'_, '_, '_, '_>) -> ModuleRoots {
-    match file.source {
-        SourceKind::Program | SourceKind::RuntimeModule(_) => body::declare_module_body(file),
-        SourceKind::RuntimeFunctions => {
-            library::declare_library_functions(file);
-            ModuleRoots::default()
+impl FileLowering<'_, '_, '_, '_> {
+    pub(crate) fn declare_module_roots(&mut self) -> ModuleRoots {
+        match self.source {
+            SourceKind::Program | SourceKind::RuntimeModule(_) => body::declare_module_body(self),
+            SourceKind::RuntimeFunctions => {
+                library::declare_library_functions(self);
+                ModuleRoots::default()
+            }
         }
     }
 }
@@ -149,6 +146,8 @@ pub(crate) fn emit_import_binding(
     imports::emit_import_binding(lowering, binding, name, None)
 }
 
-pub(crate) fn lower_import_meta(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> ValueId {
-    commonjs::emit_module_builtin(lowering, BuiltinId::ImportMeta)
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn lower_import_meta(&mut self) -> ValueId {
+        self.emit_module_builtin(BuiltinId::ImportMeta)
+    }
 }

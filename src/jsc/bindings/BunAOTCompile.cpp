@@ -444,11 +444,6 @@ extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t ad
     JSC::AOT::relocateImage({ image, size }, address);
 }
 
-extern "C" JSC::AOT::ImageAddressPlaces Bun__AOT__addressPlacesOfImage(BunAOTBytes image)
-{
-    return JSC::AOT::addressPlacesOf({ image.ptr, image.len });
-}
-
 extern "C" size_t Bun__AOT__operationCount()
 {
     return Typed::numberOfOpcodes;

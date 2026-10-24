@@ -6467,12 +6467,6 @@
   "aot/typed-packages-measure.test.ts": {
     "default": 2051
   },
-  "aot/typed-packages-wide-trees.test.ts": {
-    "default": 344,
-    "asan": 1605,
-    "musl": 349,
-    "windows": 62
-  },
   "aot/typed-packages.test.ts": {
     "default": 7782,
     "asan": 26586,

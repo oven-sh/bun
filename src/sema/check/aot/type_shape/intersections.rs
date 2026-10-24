@@ -70,6 +70,10 @@ impl<'c> IntersectionSummary<'c> {
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    pub(super) fn is_schema_part(&mut self, ty: TypeId) -> bool {
+        !matches!(self.schema_part(ty), SchemaPart::NotSchema)
+    }
+
     pub(super) fn walk_intersection(
         &mut self,
         ty: TypeId,
@@ -90,7 +94,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if rest.len() == parts.len() {
             return Ok(WalkStep::Finished(self.shape_of_intersection(ty, parts)?));
         }
+        let closes_object = |constraint: &SchemaConstraint| {
+            matches!(
+                constraint,
+                SchemaConstraint::Strict | SchemaConstraint::DeepStrict
+            )
+        };
         let base = match rest[..] {
+            [] if constraints.iter().any(closes_object) => TypeId::EMPTY_TYPE_LITERAL,
             [] => TypeId::UNKNOWN,
             [only] => only,
             _ => self.c.intersection(&rest),

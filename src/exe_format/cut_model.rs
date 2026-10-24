@@ -111,8 +111,4 @@ impl CutPlan {
     pub fn filled_bytes(&self) -> u64 {
         self.fills.iter().map(|fill| fill.range.len()).sum()
     }
-
-    pub fn removed_bytes(&self) -> u64 {
-        self.cut_bytes() + self.filled_bytes()
-    }
 }

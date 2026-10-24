@@ -19,6 +19,8 @@ test.each([
   "validate-returns-a-copy",
   "validate-takes-what-is-not-json",
   "json-parse-type-argument-by-declared-types",
+  "a-type-computed-by-conditional-aliases-that-name-one-another",
+  "an-object-type-without-members-that-is-closed",
   ...(isASAN ? [] : ["validation-compiled-and-interpreted-agree"]),
 ])(
   "bun run --aot %s.ts",

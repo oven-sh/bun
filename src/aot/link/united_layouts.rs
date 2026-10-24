@@ -3,19 +3,11 @@ use crate::ir::{
     DeclaredType, Id, InParallel, LayoutId, LayoutKey, Mapped, Primitives, PropertyKeyId, StringId,
     Type, TypeFlags, TypeId, TypeTable, drop_each, for_each_mut,
 };
-use bun_sema::check::aot::ObjectOrigin;
 use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-// The layout of a plain object belongs to no file.
 pub(super) fn has_united_definitions(key: &LayoutKey) -> bool {
-    matches!(
-        key,
-        LayoutKey::ObjectType {
-            origin: ObjectOrigin::Computed,
-            ..
-        }
-    )
+    key.has_united_definitions()
 }
 
 const FLAGS_THAT_ALL_GIVE: FieldFlags =

@@ -66,8 +66,7 @@ function filesUnder(root: string, directory: string, isWanted: (name: string) =>
 const isHeader = (name: string): boolean =>
   name.startsWith("AOT") && headerExtensions.some(extension => name.endsWith(extension));
 /** There for tests alone, and not named or placed so: what runs one pass, the dumps that only test commands print. */
-const testSourcesOutsideTests =
-  /^aot\/(?:pipeline\/AOTPipelineTesting|place\/AOTPlacementDump|valueflow\/AOTFlowResultsDump)\.cpp$/;
+const testSourcesOutsideTests = /^aot\/(?:place\/AOTPlacementDump)\.cpp$/;
 const isTestSource = (path: string): boolean =>
   path.startsWith("aot/tests/") ||
   /^AOT\w*TestCommands\.cpp$/.test(basename(path)) ||

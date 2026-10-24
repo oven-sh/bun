@@ -34,8 +34,7 @@ proves it again in every build. The compiler doesn't accept all the full types i
 One of these; the first that is there wins.
 
 1. **In the project:** copy `<name>/<version>/full-types.json` and `<name>/<version>/lay/` to
-   `<project root>/.full-types/<name>/`. Do not copy `src/`: its ambient `.d.ts` files would be picked up by
-   your own tsconfig.
+   `<project root>/.full-types/<name>/`.
 2. **In the package itself:** nothing to do. A package can ship its own full types: `index.full.ts` beside
    `index.js`, named by the `"full-types"` condition of its `exports`. It has no `full-types.json`.
 3. **As a package of its own:** `node_modules/@oven/full-types-<name>/`, with the same `full-types.json` and `lay/`. For `@scope/name`
@@ -51,7 +50,7 @@ What `full-types.json` pins is **all or nothing**. If anything does not fit, the
 first mismatch. A program never gets slower without you hearing about it:
 
 ```
-error: TS100056: The full types of "react-dom" in .full-types/react-dom can't be used: they are for version 19.3.0, but 19.2.8 is installed. Replace them with the full types for 19.2.8, or remove them
+error: TS100056: The full types of "react-dom" in .full-types/react-dom can't be used: they are for version 19.3.1, but 19.2.8 is installed. Replace them with the full types for 19.2.8, or remove them
 ```
 
 The code is compared file by file. A full-types file that is not the installed file with types added gets the same
@@ -64,7 +63,7 @@ What to do, by what the error says:
 
 | the error says | do this |
 |---|---|
-| they are for version X, but Y is installed | replace them with the full types for Y. The versions that exist are the folders here. If there is none for Y: pin the package to X, or remove the full types, or [carry](#carrying-full-types-to-another-version) them to Y |
+| they are for version X, but Y is installed | replace them with the full types for Y. The versions that exist are the folders here. If there is none for Y: pin the package to X, or remove the full types |
 | they need process.env.NODE_ENV to be defined as "production" | pass `--define 'process.env.NODE_ENV="production"'`, to `bun check --aot` as to the build. In other builds the package's entry loads its development files, which are not typed |
 | this version of Bun doesn't support the "format" in full-types.json | `"format"` is not `2`. Format `1` is no longer read: see [What the compiler accepts](#what-the-compiler-accepts). A higher number is newer than your Bun: update Bun |
 | they add F, and full types can only replace installed files | `"lay"` says `"new"` for F. Add the types to the installed file, at its own path |
@@ -115,151 +114,42 @@ count. So what is compiled is the code that `bun run` would load.
 | has to be the same | everything else: each statement, name, literal and operator, in the same order |
 
 Full types that changes more than types stops the build with the error above, until it is written again: at npm's own paths, with
-nothing but types added. The full types in this folder keep to the rule: react, react-reconciler, @anthropic-ai/sdk, react-dom 19.3.0
-and 19.3.1, seroval.
-
-`one_name.py` makes `lay/` of react-reconciler, react-dom 19.3.0 and 19.3.1, seroval and @anthropic-ai/sdk from the same `src/`:
-see [A variable that the bundle reuses](#a-variable-that-the-bundle-reuses). `check.py` and `run.py` still generate and measure all of them in the old form. `check.py` writes the format `1` files into its copy of the packages,
-`<out>/node_modules`, where they are ordinary TypeScript files of the package, so those trees say nothing about `.full-types/`.
-[What the compiler no longer accepts](#what-the-compiler-no-longer-accepts) has the rules that every `src/` was written by.
+nothing but types added. The full types in this folder keep to the rule: react, react-reconciler, @anthropic-ai/sdk, react-dom,
+seroval.
 
 ## What is in this folder
 
 ```
 <name>/<version>/
-  package.json  full-types.json  lay/               what gets published
+  package.json  full-types.json  lay/          what gets published
   LICENSE  NOTICE                              published too: the package's own licence; whose code it is and what was changed
   lay.sums                                     sha256 of every file under lay/
-  src/                                         what lay/ is generated from: the typed text + its shapes
-  family.json                                  instead of lay/ and src/: this version is another one with its version string changed
-check.py      static gates; also regenerates lay/ from src/ and compares
-one_name.py   makes lay/ in format 2 from a src/ that changes more than types, with gates of its own
-run.py        builds and runs the test trees: typed against untyped against plain Bun
-pack.py       diffs an installed tree against a generated one and writes a <name>/<version>/ folder, in format 2
+  family.json                                  instead of lay/: this version is another one with its version string changed
+pack.py       writes a <name>/<version>/ folder from the .full-types/ of a project and the packages as npm installed them
 publish.py    writes the tarballs to publish, from this folder alone
-carry.py      moves the types to another version of the same file, line by line
-sabotage.py   breaks the text in one way per gate and checks that the gate notices
-tools/        the steps check.py and one_name.py call, the tools for writing a new full types, and those that say where a typed build spends its time
-trees/        test programs: client (reconciler), server (react-dom/server), seroval, sdk, entries, lie
+trees/installs/<set>/package.json              the versions that the full types are for, to install them as npm does
 ```
 
-Environment for all of them:
+Each file under `lay/` is the installed file, edited in place. `pack.py` pins the sums, and every build proves that the files are the installed
+code and that they type check.
 
-```sh
-export SEMA=/path/to/bun-sema            # the type checker's CLI, built from src/sema
-export BUN=/path/to/bun                  # any Bun; used only to print files in a normal form
-export BUN_SEMA_TS_LIB=/path/to/typescript/lib
-```
-
-The gates work on packages as npm installs them. `trees/installs/<set>/package.json` pins what each tree was last run with:
-
-```sh
-cd trees/installs/client && bun install      # client, server-19.3.1, server-19.3.0, seroval, sdk-0.112.1, sdk-0.128.0
-```
-
-```sh
-python3 check.py  path/to/node_modules out/                     # static; a few seconds
-python3 run.py build   path/to/aot-bun path/to/node_modules out/   # compiles the trees
-python3 run.py answers path/to/aot-bun path/to/node_modules out/   # runs them and compares
-```
-
-### The gates
-
-`check.py`, per package found in that `node_modules`:
-
-| gate | fails when |
+| test | what it asks |
 |---|---|
-| md5 | the installed file is not the one the text was written for |
-| errors | the typed text has a type error |
-| verify | the text with types stripped, printed by Bun, differs from npm's file printed by Bun |
-| splits | a variable that was split into roles (see below) is read in one role where a store to another role can reach it. `verify` cannot see this; it strips the suffixes |
-| counts | the number of role variables drifted |
-| form, clean, entry | the mechanical steps from `src/` to `lay/` do not round-trip |
-| laid | a file under `lay/` has an error when it is checked at its path in the package, under `--strict` |
-| lax | a file under `lay/` has an error under `noImplicitAny: false`, `strictNullChecks: false` or `strict: false`. Those two options of the user's tsconfig reach a package |
-| fields | a class field the text adds is not `declare`d |
-| changed | (Apache-2.0 packages) the full-types file does not say on its first line that it was changed |
-| same | `lay/` (or `lay.sums`) is not byte for byte what `src/` gives, or a sha256 in `full-types.json` is not the installed file's |
+| `test/bundler/compile-aot-full-types.test.ts` | every manifest, licence file and pinned sum in this folder |
+| `test/aot/full-types-prove-every-int32.test.ts` | the large bundles type check in a build, and every `int32` in them is proven |
+| `test/aot/typed-react-costs-no-more-than-erased.test.ts`, `test/aot/int32-lanes-of-react-reconciler-cost-less-than-numbers.test.ts` | the types of react-reconciler pay |
+| `AOT_SERVERS=koa-typed,express-typed,fastify-typed bun test test/aot/servers` | the servers give the same answers with the full types |
+| `cargo test -p bun_sema_parser --test analysis_erasure typed_packages`, after `bun install` in each `trees/installs/<set>` | each file under `lay/` is the installed file with types added |
+| `test/aot/servers/measure`, `test/aot/typed-packages/measure` | what the full types buy, in instructions and bytes |
 
-`run.py` answers the question the static gates cannot: *are the types true?* Each tree is a long list of
-scenarios, each in its own `try`, printing what the package produced. The same source is run plainly on
-the untouched package (twice, to prove it is deterministic), compiled with `--aot` untyped, typed, and
-typed with `--aot-log-type-mismatches` at the build (a value that doesn't match its declared type is logged).
-Every scenario must print the same text in every build. `trees/entries` asks each replaced entry what it
-is to its importers: `require()`, `import d`, `import * as ns`, named imports including a name nobody exports.
-
-`run.py build` has one more gate, **typedness**. Full types can compile, give every right answer, and still have lost what it
-is for: the compiler may decide that the package's records could come from outside and give them no layout. That has happened:
-one change in the compiler, together with an ES-module entry, left the typed reconciler slower than the untyped one with every
-other gate green; another opened `Fiber`, through the small records that hold one, for 16% more
-instructions. Both were found by an application's benchmark. So `run.py build` takes three measures of each tree's typed program,
-all of them the compiler's own, and `PINS` in `run.py` pins them:
-
-| measure | from | fails when |
-|---|---|---|
-| typed_percent | the first line of `--explain=json`: of the property accesses in `node_modules`, how many are a load or a store at a fixed offset (`dependencyPercent`) | two points down |
-| bytes | the image's map: the bytes of the package's compiled functions, typed over untyped | a tenth up |
-| expected_open | `--explain=json`: the named types of the causes whose `family` is `unknown-code` or `unproven-type`: objects without the type's layout can be there | a new name, or more causes that name no type than `unnamed_open` pins (0 unless pinned) |
-
-```
-ok   server: typedness: react-dom: 64.0% of the property accesses in node_modules are at a fixed offset (pinned 64.0) · bytes of its compiled functions, typed / untyped: 0.965 (pinned 0.965)
-FAIL server: typedness: react-dom: 51.2% ... (pinned 64.0) · ... 1.13 (pinned 0.965) · worse: typed_percent bytes: the full types are less typed than pinned (which types: bun compile --explain)
-```
-
-The percent counts everything under `node_modules`, not the tree's own file and not Bun's built-in modules. A typed build that prints
-no report fails the gate, and nothing is compared.
-
-A regression that is known and not yet fixed is listed in `regressed_open`, by tree: the types that were closed when the package was
-typed and are open on today's compiler. `run.py` names them at every run, fails on one more name, and says so when one is no longer
-listed: it is closed again, or it has lost its layout and is read by name, and then `typed_percent` falls.
-
-The report names classes, constructor functions, interfaces and type aliases. Only an object type that was written without a name has
-none. More causes that name no type than `unnamed_open` pins fail the gate: a type that is not listed may then still be open.
-
-A tree must give the compiler the chance to go wrong: scenario 29 of the client tree reads JSON into small records under the names
-that the reconciler's own small records have (`{ current }`, `{ pending }`, `{ then }`). Without it the second regression does not show.
-
-To see which types are not closed, and why:
-
-```sh
-cd out/projects/seroval.internal/typed && bun compile wide.ts --explain
-bun check --aot wide.ts --explain=unknown-code --explain=unproven-type --explain=mutation 2>&1 | grep '^aot: '   # one line per type and reason
-```
-
-## Making full types of a new package
+## Making full types of a package
 
 Pick the file that actually runs (the production bundle, not the sources: that is what users have).
 
 ```sh
-mkdir work && cd work
-cp ../node_modules/seroval/dist/index.js original.js
-echo '{ "module": "esm", "shapes": "sv", "space": "SV" }' > project.json   # "cjs" for a CommonJS bundle
-python3 ../tools/births.py > births.txt        # every object literal and constructor, by its members
-python3 ../tools/piecework.py split            # pieces of about 480 lines, cut at top-level declarations
-```
-
-1. **Shapes first.** One person writes `sv-shapes.d.ts`: `declare namespace SV { … }` with one
-   interface for every object the file *creates and keeps* (`births.txt` lists them all), members in the
-   order the literal writes them, each with the honest type of everything ever stored to it.
-2. **Annotate in pieces.** `piecework.py take 3` creates `parts/03.mts`; edit that. `errors 3` type-checks the
-   whole file (under a second) and shows the errors in piece 3; `bang 3` adds `!` wherever the checker says
-   "possibly null"; `verify` must keep saying PASS. Pieces are independent, so this parallelises: we gave
-   each piece to one person, then ran rounds over the pieces that still had errors.
-3. **Write a test tree.** Walk the package's public API with every kind of input, including malformed input
-   and input that came through `JSON.parse`. Print results without using the package.
-4. **Add the package to `check.py`'s table**, run the gates, run the tree. For a file in `PLACED` and a package with
-   `form='placed'`, `check.py` writes `full-types.json` and `lay/` in format `2` to `<out>/sound/<name>/`. `pack.py` writes format `2` too.
-
-### A package of many small files
-
-koa, @koa/router, delegates, on-finished, ee-first, parseurl, express, router, finalhandler, body-parser and fastify have no `src/`: each file
-under `lay/` is the installed file, edited in place. They are not in `check.py`'s table. `pack.py` pins their sums, and every build proves that
-they are the installed code and that they type check: `AOT_SERVERS=koa-typed,express-typed,fastify-typed bun test test/aot/servers`.
-
-```sh
 mkdir -p .full-types/koa/lay/lib && cp node_modules/koa/lib/request.js .full-types/koa/lay/lib/
 cp .full-types/koa/lay/lib/request.js work/request.ts                        # the build names only the first error: check a copy by itself
-bun check --aot --all --no-pretty work/request.ts | python3 tools/implicit_any.py .full-types/koa/lay/lib/request.js
+bun check --aot --all --no-pretty work/request.ts
 ```
 
 - `require` returns `any`, so the types of a package are declared again at the end of each file (`declare namespace KT { .. }`), and what
@@ -282,8 +172,7 @@ or its prototype replaced, or is a function with members.
 ### The rules that matter
 
 Only types are added: annotations, `!`, casts, `this:` parameters. No statement, name, order or literal
-changes, and no comments. Anything *inserted* stands between markers so that `verify` can remove it:
-`x/*$*/ as SV.Node/*$*/`.
+changes.
 
 **Allocated here or passed in.** An interface means a fixed layout. That is right for objects that the file itself
 allocates and wrong for anything that other code can pass in: options bags, user values, callbacks, props, data out of
@@ -310,7 +199,7 @@ is that error if the call returns a `number` or an `any`. Full types cannot add 
 **A literal with no declared type is a trap.** `{ next: null }` gets a field that can only hold `null`.
 Every literal with a `null`, `undefined` or constant member that is filled in later needs a declared type.
 
-**A class field you add is `declare`d.** `class Stream { /*$*/declare buffer: SV.Given[]; declare alive: boolean;/*$*/` emits
+**A class field you add is `declare`d.** `class Stream { declare buffer: SV.Given[]; declare alive: boolean;` emits
 nothing. Without `declare` the field is a definition and the property exists before the constructor stores to it.
 
 **A constructor function declares `this` and is constructed without a cast.** In a compile build `new F(..)` has the type that `F`
@@ -344,27 +233,22 @@ type means and a program has one set of types: `strictNullChecks` and `exactOpti
 `strictNullChecks` a union cannot be told apart by `null`: so write the type on every variable. Under `exactOptionalPropertyTypes` a
 property `x?: T` cannot be set to `undefined`: write `x?: T | undefined` where the code does that. Declare every global that
 is newer than ES2020 or belongs to a host (`declare var Temporal: any;`), and reach for members the standard
-library may lack through a marked cast.
+library may lack through a cast.
 
 **A file is typed at its own path.** The typed text replaces `cjs/x.production.js` at that path and keeps
 its `exports.name = ..`. The entry, and how an importer finds `name`, stay npm's own, so `import { c } from "react/compiler-runtime"` is still
 resolved when the program is built. The compiler accepts nothing else, and it is the faster form too: through an entry that re-exports the
-`default` of a typed ES module, the importer has an object and looks `c` up by name at every call, some 25 instructions more. `PLACED` in
-`check.py` lists the small files that are typed this way. Their sources are `.cts` files under `src/`, and
-`check.py` writes them to `<out>/sound/<name>/`, not into `<out>/node_modules`, where a `.js` file would be read as JavaScript.
+`default` of a typed ES module, the importer has an object and looks `c` up by name at every call, some 25 instructions more.
 
 **So is a CommonJS bundle of which a program uses a part.** The compiler drops an export of a CommonJS module that nobody reads, and all that
 only it reaches. An entry that re-exports the `default` of a typed ES module keeps every export alive. `react-dom/server` loads two bundles
 and takes two functions of the legacy one: as ES modules the typed bundles were 221 KB (5%) more compiled code in a TanStack Start server
 than they are at npm's own paths, and more than the untyped package. What opens a type from a dead export is dropped with the export:
-`FormatContext` was open for `resumeRequest` alone. These packages have `form='placed'` in `check.py`: the typed text, followed by the shapes
-of the ES form.
+`FormatContext` was open for `resumeRequest` alone.
 
 **Mind what your test tree does to the subject.** The compiler analyzes the entire program. One
 `fromJSON(JSON.parse(text))` in seroval's tree opened the layout of every node, so the tree tested a
-program with no closed layout at all. `trees/seroval/wide.ts` is therefore built as three programs: as
-it is, `.internal` (the package only sees objects that it allocated) and `.boundary` (parsed JSON reaches the package only through an
-untyped file). `run.py` says how.
+program with no closed layout at all.
 
 ### A variable that the bundle reuses
 
@@ -383,103 +267,16 @@ takes its slow version. So run the package's tests with `--aot-log-type-mismatch
 be without being an error: `update.next` is legal on `Update | FiberRoot`, and the compiler is then told a union of two layouts.
 `(x satisfies Role)` finds those.
 
-`one_name.py` does this by machine for a text that has a variable for each role (below). In react-reconciler 357 variables had 531 roles;
-of 4,575 places where one is named, 1,439 got a cast and 283 a `!`.
-
-```sh
-BUN=path/to/bun python3 one_name.py path/to/node_modules react-reconciler/0.33.0 work/ [--write]
-```
-
-`BUN` has to be a Bun with `--aot`: the gates `strict` and `more` run `bun check --aot` on the text, so `node_modules` also has to hold
-what the text requires (react and scheduler for react-reconciler, react and react-dom for react-dom).
-
 An `int32` survives such a variable only if everything else that the variable holds is an object: `tag: RR.HookFlags | RR.Effect`. In a
 union that also lists a `number` or an `any`, the value has lost its proof, and an `int32` that is not proven stops the build. In
 react-reconciler `Flags`, `WorkTag`, `UpdateTag`, `RootExitStatus`, `PendingEffectsStatus`, `SuspenseContext`, `HookFlags` and
 `SuspendedReason` are `int32`. `Lanes`, `Lane`, `RootTag` and `TypeOfMode`, which share reused variables with each other and with plain
 numbers, are `number`.
 
-A module without reused variables takes the short way through `one_name.py`. seroval's `src/typed.mts` goes to `lay/dist/index.js`
-without its markers, with its declarations behind it as `declare namespace SV { .. }`. Then `tools/bang_index.py` writes `!` behind each
-element read that is an error under `noUncheckedIndexedAccess` (38 in 29 lines). Five integer types become `number`: their values are
-read back with a cast from a member that holds more (`node.s as SV.SymbolTag`, and `s` is `unknown`), and a cast to an `int32` needs a
-proof.
-
-```sh
-BUN=path/to/bun python3 one_name.py path/to/node_modules seroval/1.6.9 work/ [--write]
-```
-
 ### A package that the project patches
 
-Full types fits npm's code. A project that patches the package (`bun patch`, `patch-package`) keeps its own under `.full-types/<name>/`,
-and `tools/carry_patch.py` writes it: a line that the patch leaves alone keeps its types, a line that it adds or changes comes in as the
-patch wrote it, and a parameter or variable that is left without a type there becomes `any`.
-
-```sh
-python3 tools/carry_patch.py npm/cjs/x.js <name>/<version>/lay/cjs/x.js node_modules/<name>/cjs/x.js .full-types/<name>/lay/cjs/x.js
-```
-
-### Where a typed build spends its time
-
-These read the code that was emitted, not what was planned. The two with `perf` need Linux.
-
-```sh
-BUN_JSC_aotMapFilePath=$PWD/app.map bun build --compile --aot app.tsx --outfile app
-python3 tools/by_name_sites.py app.map /react-reconciler/        # which functions still reach properties by name
-BUN_JSC_useAOTPerfMap=1 perf record -e instructions:u -c 500009 -o app.perf ./app
-python3 tools/by_operation.py 500009 app.perf /tmp/perf-<pid>.map app.map   # instructions by IR operation: tests and guards, by name, by slot ..
-python3 tools/stubs.py app.perf /tmp/perf-<pid>.map app.map                 # samples by stub
-bash tools/this_programs.sh path/to/bun work/                               # builds and runs every test program that declares `this` on a function
-```
-
-### What the compiler no longer accepts
-
-Every `src/` here relies on one of these. `check.py` still generates and checks them: that is what its gates
-`splits`, `counts`, `form` and `entry` are for. Do not use them in a new full types.
-
-**A variable for each role.** Minified bundles reuse variables: Closure-compiled code stores a fiber, then a number, then a queue in the
-same `var a`. These full-types files give each role its own marked variable and write the suffix at every store and read of that role;
-`verify` strips `$as[A-Z]\w*`, and the `splits` gate proves the split follows the data flow:
-
-```ts
-function f(a: RR.Fiber) { /*$*/var a$asQueue: RR.UpdateQueue;/*$*/
-  a$asQueue = a.updateQueue;      // npm: a = a.updateQueue;
-  return a$asQueue.shared;        // npm: return a.shared;
-```
-
-To the compiler that is one declaration more and another name, so the file is not npm's code.
-
-**A variable with two roles opens the records it holds.** That is what the split was for, and it is still true. A variable without a
-written type gets the union of everything that is stored to it. If one role is `any` (an error, a prop, a child) and another is a record, then `any` reaches the record, and the record and
-all that it holds are open: every read of them gets a shape test and a slow path. Ten such variables left typed react-dom 10%
-larger than the untyped package. `--explain=unknown-code` names such a variable for each record.
-
-**Another module form.** `tools/module_form8.py` turns a CommonJS bundle into an ES module, and `tools/cjs_entry.py` keeps npm's own entry
-text, resolves its `NODE_ENV` switch to the production arm and points `require('./cjs/x.js')` at `x.ts`. The entry stays CommonJS,
-because an ES-module entry would turn `import { nameThatDoesNotExist }` from `undefined` into a build error and change what `require()`
-returns. The manifest has a `when` for `NODE_ENV`, since the rewritten entry always loads the production bundle.
-
-**A new file.** In format `1`, `"lay"` has `"new"` for a path that the installed package must not have. Such a file is never `x.ts` beside
-`x.js` when there is an `x.d.ts`: the checker prefers `x.ts`, and the package's public types vanish for its users. It is
-`x.sound.ts`.
-
-## Carrying full types to another version
-
-```sh
-python3 carry.py react-dom/19.3.0/src/server.bun \
-    old/node_modules/react-dom/cjs/react-dom-server.bun.production.js \
-    new/node_modules/react-dom/cjs/react-dom-server.bun.production.js  out/
-```
-
-A line that is identical in both versions keeps its types; a changed line comes in bare. `carry.py` then prints
-the three gates. From 19.3.0 to 19.2.8, 5,919 of 6,745 lines kept their types, leaving 142 type errors and 10
-broken role splits (an unchanged line stores `x$asRole`, the bare line after it reads `x`; only `splits` sees that).
-Fix `out/typed.cts` by hand, run `carry.py … --again` to read the gates again,
-then run the tree against the new version.
-
-Patch releases often differ only in their own version string. Those share one full-types file: see `versions` and
-`token` in `check.py`'s table. Only the newest has `lay/` in this tree; the others have `full-types.json`, `lay.sums` and
-`family.json`, and `publish.py` generates the rest and checks it against `lay.sums`.
+Full types fits npm's code. A project that patches the package (`bun patch`, `patch-package`) keeps its own under `.full-types/<name>/`:
+the patched file with the types added.
 
 ## Publishing
 
@@ -493,12 +290,8 @@ npm publish out/oven-full-types-react-dom-19.3.1.tgz --access public
 tarball whose manifest, `package.json` and folder name disagree, whose `lay/` is not byte for byte what `lay.sums` pins, or
 that names a path of the machine it was generated on. Run twice it writes the same bytes; `out/SUMS` lists them.
 
-Before publishing a version for the first time, run the gates on the package as npm installs it:
-
-```sh
-python3 publish.py gates react-dom path/to/node_modules out/
-python3 run.py build   path/to/aot-bun path/to/node_modules out2/ && python3 run.py answers path/to/aot-bun path/to/node_modules out2/
-```
+Patch releases often differ only in their own version string. Those share one full-types file. Only the newest has `lay/` in this tree; the
+others have `full-types.json`, `lay.sums` and `family.json`, and `publish.py` generates the rest and checks it against `lay.sums`.
 
 `test/bundler/compile-aot-full-types.test.ts` checks every manifest, licence file and pinned sum in this folder on each CI run.
 
@@ -519,7 +312,6 @@ file as installed and a `NOTICE` that says whose code it is and what was changed
 
 - seroval: none. `compileJSON()` of a tree that violates seroval's own declared types (a string where a node belongs, an id that is
   not a number) fails a guard at the first typed read of the wrong value. The slow version then does what npm's file does: it throws
-  seroval's own error or emits what it can. Section 98 of `trees/seroval` has the cases, and `run.py answers` says at every run whether
-  the section differs from `bun run`.
+  seroval's own error or emits what it can.
 - React's full-types files are its production files. In a build that does not define `process.env.NODE_ENV` as `"production"`, React's
   entries load their development files, which are compiled as installed.

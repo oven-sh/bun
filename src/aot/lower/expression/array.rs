@@ -3,11 +3,10 @@ use bun_core::strings::{CodepointIterator, Cursor};
 use bun_sema::hir::{Branches, ExprId, ExprKind, NodeData};
 use smallvec::SmallVec;
 
-use super::{is_statically_resolved, lower_expression};
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::RegExpFlags;
 use crate::ir::{TypeId, TypeTable, ValueId};
-use crate::lower::{FileLowering, FunctionLowering, condition, types};
+use crate::lower::{FileLowering, FunctionLowering};
 
 enum ElementKind {
     Hole,
@@ -57,9 +56,9 @@ pub(super) fn lower_array_literal(
     let ExprKind::Array(elements) = hir[literal].kind else {
         unreachable!("lower_array_literal takes an Array expression");
     };
-    let contents = types::array_literal_contents(lowering.file, literal);
+    let contents = lowering.file.array_literal_contents(literal);
     let elements: SmallVec<[ExprId; 8]> = hir.ids(elements).collect();
-    lower_elements(lowering, contents, &[], &elements, hir[literal].pos)
+    lowering.lower_elements(contents, &[], &elements, hir[literal].pos)
 }
 
 pub(super) fn lower_regexp_literal(
@@ -105,47 +104,109 @@ fn pattern_as_printed(written: &[u8]) -> Option<Vec<u8>> {
     Some(printed)
 }
 
-pub(in crate::lower) fn lower_argument_list(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    prefix: &[ValueId],
-    arguments: &[ExprId],
-    position: u32,
-) -> ValueId {
-    lower_elements(lowering, TypeTable::ANYTHING, prefix, arguments, position)
-}
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(in crate::lower) fn lower_argument_list(
+        &mut self,
+        prefix: &[ValueId],
+        arguments: &[ExprId],
+        position: u32,
+    ) -> ValueId {
+        self.lower_elements(TypeTable::ANYTHING, prefix, arguments, position)
+    }
 
-fn lower_elements(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    contents: TypeId,
-    prefix: &[ValueId],
-    elements: &[ExprId],
-    position: u32,
-) -> ValueId {
-    let hir = lowering.file.hir;
-    let mut holes: SmallVec<[u32; 4]> = SmallVec::new();
-    let mut values: SmallVec<[ValueId; 8]> = SmallVec::from_slice(prefix);
-    let mut length = prefix.len() as u32;
-    let mut remaining = elements;
-    while let Some((&element, rest)) = remaining.split_first() {
-        match element_kind(hir[element].kind) {
-            ElementKind::Spread(_) => break,
-            ElementKind::Hole => holes.push(length),
-            ElementKind::Value => values.push(lower_expression(lowering, element)),
+    fn lower_elements(
+        &mut self,
+        contents: TypeId,
+        prefix: &[ValueId],
+        elements: &[ExprId],
+        position: u32,
+    ) -> ValueId {
+        let hir = self.file.hir;
+        let mut holes: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut values: SmallVec<[ValueId; 8]> = SmallVec::from_slice(prefix);
+        let mut length = prefix.len() as u32;
+        let mut remaining = elements;
+        while let Some((&element, rest)) = remaining.split_first() {
+            match element_kind(hir[element].kind) {
+                ElementKind::Spread(_) => break,
+                ElementKind::Hole => holes.push(length),
+                ElementKind::Value => values.push(self.lower_expression(element)),
+            }
+            length += 1;
+            remaining = rest;
         }
-        length += 1;
-        remaining = rest;
+        self.set_position(position);
+        let array = self.builder.new_array(contents, &holes, &values);
+        for &element in remaining {
+            self.lower_appended_element(array, element);
+        }
+        array
     }
-    lowering.set_position(position);
-    let array = lowering.builder.new_array(contents, &holes, &values);
-    for &element in remaining {
-        lower_appended_element(lowering, array, element);
+
+    fn lower_appended_spread(&mut self, array: ValueId, iterable: ExprId) {
+        let hir = self.file.hir;
+        if !ends_in_list_literal(self.file, iterable) {
+            let position = hir[iterable].pos;
+            let iterable = self.lower_expression(iterable);
+            self.set_position(position);
+            self.builder.append_spread(array, iterable);
+            return;
+        }
+        match hir[iterable].kind {
+            ExprKind::Array(elements) => {
+                let elements: SmallVec<[ExprId; 8]> = hir.ids(elements).collect();
+                for element in elements {
+                    self.lower_appended_element(array, element);
+                }
+            }
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = hir.branches(branches);
+                let if_true = self.create_block();
+                let if_false = self.create_block();
+                let join = self.create_block();
+                self.lower_condition(test, if_true, if_false);
+                self.continue_in(if_true);
+                self.lower_appended_spread(array, yes);
+                self.jump(join);
+                self.continue_in(if_false);
+                self.lower_appended_spread(array, no);
+                self.jump(join);
+                self.continue_in(join);
+            }
+            _ => unreachable!("ends_in_list_literal has looked"),
+        }
     }
-    array
+
+    fn lower_appended_element(&mut self, array: ValueId, element: ExprId) {
+        let hir = self.file.hir;
+        let position = hir[element].pos;
+        match element_kind(hir[element].kind) {
+            ElementKind::Spread(iterable) if ends_in_list_literal(self.file, iterable) => {
+                self.lower_appended_spread(array, iterable);
+            }
+            ElementKind::Spread(iterable) => {
+                // JSC reports the iteration at the end of `...`.
+                let position = hir[iterable].pos;
+                let iterable = self.lower_expression(iterable);
+                self.set_position(position);
+                self.builder.append_spread(array, iterable);
+            }
+            ElementKind::Hole => {
+                self.set_position(position);
+                self.builder.append_hole(array);
+            }
+            ElementKind::Value => {
+                let value = self.lower_expression(element);
+                self.set_position(position);
+                self.builder.append_element(array, value);
+            }
+        }
+    }
 }
 
 fn ends_in_list_literal(file: &FileLowering<'_, '_, '_, '_>, iterable: ExprId) -> bool {
     let hir = file.hir;
-    if is_statically_resolved(file, iterable) || file.is_simplified(iterable) {
+    if file.is_statically_resolved(iterable) || file.is_simplified(iterable) {
         return false;
     }
     let is_dead = |arm: ExprId| file.decisions().is_dead_expr(arm);
@@ -160,74 +221,6 @@ fn ends_in_list_literal(file: &FileLowering<'_, '_, '_, '_>, iterable: ExprId) -
                 && (ends_in_list_literal(file, yes) || ends_in_list_literal(file, no))
         }
         _ => false,
-    }
-}
-
-fn lower_appended_spread(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    array: ValueId,
-    iterable: ExprId,
-) {
-    let hir = lowering.file.hir;
-    if !ends_in_list_literal(lowering.file, iterable) {
-        let position = hir[iterable].pos;
-        let iterable = lower_expression(lowering, iterable);
-        lowering.set_position(position);
-        lowering.builder.append_spread(array, iterable);
-        return;
-    }
-    match hir[iterable].kind {
-        ExprKind::Array(elements) => {
-            let elements: SmallVec<[ExprId; 8]> = hir.ids(elements).collect();
-            for element in elements {
-                lower_appended_element(lowering, array, element);
-            }
-        }
-        ExprKind::Cond { test, branches } => {
-            let Branches { yes, no } = hir.branches(branches);
-            let if_true = lowering.create_block();
-            let if_false = lowering.create_block();
-            let join = lowering.create_block();
-            condition::lower_condition(lowering, test, if_true, if_false);
-            lowering.continue_in(if_true);
-            lower_appended_spread(lowering, array, yes);
-            lowering.jump(join);
-            lowering.continue_in(if_false);
-            lower_appended_spread(lowering, array, no);
-            lowering.jump(join);
-            lowering.continue_in(join);
-        }
-        _ => unreachable!("ends_in_list_literal has looked"),
-    }
-}
-
-fn lower_appended_element(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    array: ValueId,
-    element: ExprId,
-) {
-    let hir = lowering.file.hir;
-    let position = hir[element].pos;
-    match element_kind(hir[element].kind) {
-        ElementKind::Spread(iterable) if ends_in_list_literal(lowering.file, iterable) => {
-            lower_appended_spread(lowering, array, iterable);
-        }
-        ElementKind::Spread(iterable) => {
-            // JSC reports the iteration at the end of `...`.
-            let position = hir[iterable].pos;
-            let iterable = lower_expression(lowering, iterable);
-            lowering.set_position(position);
-            lowering.builder.append_spread(array, iterable);
-        }
-        ElementKind::Hole => {
-            lowering.set_position(position);
-            lowering.builder.append_hole(array);
-        }
-        ElementKind::Value => {
-            let value = lower_expression(lowering, element);
-            lowering.set_position(position);
-            lowering.builder.append_element(array, value);
-        }
     }
 }
 

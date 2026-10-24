@@ -3,25 +3,19 @@ use bun_sema::hir::ExprId;
 use smallvec::{SmallVec, smallvec};
 
 use super::intrinsic::{
-    IntrinsicCall, Lowered, Misuse, emit_private_global_get, engine_private_key,
-    get_named_arguments, has_spread, lower_intrinsic_argument, lower_named_arguments,
+    IntrinsicCall, Lowered, Misuse, get_named_arguments, has_spread, lower_named_arguments,
 };
-use super::{
-    Arguments, CallSite, Callee, emit_call, emit_call_at, emit_construct, lower_argument_slice,
-};
+use super::{Arguments, CallSite, Callee, emit_call};
 use crate::builtins::PromiseStatus;
 use crate::builtins::id::{BuiltinId, BuiltinName, RuntimeFunction};
 use crate::builtins::table::{self, Conversion, ErrorKind};
 use crate::ir::generated::{self, BlockRole, RuntimeErrorKind};
 use crate::ir::{BlockId, FunctionId, FunctionKey, ValueId};
-use crate::lower::control::{self, CleanupLanding, CleanupPath};
-use crate::lower::expression::{
-    emit_locked_builtin, find_constant, lower_argument_list, lower_expression,
-    lower_expression_for_effect,
-};
+use crate::lower::FunctionLowering;
+use crate::lower::control::{CleanupLanding, CleanupPath};
+use crate::lower::expression::find_constant;
 use crate::lower::function::{self, EntryArguments};
-use crate::lower::member::{self, PropertyName};
-use crate::lower::{FunctionLowering, condition, exception};
+use crate::lower::member::PropertyName;
 
 pub(super) fn create_anonymous_callee(function: ValueId, this: Option<ValueId>) -> Callee {
     Callee {
@@ -32,69 +26,192 @@ pub(super) fn create_anonymous_callee(function: ValueId, this: Option<ValueId>) 
     }
 }
 
-pub(super) fn lower_call_with_rest(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    site: IntrinsicCall<'_>,
-    callee: Callee,
-    rest: &[ExprId],
-) -> ValueId {
-    let arguments = lower_argument_slice(lowering, rest);
-    lowering.set_position(lowering.file.hir[site.call].pos);
-    emit_call_at(lowering, callee, arguments, site.options)
-}
-
-fn lower_call_with_this(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    site: IntrinsicCall<'_>,
-    function: ValueId,
-    arguments: &[ExprId],
-) -> Lowered<ValueId> {
-    let (this, rest) = match arguments.split_first() {
-        Some((&this, rest)) => (Some(lower_intrinsic_argument(lowering, this)?), rest),
-        None => (None, arguments),
-    };
-    let callee = create_anonymous_callee(function, this);
-    Ok(lower_call_with_rest(lowering, site, callee, rest))
-}
-
-pub(super) fn lower_function_call(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    site: IntrinsicCall<'_>,
-) -> Lowered<ValueId> {
-    if let Some((function, _)) = lowering.file.hir.member_key(site.callee) {
-        let function = member::lower_member_base(lowering, site.callee, function, site.exit);
-        return lower_call_with_this(lowering, site, function, site.arguments);
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(super) fn lower_call_with_rest(
+        &mut self,
+        site: IntrinsicCall<'_>,
+        callee: Callee,
+        rest: &[ExprId],
+    ) -> ValueId {
+        let arguments = self.lower_argument_slice(rest);
+        self.set_position(self.file.hir[site.call].pos);
+        self.emit_call_at(callee, arguments, site.options)
     }
-    let Some((&function, arguments)) = site.arguments.split_first() else {
-        return Err((site.call, Misuse::ArgumentCount));
-    };
-    let function = lower_intrinsic_argument(lowering, function)?;
-    lower_call_with_this(lowering, site, function, arguments)
-}
 
-pub(super) fn lower_function_apply(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    site: IntrinsicCall<'_>,
-) -> Lowered<ValueId> {
-    let Some((function, _)) = lowering.file.hir.member_key(site.callee) else {
-        return Err((site.callee, Misuse::Position));
-    };
-    let function = member::lower_member_base(lowering, site.callee, function, site.exit);
-    let apply = emit_locked_builtin(lowering, BuiltinId::FunctionPrototypeApply);
-    let callee = create_anonymous_callee(apply, Some(function));
-    Ok(lower_call_with_rest(lowering, site, callee, site.arguments))
-}
+    fn lower_call_with_this(
+        &mut self,
+        site: IntrinsicCall<'_>,
+        function: ValueId,
+        arguments: &[ExprId],
+    ) -> Lowered<ValueId> {
+        let (this, rest) = match arguments.split_first() {
+            Some((&this, rest)) => (Some(self.lower_intrinsic_argument(this)?), rest),
+            None => (None, arguments),
+        };
+        let callee = create_anonymous_callee(function, this);
+        Ok(self.lower_call_with_rest(site, callee, rest))
+    }
 
-pub(super) fn lower_builtin_function_call(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    site: IntrinsicCall<'_>,
-    builtin: BuiltinId,
-) -> ValueId {
-    let function = emit_locked_builtin(lowering, builtin);
-    let holder = table::entry(builtin).holder;
-    let this = holder.map(|holder| emit_locked_builtin(lowering, holder));
-    let callee = create_anonymous_callee(function, this);
-    lower_call_with_rest(lowering, site, callee, site.arguments)
+    pub(super) fn lower_function_call(&mut self, site: IntrinsicCall<'_>) -> Lowered<ValueId> {
+        if let Some((function, _)) = self.file.hir.member_key(site.callee) {
+            let function = self.lower_member_base(site.callee, function, site.exit);
+            return self.lower_call_with_this(site, function, site.arguments);
+        }
+        let Some((&function, arguments)) = site.arguments.split_first() else {
+            return Err((site.call, Misuse::ArgumentCount));
+        };
+        let function = self.lower_intrinsic_argument(function)?;
+        self.lower_call_with_this(site, function, arguments)
+    }
+
+    pub(super) fn lower_function_apply(&mut self, site: IntrinsicCall<'_>) -> Lowered<ValueId> {
+        let Some((function, _)) = self.file.hir.member_key(site.callee) else {
+            return Err((site.callee, Misuse::Position));
+        };
+        let function = self.lower_member_base(site.callee, function, site.exit);
+        let apply = self.emit_locked_builtin(BuiltinId::FunctionPrototypeApply);
+        let callee = create_anonymous_callee(apply, Some(function));
+        Ok(self.lower_call_with_rest(site, callee, site.arguments))
+    }
+
+    pub(super) fn lower_builtin_function_call(
+        &mut self,
+        site: IntrinsicCall<'_>,
+        builtin: BuiltinId,
+    ) -> ValueId {
+        let function = self.emit_locked_builtin(builtin);
+        let holder = table::entry(builtin).holder;
+        let this = holder.map(|holder| self.emit_locked_builtin(holder));
+        let callee = create_anonymous_callee(function, this);
+        self.lower_call_with_rest(site, callee, site.arguments)
+    }
+
+    pub(super) fn lower_linked_function_call(
+        &mut self,
+        site: IntrinsicCall<'_>,
+        linked: RuntimeFunction,
+    ) -> Lowered<ValueId> {
+        let function = find_linked_function(self, site.callee, linked)?;
+        let arguments = self.lower_argument_slice(site.arguments);
+        self.set_position(self.file.hir[site.call].pos);
+        let is_declared_here = self.file.function_key(function).home_file() == self.file.file;
+        Ok(match arguments {
+            Arguments::Values(values) if is_declared_here => {
+                let entry_arguments = EntryArguments {
+                    this: None,
+                    new_target: None,
+                    parameters: &values,
+                };
+                self.emit_direct_call(function, entry_arguments)
+            }
+            Arguments::Values(_) | Arguments::List(_) => {
+                let closure = self.builder.new_closure(function, &[]);
+                let callee = create_anonymous_callee(closure, None);
+                self.emit_call_at(callee, arguments, site.options)
+            }
+        })
+    }
+
+    pub(super) fn lower_prepended_argument_call(
+        &mut self,
+        site: IntrinsicCall<'_>,
+        callee: BuiltinName,
+        argument: u32,
+    ) -> ValueId {
+        let hir = self.file.hir;
+        let position = hir[site.call].pos;
+        let function = self.emit_private_global_get(callee);
+        let prepended = self.builder.integer(i64::from(argument));
+        let arguments = if has_spread(hir, site.arguments) {
+            let list = self.lower_argument_list(&[prepended], site.arguments, position);
+            Arguments::List(list)
+        } else {
+            let mut values: SmallVec<[ValueId; 4]> = smallvec![prepended];
+            let rest = site.arguments.iter();
+            values.extend(rest.map(|&argument| self.lower_expression(argument)));
+            Arguments::Values(values)
+        };
+        self.set_position(position);
+        let callee = create_anonymous_callee(function, None);
+        self.emit_call_at(callee, arguments, site.options)
+    }
+
+    pub(super) fn lower_promise_status_test(
+        &mut self,
+        site: IntrinsicCall<'_>,
+        status: PromiseStatus,
+    ) -> Lowered<ValueId> {
+        let expected = match status {
+            PromiseStatus::Pending => 0,
+            PromiseStatus::Fulfilled => 1,
+            PromiseStatus::Rejected => 2,
+        };
+        let key = self.file.engine_private_key(b"peekPromiseStatus");
+        let global = self.builder.builtin(BuiltinId::GlobalThis);
+        let function = self.builder.prop_get(global, key, true, false);
+        let [promise] = lower_named_arguments(self, site)?;
+        let arguments = Arguments::Values(smallvec![promise]);
+        let actual = emit_call(self, function, None, arguments, CallSite::default());
+        let expected = self.builder.integer(expected);
+        Ok(self.builder.strict_eq(actual, expected))
+    }
+
+    pub(super) fn lower_conversion(
+        &mut self,
+        site: IntrinsicCall<'_>,
+        conversion: Conversion,
+    ) -> Lowered<ValueId> {
+        let [value] = lower_named_arguments(self, site)?;
+        let builder = &mut self.builder;
+        match conversion {
+            Conversion::ToBoolean => Ok(builder.to_boolean(value)),
+            Conversion::ToNumber => Ok(builder.to_number(value)),
+            Conversion::ToNumeric => Ok(builder.to_numeric(value)),
+            Conversion::ToString => Ok(builder.to_string(value)),
+            Conversion::ToPropertyKey => Ok(builder.to_property_key(value)),
+            Conversion::ToObject => Ok(builder.to_object(value, None)),
+            Conversion::ToLength => Ok(builder.to_length(value)),
+            Conversion::ToInt32 => {
+                let zero = builder.integer(0);
+                Ok(builder.bit_or(value, zero))
+            }
+            Conversion::ToUint32 => {
+                let zero = builder.integer(0);
+                Ok(builder.ur_shift(value, zero))
+            }
+            _ => Err((site.call, Misuse::UnsupportedConversion)),
+        }
+    }
+
+    fn emit_iterator_object_close(&mut self, iterator: ValueId, path: CleanupPath) {
+        let closed = self.create_block();
+        match path {
+            CleanupPath::Normal => {
+                let result = self.emit_return_method_call(iterator, closed);
+                let error = RuntimeErrorKind::IteratorResultNotObject;
+                self.builder.require_object(result, error);
+            }
+            CleanupPath::Rethrow | CleanupPath::Throw { .. } => {
+                let handler = self.begin_handler(BlockRole::CatchHandler, None);
+                self.emit_return_method_call(iterator, closed);
+                self.end_handler(handler);
+                self.jump(closed);
+                self.continue_in(handler.block());
+                self.builder.catch_value();
+            }
+        }
+        self.jump(closed);
+        self.continue_in(closed);
+    }
+
+    fn emit_return_method_call(&mut self, iterator: ValueId, if_absent: BlockId) -> ValueId {
+        let text = self.file.intern_bytes(b"return");
+        let key = self.file.text_key(text);
+        let method = self.emit_get(iterator, PropertyName::Constant(key));
+        let method = self.branch_if_nullish(method, if_absent);
+        let arguments = Arguments::Values(SmallVec::new());
+        emit_call(self, method, Some(iterator), arguments, CallSite::default())
+    }
 }
 
 pub(super) fn find_linked_function(
@@ -114,103 +231,6 @@ pub(super) fn find_linked_function(
     }
     let key = FunctionKey::Source(function);
     Ok(lowering.file.reference_function(key))
-}
-
-pub(super) fn lower_linked_function_call(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    site: IntrinsicCall<'_>,
-    linked: RuntimeFunction,
-) -> Lowered<ValueId> {
-    let function = find_linked_function(lowering, site.callee, linked)?;
-    let arguments = lower_argument_slice(lowering, site.arguments);
-    lowering.set_position(lowering.file.hir[site.call].pos);
-    let is_declared_here = lowering.file.function_key(function).home_file() == lowering.file.file;
-    Ok(match arguments {
-        Arguments::Values(values) if is_declared_here => {
-            let entry_arguments = EntryArguments {
-                this: None,
-                new_target: None,
-                parameters: &values,
-            };
-            function::emit_direct_call(lowering, function, entry_arguments)
-        }
-        Arguments::Values(_) | Arguments::List(_) => {
-            let closure = lowering.builder.new_closure(function, &[]);
-            let callee = create_anonymous_callee(closure, None);
-            emit_call_at(lowering, callee, arguments, site.options)
-        }
-    })
-}
-
-pub(super) fn lower_prepended_argument_call(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    site: IntrinsicCall<'_>,
-    callee: BuiltinName,
-    argument: u32,
-) -> ValueId {
-    let hir = lowering.file.hir;
-    let position = hir[site.call].pos;
-    let function = emit_private_global_get(lowering, callee);
-    let prepended = lowering.builder.integer(i64::from(argument));
-    let arguments = if has_spread(hir, site.arguments) {
-        let list = lower_argument_list(lowering, &[prepended], site.arguments, position);
-        Arguments::List(list)
-    } else {
-        let mut values: SmallVec<[ValueId; 4]> = smallvec![prepended];
-        let rest = site.arguments.iter();
-        values.extend(rest.map(|&argument| lower_expression(lowering, argument)));
-        Arguments::Values(values)
-    };
-    lowering.set_position(position);
-    let callee = create_anonymous_callee(function, None);
-    emit_call_at(lowering, callee, arguments, site.options)
-}
-
-pub(super) fn lower_promise_status_test(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    site: IntrinsicCall<'_>,
-    status: PromiseStatus,
-) -> Lowered<ValueId> {
-    let expected = match status {
-        PromiseStatus::Pending => 0,
-        PromiseStatus::Fulfilled => 1,
-        PromiseStatus::Rejected => 2,
-    };
-    let key = engine_private_key(lowering.file, b"peekPromiseStatus");
-    let global = lowering.builder.builtin(BuiltinId::GlobalThis);
-    let function = lowering.builder.prop_get(global, key, true, false);
-    let [promise] = lower_named_arguments(lowering, site)?;
-    let arguments = Arguments::Values(smallvec![promise]);
-    let actual = emit_call(lowering, function, None, arguments, CallSite::default());
-    let expected = lowering.builder.integer(expected);
-    Ok(lowering.builder.strict_eq(actual, expected))
-}
-
-pub(super) fn lower_conversion(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    site: IntrinsicCall<'_>,
-    conversion: Conversion,
-) -> Lowered<ValueId> {
-    let [value] = lower_named_arguments(lowering, site)?;
-    let builder = &mut lowering.builder;
-    match conversion {
-        Conversion::ToBoolean => Ok(builder.to_boolean(value)),
-        Conversion::ToNumber => Ok(builder.to_number(value)),
-        Conversion::ToNumeric => Ok(builder.to_numeric(value)),
-        Conversion::ToString => Ok(builder.to_string(value)),
-        Conversion::ToPropertyKey => Ok(builder.to_property_key(value)),
-        Conversion::ToObject => Ok(builder.to_object(value, None)),
-        Conversion::ToLength => Ok(builder.to_length(value)),
-        Conversion::ToInt32 => {
-            let zero = builder.integer(0);
-            Ok(builder.bit_or(value, zero))
-        }
-        Conversion::ToUint32 => {
-            let zero = builder.integer(0);
-            Ok(builder.ur_shift(value, zero))
-        }
-        _ => Err((site.call, Misuse::UnsupportedConversion)),
-    }
 }
 
 fn get_thrown_error(kind: ErrorKind) -> (generated::ErrorKind, BuiltinId) {
@@ -244,13 +264,13 @@ pub(super) fn lower_throw(
             | Constant::BigInt(_),
         )
         | None => {
-            let message = lower_expression(lowering, argument);
+            let message = lowering.lower_expression(argument);
             lowering.set_position(position);
-            let constructor = emit_locked_builtin(lowering, constructor);
+            let constructor = lowering.emit_locked_builtin(constructor);
             let arguments = Arguments::Values(smallvec![message]);
             let call_site = CallSite::default();
-            let error = emit_construct(lowering, constructor, None, arguments, call_site);
-            exception::emit_throw(lowering, error);
+            let error = lowering.emit_construct(constructor, None, arguments, call_site);
+            lowering.emit_throw(error);
         }
     }
     Ok(lowering.builder.undefined())
@@ -262,63 +282,19 @@ pub(super) fn lower_if_abrupt_close_iterator(
 ) -> Lowered<ValueId> {
     let [iterator, expression] = get_named_arguments(lowering.file, site)?;
     let position = lowering.file.hir[site.call].pos;
-    let iterator = lower_expression(lowering, iterator);
+    let iterator = lowering.lower_expression(iterator);
     let after = lowering.create_block();
 
-    control::begin_cleanup(lowering, BlockRole::CleanupHandler, None);
-    lower_expression_for_effect(lowering, expression);
+    lowering.begin_cleanup(BlockRole::CleanupHandler, None);
+    lowering.lower_expression_for_effect(expression);
     // A normal completion closes nothing, so it leaves without an exit of the cleanup.
     lowering.jump(after);
 
     lowering.set_position(position);
     let landing = CleanupLanding::KeepsException;
-    control::end_cleanup_per_exit(lowering, landing, &mut |lowering, path| {
-        emit_iterator_object_close(lowering, iterator, path);
+    lowering.end_cleanup_per_exit(landing, &mut |lowering, path| {
+        lowering.emit_iterator_object_close(iterator, path);
     });
     lowering.continue_in(after);
     Ok(lowering.builder.undefined())
-}
-
-fn emit_iterator_object_close(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    iterator: ValueId,
-    path: CleanupPath,
-) {
-    let closed = lowering.create_block();
-    match path {
-        CleanupPath::Normal => {
-            let result = emit_return_method_call(lowering, iterator, closed);
-            let error = RuntimeErrorKind::IteratorResultNotObject;
-            lowering.builder.require_object(result, error);
-        }
-        CleanupPath::Rethrow | CleanupPath::Throw { .. } => {
-            let handler = control::begin_handler(lowering, BlockRole::CatchHandler, None);
-            emit_return_method_call(lowering, iterator, closed);
-            control::end_handler(lowering, handler);
-            lowering.jump(closed);
-            lowering.continue_in(handler.block());
-            lowering.builder.catch_value();
-        }
-    }
-    lowering.jump(closed);
-    lowering.continue_in(closed);
-}
-
-fn emit_return_method_call(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    iterator: ValueId,
-    if_absent: BlockId,
-) -> ValueId {
-    let text = lowering.file.intern_bytes(b"return");
-    let key = lowering.file.text_key(text);
-    let method = member::emit_get(lowering, iterator, PropertyName::Constant(key));
-    let method = condition::branch_if_nullish(lowering, method, if_absent);
-    let arguments = Arguments::Values(SmallVec::new());
-    emit_call(
-        lowering,
-        method,
-        Some(iterator),
-        arguments,
-        CallSite::default(),
-    )
 }

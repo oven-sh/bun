@@ -6,12 +6,12 @@ use bun_sema::fold::Constant;
 use bun_sema::hir::{ClassId, ExprId, ExprKind, FnKind, IdList};
 
 use super::BindingForm;
-use super::identifiers::{self, BindingRead};
+use super::identifiers::BindingRead;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags};
 use crate::ir::{Edge, ValueId};
 use crate::lower::call::{self, Arguments, CallSite};
-use crate::lower::{FileLowering, FunctionLowering, commonjs, expression, function};
+use crate::lower::{FileLowering, FunctionLowering, commonjs, expression};
 use crate::modules::ModuleKind;
 
 #[derive(Copy, Clone)]
@@ -38,13 +38,13 @@ pub(crate) fn lower_direct_eval(
         unreachable!("lower_direct_eval takes a Call expression");
     };
     let site = hir[site];
-    let callee = expression::skip_type_syntax(lowering.file, site.callee);
+    let callee = lowering.file.skip_type_syntax(site.callee);
     let ExprKind::Ident(callee_name) = hir[callee].kind else {
         unreachable!("the callee of a direct eval is an identifier");
     };
     lowering.set_position(hir[callee].pos);
-    let (function, this) = identifiers::lower_identifier_callee(lowering, callee);
-    let (arguments, text) = lower_eval_arguments(lowering, site.args);
+    let (function, this) = lowering.lower_identifier_callee(callee);
+    let (arguments, text) = lowering.lower_eval_arguments(site.args);
     lowering.set_position(hir[call].pos);
     let eval = lowering.builder.builtin(BuiltinId::Eval);
     let is_eval = lowering.builder.strict_eq(function, eval);
@@ -61,11 +61,9 @@ pub(crate) fn lower_direct_eval(
         .branch(is_eval, Edge::to(direct), ordinary_edge);
 
     lowering.continue_in(direct);
-    let evaluated = match find_binding_named_by_text(lowering.file, call, site.args) {
-        Some((binding, name)) => {
-            identifiers::read_binding(lowering, binding, name, BindingRead::Value)
-        }
-        None => emit_direct_eval(lowering, call, text),
+    let evaluated = match lowering.file.find_binding_named_by_text(call, site.args) {
+        Some((binding, name)) => lowering.read_binding(binding, name, BindingRead::Value),
+        None => lowering.emit_direct_eval(call, text),
     };
     lowering.jump_with(join, &[evaluated]);
 
@@ -81,141 +79,136 @@ pub(crate) fn lower_direct_eval(
     result
 }
 
-// `eval("require")`: a text that is known at the build and is nothing but the name of a binding that the call sees reads that binding, like the name written in its place.
-fn find_binding_named_by_text(
-    file: &FileLowering<'_, '_, '_, '_>,
-    call: ExprId,
-    arguments: IdList<ExprId>,
-) -> Option<(Binding, Atom)> {
-    let (hir, bound) = (file.hir, file.bound);
-    let text = expression::find_constant(file, hir.ids(arguments).next()?)?;
-    let Constant::String(name) = text else {
-        return None;
-    };
-    if bound
-        .runtime
-        .eval_scopes()
-        .iter()
-        .any(|entry| entry.1.is_sloppy)
-    {
-        return None;
-    }
-    let eval_scope = bound.eval_scope(call)?;
-    let mut scope = eval_scope.scope;
-    while scope.is_some() {
-        if matches!(bound.scopes[scope.idx()].kind, ScopeKind::With(_)) {
+impl FileLowering<'_, '_, '_, '_> {
+    // `eval("require")`: a text that is known at the build and is nothing but the name of a binding that the call sees reads that binding, like the name written in its place.
+    fn find_binding_named_by_text(
+        &self,
+        call: ExprId,
+        arguments: IdList<ExprId>,
+    ) -> Option<(Binding, Atom)> {
+        let (hir, bound) = (self.hir, self.bound);
+        let text = expression::find_constant(self, hir.ids(arguments).next()?)?;
+        let Constant::String(name) = text else {
+            return None;
+        };
+        if bound
+            .runtime
+            .eval_scopes()
+            .iter()
+            .any(|entry| entry.1.is_sloppy)
+        {
             return None;
         }
-        scope = bound.runtime_parent_scope(hir, scope);
+        let eval_scope = bound.eval_scope(call)?;
+        let mut scope = eval_scope.scope;
+        while scope.is_some() {
+            if matches!(bound.scopes[scope.idx()].kind, ScopeKind::With(_)) {
+                return None;
+            }
+            scope = bound.runtime_parent_scope(hir, scope);
+        }
+        let mut symbols = bound.ids(eval_scope.symbols);
+        if let Some(symbol) = symbols.find(|&symbol| self.find_spelled_name(symbol) == name) {
+            return match self.scopes.form(symbol) {
+                BindingForm::Stored => Some((Binding::Symbol(symbol), name)),
+                _ => None,
+            };
+        }
+        if !self.is_commonjs_module() {
+            return None;
+        }
+        let mut variables = commonjs::undeclared_wrapper_parameters(bound);
+        let variable = variables.find(|variable| variable.name() == name)?;
+        Some((Binding::CommonJs(variable), name))
     }
-    let mut symbols = bound.ids(eval_scope.symbols);
-    if let Some(symbol) = symbols.find(|&symbol| bindings::find_spelled_name(file, symbol) == name)
-    {
-        return match file.scopes.form(symbol) {
-            BindingForm::Stored => Some((Binding::Symbol(symbol), name)),
-            _ => None,
+
+    fn compute_eval_context(&self, scope: ScopeId) -> EvalContext {
+        let (hir, bound) = (self.hir, self.bound);
+        let arrow_flags = match bound.code_unit(scope) {
+            CodeUnit::Function(function) if hir[function].kind == FnKind::Arrow => {
+                EvalScopeFlags::IS_IN_ARROW_FUNCTION
+            }
+            CodeUnit::Function(_) | CodeUnit::FieldInitializer(_) | CodeUnit::File => {
+                EvalScopeFlags::default()
+            }
         };
-    }
-    if !commonjs::is_commonjs_module(file) {
-        return None;
-    }
-    let mut variables = commonjs::undeclared_wrapper_parameters(bound);
-    let variable = variables.find(|variable| variable.name() == name)?;
-    Some((Binding::CommonJs(variable), name))
-}
-
-fn lower_eval_arguments(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    arguments: IdList<ExprId>,
-) -> (Arguments, EvalText) {
-    let arguments = call::lower_arguments(lowering, arguments);
-    let text = match &arguments {
-        Arguments::Values(values) => match values.first() {
-            Some(&text) => EvalText::Value(text),
-            None => EvalText::Absent,
-        },
-        Arguments::List(list) => EvalText::FirstElement(*list),
-    };
-    (arguments, text)
-}
-
-fn emit_direct_eval(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    call: ExprId,
-    text: EvalText,
-) -> ValueId {
-    let text = match text {
-        EvalText::Absent => return lowering.builder.undefined(),
-        EvalText::Value(text) => text,
-        EvalText::FirstElement(list) => {
-            let index = lowering.builder.integer(0);
-            lowering.builder.elem_get(list, index)
-        }
-    };
-    let eval_scope = lowering.file.bound.eval_scope(call);
-    let eval_scope = *eval_scope.expect("lower_direct_eval takes a call with an eval scope");
-    let context = compute_eval_context(lowering.file, eval_scope.scope);
-    let this_value = if context
-        .flags
-        .contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR)
-    {
-        lowering.builder.undefined()
-    } else {
-        function::get_this(lowering)
-    };
-    let is_in_function = context.flags.contains(EvalScopeFlags::IS_IN_FUNCTION);
-    let new_target = is_in_function.then(|| function::get_new_target(lowering));
-    let record = bindings::collect_eval_bindings(lowering, eval_scope, context);
-    let mode = if eval_scope.is_sloppy {
-        ECMAMode::Sloppy
-    } else {
-        ECMAMode::Strict
-    };
-    let scope = lowering.file.fragment.add_eval_scope(EvalScope {
-        mode,
-        flags: context.flags,
-        bindings: record.bindings,
-    });
-    lowering
-        .builder
-        .direct_eval(scope, text, this_value, new_target, &record.operands)
-}
-
-fn compute_eval_context(file: &FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> EvalContext {
-    let (hir, bound) = (file.hir, file.bound);
-    let arrow_flags = match bound.code_unit(scope) {
-        CodeUnit::Function(function) if hir[function].kind == FnKind::Arrow => {
-            EvalScopeFlags::IS_IN_ARROW_FUNCTION
-        }
-        CodeUnit::Function(_) | CodeUnit::FieldInitializer(_) | CodeUnit::File => {
-            EvalScopeFlags::default()
-        }
-    };
-    let this_scope = file.scopes.lexical_owner(scope);
-    let owner = bound.code_unit(this_scope);
-    match owner {
-        CodeUnit::File => EvalContext {
-            flags: arrow_flags | compute_module_flags(file.inputs.modules.kind(file.file)),
-            this_scope: None,
-            owner,
-            class: None,
-        },
-        CodeUnit::Function(function) => {
-            let is_derived = function::is_derived_constructor(file, function);
-            let kind = hir.runtime_function_kind(function);
-            EvalContext {
-                flags: arrow_flags | compute_function_flags(kind, is_derived),
+        let this_scope = self.scopes.lexical_owner(scope);
+        let owner = bound.code_unit(this_scope);
+        match owner {
+            CodeUnit::File => EvalContext {
+                flags: arrow_flags | compute_module_flags(self.inputs.modules.kind(self.file)),
+                this_scope: None,
+                owner,
+                class: None,
+            },
+            CodeUnit::Function(function) => {
+                let is_derived = self.is_derived_constructor(function);
+                let kind = hir.runtime_function_kind(function);
+                EvalContext {
+                    flags: arrow_flags | compute_function_flags(kind, is_derived),
+                    this_scope: Some(this_scope),
+                    owner,
+                    class: bound.function_class(function),
+                }
+            }
+            CodeUnit::FieldInitializer(member) => EvalContext {
+                flags: arrow_flags | compute_initializer_flags(),
                 this_scope: Some(this_scope),
                 owner,
-                class: bound.function_class(function),
-            }
+                class: bound.member_class(member),
+            },
         }
-        CodeUnit::FieldInitializer(member) => EvalContext {
-            flags: arrow_flags | compute_initializer_flags(),
-            this_scope: Some(this_scope),
-            owner,
-            class: bound.member_class(member),
-        },
+    }
+}
+
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    fn lower_eval_arguments(&mut self, arguments: IdList<ExprId>) -> (Arguments, EvalText) {
+        let arguments = self.lower_arguments(arguments);
+        let text = match &arguments {
+            Arguments::Values(values) => match values.first() {
+                Some(&text) => EvalText::Value(text),
+                None => EvalText::Absent,
+            },
+            Arguments::List(list) => EvalText::FirstElement(*list),
+        };
+        (arguments, text)
+    }
+
+    fn emit_direct_eval(&mut self, call: ExprId, text: EvalText) -> ValueId {
+        let text = match text {
+            EvalText::Absent => return self.builder.undefined(),
+            EvalText::Value(text) => text,
+            EvalText::FirstElement(list) => {
+                let index = self.builder.integer(0);
+                self.builder.elem_get(list, index)
+            }
+        };
+        let eval_scope = self.file.bound.eval_scope(call);
+        let eval_scope = *eval_scope.expect("lower_direct_eval takes a call with an eval scope");
+        let context = self.file.compute_eval_context(eval_scope.scope);
+        let this_value = if context
+            .flags
+            .contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR)
+        {
+            self.builder.undefined()
+        } else {
+            self.get_this()
+        };
+        let is_in_function = context.flags.contains(EvalScopeFlags::IS_IN_FUNCTION);
+        let new_target = is_in_function.then(|| self.get_new_target());
+        let record = self.collect_eval_bindings(eval_scope, context);
+        let mode = if eval_scope.is_sloppy {
+            ECMAMode::Sloppy
+        } else {
+            ECMAMode::Strict
+        };
+        let scope = self.file.fragment.add_eval_scope(EvalScope {
+            mode,
+            flags: context.flags,
+            bindings: record.bindings,
+        });
+        self.builder
+            .direct_eval(scope, text, this_value, new_target, &record.operands)
     }
 }
 

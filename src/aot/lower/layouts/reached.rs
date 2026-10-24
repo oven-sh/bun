@@ -44,31 +44,33 @@ impl Reached {
     }
 }
 
-/// `None`: more than `limit` layouts.
-pub(crate) fn collect_reached_layouts(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: TypeId,
-    limit: LimitId,
-) -> Option<Vec<LayoutId>> {
-    let limit = file.inputs.limits.get(limit);
-    let mut reached = Reached::default();
-    reached.add(Reference::Type(ty));
-    while let Some(pending) = reached.pending.pop() {
-        if reached.layouts.len() as u64 > limit {
-            return None;
-        }
-        let mut add = |reference: Reference| reached.add(reference);
-        match pending {
-            Pending::Type(ty) => file.fragment.types.get(ty).for_each_reference(&mut add),
-            Pending::Layout(layout) => {
-                let fields = super::own_fields(file, layout);
-                for field in fields.as_slice() {
-                    field.declared.for_each_reference(&mut add);
+impl FileLowering<'_, '_, '_, '_> {
+    /// `None`: more than `limit` layouts.
+    pub(crate) fn collect_reached_layouts(
+        &mut self,
+        ty: TypeId,
+        limit: LimitId,
+    ) -> Option<Vec<LayoutId>> {
+        let limit = self.inputs.limits.get(limit);
+        let mut reached = Reached::default();
+        reached.add(Reference::Type(ty));
+        while let Some(pending) = reached.pending.pop() {
+            if reached.layouts.len() as u64 > limit {
+                return None;
+            }
+            let mut add = |reference: Reference| reached.add(reference);
+            match pending {
+                Pending::Type(ty) => self.fragment.types.get(ty).for_each_reference(&mut add),
+                Pending::Layout(layout) => {
+                    let fields = super::own_fields(self, layout);
+                    for field in fields.as_slice() {
+                        field.declared.for_each_reference(&mut add);
+                    }
                 }
             }
         }
+        let mut layouts: Vec<LayoutId> = reached.layouts.into_iter().collect();
+        layouts.sort_unstable();
+        Some(layouts)
     }
-    let mut layouts: Vec<LayoutId> = reached.layouts.into_iter().collect();
-    layouts.sort_unstable();
-    Some(layouts)
 }

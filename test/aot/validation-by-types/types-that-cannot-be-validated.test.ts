@@ -26,6 +26,20 @@ test.each([
     "JSON.parse<[string, (number | undefined)?]>() cannot validate '[string, (number | undefined)?]'.",
   ],
   [
+    'console.log(JSON.parse<Uppercase<string>>("1"));',
+    "JSON.parse<Uppercase<string>>() cannot validate 'Uppercase<string>'.",
+  ],
+  ['console.log(JSON.parse<{ code: Lowercase<string> }>("{}"));', "cannot validate 'code: Lowercase<string>'."],
+  ['console.log(JSON.parse<Capitalize<string>[]>("[]"));', "cannot validate '[number]: Capitalize<string>'."],
+  ['console.log(JSON.parse<`id-${Uppercase<string>}`>("1"));', "cannot validate '`id-${Uppercase<string>}`'."],
+  ['console.log(JSON.parse<typeof globalThis>("{}"));', "cannot validate 'typeof globalThis'."],
+  ['console.log(JSON.parse<{ g: typeof globalThis }>("{}"));', "cannot validate 'g: typeof globalThis'."],
+  ['enum Color { Red, Green }\nconsole.log(JSON.parse<typeof Color>("{}"));', "cannot validate 'typeof Color'."],
+  [
+    'namespace Shapes { export const sides = 4; }\nconsole.log(JSON.parse<typeof Shapes>("{}"));',
+    "cannot validate 'typeof Shapes'.",
+  ],
+  [
     'import { validate } from "bun:bundle";\nconsole.log(validate<{ run: () => void }>({}));',
     "validate<{ run: () => void; }>() cannot validate 'run: () => void'.",
   ],
@@ -77,7 +91,10 @@ try {
     );
     expect({ said: buildExitCode ? said : "", buildExitCode }).toEqual({ said: "", buildExitCode: 0 });
     const { stdout, exitCode } = await run([executable], String(dir));
-    expect({ stdout, exitCode }).toEqual({ stdout: "1\nTypeError: expected number, received string\n", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({
+      stdout: "1\nTypeError: value must be number, received string\n",
+      exitCode: 0,
+    });
   },
   120_000,
 );

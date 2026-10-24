@@ -1,8 +1,21 @@
 // Objects are filled by key, one of the names an object already has is defined anew with other attributes, and one more name is stored by key behind that.
 // Behind a collection each object is asked one question about that last name, and nothing else looks at its names.
 const descriptors = [
-  () => ({ get() { return 5; }, set(value) {}, enumerable: true, configurable: true }),
-  () => ({ get() { return 5; }, enumerable: false, configurable: true }),
+  () => ({
+    get() {
+      return 5;
+    },
+    set(value) {},
+    enumerable: true,
+    configurable: true,
+  }),
+  () => ({
+    get() {
+      return 5;
+    },
+    enumerable: false,
+    configurable: true,
+  }),
   () => ({ value: 5, writable: true, enumerable: false, configurable: true }),
   () => ({ value: 5, writable: false, enumerable: true, configurable: true }),
   () => ({ value: 5, writable: true, enumerable: true, configurable: false }),

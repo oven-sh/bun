@@ -7,10 +7,11 @@
 //   bun test test/aot/type-errors-in-reached-code                      40 programs, 2 places each, chosen by a hash of their paths
 //   AOT_FUZZ_PROGRAMS=3000 AOT_FUZZ_SEED=7 bun test test/aot/type-errors-in-reached-code
 import { expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
+import { withPackedPrograms } from "./generate";
 import { unsupported } from "./run-programs";
 
 const programCount = Number(process.env.AOT_FUZZ_PROGRAMS) || 40;
@@ -68,7 +69,8 @@ test.skipIf(!!unsupported)(
   `a type error in code that runs stops the build: ${programCount} programs`,
   async () => {
     using root = tempDir("aot-type-errors-in-reached-code", {});
-    const programs = singleFilePrograms(join(import.meta.dir, "programs"));
+    const kept = join(import.meta.dir, "programs");
+    const { paths: programs, textOf } = withPackedPrograms(kept, singleFilePrograms(kept), /(?<!\.d)\.ts$/);
     const jobs = programs
       .map(path => ({ path, hash: Number(Bun.hash.crc32(seed + ":" + path.slice(import.meta.dir.length + 1))) }))
       .sort((a, b) => a.hash - b.hash)
@@ -82,7 +84,7 @@ test.skipIf(!!unsupported)(
       while (next < jobs.length) {
         const { path, hash } = jobs[next++];
         const random = mulberry32(hash);
-        const source = readFileSync(path, "utf8");
+        const source = textOf(path);
         // `// @ts-ignore` and the like silence the inserted error too.
         if (/@ts-(ignore|expect-error|nocheck)/.test(source)) continue;
         for (let place = 0; place < placesPerProgram; place++) {

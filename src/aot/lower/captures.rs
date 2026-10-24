@@ -7,10 +7,7 @@ use bun_sema::bind::ScopeId;
 use smallvec::SmallVec;
 
 pub(in crate::lower) use self::needs::is_initialized_before;
-pub(crate) use self::values::bind_captures;
-pub(in crate::lower) use self::values::{
-    capture_positions, captures_home_object, collect_capture_values, find_captured_value,
-};
+pub(in crate::lower) use self::values::captures_home_object;
 use super::FunctionLowering;
 use super::scope::{BindingRef, Initialization, WalkedFunction, WalkedFunctionId};
 

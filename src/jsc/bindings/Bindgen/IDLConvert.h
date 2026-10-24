@@ -370,6 +370,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLStringView<allowStringObject>> : Bun:
         return true;
     }
 };
+
 template<bool allowShared>
 struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource<allowShared>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawBufferSource<allowShared>> {
     template<Bun::IDLConversionContext Ctx>

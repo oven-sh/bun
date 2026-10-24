@@ -628,42 +628,33 @@ function isMissing(input: any, member: PlanMember, value: any): boolean {
   return value === undefined && member.mustBeOwn && !$hasOwn(input, member.key);
 }
 
-function createIssue(path: any[], code: string, expected: string, value: any, message: string | undefined): any {
+function createIssue(path: any[], code: string, expected: string, value: any, ownWords: string | undefined): any {
   const received = describeReceived(value);
-  let prefix = "Invalid input: ";
-  let detail = "expected " + expected;
-  let summary: string | undefined;
+  let message = "must be " + expected;
   switch (code) {
     case "invalid_type":
     case "invalid_union":
-      detail += ", received " + received;
+      message += ", received " + received;
       break;
     case "invalid_value":
-      detail += ", received " + quoteReceived(value, received);
+      message += ", received " + quoteReceived(value, received);
       break;
     case "unrecognized_keys":
-      prefix = "Unrecognized key: ";
-      detail = expected;
-      summary = "unrecognized key " + expected;
+      message = "must not have key " + expected;
       break;
     case "too_small":
-      prefix = "Too small: ";
-      break;
     case "too_big":
-      prefix = "Too big: ";
+      message = "must " + expected.slice(expected.indexOf(" to ") + " to ".length);
       break;
     case "not_multiple_of":
-      prefix = "Invalid number: ";
-      detail = "must be a " + expected;
+      message = "must be a " + expected;
       break;
     case "invalid_pattern":
       code = "invalid_format";
-      prefix = "Invalid string: ";
-      detail = "must match pattern " + expected.slice("string to match ".length);
+      message = "must match pattern " + expected.slice("string to match ".length);
       break;
   }
-  if (message !== undefined) return { path, code, expected, received, message, summary: message };
-  return { path, code, expected, received, message: prefix + detail, summary: summary ?? detail };
+  return { path, code, expected, received, message: ownWords ?? message, isInOwnWords: ownWords !== undefined };
 }
 
 function add(run: Run, issues: any[], issue: any): void {
@@ -984,19 +975,19 @@ function addUnder(run: Run, path: any[], found: any[], count: number, issues: an
   run.remainingIssues -= taken;
 }
 
-function addWithWholePaths(found: any[], limit: number, path: any[], issues: any[], summaries: string[]): void {
+function addWithWholePaths(found: any[], limit: number, path: any[], issues: any[], areInOwnWords: boolean[]): void {
   const end = issues.length + limit;
   for (let i = 0; i < found.length && issues.length < end; i++) {
     const entry = found[i];
     if (!$isArray(entry)) {
-      const { summary, ...issue } = entry;
+      const { isInOwnWords, ...issue } = entry;
       issues.push({ ...issue, path: [...path, ...entry.path] });
-      summaries.push(summary);
+      areInOwnWords.push(isInOwnWords);
       continue;
     }
     const length = path.length;
     for (let j = 0; j < entry[0].length; j++) path.push(entry[0][j]);
-    addWithWholePaths(entry[1], $min(entry[2], end - issues.length), path, issues, summaries);
+    addWithWholePaths(entry[1], $min(entry[2], end - issues.length), path, issues, areInOwnWords);
     path.length = length;
   }
 }
@@ -1009,9 +1000,9 @@ function findIssues(run: Run, value: any): any[] {
 
 function messageAndIssuesOf(found: any[]): [string, any[]] {
   const issues: any[] = [];
-  const summaries: string[] = [];
-  addWithWholePaths(found, maxIssueCount(), [], issues, summaries);
-  return [messageOf(issues, summaries[0]), issues];
+  const areInOwnWords: boolean[] = [];
+  addWithWholePaths(found, maxIssueCount(), [], issues, areInOwnWords);
+  return [messageOf(issues, areInOwnWords[0]), issues];
 }
 
 function errorOf(found: any[]): any {
@@ -1040,11 +1031,14 @@ function formatPath(path: any[]): string {
   return text;
 }
 
-function messageOf(issues: any[], summary: string): string {
+function messageOf(issues: any[], isInOwnWords: boolean): string {
   const first = issues[0];
-  if (first.path.length) summary = formatPath(first.path) + ": " + summary;
-  if (issues.length > 1) summary += " (and " + (issues.length - 1) + " more)";
-  return summary;
+  const path = formatPath(first.path);
+  const rest = issues.length > 1 ? "and " + (issues.length - 1) + " more" : "";
+  if (!isInOwnWords) return (path || "value") + " " + first.message + (rest && " (" + rest + ")");
+  const place = path && "at " + path;
+  const aside = place && rest ? place + ", " + rest : place || rest;
+  return first.message + (aside && " (" + aside + ")");
 }
 
 function addIssueOfRoot(run: Run, found: any[], value: any): void {

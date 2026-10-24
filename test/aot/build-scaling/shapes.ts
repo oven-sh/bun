@@ -15,6 +15,8 @@ export type Shape = {
   entry: string;
   /** `bun build --target=bun` makes one file of the program first, and that file is what is compiled. */
   isBundledFirst?: true;
+  /** The build reports errors at every size, also at 0, and makes no executable. */
+  isRefused?: true;
   write(size: number): Record<string, string>;
 };
 
@@ -473,6 +475,16 @@ export const shapes: Shape[] = [
       "main.js": size
         ? `${lines(size, index => `function f${index}(x, d) { return d <= 0 ? x : f${(index + 1) % size}({ v: x.v + ${index} }, d - 1); }`)}console.log(f0({ v: 1 }, 50).v);\n`
         : "console.log(0);\n",
+    }),
+  },
+  {
+    name: "a declaration where an expression belongs, nested in itself",
+    counted: "levels",
+    size: 4000,
+    entry: "main.ts",
+    isRefused: true,
+    write: size => ({
+      "main.ts": `const list = [1, 2, 3];\nlist.forEach(x => ${"type T = A extends B ? ".repeat(size)}1${" : C".repeat(size + 1)});\nconsole.log(list.length);\n`,
     }),
   },
 ];

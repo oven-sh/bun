@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 
 use crate::ir::generated::{DataMember, DataNode};
 use crate::ir::{PropertyKeyId, TypeTable};
-use crate::lower::{FileLowering, layouts, member};
+use crate::lower::FileLowering;
 
 type LayoutMembers = SmallVec<[(PropertyKeyId, ObjectMemberKind); 16]>;
 
@@ -90,21 +90,33 @@ fn visit<'v>(
             return;
         }
     };
-    finished.push(create_leaf(file, constant));
+    finished.push(file.create_leaf(constant));
 }
 
-pub(super) fn create_leaf(file: &mut FileLowering<'_, '_, '_, '_>, constant: Constant) -> DataNode {
-    match constant {
-        Constant::Undefined => DataNode::Undefined,
-        Constant::Null => DataNode::Null,
-        Constant::Boolean(value) => DataNode::Boolean { value },
-        Constant::Number(value) => DataNode::Number { value },
-        Constant::String(text) => DataNode::String {
-            value: file.intern_atom(text),
-        },
-        Constant::BigInt(digits) => DataNode::BigInt {
-            digits: file.intern_atom(digits),
-        },
+impl FileLowering<'_, '_, '_, '_> {
+    pub(super) fn create_leaf(&mut self, constant: Constant) -> DataNode {
+        match constant {
+            Constant::Undefined => DataNode::Undefined,
+            Constant::Null => DataNode::Null,
+            Constant::Boolean(value) => DataNode::Boolean { value },
+            Constant::Number(value) => DataNode::Number { value },
+            Constant::String(text) => DataNode::String {
+                value: self.intern_atom(text),
+            },
+            Constant::BigInt(digits) => DataNode::BigInt {
+                digits: self.intern_atom(digits),
+            },
+        }
+    }
+
+    pub(super) fn create_deferred_node(&mut self) -> DataNode {
+        match self.inputs.deferred_data.get(self.file) {
+            Some(value) => create_node(self, value),
+            None => {
+                debug_assert!(false, "module binding has the manifest of every page");
+                DataNode::Undefined
+            }
+        }
     }
 }
 
@@ -127,23 +139,13 @@ fn finish_object(
     );
     let layout_members: LayoutMembers = entries
         .iter()
-        .map(|&(name, _)| (member::name_key(file, name), ObjectMemberKind::Field))
+        .map(|&(name, _)| (file.name_key(name), ObjectMemberKind::Field))
         .collect();
-    let layout = layouts::untyped_layout(file, &layout_members);
+    let layout = file.untyped_layout(&layout_members);
     let members = layout_members
         .into_iter()
         .zip(values)
         .map(|((key, _), value)| DataMember { key, value })
         .collect();
     DataNode::Object { layout, members }
-}
-
-pub(super) fn create_deferred_node(file: &mut FileLowering<'_, '_, '_, '_>) -> DataNode {
-    match file.inputs.deferred_data.get(file.file) {
-        Some(value) => create_node(file, value),
-        None => {
-            debug_assert!(false, "module binding has the manifest of every page");
-            DataNode::Undefined
-        }
-    }
 }

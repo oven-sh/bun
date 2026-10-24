@@ -97,6 +97,7 @@ struct Walk {
     orders: WrittenUnionOrders,
     pending: Vec<(FileId, TypeNodeId, MapperId)>,
     entered: FxHashSet<(Sym, MapperId)>,
+    entered_with_type_variables: FxHashSet<Sym>,
     max_declarations: usize,
 }
 
@@ -138,6 +139,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             orders: WrittenUnionOrders::default(),
             pending: vec![(file, node, MapperId::IDENTITY)],
             entered: FxHashSet::default(),
+            entered_with_type_variables: FxHashSet::default(),
             max_declarations,
         };
         while let Some((file, node, mapper)) = walk.pending.pop() {
@@ -238,6 +240,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 (parameter, self.c.instantiate(declared, mapper))
             })
             .collect();
+        // An argument that is still a type variable, such as `infer P` in an arm of a conditional type, stands for no type of a value. What the declaration writes without it is
+        // the same each time, and an alias that names itself with such an argument has a new one at every level.
+        let has_type_variables =
+            (pairs.iter()).any(|&(_, argument)| self.c.has_type_variables(argument));
+        if has_type_variables && !walk.entered_with_type_variables.insert(symbol) {
+            return;
+        }
         let inner = self.c.types().mapper_of(&pairs);
         if walk.entered.len() >= walk.max_declarations || !walk.entered.insert((symbol, inner)) {
             return;

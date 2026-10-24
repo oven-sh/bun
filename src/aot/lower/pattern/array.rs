@@ -1,10 +1,10 @@
 use super::PatternNode;
-use super::view::{self, NodeShape};
+use super::view::NodeShape;
 use crate::ir::generated::{BlockRole, IteratorCompletion, IteratorKind};
 use crate::ir::{Edge, TypeTable, ValueId};
 use crate::lower::FunctionLowering;
-use crate::lower::control::{self, CleanupLanding, CleanupPath};
-use crate::lower::iteration::{self, IteratorStep, PatternShape};
+use crate::lower::control::{CleanupLanding, CleanupPath};
+use crate::lower::iteration::{IteratorStep, PatternShape};
 
 #[derive(Copy, Clone)]
 struct PatternIteration {
@@ -17,92 +17,70 @@ pub(super) fn destructure_array(
     node: PatternNode,
     value: ValueId,
 ) {
-    let elements = view::pattern_elements(lowering.file, node);
+    let elements = lowering.file.pattern_elements(node);
     let has_rest = elements.last().is_some_and(|element| element.is_rest);
     let shape = PatternShape {
         element_count: (elements.len() - usize::from(has_rest)) as u32,
         has_rest,
     };
     let iteration = PatternIteration {
-        iterator: iteration::emit_iterator_open(lowering, value, IteratorKind::Sync, Some(shape)),
+        iterator: lowering.emit_iterator_open(value, IteratorKind::Sync, Some(shape)),
         position: lowering.position(),
     };
-    control::begin_cleanup(
-        lowering,
-        BlockRole::IterationCleanup,
-        Some(iteration.iterator),
-    );
+    lowering.begin_cleanup(BlockRole::IterationCleanup, Some(iteration.iterator));
     for (index, element) in elements.iter().enumerate() {
-        let prepared = super::prepare_target(lowering, element.target);
+        let prepared = lowering.prepare_target(element.target);
         let read = if element.is_rest {
-            collect_rest(lowering, iteration, index as u32)
+            lowering.collect_rest(iteration, index as u32)
         } else {
-            let step = emit_pattern_step(lowering, iteration, index as u32);
-            if view::node_shape(lowering.file, element.target) == NodeShape::Hole {
+            let step = lowering.emit_pattern_step(iteration, index as u32);
+            if lowering.file.node_shape(element.target) == NodeShape::Hole {
                 continue;
             }
             step.value
         };
         let read = super::apply_default(lowering, read, element.default, element.target);
-        super::finish_target(lowering, element.target, prepared, read);
+        lowering.finish_target(element.target, prepared, read);
     }
-    control::end_cleanup_per_exit(
-        lowering,
-        CleanupLanding::KeepsException,
-        &mut |lowering, path| emit_pattern_close(lowering, iteration, path),
-    );
+    lowering.end_cleanup_per_exit(CleanupLanding::KeepsException, &mut |lowering, path| {
+        lowering.emit_pattern_close(iteration, path)
+    });
 }
 
-// The state holds [[Done]]: a finished iterator steps to (true, undefined) and is not closed.
-fn emit_pattern_step(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    iteration: PatternIteration,
-    step_index: u32,
-) -> IteratorStep {
-    lowering.set_position(iteration.position);
-    iteration::emit_iterator_step(
-        lowering,
-        iteration.iterator,
-        IteratorKind::Sync,
-        Some(step_index),
-    )
-}
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    // The state holds [[Done]]: a finished iterator steps to (true, undefined) and is not closed.
+    fn emit_pattern_step(&mut self, iteration: PatternIteration, step_index: u32) -> IteratorStep {
+        self.set_position(iteration.position);
+        self.emit_iterator_step(iteration.iterator, IteratorKind::Sync, Some(step_index))
+    }
 
-fn collect_rest(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    iteration: PatternIteration,
-    step_index: u32,
-) -> ValueId {
-    lowering.set_position(iteration.position);
-    let array = lowering.builder.new_array(TypeTable::ANYTHING, &[], &[]);
-    let header = lowering.create_block();
-    let append = lowering.create_block();
-    let exit = lowering.create_block();
-    lowering.builder.declare_loop_header(header, &[]);
-    lowering.jump(header);
-    lowering.builder.switch_to(header);
-    lowering.builder.loop_hint();
-    let step = emit_pattern_step(lowering, iteration, step_index);
-    lowering
-        .builder
-        .branch(step.done, Edge::to(exit), Edge::to(append));
-    lowering.continue_in(append);
-    lowering.builder.append_element(array, step.value);
-    lowering.jump(header);
-    lowering.builder.seal(header);
-    lowering.continue_in(exit);
-    array
-}
+    fn collect_rest(&mut self, iteration: PatternIteration, step_index: u32) -> ValueId {
+        self.set_position(iteration.position);
+        let array = self.builder.new_array(TypeTable::ANYTHING, &[], &[]);
+        let header = self.create_block();
+        let append = self.create_block();
+        let exit = self.create_block();
+        self.builder.declare_loop_header(header, &[]);
+        self.jump(header);
+        self.builder.switch_to(header);
+        self.builder.loop_hint();
+        let step = self.emit_pattern_step(iteration, step_index);
+        self.builder
+            .branch(step.done, Edge::to(exit), Edge::to(append));
+        self.continue_in(append);
+        self.builder.append_element(array, step.value);
+        self.jump(header);
+        self.builder.seal(header);
+        self.continue_in(exit);
+        array
+    }
 
-fn emit_pattern_close(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    iteration: PatternIteration,
-    path: CleanupPath,
-) {
-    lowering.set_position(iteration.position);
-    let completion = match path {
-        CleanupPath::Normal => IteratorCompletion::Normal,
-        CleanupPath::Rethrow | CleanupPath::Throw { .. } => IteratorCompletion::Throw,
-    };
-    iteration::emit_iterator_close(lowering, iteration.iterator, IteratorKind::Sync, completion);
+    fn emit_pattern_close(&mut self, iteration: PatternIteration, path: CleanupPath) {
+        self.set_position(iteration.position);
+        let completion = match path {
+            CleanupPath::Normal => IteratorCompletion::Normal,
+            CleanupPath::Rethrow | CleanupPath::Throw { .. } => IteratorCompletion::Throw,
+        };
+        self.emit_iterator_close(iteration.iterator, IteratorKind::Sync, completion);
+    }
 }

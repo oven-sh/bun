@@ -3,12 +3,10 @@ use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, File, IdList, PropId, PropKey, Span};
 use rustc_hash::FxHashMap;
 
-use super::values::{create_leaf, create_node as create_value_node};
+use super::values::create_node as create_value_node;
 use crate::ir::generated::{DataMember, DataNode};
 use crate::ir::{PositionFlags, PropertyKeyId};
-use crate::lower::{
-    FileLowering, FunctionLowering, convert, expression, layouts, member, positions, types,
-};
+use crate::lower::{FileLowering, FunctionLowering, convert, layouts, positions};
 
 const MAX_LINEAR_SEARCH_MEMBERS: usize = 8;
 
@@ -74,57 +72,52 @@ pub(super) fn create_node(
     finished.pop().expect("the walk finishes the root")
 }
 
-fn convert_int32_member(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    literal: ExprId,
-    property: PropId,
-) {
-    let file = &mut *lowering.file;
-    let layout = layouts::literal_layout(file, literal);
-    let key = constant_key(file, property);
-    let Some(field) = layouts::find_field(file, layout, key) else {
-        return;
-    };
-    let position = layouts::field_position(file, layout, field);
-    let value = file.hir[property].value;
-    let FoldedValue::Constant(constant) = file.decisions().constant(file.hir, value) else {
-        return;
-    };
-    if !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
-        return;
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    fn convert_int32_member(&mut self, literal: ExprId, property: PropId) {
+        let file = &mut *self.file;
+        let layout = file.literal_layout(literal);
+        let key = constant_key(file, property);
+        let Some(field) = file.find_field(layout, key) else {
+            return;
+        };
+        let position = file.field_position(layout, field);
+        let value = file.hir[property].value;
+        let FoldedValue::Constant(constant) = file.decisions().constant(file.hir, value) else {
+            return;
+        };
+        if !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
+            return;
+        }
+        let constant = self.emit_constant(constant);
+        let subject = convert::Int32Subject::LiteralProperty;
+        self.describe_int32_flow(position, subject, Some(value));
+        self.convert_initializer(constant, position, Some(value));
     }
-    let constant = expression::emit_constant(lowering, constant);
-    let subject = convert::Int32Subject::LiteralProperty;
-    convert::describe_int32_flow(lowering, position, subject, Some(value));
-    convert::convert_initializer(lowering, constant, position, Some(value));
-}
 
-/// No operation stores a member of a data literal, so a member that enters an `int32` gets a request of its own.
-pub(super) fn convert_int32_members(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    root: ExprId,
-) {
-    let hir = lowering.file.hir;
-    let mut pending = vec![root];
-    while let Some(expression) = pending.pop() {
-        match find_composite(hir, hir.skip_type_assertions(expression)) {
-            Some(Composite::Array { items, .. }) => pending.extend(hir.ids(items)),
-            Some(Composite::Object {
-                literal,
-                properties,
-            }) => {
-                // The positions of the fields are made when they are first asked for, which may be here.
-                let layout = layouts::literal_layout(lowering.file, literal);
-                layouts::own_fields(lowering.file, layout);
-                let has_promise = positions::has_int32_promise(lowering.file);
-                for property in properties.iter() {
-                    if has_promise {
-                        convert_int32_member(lowering, literal, property);
+    /// No operation stores a member of a data literal, so a member that enters an `int32` gets a request of its own.
+    pub(super) fn convert_int32_members(&mut self, root: ExprId) {
+        let hir = self.file.hir;
+        let mut pending = vec![root];
+        while let Some(expression) = pending.pop() {
+            match find_composite(hir, hir.skip_type_assertions(expression)) {
+                Some(Composite::Array { items, .. }) => pending.extend(hir.ids(items)),
+                Some(Composite::Object {
+                    literal,
+                    properties,
+                }) => {
+                    // The positions of the fields are made when they are first asked for, which may be here.
+                    let layout = self.file.literal_layout(literal);
+                    layouts::own_fields(self.file, layout);
+                    let has_promise = positions::has_int32_promise(self.file);
+                    for property in properties.iter() {
+                        if has_promise {
+                            self.convert_int32_member(literal, property);
+                        }
+                        pending.push(hir[property].value);
                     }
-                    pending.push(hir[property].value);
                 }
+                None => {}
             }
-            None => {}
         }
     }
 }
@@ -138,7 +131,7 @@ fn visit(
     let hir = file.hir;
     let mut part = expression;
     loop {
-        if let Some(node) = create_folded_node(file, part) {
+        if let Some(node) = file.create_folded_node(part) {
             finished.push(node);
             return;
         }
@@ -160,30 +153,41 @@ fn visit(
     }
 }
 
-fn create_folded_node(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    expression: ExprId,
-) -> Option<DataNode> {
-    let decisions = file.decisions();
-    match decisions.decision(expression) {
-        Decision::Constant(constant) => return Some(create_leaf(file, constant)),
-        Decision::Data(value) => return Some(create_value_node(file, value)),
-        Decision::DeferredData | Decision::GlobalPath(_) => {
-            debug_assert!(
-                false,
-                "every part of a data literal has its value at build time"
-            );
-            return Some(DataNode::Undefined);
+impl FileLowering<'_, '_, '_, '_> {
+    fn create_folded_node(&mut self, expression: ExprId) -> Option<DataNode> {
+        let decisions = self.decisions();
+        match decisions.decision(expression) {
+            Decision::Constant(constant) => return Some(self.create_leaf(constant)),
+            Decision::Data(value) => return Some(create_value_node(self, value)),
+            Decision::DeferredData | Decision::GlobalPath(_) => {
+                debug_assert!(
+                    false,
+                    "every part of a data literal has its value at build time"
+                );
+                return Some(DataNode::Undefined);
+            }
+            Decision::Unknown => {}
         }
-        Decision::Unknown => {}
+        match decisions.constant(self.hir, expression) {
+            FoldedValue::Constant(constant) => Some(self.create_leaf(constant)),
+            FoldedValue::ConstantOutsideDeadZone(constant) => {
+                debug_assert!(false, "no part of a data literal checks a dead zone");
+                Some(self.create_leaf(constant))
+            }
+            FoldedValue::Unknown => None,
+        }
     }
-    match decisions.constant(file.hir, expression) {
-        FoldedValue::Constant(constant) => Some(create_leaf(file, constant)),
-        FoldedValue::ConstantOutsideDeadZone(constant) => {
-            debug_assert!(false, "no part of a data literal checks a dead zone");
-            Some(create_leaf(file, constant))
+
+    fn to_property_key(&mut self, constant: Constant) -> PropertyKeyId {
+        match constant {
+            Constant::String(text) => self.name_key(text),
+            Constant::Number(number) => intern_text_key(self, &number_to_string(number)),
+            Constant::BigInt(digits) => self.atom_key(digits),
+            Constant::Boolean(true) => intern_text_key(self, b"true"),
+            Constant::Boolean(false) => intern_text_key(self, b"false"),
+            Constant::Null => intern_text_key(self, b"null"),
+            Constant::Undefined => intern_text_key(self, b"undefined"),
         }
-        FoldedValue::Unknown => None,
     }
 }
 
@@ -207,7 +211,7 @@ fn finish_array(
     elements: Vec<DataNode>,
 ) -> DataNode {
     DataNode::Array {
-        contents: types::array_literal_contents(file, literal),
+        contents: file.array_literal_contents(literal),
         elements,
     }
 }
@@ -223,7 +227,7 @@ fn finish_object(
         values.len(),
         "each property has one finished node"
     );
-    let layout = layouts::literal_layout(file, literal);
+    let layout = file.literal_layout(literal);
     let searches_linearly = properties.len() <= MAX_LINEAR_SEARCH_MEMBERS;
     let mut members: Vec<DataMember> = Vec::with_capacity(values.len());
     let mut member_indexes: FxHashMap<PropertyKeyId, usize> = FxHashMap::default();
@@ -249,32 +253,20 @@ fn finish_object(
 
 fn constant_key(file: &mut FileLowering<'_, '_, '_, '_>, property: PropId) -> PropertyKeyId {
     let folded = match file.hir.runtime_property_key(property) {
-        PropKey::Name(name) => return member::name_key(file, name),
+        PropKey::Name(name) => return file.name_key(name),
         PropKey::Computed(key) => file.decisions().constant(file.hir, key),
         PropKey::None | PropKey::Private(_) => FoldedValue::Unknown,
     };
     match folded {
-        FoldedValue::Constant(constant) => to_property_key(file, constant),
+        FoldedValue::Constant(constant) => file.to_property_key(constant),
         FoldedValue::ConstantOutsideDeadZone(constant) => {
             debug_assert!(false, "no key of a data literal checks a dead zone");
-            to_property_key(file, constant)
+            file.to_property_key(constant)
         }
         FoldedValue::Unknown => {
             debug_assert!(false, "every key of a data literal is constant");
             intern_text_key(file, b"")
         }
-    }
-}
-
-fn to_property_key(file: &mut FileLowering<'_, '_, '_, '_>, constant: Constant) -> PropertyKeyId {
-    match constant {
-        Constant::String(text) => member::name_key(file, text),
-        Constant::Number(number) => intern_text_key(file, &number_to_string(number)),
-        Constant::BigInt(digits) => file.atom_key(digits),
-        Constant::Boolean(true) => intern_text_key(file, b"true"),
-        Constant::Boolean(false) => intern_text_key(file, b"false"),
-        Constant::Null => intern_text_key(file, b"null"),
-        Constant::Undefined => intern_text_key(file, b"undefined"),
     }
 }
 

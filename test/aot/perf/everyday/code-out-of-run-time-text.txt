@@ -54,3 +54,23 @@ const items: unknown[] = [JSON.parse('{"sku":"a","quantity":2,"unitCents":199}')
 function turn(i: number): number {
   return validate(items[i & 1]) ? 1 : 2;
 }
+//// a-result-asked-for-its-class-as-a-composed-handler-writes-it
+const nothing = String(Date.now()).slice(99);
+class CustomStatus {
+  constructor(public code: number, public response: unknown) {}
+}
+class Refusal extends Error {
+  constructor(public status: number) { super("refused"); }
+}
+const handle = new Function("CustomStatus", "Refusal", "return function (value) { if (value instanceof CustomStatus) return value.code; if (value instanceof Refusal) return value.status; return 200; }" + nothing)(CustomStatus, Refusal) as (value: unknown) => number;
+const values: unknown[] = [{ user: 1 }, new CustomStatus(201, "made"), { id: 2 }, new Refusal(401)];
+function turn(i: number): number {
+  return handle(values[i & 3]);
+}
+//// a-path-cut-out-of-a-url-as-a-composed-handler-writes-it
+const nothing = String(Date.now()).slice(99);
+const pathOf = new Function("u", "const s = u.indexOf('/', 11), qi = u.indexOf('?', s + 1); return u.substring(s, qi === -1 ? undefined : qi)" + nothing) as (u: string) => string;
+const urls: string[] = ["http://127.0.0.1:3000/api/projects/7/tasks?status=open" + nothing, "http://127.0.0.1:3000/health" + nothing];
+function turn(i: number): number {
+  return pathOf(urls[i & 1]!).length;
+}

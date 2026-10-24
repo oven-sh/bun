@@ -1,12 +1,12 @@
 a getter that matches, valid: ggh|gg|h|-ggh-|-|-|h | valid
-a getter that matches, count: ggh|gg|h|-ggh-|-|-|h | count: expected number, received string
-a getter that matches, first: ggh|gg|h|-ggh-|-|-|h | first: must match pattern /^(a+)(b*)$/
-a getter that matches, mail: ggh|gg|h|-ggh-|-|-|h | mail: expected email
-a getter that matches, tag: ggh|gg|h|-ggh-|-|-|h | tag: expected `id-${bigint}`
-a getter that matches, code: ggh|gg|h|-ggh-|-|-|h | code: must match pattern /^(1)(2)$/
-a getter that matches, either: ggh|gg|h|-ggh-|-|-|h | either: expected { deep } | string | string, received string
+a getter that matches, count: ggh|gg|h|-ggh-|-|-|h | count must be number, received string
+a getter that matches, first: ggh|gg|h|-ggh-|-|-|h | first must match pattern /^(a+)(b*)$/
+a getter that matches, mail: ggh|gg|h|-ggh-|-|-|h | mail must be email
+a getter that matches, tag: ggh|gg|h|-ggh-|-|-|h | tag must be `id-${bigint}`
+a getter that matches, code: ggh|gg|h|-ggh-|-|-|h | code must match pattern /^(1)(2)$/
+a getter that matches, either: ggh|gg|h|-ggh-|-|-|h | either must be { deep } | string | string, received string
 a getter that matches, deep: ggh|gg|h|-ggh-|-|-|h | valid
-a getter that matches, deep refused: ggh|gg|h|-ggh-|-|-|h | either.deep: expected uuid
-a getter that matches, last: ggh|gg|h|-ggh-|-|-|h | either: expected { deep } | string | string, received number
+a getter that matches, deep refused: ggh|gg|h|-ggh-|-|-|h | either.deep must be uuid
+a getter that matches, last: ggh|gg|h|-ggh-|-|-|h | either must be { deep } | string | string, received number
 stored by the program xx
 970 looks, 0 wrong

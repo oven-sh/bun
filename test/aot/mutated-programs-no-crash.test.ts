@@ -6,11 +6,12 @@
 //   bun test test/aot/mutated-programs-no-crash                        300 mutants that are always the same, and 300 from a seed that no run has used
 //   AOT_FUZZ_MUTANTS=50000 AOT_FUZZ_SEED=7 bun test test/aot/mutated-programs-no-crash
 import { expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
 import { freshSeed } from "./fresh-seed";
+import { withPackedPrograms } from "./generate";
 import { unsupported } from "./run-programs";
 
 const mutantCount = Number(process.env.AOT_FUZZ_MUTANTS) || 300;
@@ -107,7 +108,8 @@ for (const seed of seeds)
     `bun check --aot survives ${mutantCount} mutated programs, AOT_FUZZ_SEED=${seed}`,
     async () => {
       using root = tempDir("aot-mutated-programs", {});
-      const programs = singleFilePrograms(join(import.meta.dir, "programs"));
+      const kept = join(import.meta.dir, "programs");
+      const { paths: programs, textOf } = withPackedPrograms(kept, singleFilePrograms(kept), /(?<!\.d)\.ts$/);
       const random = mulberry32(seed);
       const crashes: { from: string; outcome: string; source: string }[] = [];
       let next = 0;
@@ -117,7 +119,7 @@ for (const seed of seeds)
         const entryPoint = join(folder, "main.ts");
         while (next++ < mutantCount) {
           const from = programs[Math.floor(random() * programs.length)];
-          let source = mutate(readFileSync(from, "utf8"), random);
+          let source = mutate(textOf(from), random);
           if (random() < 0.3) source = mutate(source, random);
           writeFileSync(entryPoint, source);
           await using spawned = Bun.spawn({

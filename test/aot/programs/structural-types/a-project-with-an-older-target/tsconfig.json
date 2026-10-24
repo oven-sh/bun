@@ -1,8 +1,0 @@
-{
-  "extends": "../../tsconfig.json",
-  "compilerOptions": {
-    "strict": true,
-    "target": "es2020",
-    "lib": ["esnext"]
-  }
-}

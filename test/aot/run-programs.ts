@@ -30,6 +30,8 @@
 //   // STATISTIC: <name> (= | >= | <=) <n>  a line of the entry point: what the build counted under that `StatisticId`, as the hidden `--explain=statistics` prints it.
 //                                         It shows that an optimization ran on a host built-in, which `testaot` and so shell/expectations.py do not have.
 //                                         Checked on the build that keeps the types, and not where a variant adds build flags
+//   programs/<topic>/<words>.programs     many programs in one file, with the text that they share written once: `packedFiles` in generate.ts. A test file writes those that it runs
+//                                         into a temporary folder, under the names they have there; `bun test/aot/generate.ts <topic> <where>` writes them all
 //   programs/**/tsconfig.json             the compiler options for the programs below it
 //   programs/jsc-shell-functions.ts       noInline(), gc() and similar functions, for the programs that import it
 //   programs/start-the-entry-point-named.ts  the first entry point of an executable that holds many programs (programs-as-entry-points.ts)
@@ -83,7 +85,7 @@
 //   untyped-code          code without type information
 //   untyped-stress        the same, ported from stress tests that were written for the `jsc` shell
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { availableParallelism, tmpdir } from "os";
 import { join, relative, sep } from "path";
@@ -183,6 +185,11 @@ function findWritten(topic: string, into: string[]) {
       notYetWritten.clear();
       groups.clear();
     });
+  }
+  // The compiler options of the folder hold for what is written as for what is kept.
+  if (existsSync(join(root, topic, "tsconfig.json"))) {
+    mkdirSync(join(writtenRoot, topic), { recursive: true });
+    copyFileSync(join(root, topic, "tsconfig.json"), join(writtenRoot, topic, "tsconfig.json"));
   }
   if (!programsOfScript.has(topic)) programsOfScript.set(topic, generator.programs());
   for (const program of programsOfScript.get(topic)!) {

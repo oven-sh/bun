@@ -2,25 +2,13 @@
 """publish.py pack <out: a new folder> [<name>@<version> ..]
        THE TARBALLS, byte for byte what `npm publish <file>` would send. Nothing is sent, nothing is installed, no network, no tool but Python 3.
        Reads this folder alone. All full types, or the named ones. Run twice, it writes the same bytes.
-   publish.py gates <name> <node_modules that holds the package as installed> <out: a new folder>
-       Every static gate (check.py) and the packer (pack.py) on the installed version, and then: what they give is what this folder holds. Needs SEMA and BUN (see README.md).
-A tarball holds: package.json, full-types.json, LICENSE, NOTICE, README.md and lay/. Never src/.
+A tarball holds: package.json, full-types.json, LICENSE, NOTICE, README.md and lay/.
 Before a tarball is written: the manifest, package.json and the folder's name agree; lay/ holds exactly the manifest's paths; every file has the sha256 that lay.sums pins; no file names a path or a person of the machines it was made on.
 A version that keeps no lay/ (family.json: it differs from another version in its version string alone) is made from that version's lay/ here, and must come out with the sums its own lay.sums pins."""
-import gzip, hashlib, io, json, os, re, subprocess, sys, tarfile
+import gzip, hashlib, io, json, os, re, sys, tarfile
 H = os.path.dirname(os.path.abspath(__file__))
-if len(sys.argv) < 3 or sys.argv[1] not in ('pack', 'gates'): sys.exit(__doc__)
+if len(sys.argv) < 3 or sys.argv[1] != 'pack': sys.exit(__doc__)
 sha = lambda b: hashlib.sha256(b).hexdigest(); read = lambda p: open(p, 'rb').read()
-if sys.argv[1] == 'gates':
-    name, N, OUT = sys.argv[2], os.path.abspath(sys.argv[3]), os.path.abspath(sys.argv[4]); v = json.load(open(N + '/' + name + '/package.json'))['version']; D = H + '/' + name + '/' + v
-    if not os.path.exists(D + '/full-types.json'): sys.exit('publish.py: no %s/%s in this folder' % (name, v))
-    r = subprocess.run([sys.executable, H + '/check.py', N, OUT + '/check', '--elements=plain', '--no-options'], capture_output=True, text=True)
-    if r.returncode or ('%s@%s' % (name, v)).ljust(42) + ' same' not in r.stdout: sys.exit('publish.py: the gates fail:\n' + '\n'.join(l for l in r.stdout.split('\n') if l.startswith('FAIL') or ' same ' in l))
-    r = subprocess.run([sys.executable, '-I', H + '/pack.py', N, OUT + '/check/sound', OUT + '/pack', name], capture_output=True, text=True)
-    if r.returncode: sys.exit('publish.py: pack.py: ' + r.stderr[-400:])
-    for f in ('full-types.json', 'package.json', 'LICENSE', 'NOTICE', 'lay.sums'):
-        if read(OUT + '/pack/' + name + '/' + v + '/' + f) != read(D + '/' + f): sys.exit('publish.py: %s is not this folder\'s' % f)
-    print('publish.py: %s@%s: every gate passes, and what they give is what this folder holds' % (name, v)); sys.exit(0)
 OUT = os.path.abspath(sys.argv[2]); only = set(sys.argv[3:])
 if os.path.exists(OUT): sys.exit('publish.py: %s stands already: name another folder' % OUT)
 PRIVATE = re.compile(rb"/Users/|/home/|/private/|/tmp/|[A-Z]:\\Users")
@@ -43,7 +31,7 @@ Licence: %(license)s, the package's own. See `LICENSE` and `NOTICE`.
 '''
 made = []
 for d, ds, fs in sorted(os.walk(H)):
-    ds[:] = sorted(x for x in ds if x not in ('lay', 'src', 'tools', 'trees', 'node_modules'))
+    ds[:] = sorted(x for x in ds if x not in ('lay', 'trees', 'node_modules'))
     if 'full-types.json' not in fs: continue
     S = json.loads(read(d + '/full-types.json')); P = json.loads(read(d + '/package.json')); name, v = S['name'], S['version']; who = '%s@%s' % (name, v)
     if only and who not in only: continue

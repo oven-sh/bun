@@ -19,27 +19,15 @@ use super::{CheckerTypeId, FileLowering};
 use crate::ir::generated::{FieldFlags, LimitId};
 use crate::ir::{DeclaredType, FunctionId, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
 
-pub(crate) use self::classes::constructor_function_layout;
-pub(in crate::lower) use self::classes::{class_binding, intern_class_name, private_key};
-pub(in crate::lower) use self::containers::container_layout;
-pub(crate) use self::containers::{
-    begins_with_exports_object, module_exports_layout, module_type_layout,
-};
+pub(in crate::lower) use self::classes::private_key;
 #[cfg(test)]
 pub(crate) use self::defined_object_types::late_answers;
 pub use self::defined_object_types::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 use self::defined_object_types::{
     HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE, NamesOfObjectType,
 };
-pub(in crate::lower) use self::dictionaries::is_dictionary_type;
-pub(in crate::lower) use self::object_types::literal_layout;
 use self::object_types::{FieldName, ListedFields};
-pub(crate) use self::object_types::{object_type_layout, untyped_layout};
 pub(in crate::lower) use self::own_fields::OwnFields;
-pub(crate) use self::reached::collect_reached_layouts;
-pub(in crate::lower) use self::type_parameters::{
-    record_call_type_arguments, type_parameter_layout,
-};
 
 #[derive(Default)]
 pub(crate) struct LayoutState {
@@ -146,174 +134,149 @@ impl LayoutState {
     }
 }
 
-// Whatever has the one layout passes for the other from here on, and is seen, and stored into, through its types.
-pub(crate) fn add_conversion(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    target: LayoutId,
-) {
-    file.layouts.conversion_targets.insert(target);
-    file.fragment.add_supertype(layout, target);
-}
-
-// An object that nobody has followed here, or that the code stores into, is seen through the types of the layout.
-pub(crate) fn note_view(file: &mut FileLowering<'_, '_, '_, '_>, layout: LayoutId) {
-    file.layouts.conversion_targets.insert(layout);
-}
-
-pub(crate) fn class_layout(file: &mut FileLowering<'_, '_, '_, '_>, class: ClassRef) -> LayoutId {
-    file.fragment.declare_layout(LayoutKey::Class(class))
-}
-
-pub(crate) fn class_type_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassRef,
-    ty: CheckerTypeId,
-) -> LayoutId {
-    file.layouts.class_types.push((class, ty));
-    class_layout(file, class)
-}
-
-pub(crate) fn find_field(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    key: PropertyKeyId,
-) -> Option<u32> {
-    match find_fields_without_types(file, layout) {
-        Some(listed) => listed.find(file, key),
-        None => own_fields(file, layout).find(key),
+impl FileLowering<'_, '_, '_, '_> {
+    // Whatever has the one layout passes for the other from here on, and is seen, and stored into, through its types.
+    pub(crate) fn add_conversion(&mut self, layout: LayoutId, target: LayoutId) {
+        self.layouts.conversion_targets.insert(target);
+        self.fragment.add_supertype(layout, target);
     }
-}
 
-fn find_fields_without_types(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-) -> Option<Rc<ListedFields>> {
-    if file.layouts.stored_fields(layout).is_some() {
-        return None;
+    // An object that nobody has followed here, or that the code stores into, is seen through the types of the layout.
+    pub(crate) fn note_view(&mut self, layout: LayoutId) {
+        self.layouts.conversion_targets.insert(layout);
     }
-    match file.fragment.layout_key(layout) {
-        LayoutKey::ObjectType { .. } => Some(object_types::list_fields(file, layout)),
-        _ => None,
+
+    pub(crate) fn class_layout(&mut self, class: ClassRef) -> LayoutId {
+        self.fragment.declare_layout(LayoutKey::Class(class))
     }
-}
 
-pub(crate) fn is_method_field(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    field: u32,
-) -> bool {
-    let flags = match find_fields_without_types(file, layout) {
-        Some(listed) => listed.flags(field),
-        None => own_fields(file, layout).get(field).flags,
-    };
-    flags.contains(FieldFlags::IS_METHOD)
-}
-
-pub(crate) fn field_position(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    field: u32,
-) -> DeclaredType {
-    match find_fields_without_types(file, layout) {
-        Some(listed) => object_types::listed_field_position(file, layout, &listed, field),
-        None => own_fields(file, layout).get(field).declared,
+    pub(crate) fn class_type_layout(&mut self, class: ClassRef, ty: CheckerTypeId) -> LayoutId {
+        self.layouts.class_types.push((class, ty));
+        self.class_layout(class)
     }
-}
 
-// Whoever builds a value of the type makes objects with every layout that the type leads to, and puts their names into them.
-pub(crate) fn note_what_is_built(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: TypeId,
-    limit: LimitId,
-) {
-    let Some(layouts) = collect_reached_layouts(file, ty, limit) else {
-        return;
-    };
-    for layout in layouts {
-        file.fragment.note_allocation(layout);
-        let fields = own_fields(file, layout);
-        for key in fields.as_slice().iter().filter_map(|field| field.key) {
-            file.fragment.note_write(key);
+    pub(crate) fn find_field(&mut self, layout: LayoutId, key: PropertyKeyId) -> Option<u32> {
+        match self.find_fields_without_types(layout) {
+            Some(listed) => listed.find(self, key),
+            None => own_fields(self, layout).find(key),
         }
     }
-}
 
-pub(crate) fn define_remaining_layouts(file: &mut FileLowering<'_, '_, '_, '_>) {
-    type_parameters::record_class_type_arguments_of_file(file);
-    classes::define_remaining_class_layouts(file);
-    let mentioned_count = file.fragment.end_layouts_of_code();
-    for layout in (0..mentioned_count).map(LayoutId::new) {
-        match file.fragment.layout_key(layout) {
-            LayoutKey::Container(symbol)
-                if symbol.file == file.file && !file.fragment.is_layout_defined(layout) =>
-            {
-                containers::define_container_layout(file, layout, symbol);
-            }
-            LayoutKey::ObjectType { .. }
-            | LayoutKey::Class(_)
-            | LayoutKey::ConstructorFunction(_)
-            | LayoutKey::Library(_)
-            | LayoutKey::UntypedLiteral { .. }
-            | LayoutKey::Container(_)
-            | LayoutKey::TypeParameter(_)
-            | LayoutKey::Environment { .. } => {}
+    fn find_fields_without_types(&mut self, layout: LayoutId) -> Option<Rc<ListedFields>> {
+        if self.layouts.stored_fields(layout).is_some() {
+            return None;
+        }
+        match self.fragment.layout_key(layout) {
+            LayoutKey::ObjectType { .. } => Some(self.list_fields(layout)),
+            _ => None,
         }
     }
-    for level in 0..=LAST_DEFINITION_LEVEL {
-        if !define_object_types(file, level) {
-            break;
+
+    pub(crate) fn is_method_field(&mut self, layout: LayoutId, field: u32) -> bool {
+        let flags = match self.find_fields_without_types(layout) {
+            Some(listed) => listed.flags(field),
+            None => own_fields(self, layout).get(field).flags,
+        };
+        flags.contains(FieldFlags::IS_METHOD)
+    }
+
+    pub(crate) fn field_position(&mut self, layout: LayoutId, field: u32) -> DeclaredType {
+        match self.find_fields_without_types(layout) {
+            Some(listed) => self.listed_field_position(layout, &listed, field),
+            None => own_fields(self, layout).get(field).declared,
         }
     }
-    let described_names = core::mem::take(&mut file.layouts.described_names);
-    file.inputs
-        .defined_object_types
-        .hold_names_of_file(file.file, described_names);
-}
 
-// The layouts through whose types the file may see an object that somebody makes: those with which it makes one, those that it converts a value to, and what those extend.
-fn find_layouts_of_objects(file: &FileLowering<'_, '_, '_, '_>) -> FxHashSet<LayoutId> {
-    let mut found = file.layouts.conversion_targets.clone();
-    let layouts = (0..file.fragment.layout_keys().len()).map(LayoutId::new);
-    found.extend(layouts.filter(|&layout| file.fragment.is_allocated(layout)));
-    loop {
-        let count = found.len();
-        for &(layout, supertype) in file.fragment.supertype_edges() {
-            if found.contains(&layout) {
-                found.insert(supertype);
+    // Whoever builds a value of the type makes objects with every layout that the type leads to, and puts their names into them.
+    pub(crate) fn note_what_is_built(&mut self, ty: TypeId, limit: LimitId) {
+        let Some(layouts) = self.collect_reached_layouts(ty, limit) else {
+            return;
+        };
+        for layout in layouts {
+            self.fragment.note_allocation(layout);
+            let fields = own_fields(self, layout);
+            for key in fields.as_slice().iter().filter_map(|field| field.key) {
+                self.fragment.note_write(key);
             }
         }
-        if found.len() == count {
-            return found;
-        }
     }
-}
 
-// The types that the file has met and not settled are of this level, whichever layout they have.
-fn define_object_types(file: &mut FileLowering<'_, '_, '_, '_>, level: u8) -> bool {
-    let mut types_of_level = Vec::new();
-    for layout in (0..file.fragment.layout_keys().len()).map(LayoutId::new) {
-        if !matches!(
-            file.fragment.layout_key(layout),
-            LayoutKey::ObjectType { .. }
-        ) {
-            continue;
+    pub(crate) fn define_remaining_layouts(&mut self) {
+        self.record_class_type_arguments_of_file();
+        classes::define_remaining_class_layouts(self);
+        let mentioned_count = self.fragment.end_layouts_of_code();
+        for layout in (0..mentioned_count).map(LayoutId::new) {
+            match self.fragment.layout_key(layout) {
+                LayoutKey::Container(symbol)
+                    if symbol.file == self.file && !self.fragment.is_layout_defined(layout) =>
+                {
+                    self.define_container_layout(layout, symbol);
+                }
+                LayoutKey::ObjectType { .. }
+                | LayoutKey::Class(_)
+                | LayoutKey::ConstructorFunction(_)
+                | LayoutKey::Library(_)
+                | LayoutKey::UntypedLiteral { .. }
+                | LayoutKey::Container(_)
+                | LayoutKey::TypeParameter(_)
+                | LayoutKey::Environment { .. } => {}
+            }
         }
-        let types = file.layouts.take_unsettled_types(layout);
-        if !types.is_empty() {
-            types_of_level.push((layout, types));
+        for level in 0..=LAST_DEFINITION_LEVEL {
+            if !self.define_object_types(level) {
+                break;
+            }
+        }
+        let described_names = core::mem::take(&mut self.layouts.described_names);
+        self.inputs
+            .defined_object_types
+            .hold_names_of_file(self.file, described_names);
+    }
+
+    // The layouts through whose types the file may see an object that somebody makes: those with which it makes one, those that it converts a value to, and what those extend.
+    fn find_layouts_of_objects(&self) -> FxHashSet<LayoutId> {
+        let mut found = self.layouts.conversion_targets.clone();
+        let layouts = (0..self.fragment.layout_keys().len()).map(LayoutId::new);
+        found.extend(layouts.filter(|&layout| self.fragment.is_allocated(layout)));
+        loop {
+            let count = found.len();
+            for &(layout, supertype) in self.fragment.supertype_edges() {
+                if found.contains(&layout) {
+                    found.insert(supertype);
+                }
+            }
+            if found.len() == count {
+                return found;
+            }
         }
     }
-    // Which types a file meets behind its code hangs on what it leaves to earlier files, which differs from one build to the next.
-    let layouts_of_objects = match level {
-        0 => find_layouts_of_objects(file),
-        _ => FxHashSet::default(),
-    };
-    for (layout, types) in &types_of_level {
-        let says_types = layouts_of_objects.contains(layout);
-        object_types::define_object_type_layout(file, *layout, types, level, says_types);
+
+    // The types that the file has met and not settled are of this level, whichever layout they have.
+    fn define_object_types(&mut self, level: u8) -> bool {
+        let mut types_of_level = Vec::new();
+        for layout in (0..self.fragment.layout_keys().len()).map(LayoutId::new) {
+            if !matches!(
+                self.fragment.layout_key(layout),
+                LayoutKey::ObjectType { .. }
+            ) {
+                continue;
+            }
+            let types = self.layouts.take_unsettled_types(layout);
+            if !types.is_empty() {
+                types_of_level.push((layout, types));
+            }
+        }
+        // Which types a self meets behind its code hangs on what it leaves to earlier files, which differs from one build to the next.
+        let layouts_of_objects = match level {
+            0 => self.find_layouts_of_objects(),
+            _ => FxHashSet::default(),
+        };
+        for (layout, types) in &types_of_level {
+            let says_types = layouts_of_objects.contains(layout);
+            self.define_object_type_layout(*layout, types, level, says_types);
+        }
+        !types_of_level.is_empty()
     }
-    !types_of_level.is_empty()
 }
 
 pub(in crate::lower) fn own_fields(
@@ -328,8 +291,8 @@ pub(in crate::lower) fn own_fields(
         LayoutKey::ConstructorFunction(function) => {
             classes::compute_constructor_function_fields(file, function)
         }
-        LayoutKey::ObjectType { .. } => object_types::compute_object_type_fields(file, layout),
-        LayoutKey::Container(symbol) => containers::compute_container_fields(file, symbol),
+        LayoutKey::ObjectType { .. } => file.compute_object_type_fields(layout),
+        LayoutKey::Container(symbol) => file.compute_container_fields(symbol),
         // The checker of this project has not read the text that stores them.
         _ => OwnFields::default(),
     };

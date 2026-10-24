@@ -264,7 +264,10 @@ mod tests {
             .filter(|element| element.can_be_filled)
             .map(|element| element.range.len() - cut_bytes(element))
             .sum();
-        assert_eq!(plan.removed_bytes(), cut_input_bytes + uncut_fillable_bytes);
+        assert_eq!(
+            plan.cut_bytes() + plan.filled_bytes(),
+            cut_input_bytes + uncut_fillable_bytes
+        );
         assert_eq!(plan.cut_bytes(), cut_input_bytes);
         let is_in_fillable_element = |fill: &Fill| {
             removable.iter().any(|element| {
@@ -513,7 +516,7 @@ mod tests {
         let plan = choose(&removable, LIMITS);
         assert_eq!(plan.cuts, [range(4096, 28672)]);
         assert_eq!(plan.fills, [fill(28672, 30000, true)]);
-        assert_eq!(plan.removed_bytes(), 30000 - 4096);
+        assert_eq!(plan.cut_bytes() + plan.filled_bytes(), 30000 - 4096);
     }
 
     #[test]
@@ -522,7 +525,7 @@ mod tests {
         let plan = choose(&removable, LIMITS);
         assert!(plan.cuts.is_empty());
         assert_eq!(plan.fills, [fill(5000, 8000, false)]);
-        assert_eq!(plan.removed_bytes(), 3000);
+        assert_eq!(plan.cut_bytes() + plan.filled_bytes(), 3000);
     }
 
     #[test]

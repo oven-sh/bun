@@ -8,70 +8,129 @@ use crate::ir::generated::TypeSiteKind;
 use crate::ir::{DeclaredType, FunctionKey, Type, TypeTable};
 use crate::lower::{FileLowering, class};
 
-pub(super) fn compute_variable_position(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    symbol: Sym,
-) -> DeclaredType {
-    if is_function_binding(file, symbol) {
-        let ty = match find_bound_function(file, symbol) {
-            Some(key) => {
-                let function = file.reference_function(key);
-                file.fragment.types.intern(Type::function(function))
-            }
-            None => TypeTable::FUNCTION,
-        };
-        return DeclaredType::from_compiler(ty);
-    }
-    let files = file.queries.files();
-    let declarations = files.decls_of(symbol);
-    let mut values = declarations
-        .iter()
-        .filter(|&&(_, it)| !declares_type_alone(it));
-    let Some(&(declaring_file, declaration)) = values.next() else {
-        return DeclaredType::untyped();
-    };
-    let (kind, pattern) = match declaration {
-        Decl::Var(pattern) | Decl::Require(pattern) => (TypeSiteKind::Variable, pattern),
-        Decl::Param(pattern) => (TypeSiteKind::Parameter, pattern),
-        _ => return DeclaredType::untyped(),
-    };
-    let written = file.queries.written_variable_type(symbol);
-    let (checked, origin) = match declaring_file == file.file {
-        true => {
-            let origin = SiteOrigin {
-                kind,
-                position: file.hir[pattern].pos,
+impl FileLowering<'_, '_, '_, '_> {
+    pub(super) fn compute_variable_position(&mut self, symbol: Sym) -> DeclaredType {
+        if self.is_function_binding(symbol) {
+            let ty = match self.find_bound_function(symbol) {
+                Some(key) => {
+                    let function = self.reference_function(key);
+                    self.fragment.types.intern(Type::function(function))
+                }
+                None => TypeTable::FUNCTION,
             };
-            (file.queries.binding_type(pattern), Some(origin))
+            return DeclaredType::from_compiler(ty);
         }
-        false => (Err(GaveUp::Unresolved), None),
-    };
-    let types = PositionTypes { written, checked };
-    let position = super::build_position_of_types(file, types, origin);
-    match starts_undefined(file, symbol, declaring_file, pattern) {
-        true => super::add_undefined(file, position),
-        false => position,
+        let files = self.queries.files();
+        let declarations = files.decls_of(symbol);
+        let mut values = declarations
+            .iter()
+            .filter(|&&(_, it)| !declares_type_alone(it));
+        let Some(&(declaring_file, declaration)) = values.next() else {
+            return DeclaredType::untyped();
+        };
+        let (kind, pattern) = match declaration {
+            Decl::Var(pattern) | Decl::Require(pattern) => (TypeSiteKind::Variable, pattern),
+            Decl::Param(pattern) => (TypeSiteKind::Parameter, pattern),
+            _ => return DeclaredType::untyped(),
+        };
+        let written = self.queries.written_variable_type(symbol);
+        let (checked, origin) = match declaring_file == self.file {
+            true => {
+                let origin = SiteOrigin {
+                    kind,
+                    position: self.hir[pattern].pos,
+                };
+                (self.queries.binding_type(pattern), Some(origin))
+            }
+            false => (Err(GaveUp::Unresolved), None),
+        };
+        let types = PositionTypes { written, checked };
+        let position = self.build_position_of_types(types, origin);
+        match self.starts_undefined(symbol, declaring_file, pattern) {
+            true => self.add_undefined(position),
+            false => position,
+        }
     }
-}
 
-// `var v = 1`, `let v;` and the `v` of `(v?: number) => {}` hold `undefined` before anything is stored.
-fn starts_undefined(
-    file: &FileLowering<'_, '_, '_, '_>,
-    symbol: Sym,
-    declaring_file: FileId,
-    pattern: PatId,
-) -> bool {
-    let files = file.queries.files();
-    if files.bound(symbol.file).initial_state(symbol.id) == InitialState::Undefined {
-        return true;
-    }
-    let (hir, bound) = (files.hir(declaring_file), files.bound(declaring_file));
-    match bound.pat_parent[pattern.idx()] {
-        PatParent::Var(declaration) => {
-            hir[declaration].init.is_none() && !is_loop_head(hir, bound, declaration)
+    // `var v = 1`, `let v;` and the `v` of `(v?: number) => {}` hold `undefined` before anything is stored.
+    fn starts_undefined(&self, symbol: Sym, declaring_file: FileId, pattern: PatId) -> bool {
+        let files = self.queries.files();
+        if files.bound(symbol.file).initial_state(symbol.id) == InitialState::Undefined {
+            return true;
         }
-        PatParent::Param(parameter) => hir[parameter].flags.contains(Flags::OPTIONAL),
-        PatParent::None | PatParent::Prop(..) | PatParent::Elem(..) => false,
+        let (hir, bound) = (files.hir(declaring_file), files.bound(declaring_file));
+        match bound.pat_parent[pattern.idx()] {
+            PatParent::Var(declaration) => {
+                hir[declaration].init.is_none() && !is_loop_head(hir, bound, declaration)
+            }
+            PatParent::Param(parameter) => hir[parameter].flags.contains(Flags::OPTIONAL),
+            PatParent::None | PatParent::Prop(..) | PatParent::Elem(..) => false,
+        }
+    }
+
+    fn is_lowered_file(&self, other: FileId) -> bool {
+        self.inputs.files[other.idx()].is_some()
+    }
+
+    fn find_defined_function(&self, function: FunctionRef) -> Option<FunctionKey> {
+        let compiled = self.queries.files().compiled(function.file)?;
+        let is_defined = self.is_lowered_file(function.file)
+            && !compiled
+                .analysis
+                .decisions
+                .is_dead_function(function.function);
+        is_defined.then_some(FunctionKey::Source(function))
+    }
+
+    fn is_dead_class(&self, class: ClassRef) -> bool {
+        let files = self.queries.files();
+        let Some(compiled) = files.compiled(class.file) else {
+            return false;
+        };
+        let decisions = &compiled.analysis.decisions;
+        match files.bound(class.file).class_owner[class.class.idx()] {
+            ClassOwner::Expr(expression) => decisions.is_dead_expr(expression),
+            ClassOwner::Stmt(statement) => decisions.is_dead_stmt(statement),
+        }
+    }
+
+    fn find_bound_function(&self, symbol: Sym) -> Option<FunctionKey> {
+        let key = match self.queries.class_of_binding(symbol) {
+            Some(class) => {
+                let left_out = self.inputs.library_functions.left_out_declarations();
+                match left_out.is_class_left_out(class.file, class.class) {
+                    true => None,
+                    false => find_class_constructor(self, class),
+                }
+            }
+            None => self.find_defined_function(find_only_definition(self, symbol)?),
+        };
+        key.filter(|key| self.inputs.modules.load_failure(key.home_file()).is_none())
+    }
+
+    fn is_function_binding(&self, symbol: Sym) -> bool {
+        if self.queries.class_of_binding(symbol).is_some() {
+            return true;
+        }
+        let files = self.queries.files();
+        let mut has_body = false;
+        for &(declaring_file, declaration) in files.decls_of(symbol).iter() {
+            let function = match declaration {
+                Decl::Fn(function) => function,
+                _ if declares_type_alone(declaration) => continue,
+                _ => return false,
+            };
+            let bound = files.bound(declaring_file);
+            if !bound.is_stable_binding(bound.declared_symbol(declaration)) {
+                return false;
+            }
+            has_body |= match files.hir(declaring_file)[function].body {
+                FnBody::None => false,
+                FnBody::Block(_) | FnBody::Expr(_) => true,
+            };
+        }
+        // The variable that a function in a block also declares in sloppy code is `undefined` until the block runs.
+        has_body && files.bound(symbol.file).initial_state(symbol.id) == InitialState::Initialized
     }
 }
 
@@ -85,23 +144,6 @@ fn is_loop_head(hir: &File<'_>, bound: &Bound<'_>, declaration: VarDeclId) -> bo
         hir[parent].kind,
         StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == statement
     )
-}
-
-fn is_lowered_file(file: &FileLowering<'_, '_, '_, '_>, other: FileId) -> bool {
-    file.inputs.files[other.idx()].is_some()
-}
-
-fn find_defined_function(
-    file: &FileLowering<'_, '_, '_, '_>,
-    function: FunctionRef,
-) -> Option<FunctionKey> {
-    let compiled = file.queries.files().compiled(function.file)?;
-    let is_defined = is_lowered_file(file, function.file)
-        && !compiled
-            .analysis
-            .decisions
-            .is_dead_function(function.function);
-    is_defined.then_some(FunctionKey::Source(function))
 }
 
 fn find_only_definition(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> Option<FunctionRef> {
@@ -125,18 +167,6 @@ fn find_only_definition(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> Opt
     definitions.next().is_none().then_some(definition)
 }
 
-fn is_dead_class(file: &FileLowering<'_, '_, '_, '_>, class: ClassRef) -> bool {
-    let files = file.queries.files();
-    let Some(compiled) = files.compiled(class.file) else {
-        return false;
-    };
-    let decisions = &compiled.analysis.decisions;
-    match files.bound(class.file).class_owner[class.class.idx()] {
-        ClassOwner::Expr(expression) => decisions.is_dead_expr(expression),
-        ClassOwner::Stmt(statement) => decisions.is_dead_stmt(statement),
-    }
-}
-
 fn find_class_constructor(
     file: &FileLowering<'_, '_, '_, '_>,
     class: ClassRef,
@@ -150,50 +180,11 @@ fn find_class_constructor(
                 file: class.file,
                 function: hir[member].func,
             };
-            find_defined_function(file, function)
+            file.find_defined_function(function)
         }
         None => {
-            let is_defined = is_lowered_file(file, class.file) && !is_dead_class(file, class);
+            let is_defined = file.is_lowered_file(class.file) && !file.is_dead_class(class);
             is_defined.then_some(FunctionKey::ImplicitConstructor(class))
         }
     }
-}
-
-fn find_bound_function(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> Option<FunctionKey> {
-    let key = match file.queries.class_of_binding(symbol) {
-        Some(class) => {
-            let left_out = file.inputs.library_functions.left_out_declarations();
-            match left_out.is_class_left_out(class.file, class.class) {
-                true => None,
-                false => find_class_constructor(file, class),
-            }
-        }
-        None => find_defined_function(file, find_only_definition(file, symbol)?),
-    };
-    key.filter(|key| file.inputs.modules.load_failure(key.home_file()).is_none())
-}
-
-fn is_function_binding(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> bool {
-    if file.queries.class_of_binding(symbol).is_some() {
-        return true;
-    }
-    let files = file.queries.files();
-    let mut has_body = false;
-    for &(declaring_file, declaration) in files.decls_of(symbol).iter() {
-        let function = match declaration {
-            Decl::Fn(function) => function,
-            _ if declares_type_alone(declaration) => continue,
-            _ => return false,
-        };
-        let bound = files.bound(declaring_file);
-        if !bound.is_stable_binding(bound.declared_symbol(declaration)) {
-            return false;
-        }
-        has_body |= match files.hir(declaring_file)[function].body {
-            FnBody::None => false,
-            FnBody::Block(_) | FnBody::Expr(_) => true,
-        };
-    }
-    // The variable that a function in a block also declares in sloppy code is `undefined` until the block runs.
-    has_body && files.bound(symbol.file).initial_state(symbol.id) == InitialState::Initialized
 }

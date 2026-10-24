@@ -8,8 +8,8 @@ use bun_sema::hir::{self, ExportSpecId, StmtId, StmtKind};
 use bun_sema::util::SharedSort;
 
 use crate::ir::{PropertyKeyId, ValueId};
-use crate::lower::member::{self, PropertyName};
-use crate::lower::{FileLowering, FunctionLowering, layouts, object, scope};
+use crate::lower::member::PropertyName;
+use crate::lower::{FileLowering, FunctionLowering, object};
 use crate::modules::compare_code_units;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -135,31 +135,28 @@ pub(super) fn emit_module_value(
                 .file
                 .bound
                 .declared_symbol(Decl::ExportExpr(*statement));
-            scope::get_binding(lowering, Binding::Symbol(symbol), known::default)
+            lowering.get_binding(Binding::Symbol(symbol), known::default)
         }
-        ModuleValue::DefaultDeclaration(binding) => {
-            scope::get_binding(lowering, *binding, known::default)
-        }
-        ModuleValue::NamedExports(exports) => emit_named_exports(lowering, exports),
+        ModuleValue::DefaultDeclaration(binding) => lowering.get_binding(*binding, known::default),
+        ModuleValue::NamedExports(exports) => lowering.emit_named_exports(exports),
     }
 }
 
-fn emit_named_exports(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    exports: &[NamedExport],
-) -> ValueId {
-    let members: Vec<(PropertyKeyId, ObjectMemberKind)> = exports
-        .iter()
-        .map(|export| {
-            let key = member::name_key(lowering.file, export.exported);
-            (key, ObjectMemberKind::Field)
-        })
-        .collect();
-    let layout = layouts::untyped_layout(lowering.file, &members);
-    let mut created = object::begin_object(lowering, layout);
-    for (export, &(key, _)) in exports.iter().zip(&members) {
-        let value = scope::get_binding(lowering, export.binding, export.local);
-        object::add_property(lowering, &mut created, PropertyName::Constant(key), value);
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    fn emit_named_exports(&mut self, exports: &[NamedExport]) -> ValueId {
+        let members: Vec<(PropertyKeyId, ObjectMemberKind)> = exports
+            .iter()
+            .map(|export| {
+                let key = self.file.name_key(export.exported);
+                (key, ObjectMemberKind::Field)
+            })
+            .collect();
+        let layout = self.file.untyped_layout(&members);
+        let mut created = self.begin_object(layout);
+        for (export, &(key, _)) in exports.iter().zip(&members) {
+            let value = self.get_binding(export.binding, export.local);
+            self.add_property(&mut created, PropertyName::Constant(key), value);
+        }
+        object::finish_object(self, created)
     }
-    object::finish_object(lowering, created)
 }

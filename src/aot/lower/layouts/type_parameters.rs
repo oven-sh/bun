@@ -3,54 +3,49 @@ use bun_sema::hir::ExprId;
 use rustc_hash::FxHashSet;
 
 use crate::ir::{LayoutId, LayoutKey};
-use crate::lower::{CheckerTypeId, FileLowering, convert};
+use crate::lower::{CheckerTypeId, FileLowering};
 
-pub(in crate::lower) fn type_parameter_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    parameter: TypeParameterRef,
-) -> LayoutId {
-    file.fragment
-        .declare_layout(LayoutKey::TypeParameter(parameter))
-}
-
-fn record_type_arguments(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    pairs: &[TypeArgument],
-    position: u32,
-) {
-    for pair in pairs {
-        convert::record_type_flow(file, pair.argument, pair.parameter, position);
+impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn type_parameter_layout(
+        &mut self,
+        parameter: TypeParameterRef,
+    ) -> LayoutId {
+        self.fragment
+            .declare_layout(LayoutKey::TypeParameter(parameter))
     }
-}
 
-pub(in crate::lower) fn record_call_type_arguments(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    call: ExprId,
-) {
-    if let Ok(pairs) = file.queries.call_type_arguments(call) {
-        let position = file.hir[call].pos;
-        record_type_arguments(file, pairs, position);
+    fn record_type_arguments(&mut self, pairs: &[TypeArgument], position: u32) {
+        for pair in pairs {
+            self.record_type_flow(pair.argument, pair.parameter, position);
+        }
     }
-}
 
-fn find_class_position(file: &FileLowering<'_, '_, '_, '_>, class: ClassRef) -> u32 {
-    match class.file == file.file {
-        true => file.hir[class.class].start,
-        false => 0,
+    pub(in crate::lower) fn record_call_type_arguments(&mut self, call: ExprId) {
+        if let Ok(pairs) = self.queries.call_type_arguments(call) {
+            let position = self.hir[call].pos;
+            self.record_type_arguments(pairs, position);
+        }
     }
-}
 
-// Type mapping only lists the class types it meets, because a flow asks for layouts and types in turn.
-pub(super) fn record_class_type_arguments_of_file(file: &mut FileLowering<'_, '_, '_, '_>) {
-    let mut recorded: FxHashSet<(ClassRef, CheckerTypeId)> = FxHashSet::default();
-    while !file.layouts.class_types.is_empty() {
-        for (class, ty) in core::mem::take(&mut file.layouts.class_types) {
-            if !recorded.insert((class, ty)) {
-                continue;
-            }
-            if let Ok(pairs) = file.queries.class_type_arguments(class, ty) {
-                let position = find_class_position(file, class);
-                record_type_arguments(file, pairs, position);
+    fn find_class_position(&self, class: ClassRef) -> u32 {
+        match class.file == self.file {
+            true => self.hir[class.class].start,
+            false => 0,
+        }
+    }
+
+    // Type mapping only lists the class types it meets, because a flow asks for layouts and types in turn.
+    pub(super) fn record_class_type_arguments_of_file(&mut self) {
+        let mut recorded: FxHashSet<(ClassRef, CheckerTypeId)> = FxHashSet::default();
+        while !self.layouts.class_types.is_empty() {
+            for (class, ty) in core::mem::take(&mut self.layouts.class_types) {
+                if !recorded.insert((class, ty)) {
+                    continue;
+                }
+                if let Ok(pairs) = self.queries.class_type_arguments(class, ty) {
+                    let position = self.find_class_position(class);
+                    self.record_type_arguments(pairs, position);
+                }
             }
         }
     }

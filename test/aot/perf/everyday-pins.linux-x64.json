@@ -343,9 +343,17 @@
     "typed": 2033.2,
     "untyped": 2071.0
   },
+  "everyday-code-out-of-run-time-text/a-path-cut-out-of-a-url-as-a-composed-handler-writes-it": {
+    "typed": 1138.6,
+    "untyped": 1154.4
+  },
   "everyday-code-out-of-run-time-text/a-prefix-compared-character-by-character": {
     "typed": 805.5,
     "untyped": 805.5
+  },
+  "everyday-code-out-of-run-time-text/a-result-asked-for-its-class-as-a-composed-handler-writes-it": {
+    "typed": 560.2,
+    "untyped": 560.3
   },
   "everyday-code-out-of-run-time-text/integers-validated-as-a-schema-compiler-writes-it": {
     "typed": 1624.0,
@@ -1346,6 +1354,10 @@
   "everyday-spellings/union.type-predicate": {
     "typed": 12,
     "untyped": 24
+  },
+  "everyday-strings/a-piece-of-a-query-compared-with-the-state-of-every-row": {
+    "typed": 958.9,
+    "untyped": 975.7
   },
   "everyday-strings/char-at": {
     "typed": 10.2,

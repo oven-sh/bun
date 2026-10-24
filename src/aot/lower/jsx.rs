@@ -14,16 +14,12 @@ struct Element {
     key: Option<PropId>,
 }
 
-pub(crate) fn lower_jsx(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) -> ValueId {
-    element::lower_element(lowering, expression)
-}
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn lower_jsx(&mut self, expression: ExprId) -> ValueId {
+        element::lower_element(self, expression)
+    }
 
-pub(crate) fn lower_element_parts_for_effect(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) {
-    element::lower_parts_for_effect(lowering, expression);
+    pub(crate) fn lower_element_parts_for_effect(&mut self, expression: ExprId) {
+        element::lower_parts_for_effect(self, expression);
+    }
 }

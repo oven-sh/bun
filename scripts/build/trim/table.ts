@@ -77,7 +77,6 @@ interface SectionRecords {
 }
 type Sections = Record<SectionName, Buffer>;
 
-const malformed = (rule: string) => new BuildError(`the trim table is malformed: ${rule}`);
 const hex = (address: number) => "0x" + address.toString(16);
 const alignSection = (offset: number) => Math.ceil(offset / sectionAlignment) * sectionAlignment;
 const isUnsignedBelow = (value: number, limit: number) => Number.isInteger(value) && value >= 0 && value < limit;

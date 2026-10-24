@@ -20,7 +20,7 @@ use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Field, FieldForm, Layout, LayoutKind, LimitId};
 use crate::ir::{DeclaredType, LayoutId, LayoutKey};
-use crate::lower::{CheckerTypeId, FileLowering, member, positions};
+use crate::lower::{CheckerTypeId, FileLowering};
 use crate::modules::{ModuleKind, ModuleRef, Shape};
 
 fn find_name_position(hir: &hir::File<'_>, declaration: Decl) -> Option<u32> {
@@ -33,75 +33,208 @@ fn find_name_position(hir: &hir::File<'_>, declaration: Decl) -> Option<u32> {
     }
 }
 
-fn find_container_position(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> u32 {
-    let declarations = file.queries.files().decls_of(symbol);
-    let mut own_declarations = declarations.iter().filter(|entry| entry.0 == file.file);
-    let position = own_declarations.find_map(|entry| find_name_position(file.hir, entry.1));
-    position.unwrap_or(0)
-}
+impl FileLowering<'_, '_, '_, '_> {
+    fn find_container_position(&self, symbol: Sym) -> u32 {
+        let declarations = self.queries.files().decls_of(symbol);
+        let mut own_declarations = declarations.iter().filter(|entry| entry.0 == self.file);
+        let position = own_declarations.find_map(|entry| find_name_position(self.hir, entry.1));
+        position.unwrap_or(0)
+    }
 
-pub(in crate::lower) fn container_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    container: SymbolId,
-) -> LayoutId {
-    let symbol = file.queries.canonical_symbol(file.file, container);
-    file.fragment.declare_layout(LayoutKey::Container(symbol))
-}
+    pub(in crate::lower) fn container_layout(&mut self, container: SymbolId) -> LayoutId {
+        let symbol = self.queries.canonical_symbol(self.file, container);
+        self.fragment.declare_layout(LayoutKey::Container(symbol))
+    }
 
-fn is_file_symbol(file: &FileLowering<'_, '_, '_, '_>, symbol: Sym) -> bool {
-    file.queries.files().bound(symbol.file).file_symbol == symbol.id
-}
+    fn is_file_symbol(&self, symbol: Sym) -> bool {
+        self.queries.files().bound(symbol.file).file_symbol == symbol.id
+    }
 
-fn has_exports_object(file: &FileLowering<'_, '_, '_, '_>, module: FileId) -> bool {
-    match file.inputs.modules.shape(ModuleRef::File(module)) {
-        Shape::Value | Shape::AsToday => true,
-        Shape::EsModule | Shape::Names => false,
+    fn has_exports_object(&self, module: FileId) -> bool {
+        match self.inputs.modules.shape(ModuleRef::File(module)) {
+            Shape::Value | Shape::AsToday => true,
+            Shape::EsModule | Shape::Names => false,
+        }
     }
-}
 
-// The layout of the object that the body of a CommonJS module begins with as its `exports`, where its exports are one value.
-pub(crate) fn module_exports_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    module: FileId,
-) -> Option<LayoutId> {
-    let modules = file.inputs.modules;
-    if !modules.has_record(module)
-        || modules.kind(module) != ModuleKind::CommonJs
-        || modules.is_library(module)
-        || !has_exports_object(file, module)
-    {
-        return None;
+    // The layout of the object that the body of a CommonJS module begins with as its `exports`, where its exports are one value.
+    pub(crate) fn module_exports_layout(&mut self, module: FileId) -> Option<LayoutId> {
+        let modules = self.inputs.modules;
+        if !modules.has_record(module)
+            || modules.kind(module) != ModuleKind::CommonJs
+            || modules.is_library(module)
+            || !self.has_exports_object(module)
+        {
+            return None;
+        }
+        let bound = self.queries.files().bound(module);
+        // `arguments.callee` is the function that holds the text of the module.
+        if bound.file_uses_arguments() {
+            return None;
+        }
+        let file_symbol = bound.file_symbol;
+        if file_symbol.is_none() {
+            return None;
+        }
+        // A self symbol that declarations of other files merge into is defined by no self alone.
+        let symbol = self.queries.canonical_symbol(module, file_symbol);
+        if symbol.file != module || symbol.id != file_symbol {
+            return None;
+        }
+        let layout = self.fragment.declare_layout(LayoutKey::Container(symbol));
+        let has_fields = !super::own_fields(self, layout).as_slice().is_empty();
+        has_fields.then_some(layout)
     }
-    let bound = file.queries.files().bound(module);
-    // `arguments.callee` is the function that holds the text of the module.
-    if bound.file_uses_arguments() {
-        return None;
-    }
-    let file_symbol = bound.file_symbol;
-    if file_symbol.is_none() {
-        return None;
-    }
-    // A file symbol that declarations of other files merge into is defined by no file alone.
-    let symbol = file.queries.canonical_symbol(module, file_symbol);
-    if symbol.file != module || symbol.id != file_symbol {
-        return None;
-    }
-    let layout = file.fragment.declare_layout(LayoutKey::Container(symbol));
-    let has_fields = !super::own_fields(file, layout).as_slice().is_empty();
-    has_fields.then_some(layout)
-}
 
-pub(crate) fn module_type_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> Option<LayoutId> {
-    let ObjectOrigin::Symbol(symbol) = file.queries.object_origin(ty) else {
-        return None;
-    };
-    if !is_file_symbol(file, symbol) {
-        return None;
+    pub(crate) fn module_type_layout(&mut self, ty: CheckerTypeId) -> Option<LayoutId> {
+        let ObjectOrigin::Symbol(symbol) = self.queries.object_origin(ty) else {
+            return None;
+        };
+        if !self.is_file_symbol(symbol) {
+            return None;
+        }
+        self.module_exports_layout(symbol.file)
     }
-    module_exports_layout(file, symbol.file)
+
+    // `false`: nobody can see the object, so the body does not make it. A module that is required while its body runs shows it.
+    pub(crate) fn begins_with_exports_object(&self, module: FileId) -> bool {
+        let own_module = ModuleRef::File(module);
+        let modules = self.inputs.modules;
+        if modules.half(own_module) || modules.keeps_module_object(own_module) {
+            return true;
+        }
+        let files = self.queries.files();
+        let (Some(compiled), Some(inputs)) =
+            (files.compiled(module), self.inputs.files[module.idx()])
+        else {
+            return true;
+        };
+        let text = ModuleText {
+            files,
+            hir: files.hir(module),
+            bound: files.bound(module),
+            decisions: &compiled.analysis.decisions,
+            builtins: inputs.builtins,
+            is_this_exports: !compiled.analysis.has_esm_syntax,
+        };
+        !replaces_exports_first(&text)
+    }
+
+    // The fields are in the order in which the body creates the properties, which is the one order of keys that a creating store goes on from without a call.
+    fn compute_exports_fields(&mut self, module: FileId) -> OwnFields {
+        let files = self.queries.files();
+        let (Some(compiled), Some(inputs)) =
+            (files.compiled(module), self.inputs.files[module.idx()])
+        else {
+            return OwnFields::default().finish();
+        };
+        let text = ModuleText {
+            files,
+            hir: files.hir(module),
+            bound: files.bound(module),
+            decisions: &compiled.analysis.decisions,
+            builtins: inputs.builtins,
+            is_this_exports: !compiled.analysis.has_esm_syntax,
+        };
+        let mut creations = collect_creations(&text).unwrap_or_default();
+        creations.sort_by_key(|it| (it.is_deferred, it.end, Reverse(it.start)));
+
+        let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
+        let mut created_names = FxHashSet::default();
+        let mut fields = OwnFields::default();
+        for creation in creations {
+            if !created_names.insert(creation.name) {
+                continue;
+            }
+            let Some(form) = creation.form else {
+                continue;
+            };
+            let key = self.atom_key(creation.name);
+            if !can_be_field(self, key) {
+                continue;
+            }
+            if fields.as_slice().len() as u64 >= limit {
+                if module == self.file {
+                    self.gave_up(LimitId::FieldsInKeyOrder, 0);
+                }
+                break;
+            }
+            fields.add(Field {
+                key: Some(key),
+                declared: DeclaredType::untyped(),
+                form,
+                ..Field::default()
+            });
+        }
+        fields.finish()
+    }
+
+    pub(super) fn compute_container_fields(&mut self, symbol: Sym) -> OwnFields {
+        if self.is_file_symbol(symbol) {
+            return self.compute_exports_fields(symbol.file);
+        }
+        if symbol.file != self.file {
+            return OwnFields::default();
+        }
+        let bound = self.bound;
+        let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
+        let mut fields = OwnFields::default();
+        for &(name, export) in bound.table(bound.symbol(symbol.id).exports) {
+            if !bound.has_runtime_value(export) {
+                continue;
+            }
+            let key = self.name_key(name);
+            if !can_be_field(self, key) {
+                continue;
+            }
+            if fields.as_slice().len() as u64 >= limit {
+                let position = self.find_container_position(symbol);
+                self.gave_up(LimitId::FieldsInKeyOrder, position);
+                break;
+            }
+            let mut declarations = bound.symbol(export).decls.iter();
+            let is_enum_member = declarations.any(|decl| matches!(decl, Decl::EnumMember(_)));
+            let declared = match is_enum_member {
+                true => DeclaredType::untyped(),
+                false => self.binding_position(export),
+            };
+            fields.add(Field {
+                key: Some(key),
+                declared,
+                ..Field::default()
+            });
+        }
+        fields.finish()
+    }
+
+    pub(super) fn define_container_layout(&mut self, layout: LayoutId, symbol: Sym) {
+        debug_assert!(
+            symbol.file == self.file,
+            "a container is defined by its self"
+        );
+        let name = self.bound.symbol(symbol.id).name;
+        // The exports of a module are an ordinary object to every pass that looks at the kind.
+        let is_module_exports = self.is_file_symbol(symbol);
+        let kind = match is_module_exports {
+            true => LayoutKind::Record,
+            false => LayoutKind::Container,
+        };
+        let definition = Layout {
+            kind,
+            name: (name.is_some() && !is_module_exports)
+                .then(|| self.intern_binding_name(Binding::Symbol(symbol.id), name)),
+            module: Some(self.module_id()),
+            position: self.find_container_position(symbol),
+            fields: super::own_fields(self, layout).as_slice().to_vec(),
+            ..Layout::default()
+        };
+        // The body of the module makes the object, and a field is there because the module puts something under its name.
+        self.fragment.note_allocation(layout);
+        for key in definition.fields.iter().filter_map(|field| field.key) {
+            self.fragment.note_write(key);
+        }
+        self.fragment.define_layout(layout, definition);
+    }
 }
 
 struct ModuleText<'x, 's> {
@@ -570,152 +703,4 @@ fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
         };
         names_replaced_value && is_evaluated_behind(text, &replacement, mention)
     })
-}
-
-// `false`: nobody can see the object, so the body does not make it. A module that is required while its body runs shows it.
-pub(crate) fn begins_with_exports_object(
-    file: &FileLowering<'_, '_, '_, '_>,
-    module: FileId,
-) -> bool {
-    let own_module = ModuleRef::File(module);
-    let modules = file.inputs.modules;
-    if modules.half(own_module) || modules.keeps_module_object(own_module) {
-        return true;
-    }
-    let files = file.queries.files();
-    let (Some(compiled), Some(inputs)) = (files.compiled(module), file.inputs.files[module.idx()])
-    else {
-        return true;
-    };
-    let text = ModuleText {
-        files,
-        hir: files.hir(module),
-        bound: files.bound(module),
-        decisions: &compiled.analysis.decisions,
-        builtins: inputs.builtins,
-        is_this_exports: !compiled.analysis.has_esm_syntax,
-    };
-    !replaces_exports_first(&text)
-}
-
-// The fields are in the order in which the body creates the properties, which is the one order of keys that a creating store goes on from without a call.
-fn compute_exports_fields(file: &mut FileLowering<'_, '_, '_, '_>, module: FileId) -> OwnFields {
-    let files = file.queries.files();
-    let (Some(compiled), Some(inputs)) = (files.compiled(module), file.inputs.files[module.idx()])
-    else {
-        return OwnFields::default().finish();
-    };
-    let text = ModuleText {
-        files,
-        hir: files.hir(module),
-        bound: files.bound(module),
-        decisions: &compiled.analysis.decisions,
-        builtins: inputs.builtins,
-        is_this_exports: !compiled.analysis.has_esm_syntax,
-    };
-    let mut creations = collect_creations(&text).unwrap_or_default();
-    creations.sort_by_key(|it| (it.is_deferred, it.end, Reverse(it.start)));
-
-    let limit = file.inputs.limits.get(LimitId::FieldsInKeyOrder);
-    let mut created_names = FxHashSet::default();
-    let mut fields = OwnFields::default();
-    for creation in creations {
-        if !created_names.insert(creation.name) {
-            continue;
-        }
-        let Some(form) = creation.form else {
-            continue;
-        };
-        let key = file.atom_key(creation.name);
-        if !can_be_field(file, key) {
-            continue;
-        }
-        if fields.as_slice().len() as u64 >= limit {
-            if module == file.file {
-                file.gave_up(LimitId::FieldsInKeyOrder, 0);
-            }
-            break;
-        }
-        fields.add(Field {
-            key: Some(key),
-            declared: DeclaredType::untyped(),
-            form,
-            ..Field::default()
-        });
-    }
-    fields.finish()
-}
-
-pub(super) fn compute_container_fields(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    symbol: Sym,
-) -> OwnFields {
-    if is_file_symbol(file, symbol) {
-        return compute_exports_fields(file, symbol.file);
-    }
-    if symbol.file != file.file {
-        return OwnFields::default();
-    }
-    let bound = file.bound;
-    let limit = file.inputs.limits.get(LimitId::FieldsInKeyOrder);
-    let mut fields = OwnFields::default();
-    for &(name, export) in bound.table(bound.symbol(symbol.id).exports) {
-        if !bound.has_runtime_value(export) {
-            continue;
-        }
-        let key = member::name_key(file, name);
-        if !can_be_field(file, key) {
-            continue;
-        }
-        if fields.as_slice().len() as u64 >= limit {
-            let position = find_container_position(file, symbol);
-            file.gave_up(LimitId::FieldsInKeyOrder, position);
-            break;
-        }
-        let mut declarations = bound.symbol(export).decls.iter();
-        let is_enum_member = declarations.any(|decl| matches!(decl, Decl::EnumMember(_)));
-        let declared = match is_enum_member {
-            true => DeclaredType::untyped(),
-            false => positions::binding_position(file, export),
-        };
-        fields.add(Field {
-            key: Some(key),
-            declared,
-            ..Field::default()
-        });
-    }
-    fields.finish()
-}
-
-pub(super) fn define_container_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    symbol: Sym,
-) {
-    debug_assert!(
-        symbol.file == file.file,
-        "a container is defined by its file"
-    );
-    let name = file.bound.symbol(symbol.id).name;
-    // The exports of a module are an ordinary object to every pass that looks at the kind.
-    let is_module_exports = is_file_symbol(file, symbol);
-    let kind = match is_module_exports {
-        true => LayoutKind::Record,
-        false => LayoutKind::Container,
-    };
-    let definition = Layout {
-        kind,
-        name: (name.is_some() && !is_module_exports)
-            .then(|| file.intern_binding_name(Binding::Symbol(symbol.id), name)),
-        module: Some(file.module_id()),
-        position: find_container_position(file, symbol),
-        fields: super::own_fields(file, layout).as_slice().to_vec(),
-        ..Layout::default()
-    };
-    // The body of the module makes the object, and a field is there because the module puts something under its name.
-    file.fragment.note_allocation(layout);
-    for key in definition.fields.iter().filter_map(|field| field.key) {
-        file.fragment.note_write(key);
-    }
-    file.fragment.define_layout(layout, definition);
 }

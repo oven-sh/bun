@@ -36,7 +36,6 @@ pub struct ExecutableDetails {
     pub trim_summary: Option<bun_trim::TrimSummary>,
     /// Bytes of the file, before Windows metadata is edited.
     pub size: u64,
-    pub has_symbols: bool,
     /// `bun_exe_format::build_id`, for an executable that holds a compiled program.
     pub build_id: Option<[u8; bun_exe_format::build_id::SIZE]>,
 }
@@ -153,7 +152,6 @@ impl InjectionAdditions<'_> {
         ExecutableDetails {
             trim_summary: self.trim_summary,
             size: bun_sys::get_file_size(file).unwrap_or(0),
-            has_symbols: self.has_symbols,
             build_id: self.build_id,
         }
     }

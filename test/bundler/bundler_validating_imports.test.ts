@@ -46,7 +46,7 @@ const supported: Record<string, { files: Record<string, string>; stdout: string;
 console.log(shown(() => validate<User>({ id: 1, name: "a", more: true })));
 console.log(shown(() => validate<User>({ id: "1", name: "a" })));`,
     },
-    stdout: `{"id":1,"name":"a","more":true}\nTypeError: id: expected number, received string\n`,
+    stdout: `{"id":1,"name":"a","more":true}\nTypeError: id must be number, received string\n`,
   },
   "validate with an alias, imported next to feature": {
     files: {
@@ -54,7 +54,7 @@ console.log(shown(() => validate<User>({ id: "1", name: "a" })));`,
 if (feature("NOTHING")) console.log("never");
 console.log(shown(() => check<User>({ id: 1, name: "a" })), shown(() => check<number>("1")));`,
     },
-    stdout: `{"id":1,"name":"a"} TypeError: expected number, received string\n`,
+    stdout: `{"id":1,"name":"a"} TypeError: value must be number, received string\n`,
   },
   "a call above the import statement": {
     files: {
@@ -63,7 +63,7 @@ const check = (value: unknown) => validate<User>(value);
 import { validate } from "bun:bundle";
 console.log(shown(() => check({ id: 1, name: "a" })), shown(() => check(null)));`,
     },
-    stdout: `{"id":1,"name":"a"} TypeError: expected object, received null\n`,
+    stdout: `{"id":1,"name":"a"} TypeError: value must be object, received null\n`,
   },
   "two files that import validate": {
     files: {
@@ -71,7 +71,7 @@ console.log(shown(() => check({ id: 1, name: "a" })), shown(() => check(null)));
 console.log(shown(() => validate<number>(1)), shown(() => other("1")));`,
       "other.ts": `import { validate } from "bun:bundle";\nexport const other = (value: unknown) => validate<number>(value);`,
     },
-    stdout: `1 TypeError: expected number, received string\n`,
+    stdout: `1 TypeError: value must be number, received string\n`,
   },
   "other bindings named validate are left alone": {
     files: {
@@ -86,7 +86,7 @@ function withLocal() {
 console.log(validate<number>("text"), withParameter(<T,>(value: unknown) => ("given " + value) as T), withLocal(), shown(() => checked<number>("text")));`,
       "own.ts": `export const validate = <T,>(value: unknown) => ("its own given " + value) as T;`,
     },
-    stdout: `its own given text given a parameter a local given text TypeError: expected number, received string\n`,
+    stdout: `its own given text given a parameter a local given text TypeError: value must be number, received string\n`,
   },
   "JSON from bun": {
     files: {
@@ -95,17 +95,17 @@ console.log(shown(() => JSON.parse<User>('{"id":1,"name":"a","more":true}')));
 console.log(shown(() => JSON.parse<User>('{"id":"1","name":"a"}')));
 console.log(shown(() => JSON.parse<User>('{"id":')).split(":")[0]);
 console.log(JSON === globalThis.JSON, JSON.stringify({ a: 1 }), ["1", "2"].map(text => JSON.parse<any>(text)).join(), typeof JSON.parse);
-console.log(await Promise.resolve("[1]").then(JSON.parse), (codec => codec.stringify([2]))(JSON));`,
+console.log(shown(() => ["[1]"].map(JSON.parse)).slice(0, 37), (codec => codec.stringify([2]))(JSON));`,
     },
-    stdout: `{"id":1,"name":"a","more":true}\nTypeError: id: expected number, received string\nSyntaxError\ntrue {"a":1} 1,2 function\n[ 1 ] [2]\n`,
+    stdout: `{"id":1,"name":"a","more":true}\nTypeError: id must be number, received string\nSyntaxError\nfalse {"a":1} 1,2 function\nTypeError: JSON.parse() from "bun" has [2]\n`,
   },
   "JSON from bun with an alias, and Bun.JSON": {
     files: {
       "program.ts": `import { JSON as Codec, inspect } from "bun";\nimport type { User } from "./types";${shown}
-console.log(shown(() => Codec.parse<User>('{"id":"1","name":"a"}')), Codec === JSON, Codec.stringify([1]), typeof inspect);
+console.log(shown(() => Codec.parse<User>('{"id":"1","name":"a"}')), Codec === Bun.JSON, Codec.stringify([1]), typeof inspect);
 console.log(shown(() => Bun.JSON.parse<User>('{"id":"1","name":"a"}')), Bun.JSON === JSON);`,
     },
-    stdout: `TypeError: id: expected number, received string true [1] function\nTypeError: id: expected number, received string true\n`,
+    stdout: `TypeError: id must be number, received string true [1] function\nTypeError: id must be number, received string false\n`,
     needsBun: true,
   },
   "a parameter with the alias of JSON is left alone": {
@@ -116,7 +116,7 @@ function withParameter(Codec: { parse<T>(text: string): T }) {
 }
 console.log(withParameter({ parse: <T,>(text: string) => ("theirs given " + text) as T }), shown(() => Codec.parse<number>('"text"')));`,
     },
-    stdout: `theirs given text TypeError: expected number, received string\n`,
+    stdout: `theirs given text TypeError: value must be number, received string\n`,
   },
 };
 
@@ -222,18 +222,14 @@ describe.each(["bun run", "bun build", ...(unsupported ? [] : ["bun build --comp
     const compiles = way.endsWith("--aot");
     // An ahead-of-time build decides by binding and puts no text in the place of the alias, so a parameter named JSON hides nothing from it.
     const names = Object.keys(errors).filter(name => !(compiles && name.includes("shadows the global")));
-    const refusedEverywhere = "a name that bun:bundle does not export";
+    const refusedEverywhere = ["a name that bun:bundle does not export", "JSON.parse from bun without a type argument"];
     if (!compiles)
-      whereNothingIsCompiled.each(names.filter(name => name !== refusedEverywhere))(
+      whereNothingIsCompiled.each(names.filter(name => !refusedEverywhere.includes(name)))(
         "%s",
         async name => reportsAnError(way, name),
         120_000,
       );
-    test.concurrent.each(compiles ? names : [refusedEverywhere])(
-      "%s",
-      async name => reportsAnError(way, name),
-      120_000,
-    );
+    test.concurrent.each(compiles ? names : refusedEverywhere)("%s", async name => reportsAnError(way, name), 120_000);
   },
 );
 
@@ -284,19 +280,16 @@ whereNothingIsCompiled("validate in a JavaScript file, as tsc or esbuild would e
   });
 });
 
-whereNothingIsCompiled(
-  "JSON.parse from bun in a JavaScript file, as tsc or esbuild would emit it, is an error",
-  async () => {
-    using dir = tempDir("validating-imports-javascript", {
-      "json.js": `import { JSON } from "bun";\nconsole.log(JSON.parse('{"id":"1"}'));`,
-    });
-    expect(await spawned([bunExe(), "run", "./json.js"], String(dir))).toMatchObject({
-      stdout: "",
-      stderr: expect.stringContaining(`JSON.parse() from "bun" needs a type argument`),
-      exitCode: 1,
-    });
-  },
-);
+test("JSON.parse from bun in a JavaScript file, as tsc or esbuild would emit it, is an error", async () => {
+  using dir = tempDir("validating-imports-javascript", {
+    "json.js": `import { JSON } from "bun";\nconsole.log(JSON.parse('{"id":"1"}'));`,
+  });
+  expect(await spawned([bunExe(), "run", "./json.js"], String(dir))).toMatchObject({
+    stdout: "",
+    stderr: expect.stringContaining(`JSON.parse() from "bun" needs a type argument`),
+    exitCode: 1,
+  });
+});
 
 whereNothingIsCompiled.each(["validate<number>(1)", "JSON.parse<number>('1')"])(
   "bun build --no-bundle reports an error for %s",
@@ -375,9 +368,9 @@ const leftAsItWas: Record<string, [program: string, stdout: string]> = {
     `import { JSON } from "bun";\nconsole.log(JSON.parse<any>(${text}).id, JSON.parse< unknown >("2"), Bun.JSON.parse<any>("3"));`,
     "1 2 3\n",
   ],
-  "no type argument, and other members": [
-    `import { JSON } from "bun";\nconsole.log(JSON.parse(${text}).id, JSON.stringify([2]), JSON === globalThis.JSON);`,
-    "1 [2] true\n",
+  "other members": [
+    `import { JSON } from "bun";\nconsole.log(JSON.stringify([2]), JSON === globalThis.JSON, JSON.stringify === globalThis.JSON.stringify);`,
+    "[2] false true\n",
   ],
   "other things named JSON, Bun and parse": [
     `import { JSON as Codec, inspect } from "bun";

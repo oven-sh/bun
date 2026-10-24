@@ -1,0 +1,121 @@
+//// walks-over-built-ins/entries.cjs
+// Walks over built ins, one probe of many. It prints what plain Bun prints.
+function f57() { return 'ok 57'; }
+for (const [key, value] of Object.entries({ f57 })) exports[key] = value;
+console.log(typeof exports.f57, Object.keys(exports).join());
+const out = {};
+for (const [key, value] of Object.entries({ f57, n: 1 })) out[key] = value;
+console.log(typeof out.f57, out.n, JSON.stringify(Object.entries({ a: 1, b: "x" })), JSON.stringify(Object.values({ a: 1, b: "x" })));
+//// walks-over-built-ins/fh-callbacks.ts
+// Callbacks handed over: each function here is the callback of one asynchronous function of node:fs, node:zlib, node:crypto, node:dns or node:stream, which passes (null or an error, a result of its own type); the program's own calls pass (number, number).
+import { access, exists, readFile, readdir, realpath, stat } from "node:fs";
+import { deflate, gzip } from "node:zlib";
+import { pbkdf2, randomBytes, randomFill } from "node:crypto";
+import { lookup } from "node:dns";
+import { finished, pipeline, PassThrough, Readable } from "node:stream";
+
+let bits = 0;
+
+function afterStat(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 1; }
+function afterMissing(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 2; }
+function afterReaddir(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 4; }
+function afterAccess(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 8; }
+function afterExists(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 16; }
+function afterRealpath(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 32; }
+function afterGzip(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 64; }
+function afterDeflate(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 128; }
+function afterBytes(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 256; }
+function afterFill(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 512; }
+function afterKey(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 1024; }
+function afterLookup(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 2048; }
+function afterFinished(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 4096; }
+function afterPipeline(a: number, b: number): void { if (typeof a !== "number" || typeof b !== "number") bits |= 8192; }
+
+for (const own of [afterStat, afterMissing, afterReaddir, afterAccess, afterExists, afterRealpath, afterGzip, afterDeflate, afterBytes, afterFill, afterKey, afterLookup, afterFinished, afterPipeline]) own(1, 2);
+stat("/", afterStat as any);
+readFile("/no/such/file/anywhere", afterMissing as any);
+readdir("/no/such/folder", afterReaddir as any);
+access("/", afterAccess as any);
+exists("/", afterExists as any);
+realpath("/", afterRealpath as any);
+gzip("a", afterGzip as any);
+deflate("a", afterDeflate as any);
+randomBytes(1, afterBytes as any);
+randomFill(new Uint8Array(1), afterFill as any);
+pbkdf2("p", "s", 1, 1, "sha1", afterKey as any);
+lookup("127.0.0.1", afterLookup as any);
+finished(Readable.from(["a"]).resume(), afterFinished as any);
+pipeline(Readable.from(["a"]), new PassThrough().resume(), afterPipeline as any);
+let rounds = 0;
+const timer = setInterval(() => {
+  if (bits !== 16383 && ++rounds < 150) return;
+  clearInterval(timer);
+  console.log(bits.toString(2));
+}, 10);
+//// walks-over-built-ins/l-exit.js
+// Walks over built ins: l exit. It prints what plain Bun prints.
+const K = process.argv[2];
+if (process.argv.length > 99) {
+  process.exit(1);
+}
+console.log("hello");
+//// walks-over-built-ins/start-http.mjs
+// Walks over built ins: start http. It prints what plain Bun prints.
+import http from "node:http";
+console.log(typeof http.createServer);
+//// walks-over-built-ins/w-forin.js
+// Walks over built ins: w forin. It prints what plain Bun prints.
+let count = 0;
+for (const name in process) count++;
+console.log(count > 10);
+//// walks-over-built-ins/w-inspect.js
+// Walks over built ins: w inspect. It prints what plain Bun prints.
+const text = Bun.inspect(process);
+console.log(typeof text, text.length > 100);
+//// walks-over-built-ins/w-key.js
+// Walks over built ins: w key. It prints what plain Bun prints.
+const key = process.argv[2] ?? "pid";
+console.log(typeof process[key]);
+//// walks-over-built-ins/w-lookup-process.js
+// Walks over built ins: w lookup process. It prints what plain Bun prints.
+let count = 0;
+for (const name of Reflect.ownKeys(process)) if (process.__lookupGetter__(name) === undefined) count++;
+console.log(count > 3);
+//// walks-over-built-ins/w-method-bun.js
+// Walks over built ins: w method bun. It prints what plain Bun prints.
+let count = 0;
+for (const name of Reflect.ownKeys(Bun)) if (Bun.hasOwnProperty(name)) count++;
+console.log(count > 3);
+//// walks-over-built-ins/w-method-console.js
+// Walks over built ins: w method console. It prints what plain Bun prints.
+let count = 0;
+for (const name of Reflect.ownKeys(console)) if (console.propertyIsEnumerable(name)) count++;
+console.log(count > 3);
+//// walks-over-built-ins/w-rest.js
+// Walks over built ins: w rest. It prints what plain Bun prints.
+const { nothingOfThisName, ...rest } = process;
+console.log(Object.keys(rest).length > 3);
+//// walks-over-built-ins/w-rest-bun.js
+// Walks over built ins: w rest bun. It prints what plain Bun prints.
+const { nothingOfThisName, ...rest } = Bun;
+console.log(Object.keys(rest).length > 3);
+//// walks-over-built-ins/w-spread.js
+// Walks over built ins: w spread. It prints what plain Bun prints.
+const copy = { ...process };
+console.log(typeof copy.pid, typeof copy.argv, Object.keys(copy).length > 10);
+//// walks-over-built-ins/w-util.js
+// Walks over built ins: w util. It prints what plain Bun prints.
+import util from "node:util";
+const text = util.inspect(globalThis, { depth: 1 });
+console.log(typeof text, text.length > 100);
+//// walks-over-built-ins/w-util-bun.js
+// Walks over built ins: w util bun. It prints what plain Bun prints.
+import util from "node:util";
+console.log(util.inspect(Bun, { depth: 1 }).length > 100);
+//// walks-over-built-ins/w-util-bun-named.js
+// Walks over built ins: w util bun named. It prints what plain Bun prints.
+import { inspect } from "node:util";
+console.log(inspect(Bun, { depth: 1 }).length > 100);
+//// walks-over-built-ins/w-values.js
+// Walks over built ins: w values. It prints what plain Bun prints.
+console.log(Object.values(process).length > 10);

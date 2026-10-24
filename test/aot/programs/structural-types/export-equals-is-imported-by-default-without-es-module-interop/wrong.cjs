@@ -1,1 +1,0 @@
-exports.plusOne = n => n + "!";

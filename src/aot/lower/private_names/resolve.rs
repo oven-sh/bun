@@ -11,55 +11,54 @@ fn get_class_layout(file: &mut FileLowering<'_, '_, '_, '_>, class: ClassId) -> 
         file: file.file,
         class,
     };
-    layouts::class_layout(file, reference)
+    file.class_layout(reference)
 }
 
-pub(in crate::lower) fn resolve_private_name(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    name: PrivateNameId,
-) -> PrivateBinding {
-    let declared = *file.bound.private_name(name);
-    let transform = class::class_plan(file, declared.class).transform;
-    let is_decorated = class::is_decorated_private_name(file.hir, transform, &declared);
-    let holder = if declared.is_static {
-        PrivateHolder::ClassObject
-    } else {
-        let layout = get_class_layout(file, declared.class);
-        let own = layouts::own_fields(file, layout);
-        let field = match declared.members {
-            PrivateMembers::Field(_) | PrivateMembers::AutoAccessor(_) => {
-                own.find(layouts::private_key(file, layout, declared.name))
-            }
-            PrivateMembers::Method(_) | PrivateMembers::Accessor { .. } => own.brand(),
+impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn resolve_private_name(&mut self, name: PrivateNameId) -> PrivateBinding {
+        let declared = *self.bound.private_name(name);
+        let transform = self.class_plan(declared.class).transform;
+        let is_decorated = class::is_decorated_private_name(self.hir, transform, &declared);
+        let holder = if declared.is_static {
+            PrivateHolder::ClassObject
+        } else {
+            let layout = get_class_layout(self, declared.class);
+            let own = layouts::own_fields(self, layout);
+            let field = match declared.members {
+                PrivateMembers::Field(_) | PrivateMembers::AutoAccessor(_) => {
+                    own.find(layouts::private_key(self, layout, declared.name))
+                }
+                PrivateMembers::Method(_) | PrivateMembers::Accessor { .. } => own.brand(),
+            };
+            let field = field.expect("the layout lists the private state of its class");
+            PrivateHolder::Instance { layout, field }
         };
-        let field = field.expect("the layout lists the private state of its class");
-        PrivateHolder::Instance { layout, field }
-    };
-    PrivateBinding {
-        class: declared.class,
-        members: declared.members,
-        holder,
-        is_decorated,
+        PrivateBinding {
+            class: declared.class,
+            members: declared.members,
+            holder,
+            is_decorated,
+        }
     }
-}
 
-pub(in crate::lower) fn resolve_accessor_storage(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    member: MemberId,
-) -> AccessorStorage {
-    let class = file.bound.member_class(member);
-    let class = class.expect("an accessor field is a member of a class");
-    let holder = if file.hir[member].flags.contains(Flags::STATIC) {
-        PrivateHolder::ClassObject
-    } else {
-        let layout = get_class_layout(file, class);
-        let field = layouts::own_fields(file, layout).find_accessor_storage(member);
-        let field = field.expect("the layout lists the private state of its class");
-        PrivateHolder::Instance { layout, field }
-    };
-    AccessorStorage {
-        class,
-        member,
-        holder,
+    pub(in crate::lower) fn resolve_accessor_storage(
+        &mut self,
+        member: MemberId,
+    ) -> AccessorStorage {
+        let class = self.bound.member_class(member);
+        let class = class.expect("an accessor field is a member of a class");
+        let holder = if self.hir[member].flags.contains(Flags::STATIC) {
+            PrivateHolder::ClassObject
+        } else {
+            let layout = get_class_layout(self, class);
+            let field = layouts::own_fields(self, layout).find_accessor_storage(member);
+            let field = field.expect("the layout lists the private state of its class");
+            PrivateHolder::Instance { layout, field }
+        };
+        AccessorStorage {
+            class,
+            member,
+            holder,
+        }
     }
 }

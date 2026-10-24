@@ -7,21 +7,12 @@ use bun_sema::fold::Constant;
 use bun_sema::hir::{Chain, ExprId, ExprKind, MemberKey, NodeData};
 use bun_sema::types::EnumValue;
 
-use super::{
-    FileLowering, FunctionLowering, call, commonjs, condition, convert, expression, function,
-    module, private_names,
-};
+use super::{FileLowering, FunctionLowering};
 use crate::diagnostic_codes::Code;
 use crate::ir::{BlockId, PropertyKeyId, ValueId};
 
-pub(in crate::lower) use self::key::{
-    created_symbol_key, find_function_name, find_key_text, find_name_under_symbol,
-    function_name_key, lower_computed_key, lower_member_key,
-};
-pub(crate) use self::key::{emit_name_value, lower_property_name, name_key};
-pub(in crate::lower) use self::reference::{
-    KeyConversion, Reference, get_reference, lower_reference, put_reference,
-};
+pub(in crate::lower) use self::key::find_function_name;
+pub(in crate::lower) use self::reference::{KeyConversion, Reference};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum PropertyName {
@@ -44,81 +35,116 @@ enum Access {
     Element(ValueId),
 }
 
-fn resolve_access(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    name: PropertyName,
-) -> Access {
-    match name {
-        PropertyName::Constant(key) => match key::find_element_index(lowering.file, key) {
-            Some(index) => Access::Element(lowering.builder.integer(i64::from(index))),
-            None => Access::Property(key),
-        },
-        PropertyName::Computed(value) => Access::Element(value),
-    }
-}
-
-pub(crate) fn emit_get(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ValueId,
-    name: PropertyName,
-) -> ValueId {
-    match resolve_access(lowering, name) {
-        Access::Property(key) => lowering.builder.prop_get(object, key, false, false),
-        Access::Element(property) => lowering.builder.elem_get(object, property),
-    }
-}
-
-pub(crate) fn emit_set(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ValueId,
-    name: PropertyName,
-    value: ValueId,
-) {
-    let mode = lowering.mode();
-    match resolve_access(lowering, name) {
-        Access::Property(key) => {
-            lowering.file.fragment.note_write(key);
-            lowering.builder.prop_set(object, key, mode, value, false)
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    fn resolve_access(&mut self, name: PropertyName) -> Access {
+        match name {
+            PropertyName::Constant(key) => match self.file.find_element_index(key) {
+                Some(index) => Access::Element(self.builder.integer(i64::from(index))),
+                None => Access::Property(key),
+            },
+            PropertyName::Computed(value) => Access::Element(value),
         }
-        Access::Element(property) => lowering.builder.elem_set(object, property, mode, value),
-    };
-}
-
-pub(crate) fn emit_define(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ValueId,
-    name: PropertyName,
-    value: ValueId,
-) {
-    match resolve_access(lowering, name) {
-        Access::Property(key) => {
-            lowering.file.fragment.note_write(key);
-            lowering.builder.prop_define(object, key, value)
-        }
-        Access::Element(property) => lowering.builder.elem_define(object, property, value),
-    };
-}
-
-pub(in crate::lower) fn emit_has(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ValueId,
-    name: PropertyName,
-) -> ValueId {
-    match resolve_access(lowering, name) {
-        Access::Property(key) => lowering.builder.prop_has(object, key),
-        Access::Element(property) => lowering.builder.elem_has(object, property),
     }
-}
 
-pub(in crate::lower) fn emit_delete(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ValueId,
-    name: PropertyName,
-) -> ValueId {
-    let mode = lowering.mode();
-    match resolve_access(lowering, name) {
-        Access::Property(key) => lowering.builder.prop_delete(object, key, mode, false),
-        Access::Element(property) => lowering.builder.elem_delete(object, property, mode),
+    pub(crate) fn emit_get(&mut self, object: ValueId, name: PropertyName) -> ValueId {
+        match self.resolve_access(name) {
+            Access::Property(key) => self.builder.prop_get(object, key, false, false),
+            Access::Element(property) => self.builder.elem_get(object, property),
+        }
+    }
+
+    pub(crate) fn emit_set(&mut self, object: ValueId, name: PropertyName, value: ValueId) {
+        let mode = self.mode();
+        match self.resolve_access(name) {
+            Access::Property(key) => {
+                self.file.fragment.note_write(key);
+                self.builder.prop_set(object, key, mode, value, false)
+            }
+            Access::Element(property) => self.builder.elem_set(object, property, mode, value),
+        };
+    }
+
+    pub(crate) fn emit_define(&mut self, object: ValueId, name: PropertyName, value: ValueId) {
+        match self.resolve_access(name) {
+            Access::Property(key) => {
+                self.file.fragment.note_write(key);
+                self.builder.prop_define(object, key, value)
+            }
+            Access::Element(property) => self.builder.elem_define(object, property, value),
+        };
+    }
+
+    pub(in crate::lower) fn emit_has(&mut self, object: ValueId, name: PropertyName) -> ValueId {
+        match self.resolve_access(name) {
+            Access::Property(key) => self.builder.prop_has(object, key),
+            Access::Element(property) => self.builder.elem_has(object, property),
+        }
+    }
+
+    pub(in crate::lower) fn emit_delete(&mut self, object: ValueId, name: PropertyName) -> ValueId {
+        let mode = self.mode();
+        match self.resolve_access(name) {
+            Access::Property(key) => self.builder.prop_delete(object, key, mode, false),
+            Access::Element(property) => self.builder.elem_delete(object, property, mode),
+        }
+    }
+
+    pub(in crate::lower) fn lower_member_base(
+        &mut self,
+        access: ExprId,
+        object: ExprId,
+        exit: Option<BlockId>,
+    ) -> ValueId {
+        let base = self.lower_chain_base(object, exit);
+        match chain_of(self.file, access) {
+            Chain::Start => {
+                let exit = exit.expect("an optional link has the exit of its chain");
+                self.branch_if_expression_nullish(object, base, exit)
+            }
+            Chain::No | Chain::Continue => base,
+        }
+    }
+
+    fn lower_static_member(&mut self, access: ExprId) -> Option<ValueId> {
+        if let Some(value) = self.lower_namespace_member(access) {
+            return Some(value);
+        }
+        if let Some(value) = self.lower_export_member(access) {
+            return Some(value);
+        }
+        if !self.file.hir.has_typescript_semantics() {
+            return None;
+        }
+        let value = match self.file.queries.constant_enum_access(access) {
+            Ok(Some(EnumValue::Number(bits))) => self.emit_number(f64::from_bits(bits)),
+            Ok(Some(EnumValue::String(text))) => self.emit_constant(Constant::String(text)),
+            Ok(None) | Err(_) => return None,
+        };
+        self.enum_constants.insert(value);
+        Some(value)
+    }
+
+    fn warn_function_introspection(&mut self, access: ExprId) {
+        let Some((object, MemberKey::Name(name))) = self.file.hir.member_key(access) else {
+            return;
+        };
+        if name != known::arguments && name != known::caller {
+            return;
+        }
+        let Ok(ty) = self.file.queries.expression_type(object) else {
+            return;
+        };
+        let Ok(shape) = self.file.queries.type_shape(ty) else {
+            return;
+        };
+        if !is_function_shape(shape.kind) {
+            return;
+        }
+        let span = self.file.span_of(NodeData::Expr(access));
+        let text = self.file.queries.atom_bytes(name);
+        self.file
+            .diagnostics
+            .report(Code::FunctionIntrospection, span, &[text]);
     }
 }
 
@@ -132,37 +158,21 @@ pub(in crate::lower) fn lower_member(
         unreachable!("lower_member takes a Dot or an Index expression");
     };
     if matches!(member, MemberKey::PrivateName(_)) {
-        let base = lower_member_base(lowering, access, object, exit);
+        let base = lowering.lower_member_base(access, object, exit);
         lowering.set_position(hir[access].pos);
-        return private_names::emit_private_get(lowering, base, access);
+        return lowering.emit_private_get(base, access);
     }
     if matches!(hir[object].kind, ExprKind::Super) {
-        function::get_this(lowering);
-        let reference = lower_reference(lowering, access, KeyConversion::AtAccess);
+        lowering.get_this();
+        let reference = lowering.lower_reference(access, KeyConversion::AtAccess);
         lowering.set_position(hir[access].pos);
-        return get_reference(lowering, &reference);
+        return lowering.get_reference(&reference);
     }
-    if let Some(value) = lower_static_member(lowering, access) {
+    if let Some(value) = lowering.lower_static_member(access) {
         return value;
     }
     let (base, name) = lower_member_operands(lowering, access, exit);
     emit_member_read(lowering, access, base, name)
-}
-
-pub(in crate::lower) fn lower_member_base(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: ExprId,
-    object: ExprId,
-    exit: Option<BlockId>,
-) -> ValueId {
-    let base = expression::lower_chain_base(lowering, object, exit);
-    match chain_of(lowering.file, access) {
-        Chain::Start => {
-            let exit = exit.expect("an optional link has the exit of its chain");
-            condition::branch_if_expression_nullish(lowering, object, base, exit)
-        }
-        Chain::No | Chain::Continue => base,
-    }
 }
 
 pub(in crate::lower) fn lower_member_operands(
@@ -173,8 +183,8 @@ pub(in crate::lower) fn lower_member_operands(
     let Some((object, member)) = lowering.file.hir.member_key(access) else {
         unreachable!("lower_member_operands takes a Dot or an Index expression");
     };
-    let base = lower_member_base(lowering, access, object, exit);
-    let name = lower_member_key(lowering, member);
+    let base = lowering.lower_member_base(access, object, exit);
+    let name = lowering.lower_member_key(member);
     (base, name)
 }
 
@@ -188,12 +198,12 @@ pub(in crate::lower) fn emit_member_read(
     let Some((object_expression, _)) = hir.member_key(access) else {
         unreachable!("emit_member_read takes a Dot or an Index expression");
     };
-    let object_position = call::last_mapped_position(lowering.file, object_expression);
+    let object_position = lowering.file.last_mapped_position(object_expression);
     lowering.set_position(object_position);
-    let value = emit_get(lowering, object, name);
+    let value = lowering.emit_get(object, name);
     lowering.set_position(hir[access].pos);
-    let value = convert::claim_member_read(lowering, access, value);
-    warn_function_introspection(lowering, access);
+    let value = lowering.claim_member_read(access, value);
+    lowering.warn_function_introspection(access);
     value
 }
 
@@ -203,59 +213,6 @@ fn chain_of(file: &FileLowering<'_, '_, '_, '_>, access: ExprId) -> Chain {
         unreachable!("chain_of takes a Dot or an Index expression");
     };
     chain
-}
-
-fn lower_static_member(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: ExprId,
-) -> Option<ValueId> {
-    if let Some(value) = module::lower_namespace_member(lowering, access) {
-        return Some(value);
-    }
-    if let Some(value) = commonjs::lower_export_member(lowering, access) {
-        return Some(value);
-    }
-    if !lowering.file.hir.has_typescript_semantics() {
-        return None;
-    }
-    let value = match lowering.file.queries.constant_enum_access(access) {
-        Ok(Some(EnumValue::Number(bits))) => {
-            expression::emit_number(lowering, f64::from_bits(bits))
-        }
-        Ok(Some(EnumValue::String(text))) => {
-            expression::emit_constant(lowering, Constant::String(text))
-        }
-        Ok(None) | Err(_) => return None,
-    };
-    lowering.enum_constants.insert(value);
-    Some(value)
-}
-
-fn warn_function_introspection(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: ExprId,
-) {
-    let Some((object, MemberKey::Name(name))) = lowering.file.hir.member_key(access) else {
-        return;
-    };
-    if name != known::arguments && name != known::caller {
-        return;
-    }
-    let Ok(ty) = lowering.file.queries.expression_type(object) else {
-        return;
-    };
-    let Ok(shape) = lowering.file.queries.type_shape(ty) else {
-        return;
-    };
-    if !is_function_shape(shape.kind) {
-        return;
-    }
-    let span = lowering.file.span_of(NodeData::Expr(access));
-    let text = lowering.file.queries.atom_bytes(name);
-    lowering
-        .file
-        .diagnostics
-        .report(Code::FunctionIntrospection, span, &[text]);
 }
 
 fn is_function_shape(kind: ShapeKind<'_>) -> bool {

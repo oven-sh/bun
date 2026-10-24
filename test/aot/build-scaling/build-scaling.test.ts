@@ -76,6 +76,8 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
       cwd,
       [bunExe(), "build", "--compile", "--aot", withThreads(1), ...carrier, entry, "--outfile", executable],
       900_000,
+      bunEnv,
+      shape.isRefused ? 1 : 0,
     );
   } finally {
     rmSync(executable, { force: true });

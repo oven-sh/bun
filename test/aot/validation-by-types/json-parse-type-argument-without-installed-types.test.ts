@@ -36,10 +36,10 @@ console.log(shown(() => JSON.parse('{"x":-1}')), shown(() => JSON.parse('{"x":-1
 `;
 
 const expected = `{"x":1,"y":2.5,"z":"kept"}
-TypeError: x: expected number to be >=0 (and 1 more) [x,y]
-TypeError: y: expected number, received undefined [y]
+TypeError: x must be >=0 (and 1 more) [x,y]
+TypeError: y must be number, received undefined [y]
 SyntaxError: JSON Parse error: Expected '}'
-{"name":"ab","at":{"x":1,"y":2}} TypeError: name: expected string to have >=2 characters [name]
+{"name":"ab","at":{"x":1,"y":2}} TypeError: name must have >=2 characters [name]
 {"x":-1} {"x":-1}
 `;
 

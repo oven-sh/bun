@@ -97,6 +97,7 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["references-in-every-slot-kind", "ts"],
   ["regular-expression-literals", "js", { ...withoutTheRegExpJIT, leftOut: [1, 8, 26] }],
   ["regexps-and-near-matches", "js", withoutTheRegExpJIT],
+  ["repeated-groups-that-can-match-nothing", "js", withoutTheRegExpJIT],
   ["rest-parameters", "ts", { leftOut: [8, 10, 15, 22] }],
   ["paths-to-call-site", "js"],
   ["paths-to-read-site", "js", { words: seed => ["js", seed] }],

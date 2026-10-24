@@ -9,9 +9,11 @@
 //   --jobs <n>                                     how many processes write those programs at a time (default: four per core, 64 at most: they wait for timers most of the time)
 //
 // The same script, table and Bun write the same bytes every time, however many processes share the work.
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+//
+// A folder of ./programs may also hold files `*.programs`, each with many programs in it: `packedFiles` below. They are written out in the same way.
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { availableParallelism } from "os";
-import { dirname, join } from "path";
+import { basename, dirname, join, resolve, sep } from "path";
 import type { Row } from "./built-ins-alone/table";
 
 /** A program that a script writes. `entry` and the names of `files` are paths below the folder of programs. */
@@ -51,6 +53,8 @@ export function programsOf(files: Record<string, string>): WrittenProgram[] {
   };
   const programs = new Map<string, WrittenProgram>();
   const byName = new Map<string, WrittenProgram[]>();
+  const handOn = (program: WrittenProgram, name: string) =>
+    Object.defineProperty(program.files, name, Object.getOwnPropertyDescriptor(files, name)!);
   for (const name of names) {
     const entry = mainAbove(name) ?? name;
     if (entry === name && besidePrograms.test(name)) continue;
@@ -59,11 +63,11 @@ export function programsOf(files: Record<string, string>): WrittenProgram[] {
       const bare = entry.replace(/(\/main)?\.[a-z]+$/, "");
       byName.set(bare, [...(byName.get(bare) ?? []), programs.get(entry)!]);
     }
-    programs.get(entry)!.files[name] = files[name];
+    handOn(programs.get(entry)!, name);
   }
   for (const name of names)
     if (!mainAbove(name) && besidePrograms.test(name))
-      for (const program of byName.get(name.replace(besidePrograms, "")) ?? []) program.files[name] = files[name];
+      for (const program of byName.get(name.replace(besidePrograms, "")) ?? []) handOn(program, name);
   return [...programs.values()];
 }
 
@@ -97,9 +101,74 @@ export function untypedTwins(
   written: Record<string, string> = {},
 ): Record<string, string> {
   const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: false, inline: false });
+  const packed = packsOf(topic).length ? packedFiles(topic) : {};
+  const kept = (name: string) => join(import.meta.dir, "programs", topic, `${name}.ts`);
   const typed = (name: string) =>
-    written[`${name}.ts`] ?? readFileSync(join(import.meta.dir, "programs", topic, `${name}.ts`), "utf8");
+    written[`${name}.ts`] ?? (existsSync(kept(name)) ? readFileSync(kept(name), "utf8") : packed[`${name}.ts`]);
   return Object.fromEntries(names.map(name => [`${name}-untyped.${extension}`, transpiler.transformSync(typed(name))]));
+}
+
+const topics = () =>
+  readdirSync(join(import.meta.dir, "programs"), { withFileTypes: true }).filter(entry => entry.isDirectory());
+const packsOf = (topic: string) =>
+  readdirSync(join(import.meta.dir, "programs", topic))
+    .filter(name => name.endsWith(".programs"))
+    .sort();
+
+/**
+ * The files that the `*.programs` files of a folder hold, by their paths below the folder. A line that begins with four slashes is a mark:
+ *
+ *   //// <path>                        a file begins. `////! <path>`: one without a newline at its end
+ *   ////: <name>                       a piece begins: text that stands in several places. «1» to «9» in it stand for arguments
+ *   ////= <name><tab><argument>..      here stands that piece
+ *
+ * A piece is known in every such file of its folder.
+ */
+export function packedFiles(topic: string): Record<string, string> {
+  const pieces = new Map<string, string>();
+  const files: Record<string, string> = {};
+  const expanded = (body: string, given: string[] = []): string =>
+    (given.length ? body.replace(/«(\d)»/g, (_, n) => given[n - 1]) : body).replace(/^\/\/\/\/= (.*)\n/gm, (_, use) => {
+      const [name, ...passed] = use.split("\t");
+      return expanded(pieces.get(name)!, passed);
+    });
+  for (const pack of packsOf(topic)) {
+    const text = readFileSync(join(import.meta.dir, "programs", topic, pack), "utf8").replaceAll("\r\n", "\n");
+    const marks = [...text.matchAll(/^\/\/\/\/([ !:]) ?(.*)\n/gm)];
+    for (const [index, { 0: line, 1: mark, 2: name, index: start }] of marks.entries()) {
+      const body = () => text.slice(start + line.length, marks[index + 1]?.index);
+      if (mark === ":") pieces.set(name, body());
+      // A text is put together when somebody reads it: most who ask want the names.
+      else
+        Object.defineProperty(files, name, {
+          enumerable: true,
+          get: () => expanded(body()).slice(0, mark === "!" ? -1 : undefined),
+        });
+    }
+  }
+  return files;
+}
+
+/**
+ * For whoever walks ./programs by himself and draws from the programs that are one file: `kept`, what the walk of `root` found, with the packed ones whose names match
+ * among them, each where it would lie if it were kept. `textOf` reads either.
+ */
+export function withPackedPrograms(root: string, kept: string[], matches: RegExp) {
+  const packed = new Map<string, () => string>();
+  const programs = join(import.meta.dir, "programs");
+  for (const { name: topic } of resolve(root) === programs ? topics() : [])
+    for (const { entry, files } of packsOf(topic).length ? programsOf(packedFiles(topic)) : [])
+      if (Object.keys(files).length === 1 && matches.test(entry) && !basename(entry).startsWith("main."))
+        packed.set(join(programs, topic, entry), () => files[entry]);
+  const parts = new Map([...kept, ...packed.keys()].map(path => [path, path.split(sep)]));
+  const inOrderOfWalk = (a: string[], b: string[]) => {
+    const differs = a.findIndex((part, index) => part !== b[index]);
+    return differs < 0 ? -1 : a[differs] < (b[differs] ?? "") ? -1 : 1;
+  };
+  return {
+    paths: [...parts.keys()].sort((a, b) => inOrderOfWalk(parts.get(a)!, parts.get(b)!)),
+    textOf: (path: string) => packed.get(path)?.() ?? readFileSync(path, "utf8"),
+  };
 }
 
 /** By the folder of ./programs. A script is loaded when somebody asks for its folder. */
@@ -180,6 +249,15 @@ export const generators: Record<string, () => Generator> = {
   "ways-into-library-modules": () => require("./generate/ways-into-library-modules"),
   "writes-to-host-objects": () => require("./generate/writes-to-host-objects"),
 };
+
+for (const { name: topic } of topics()) {
+  if (packsOf(topic).length === 0) continue;
+  const script = generators[topic];
+  generators[topic] = () => {
+    const generator: Generator | undefined = script?.();
+    return { ...generator, programs: () => [...(generator?.programs() ?? []), ...programsOf(packedFiles(topic))] };
+  };
+}
 
 /**
  * The table of built-ins that `bun` was built with, as the build wrote it: $AOT_BUILTIN_TABLE, or aot_builtin_table.json beside that Bun (CI packs it there),
@@ -323,7 +401,8 @@ if (import.meta.main && process.argv[2] === "--write-groups") {
     // What is kept under the name of a program that the script writes takes its place.
     const programs = generator.programs().filter(program => !existsSync(join(kept, program.entry)));
     for (const program of programs) writeProgram(join(where, each), program);
-    if (existsSync(kept)) cpSync(kept, join(where, each), { recursive: true });
+    if (existsSync(kept))
+      cpSync(kept, join(where, each), { recursive: true, filter: source => !source.endsWith(".programs") });
     const entries = programs.map(program => program.entry);
     if (generator.fromTable && (tablePath === undefined || !existsSync(tablePath))) {
       console.error(

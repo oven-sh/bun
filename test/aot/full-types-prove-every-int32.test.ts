@@ -1,5 +1,5 @@
 // A program that installs the full types under packages/full-types gets no warning about them. Each text is laid here as a TypeScript file of a package and goes through the checker of a
-// build, as packages/full-types/one_name.py sends it before it writes it. A type error in the text would be TS100009. An `int32` that the compiler cannot prove would be TS100066, on every
+// build. A type error in the text would be TS100009. An `int32` that the compiler cannot prove would be TS100066, on every
 // build, unless the value that enters it is written `e as int32`.
 import { expect, test } from "bun:test";
 import { cpSync } from "fs";
@@ -33,8 +33,6 @@ async function check(text: string, name: string) {
 test.skipIf(!!unsupported).each([
   ["react-reconciler/0.33.0", "cjs/react-reconciler.production.js", "text.cts"],
   ["seroval/1.6.9", "dist/index.js", "text.mts"],
-  ["react-dom/19.3.0", "cjs/react-dom-server-legacy.browser.production.js", "text.cts"],
-  ["react-dom/19.3.0", "cjs/react-dom-server.bun.production.js", "text.cts"],
   ["react-dom/19.3.1", "cjs/react-dom-server-legacy.browser.production.js", "text.cts"],
   ["react-dom/19.3.1", "cjs/react-dom-server.bun.production.js", "text.cts"],
 ])(

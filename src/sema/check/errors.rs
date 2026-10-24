@@ -1393,7 +1393,7 @@ impl Checker<'_, '_> {
         };
         // `await x` where it isn't allowed: the parser treated the keyword as an identifier and already reported the
         // error.
-        if hir.has_diagnostic(hir[e].pos, 1308) {
+        if name == known::r#await && hir.has_diagnostic(hir[e].pos, 1308) {
             return;
         }
         let other = SymFlags::TYPE | SymFlags::NAMESPACE;

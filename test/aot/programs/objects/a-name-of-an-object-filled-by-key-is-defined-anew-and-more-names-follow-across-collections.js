@@ -3,8 +3,21 @@
 const later = ["north", "east", "south", "west", "up", "down"];
 const sizes = [0, 1, 2, 3, 5, 6, 7, 10, 30, 63, 64, 65, 70, 130, 300, 600];
 const descriptors = [
-  () => ({ get() { return 5; }, set(value) {}, enumerable: true, configurable: true }),
-  () => ({ get() { return 5; }, enumerable: false, configurable: true }),
+  () => ({
+    get() {
+      return 5;
+    },
+    set(value) {},
+    enumerable: true,
+    configurable: true,
+  }),
+  () => ({
+    get() {
+      return 5;
+    },
+    enumerable: false,
+    configurable: true,
+  }),
   () => ({ value: 5, writable: true, enumerable: false, configurable: true }),
   () => ({ value: 5, writable: false, enumerable: true, configurable: true }),
   () => ({ value: 5, writable: true, enumerable: true, configurable: false }),

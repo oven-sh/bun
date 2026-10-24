@@ -6,7 +6,6 @@ import { assert } from "./error.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote } from "./shell.ts";
 import { streamPath } from "./stream.ts";
-import type { ObjectFormat } from "./trim/types.ts";
 
 export interface EngineSources {
   /** `Source/JavaScriptCore` of the checkout this graph compiles. Undefined when it links a prebuilt WebKit. */
@@ -362,8 +361,4 @@ export function emitAotCodegen(ctx: Ctx): void {
   emitAotSchemaUseCheck(ctx);
   emitBuiltinsTable(ctx);
   emitBuiltinSources(ctx);
-}
-
-export function executableFormat(cfg: Pick<Config, "darwin" | "windows">): ObjectFormat {
-  return cfg.darwin ? "macho" : cfg.windows ? "coff" : "elf";
 }

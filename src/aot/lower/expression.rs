@@ -13,22 +13,15 @@ use smallvec::SmallVec;
 
 use super::member::{self, PropertyName};
 use super::{
-    FileLowering, FunctionLowering, async_function, call, class, commonjs, control, convert, data,
-    function, generator, jsx, module, object, operator, scope, template,
+    FileLowering, FunctionLowering, async_function, call, control, generator, module, object,
+    operator, scope, template,
 };
 use crate::builtins::Resolved;
 use crate::ir::generated::MAX_TRACKED_INTEGER;
 use crate::ir::{BlockId, DeclaredType, ValueId};
 
-pub(in crate::lower) use self::array::lower_argument_list;
-pub(in crate::lower) use self::assignment::{AssignmentTarget, classify_assignment_target};
-pub(in crate::lower) use self::builtin_path::{emit_locked_builtin, expect_resolved_path};
-pub(in crate::lower) use self::chain::{
-    ShortCircuit, is_chain_root, lower_chain_base, lower_in_chain,
-};
-pub(in crate::lower) use self::global_path::{
-    emit_free_name_delete, emit_free_name_get, emit_free_name_set, lower_global_path_holder,
-};
+pub(in crate::lower) use self::assignment::AssignmentTarget;
+pub(in crate::lower) use self::chain::ShortCircuit;
 
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct TailCast<'t> {
@@ -102,127 +95,438 @@ fn binary_form(op: BinOp) -> BinaryForm {
     }
 }
 
-pub(crate) fn lower_expression(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) -> ValueId {
-    lower_expression_in(lowering, expression, Evaluation::PLAIN)
-}
-
-pub(crate) fn lower_expression_for_effect(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) {
-    let position = lowering.file.hir[expression].pos;
-    if !lowering.enter_nesting(position) {
-        return;
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn lower_expression(&mut self, expression: ExprId) -> ValueId {
+        self.lower_expression_in(expression, Evaluation::PLAIN)
     }
-    lowering.set_position(position);
-    match lowering.file.decisions().decision(expression) {
-        Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {}
-        Decision::GlobalPath(_) => {
-            lower_by_decision(lowering, expression, Evaluation::PLAIN);
+
+    pub(crate) fn lower_expression_for_effect(&mut self, expression: ExprId) {
+        let position = self.file.hir[expression].pos;
+        if !self.enter_nesting(position) {
+            return;
         }
-        Decision::Unknown
-            if lowering
-                .file
-                .decisions()
-                .is_truthy_without_effects(expression) => {}
-        Decision::Unknown => lower_for_effect_by_kind(lowering, expression),
+        self.set_position(position);
+        match self.file.decisions().decision(expression) {
+            Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {}
+            Decision::GlobalPath(_) => {
+                self.lower_by_decision(expression, Evaluation::PLAIN);
+            }
+            Decision::Unknown if self.file.decisions().is_truthy_without_effects(expression) => {}
+            Decision::Unknown => self.lower_for_effect_by_kind(expression),
+        }
+        self.leave_nesting();
     }
-    lowering.leave_nesting();
-}
 
-pub(crate) fn lower_tail_expression(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) -> ValueId {
-    let tail = if control::allows_tail_call(lowering) {
-        Tail::Yes { casts: None }
-    } else {
-        Tail::No
-    };
-    lower_expression_in(lowering, expression, Evaluation::at_tail(tail))
-}
+    pub(crate) fn lower_tail_expression(&mut self, expression: ExprId) -> ValueId {
+        let tail = if control::allows_tail_call(self) {
+            Tail::Yes { casts: None }
+        } else {
+            Tail::No
+        };
+        self.lower_expression_in(expression, Evaluation::at_tail(tail))
+    }
 
-pub(crate) fn lower_named_evaluation(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    name: PropertyName,
-) -> ValueId {
-    lower_expression_in(lowering, expression, Evaluation::named(name))
-}
+    pub(crate) fn lower_named_evaluation(
+        &mut self,
+        expression: ExprId,
+        name: PropertyName,
+    ) -> ValueId {
+        self.lower_expression_in(expression, Evaluation::named(name))
+    }
 
-pub(crate) fn emit_constant(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    constant: Constant,
-) -> ValueId {
-    match constant {
-        Constant::Undefined => lowering.builder.undefined(),
-        Constant::Null => lowering.builder.null(),
-        Constant::Boolean(value) => lowering.builder.boolean(value),
-        Constant::Number(number) => emit_number(lowering, number),
-        Constant::String(text) => {
-            let string = lowering.file.intern_atom(text);
-            lowering.builder.string(string)
-        }
-        Constant::BigInt(digits) => {
-            let digits = lowering.file.intern_atom(digits);
-            lowering.builder.big_int(digits)
+    pub(crate) fn emit_constant(&mut self, constant: Constant) -> ValueId {
+        match constant {
+            Constant::Undefined => self.builder.undefined(),
+            Constant::Null => self.builder.null(),
+            Constant::Boolean(value) => self.builder.boolean(value),
+            Constant::Number(number) => self.emit_number(number),
+            Constant::String(text) => {
+                let string = self.file.intern_atom(text);
+                self.builder.string(string)
+            }
+            Constant::BigInt(digits) => {
+                let digits = self.file.intern_atom(digits);
+                self.builder.big_int(digits)
+            }
         }
     }
-}
 
-pub(crate) fn emit_number(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    number: f64,
-) -> ValueId {
-    let is_tracked_integer = number == number.trunc()
-        && number.abs() < MAX_TRACKED_INTEGER as f64
-        && number.to_bits() != (-0.0f64).to_bits();
-    if is_tracked_integer {
-        lowering.builder.integer(number as i64)
-    } else {
-        lowering.builder.double(number)
+    pub(crate) fn emit_number(&mut self, number: f64) -> ValueId {
+        let is_tracked_integer = number == number.trunc()
+            && number.abs() < MAX_TRACKED_INTEGER as f64
+            && number.to_bits() != (-0.0f64).to_bits();
+        if is_tracked_integer {
+            self.builder.integer(number as i64)
+        } else {
+            self.builder.double(number)
+        }
+    }
+
+    pub(in crate::lower) fn lower_expression_in(
+        &mut self,
+        expression: ExprId,
+        evaluation: Evaluation<'_>,
+    ) -> ValueId {
+        let position = self.file.hir[expression].pos;
+        if !self.enter_nesting(position) {
+            return self.builder.undefined();
+        }
+        self.set_position(position);
+        let value = self.lower_by_decision(expression, evaluation);
+        let value = self.finish_expression(expression, value);
+        self.leave_nesting();
+        value
+    }
+
+    pub(in crate::lower) fn finish_expression(
+        &mut self,
+        expression: ExprId,
+        value: ValueId,
+    ) -> ValueId {
+        // A constant has its own type, and a built-in that the table resolves says more than the type the checker has for it.
+        if self.file.is_statically_resolved(expression) || self.enum_constants.contains(&value) {
+            return value;
+        }
+        let mut finished = self.convert_narrowed_reference(expression, value);
+        if finished == value {
+            finished = self.expect_inferred_type(expression, value);
+        }
+        self.rebind_if_local(expression, value, finished);
+        finished
+    }
+
+    pub(in crate::lower) fn convert_through_assertions(
+        &mut self,
+        expression: ExprId,
+        innermost: ValueId,
+    ) -> ValueId {
+        let hir = self.file.hir;
+        let mut assertions: SmallVec<[ExprId; 2]> = SmallVec::new();
+        let mut current = expression;
+        while let Some(operand) = hir.type_assertion_operand(current) {
+            if matches!(hir[current].kind, ExprKind::As { .. }) {
+                assertions.push(current);
+            }
+            current = operand;
+        }
+        let mut value = innermost;
+        for &assertion in assertions.iter().rev() {
+            self.set_position(hir[assertion].pos);
+            value = self.convert_assertion(assertion, value);
+        }
+        self.rebind_if_local(expression, innermost, value);
+        value
+    }
+
+    fn rebind_if_local(&mut self, expression: ExprId, before: ValueId, after: ValueId) {
+        if before == after {
+            return;
+        }
+        let Some(symbol) = scope::find_tested_local(self, expression) else {
+            return;
+        };
+        // The local has its own type again where the claim ends, and a closure takes it at that type.
+        let position = self.local_position(symbol);
+        if self.is_converted_within(after, position) {
+            self.rebind_local(symbol, after);
+        }
+    }
+
+    fn lower_by_decision(&mut self, expression: ExprId, evaluation: Evaluation<'_>) -> ValueId {
+        match self.file.decisions().decision(expression) {
+            Decision::Constant(constant) => self.emit_constant(constant),
+            Decision::Data(_) | Decision::DeferredData => self.lower_decided_data(expression),
+            Decision::GlobalPath(path) => self.lower_global_path(expression, path),
+            Decision::Unknown => self.lower_by_resolution(expression, evaluation),
+        }
+    }
+
+    fn lower_by_resolution(&mut self, expression: ExprId, evaluation: Evaluation<'_>) -> ValueId {
+        let hir = self.file.hir;
+        if let Some(value) = self.try_lower_mention(expression) {
+            return value;
+        }
+        match self.file.builtins.of_expr(expression) {
+            Some(Resolved::Builtin(path)) if path.locked_builtin().is_some() => {
+                self.emit_locked_builtin(path.id)
+            }
+            Some(Resolved::Builtin(path))
+                if !matches!(hir[expression].kind, ExprKind::Ident(_)) =>
+            {
+                self.lower_builtin_path(expression, path, evaluation)
+            }
+            Some(Resolved::Intrinsic(intrinsic)) => {
+                let exit = evaluation.chain_exit;
+                call::lower_intrinsic_expression(self, expression, intrinsic, exit)
+            }
+            Some(Resolved::Builtin(_) | Resolved::DynamicGlobal(_)) | None => {
+                self.lower_by_kind(expression, evaluation)
+            }
+        }
+    }
+
+    fn lower_by_kind(&mut self, expression: ExprId, evaluation: Evaluation<'_>) -> ValueId {
+        let hir = self.file.hir;
+        match hir[expression].kind {
+            ExprKind::Missing | ExprKind::Super | ExprKind::PrivateIdentifier(_) => {
+                self.builder.undefined()
+            }
+            ExprKind::Ident(_) => self.lower_identifier(expression),
+            ExprKind::This => self.lower_this_expression(),
+            ExprKind::NewTarget(_) => self.get_new_target(),
+            ExprKind::Null => self.emit_constant(Constant::Null),
+            ExprKind::True => self.emit_constant(Constant::Boolean(true)),
+            ExprKind::False => self.emit_constant(Constant::Boolean(false)),
+            ExprKind::Number(index) => self.emit_number(hir.numbers[index as usize]),
+            ExprKind::String(text) | ExprKind::JsxText(text) => {
+                self.emit_constant(Constant::String(text))
+            }
+            ExprKind::BigInt(digits) => self.emit_constant(Constant::BigInt(digits)),
+            ExprKind::Regex { .. } => array::lower_regexp_literal(self, expression),
+            ExprKind::Template { .. } => {
+                self.lower_unless_constant(expression, template::lower_template_literal)
+            }
+            ExprKind::TaggedTemplate(_) => {
+                template::lower_tagged_template(self, expression, evaluation.tail)
+            }
+            ExprKind::Array(_) | ExprKind::Object(_)
+                if self.file.decisions().is_data_literal(expression)
+                    && !self.file.holds_dictionary_literal(expression) =>
+            {
+                self.lower_decided_data(expression)
+            }
+            ExprKind::Array(_) => array::lower_array_literal(self, expression),
+            ExprKind::Object(_) => object::lower_object_literal(self, expression),
+            ExprKind::Fn(function) => self.lower_function_expression(function, evaluation.name),
+            ExprKind::Class(class) => self.lower_class_expression(class, evaluation.name),
+            ExprKind::Dot { chain: link, .. } | ExprKind::Index { chain: link, .. } => {
+                self.lower_access(expression, link, evaluation)
+            }
+            ExprKind::Call(site) => self.lower_call_link(expression, hir[site].chain, evaluation),
+            ExprKind::New(_) => self.lower_new(expression),
+            ExprKind::Unary { op, .. } => self.lower_unary_kind(expression, op),
+            ExprKind::Binary { op, .. } => self.lower_binary_kind(expression, op, evaluation.tail),
+            ExprKind::Assign { .. } => {
+                assignment::lower_assignment(self, expression, ResultUsage::Value)
+            }
+            ExprKind::Cond { .. } => {
+                self.lower_conditional(expression, ResultUsage::Value, evaluation.tail)
+            }
+            ExprKind::Spread(operand) => self.lower_expression(operand),
+            ExprKind::Await(_) => async_function::lower_await(self, expression),
+            ExprKind::Yield { .. } => generator::lower_yield(self, expression),
+            ExprKind::Jsx(_) => self.lower_jsx(expression),
+            ExprKind::ImportCall { .. } => module::lower_import_call(self, expression),
+            ExprKind::ImportMeta => self.lower_import_meta(),
+            ExprKind::As { expr: operand, ty } => {
+                self.lower_assertion(expression, operand, ty, evaluation)
+            }
+            ExprKind::Satisfies { expr: operand, .. }
+            | ExprKind::AsConst(operand)
+            | ExprKind::NonNull(operand)
+            | ExprKind::Instantiation { expr: operand, .. } => {
+                let operand_evaluation = Evaluation {
+                    chain_exit: None,
+                    ..evaluation
+                };
+                self.lower_expression_in(operand, operand_evaluation)
+            }
+        }
+    }
+
+    fn lower_unless_constant(
+        &mut self,
+        expression: ExprId,
+        lower: fn(&mut FunctionLowering<'_, '_, '_, '_, '_>, ExprId) -> ValueId,
+    ) -> ValueId {
+        if let Some(constant) = find_constant(self.file, expression) {
+            return self.emit_constant(constant);
+        }
+        let computed = lower(self, expression);
+        match self.file.find_constant_outside_dead_zone(expression) {
+            Some(constant) => self.emit_constant(constant),
+            None => computed,
+        }
+    }
+
+    fn lower_access(&mut self, access: ExprId, link: Chain, evaluation: Evaluation<'_>) -> ValueId {
+        match (link, evaluation.chain_exit) {
+            (Chain::No, _) => member::lower_member(self, access, None),
+            (Chain::Start | Chain::Continue, Some(exit)) => {
+                member::lower_member(self, access, Some(exit))
+            }
+            (Chain::Start | Chain::Continue, None) => {
+                chain::lower_whole_chain(self, access, evaluation.tail)
+            }
+        }
+    }
+
+    fn lower_call_link(
+        &mut self,
+        call: ExprId,
+        link: Chain,
+        evaluation: Evaluation<'_>,
+    ) -> ValueId {
+        match (link, evaluation.chain_exit) {
+            (Chain::No, _) => self.lower_call(call, Evaluation::at_tail(evaluation.tail)),
+            (Chain::Start | Chain::Continue, Some(_)) => self.lower_call(call, evaluation),
+            (Chain::Start | Chain::Continue, None) => {
+                chain::lower_whole_chain(self, call, evaluation.tail)
+            }
+        }
+    }
+
+    fn lower_unary_kind(&mut self, expression: ExprId, op: UnOp) -> ValueId {
+        match op {
+            UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
+                assignment::lower_update(self, expression, ResultUsage::Value)
+            }
+            _ => self.lower_unless_constant(expression, operator::lower_unary),
+        }
+    }
+
+    fn lower_binary_kind(&mut self, expression: ExprId, op: BinOp, tail: Tail<'_>) -> ValueId {
+        match binary_form(op) {
+            BinaryForm::Logical => self.lower_logical(expression, ResultUsage::Value, tail),
+            BinaryForm::Comma => {
+                let last = logical::lower_comma_prefix(self, expression);
+                self.lower_expression_in(last, Evaluation::at_tail(tail))
+            }
+            BinaryForm::Operator => self.lower_unless_constant(expression, operator::lower_binary),
+        }
+    }
+
+    fn lower_assertion(
+        &mut self,
+        assertion: ExprId,
+        operand: ExprId,
+        ty: TypeNodeId,
+        evaluation: Evaluation<'_>,
+    ) -> ValueId {
+        let inner = match evaluation.tail {
+            Tail::Yes { casts } if self.file.is_checked() => {
+                let position = self.file.assertion_position(ty);
+                let cast = TailCast {
+                    position,
+                    outer: casts,
+                };
+                let operand_evaluation = Evaluation {
+                    tail: Tail::Yes { casts: Some(&cast) },
+                    chain_exit: None,
+                    name: evaluation.name,
+                };
+                self.lower_expression_in(operand, operand_evaluation)
+            }
+            Tail::Yes { .. } | Tail::No => {
+                let operand_evaluation = Evaluation {
+                    chain_exit: None,
+                    ..evaluation
+                };
+                self.lower_expression_in(operand, operand_evaluation)
+            }
+        };
+        self.set_position(self.file.hir[assertion].pos);
+        let converted = self.convert_assertion(assertion, inner);
+        self.rebind_if_local(operand, inner, converted);
+        converted
+    }
+
+    fn lower_for_effect_by_kind(&mut self, expression: ExprId) {
+        if self.file.is_simplified(expression) {
+            return self.lower_simplified_expression(expression);
+        }
+        match self.file.hir[expression].kind {
+            ExprKind::Assign { .. } => {
+                assignment::lower_assignment(self, expression, ResultUsage::Effect);
+            }
+            ExprKind::Cond { .. } => {
+                self.lower_conditional(expression, ResultUsage::Effect, Tail::No);
+            }
+            ExprKind::Binary { op, .. } => match binary_form(op) {
+                BinaryForm::Logical => {
+                    self.lower_logical(expression, ResultUsage::Effect, Tail::No);
+                }
+                BinaryForm::Comma => {
+                    let last = logical::lower_comma_prefix(self, expression);
+                    self.lower_expression_for_effect(last);
+                }
+                BinaryForm::Operator => {
+                    self.lower_by_decision(expression, Evaluation::PLAIN);
+                }
+            },
+            ExprKind::Unary { op, operand } => match op {
+                UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
+                    assignment::lower_update(self, expression, ResultUsage::Effect);
+                }
+                UnOp::Void | UnOp::Not => self.lower_expression_for_effect(operand),
+                UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Typeof | UnOp::Delete => {
+                    self.lower_by_decision(expression, Evaluation::PLAIN);
+                }
+            },
+            ExprKind::Satisfies { expr: operand, .. }
+            | ExprKind::AsConst(operand)
+            | ExprKind::NonNull(operand)
+            | ExprKind::Instantiation { expr: operand, .. } => {
+                self.lower_expression_for_effect(operand);
+            }
+            ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::JsxText(_) => {}
+            _ => {
+                self.lower_by_decision(expression, Evaluation::PLAIN);
+            }
+        }
     }
 }
 
-pub(crate) fn skip_type_syntax(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> ExprId {
-    file.hir.skip_type_assertions(expression)
-}
+impl FileLowering<'_, '_, '_, '_> {
+    pub(crate) fn skip_type_syntax(&self, expression: ExprId) -> ExprId {
+        self.hir.skip_type_assertions(expression)
+    }
 
-pub(in crate::lower) fn lower_expression_in(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    evaluation: Evaluation<'_>,
-) -> ValueId {
-    let position = lowering.file.hir[expression].pos;
-    if !lowering.enter_nesting(position) {
-        return lowering.builder.undefined();
+    pub(in crate::lower) fn is_statically_resolved(&self, expression: ExprId) -> bool {
+        is_decided(self, expression) || self.builtins.of_expr(expression).is_some()
     }
-    lowering.set_position(position);
-    let value = lower_by_decision(lowering, expression, evaluation);
-    let value = finish_expression(lowering, expression, value);
-    lowering.leave_nesting();
-    value
-}
 
-pub(in crate::lower) fn finish_expression(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    value: ValueId,
-) -> ValueId {
-    // A constant has its own type, and a built-in that the table resolves says more than the type the checker has for it.
-    if is_statically_resolved(lowering.file, expression) || lowering.enum_constants.contains(&value)
-    {
-        return value;
+    // An `as` is a test at run time, so a constant stands for the whole expression only where the syntax alone shows that each test passes.
+    pub(in crate::lower) fn passes_every_assertion(
+        &self,
+        expression: ExprId,
+        constant: Constant,
+    ) -> bool {
+        if !self.is_checked() {
+            return true;
+        }
+        let hir = self.hir;
+        let mut current = expression;
+        while let Some(operand) = hir.type_assertion_operand(current) {
+            if let ExprKind::As { ty, .. } = hir[current].kind {
+                let TypeNodeKind::Keyword(keyword) = hir[ty].kind else {
+                    return false;
+                };
+                if !keyword_accepts(keyword, constant) {
+                    return false;
+                }
+            }
+            current = operand;
+        }
+        true
     }
-    let mut finished = convert::convert_narrowed_reference(lowering, expression, value);
-    if finished == value {
-        finished = expected_type::expect_inferred_type(lowering, expression, value);
+
+    // Such an expression throws for a variable in its dead zone or has this value, and does nothing else: behind its operations the value is known.
+    fn find_constant_outside_dead_zone(&self, expression: ExprId) -> Option<Constant> {
+        let inner = self.skip_type_syntax(expression);
+        match self.decisions().constant(self.hir, inner) {
+            FoldedValue::ConstantOutsideDeadZone(constant) => self
+                .passes_every_assertion(expression, constant)
+                .then_some(constant),
+            FoldedValue::Constant(_) | FoldedValue::Unknown => None,
+        }
     }
-    rebind_if_local(lowering, expression, value, finished);
-    finished
 }
 
 pub(in crate::lower) fn is_decided(
@@ -232,22 +536,15 @@ pub(in crate::lower) fn is_decided(
     !matches!(file.decisions().decision(expression), Decision::Unknown)
 }
 
-pub(in crate::lower) fn is_statically_resolved(
-    file: &FileLowering<'_, '_, '_, '_>,
-    expression: ExprId,
-) -> bool {
-    is_decided(file, expression) || file.builtins.of_expr(expression).is_some()
-}
-
 pub(in crate::lower) fn find_constant(
     file: &FileLowering<'_, '_, '_, '_>,
     expression: ExprId,
 ) -> Option<Constant> {
-    let inner = skip_type_syntax(file, expression);
+    let inner = file.skip_type_syntax(expression);
     match file.decisions().constant(file.hir, inner) {
-        FoldedValue::Constant(constant) => {
-            passes_every_assertion(file, expression, constant).then_some(constant)
-        }
+        FoldedValue::Constant(constant) => file
+            .passes_every_assertion(expression, constant)
+            .then_some(constant),
         FoldedValue::ConstantOutsideDeadZone(_) | FoldedValue::Unknown => None,
     }
 }
@@ -275,369 +572,5 @@ fn keyword_accepts(keyword: Keyword, constant: Constant) -> bool {
             | Keyword::Intrinsic,
             _,
         ) => false,
-    }
-}
-
-// An `as` is a test at run time, so a constant stands for the whole expression only where the syntax alone shows that each test passes.
-pub(in crate::lower) fn passes_every_assertion(
-    file: &FileLowering<'_, '_, '_, '_>,
-    expression: ExprId,
-    constant: Constant,
-) -> bool {
-    if !file.is_checked() {
-        return true;
-    }
-    let hir = file.hir;
-    let mut current = expression;
-    while let Some(operand) = hir.type_assertion_operand(current) {
-        if let ExprKind::As { ty, .. } = hir[current].kind {
-            let TypeNodeKind::Keyword(keyword) = hir[ty].kind else {
-                return false;
-            };
-            if !keyword_accepts(keyword, constant) {
-                return false;
-            }
-        }
-        current = operand;
-    }
-    true
-}
-
-pub(in crate::lower) fn convert_through_assertions(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    innermost: ValueId,
-) -> ValueId {
-    let hir = lowering.file.hir;
-    let mut assertions: SmallVec<[ExprId; 2]> = SmallVec::new();
-    let mut current = expression;
-    while let Some(operand) = hir.type_assertion_operand(current) {
-        if matches!(hir[current].kind, ExprKind::As { .. }) {
-            assertions.push(current);
-        }
-        current = operand;
-    }
-    let mut value = innermost;
-    for &assertion in assertions.iter().rev() {
-        lowering.set_position(hir[assertion].pos);
-        value = convert::convert_assertion(lowering, assertion, value);
-    }
-    rebind_if_local(lowering, expression, innermost, value);
-    value
-}
-
-fn rebind_if_local(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    before: ValueId,
-    after: ValueId,
-) {
-    if before == after {
-        return;
-    }
-    let Some(symbol) = scope::find_tested_local(lowering, expression) else {
-        return;
-    };
-    // The local has its own type again where the claim ends, and a closure takes it at that type.
-    let position = scope::local_position(lowering, symbol);
-    if convert::is_converted_within(lowering, after, position) {
-        scope::rebind_local(lowering, symbol, after);
-    }
-}
-
-fn lower_by_decision(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    evaluation: Evaluation<'_>,
-) -> ValueId {
-    match lowering.file.decisions().decision(expression) {
-        Decision::Constant(constant) => emit_constant(lowering, constant),
-        Decision::Data(_) | Decision::DeferredData => {
-            data::lower_decided_data(lowering, expression)
-        }
-        Decision::GlobalPath(path) => global_path::lower_global_path(lowering, expression, path),
-        Decision::Unknown => lower_by_resolution(lowering, expression, evaluation),
-    }
-}
-
-fn lower_by_resolution(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    evaluation: Evaluation<'_>,
-) -> ValueId {
-    let hir = lowering.file.hir;
-    if let Some(value) = commonjs::try_lower_mention(lowering, expression) {
-        return value;
-    }
-    match lowering.file.builtins.of_expr(expression) {
-        Some(Resolved::Builtin(path)) if path.locked_builtin().is_some() => {
-            emit_locked_builtin(lowering, path.id)
-        }
-        Some(Resolved::Builtin(path)) if !matches!(hir[expression].kind, ExprKind::Ident(_)) => {
-            builtin_path::lower_builtin_path(lowering, expression, path, evaluation)
-        }
-        Some(Resolved::Intrinsic(intrinsic)) => {
-            let exit = evaluation.chain_exit;
-            call::lower_intrinsic_expression(lowering, expression, intrinsic, exit)
-        }
-        Some(Resolved::Builtin(_) | Resolved::DynamicGlobal(_)) | None => {
-            lower_by_kind(lowering, expression, evaluation)
-        }
-    }
-}
-
-fn lower_by_kind(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    evaluation: Evaluation<'_>,
-) -> ValueId {
-    let hir = lowering.file.hir;
-    match hir[expression].kind {
-        ExprKind::Missing | ExprKind::Super | ExprKind::PrivateIdentifier(_) => {
-            lowering.builder.undefined()
-        }
-        ExprKind::Ident(_) => scope::lower_identifier(lowering, expression),
-        ExprKind::This => function::lower_this_expression(lowering),
-        ExprKind::NewTarget(_) => function::get_new_target(lowering),
-        ExprKind::Null => emit_constant(lowering, Constant::Null),
-        ExprKind::True => emit_constant(lowering, Constant::Boolean(true)),
-        ExprKind::False => emit_constant(lowering, Constant::Boolean(false)),
-        ExprKind::Number(index) => emit_number(lowering, hir.numbers[index as usize]),
-        ExprKind::String(text) | ExprKind::JsxText(text) => {
-            emit_constant(lowering, Constant::String(text))
-        }
-        ExprKind::BigInt(digits) => emit_constant(lowering, Constant::BigInt(digits)),
-        ExprKind::Regex { .. } => array::lower_regexp_literal(lowering, expression),
-        ExprKind::Template { .. } => {
-            lower_unless_constant(lowering, expression, template::lower_template_literal)
-        }
-        ExprKind::TaggedTemplate(_) => {
-            template::lower_tagged_template(lowering, expression, evaluation.tail)
-        }
-        ExprKind::Array(_) | ExprKind::Object(_)
-            if lowering.file.decisions().is_data_literal(expression)
-                && !object::holds_dictionary_literal(lowering.file, expression) =>
-        {
-            data::lower_decided_data(lowering, expression)
-        }
-        ExprKind::Array(_) => array::lower_array_literal(lowering, expression),
-        ExprKind::Object(_) => object::lower_object_literal(lowering, expression),
-        ExprKind::Fn(function) => {
-            function::lower_function_expression(lowering, function, evaluation.name)
-        }
-        ExprKind::Class(class) => class::lower_class_expression(lowering, class, evaluation.name),
-        ExprKind::Dot { chain: link, .. } | ExprKind::Index { chain: link, .. } => {
-            lower_access(lowering, expression, link, evaluation)
-        }
-        ExprKind::Call(site) => lower_call_link(lowering, expression, hir[site].chain, evaluation),
-        ExprKind::New(_) => call::lower_new(lowering, expression),
-        ExprKind::Unary { op, .. } => lower_unary_kind(lowering, expression, op),
-        ExprKind::Binary { op, .. } => lower_binary_kind(lowering, expression, op, evaluation.tail),
-        ExprKind::Assign { .. } => {
-            assignment::lower_assignment(lowering, expression, ResultUsage::Value)
-        }
-        ExprKind::Cond { .. } => {
-            logical::lower_conditional(lowering, expression, ResultUsage::Value, evaluation.tail)
-        }
-        ExprKind::Spread(operand) => lower_expression(lowering, operand),
-        ExprKind::Await(_) => async_function::lower_await(lowering, expression),
-        ExprKind::Yield { .. } => generator::lower_yield(lowering, expression),
-        ExprKind::Jsx(_) => jsx::lower_jsx(lowering, expression),
-        ExprKind::ImportCall { .. } => module::lower_import_call(lowering, expression),
-        ExprKind::ImportMeta => module::lower_import_meta(lowering),
-        ExprKind::As { expr: operand, ty } => {
-            lower_assertion(lowering, expression, operand, ty, evaluation)
-        }
-        ExprKind::Satisfies { expr: operand, .. }
-        | ExprKind::AsConst(operand)
-        | ExprKind::NonNull(operand)
-        | ExprKind::Instantiation { expr: operand, .. } => {
-            let operand_evaluation = Evaluation {
-                chain_exit: None,
-                ..evaluation
-            };
-            lower_expression_in(lowering, operand, operand_evaluation)
-        }
-    }
-}
-
-fn lower_unless_constant(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    lower: fn(&mut FunctionLowering<'_, '_, '_, '_, '_>, ExprId) -> ValueId,
-) -> ValueId {
-    if let Some(constant) = find_constant(lowering.file, expression) {
-        return emit_constant(lowering, constant);
-    }
-    let computed = lower(lowering, expression);
-    match find_constant_outside_dead_zone(lowering.file, expression) {
-        Some(constant) => emit_constant(lowering, constant),
-        None => computed,
-    }
-}
-
-// Such an expression throws for a variable in its dead zone or has this value, and does nothing else: behind its operations the value is known.
-fn find_constant_outside_dead_zone(
-    file: &FileLowering<'_, '_, '_, '_>,
-    expression: ExprId,
-) -> Option<Constant> {
-    let inner = skip_type_syntax(file, expression);
-    match file.decisions().constant(file.hir, inner) {
-        FoldedValue::ConstantOutsideDeadZone(constant) => {
-            passes_every_assertion(file, expression, constant).then_some(constant)
-        }
-        FoldedValue::Constant(_) | FoldedValue::Unknown => None,
-    }
-}
-
-fn lower_access(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    access: ExprId,
-    link: Chain,
-    evaluation: Evaluation<'_>,
-) -> ValueId {
-    match (link, evaluation.chain_exit) {
-        (Chain::No, _) => member::lower_member(lowering, access, None),
-        (Chain::Start | Chain::Continue, Some(exit)) => {
-            member::lower_member(lowering, access, Some(exit))
-        }
-        (Chain::Start | Chain::Continue, None) => {
-            chain::lower_whole_chain(lowering, access, evaluation.tail)
-        }
-    }
-}
-
-fn lower_call_link(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    call: ExprId,
-    link: Chain,
-    evaluation: Evaluation<'_>,
-) -> ValueId {
-    match (link, evaluation.chain_exit) {
-        (Chain::No, _) => call::lower_call(lowering, call, Evaluation::at_tail(evaluation.tail)),
-        (Chain::Start | Chain::Continue, Some(_)) => call::lower_call(lowering, call, evaluation),
-        (Chain::Start | Chain::Continue, None) => {
-            chain::lower_whole_chain(lowering, call, evaluation.tail)
-        }
-    }
-}
-
-fn lower_unary_kind(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    op: UnOp,
-) -> ValueId {
-    match op {
-        UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
-            assignment::lower_update(lowering, expression, ResultUsage::Value)
-        }
-        _ => lower_unless_constant(lowering, expression, operator::lower_unary),
-    }
-}
-
-fn lower_binary_kind(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    op: BinOp,
-    tail: Tail<'_>,
-) -> ValueId {
-    match binary_form(op) {
-        BinaryForm::Logical => {
-            logical::lower_logical(lowering, expression, ResultUsage::Value, tail)
-        }
-        BinaryForm::Comma => {
-            let last = logical::lower_comma_prefix(lowering, expression);
-            lower_expression_in(lowering, last, Evaluation::at_tail(tail))
-        }
-        BinaryForm::Operator => lower_unless_constant(lowering, expression, operator::lower_binary),
-    }
-}
-
-fn lower_assertion(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    assertion: ExprId,
-    operand: ExprId,
-    ty: TypeNodeId,
-    evaluation: Evaluation<'_>,
-) -> ValueId {
-    let inner = match evaluation.tail {
-        Tail::Yes { casts } if lowering.file.is_checked() => {
-            let position = convert::assertion_position(lowering.file, ty);
-            let cast = TailCast {
-                position,
-                outer: casts,
-            };
-            let operand_evaluation = Evaluation {
-                tail: Tail::Yes { casts: Some(&cast) },
-                chain_exit: None,
-                name: evaluation.name,
-            };
-            lower_expression_in(lowering, operand, operand_evaluation)
-        }
-        Tail::Yes { .. } | Tail::No => {
-            let operand_evaluation = Evaluation {
-                chain_exit: None,
-                ..evaluation
-            };
-            lower_expression_in(lowering, operand, operand_evaluation)
-        }
-    };
-    lowering.set_position(lowering.file.hir[assertion].pos);
-    let converted = convert::convert_assertion(lowering, assertion, inner);
-    rebind_if_local(lowering, operand, inner, converted);
-    converted
-}
-
-fn lower_for_effect_by_kind(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) {
-    if lowering.file.is_simplified(expression) {
-        return unused::lower_simplified_expression(lowering, expression);
-    }
-    match lowering.file.hir[expression].kind {
-        ExprKind::Assign { .. } => {
-            assignment::lower_assignment(lowering, expression, ResultUsage::Effect);
-        }
-        ExprKind::Cond { .. } => {
-            logical::lower_conditional(lowering, expression, ResultUsage::Effect, Tail::No);
-        }
-        ExprKind::Binary { op, .. } => match binary_form(op) {
-            BinaryForm::Logical => {
-                logical::lower_logical(lowering, expression, ResultUsage::Effect, Tail::No);
-            }
-            BinaryForm::Comma => {
-                let last = logical::lower_comma_prefix(lowering, expression);
-                lower_expression_for_effect(lowering, last);
-            }
-            BinaryForm::Operator => {
-                lower_by_decision(lowering, expression, Evaluation::PLAIN);
-            }
-        },
-        ExprKind::Unary { op, operand } => match op {
-            UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
-                assignment::lower_update(lowering, expression, ResultUsage::Effect);
-            }
-            UnOp::Void | UnOp::Not => lower_expression_for_effect(lowering, operand),
-            UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Typeof | UnOp::Delete => {
-                lower_by_decision(lowering, expression, Evaluation::PLAIN);
-            }
-        },
-        ExprKind::Satisfies { expr: operand, .. }
-        | ExprKind::AsConst(operand)
-        | ExprKind::NonNull(operand)
-        | ExprKind::Instantiation { expr: operand, .. } => {
-            lower_expression_for_effect(lowering, operand);
-        }
-        ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::JsxText(_) => {}
-        _ => {
-            lower_by_decision(lowering, expression, Evaluation::PLAIN);
-        }
     }
 }

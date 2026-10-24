@@ -9,10 +9,9 @@ typed-objects/builtin-prototypes-immutable
 typed-objects/reflect-results-for-builtin
 # TODO: JIT mode itself: the run ends at the first `new` and prints nothing more; the executable is held against the stored text
 host-classes/a-class-with-computed-fields-stands-below-a-host-constructor-that-answers-with-a-string
-# TODO: once the code is compiled, a global that has been deleted is read as undefined, or stored to, without a ReferenceError
+# TODO: once the code is compiled, a global that has been deleted is read as undefined, without a ReferenceError
 language/global-variables-that-change-are-read-outside-hot-code
 structural-types/a-declared-global-appears-changes-type-and-disappears
-structural-types/a-declared-variable-appears-on-the-global-object-and-is-stored-to
 # TODO: once it is compiled, a switch over texts takes the default for a piece of a text whose storage has gone from 8 to 16 bits
 strings/substrings-of-widened-16-bit-string
 # Not bugs:

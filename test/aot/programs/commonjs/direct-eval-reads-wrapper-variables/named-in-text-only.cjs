@@ -3,7 +3,7 @@ const external = function (module) {
 };
 const loaded = { exports: {} };
 external(loaded);
-console.log(typeof loaded.exports.join, loaded.exports.join("a", "b"));
+console.log(typeof loaded.exports.join, loaded.exports.posix.join("a", "b"));
 
 function readInFunction(text) {
   return eval(text);

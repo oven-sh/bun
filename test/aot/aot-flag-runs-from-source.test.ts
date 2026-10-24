@@ -177,6 +177,18 @@ describe("the built-ins that a compiled program cannot change", () => {
   );
 });
 
+describe("what the program itself has put on the global object", () => {
+  test("hot code stores to a property that was deleted as it does under bun run", async () => {
+    const folder = join(import.meta.dir, "programs", "language");
+    const program = "a-strict-store-to-a-global-that-was-deleted-throws-in-hot-code.js";
+    // The loop waits for each tier, so that the code is compiled when the property goes, however busy the machine is.
+    const waitsForTheJIT = { BUN_JSC_useConcurrentJIT: "0" };
+    const plain = await spawned([bunExe(), "run", program], folder, waitsForTheJIT);
+    expect(plain.stdout).toContain("ReferenceError ReferenceError undefined false");
+    expect(await spawned([bunExe(), "run", "--aot", program], folder, waitsForTheJIT)).toEqual(plain);
+  });
+});
+
 describe("bun test --aot", () => {
   const price = {
     "tsconfig.json": tsconfig,

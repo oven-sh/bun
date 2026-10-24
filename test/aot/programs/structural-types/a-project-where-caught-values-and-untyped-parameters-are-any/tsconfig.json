@@ -1,9 +1,0 @@
-{
-  "extends": "../../tsconfig.json",
-  "compilerOptions": {
-    "strict": true,
-    "noImplicitAny": false,
-    "noImplicitThis": false,
-    "useUnknownInCatchVariables": false
-  }
-}

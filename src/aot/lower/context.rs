@@ -20,7 +20,6 @@ use super::class::ClassState;
 use super::fragment::{FragmentBuilder, ModuleFragment};
 use super::layouts::{DefinedObjectTypes, LayoutState};
 use super::module::{LibraryFunctions, ModuleState};
-use super::named_entries::drop_unnamed_entries;
 use super::scope::{ScopeAnalysis, ScopeInput, analyze_scopes};
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
@@ -226,7 +225,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(super) fn finish(mut self, module: ModuleFragment) -> LoweredFile {
         self.fragment.is_checked = self.is_checked();
         let mut fragment = self.fragment.finish(module);
-        drop_unnamed_entries(&mut fragment);
         fragment.strings.share_strings();
         fragment.property_keys.release_spare_capacity();
         fragment.types.share_types();

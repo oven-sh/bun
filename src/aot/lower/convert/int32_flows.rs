@@ -122,29 +122,136 @@ fn function_name<'p>(
     None
 }
 
-fn parameter_text(
-    file: &FileLowering<'_, '_, '_, '_>,
-    function: FunctionRef,
-    parameter: ParamId,
-) -> Vec<u8> {
-    let hir = file.queries.files().hir(function.file);
-    let label = match hir[hir[parameter].pat].kind {
-        PatKind::Ident(name) => Some(quoted(name_text(file, name))),
-        PatKind::Missing | PatKind::Object(_) | PatKind::Array(_) => {
-            let mut parameters = hir[function.function].params.iter();
-            let position = parameters.position(|other| other == parameter);
-            position.map(|position| (position + 1).to_string().into_bytes())
+impl FileLowering<'_, '_, '_, '_> {
+    fn parameter_text(&self, function: FunctionRef, parameter: ParamId) -> Vec<u8> {
+        let hir = self.queries.files().hir(function.file);
+        let label = match hir[hir[parameter].pat].kind {
+            PatKind::Ident(name) => Some(quoted(name_text(self, name))),
+            PatKind::Missing | PatKind::Object(_) | PatKind::Array(_) => {
+                let mut parameters = hir[function.function].params.iter();
+                let position = parameters.position(|other| other == parameter);
+                position.map(|position| (position + 1).to_string().into_bytes())
+            }
+        };
+        let mut text = b"Parameter".to_vec();
+        if let Some(label) = label {
+            text.push(b' ');
+            text.extend(label);
         }
-    };
-    let mut text = b"Parameter".to_vec();
-    if let Some(label) = label {
-        text.push(b' ');
-        text.extend(label);
+        if let Some(name) = function_name(self, function) {
+            text.extend(concat(&[b" of ", &quoted(name)]));
+        }
+        text
     }
-    if let Some(name) = function_name(file, function) {
-        text.extend(concat(&[b" of ", &quoted(name)]));
+
+    fn member_text(&mut self, access: ExprId) -> Option<Vec<u8>> {
+        let (object, key) = self.hir.member_key(access)?;
+        let name = match key {
+            MemberKey::Name(name) | MemberKey::PrivateName(name) => name,
+            MemberKey::Computed(_) => return None,
+        };
+        let owner = match self.queries.expression_type(object) {
+            Ok(ty) => type_name(self, ty),
+            Err(_) => None,
+        };
+        Some(property_text(name_text(self, name), owner))
     }
-    text
+
+    fn literal_property_text(&mut self, value: ExprId) -> Option<Vec<u8>> {
+        let Parent::Prop(property) = self.bound.parent_of_expr(value) else {
+            return None;
+        };
+        let PropKey::Name(name) = self.hir[property].key else {
+            return None;
+        };
+        let literal = self.bound.prop_owner[property.idx()];
+        let owner = match self.queries.contextual_type(literal) {
+            Ok(Some(ty)) => type_name(self, ty),
+            Ok(None) | Err(_) => None,
+        };
+        Some(property_text(name_text(self, name), owner))
+    }
+
+    fn result_text(&self, function: FunctionKey) -> Vec<u8> {
+        let name = match function {
+            FunctionKey::Source(function) => function_name(self, function),
+            _ => None,
+        };
+        match name {
+            Some(name) => concat(&[b"The return value of ", &quoted(name)]),
+            None => b"The return value".to_vec(),
+        }
+    }
+
+    fn tight_text(&self, expression: ExprId) -> Vec<u8> {
+        let text = text_of(self, expression);
+        let is_tight = matches!(
+            self.hir[expression].kind,
+            ExprKind::Ident(_)
+                | ExprKind::This
+                | ExprKind::Number(_)
+                | ExprKind::String(_)
+                | ExprKind::Template { .. }
+                | ExprKind::Dot { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Call(_)
+                | ExprKind::New(_)
+                | ExprKind::Unary { .. }
+                | ExprKind::Array(_)
+                | ExprKind::Object(_)
+        );
+        if is_tight {
+            text.to_vec()
+        } else {
+            parenthesized(text)
+        }
+    }
+
+    fn argument_text(&self, expression: ExprId) -> Vec<u8> {
+        let text = text_of(self, expression);
+        let is_sequence = matches!(
+            self.hir[expression].kind,
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                ..
+            }
+        );
+        if is_sequence {
+            parenthesized(text)
+        } else {
+            text.to_vec()
+        }
+    }
+
+    fn step_advice(&self, operand: ExprId, step: &[u8]) -> Vec<u8> {
+        let target = self.tight_text(operand);
+        concat(&[&target, b" = (", &target, b" ", step, b" 1) | 0"])
+    }
+
+    fn target_text(&self, subject: Subject) -> Option<Vec<u8>> {
+        match subject {
+            Subject::Binding(symbol) => {
+                Some(name_text(self, self.bound.symbol(symbol).name).to_vec())
+            }
+            Subject::Member(access) => Some(text_of(self, access).to_vec()),
+            _ => None,
+        }
+    }
+
+    fn describe_value(&mut self, subject: Subject, value: FlowingValue) -> Option<Int32FlowValue> {
+        match value {
+            FlowingValue::Expression(stored) => Some(Int32FlowValue::Expression {
+                start: range_of_node(self.hir, NodeData::Expr(stored)).0,
+                text: text_of(self, stored).to_vec(),
+                advice: advice_text(self, stored),
+                is_any: is_any(self, stored),
+            }),
+            FlowingValue::AssignedByPattern => {
+                self.target_text(subject).map(Int32FlowValue::PatternTarget)
+            }
+            FlowingValue::PassedBySpread => Some(Int32FlowValue::SpreadArgument),
+        }
+    }
 }
 
 fn property_text(name: &[u8], owner: Option<Vec<u8>>) -> Vec<u8> {
@@ -174,40 +281,9 @@ fn binding_text(file: &FileLowering<'_, '_, '_, '_>, symbol: SymbolId) -> Vec<u8
             file: file.file,
             function: bound.param_fn[parameter.idx()],
         };
-        return parameter_text(file, function, parameter);
+        return file.parameter_text(function, parameter);
     }
     quoted(name_text(file, declared.name))
-}
-
-fn member_text(file: &mut FileLowering<'_, '_, '_, '_>, access: ExprId) -> Option<Vec<u8>> {
-    let (object, key) = file.hir.member_key(access)?;
-    let name = match key {
-        MemberKey::Name(name) | MemberKey::PrivateName(name) => name,
-        MemberKey::Computed(_) => return None,
-    };
-    let owner = match file.queries.expression_type(object) {
-        Ok(ty) => type_name(file, ty),
-        Err(_) => None,
-    };
-    Some(property_text(name_text(file, name), owner))
-}
-
-fn literal_property_text(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    value: ExprId,
-) -> Option<Vec<u8>> {
-    let Parent::Prop(property) = file.bound.parent_of_expr(value) else {
-        return None;
-    };
-    let PropKey::Name(name) = file.hir[property].key else {
-        return None;
-    };
-    let literal = file.bound.prop_owner[property.idx()];
-    let owner = match file.queries.contextual_type(literal) {
-        Ok(Some(ty)) => type_name(file, ty),
-        Ok(None) | Err(_) => None,
-    };
-    Some(property_text(name_text(file, name), owner))
 }
 
 fn class_field_text(file: &FileLowering<'_, '_, '_, '_>, member: MemberId) -> Option<Vec<u8>> {
@@ -220,17 +296,6 @@ fn class_field_text(file: &FileLowering<'_, '_, '_, '_>, member: MemberId) -> Op
     };
     let owner = class_name(file, class).map(<[u8]>::to_vec);
     Some(property_text(name_text(file, name), owner))
-}
-
-fn result_text(file: &FileLowering<'_, '_, '_, '_>, function: FunctionKey) -> Vec<u8> {
-    let name = match function {
-        FunctionKey::Source(function) => function_name(file, function),
-        _ => None,
-    };
-    match name {
-        Some(name) => concat(&[b"The return value of ", &quoted(name)]),
-        None => b"The return value".to_vec(),
-    }
 }
 
 fn subject_text(
@@ -247,20 +312,20 @@ fn subject_text(
                 file: file.file,
                 function: file.bound.param_fn[parameter.idx()],
             };
-            Some(parameter_text(file, function, parameter))
+            Some(file.parameter_text(function, parameter))
         }
         Subject::Argument { callee, index } => {
             let parameters = file.queries.files().hir(callee.file)[callee.function].params;
             let parameter = parameters.iter().nth(index)?;
-            Some(parameter_text(file, callee, parameter))
+            Some(file.parameter_text(callee, parameter))
         }
-        Subject::Member(access) => member_text(file, access),
+        Subject::Member(access) => file.member_text(access),
         Subject::LiteralProperty => match value {
-            FlowingValue::Expression(initializer) => literal_property_text(file, initializer),
+            FlowingValue::Expression(initializer) => file.literal_property_text(initializer),
             FlowingValue::AssignedByPattern | FlowingValue::PassedBySpread => None,
         },
         Subject::ClassField(member) => class_field_text(file, member),
-        Subject::Result => Some(result_text(file, key)),
+        Subject::Result => Some(file.result_text(key)),
         Subject::Assertion => Some(b"This expression".to_vec()),
     }
 }
@@ -273,51 +338,6 @@ fn text_of<'p>(file: &FileLowering<'_, '_, 'p, '_>, expression: ExprId) -> &'p [
         .unwrap_or_default()
 }
 
-fn tight_text(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> Vec<u8> {
-    let text = text_of(file, expression);
-    let is_tight = matches!(
-        file.hir[expression].kind,
-        ExprKind::Ident(_)
-            | ExprKind::This
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::Template { .. }
-            | ExprKind::Dot { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::Call(_)
-            | ExprKind::New(_)
-            | ExprKind::Unary { .. }
-            | ExprKind::Array(_)
-            | ExprKind::Object(_)
-    );
-    if is_tight {
-        text.to_vec()
-    } else {
-        parenthesized(text)
-    }
-}
-
-fn argument_text(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> Vec<u8> {
-    let text = text_of(file, expression);
-    let is_sequence = matches!(
-        file.hir[expression].kind,
-        ExprKind::Binary {
-            op: BinOp::Comma,
-            ..
-        }
-    );
-    if is_sequence {
-        parenthesized(text)
-    } else {
-        text.to_vec()
-    }
-}
-
-fn step_advice(file: &FileLowering<'_, '_, '_, '_>, operand: ExprId, step: &[u8]) -> Vec<u8> {
-    let target = tight_text(file, operand);
-    concat(&[&target, b" = (", &target, b" ", step, b" 1) | 0"])
-}
-
 /// What to write in place of the stored expression so that the value is an int32 in plain Bun too.
 fn advice_text(file: &FileLowering<'_, '_, '_, '_>, stored: ExprId) -> Vec<u8> {
     match file.hir[stored].kind {
@@ -326,7 +346,7 @@ fn advice_text(file: &FileLowering<'_, '_, '_, '_>, stored: ExprId) -> Vec<u8> {
             target,
             value,
         } => {
-            let (target, value) = (tight_text(file, target), argument_text(file, value));
+            let (target, value) = (file.tight_text(target), file.argument_text(value));
             concat(&[&target, b" = Math.imul(", &target, b", ", &value, b")"])
         }
         ExprKind::Assign {
@@ -334,7 +354,7 @@ fn advice_text(file: &FileLowering<'_, '_, '_, '_>, stored: ExprId) -> Vec<u8> {
             target,
             value,
         } => {
-            let (target, value) = (tight_text(file, target), tight_text(file, value));
+            let (target, value) = (file.tight_text(target), file.tight_text(value));
             let operator = operator_text(op);
             concat(&[
                 &target, b" = (", &target, b" ", operator, b" ", &value, b") | 0",
@@ -343,17 +363,17 @@ fn advice_text(file: &FileLowering<'_, '_, '_, '_>, stored: ExprId) -> Vec<u8> {
         ExprKind::Unary {
             op: UnOp::PreInc | UnOp::PostInc,
             operand,
-        } => step_advice(file, operand, b"+"),
+        } => file.step_advice(operand, b"+"),
         ExprKind::Unary {
             op: UnOp::PreDec | UnOp::PostDec,
             operand,
-        } => step_advice(file, operand, b"-"),
+        } => file.step_advice(operand, b"-"),
         ExprKind::Binary {
             op: BinOp::Mul,
             left,
             right,
         } => {
-            let (left, right) = (argument_text(file, left), argument_text(file, right));
+            let (left, right) = (file.argument_text(left), file.argument_text(right));
             concat(&[b"Math.imul(", &left, b", ", &right, b")"])
         }
         ExprKind::Missing
@@ -404,7 +424,7 @@ fn advice_text(file: &FileLowering<'_, '_, '_, '_>, stored: ExprId) -> Vec<u8> {
         | ExprKind::ImportCall { .. }
         | ExprKind::ImportMeta
         | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => concat(&[&tight_text(file, stored), b" | 0"]),
+        | ExprKind::JsxText(_) => concat(&[&file.tight_text(stored), b" | 0"]),
     }
 }
 
@@ -416,57 +436,28 @@ fn is_any(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) -> bool {
     shape.is_ok_and(|shape| shape.kind == ShapeKind::Anything(AnythingReason::Any))
 }
 
-fn target_text(file: &FileLowering<'_, '_, '_, '_>, subject: Subject) -> Option<Vec<u8>> {
-    match subject {
-        Subject::Binding(symbol) => Some(name_text(file, file.bound.symbol(symbol).name).to_vec()),
-        Subject::Member(access) => Some(text_of(file, access).to_vec()),
-        _ => None,
-    }
-}
-
-fn describe_value(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    subject: Subject,
-    value: FlowingValue,
-) -> Option<Int32FlowValue> {
-    match value {
-        FlowingValue::Expression(stored) => Some(Int32FlowValue::Expression {
-            start: range_of_node(file.hir, NodeData::Expr(stored)).0,
-            text: text_of(file, stored).to_vec(),
-            advice: advice_text(file, stored),
-            is_any: is_any(file, stored),
-        }),
-        FlowingValue::AssignedByPattern => {
-            target_text(file, subject).map(Int32FlowValue::PatternTarget)
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    /// Keeps what a message about the flow says beside the engine's reason. The request of the flow is emitted next, at the current position.
+    pub(super) fn record_flow(&mut self, position: DeclaredType, description: FlowDescription) {
+        if !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
+            return;
         }
-        FlowingValue::PassedBySpread => Some(Int32FlowValue::SpreadArgument),
+        let FlowDescription { subject, value } = description;
+        let Some(subject_text) = subject_text(self, subject, value) else {
+            return;
+        };
+        let request_position = self.position();
+        let file = &mut *self.file;
+        let Some(value) = file.describe_value(subject, value) else {
+            return;
+        };
+        let site = position.site.map(|site| file.fragment.type_site(site));
+        file.diagnostics.add_int32_flow(Int32Flow {
+            file: file.file,
+            position: request_position,
+            site: site.map(|site| (site.position, site.kind)),
+            subject: subject_text,
+            value,
+        });
     }
-}
-
-/// Keeps what a message about the flow says beside the engine's reason. The request of the flow is emitted next, at the current position.
-pub(super) fn record_flow(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    position: DeclaredType,
-    description: FlowDescription,
-) {
-    if !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
-        return;
-    }
-    let FlowDescription { subject, value } = description;
-    let Some(subject_text) = subject_text(lowering, subject, value) else {
-        return;
-    };
-    let request_position = lowering.position();
-    let file = &mut *lowering.file;
-    let Some(value) = describe_value(file, subject, value) else {
-        return;
-    };
-    let site = position.site.map(|site| file.fragment.type_site(site));
-    file.diagnostics.add_int32_flow(Int32Flow {
-        file: file.file,
-        position: request_position,
-        site: site.map(|site| (site.position, site.kind)),
-        subject: subject_text,
-        value,
-    });
 }

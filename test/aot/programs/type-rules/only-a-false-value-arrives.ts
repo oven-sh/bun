@@ -5,7 +5,7 @@ function describe(error: unknown): string {
   const e = error;
   const message = e.message.split("\n")[0].replace(/ \(bun compile[^)]*\)/, "");
   // The text of an error of the language is not the subject here.
-  if (!/(^|: )expected /.test(message)) return e.name;
+  if (!/(^|: )expected | must be /.test(message)) return e.name;
   const position = message.includes(", got ") ? /:(\d+):(\d+)\)?\s*$/m.exec(e.stack ?? "") : null;
   return e.name + ": " + message + (position ? " | " + position[1] + ":" + position[2] : "");
 }

@@ -251,9 +251,9 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 | `verify-binary.ts`             | Build-time CLI: static scans of the linked executable (exports, dynamic deps, initializers, hardening, debug info) and the duplicate-definition scan of the link inputs |
 | `binary-expectations.ts`       | What each target's executable must look like for `verify-binary.ts`; serialized to `<exe>.verify.json` at configure                                                     |
 | `annotations.ts`               | Compiler output from a failed step, parsed into Buildkite annotations                                                                                                   |
-| `aot.ts`                       | The steps that exist for `bun compile`: removable features, the IR schema, the table of built-ins, the archive of Bun's own sources, the check of `--trim`'s profiles   |
+| `aot.ts`                       | The steps that exist for `bun compile`: removable features, the IR schema, the table of built-ins, the archive of Bun's own sources                                     |
 | `aot-source-lists.ts`          | Writes and checks the lists of WebKit's `aot/`: library and test sources, include directories, exported headers                                                         |
-| `aot-paths.ts`                 | Prints where this configuration finds `testaot`, `jsc`, the engine's tests, the schema and the engine's half of the table: for CI steps and shells                      |
+| `aot-paths.ts`                 | Prints where this configuration finds `testaot`, `jsc`, the schema and the engine's half of the table: for CI steps and shells                                          |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |

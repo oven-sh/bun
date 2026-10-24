@@ -4,7 +4,7 @@
 Writes the folder that this repository has for full types and that publish.py publishes: <out folder>/<name>/<version>/.
 
   <node_modules>    the packages as npm installed them
-  <full types>  <name>/full-types.json and <name>/lay/ for each package: <out>/sound of check.py, or the .full-types/ of a project
+  <full types>  <name>/full-types.json and <name>/lay/ for each package: the .full-types/ of a project
   <out folder>      a new folder
   <package> ..      the packages to pack. Default: every package in <full types>
 
@@ -17,9 +17,6 @@ The folder has:
   NOTICE        whose code it is, under which license, and which files were changed and how
   lay.sums      the sha256 and the path of each file under lay/
 
-It does not have src/, which check.py generates lay/ from: copy that into the folder. Never copy src/ to a project's
-.full-types/<name>/, where the project's tsconfig.json includes its ambient .d.ts files.
-
 The manifest is not trusted. It is checked against <node_modules> as the compiler checks it in a build
 (src/aot/load/typed_packages.rs): the format, the name, the version, each path, and the sha256 of each installed file in `lay`
 and `basis`. lay/ must have exactly the files that `lay` lists. Of `needs` only the form is checked.
@@ -29,8 +26,7 @@ changed: each full-types file starts with `// CHANGED: `.
 
 If a package fails a check, nothing is written.
 
-Whether a full-types file is the installed file with types added is not checked here. check.py does it (`verify`), and so does
-every build."""
+Whether a full-types file is the installed file with types added is not checked here. Every build does it."""
 import hashlib, json, os, re, shutil, sys
 
 if len(sys.argv) < 4:

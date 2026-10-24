@@ -26,7 +26,7 @@ use crate::ir::{
     DeclaredType, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, StringId, WellKnownSymbol,
     classify_name,
 };
-use crate::lower::{CheckerTypeId, FileLowering, SourceKind, convert, member, positions, types};
+use crate::lower::{CheckerTypeId, FileLowering, SourceKind, types};
 use crate::modules::ModuleRef;
 
 const _: () = assert!(PropertyKeyKind::COUNT <= 1 << u8::BITS);
@@ -83,10 +83,10 @@ impl ListedFields {
         file: &FileLowering<'_, '_, '_, '_>,
         key: PropertyKeyId,
     ) -> Option<u32> {
-        let found = match describe_key(file, key) {
+        let found = match file.describe_key(key) {
             Some(description) => self
                 .fields
-                .binary_search_by(|field| compare_name(file, field.name, &description))
+                .binary_search_by(|field| file.compare_name(field.name, &description))
                 .ok(),
             None => self
                 .fields
@@ -175,28 +175,705 @@ fn describe_flags(flags: impl Iterator<Item = FieldFlags>) -> TypeIdentity {
     )
 }
 
-fn describe_names(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    members: &[ListedMember],
-) -> NamesOfObjectType {
-    let fields = sort_listed_fields(file, ty, members);
-    let descriptions: Vec<(KeyDescription, ObjectMemberKind)> = fields
-        .iter()
-        .filter_map(|field| {
-            Some((
-                describe_name(file, field.name)?,
-                field.members.borrow()[0].1.kind,
-            ))
+impl FileLowering<'_, '_, '_, '_> {
+    fn describe_names(&mut self, ty: CheckerTypeId, members: &[ListedMember]) -> NamesOfObjectType {
+        let fields = self.sort_listed_fields(ty, members);
+        let descriptions: Vec<(KeyDescription, ObjectMemberKind)> = fields
+            .iter()
+            .filter_map(|field| {
+                Some((
+                    self.describe_name(field.name)?,
+                    field.members.borrow()[0].1.kind,
+                ))
+            })
+            .collect();
+        let names = descriptions
+            .iter()
+            .map(|(name, kind)| (name.as_slice(), *kind));
+        NamesOfObjectType {
+            identity: TypeIdentity::of_untyped_members(names),
+            is_empty: descriptions.is_empty(),
+            flags: describe_flags(fields.iter().map(|field| field.flags.get())),
+        }
+    }
+
+    // Every member of such a type is a type that nothing has made yet, with the same layout, and looking at its members makes the next ones.
+    fn grows_without_end(&mut self, ty: CheckerTypeId) -> bool {
+        const LONGEST_PATH: usize = 64;
+        let Some(holder) = self
+            .layouts
+            .holder_in_progress
+            .filter(|&holder| holder != ty)
+        else {
+            return false;
+        };
+        self.layouts.holders.insert(ty, holder);
+        let mut path = vec![ty];
+        while let Some(&holder) = self.layouts.holders.get(&path[path.len() - 1])
+            && path.len() < LONGEST_PATH
+        {
+            path.push(holder);
+        }
+        path.reverse();
+        self.queries.grows_along(&path)
+    }
+
+    fn create_position_of_member(
+        &mut self,
+        ty: CheckerTypeId,
+        member: ListedMember,
+    ) -> DeclaredType {
+        let outer = self.layouts.holder_in_progress.replace(ty);
+        let types = self.queries.listed_member_types(ty, member);
+        let declared = self.create_member_position(types);
+        self.layouts.holder_in_progress = outer;
+        match member.is_optional {
+            true => self.add_undefined(declared),
+            false => declared,
+        }
+    }
+
+    // What passes for an interface passes for what the interface extends.
+    fn add_edges_to_extended_types(&mut self, layout: LayoutId, ty: CheckerTypeId) {
+        let ObjectOrigin::Symbol(interface) = self.queries.object_origin(ty) else {
+            return;
+        };
+        for base in self
+            .queries
+            .declared_base_types(interface)
+            .unwrap_or_default()
+        {
+            if let Some(extended) = self.object_type_layout(base)
+                && extended != layout
+            {
+                self.fragment.add_supertype(layout, extended);
+            }
+        }
+    }
+
+    // `IncomingMessage` of a declaration file: what has that type is made by the function of Bun's own module of that name.
+    fn add_edge_from_library_class(&mut self, layout: LayoutId, ty: CheckerTypeId) {
+        if self.source != SourceKind::Program {
+            return;
+        }
+        for declaration in self.queries.library_declarations_of_type(ty) {
+            let made = self
+                .fragment
+                .declare_layout(LayoutKey::Library(declaration));
+            self.add_conversion(made, layout);
+        }
+    }
+
+    pub(crate) fn object_type_layout(&mut self, ty: CheckerTypeId) -> Option<LayoutId> {
+        if let Some(&layout) = self.layouts.object_types.get(&ty) {
+            return layout;
+        }
+        let layout = find_object_type_layout(self, ty);
+        self.layouts.object_types.insert(ty, layout);
+        layout
+    }
+
+    fn find_named_declaration(&mut self, ty: CheckerTypeId, is_shown: bool) -> Declaration {
+        // A bundle holds no name of a type. The report of a mismatch shows them.
+        let options = self.inputs.options;
+        if !is_shown || (options.minifies_identifiers && !options.reports_type_mismatches) {
+            return Declaration {
+                name: None,
+                site: self.queries.type_name_site(ty),
+            };
+        }
+        match self.queries.type_display_name(ty) {
+            Some(display_name) => Declaration {
+                name: Some(self.intern_bytes(&display_name.text)),
+                site: Some((display_name.file, display_name.position)),
+            },
+            None => Declaration::default(),
+        }
+    }
+
+    fn find_position_in_file(&mut self, layout: LayoutId) -> u32 {
+        let Some(&ty) = self.layouts.source_types(layout).first() else {
+            debug_assert!(false, "object type layout without a source type");
+            return 0;
+        };
+        match find_declaration(self, ty, false).site {
+            Some((home, position)) if home == self.file => position,
+            Some(_) | None => 0,
+        }
+    }
+
+    fn collect_listed_fields(
+        &mut self,
+        ty: CheckerTypeId,
+        members: &[ListedMember],
+    ) -> Vec<ListedField> {
+        let mut listed = Vec::with_capacity(members.len());
+        let mut names = FxHashSet::with_capacity_and_hasher(members.len(), Default::default());
+        for &listed_member in members {
+            let name = match (listed_member.name, self.source.dialect()) {
+                (MemberName::String(name), SourceDialect::Program) => FieldName::Text(name),
+                (MemberName::String(name), SourceDialect::Runtime) => {
+                    FieldName::Key(self.name_key(name))
+                }
+                (MemberName::Symbol(name), _) => match self.created_symbol_key(name) {
+                    Some(key) => FieldName::Key(key),
+                    None => continue,
+                },
+                (MemberName::Private(_), _) => continue,
+            };
+            let can_be_field = match name {
+                FieldName::Text(text) => {
+                    is_field_name(classify_name(self.queries.atom_bytes(text)))
+                }
+                FieldName::Key(key) => can_be_field(self, key),
+            };
+            if can_be_field && names.insert(name) {
+                listed.push(ListedField::new(name, ty, listed_member));
+            }
+        }
+        listed
+    }
+
+    fn find_key(&mut self, name: FieldName) -> PropertyKeyId {
+        match name {
+            FieldName::Text(text) => self.atom_key(text),
+            FieldName::Key(key) => key,
+        }
+    }
+
+    // In the one order that every type with these names gives: field `i` of one is field `i` of the other.
+    fn sort_listed_fields(
+        &mut self,
+        ty: CheckerTypeId,
+        members: &[ListedMember],
+    ) -> Vec<ListedField> {
+        if let Some(sorted) = self.layouts.sorted_members.get(&ty) {
+            return sorted
+                .iter()
+                .map(|&(name, member)| ListedField::new(name, ty, member))
+                .collect();
+        }
+        let mut fields = self.collect_listed_fields(ty, members);
+        fields.sort_by_cached_key(|field| self.describe_name(field.name));
+        fields.truncate(self.inputs.limits.get(LimitId::FieldsInKeyOrder) as usize);
+        let sorted = fields
+            .iter()
+            .map(|field| (field.name, field.members.borrow()[0].1))
+            .collect();
+        self.layouts.sorted_members.insert(ty, sorted);
+        fields
+    }
+
+    fn compute_listed_fields(&mut self, layout: LayoutId) -> ListedFields {
+        let types: SmallVec<[CheckerTypeId; 4]> =
+            SmallVec::from_slice(self.layouts.source_types(layout));
+        debug_assert!(
+            !types.is_empty(),
+            "object type layout without a source type"
+        );
+        let mut listed = ListedFields::default();
+        for (index, &ty) in types.iter().enumerate() {
+            let Ok(members) = self.queries.listed_members(ty) else {
+                return ListedFields::default();
+            };
+            let fields_of_type = self.sort_listed_fields(ty, members);
+            if index > 0 {
+                listed.add_type(fields_of_type);
+                continue;
+            }
+            let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
+            if members.len() as u64 > limit && fields_of_type.len() as u64 == limit {
+                let position = self.find_position_in_file(layout);
+                self.gave_up(LimitId::FieldsInKeyOrder, position);
+            }
+            listed.fields = fields_of_type;
+            listed.is_known = true;
+        }
+        listed
+    }
+
+    pub(super) fn list_fields(&mut self, layout: LayoutId) -> Rc<ListedFields> {
+        if let Some(listed) = self.layouts.stored_listed_fields(layout) {
+            return listed;
+        }
+        let listed = Rc::new(self.compute_listed_fields(layout));
+        self.layouts.store_listed_fields(layout, Rc::clone(&listed));
+        listed
+    }
+
+    // The checker's type of `a?: number` is `number`.
+    pub(super) fn listed_field_position(
+        &mut self,
+        layout: LayoutId,
+        listed: &ListedFields,
+        field: u32,
+    ) -> DeclaredType {
+        let field = &listed.fields[field as usize];
+        let (mut united, number_united) = field.declared.get();
+        let members: SmallVec<[(CheckerTypeId, ListedMember); 4]> =
+            SmallVec::from_slice(&field.members.borrow()[number_united..]);
+        for &(ty, member) in &members {
+            // Looking at the members is what finds out.
+            if self.layouts.is_growing(layout) {
+                return DeclaredType::untyped();
+            }
+            let declared = self.create_position_of_member(ty, member);
+            united = Some(match united {
+                Some(united) => unite_positions(self, united, declared),
+                None => declared,
+            });
+        }
+        if self.layouts.is_growing(layout) {
+            return DeclaredType::untyped();
+        }
+        field.declared.set((united, number_united + members.len()));
+        united.unwrap_or_else(DeclaredType::untyped)
+    }
+
+    pub(super) fn compute_object_type_fields(&mut self, layout: LayoutId) -> OwnFields {
+        let listed = self.list_fields(layout);
+        if !listed.is_known {
+            return OwnFields::default();
+        }
+        // The type of a field may be the first mention of another type with this very layout (`interface Even { other: Odd }`), which then adds to the fields that have been looked at.
+        for _ in 0..MAX_ROUNDS_OF_FIELD_TYPES {
+            let number_of_types = self.layouts.source_types(layout).len();
+            for index in 0..listed.fields.len() as u32 {
+                self.listed_field_position(layout, &listed, index);
+            }
+            if self.layouts.source_types(layout).len() == number_of_types {
+                break;
+            }
+        }
+        let is_growing = self.layouts.is_growing(layout);
+        let mut fields = OwnFields::default();
+        for field in &listed.fields {
+            let declared = field.declared.get().0.filter(|_| !is_growing);
+            fields.add(Field {
+                key: Some(self.find_key(field.name)),
+                declared: declared.unwrap_or_else(DeclaredType::untyped),
+                flags: field.flags.get(),
+                ..Field::default()
+            });
+        }
+        fields.finish()
+    }
+
+    fn find_object_type_key(&mut self, ty: CheckerTypeId) -> Option<ObjectTypeKey> {
+        // The identity of a computed type leaves out what nobody has written: the type of a method of a literal, of a rest copy.
+        let origin = match self.queries.object_origin(ty) {
+            ObjectOrigin::Computed => return None,
+            origin @ (ObjectOrigin::Symbol(_)
+            | ObjectOrigin::TypeLiteral { .. }
+            | ObjectOrigin::MappedType { .. }
+            | ObjectOrigin::ObjectLiteral { .. }) => origin,
+        };
+        Some(ObjectTypeKey {
+            origin,
+            identity: self.queries.type_identity(ty).ok()?,
+            is_checked: self.is_checked(),
         })
-        .collect();
-    let names = descriptions
-        .iter()
-        .map(|(name, kind)| (name.as_slice(), *kind));
-    NamesOfObjectType {
-        identity: TypeIdentity::of_untyped_members(names),
-        is_empty: descriptions.is_empty(),
-        flags: describe_flags(fields.iter().map(|field| field.flags.get())),
+    }
+
+    fn compute_fields_of_type(
+        &mut self,
+        layout: LayoutId,
+        ty: CheckerTypeId,
+        is_told_to_other_files: bool,
+    ) -> Option<FieldsOfType> {
+        let members = self.queries.listed_members(ty).ok()?;
+        let listed = self.sort_listed_fields(ty, members);
+        let mut fields = Vec::with_capacity(listed.len());
+        let mut name_the_same_in_every_file = is_told_to_other_files;
+        let outer = self.layouts.holder_in_progress.replace(ty);
+        for field in &listed {
+            let (_, member) = field.members.borrow()[0];
+            let types = self.queries.listed_member_types(ty, member);
+            name_the_same_in_every_file &=
+                types.checked.is_ok() && !matches!(types.written, WrittenType::GaveUp(_));
+            for named in [types.written.written(), types.checked.ok()]
+                .into_iter()
+                .flatten()
+            {
+                name_the_same_in_every_file = name_the_same_in_every_file
+                    && types::is_mapped_alike_in_every_file(self, named);
+            }
+            let declared = self.create_member_position(types);
+            let declared = match member.is_optional {
+                true => self.add_undefined(declared),
+                false => declared,
+            };
+            fields.push(Field {
+                key: Some(self.find_key(field.name)),
+                declared,
+                flags: field.flags.get(),
+                ..Field::default()
+            });
+        }
+        self.layouts.holder_in_progress = outer;
+        // Whether the self had found out by now hangs on what else it has looked at.
+        if self.layouts.is_growing(layout) {
+            name_the_same_in_every_file = false;
+            for field in &mut fields {
+                field.declared = DeclaredType::untyped();
+            }
+        }
+        Some(FieldsOfType {
+            fields,
+            declared_order: find_declared_order(&listed),
+            name_the_same_in_every_file,
+        })
+    }
+
+    // Where the type is declared, if that is a file with a module in the program.
+    fn find_place(&mut self, ty: CheckerTypeId) -> Option<(FileId, u32)> {
+        let (home, position) = find_declaration(self, ty, false).site?;
+        let has_module = self.queries.files().is_compiled(home) && !self.inputs.is_left_out(home);
+        has_module.then_some((home, position))
+    }
+
+    // The link drops the name of every definition of a layout but the one that it shows: the first with a place, or the first.
+    fn can_be_shown(&self, layout: LayoutId, has_place: bool) -> bool {
+        let is_first_of_file = match has_place {
+            true => !self.layouts.placed_layouts.contains(&layout),
+            false => !self.fragment.is_layout_defined(layout),
+        };
+        let layout_key = self.fragment.layout_key(layout);
+        let defined = self.inputs.defined_object_types;
+        is_first_of_file
+            && !defined.is_layout_defined_by_earlier_file(layout_key, self.file, has_place)
+    }
+
+    fn flag_place(&mut self, layout: LayoutId, has_place: bool) -> u8 {
+        if !has_place {
+            return 0;
+        }
+        self.layouts.placed_layouts.insert(layout);
+        HAS_PLACE
+    }
+
+    // `false`: the file or an earlier one has said the same of the layout.
+    fn claim_names(&mut self, layout: LayoutId, key: ObjectTypeKey) -> bool {
+        let defined = self.inputs.defined_object_types;
+        let Some(defined_type) = DefinedObjectType::new(self.fragment.layout_key(layout), key)
+        else {
+            return false;
+        };
+        self.layouts.named_types.insert((layout, key))
+            && !defined.is_defined_by_earlier_file(&defined_type, self.file)
+    }
+
+    // Which names the type has and which it requires, as the listed members show, and not what they hold.
+    fn define_names_of_type(&mut self, layout: LayoutId, ty: CheckerTypeId) {
+        // Most types were put in order by an earlier self, and most of those say what another type has said.
+        let has_place = self.find_place(ty).is_some();
+        let known = self.inputs.defined_object_types.find_names(ty);
+        if let Some(names) = known
+            && !self.claim_names(layout, create_key_of_names(names.flags, has_place))
+        {
+            return;
+        }
+        let Ok(members) = self.queries.listed_members(ty) else {
+            return;
+        };
+        let listed = self.sort_listed_fields(ty, members);
+        let fields: Vec<Field> = listed
+            .iter()
+            .map(|field| Field {
+                key: Some(self.find_key(field.name)),
+                declared: DeclaredType::unsaid(),
+                flags: field.flags.get(),
+                ..Field::default()
+            })
+            .collect();
+        let key = create_key_of_names(
+            describe_flags(fields.iter().map(|field| field.flags)),
+            has_place,
+        );
+        if known.is_none() && !self.claim_names(layout, key) {
+            return;
+        }
+        let is_shown = self.can_be_shown(layout, has_place);
+        let definition =
+            self.create_layout_of_type(ty, fields, find_declared_order(&listed), is_shown);
+        let level = LAST_DEFINITION_LEVEL | self.flag_place(layout, has_place);
+        self.fragment
+            .define_object_type(layout, definition, Some((key, level)));
+    }
+
+    // One definition for each type, which says what that type declares: the link unites them.
+    pub(super) fn define_object_type_layout(
+        &mut self,
+        layout: LayoutId,
+        types: &[CheckerTypeId],
+        level: u8,
+        says_types: bool,
+    ) {
+        // A layout with a home has one type, and the link takes what the home says.
+        let has_home = self.fragment.layout_key(layout).home_file().is_some();
+        if !has_home && !says_types {
+            for &ty in types {
+                self.define_names_of_type(layout, ty);
+            }
+            return;
+        }
+        for &ty in types {
+            let key = match has_home {
+                true => None,
+                false => self.find_object_type_key(ty),
+            };
+            let layout_key = self.fragment.layout_key(layout);
+            let defined = self.inputs.defined_object_types;
+            let defined_type = key.and_then(|key| DefinedObjectType::new(layout_key, key));
+            let is_defined_by_earlier_file =
+                defined_type.is_some_and(|ty| defined.is_defined_by_earlier_file(&ty, self.file));
+            if is_defined_by_earlier_file
+                && (level == LAST_DEFINITION_LEVEL
+                    || defined_type
+                        .is_some_and(|ty| defined.has_earlier_file_gone_on_for_all(&ty, self.file)))
+            {
+                continue;
+            }
+            let is_told_to_other_files = defined_type.is_some()
+                && !is_defined_by_earlier_file
+                && level < LAST_DEFINITION_LEVEL;
+            if let Some(computed) = self.compute_fields_of_type(layout, ty, is_told_to_other_files)
+                && !is_defined_by_earlier_file
+            {
+                let names_the_same = match computed.name_the_same_in_every_file {
+                    true => NAMES_THE_SAME_IN_EVERY_FILE,
+                    false => 0,
+                };
+                let has_place = !has_home && self.find_place(ty).is_some();
+                let is_shown = self.can_be_shown(layout, has_place);
+                let key = key.map(|key| {
+                    (
+                        key,
+                        level | names_the_same | self.flag_place(layout, has_place),
+                    )
+                });
+                let definition = self.create_layout_of_type(
+                    ty,
+                    computed.fields,
+                    computed.declared_order,
+                    is_shown,
+                );
+                self.fragment.define_object_type(layout, definition, key);
+            }
+        }
+    }
+
+    // Which types with the layout a file meets first hangs on what it leaves to earlier files, so a definition is shown under the name of its own type.
+    fn create_layout_of_type(
+        &mut self,
+        ty: CheckerTypeId,
+        fields: Vec<Field>,
+        declared_order: Vec<u32>,
+        is_shown: bool,
+    ) -> Layout {
+        let declaration = find_declaration(self, ty, is_shown);
+        let (module, position) = match declaration.site {
+            Some((home, position))
+                if self.queries.files().is_compiled(home) && !self.inputs.is_left_out(home) =>
+            {
+                let module = self.fragment.declare_module(ModuleRef::File(home));
+                (Some(module), position)
+            }
+            Some(_) | None => (None, 0),
+        };
+        Layout {
+            kind: LayoutKind::Record,
+            name: declaration.name,
+            module,
+            position,
+            fields,
+            declared_order,
+            ..Layout::default()
+        }
+    }
+
+    fn describe_name(&self, name: FieldName) -> Option<KeyDescription> {
+        match name {
+            FieldName::Text(text) => {
+                let mut description = KeyDescription::new();
+                description.push(PropertyKeyKind::Text.to_wire() as u8);
+                description.extend_from_slice(self.queries.atom_bytes(text));
+                Some(description)
+            }
+            FieldName::Key(key) => self.describe_key(key),
+        }
+    }
+
+    fn compare_name(&self, name: FieldName, description: &[u8]) -> Ordering {
+        match name {
+            FieldName::Text(text) => {
+                let kind = [PropertyKeyKind::Text.to_wire() as u8];
+                kind.iter()
+                    .chain(self.queries.atom_bytes(text))
+                    .cmp(description)
+            }
+            FieldName::Key(key) => match self.describe_key(key) {
+                Some(described) => described.as_slice().cmp(description),
+                None => Ordering::Less,
+            },
+        }
+    }
+
+    fn describe_key(&self, key: PropertyKeyId) -> Option<KeyDescription> {
+        let key = self.fragment.property_keys.get(key);
+        let mut description = KeyDescription::new();
+        description.push(key.kind.to_wire() as u8);
+        match key.kind {
+            PropertyKeyKind::Text | PropertyKeyKind::EnginePrivateName => {
+                description.extend_from_slice(self.fragment.strings.get(key.text?));
+            }
+            PropertyKeyKind::WellKnownSymbol => description.push(key.symbol?.to_wire() as u8),
+            PropertyKeyKind::CreatedSymbol => {
+                let ModuleRef::File(home) = self.fragment.module_ref(key.module?) else {
+                    return None;
+                };
+                description.extend_from_slice(&home.0.to_be_bytes());
+                description.extend_from_slice(&key.position?.to_be_bytes());
+            }
+            PropertyKeyKind::PrivateName => return None,
+        }
+        Some(description)
+    }
+
+    fn truncate_to_field_limit(&mut self, members: &mut Vec<UntypedMember>, position: u32) {
+        let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
+        if members.len() as u64 <= limit {
+            return;
+        }
+        let mut source_indexes: Vec<usize> = Vec::with_capacity(members.len());
+        source_indexes.extend(members.iter().map(|member| member.source_index));
+        source_indexes.sort_unstable();
+        let first_dropped = source_indexes[limit as usize];
+        members.retain(|member| member.source_index < first_dropped);
+        self.gave_up(LimitId::FieldsInKeyOrder, position);
+    }
+
+    fn sort_untyped_members(&mut self, members: &[Member], position: u32) -> Vec<UntypedMember> {
+        let mut sorted = Vec::with_capacity(members.len());
+        for (source_index, &(key, kind)) in members.iter().enumerate() {
+            match kind {
+                ObjectMemberKind::Field | ObjectMemberKind::Method => {}
+                _ => continue,
+            }
+            if !can_be_field(self, key) {
+                continue;
+            }
+            let Some(description) = self.describe_key(key) else {
+                continue;
+            };
+            sorted.push(UntypedMember {
+                description,
+                key,
+                kind,
+                source_index,
+            });
+        }
+        sorted.shared_sort_by(|a, b| a.description.cmp(&b.description));
+        sorted.dedup_by(|later, earlier| {
+            let is_repeated = later.key == earlier.key;
+            if is_repeated {
+                earlier.kind = later.kind;
+            }
+            is_repeated
+        });
+        self.truncate_to_field_limit(&mut sorted, position);
+        sorted
+    }
+
+    pub(crate) fn untyped_layout(
+        &mut self,
+        members: &[(PropertyKeyId, ObjectMemberKind)],
+    ) -> LayoutId {
+        untyped_layout_at(self, members, 0)
+    }
+
+    fn collect_literal_members(&mut self, literal: ExprId) -> Members {
+        let hir = self.hir;
+        let mut members = Members::new();
+        let ExprKind::Object(properties) = hir[literal].kind else {
+            debug_assert!(false, "an object literal was expected");
+            return members;
+        };
+        for property in properties.iter() {
+            let kind = match hir[property].kind {
+                PropKind::Init | PropKind::Shorthand => ObjectMemberKind::Field,
+                PropKind::Method => ObjectMemberKind::Method,
+                PropKind::Spread | PropKind::Getter | PropKind::Setter => continue,
+            };
+            match hir.runtime_property_key(property) {
+                PropKey::Name(name) => members.push((self.name_key(name), kind)),
+                PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => {}
+            }
+        }
+        members
+    }
+
+    // `{ size: 4, a: 1 }` under `{ size: number; [key: string]: number }`: that type has no field for `a`, and the literal's own type has one.
+    fn writes_name_under_index_signature(&mut self, literal: ExprId, ty: CheckerTypeId) -> bool {
+        let signatures = self.queries.index_signatures(ty);
+        if !signatures.is_ok_and(|signatures| !signatures.is_empty()) {
+            return false;
+        }
+        let hir = self.hir;
+        let ExprKind::Object(properties) = hir[literal].kind else {
+            return false;
+        };
+        properties.iter().any(|property| {
+            let PropKey::Name(name) = hir.runtime_property_key(property) else {
+                return false;
+            };
+            matches!(
+                self.queries.find_member(ty, name),
+                Ok(MemberLookup::Index(_))
+            )
+        })
+    }
+
+    fn find_contextual_layout(&mut self, literal: ExprId) -> Option<(LayoutId, CheckerTypeId)> {
+        if let Some(found) = self.find_target_layout(literal) {
+            return Some(found);
+        }
+        let ty = self.queries.contextual_type(literal).ok()??;
+        if self.writes_name_under_index_signature(literal, ty) {
+            return None;
+        }
+        Some((self.object_type_layout(ty)?, ty))
+    }
+
+    fn find_layout_of_checked_literal(&mut self, literal: ExprId) -> Option<LayoutId> {
+        let mut found = self.find_contextual_layout(literal);
+        if found.is_none() {
+            found = find_layout_of_enclosing_list(self, literal);
+        }
+        if found.is_none() {
+            found = find_checked_layout(self, literal);
+        }
+        Some(found?.0)
+    }
+
+    fn compute_literal_layout(&mut self, literal: ExprId) -> LayoutId {
+        if let Some(layout) = self.find_layout_of_checked_literal(literal) {
+            return layout;
+        }
+        let members = self.collect_literal_members(literal);
+        let position = self.hir[literal].pos;
+        untyped_layout_at(self, &members, position)
+    }
+
+    pub(in crate::lower) fn literal_layout(&mut self, literal: ExprId) -> LayoutId {
+        if let Some(&layout) = self.layouts.literals.get(&literal) {
+            return layout;
+        }
+        self.layouts.literals_in_progress.push(literal);
+        let layout = self.compute_literal_layout(literal);
+        self.layouts.literals_in_progress.pop();
+        self.layouts.literals.insert(literal, layout);
+        layout
     }
 }
 
@@ -210,7 +887,7 @@ fn declare_object_type(
     let names = match file.inputs.defined_object_types.find_names(ty) {
         Some(names) => names,
         None => {
-            let names = describe_names(file, ty, members);
+            let names = file.describe_names(ty, members);
             file.layouts.described_names.push((ty, names));
             names
         }
@@ -232,93 +909,18 @@ fn declare_object_type(
     if file.layouts.is_growing(layout) || !file.layouts.add_source_type(layout, ty) {
         return Some(layout);
     }
-    if grows_without_end(file, ty) {
+    if file.grows_without_end(ty) {
         file.layouts.mark_growing(layout);
         return Some(layout);
     }
     if let Some(listed) = file.layouts.stored_listed_fields(layout)
         && listed.is_known
     {
-        listed.add_type(sort_listed_fields(file, ty, members));
+        listed.add_type(file.sort_listed_fields(ty, members));
     }
-    add_edges_to_extended_types(file, layout, ty);
-    add_edge_from_library_class(file, layout, ty);
+    file.add_edges_to_extended_types(layout, ty);
+    file.add_edge_from_library_class(layout, ty);
     Some(layout)
-}
-
-// Every member of such a type is a type that nothing has made yet, with the same layout, and looking at its members makes the next ones.
-fn grows_without_end(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> bool {
-    const LONGEST_PATH: usize = 64;
-    let Some(holder) = file
-        .layouts
-        .holder_in_progress
-        .filter(|&holder| holder != ty)
-    else {
-        return false;
-    };
-    file.layouts.holders.insert(ty, holder);
-    let mut path = vec![ty];
-    while let Some(&holder) = file.layouts.holders.get(&path[path.len() - 1])
-        && path.len() < LONGEST_PATH
-    {
-        path.push(holder);
-    }
-    path.reverse();
-    file.queries.grows_along(&path)
-}
-
-fn create_position_of_member(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    member: ListedMember,
-) -> DeclaredType {
-    let outer = file.layouts.holder_in_progress.replace(ty);
-    let types = file.queries.listed_member_types(ty, member);
-    let declared = positions::create_member_position(file, types);
-    file.layouts.holder_in_progress = outer;
-    match member.is_optional {
-        true => positions::add_undefined(file, declared),
-        false => declared,
-    }
-}
-
-// What passes for an interface passes for what the interface extends.
-fn add_edges_to_extended_types(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    ty: CheckerTypeId,
-) {
-    let ObjectOrigin::Symbol(interface) = file.queries.object_origin(ty) else {
-        return;
-    };
-    for base in file
-        .queries
-        .declared_base_types(interface)
-        .unwrap_or_default()
-    {
-        if let Some(extended) = object_type_layout(file, base)
-            && extended != layout
-        {
-            file.fragment.add_supertype(layout, extended);
-        }
-    }
-}
-
-// `IncomingMessage` of a declaration file: what has that type is made by the function of Bun's own module of that name.
-fn add_edge_from_library_class(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    ty: CheckerTypeId,
-) {
-    if file.source != SourceKind::Program {
-        return;
-    }
-    for declaration in file.queries.library_declarations_of_type(ty) {
-        let made = file
-            .fragment
-            .declare_layout(LayoutKey::Library(declaration));
-        super::add_conversion(file, made, layout);
-    }
 }
 
 fn find_object_type_layout(
@@ -326,7 +928,7 @@ fn find_object_type_layout(
     ty: CheckerTypeId,
 ) -> Option<LayoutId> {
     let shape = file.queries.type_shape(ty).ok()?;
-    if !is_object_shape(shape.kind) || super::is_dictionary_type(file, ty) {
+    if !is_object_shape(shape.kind) || file.is_dictionary_type(ty) {
         return None;
     }
     let origin = file.queries.object_origin(ty);
@@ -338,43 +940,9 @@ fn find_object_type_layout(
         && matches!(file.hir[expression].kind, ExprKind::Object(_))
         && !file.layouts.literals_in_progress.contains(&expression)
     {
-        return Some(literal_layout(file, expression));
+        return Some(file.literal_layout(expression));
     }
     declare_object_type(file, ty, None)
-}
-
-pub(crate) fn object_type_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> Option<LayoutId> {
-    if let Some(&layout) = file.layouts.object_types.get(&ty) {
-        return layout;
-    }
-    let layout = find_object_type_layout(file, ty);
-    file.layouts.object_types.insert(ty, layout);
-    layout
-}
-
-fn find_named_declaration(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    is_shown: bool,
-) -> Declaration {
-    // A bundle holds no name of a type. The report of a mismatch shows them.
-    let options = file.inputs.options;
-    if !is_shown || (options.minifies_identifiers && !options.reports_type_mismatches) {
-        return Declaration {
-            name: None,
-            site: file.queries.type_name_site(ty),
-        };
-    }
-    match file.queries.type_display_name(ty) {
-        Some(display_name) => Declaration {
-            name: Some(file.intern_bytes(&display_name.text)),
-            site: Some((display_name.file, display_name.position)),
-        },
-        None => Declaration::default(),
-    }
 }
 
 fn find_declaration(
@@ -384,7 +952,7 @@ fn find_declaration(
 ) -> Declaration {
     let files = file.queries.files();
     match file.queries.object_origin(ty) {
-        ObjectOrigin::Symbol(_) => find_named_declaration(file, ty, is_shown),
+        ObjectOrigin::Symbol(_) => file.find_named_declaration(ty, is_shown),
         ObjectOrigin::TypeLiteral { file: home, node }
         | ObjectOrigin::MappedType { file: home, node } => Declaration {
             name: None,
@@ -399,120 +967,6 @@ fn find_declaration(
         },
         ObjectOrigin::Computed => Declaration::default(),
     }
-}
-
-fn find_position_in_file(file: &mut FileLowering<'_, '_, '_, '_>, layout: LayoutId) -> u32 {
-    let Some(&ty) = file.layouts.source_types(layout).first() else {
-        debug_assert!(false, "object type layout without a source type");
-        return 0;
-    };
-    match find_declaration(file, ty, false).site {
-        Some((home, position)) if home == file.file => position,
-        Some(_) | None => 0,
-    }
-}
-
-fn collect_listed_fields(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    members: &[ListedMember],
-) -> Vec<ListedField> {
-    let mut listed = Vec::with_capacity(members.len());
-    let mut names = FxHashSet::with_capacity_and_hasher(members.len(), Default::default());
-    for &listed_member in members {
-        let name = match (listed_member.name, file.source.dialect()) {
-            (MemberName::String(name), SourceDialect::Program) => FieldName::Text(name),
-            (MemberName::String(name), SourceDialect::Runtime) => {
-                FieldName::Key(member::name_key(file, name))
-            }
-            (MemberName::Symbol(name), _) => match member::created_symbol_key(file, name) {
-                Some(key) => FieldName::Key(key),
-                None => continue,
-            },
-            (MemberName::Private(_), _) => continue,
-        };
-        let can_be_field = match name {
-            FieldName::Text(text) => is_field_name(classify_name(file.queries.atom_bytes(text))),
-            FieldName::Key(key) => can_be_field(file, key),
-        };
-        if can_be_field && names.insert(name) {
-            listed.push(ListedField::new(name, ty, listed_member));
-        }
-    }
-    listed
-}
-
-fn find_key(file: &mut FileLowering<'_, '_, '_, '_>, name: FieldName) -> PropertyKeyId {
-    match name {
-        FieldName::Text(text) => file.atom_key(text),
-        FieldName::Key(key) => key,
-    }
-}
-
-// In the one order that every type with these names gives: field `i` of one is field `i` of the other.
-fn sort_listed_fields(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    members: &[ListedMember],
-) -> Vec<ListedField> {
-    if let Some(sorted) = file.layouts.sorted_members.get(&ty) {
-        return sorted
-            .iter()
-            .map(|&(name, member)| ListedField::new(name, ty, member))
-            .collect();
-    }
-    let mut fields = collect_listed_fields(file, ty, members);
-    fields.sort_by_cached_key(|field| describe_name(file, field.name));
-    fields.truncate(file.inputs.limits.get(LimitId::FieldsInKeyOrder) as usize);
-    let sorted = fields
-        .iter()
-        .map(|field| (field.name, field.members.borrow()[0].1))
-        .collect();
-    file.layouts.sorted_members.insert(ty, sorted);
-    fields
-}
-
-fn compute_listed_fields(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-) -> ListedFields {
-    let types: SmallVec<[CheckerTypeId; 4]> =
-        SmallVec::from_slice(file.layouts.source_types(layout));
-    debug_assert!(
-        !types.is_empty(),
-        "object type layout without a source type"
-    );
-    let mut listed = ListedFields::default();
-    for (index, &ty) in types.iter().enumerate() {
-        let Ok(members) = file.queries.listed_members(ty) else {
-            return ListedFields::default();
-        };
-        let fields_of_type = sort_listed_fields(file, ty, members);
-        if index > 0 {
-            listed.add_type(fields_of_type);
-            continue;
-        }
-        let limit = file.inputs.limits.get(LimitId::FieldsInKeyOrder);
-        if members.len() as u64 > limit && fields_of_type.len() as u64 == limit {
-            let position = find_position_in_file(file, layout);
-            file.gave_up(LimitId::FieldsInKeyOrder, position);
-        }
-        listed.fields = fields_of_type;
-        listed.is_known = true;
-    }
-    listed
-}
-
-pub(super) fn list_fields(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-) -> Rc<ListedFields> {
-    if let Some(listed) = file.layouts.stored_listed_fields(layout) {
-        return listed;
-    }
-    let listed = Rc::new(compute_listed_fields(file, layout));
-    file.layouts.store_listed_fields(layout, Rc::clone(&listed));
-    listed
 }
 
 // Nothing tests a store into an expected position, so a field is proven only where every type that has it proves it.
@@ -536,86 +990,6 @@ fn unite_positions(
     }
 }
 
-// The checker's type of `a?: number` is `number`.
-pub(super) fn listed_field_position(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    listed: &ListedFields,
-    field: u32,
-) -> DeclaredType {
-    let field = &listed.fields[field as usize];
-    let (mut united, number_united) = field.declared.get();
-    let members: SmallVec<[(CheckerTypeId, ListedMember); 4]> =
-        SmallVec::from_slice(&field.members.borrow()[number_united..]);
-    for &(ty, member) in &members {
-        // Looking at the members is what finds out.
-        if file.layouts.is_growing(layout) {
-            return DeclaredType::untyped();
-        }
-        let declared = create_position_of_member(file, ty, member);
-        united = Some(match united {
-            Some(united) => unite_positions(file, united, declared),
-            None => declared,
-        });
-    }
-    if file.layouts.is_growing(layout) {
-        return DeclaredType::untyped();
-    }
-    field.declared.set((united, number_united + members.len()));
-    united.unwrap_or_else(DeclaredType::untyped)
-}
-
-pub(super) fn compute_object_type_fields(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-) -> OwnFields {
-    let listed = list_fields(file, layout);
-    if !listed.is_known {
-        return OwnFields::default();
-    }
-    // The type of a field may be the first mention of another type with this very layout (`interface Even { other: Odd }`), which then adds to the fields that have been looked at.
-    for _ in 0..MAX_ROUNDS_OF_FIELD_TYPES {
-        let number_of_types = file.layouts.source_types(layout).len();
-        for index in 0..listed.fields.len() as u32 {
-            listed_field_position(file, layout, &listed, index);
-        }
-        if file.layouts.source_types(layout).len() == number_of_types {
-            break;
-        }
-    }
-    let is_growing = file.layouts.is_growing(layout);
-    let mut fields = OwnFields::default();
-    for field in &listed.fields {
-        let declared = field.declared.get().0.filter(|_| !is_growing);
-        fields.add(Field {
-            key: Some(find_key(file, field.name)),
-            declared: declared.unwrap_or_else(DeclaredType::untyped),
-            flags: field.flags.get(),
-            ..Field::default()
-        });
-    }
-    fields.finish()
-}
-
-fn find_object_type_key(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> Option<ObjectTypeKey> {
-    // The identity of a computed type leaves out what nobody has written: the type of a method of a literal, of a rest copy.
-    let origin = match file.queries.object_origin(ty) {
-        ObjectOrigin::Computed => return None,
-        origin @ (ObjectOrigin::Symbol(_)
-        | ObjectOrigin::TypeLiteral { .. }
-        | ObjectOrigin::MappedType { .. }
-        | ObjectOrigin::ObjectLiteral { .. }) => origin,
-    };
-    Some(ObjectTypeKey {
-        origin,
-        identity: file.queries.type_identity(ty).ok()?,
-        is_checked: file.is_checked(),
-    })
-}
-
 struct FieldsOfType {
     fields: Vec<Field>,
     declared_order: Vec<u32>,
@@ -632,56 +1006,6 @@ fn find_declared_order(listed: &[ListedField]) -> Vec<u32> {
     }
 }
 
-fn compute_fields_of_type(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    ty: CheckerTypeId,
-    is_told_to_other_files: bool,
-) -> Option<FieldsOfType> {
-    let members = file.queries.listed_members(ty).ok()?;
-    let listed = sort_listed_fields(file, ty, members);
-    let mut fields = Vec::with_capacity(listed.len());
-    let mut name_the_same_in_every_file = is_told_to_other_files;
-    let outer = file.layouts.holder_in_progress.replace(ty);
-    for field in &listed {
-        let (_, member) = field.members.borrow()[0];
-        let types = file.queries.listed_member_types(ty, member);
-        name_the_same_in_every_file &=
-            types.checked.is_ok() && !matches!(types.written, WrittenType::GaveUp(_));
-        for named in [types.written.written(), types.checked.ok()]
-            .into_iter()
-            .flatten()
-        {
-            name_the_same_in_every_file =
-                name_the_same_in_every_file && types::is_mapped_alike_in_every_file(file, named);
-        }
-        let declared = positions::create_member_position(file, types);
-        let declared = match member.is_optional {
-            true => positions::add_undefined(file, declared),
-            false => declared,
-        };
-        fields.push(Field {
-            key: Some(find_key(file, field.name)),
-            declared,
-            flags: field.flags.get(),
-            ..Field::default()
-        });
-    }
-    file.layouts.holder_in_progress = outer;
-    // Whether the file had found out by now hangs on what else it has looked at.
-    if file.layouts.is_growing(layout) {
-        name_the_same_in_every_file = false;
-        for field in &mut fields {
-            field.declared = DeclaredType::untyped();
-        }
-    }
-    Some(FieldsOfType {
-        fields,
-        declared_order: find_declared_order(&listed),
-        name_the_same_in_every_file,
-    })
-}
-
 // All that such a definition says: two types that say the same have one key.
 fn create_key_of_names(flags: TypeIdentity, has_place: bool) -> ObjectTypeKey {
     ObjectTypeKey {
@@ -691,285 +1015,12 @@ fn create_key_of_names(flags: TypeIdentity, has_place: bool) -> ObjectTypeKey {
     }
 }
 
-// Where the type is declared, if that is a file with a module in the program.
-fn find_place(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> Option<(FileId, u32)> {
-    let (home, position) = find_declaration(file, ty, false).site?;
-    let has_module = file.queries.files().is_compiled(home) && !file.inputs.is_left_out(home);
-    has_module.then_some((home, position))
-}
-
-// The link drops the name of every definition of a layout but the one that it shows: the first with a place, or the first.
-fn can_be_shown(file: &FileLowering<'_, '_, '_, '_>, layout: LayoutId, has_place: bool) -> bool {
-    let is_first_of_file = match has_place {
-        true => !file.layouts.placed_layouts.contains(&layout),
-        false => !file.fragment.is_layout_defined(layout),
-    };
-    let layout_key = file.fragment.layout_key(layout);
-    let defined = file.inputs.defined_object_types;
-    is_first_of_file && !defined.is_layout_defined_by_earlier_file(layout_key, file.file, has_place)
-}
-
-fn flag_place(file: &mut FileLowering<'_, '_, '_, '_>, layout: LayoutId, has_place: bool) -> u8 {
-    if !has_place {
-        return 0;
-    }
-    file.layouts.placed_layouts.insert(layout);
-    HAS_PLACE
-}
-
-// `false`: the file or an earlier one has said the same of the layout.
-fn claim_names(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    key: ObjectTypeKey,
-) -> bool {
-    let defined = file.inputs.defined_object_types;
-    let Some(defined_type) = DefinedObjectType::new(file.fragment.layout_key(layout), key) else {
-        return false;
-    };
-    file.layouts.named_types.insert((layout, key))
-        && !defined.is_defined_by_earlier_file(&defined_type, file.file)
-}
-
-// Which names the type has and which it requires, as the listed members show, and not what they hold.
-fn define_names_of_type(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    ty: CheckerTypeId,
-) {
-    // Most types were put in order by an earlier file, and most of those say what another type has said.
-    let has_place = find_place(file, ty).is_some();
-    let known = file.inputs.defined_object_types.find_names(ty);
-    if let Some(names) = known
-        && !claim_names(file, layout, create_key_of_names(names.flags, has_place))
-    {
-        return;
-    }
-    let Ok(members) = file.queries.listed_members(ty) else {
-        return;
-    };
-    let listed = sort_listed_fields(file, ty, members);
-    let fields: Vec<Field> = listed
-        .iter()
-        .map(|field| Field {
-            key: Some(find_key(file, field.name)),
-            declared: DeclaredType::unsaid(),
-            flags: field.flags.get(),
-            ..Field::default()
-        })
-        .collect();
-    let key = create_key_of_names(
-        describe_flags(fields.iter().map(|field| field.flags)),
-        has_place,
-    );
-    if known.is_none() && !claim_names(file, layout, key) {
-        return;
-    }
-    let is_shown = can_be_shown(file, layout, has_place);
-    let definition =
-        create_layout_of_type(file, ty, fields, find_declared_order(&listed), is_shown);
-    let level = LAST_DEFINITION_LEVEL | flag_place(file, layout, has_place);
-    file.fragment
-        .define_object_type(layout, definition, Some((key, level)));
-}
-
-// One definition for each type, which says what that type declares: the link unites them.
-pub(super) fn define_object_type_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    types: &[CheckerTypeId],
-    level: u8,
-    says_types: bool,
-) {
-    // A layout with a home has one type, and the link takes what the home says.
-    let has_home = file.fragment.layout_key(layout).home_file().is_some();
-    if !has_home && !says_types {
-        for &ty in types {
-            define_names_of_type(file, layout, ty);
-        }
-        return;
-    }
-    for &ty in types {
-        let key = match has_home {
-            true => None,
-            false => find_object_type_key(file, ty),
-        };
-        let layout_key = file.fragment.layout_key(layout);
-        let defined = file.inputs.defined_object_types;
-        let defined_type = key.and_then(|key| DefinedObjectType::new(layout_key, key));
-        let is_defined_by_earlier_file =
-            defined_type.is_some_and(|ty| defined.is_defined_by_earlier_file(&ty, file.file));
-        if is_defined_by_earlier_file
-            && (level == LAST_DEFINITION_LEVEL
-                || defined_type
-                    .is_some_and(|ty| defined.has_earlier_file_gone_on_for_all(&ty, file.file)))
-        {
-            continue;
-        }
-        let is_told_to_other_files =
-            defined_type.is_some() && !is_defined_by_earlier_file && level < LAST_DEFINITION_LEVEL;
-        if let Some(computed) = compute_fields_of_type(file, layout, ty, is_told_to_other_files)
-            && !is_defined_by_earlier_file
-        {
-            let names_the_same = match computed.name_the_same_in_every_file {
-                true => NAMES_THE_SAME_IN_EVERY_FILE,
-                false => 0,
-            };
-            let has_place = !has_home && find_place(file, ty).is_some();
-            let is_shown = can_be_shown(file, layout, has_place);
-            let key = key.map(|key| {
-                (
-                    key,
-                    level | names_the_same | flag_place(file, layout, has_place),
-                )
-            });
-            let definition =
-                create_layout_of_type(file, ty, computed.fields, computed.declared_order, is_shown);
-            file.fragment.define_object_type(layout, definition, key);
-        }
-    }
-}
-
-// Which types with the layout a file meets first hangs on what it leaves to earlier files, so a definition is shown under the name of its own type.
-fn create_layout_of_type(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-    fields: Vec<Field>,
-    declared_order: Vec<u32>,
-    is_shown: bool,
-) -> Layout {
-    let declaration = find_declaration(file, ty, is_shown);
-    let (module, position) = match declaration.site {
-        Some((home, position))
-            if file.queries.files().is_compiled(home) && !file.inputs.is_left_out(home) =>
-        {
-            let module = file.fragment.declare_module(ModuleRef::File(home));
-            (Some(module), position)
-        }
-        Some(_) | None => (None, 0),
-    };
-    Layout {
-        kind: LayoutKind::Record,
-        name: declaration.name,
-        module,
-        position,
-        fields,
-        declared_order,
-        ..Layout::default()
-    }
-}
-
-fn describe_name(file: &FileLowering<'_, '_, '_, '_>, name: FieldName) -> Option<KeyDescription> {
-    match name {
-        FieldName::Text(text) => {
-            let mut description = KeyDescription::new();
-            description.push(PropertyKeyKind::Text.to_wire() as u8);
-            description.extend_from_slice(file.queries.atom_bytes(text));
-            Some(description)
-        }
-        FieldName::Key(key) => describe_key(file, key),
-    }
-}
-
-fn compare_name(
-    file: &FileLowering<'_, '_, '_, '_>,
-    name: FieldName,
-    description: &[u8],
-) -> Ordering {
-    match name {
-        FieldName::Text(text) => {
-            let kind = [PropertyKeyKind::Text.to_wire() as u8];
-            kind.iter()
-                .chain(file.queries.atom_bytes(text))
-                .cmp(description)
-        }
-        FieldName::Key(key) => match describe_key(file, key) {
-            Some(described) => described.as_slice().cmp(description),
-            None => Ordering::Less,
-        },
-    }
-}
-
-fn describe_key(file: &FileLowering<'_, '_, '_, '_>, key: PropertyKeyId) -> Option<KeyDescription> {
-    let key = file.fragment.property_keys.get(key);
-    let mut description = KeyDescription::new();
-    description.push(key.kind.to_wire() as u8);
-    match key.kind {
-        PropertyKeyKind::Text | PropertyKeyKind::EnginePrivateName => {
-            description.extend_from_slice(file.fragment.strings.get(key.text?));
-        }
-        PropertyKeyKind::WellKnownSymbol => description.push(key.symbol?.to_wire() as u8),
-        PropertyKeyKind::CreatedSymbol => {
-            let ModuleRef::File(home) = file.fragment.module_ref(key.module?) else {
-                return None;
-            };
-            description.extend_from_slice(&home.0.to_be_bytes());
-            description.extend_from_slice(&key.position?.to_be_bytes());
-        }
-        PropertyKeyKind::PrivateName => return None,
-    }
-    Some(description)
-}
-
-fn truncate_to_field_limit(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    members: &mut Vec<UntypedMember>,
-    position: u32,
-) {
-    let limit = file.inputs.limits.get(LimitId::FieldsInKeyOrder);
-    if members.len() as u64 <= limit {
-        return;
-    }
-    let mut source_indexes: Vec<usize> = Vec::with_capacity(members.len());
-    source_indexes.extend(members.iter().map(|member| member.source_index));
-    source_indexes.sort_unstable();
-    let first_dropped = source_indexes[limit as usize];
-    members.retain(|member| member.source_index < first_dropped);
-    file.gave_up(LimitId::FieldsInKeyOrder, position);
-}
-
-fn sort_untyped_members(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    members: &[Member],
-    position: u32,
-) -> Vec<UntypedMember> {
-    let mut sorted = Vec::with_capacity(members.len());
-    for (source_index, &(key, kind)) in members.iter().enumerate() {
-        match kind {
-            ObjectMemberKind::Field | ObjectMemberKind::Method => {}
-            _ => continue,
-        }
-        if !can_be_field(file, key) {
-            continue;
-        }
-        let Some(description) = describe_key(file, key) else {
-            continue;
-        };
-        sorted.push(UntypedMember {
-            description,
-            key,
-            kind,
-            source_index,
-        });
-    }
-    sorted.shared_sort_by(|a, b| a.description.cmp(&b.description));
-    sorted.dedup_by(|later, earlier| {
-        let is_repeated = later.key == earlier.key;
-        if is_repeated {
-            earlier.kind = later.kind;
-        }
-        is_repeated
-    });
-    truncate_to_field_limit(file, &mut sorted, position);
-    sorted
-}
-
 fn untyped_layout_at(
     file: &mut FileLowering<'_, '_, '_, '_>,
     members: &[Member],
     position: u32,
 ) -> LayoutId {
-    let sorted = sort_untyped_members(file, members, position);
+    let sorted = file.sort_untyped_members(members, position);
     let descriptions = sorted
         .iter()
         .map(|member| (member.description.as_slice(), member.kind));
@@ -1000,73 +1051,6 @@ fn untyped_layout_at(
     layout
 }
 
-pub(crate) fn untyped_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    members: &[(PropertyKeyId, ObjectMemberKind)],
-) -> LayoutId {
-    untyped_layout_at(file, members, 0)
-}
-
-fn collect_literal_members(file: &mut FileLowering<'_, '_, '_, '_>, literal: ExprId) -> Members {
-    let hir = file.hir;
-    let mut members = Members::new();
-    let ExprKind::Object(properties) = hir[literal].kind else {
-        debug_assert!(false, "an object literal was expected");
-        return members;
-    };
-    for property in properties.iter() {
-        let kind = match hir[property].kind {
-            PropKind::Init | PropKind::Shorthand => ObjectMemberKind::Field,
-            PropKind::Method => ObjectMemberKind::Method,
-            PropKind::Spread | PropKind::Getter | PropKind::Setter => continue,
-        };
-        match hir.runtime_property_key(property) {
-            PropKey::Name(name) => members.push((member::name_key(file, name), kind)),
-            PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => {}
-        }
-    }
-    members
-}
-
-// `{ size: 4, a: 1 }` under `{ size: number; [key: string]: number }`: that type has no field for `a`, and the literal's own type has one.
-fn writes_name_under_index_signature(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    literal: ExprId,
-    ty: CheckerTypeId,
-) -> bool {
-    let signatures = file.queries.index_signatures(ty);
-    if !signatures.is_ok_and(|signatures| !signatures.is_empty()) {
-        return false;
-    }
-    let hir = file.hir;
-    let ExprKind::Object(properties) = hir[literal].kind else {
-        return false;
-    };
-    properties.iter().any(|property| {
-        let PropKey::Name(name) = hir.runtime_property_key(property) else {
-            return false;
-        };
-        matches!(
-            file.queries.find_member(ty, name),
-            Ok(MemberLookup::Index(_))
-        )
-    })
-}
-
-fn find_contextual_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    literal: ExprId,
-) -> Option<(LayoutId, CheckerTypeId)> {
-    if let Some(found) = super::birth_targets::find_target_layout(file, literal) {
-        return Some(found);
-    }
-    let ty = file.queries.contextual_type(literal).ok()??;
-    if writes_name_under_index_signature(file, literal, ty) {
-        return None;
-    }
-    Some((object_type_layout(file, ty)?, ty))
-}
-
 fn find_layout_of_enclosing_list(
     file: &mut FileLowering<'_, '_, '_, '_>,
     literal: ExprId,
@@ -1078,7 +1062,7 @@ fn find_layout_of_enclosing_list(
         return None;
     }
     let list_type = file.queries.expression_type(list).ok()?;
-    let element = convert::find_array_element_type(file, list_type)?;
+    let element = file.find_array_element_type(list_type)?;
     let ObjectOrigin::ObjectLiteral {
         file: home,
         expression,
@@ -1089,7 +1073,7 @@ fn find_layout_of_enclosing_list(
     if home != file.file || expression == literal {
         return None;
     }
-    Some((object_type_layout(file, element)?, element))
+    Some((file.object_type_layout(element)?, element))
 }
 
 fn find_checked_layout(
@@ -1107,46 +1091,9 @@ fn find_checked_layout(
         .is_ok_and(|members| !members.is_empty());
     if has_names
         && file.queries.object_origin(ty) != origin
-        && let Some(layout) = object_type_layout(file, ty)
+        && let Some(layout) = file.object_type_layout(ty)
     {
         return Some((layout, ty));
     }
     Some((declare_object_type(file, ty, Some(literal))?, ty))
-}
-
-fn find_layout_of_checked_literal(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    literal: ExprId,
-) -> Option<LayoutId> {
-    let mut found = find_contextual_layout(file, literal);
-    if found.is_none() {
-        found = find_layout_of_enclosing_list(file, literal);
-    }
-    if found.is_none() {
-        found = find_checked_layout(file, literal);
-    }
-    Some(found?.0)
-}
-
-fn compute_literal_layout(file: &mut FileLowering<'_, '_, '_, '_>, literal: ExprId) -> LayoutId {
-    if let Some(layout) = find_layout_of_checked_literal(file, literal) {
-        return layout;
-    }
-    let members = collect_literal_members(file, literal);
-    let position = file.hir[literal].pos;
-    untyped_layout_at(file, &members, position)
-}
-
-pub(in crate::lower) fn literal_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    literal: ExprId,
-) -> LayoutId {
-    if let Some(&layout) = file.layouts.literals.get(&literal) {
-        return layout;
-    }
-    file.layouts.literals_in_progress.push(literal);
-    let layout = compute_literal_layout(file, literal);
-    file.layouts.literals_in_progress.pop();
-    file.layouts.literals.insert(literal, layout);
-    layout
 }

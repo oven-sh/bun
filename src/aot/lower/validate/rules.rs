@@ -12,57 +12,70 @@ enum RuleKind {
     Default,
 }
 
-pub(super) fn apply_constraint(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    node: &mut ValidationNode,
-    constraint: SchemaConstraint,
-) {
-    match constraint {
-        SchemaConstraint::Int => node.rules.push(ValidationRule::Integer),
-        SchemaConstraint::Int32 => node.rules.extend([
-            ValidationRule::Integer,
-            ValidationRule::Minimum {
-                bound: f64::from(i32::MIN),
+impl FileLowering<'_, '_, '_, '_> {
+    pub(super) fn apply_constraint(
+        &mut self,
+        node: &mut ValidationNode,
+        constraint: SchemaConstraint,
+    ) {
+        match constraint {
+            SchemaConstraint::Int => node.rules.push(ValidationRule::Integer),
+            SchemaConstraint::Int32 => node.rules.extend([
+                ValidationRule::Integer,
+                ValidationRule::Minimum {
+                    bound: f64::from(i32::MIN),
+                },
+                ValidationRule::Maximum {
+                    bound: f64::from(i32::MAX),
+                },
+            ]),
+            SchemaConstraint::Min(bound) => node.rules.push(ValidationRule::Minimum { bound }),
+            SchemaConstraint::Max(bound) => node.rules.push(ValidationRule::Maximum { bound }),
+            SchemaConstraint::Above(bound) => {
+                node.rules.push(ValidationRule::ExclusiveMinimum { bound });
+            }
+            SchemaConstraint::Below(bound) => {
+                node.rules.push(ValidationRule::ExclusiveMaximum { bound });
+            }
+            SchemaConstraint::MultipleOf(divisor) => {
+                node.rules.push(ValidationRule::MultipleOf { divisor });
+            }
+            SchemaConstraint::MinLength(length) | SchemaConstraint::MinItems(length) => {
+                node.rules.push(ValidationRule::MinimumLength { length });
+            }
+            SchemaConstraint::MaxLength(length) | SchemaConstraint::MaxItems(length) => {
+                node.rules.push(ValidationRule::MaximumLength { length });
+            }
+            SchemaConstraint::Pattern(source) => {
+                let source = self.intern_atom(source);
+                node.rules.push(ValidationRule::Pattern { source });
+            }
+            SchemaConstraint::Format(format) => {
+                let format = text_format(format);
+                node.rules.push(ValidationRule::Format { format });
+            }
+            SchemaConstraint::Message(text) => {
+                let text = self.intern_atom(text);
+                replace_rule(node, ValidationRule::Message { text });
+            }
+            SchemaConstraint::Default(default) => {
+                let rule = self.default_rule(default);
+                replace_rule(node, rule);
+            }
+            SchemaConstraint::Strict => reject_undeclared_members(node),
+            SchemaConstraint::DeepStrict => {}
+        }
+    }
+
+    fn default_rule(&mut self, default: SchemaDefault) -> ValidationRule {
+        match default {
+            SchemaDefault::Null => ValidationRule::DefaultNull,
+            SchemaDefault::Boolean(value) => ValidationRule::DefaultBoolean { value },
+            SchemaDefault::Number(value) => ValidationRule::DefaultNumber { value },
+            SchemaDefault::String(text) => ValidationRule::DefaultString {
+                value: self.intern_atom(text),
             },
-            ValidationRule::Maximum {
-                bound: f64::from(i32::MAX),
-            },
-        ]),
-        SchemaConstraint::Min(bound) => node.rules.push(ValidationRule::Minimum { bound }),
-        SchemaConstraint::Max(bound) => node.rules.push(ValidationRule::Maximum { bound }),
-        SchemaConstraint::Above(bound) => {
-            node.rules.push(ValidationRule::ExclusiveMinimum { bound });
         }
-        SchemaConstraint::Below(bound) => {
-            node.rules.push(ValidationRule::ExclusiveMaximum { bound });
-        }
-        SchemaConstraint::MultipleOf(divisor) => {
-            node.rules.push(ValidationRule::MultipleOf { divisor });
-        }
-        SchemaConstraint::MinLength(length) | SchemaConstraint::MinItems(length) => {
-            node.rules.push(ValidationRule::MinimumLength { length });
-        }
-        SchemaConstraint::MaxLength(length) | SchemaConstraint::MaxItems(length) => {
-            node.rules.push(ValidationRule::MaximumLength { length });
-        }
-        SchemaConstraint::Pattern(source) => {
-            let source = file.intern_atom(source);
-            node.rules.push(ValidationRule::Pattern { source });
-        }
-        SchemaConstraint::Format(format) => {
-            let format = text_format(format);
-            node.rules.push(ValidationRule::Format { format });
-        }
-        SchemaConstraint::Message(text) => {
-            let text = file.intern_atom(text);
-            replace_rule(node, ValidationRule::Message { text });
-        }
-        SchemaConstraint::Default(default) => {
-            let rule = default_rule(file, default);
-            replace_rule(node, rule);
-        }
-        SchemaConstraint::Strict => reject_undeclared_members(node),
-        SchemaConstraint::DeepStrict => {}
     }
 }
 
@@ -75,17 +88,6 @@ fn text_format(format: SchemaFormat) -> TextFormat {
         SchemaFormat::Date => TextFormat::Date,
         SchemaFormat::DateTime => TextFormat::DateTime,
         SchemaFormat::Url => TextFormat::Url,
-    }
-}
-
-fn default_rule(file: &mut FileLowering<'_, '_, '_, '_>, default: SchemaDefault) -> ValidationRule {
-    match default {
-        SchemaDefault::Null => ValidationRule::DefaultNull,
-        SchemaDefault::Boolean(value) => ValidationRule::DefaultBoolean { value },
-        SchemaDefault::Number(value) => ValidationRule::DefaultNumber { value },
-        SchemaDefault::String(text) => ValidationRule::DefaultString {
-            value: file.intern_atom(text),
-        },
     }
 }
 

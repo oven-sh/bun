@@ -9,9 +9,9 @@ use smallvec::SmallVec;
 
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, TypeTable, ValueId};
-use crate::lower::member::{self, PropertyName};
-use crate::lower::scope::{self, BindingForm};
-use crate::lower::{FunctionLowering, call, commonjs, condition, expression};
+use crate::lower::FunctionLowering;
+use crate::lower::member::PropertyName;
+use crate::lower::scope::BindingForm;
 
 #[derive(Copy, Clone)]
 struct MetadataRoot {
@@ -42,208 +42,171 @@ fn global_builtin(global: MetadataGlobal) -> BuiltinId {
     }
 }
 
-pub(super) fn emit_member_metadata(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    member: MemberId,
-    decorators: &mut SmallVec<[ValueId; 8]>,
-) {
-    let entries = MetadataCollector::new(lowering.file.hir).collect_member(member);
-    for (key, value) in entries {
-        let value = match value {
-            DesignValue::Type(metadata) => serialize_metadata(lowering, class, metadata),
-            DesignValue::Types(types) => serialize_metadata_array(lowering, class, &types),
-        };
-        decorators.push(emit_define_metadata(lowering, key, value));
-    }
-}
-
-pub(super) fn emit_constructor_metadata(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    constructor: FnId,
-) -> ValueId {
-    let mut collector = MetadataCollector::new(lowering.file.hir);
-    let parameters = collector.collect_constructor(class, constructor);
-    let parameters = serialize_metadata_array(lowering, class, &parameters);
-    emit_define_metadata(lowering, DesignKey::ParameterTypes, parameters)
-}
-
-fn serialize_metadata(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    metadata: Metadata,
-) -> ValueId {
-    match metadata.serialized() {
-        SerializedMetadata::Undefined => lowering.builder.undefined(),
-        SerializedMetadata::Global(global) => emit_metadata_global(lowering, class, global),
-        SerializedMetadata::GuardedGlobal(global) => {
-            let root = find_global_root(lowering, class, global);
-            serialize_guarded_root(lowering, class, root)
-        }
-        SerializedMetadata::GuardedName(node) => match find_type_name_root(lowering, node) {
-            Some(root) => serialize_guarded_root(lowering, class, root),
-            None => emit_metadata_global(lowering, class, MetadataGlobal::Object),
-        },
-        SerializedMetadata::GuardedQualifiedName(node) => {
-            serialize_qualified_name(lowering, class, node)
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(super) fn emit_member_metadata(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+        decorators: &mut SmallVec<[ValueId; 8]>,
+    ) {
+        let entries = MetadataCollector::new(self.file.hir).collect_member(member);
+        for (key, value) in entries {
+            let value = match value {
+                DesignValue::Type(metadata) => self.serialize_metadata(class, metadata),
+                DesignValue::Types(types) => self.serialize_metadata_array(class, &types),
+            };
+            decorators.push(self.emit_define_metadata(key, value));
         }
     }
-}
 
-fn serialize_metadata_array(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    entries: &[Metadata],
-) -> ValueId {
-    let mut values = SmallVec::<[ValueId; 4]>::with_capacity(entries.len());
-    for &entry in entries {
-        values.push(serialize_metadata(lowering, class, entry));
+    pub(super) fn emit_constructor_metadata(
+        &mut self,
+        class: ClassId,
+        constructor: FnId,
+    ) -> ValueId {
+        let mut collector = MetadataCollector::new(self.file.hir);
+        let parameters = collector.collect_constructor(class, constructor);
+        let parameters = self.serialize_metadata_array(class, &parameters);
+        self.emit_define_metadata(DesignKey::ParameterTypes, parameters)
     }
-    lowering
-        .builder
-        .new_array(TypeTable::ANYTHING, &[], &values)
-}
 
-fn emit_metadata_global(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    global: MetadataGlobal,
-) -> ValueId {
-    let root = find_global_root(lowering, class, global);
-    read_metadata_root(lowering, root, false)
-}
-
-fn serialize_guarded_root(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    root: MetadataRoot,
-) -> ValueId {
-    let use_object = lowering.create_block();
-    let tested = read_metadata_root(lowering, root, true);
-    condition::branch_if_undefined(lowering, tested, use_object);
-    let value = read_metadata_root(lowering, root, false);
-    join_metadata_value(lowering, class, value, use_object)
-}
-
-fn serialize_qualified_name(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    node: TypeNodeId,
-) -> ValueId {
-    let names = entity_names(lowering.file.hir, node);
-    let Some(root) = find_type_name_root(lowering, node) else {
-        return emit_metadata_global(lowering, class, MetadataGlobal::Object);
-    };
-    let use_object = lowering.create_block();
-    for count in 1..=names.len() {
-        let tested = read_metadata_chain(lowering, root, names, count);
-        condition::branch_if_undefined(lowering, tested, use_object);
-    }
-    let value = read_metadata_chain(lowering, root, names, names.len());
-    join_metadata_value(lowering, class, value, use_object)
-}
-
-fn join_metadata_value(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    value: ValueId,
-    use_object: BlockId,
-) -> ValueId {
-    let join = lowering.create_block();
-    let result = lowering.builder.add_parameter(join, None);
-    lowering.jump_with(join, &[value]);
-    lowering.continue_in(use_object);
-    let object = emit_metadata_global(lowering, class, MetadataGlobal::Object);
-    lowering.jump_with(join, &[object]);
-    lowering.continue_in(join);
-    result
-}
-
-fn read_metadata_chain(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    root: MetadataRoot,
-    names: Span<NameId>,
-    count: usize,
-) -> ValueId {
-    let hir = lowering.file.hir;
-    let mut value = read_metadata_root(lowering, root, count == 1);
-    for index in 1..count {
-        let key = member::name_key(lowering.file, hir[names.at(index)].text);
-        value = member::emit_get(lowering, value, PropertyName::Constant(key));
-    }
-    value
-}
-
-fn read_metadata_root(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    root: MetadataRoot,
-    is_for_typeof: bool,
-) -> ValueId {
-    match root.binding {
-        Binding::Free => {
-            let value = expression::emit_free_name_get(lowering, root.name, is_for_typeof);
-            match root.global {
-                Some(global) => lowering.expect_builtin(value, global_builtin(global)),
-                None => value,
+    fn serialize_metadata(&mut self, class: ClassId, metadata: Metadata) -> ValueId {
+        match metadata.serialized() {
+            SerializedMetadata::Undefined => self.builder.undefined(),
+            SerializedMetadata::Global(global) => self.emit_metadata_global(class, global),
+            SerializedMetadata::GuardedGlobal(global) => {
+                let root = self.find_global_root(class, global);
+                self.serialize_guarded_root(class, root)
+            }
+            SerializedMetadata::GuardedName(node) => match self.find_type_name_root(node) {
+                Some(root) => self.serialize_guarded_root(class, root),
+                None => self.emit_metadata_global(class, MetadataGlobal::Object),
+            },
+            SerializedMetadata::GuardedQualifiedName(node) => {
+                self.serialize_qualified_name(class, node)
             }
         }
-        Binding::CommonJs(variable) if is_for_typeof => {
-            commonjs::get_commonjs_variable_for_typeof(lowering, variable)
+    }
+
+    fn serialize_metadata_array(&mut self, class: ClassId, entries: &[Metadata]) -> ValueId {
+        let mut values = SmallVec::<[ValueId; 4]>::with_capacity(entries.len());
+        for &entry in entries {
+            values.push(self.serialize_metadata(class, entry));
         }
-        Binding::CommonJs(variable) => commonjs::get_commonjs_variable(lowering, variable),
-        Binding::Symbol(symbol) if is_for_typeof && is_unresolvable(lowering, symbol) => {
-            lowering.builder.undefined()
+        self.builder.new_array(TypeTable::ANYTHING, &[], &values)
+    }
+
+    fn emit_metadata_global(&mut self, class: ClassId, global: MetadataGlobal) -> ValueId {
+        let root = self.find_global_root(class, global);
+        self.read_metadata_root(root, false)
+    }
+
+    fn serialize_guarded_root(&mut self, class: ClassId, root: MetadataRoot) -> ValueId {
+        let use_object = self.create_block();
+        let tested = self.read_metadata_root(root, true);
+        self.branch_if_undefined(tested, use_object);
+        let value = self.read_metadata_root(root, false);
+        self.join_metadata_value(class, value, use_object)
+    }
+
+    fn serialize_qualified_name(&mut self, class: ClassId, node: TypeNodeId) -> ValueId {
+        let names = entity_names(self.file.hir, node);
+        let Some(root) = self.find_type_name_root(node) else {
+            return self.emit_metadata_global(class, MetadataGlobal::Object);
+        };
+        let use_object = self.create_block();
+        for count in 1..=names.len() {
+            let tested = self.read_metadata_chain(root, names, count);
+            self.branch_if_undefined(tested, use_object);
         }
-        Binding::Symbol(_) | Binding::Arguments(_) => {
-            scope::get_binding(lowering, root.binding, root.name)
+        let value = self.read_metadata_chain(root, names, names.len());
+        self.join_metadata_value(class, value, use_object)
+    }
+
+    fn join_metadata_value(
+        &mut self,
+        class: ClassId,
+        value: ValueId,
+        use_object: BlockId,
+    ) -> ValueId {
+        let join = self.create_block();
+        let result = self.builder.add_parameter(join, None);
+        self.jump_with(join, &[value]);
+        self.continue_in(use_object);
+        let object = self.emit_metadata_global(class, MetadataGlobal::Object);
+        self.jump_with(join, &[object]);
+        self.continue_in(join);
+        result
+    }
+
+    fn read_metadata_chain(
+        &mut self,
+        root: MetadataRoot,
+        names: Span<NameId>,
+        count: usize,
+    ) -> ValueId {
+        let hir = self.file.hir;
+        let mut value = self.read_metadata_root(root, count == 1);
+        for index in 1..count {
+            let key = self.file.name_key(hir[names.at(index)].text);
+            value = self.emit_get(value, PropertyName::Constant(key));
+        }
+        value
+    }
+
+    fn read_metadata_root(&mut self, root: MetadataRoot, is_for_typeof: bool) -> ValueId {
+        match root.binding {
+            Binding::Free => {
+                let value = self.emit_free_name_get(root.name, is_for_typeof);
+                match root.global {
+                    Some(global) => self.expect_builtin(value, global_builtin(global)),
+                    None => value,
+                }
+            }
+            Binding::CommonJs(variable) if is_for_typeof => {
+                self.get_commonjs_variable_for_typeof(variable)
+            }
+            Binding::CommonJs(variable) => self.get_commonjs_variable(variable),
+            Binding::Symbol(symbol) if is_for_typeof && self.is_unresolvable(symbol) => {
+                self.builder.undefined()
+            }
+            Binding::Symbol(_) | Binding::Arguments(_) => self.get_binding(root.binding, root.name),
         }
     }
-}
 
-fn is_unresolvable(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, symbol: SymbolId) -> bool {
-    matches!(lowering.file.scopes.form(symbol), BindingForm::NotAValue)
-}
-
-fn find_type_name_root(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-    node: TypeNodeId,
-) -> Option<MetadataRoot> {
-    let hir = lowering.file.hir;
-    let references = lowering.file.bound.runtime.implicit_references();
-    let binding = find_metadata_binding(references, MetadataReference::TypeName(node));
-    debug_assert!(
-        binding.is_some(),
-        "the binder records the binding of every visited name"
-    );
-    Some(MetadataRoot {
-        binding: binding?,
-        name: hir[entity_names(hir, node).at(0)].text,
-        global: None,
-    })
-}
-
-fn find_global_root(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    global: MetadataGlobal,
-) -> MetadataRoot {
-    let references = lowering.file.bound.runtime.implicit_references();
-    let reference = MetadataReference::Global(class, global);
-    MetadataRoot {
-        binding: find_metadata_binding(references, reference).unwrap_or(Binding::Free),
-        name: global.name(),
-        global: Some(global),
+    fn is_unresolvable(&self, symbol: SymbolId) -> bool {
+        matches!(self.file.scopes.form(symbol), BindingForm::NotAValue)
     }
-}
 
-fn emit_define_metadata(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    key: DesignKey,
-    value: ValueId,
-) -> ValueId {
-    let label = lowering.file.intern_bytes(design_label(key));
-    let label = lowering.builder.string(label);
-    let helper = BuiltinId::CompilerHelpersDefineMetadata;
-    call::emit_builtin_call(lowering, helper, &[label, value])
+    fn find_type_name_root(&self, node: TypeNodeId) -> Option<MetadataRoot> {
+        let hir = self.file.hir;
+        let references = self.file.bound.runtime.implicit_references();
+        let binding = find_metadata_binding(references, MetadataReference::TypeName(node));
+        debug_assert!(
+            binding.is_some(),
+            "the binder records the binding of every visited name"
+        );
+        Some(MetadataRoot {
+            binding: binding?,
+            name: hir[entity_names(hir, node).at(0)].text,
+            global: None,
+        })
+    }
+
+    fn find_global_root(&self, class: ClassId, global: MetadataGlobal) -> MetadataRoot {
+        let references = self.file.bound.runtime.implicit_references();
+        let reference = MetadataReference::Global(class, global);
+        MetadataRoot {
+            binding: find_metadata_binding(references, reference).unwrap_or(Binding::Free),
+            name: global.name(),
+            global: Some(global),
+        }
+    }
+
+    fn emit_define_metadata(&mut self, key: DesignKey, value: ValueId) -> ValueId {
+        let label = self.file.intern_bytes(design_label(key));
+        let label = self.builder.string(label);
+        let helper = BuiltinId::CompilerHelpersDefineMetadata;
+        self.emit_builtin_call(helper, &[label, value])
+    }
 }

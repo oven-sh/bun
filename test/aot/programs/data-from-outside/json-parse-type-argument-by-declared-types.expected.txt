@@ -15,7 +15,7 @@ refused coupon too_big string to have <=16 characters string
 refused customer invalid_type object undefined
 refused  invalid_type object null refused  invalid_type object array refused  invalid_type object string
 5124 customer,items,coupon,more id,name,email,more sku,quantity,unitCents,more TENOFF
-true items[1].unitCents: expected number to be >=0 [{"path":["items",1,"unitCents"],"code":"too_small","expected":"number to be >=0","received":"number","message":"Too small: expected number to be >=0"}]
+true items[1].unitCents must be >=0 [{"path":["items",1,"unitCents"],"code":"too_small","expected":"number to be >=0","received":"number","message":"must be >=0"}]
 {"text":"t","count":1.5,"flag":false,"nothing":null,"either":5,"literal":3,"color":"blue","pair":["p",2],"byName":{"a":1,"b":2},"shapes":[{"kind":"circle","radius":1,"extra":1},{"kind":"none"}],"shape":null,"tree":{"value":1,"children":[{"value":2,"children":[],"parent":null}]},"anything":{"whatever":[1]},"list":[[1],[],[2,3]],"nested":{"deep":{"deeper":{"deepest":true}}},"with-dash":1,"objectOrText":{"a":1}}
 as it is accepted
 text text invalid_type string number
@@ -55,12 +55,12 @@ accepted {"some":1,"other":2} refused other invalid_type number string
 refused  unrecognized_keys "b" object accepted {"a":{"b":1,"c":2}}
 {"end":9,"kind":"name","more":[1,2],"start":4,"flags":3} end,kind,more,start,flags 5 undefined 3
 {"end":9,"kind":"name","more":[1,2],"start":5,"flags":3,"text":"t"}
-TypeError end: expected number, received undefined
-TypeError start: expected number, received string
-TypeError text: expected undefined | string, received number
-TypeError expected object, received array
-TypeError expected object, received null
-TypeError expected object, received number
+TypeError end must be number, received undefined
+TypeError start must be number, received string
+TypeError text must be undefined | string, received number
+TypeError value must be object, received array
+TypeError value must be object, received null
+TypeError value must be object, received number
 SyntaxError 
 3 [{"kind":"a","start":0,"end":1},{"kind":"b","start":1,"end":3,"other":true}]
 {"0":"zero","a":1,"some":2,"known":3,"values":[1,2],"__proto__":{"x":1},"hasOwnProperty":"mine"} 0,a,some,known,values,__proto__,hasOwnProperty 5 {"0":"zero","a":1,"some":2,"known":3,"values":[1,2],"__proto__":{"x":1},"hasOwnProperty":"mine"} true

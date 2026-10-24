@@ -49,6 +49,7 @@
 //   a-full-heap-is-let-go-and-built-ins-make-things objects are kept until no more fit, all or half of them are let go, and at once one built-in that makes things is called thousands of times: there is room again, so no call may fail (a-full-heap-is-let-go-and-built-ins-make-things.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
+import { withPackedPrograms } from "../generate";
 import { staysAScript, type Bed, type Program } from "./beds";
 import { erased, mutate, reprinted } from "./mutate";
 import { Random } from "./random";
@@ -73,7 +74,7 @@ export interface Generated extends Program {
 export type Source = (seed: number, bed: Bed) => Generated | undefined;
 
 /** The programs in a single file that print the same compiled and plain, with nothing stored beside them. */
-function singleFilePrograms(root: string): string[] {
+function singleFilePrograms(root: string) {
   const found: string[] = [];
   const visit = (folder: string) => {
     const entries = readdirSync(folder, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
@@ -88,21 +89,21 @@ function singleFilePrograms(root: string): string[] {
     }
   };
   if (existsSync(root)) visit(root);
-  return found;
+  return withPackedPrograms(root, found, /(?<!\.d)\.(ts|js)$/);
 }
 
 // Depends on where the file lies, on the clock or on chance, or prints what differs by design (positions, source text).
 const cannotStandAlone = /from "\.|require\("\.|import\("\.|import\.meta|__dirname|__filename|process\.argv|\bprocess\b.*\bconsole\.log\(process\)|Bun\.main|\.stack\b|Date\.now|performance\.now|Math\.random|new Date\(\)|\.toString\(\)\.length|\.caller\b|getBuiltinModule|mkdtemp|hrtime|[cC]puUsage|memoryUsage|resourceUsage|randomUUID|randomBytes|getRandomValues|port: 0|listen\(0/;
 
 function mutation(root: string, rejected: Set<string>): Source | undefined {
-  const files = singleFilePrograms(root);
+  const { paths: files, textOf } = singleFilePrograms(root);
   if (!files.length) return;
   const printed = new Map<string, string | undefined>();
   // The program as it is (typed), or erased to JavaScript and printed one statement per line.
   const baseText = (path: string, typed: boolean) => {
     const key = `${path} ${typed}`;
     if (printed.has(key)) return printed.get(key);
-    let text: string | undefined = readFileSync(path, "utf8");
+    let text: string | undefined = textOf(path);
     if (text.length > 12_000 || cannotStandAlone.test(text)) text = undefined;
     try {
       if (text !== undefined && !typed) text = erased(text, path.endsWith(".ts") ? "ts" : "js");
@@ -134,12 +135,12 @@ function mutation(root: string, rejected: Set<string>): Source | undefined {
 }
 
 function asTheyAre(root: string): Source | undefined {
-  const files = singleFilePrograms(root);
+  const { paths: files, textOf } = singleFilePrograms(root);
   if (!files.length) return;
   return (seed, bed) => {
     if (bed.name !== "product") return;
     const path = files[seed % files.length];
-    const text = readFileSync(path, "utf8");
+    const text = textOf(path);
     if (text.length > 60_000 || cannotStandAlone.test(text)) return;
     return { source: "programs-as-they-are", seed, text: path.endsWith(".js") && !/^(import|export)\b/m.test(text) ? staysAScript + text : text, extension: path.endsWith(".ts") ? "ts" : "js", notes: relative(root, path) };
   };

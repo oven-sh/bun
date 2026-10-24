@@ -28,24 +28,11 @@ pub(crate) use self::analysis::ScopeAnalysis;
 pub(in crate::lower) use self::analysis::{
     ArgumentsObject, BindingForm, BindingRef, Placement, Storage,
 };
-pub(crate) use self::bindings::{get_binding, initialize_converted_symbol};
-pub(in crate::lower) use self::bindings::{get_mapped_argument, get_stored, set_mapped_argument};
-pub(in crate::lower) use self::enter::{allocate_scope, instantiate_functions};
-pub(crate) use self::enter::{
-    copy_iteration_bindings, create_loop_header, enter_scope, enter_with_scope, leave_scope,
-};
-pub(in crate::lower) use self::environments::{
-    environment_layout, get_environment, stored_position,
-};
+pub(in crate::lower) use self::environments::environment_layout;
 pub(crate) use self::eval::lower_direct_eval;
-pub(crate) use self::identifiers::{
-    delete_identifier, find_tested_local, get_identifier_target, initialize_pattern_name,
-    lower_identifier, lower_identifier_callee, lower_identifier_for_typeof, read_local,
-    rebind_local, resolve_identifier_target, resolve_pattern_target, set_identifier_target,
-};
+pub(crate) use self::identifiers::find_tested_local;
 pub(crate) use self::state::ScopeState;
 pub(in crate::lower) use self::state::{DeadZone, LocalBinding};
-pub(crate) use self::variables::ensure_variable;
 pub(in crate::lower) use self::walk::{Initialization, WalkedFunction, WalkedFunctionId};
 
 pub(crate) struct ScopeInput<'x, 's> {
@@ -95,8 +82,22 @@ pub(crate) fn analyze_scopes(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
     plan::analyze(input)
 }
 
-pub(crate) fn innermost_scope(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> ScopeId {
-    lowering.scopes.innermost_scope()
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn innermost_scope(&self) -> ScopeId {
+        self.scopes.innermost_scope()
+    }
+
+    pub(crate) fn local_position(&mut self, symbol: SymbolId) -> DeclaredType {
+        self.file.stored_position(BindingRef::Symbol(symbol))
+    }
+
+    pub(crate) fn get_slot(&mut self, scope: ScopeId, slot: ScopeSlot) -> ValueId {
+        self.get_stored(BindingRef::Slot(scope, slot))
+    }
+
+    pub(crate) fn set_slot(&mut self, scope: ScopeId, slot: ScopeSlot, value: ValueId) {
+        self.set_stored(BindingRef::Slot(scope, slot), value);
+    }
 }
 
 pub(crate) fn set_binding(
@@ -115,28 +116,4 @@ pub(crate) fn initialize_binding(
     value: ValueId,
 ) {
     bindings::initialize_binding(lowering, binding, name, value, None);
-}
-
-pub(crate) fn local_position(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    symbol: SymbolId,
-) -> DeclaredType {
-    environments::stored_position(lowering.file, BindingRef::Symbol(symbol))
-}
-
-pub(crate) fn get_slot(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    scope: ScopeId,
-    slot: ScopeSlot,
-) -> ValueId {
-    bindings::get_stored(lowering, BindingRef::Slot(scope, slot))
-}
-
-pub(crate) fn set_slot(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    scope: ScopeId,
-    slot: ScopeSlot,
-    value: ValueId,
-) {
-    bindings::set_stored(lowering, BindingRef::Slot(scope, slot), value);
 }

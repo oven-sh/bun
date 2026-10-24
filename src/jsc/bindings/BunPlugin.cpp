@@ -1,5 +1,4 @@
 #include "BunPlugin.h"
-#include "ModuleLoader.h"
 #include "BunCompiledModules.h"
 
 #include "JavaScriptCore/CallData.h"
@@ -27,7 +26,6 @@
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
 #include "BunClientData.h"

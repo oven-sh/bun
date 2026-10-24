@@ -5028,12 +5028,12 @@ impl NodeFS {
         // arm takes `&ZStr` and performs the kernel32 widening internally
         // (sys/lib.rs `windows_impl::access`), so feed it the UTF-8 path on
         // every platform.
-        let path: &ZStr = if p.is_empty() {
+        let path: &ZStr = if args.path.slice().is_empty() {
             ZStr::EMPTY
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };
-        match Syscall::access(path, mode) {
+        match Syscall::access(path, args.mode.as_int()) {
             Ok(_) => Ok(Null),
             Err(err) => {
                 if !graph_may_answer_for(p) {
@@ -6008,10 +6008,13 @@ impl NodeFS {
 
     pub(crate) fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        if let Some(result) =
-            graph_in_front_of_disk(path.as_bytes()).and_then(|graph| graph.stat(path.as_bytes()))
-        {
-            return Ok(stats_of(&result, args.big_int));
+        if let Some(graph) = graph_in_front_of_disk(path.as_bytes()) {
+            if let Some(result) = graph.stat(path.as_bytes()) {
+                return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                    &PosixStat::init(&result),
+                    args.big_int,
+                ))));
+            }
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
@@ -6024,7 +6027,10 @@ impl NodeFS {
             };
         }
         match Syscall::lstat(path) {
-            Ok(result) => Ok(stats_of(&result, args.big_int)),
+            Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                &PosixStat::init(&result),
+                args.big_int,
+            )))),
             Err(err) => stat_failure(err, path.as_bytes(), args),
         }
     }
@@ -8247,10 +8253,13 @@ impl NodeFS {
 
     pub(crate) fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        if let Some(result) =
-            graph_in_front_of_disk(path.as_bytes()).and_then(|graph| graph.stat(path.as_bytes()))
-        {
-            return Ok(stats_of(&result, args.big_int));
+        if let Some(graph) = graph_in_front_of_disk(path.as_bytes()) {
+            if let Some(result) = graph.stat(path.as_bytes()) {
+                return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                    &PosixStat::init(&result),
+                    args.big_int,
+                ))));
+            }
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
@@ -8263,7 +8272,10 @@ impl NodeFS {
             };
         }
         match Syscall::stat(path) {
-            Ok(result) => Ok(stats_of(&result, args.big_int)),
+            Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                &PosixStat::init(&result),
+                args.big_int,
+            )))),
             Err(err) => stat_failure(err, path.as_bytes(), args),
         }
     }

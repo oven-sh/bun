@@ -211,6 +211,10 @@ mod fake_mimalloc {
     #[unsafe(no_mangle)]
     extern "C" fn mi_collect(_force: bool) {}
     #[unsafe(no_mangle)]
+    extern "C" fn mi_option_get(_option: u32) -> core::ffi::c_long {
+        0
+    }
+    #[unsafe(no_mangle)]
     extern "C" fn mi_option_set(_option: u32, _value: core::ffi::c_long) {}
     #[unsafe(no_mangle)]
     extern "C" fn mi_option_set_default(_option: u32, _value: core::ffi::c_long) {}

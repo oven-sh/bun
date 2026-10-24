@@ -7,14 +7,8 @@ use bun_sema::hir::MemberId;
 
 use crate::ir::ValueId;
 
-pub(in crate::lower) use self::legacy::{
-    apply_legacy_decorators, has_legacy_decorators, move_decorated_fields,
-};
+pub(in crate::lower) use self::legacy::{has_legacy_decorators, move_decorated_fields};
 pub(in crate::lower) use self::plan::plan_standard_elements;
-pub(in crate::lower) use self::standard::{
-    emit_initializer_run, emit_standard_decorations, emit_value_initializer_run,
-    get_initializer_list,
-};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(in crate::lower) enum DecoratedKind {

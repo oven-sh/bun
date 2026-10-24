@@ -1,9 +1,6 @@
 use bun_sema::hir::{self, ExprId, ExprKind, Flags, FnId};
 
-use super::async_function::emit_await;
-use super::types::find_mapped_source;
-use super::yield_star::lower_yield_star;
-use super::{FileLowering, FunctionLowering, control, convert, exception, expression, positions};
+use super::{FileLowering, FunctionLowering, convert};
 use crate::ir::generated::{FunctionFlags, ResumeMode, YieldResult};
 use crate::ir::{DeclaredType, Edge, FunctionKey, ValueId};
 
@@ -30,26 +27,102 @@ pub(crate) fn coroutine_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFl
     flags
 }
 
-pub(in crate::lower) fn is_async_generator(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-) -> bool {
-    let flags = lowering.builder.function().flags;
-    flags.contains(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR)
-}
-
-pub(crate) fn emit_coroutine_start(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
-    let flags = lowering.builder.function().flags;
-    if !flags.contains(FunctionFlags::IS_GENERATOR) {
-        return;
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(in crate::lower) fn is_async_generator(&self) -> bool {
+        let flags = self.builder.function().flags;
+        flags.contains(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR)
     }
-    let yielded = match lowering.key {
-        FunctionKey::Source(source) => {
-            positions::function_positions(lowering.file, source.function).yielded
+
+    pub(crate) fn emit_coroutine_start(&mut self) {
+        let flags = self.builder.function().flags;
+        if !flags.contains(FunctionFlags::IS_GENERATOR) {
+            return;
         }
-        _ => DeclaredType::untyped(),
-    };
-    lowering.builder.initial_yield();
-    lowering.coroutine.yielded = Some(yielded);
+        let yielded = match self.key {
+            FunctionKey::Source(source) => self.file.function_positions(source.function).yielded,
+            _ => DeclaredType::untyped(),
+        };
+        self.builder.initial_yield();
+        self.coroutine.yielded = Some(yielded);
+    }
+
+    pub(crate) fn prepare_return_value(&mut self, value: ValueId) -> ValueId {
+        self.await_in_async_generator(value)
+    }
+
+    fn await_in_async_generator(&mut self, value: ValueId) -> ValueId {
+        match self.is_async_generator() {
+            true => self.emit_await(value),
+            false => value,
+        }
+    }
+
+    pub(in crate::lower) fn yielded_position(&self) -> DeclaredType {
+        let yielded = self.coroutine.yielded;
+        debug_assert!(yielded.is_some(), "InitialYield dominates every Yield");
+        yielded.unwrap_or_else(DeclaredType::untyped)
+    }
+
+    pub(in crate::lower) fn emit_yield(&mut self, value: ValueId) -> Resumption {
+        let builder = &mut self.builder;
+        let results = builder.yield_value(value);
+        Resumption {
+            sent: builder.result_at(results, YieldResult::Sent.to_wire()),
+            mode: builder.result_at(results, YieldResult::Mode.to_wire()),
+        }
+    }
+
+    pub(in crate::lower) fn emit_resume_switch(
+        &mut self,
+        mode: ValueId,
+        on_throw: Edge<'_>,
+        on_return: Edge<'_>,
+        on_next: Edge<'_>,
+    ) {
+        let cases = [
+            i64::from(ResumeMode::Throw.to_wire()),
+            i64::from(ResumeMode::Return.to_wire()),
+        ];
+        self.builder
+            .switch(mode, &cases, &[on_throw, on_return], on_next);
+    }
+
+    fn lower_plain_yield(&mut self, expression: ExprId, operand: ExprId) -> ValueId {
+        let value = match operand.some() {
+            Some(operand) => self.lower_expression(operand),
+            None => self.builder.undefined(),
+        };
+        let position = self.file.hir[expression].pos;
+        self.set_position(position);
+        let value = self.await_in_async_generator(value);
+        let yielded = self.yielded_position();
+        let source = operand.some();
+        let source = match self.is_async_generator() {
+            true => source.and_then(|operand| self.file.find_awaited_source(operand, yielded)),
+            false => source,
+        };
+        let value = convert::convert(self, value, yielded, source);
+        let resumption = self.emit_yield(value);
+
+        let on_throw = self.create_block();
+        let on_return = self.create_block();
+        let on_next = self.create_block();
+        self.emit_resume_switch(
+            resumption.mode,
+            Edge::to(on_throw),
+            Edge::to(on_return),
+            Edge::to(on_next),
+        );
+
+        self.continue_in(on_throw);
+        self.emit_throw(resumption.sent);
+
+        self.continue_in(on_return);
+        self.emit_return(resumption.sent, None);
+
+        self.continue_in(on_next);
+        resumption.sent
+    }
 }
 
 pub(crate) fn lower_yield(
@@ -60,120 +133,28 @@ pub(crate) fn lower_yield(
         unreachable!("lower_yield takes a Yield expression");
     };
     match star {
-        true => lower_yield_star(lowering, value),
-        false => lower_plain_yield(lowering, expression, value),
+        true => lowering.lower_yield_star(value),
+        false => lowering.lower_plain_yield(expression, value),
     }
 }
 
-pub(crate) fn prepare_return_value(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    value: ValueId,
-) -> ValueId {
-    await_in_async_generator(lowering, value)
-}
-
-fn await_in_async_generator(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    value: ValueId,
-) -> ValueId {
-    match is_async_generator(lowering) {
-        true => emit_await(lowering, value),
-        false => value,
+impl FileLowering<'_, '_, '_, '_> {
+    // The position takes what the operand is fulfilled with: the operand itself where its type has no promise in it.
+    pub(in crate::lower) fn find_awaited_source(
+        &mut self,
+        operand: ExprId,
+        position: DeclaredType,
+    ) -> Option<ExprId> {
+        let operand_type = self.queries.expression_type(operand).ok()?;
+        let fulfilled = self.queries.awaited_type(operand_type).ok()?;
+        if fulfilled == operand_type {
+            return Some(operand);
+        }
+        let target = self
+            .find_position_source(position)
+            .or_else(|| self.find_mapped_source(position.ty))?;
+        let source_position = self.hir[operand].pos;
+        self.record_type_flow(fulfilled, target, source_position);
+        None
     }
-}
-
-pub(in crate::lower) fn yielded_position(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-) -> DeclaredType {
-    let yielded = lowering.coroutine.yielded;
-    debug_assert!(yielded.is_some(), "InitialYield dominates every Yield");
-    yielded.unwrap_or_else(DeclaredType::untyped)
-}
-
-pub(in crate::lower) fn emit_yield(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    value: ValueId,
-) -> Resumption {
-    let builder = &mut lowering.builder;
-    let results = builder.yield_value(value);
-    Resumption {
-        sent: builder.result_at(results, YieldResult::Sent.to_wire()),
-        mode: builder.result_at(results, YieldResult::Mode.to_wire()),
-    }
-}
-
-pub(in crate::lower) fn emit_resume_switch(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    mode: ValueId,
-    on_throw: Edge<'_>,
-    on_return: Edge<'_>,
-    on_next: Edge<'_>,
-) {
-    let cases = [
-        i64::from(ResumeMode::Throw.to_wire()),
-        i64::from(ResumeMode::Return.to_wire()),
-    ];
-    lowering
-        .builder
-        .switch(mode, &cases, &[on_throw, on_return], on_next);
-}
-
-// The position takes what the operand is fulfilled with: the operand itself where its type has no promise in it.
-pub(in crate::lower) fn find_awaited_source(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    operand: ExprId,
-    position: DeclaredType,
-) -> Option<ExprId> {
-    let operand_type = file.queries.expression_type(operand).ok()?;
-    let fulfilled = file.queries.awaited_type(operand_type).ok()?;
-    if fulfilled == operand_type {
-        return Some(operand);
-    }
-    let target = positions::find_position_source(file, position)
-        .or_else(|| find_mapped_source(file, position.ty))?;
-    let source_position = file.hir[operand].pos;
-    convert::record_type_flow(file, fulfilled, target, source_position);
-    None
-}
-
-fn lower_plain_yield(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    operand: ExprId,
-) -> ValueId {
-    let value = match operand.some() {
-        Some(operand) => expression::lower_expression(lowering, operand),
-        None => lowering.builder.undefined(),
-    };
-    let position = lowering.file.hir[expression].pos;
-    lowering.set_position(position);
-    let value = await_in_async_generator(lowering, value);
-    let yielded = yielded_position(lowering);
-    let source = operand.some();
-    let source = match is_async_generator(lowering) {
-        true => source.and_then(|operand| find_awaited_source(lowering.file, operand, yielded)),
-        false => source,
-    };
-    let value = convert::convert(lowering, value, yielded, source);
-    let resumption = emit_yield(lowering, value);
-
-    let on_throw = lowering.create_block();
-    let on_return = lowering.create_block();
-    let on_next = lowering.create_block();
-    emit_resume_switch(
-        lowering,
-        resumption.mode,
-        Edge::to(on_throw),
-        Edge::to(on_return),
-        Edge::to(on_next),
-    );
-
-    lowering.continue_in(on_throw);
-    exception::emit_throw(lowering, resumption.sent);
-
-    lowering.continue_in(on_return);
-    control::emit_return(lowering, resumption.sent, None);
-
-    lowering.continue_in(on_next);
-    resumption.sent
 }

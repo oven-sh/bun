@@ -22,7 +22,6 @@ try {
   const paths = {
     TESTAOT: webkitTestAotPath(cfg),
     JSC: webkitJSCPath(cfg),
-    AOT_TESTS: webkitAotFile(cfg, "tests"),
     AOT_SCHEMA: webkitAotFile(cfg, "AOTSchema.def"),
     AOT_BUILTINS_GENERATED: webkitAotFile(cfg, "builtins-generated"),
     AOT_ENGINE_DIRECTORY: webkitAotFile(cfg, "directory"),

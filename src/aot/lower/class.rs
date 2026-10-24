@@ -18,26 +18,13 @@ use super::member::PropertyName;
 use crate::ir::{LayoutId, PropertyKeyId, StringId, ValueId};
 
 pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_function};
-pub(crate) use self::accessors::{lower_accessor_function, lower_private_name_test};
-pub(crate) use self::constructor::{
-    emit_constructor_result, finish_constructor_header, lower_constructor,
-    lower_implicit_constructor, lower_super_call,
-};
-pub(crate) use self::definition::{lower_class_declaration, lower_class_expression};
-pub(in crate::lower) use self::fields::{find_private_state_field, private_state_fields};
-pub(crate) use self::fields::{
-    lower_instance_initializer, lower_static_initializer, static_field_position,
-};
+pub(in crate::lower) use self::fields::find_private_state_field;
+pub(crate) use self::fields::static_field_position;
 pub(crate) use self::plan::class_slots;
 pub(in crate::lower) use self::plan::{
     decorators_of, has_decorators, has_instance_brand, has_private_static_storage,
     is_auto_accessor, is_declaration_only, is_decorated_private_name, is_derived_class,
     runtime_members,
-};
-pub(crate) use self::slots::get_class_home;
-pub(in crate::lower) use self::slots::{
-    create_private_state_variable, get_class_slot, get_private_state_slot, set_class_slot,
-    set_private_state_slot,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -115,17 +102,16 @@ pub(crate) struct ClassState {
     constant_keys: FxHashMap<MemberId, PropertyKeyId>,
 }
 
-pub(in crate::lower) fn class_plan(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassId,
-) -> Rc<ClassPlan> {
-    if let Some(plan) = file.classes.plans.get(&class) {
-        return Rc::clone(plan);
+impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn class_plan(&mut self, class: ClassId) -> Rc<ClassPlan> {
+        if let Some(plan) = self.classes.plans.get(&class) {
+            return Rc::clone(plan);
+        }
+        let plan = plan::plan_class(self.hir, self.bound, self.compiled.settings, class);
+        let plan = Rc::new(plan);
+        self.classes.plans.insert(class, Rc::clone(&plan));
+        plan
     }
-    let plan = plan::plan_class(file.hir, file.bound, file.compiled.settings, class);
-    let plan = Rc::new(plan);
-    file.classes.plans.insert(class, Rc::clone(&plan));
-    plan
 }
 
 pub(in crate::lower) fn find_member_value<T: Copy>(

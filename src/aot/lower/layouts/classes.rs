@@ -20,28 +20,506 @@ use crate::ir::{
     PositionFlags, PropertyKey, PropertyKeyId, StringId, Type, VariableKey,
 };
 use crate::lower::module::LibraryFunctionForm;
-use crate::lower::positions::{self, SiteOrigin};
-use crate::lower::types::map_type_at;
-use crate::lower::{
-    CheckerTypeId, FileLowering, SourceKind, class, convert, function, function_types, member,
-    module, scope,
-};
+use crate::lower::positions::SiteOrigin;
+use crate::lower::{CheckerTypeId, FileLowering, SourceKind, class, module};
 
 type Supertypes = SmallVec<[LayoutId; 4]>;
 
-pub(in crate::lower) fn class_binding(
-    file: &FileLowering<'_, '_, '_, '_>,
-    class: ClassId,
-) -> Binding {
-    Binding::Symbol(file.bound.declared_symbol(Decl::Class(class)))
-}
+impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn class_binding(&self, class: ClassId) -> Binding {
+        Binding::Symbol(self.bound.declared_symbol(Decl::Class(class)))
+    }
 
-pub(in crate::lower) fn intern_class_name(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassId,
-) -> StringId {
-    let binding = class_binding(file, class);
-    file.intern_function_name(binding, file.hir[class].name)
+    pub(in crate::lower) fn intern_class_name(&mut self, class: ClassId) -> StringId {
+        let binding = self.class_binding(class);
+        self.intern_function_name(binding, self.hir[class].name)
+    }
+
+    fn hidden_key(&mut self, owner: LayoutId, text: &[u8]) -> PropertyKeyId {
+        let text = self.intern_bytes(text);
+        let key = PropertyKey::from_private_name(text, owner);
+        self.fragment.property_keys.intern(key)
+    }
+
+    fn brand_field(&mut self, layout: LayoutId) -> Field {
+        let token = Type::opaque(OpaqueKind::ClassToken);
+        let token = self.fragment.types.intern(token);
+        Field {
+            key: Some(self.hidden_key(layout, b"#")),
+            declared: DeclaredType::from_compiler(token),
+            flags: FieldFlags::IS_REQUIRED
+                | FieldFlags::IS_PRIVATE
+                | FieldFlags::IS_HIDDEN
+                | FieldFlags::IS_BRAND
+                | FieldFlags::IS_IMMUTABLE,
+            ..Field::default()
+        }
+    }
+
+    fn collect_accessor_keys(&mut self, shape: &ClassShape<'_>) -> SmallVec<[PropertyKeyId; 8]> {
+        let mut keys = SmallVec::new();
+        for entry in shape.members.iter().filter(|entry| !entry.is_static) {
+            match entry.kind {
+                ObjectMemberKind::Getter
+                | ObjectMemberKind::Setter
+                | ObjectMemberKind::GetterAndSetter => {}
+                ObjectMemberKind::Field | ObjectMemberKind::Method => continue,
+            }
+            match entry.name {
+                MemberName::String(name) => keys.push(self.name_key(name)),
+                MemberName::Symbol(_) | MemberName::Private(_) => {}
+            }
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        keys
+    }
+
+    fn create_field_position(
+        &mut self,
+        owner: FieldOwner,
+        types: PositionTypes,
+        position: u32,
+    ) -> DeclaredType {
+        if owner.file != self.file {
+            return DeclaredType::untyped();
+        }
+        let origin = SiteOrigin {
+            kind: TypeSiteKind::Field,
+            position,
+        };
+        self.create_position(types, origin)
+    }
+
+    // A name that is only stored has the type of the first value stored. The checker holds no other store to it.
+    fn create_stored_field_position(
+        &mut self,
+        owner: FieldOwner,
+        types: PositionTypes,
+        position: u32,
+    ) -> DeclaredType {
+        let Ok(stored) = types.checked else {
+            return DeclaredType::untyped();
+        };
+        if owner.file != self.file {
+            return DeclaredType::untyped();
+        }
+        let mapped = self.map_type_at(stored, position);
+        DeclaredType::new(Mapped::expected(mapped.ty), None, PositionFlags::default())
+    }
+
+    fn create_named_field_position(
+        &mut self,
+        owner: FieldOwner,
+        field: &NamedField,
+    ) -> DeclaredType {
+        let mut declared = match field.has_declared_type {
+            true => self.create_field_position(owner, field.types, field.position),
+            false => self.create_stored_field_position(owner, field.types, field.position),
+        };
+        if field.is_optional_member {
+            declared = self.add_undefined(declared);
+        }
+        declared
+    }
+
+    #[allow(clippy::needless_pass_by_value)] // made for this call
+    fn try_add_named_field(
+        &mut self,
+        fields: &mut OwnFields,
+        owner: FieldOwner,
+        field: NamedField,
+        public_capacity: &mut u64,
+    ) -> bool {
+        if let Some(index) = fields.find_unindexed(field.key) {
+            let known = *fields.get(index);
+            let declared = match field.types.written.written() {
+                Some(_) => self.create_named_field_position(owner, &field),
+                None => known.declared,
+            };
+            let merged = Field {
+                declared,
+                flags: known.flags | field.flags,
+                ..known
+            };
+            fields.replace(index, merged);
+            return true;
+        }
+        if !field.flags.contains(FieldFlags::IS_PRIVATE) {
+            if *public_capacity == 0 {
+                return false;
+            }
+            *public_capacity -= 1;
+        }
+        fields.add(Field {
+            key: Some(field.key),
+            declared: self.create_named_field_position(owner, &field),
+            flags: field.flags,
+            ..Field::default()
+        });
+        true
+    }
+
+    fn find_declared_this_type(&mut self, function: FunctionRef) -> Option<CheckerTypeId> {
+        if function.file != self.file {
+            return None;
+        }
+        let signature = self.queries.function_signature(function);
+        let written = signature.this_type.written.written()?;
+        self.queries.without_nullish(written).ok()
+    }
+
+    fn find_declared_member(
+        &mut self,
+        receiver: CheckerTypeId,
+        name: MemberName,
+    ) -> Option<ObjectMember> {
+        let (MemberName::String(name) | MemberName::Symbol(name)) = name else {
+            return None;
+        };
+        match self.queries.find_member(receiver, name) {
+            Ok(MemberLookup::Member(member)) if member.kind == ObjectMemberKind::Field => {
+                Some(member)
+            }
+            Ok(MemberLookup::Member(_) | MemberLookup::Index(_) | MemberLookup::Absent)
+            | Err(_) => None,
+        }
+    }
+
+    fn add_named_fields(
+        &mut self,
+        fields: &mut OwnFields,
+        owner: FieldOwner,
+        shape: &ClassShape<'_>,
+        declared_this: Option<CheckerTypeId>,
+        mut public_capacity: u64,
+    ) {
+        let hir = self.queries.files().hir(owner.file);
+        let accessor_keys = self.collect_accessor_keys(shape);
+        let mut first_omitted = None;
+        for entry in shape.members.iter().filter(|entry| !entry.is_static) {
+            match entry.kind {
+                ObjectMemberKind::Field => {}
+                _ => continue,
+            }
+            let (position, is_declared) = match entry.source {
+                ClassMemberSource::Member(node) if class::is_declaration_only(hir[node]) => {
+                    continue;
+                }
+                ClassMemberSource::Member(node) => (hir[node].name_pos, true),
+                ClassMemberSource::ParameterProperty(parameter) => (hir[parameter].pos, true),
+                ClassMemberSource::ThisStore(store) => (hir[store].pos, false),
+                ClassMemberSource::PrototypeStore(_) | ClassMemberSource::StaticStore(_) => {
+                    continue;
+                }
+            };
+            let Some((key, mut flags)) = find_field_key(self, owner.layout, entry.name) else {
+                continue;
+            };
+            if !is_declared && accessor_keys.binary_search(&key).is_ok() {
+                continue;
+            }
+            if !entry.is_optional {
+                flags |= FieldFlags::IS_REQUIRED;
+            }
+            let declared_member = match (is_declared, declared_this) {
+                (false, Some(receiver)) => self.find_declared_member(receiver, entry.name),
+                (true, _) | (false, None) => None,
+            };
+            let field = NamedField {
+                key,
+                flags,
+                types: declared_member.map_or(entry.types, |member| member.types),
+                has_declared_type: is_declared || declared_member.is_some(),
+                is_optional_member: declared_member.is_some_and(|member| member.is_optional),
+                position,
+            };
+            if !self.try_add_named_field(fields, owner, field, &mut public_capacity) {
+                first_omitted.get_or_insert(position);
+            }
+        }
+        if let Some(position) = first_omitted
+            && owner.file == self.file
+        {
+            self.gave_up(LimitId::FieldsInKeyOrder, position);
+        }
+    }
+
+    fn accessor_storage_key(
+        &mut self,
+        owner: FieldOwner,
+        class: ClassId,
+        member: MemberId,
+    ) -> (PropertyKeyId, FieldFlags) {
+        let hir = self.queries.files().hir(owner.file);
+        let flags = FieldFlags::IS_REQUIRED | FieldFlags::IS_PRIVATE;
+        match hir.runtime_member_key(member) {
+            PropKey::Private(name) => (private_key(self, owner.layout, name), flags),
+            PropKey::None | PropKey::Name(_) | PropKey::Computed(_) => {
+                let text = format!("#{}", member.0 - hir[class].members.start);
+                let key = self.hidden_key(owner.layout, text.as_bytes());
+                (key, flags | FieldFlags::IS_HIDDEN)
+            }
+        }
+    }
+
+    fn add_accessor_storages(
+        &mut self,
+        fields: &mut OwnFields,
+        owner: FieldOwner,
+        class: ClassId,
+        shape: &ClassShape<'_>,
+    ) {
+        let hir = self.queries.files().hir(owner.file);
+        for member in instance_accessor_members(hir, class) {
+            let (key, flags) = self.accessor_storage_key(owner, class, member);
+            let source = ClassMemberSource::Member(member);
+            let declared = match shape.members.iter().find(|entry| entry.source == source) {
+                Some(entry) => self.create_field_position(owner, entry.types, hir[member].name_pos),
+                None => DeclaredType::untyped(),
+            };
+            let storage = Field {
+                key: Some(key),
+                declared,
+                flags,
+                ..Field::default()
+            };
+            fields.add_accessor_storage(member, storage);
+        }
+    }
+
+    fn report_excess_fields(&mut self, owner: FieldOwner, position: u32, fields: &OwnFields) {
+        let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
+        let count = fields.as_slice().len() as u64;
+        if count <= limit || owner.file != self.file {
+            return;
+        }
+        self.gave_up(LimitId::FieldsInKeyOrder, position);
+        let span = self.span_at(position);
+        let (limit, count) = (limit.to_string(), count.to_string());
+        let purpose = LimitId::FieldsInKeyOrder.purpose();
+        let arguments = [purpose.as_bytes(), limit.as_bytes(), count.as_bytes()];
+        self.diagnostics
+            .report(Code::ProgramLimitExceeded, span, &arguments);
+    }
+
+    fn find_layout_of_parent(&mut self, parent: ClassParent) -> Option<LayoutId> {
+        match parent {
+            ClassParent::Declared(ClassDeclaration::Class(parent)) => {
+                Some(self.class_layout(parent))
+            }
+            ClassParent::Declared(ClassDeclaration::Function(parent)) => {
+                self.declare_constructor_function_layout(parent)
+            }
+            ClassParent::Library(parent) => {
+                Some(self.fragment.declare_layout(LayoutKey::Library(parent)))
+            }
+        }
+    }
+
+    fn collect_implemented_layouts(&mut self, class: ClassId) -> SmallVec<[LayoutId; 2]> {
+        let hir = self.hir;
+        let mut layouts = SmallVec::new();
+        for node in hir.ids(hir[class].implements) {
+            let Some(ty) = self.queries.written_type(node).written() else {
+                continue;
+            };
+            let Ok(shape) = self.queries.type_shape(ty) else {
+                continue;
+            };
+            match classify_heritage_shape(shape.kind) {
+                HeritageShape::ObjectType => {
+                    if let Some(layout) = self.object_type_layout(ty) {
+                        layouts.push(layout);
+                    }
+                }
+                HeritageShape::Class(implemented) => {
+                    layouts.push(self.class_layout(implemented));
+                }
+                HeritageShape::ClassConstructor(_) | HeritageShape::NoLayout => {}
+            }
+        }
+        layouts
+    }
+
+    fn collect_supertypes(
+        &mut self,
+        layout: LayoutId,
+        class: ClassId,
+        base: Option<LayoutId>,
+    ) -> Supertypes {
+        let mut supertypes: Supertypes = base.into_iter().collect();
+        for implemented in self.collect_implemented_layouts(class) {
+            if implemented != layout && !supertypes.contains(&implemented) {
+                supertypes.push(implemented);
+            }
+        }
+        supertypes
+    }
+
+    fn find_field_origin(
+        &mut self,
+        supertypes: &[LayoutId],
+        key: PropertyKeyId,
+    ) -> Option<(LayoutId, u32)> {
+        supertypes.iter().find_map(|&supertype| {
+            let field = super::own_fields(self, supertype).find(key)?;
+            Some((supertype, field))
+        })
+    }
+
+    fn set_field_origins(&mut self, fields: &mut [Field], supertypes: &[LayoutId]) {
+        for field in fields {
+            let Some(key) = field.key else {
+                continue;
+            };
+            if field.flags.contains(FieldFlags::IS_PRIVATE) {
+                continue;
+            }
+            if let Some((origin_layout, origin_field)) = self.find_field_origin(supertypes, key) {
+                field.origin_layout = Some(origin_layout);
+                field.origin_field = Some(origin_field);
+            }
+        }
+    }
+
+    fn create_static_field(
+        &mut self,
+        class: ClassRef,
+        key: PropertyKeyId,
+        member: MemberId,
+    ) -> StaticField {
+        let slot = ClassSlot::StaticField(member);
+        StaticField {
+            key: Some(key),
+            computed_key: None,
+            variable: self.ensure_variable(VariableKey::ClassSlot { class, slot }),
+        }
+    }
+
+    fn record_heritage_flows(&mut self, class: ClassRef, base: Option<ClassRef>) {
+        if let Some(base) = base {
+            let derived_type = self.find_class_function_type(class);
+            let base_type = self.find_class_function_type(base);
+            self.fragment
+                .add_function_type_edge(derived_type, base_type);
+        }
+        let Ok(instance) = self.queries.declared_class_type(class) else {
+            return;
+        };
+        let position = class_position(&self.hir[class.class]);
+        for inherited in find_inherited_types(self, class.class, base) {
+            self.record_heritage_flow(instance, inherited, position);
+        }
+    }
+
+    // `a.b = function () {}`, `{ b: function () {} }`: nobody can name the function behind `new`.
+    fn is_stored_as_property(&self, function: FnId) -> bool {
+        let FnOwner::Expr(expression) = self.bound.fns[function.idx()].owner else {
+            return false;
+        };
+        match self.bound.parent_of_expr(expression) {
+            Parent::Prop(_) => true,
+            Parent::Expr(parent) => match self.hir[parent].kind {
+                ExprKind::Assign {
+                    op: None,
+                    target,
+                    value,
+                } => {
+                    let is_member = matches!(
+                        self.hir[target].kind,
+                        ExprKind::Dot { .. } | ExprKind::Index { .. }
+                    );
+                    value == expression && is_member
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    // The type of the objects that the function makes.
+    fn find_declared_this_layout(&mut self, function: FunctionRef) -> Option<LayoutId> {
+        if self.is_stored_as_property(function.function) {
+            return None;
+        }
+        let signature = self.queries.function_signature(function);
+        let ty = signature.this_type.written.written()?;
+        let shape = self.queries.type_shape(ty).ok()?;
+        match classify_heritage_shape(shape.kind) {
+            HeritageShape::ObjectType => self.object_type_layout(ty),
+            HeritageShape::Class(class) => Some(self.class_layout(class)),
+            HeritageShape::ClassConstructor(_) | HeritageShape::NoLayout => None,
+        }
+    }
+
+    fn find_parent_layout(&mut self, function: FunctionRef) -> Option<LayoutId> {
+        let parent = self.queries.constructor_function_parent(function)?;
+        self.find_layout_of_parent(parent)
+    }
+
+    fn define_constructor_function_layout(&mut self, layout: LayoutId, function: FunctionRef) {
+        let node = self.hir[function.function];
+        let constructor = match self.decisions().is_dead_function(function.function) {
+            true => None,
+            false => Some(self.reference_function(FunctionKey::Source(function))),
+        };
+        let declared_this = self.find_declared_this_layout(function);
+        let supertypes: Supertypes = declared_this
+            .into_iter()
+            .filter(|&it| it != layout)
+            .collect();
+        let mut fields = super::own_fields(self, layout).as_slice().to_vec();
+        self.set_field_origins(&mut fields, &supertypes);
+        let base = self.find_parent_layout(function).filter(|&it| it != layout);
+        let definition = Layout {
+            kind: LayoutKind::Instance,
+            name: node
+                .name
+                .is_some()
+                .then(|| self.intern_own_name(function.function)),
+            module: Some(self.module_id()),
+            position: node.start,
+            base,
+            constructor,
+            fields,
+            flags: LayoutFlags::IS_CONSTRUCTOR_FUNCTION,
+            ..Layout::default()
+        };
+        self.fragment.define_layout(layout, definition);
+        for supertype in supertypes {
+            self.add_conversion(layout, supertype);
+        }
+    }
+
+    fn declare_constructor_function_layout(&mut self, function: FunctionRef) -> Option<LayoutId> {
+        let hir = self.queries.files().hir(function.file);
+        if !can_be_constructor_function(&hir[function.function]) {
+            return None;
+        }
+        self.queries.constructor_function_shape(function)?;
+        if function.file == self.file {
+            match module::library_function_form(self, function.function) {
+                Some(LibraryFunctionForm::Method | LibraryFunctionForm::NakedConstructor) => {
+                    return None;
+                }
+                Some(LibraryFunctionForm::Constructor) | None => {}
+            }
+        }
+        let key = LayoutKey::ConstructorFunction(function);
+        Some(self.fragment.declare_layout(key))
+    }
+
+    pub(crate) fn constructor_function_layout(
+        &mut self,
+        function: FunctionRef,
+    ) -> Option<LayoutId> {
+        let layout = self.declare_constructor_function_layout(function)?;
+        if function.file == self.file && !self.fragment.is_layout_defined(layout) {
+            self.define_constructor_function_layout(layout, function);
+        }
+        Some(layout)
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -67,38 +545,13 @@ enum HeritageShape {
     NoLayout,
 }
 
-fn hidden_key(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    owner: LayoutId,
-    text: &[u8],
-) -> PropertyKeyId {
-    let text = file.intern_bytes(text);
-    let key = PropertyKey::from_private_name(text, owner);
-    file.fragment.property_keys.intern(key)
-}
-
 pub(in crate::lower) fn private_key(
     file: &mut FileLowering<'_, '_, '_, '_>,
     owner: LayoutId,
     name: Atom,
 ) -> PropertyKeyId {
     let text = written_name(file.queries.atom_bytes(name));
-    hidden_key(file, owner, text)
-}
-
-fn brand_field(file: &mut FileLowering<'_, '_, '_, '_>, layout: LayoutId) -> Field {
-    let token = Type::opaque(OpaqueKind::ClassToken);
-    let token = file.fragment.types.intern(token);
-    Field {
-        key: Some(hidden_key(file, layout, b"#")),
-        declared: DeclaredType::from_compiler(token),
-        flags: FieldFlags::IS_REQUIRED
-            | FieldFlags::IS_PRIVATE
-            | FieldFlags::IS_HIDDEN
-            | FieldFlags::IS_BRAND
-            | FieldFlags::IS_IMMUTABLE,
-        ..Field::default()
-    }
+    file.hidden_key(owner, text)
 }
 
 fn class_position(node: &hir::Class) -> u32 {
@@ -115,7 +568,7 @@ fn find_field_key(
 ) -> Option<(PropertyKeyId, FieldFlags)> {
     match name {
         MemberName::String(name) => {
-            let key = member::name_key(file, name);
+            let key = file.name_key(name);
             can_be_field(file, key).then_some((key, FieldFlags::default()))
         }
         MemberName::Private(name) => {
@@ -123,80 +576,10 @@ fn find_field_key(
             Some((key, FieldFlags::IS_PRIVATE))
         }
         MemberName::Symbol(name) => {
-            let key = member::created_symbol_key(file, name)?;
+            let key = file.created_symbol_key(name)?;
             Some((key, FieldFlags::default()))
         }
     }
-}
-
-fn collect_accessor_keys(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    shape: &ClassShape<'_>,
-) -> SmallVec<[PropertyKeyId; 8]> {
-    let mut keys = SmallVec::new();
-    for entry in shape.members.iter().filter(|entry| !entry.is_static) {
-        match entry.kind {
-            ObjectMemberKind::Getter
-            | ObjectMemberKind::Setter
-            | ObjectMemberKind::GetterAndSetter => {}
-            ObjectMemberKind::Field | ObjectMemberKind::Method => continue,
-        }
-        match entry.name {
-            MemberName::String(name) => keys.push(member::name_key(file, name)),
-            MemberName::Symbol(_) | MemberName::Private(_) => {}
-        }
-    }
-    keys.sort_unstable();
-    keys.dedup();
-    keys
-}
-
-fn create_field_position(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    owner: FieldOwner,
-    types: PositionTypes,
-    position: u32,
-) -> DeclaredType {
-    if owner.file != file.file {
-        return DeclaredType::untyped();
-    }
-    let origin = SiteOrigin {
-        kind: TypeSiteKind::Field,
-        position,
-    };
-    positions::create_position(file, types, origin)
-}
-
-// A name that is only stored has the type of the first value stored. The checker holds no other store to it.
-fn create_stored_field_position(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    owner: FieldOwner,
-    types: PositionTypes,
-    position: u32,
-) -> DeclaredType {
-    let Ok(stored) = types.checked else {
-        return DeclaredType::untyped();
-    };
-    if owner.file != file.file {
-        return DeclaredType::untyped();
-    }
-    let mapped = map_type_at(file, stored, position);
-    DeclaredType::new(Mapped::expected(mapped.ty), None, PositionFlags::default())
-}
-
-fn create_named_field_position(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    owner: FieldOwner,
-    field: &NamedField,
-) -> DeclaredType {
-    let mut declared = match field.has_declared_type {
-        true => create_field_position(file, owner, field.types, field.position),
-        false => create_stored_field_position(file, owner, field.types, field.position),
-    };
-    if field.is_optional_member {
-        declared = positions::add_undefined(file, declared);
-    }
-    declared
 }
 
 fn count_private_fields(shape: &ClassShape<'_>) -> usize {
@@ -210,126 +593,6 @@ fn count_private_fields(shape: &ClassShape<'_>) -> usize {
         .count()
 }
 
-#[allow(clippy::needless_pass_by_value)] // made for this call
-fn try_add_named_field(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    fields: &mut OwnFields,
-    owner: FieldOwner,
-    field: NamedField,
-    public_capacity: &mut u64,
-) -> bool {
-    if let Some(index) = fields.find_unindexed(field.key) {
-        let known = *fields.get(index);
-        let declared = match field.types.written.written() {
-            Some(_) => create_named_field_position(file, owner, &field),
-            None => known.declared,
-        };
-        let merged = Field {
-            declared,
-            flags: known.flags | field.flags,
-            ..known
-        };
-        fields.replace(index, merged);
-        return true;
-    }
-    if !field.flags.contains(FieldFlags::IS_PRIVATE) {
-        if *public_capacity == 0 {
-            return false;
-        }
-        *public_capacity -= 1;
-    }
-    fields.add(Field {
-        key: Some(field.key),
-        declared: create_named_field_position(file, owner, &field),
-        flags: field.flags,
-        ..Field::default()
-    });
-    true
-}
-
-fn find_declared_this_type(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionRef,
-) -> Option<CheckerTypeId> {
-    if function.file != file.file {
-        return None;
-    }
-    let signature = file.queries.function_signature(function);
-    let written = signature.this_type.written.written()?;
-    file.queries.without_nullish(written).ok()
-}
-
-fn find_declared_member(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    receiver: CheckerTypeId,
-    name: MemberName,
-) -> Option<ObjectMember> {
-    let (MemberName::String(name) | MemberName::Symbol(name)) = name else {
-        return None;
-    };
-    match file.queries.find_member(receiver, name) {
-        Ok(MemberLookup::Member(member)) if member.kind == ObjectMemberKind::Field => Some(member),
-        Ok(MemberLookup::Member(_) | MemberLookup::Index(_) | MemberLookup::Absent) | Err(_) => {
-            None
-        }
-    }
-}
-
-fn add_named_fields(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    fields: &mut OwnFields,
-    owner: FieldOwner,
-    shape: &ClassShape<'_>,
-    declared_this: Option<CheckerTypeId>,
-    mut public_capacity: u64,
-) {
-    let hir = file.queries.files().hir(owner.file);
-    let accessor_keys = collect_accessor_keys(file, shape);
-    let mut first_omitted = None;
-    for entry in shape.members.iter().filter(|entry| !entry.is_static) {
-        match entry.kind {
-            ObjectMemberKind::Field => {}
-            _ => continue,
-        }
-        let (position, is_declared) = match entry.source {
-            ClassMemberSource::Member(node) if class::is_declaration_only(hir[node]) => continue,
-            ClassMemberSource::Member(node) => (hir[node].name_pos, true),
-            ClassMemberSource::ParameterProperty(parameter) => (hir[parameter].pos, true),
-            ClassMemberSource::ThisStore(store) => (hir[store].pos, false),
-            ClassMemberSource::PrototypeStore(_) | ClassMemberSource::StaticStore(_) => continue,
-        };
-        let Some((key, mut flags)) = find_field_key(file, owner.layout, entry.name) else {
-            continue;
-        };
-        if !is_declared && accessor_keys.binary_search(&key).is_ok() {
-            continue;
-        }
-        if !entry.is_optional {
-            flags |= FieldFlags::IS_REQUIRED;
-        }
-        let declared_member = match (is_declared, declared_this) {
-            (false, Some(receiver)) => find_declared_member(file, receiver, entry.name),
-            (true, _) | (false, None) => None,
-        };
-        let field = NamedField {
-            key,
-            flags,
-            types: declared_member.map_or(entry.types, |member| member.types),
-            has_declared_type: is_declared || declared_member.is_some(),
-            is_optional_member: declared_member.is_some_and(|member| member.is_optional),
-            position,
-        };
-        if !try_add_named_field(file, fields, owner, field, &mut public_capacity) {
-            first_omitted.get_or_insert(position);
-        }
-    }
-    if let Some(position) = first_omitted
-        && owner.file == file.file
-    {
-        file.gave_up(LimitId::FieldsInKeyOrder, position);
-    }
-}
-
 fn instance_accessor_members(
     hir: &hir::File<'_>,
     class: ClassId,
@@ -340,69 +603,6 @@ fn instance_accessor_members(
             && !node.flags.contains(Flags::STATIC)
             && !class::is_declaration_only(node)
     })
-}
-
-fn accessor_storage_key(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    owner: FieldOwner,
-    class: ClassId,
-    member: MemberId,
-) -> (PropertyKeyId, FieldFlags) {
-    let hir = file.queries.files().hir(owner.file);
-    let flags = FieldFlags::IS_REQUIRED | FieldFlags::IS_PRIVATE;
-    match hir.runtime_member_key(member) {
-        PropKey::Private(name) => (private_key(file, owner.layout, name), flags),
-        PropKey::None | PropKey::Name(_) | PropKey::Computed(_) => {
-            let text = format!("#{}", member.0 - hir[class].members.start);
-            let key = hidden_key(file, owner.layout, text.as_bytes());
-            (key, flags | FieldFlags::IS_HIDDEN)
-        }
-    }
-}
-
-fn add_accessor_storages(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    fields: &mut OwnFields,
-    owner: FieldOwner,
-    class: ClassId,
-    shape: &ClassShape<'_>,
-) {
-    let hir = file.queries.files().hir(owner.file);
-    for member in instance_accessor_members(hir, class) {
-        let (key, flags) = accessor_storage_key(file, owner, class, member);
-        let source = ClassMemberSource::Member(member);
-        let declared = match shape.members.iter().find(|entry| entry.source == source) {
-            Some(entry) => create_field_position(file, owner, entry.types, hir[member].name_pos),
-            None => DeclaredType::untyped(),
-        };
-        let storage = Field {
-            key: Some(key),
-            declared,
-            flags,
-            ..Field::default()
-        };
-        fields.add_accessor_storage(member, storage);
-    }
-}
-
-fn report_excess_fields(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    owner: FieldOwner,
-    position: u32,
-    fields: &OwnFields,
-) {
-    let limit = file.inputs.limits.get(LimitId::FieldsInKeyOrder);
-    let count = fields.as_slice().len() as u64;
-    if count <= limit || owner.file != file.file {
-        return;
-    }
-    file.gave_up(LimitId::FieldsInKeyOrder, position);
-    let span = file.span_at(position);
-    let (limit, count) = (limit.to_string(), count.to_string());
-    let purpose = LimitId::FieldsInKeyOrder.purpose();
-    let arguments = [purpose.as_bytes(), limit.as_bytes(), count.as_bytes()];
-    file.diagnostics
-        .report(Code::ProgramLimitExceeded, span, &arguments);
 }
 
 pub(super) fn compute_class_fields(
@@ -419,21 +619,21 @@ pub(super) fn compute_class_fields(
     };
     let mut fields = OwnFields::default();
     if class::has_instance_brand(hir, bound, class.class) {
-        fields.add(brand_field(file, layout));
+        fields.add(file.brand_field(layout));
     }
-    let states = class::private_state_fields(file, layout, class);
+    let states = file.private_state_fields(layout, class);
     let private_field_count = fields.as_slice().len()
         + count_private_fields(shape)
         + instance_accessor_members(hir, class.class).count()
         + states.len();
     let limit = file.inputs.limits.get(LimitId::FieldsInKeyOrder);
     let public_capacity = limit.saturating_sub(private_field_count as u64);
-    add_named_fields(file, &mut fields, owner, shape, None, public_capacity);
-    add_accessor_storages(file, &mut fields, owner, class.class, shape);
+    file.add_named_fields(&mut fields, owner, shape, None, public_capacity);
+    file.add_accessor_storages(&mut fields, owner, class.class, shape);
     for state in states {
         fields.add(state);
     }
-    report_excess_fields(file, owner, class_position(&hir[class.class]), &fields);
+    file.report_excess_fields(owner, class_position(&hir[class.class]), &fields);
     fields.finish()
 }
 
@@ -450,9 +650,9 @@ pub(super) fn compute_constructor_function_fields(
         layout: file.fragment.declare_layout(key),
     };
     let limit = file.inputs.limits.get(LimitId::FieldsInKeyOrder);
-    let declared_this = find_declared_this_type(file, function);
+    let declared_this = file.find_declared_this_type(function);
     let mut fields = OwnFields::default();
-    add_named_fields(file, &mut fields, owner, shape, declared_this, limit);
+    file.add_named_fields(&mut fields, owner, shape, declared_this, limit);
     fields.finish()
 }
 
@@ -479,23 +679,6 @@ fn find_base_class(file: &mut FileLowering<'_, '_, '_, '_>, class: ClassId) -> O
     }
 }
 
-fn find_layout_of_parent(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    parent: ClassParent,
-) -> Option<LayoutId> {
-    match parent {
-        ClassParent::Declared(ClassDeclaration::Class(parent)) => {
-            Some(super::class_layout(file, parent))
-        }
-        ClassParent::Declared(ClassDeclaration::Function(parent)) => {
-            declare_constructor_function_layout(file, parent)
-        }
-        ClassParent::Library(parent) => {
-            Some(file.fragment.declare_layout(LayoutKey::Library(parent)))
-        }
-    }
-}
-
 // Where the type of the heritage is no class, its binding says what it is: a constructor function, or what a module of Bun's exports.
 fn find_base_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
@@ -503,7 +686,7 @@ fn find_base_layout(
     base_class: Option<ClassRef>,
 ) -> Option<LayoutId> {
     if let Some(base) = base_class {
-        return Some(super::class_layout(file, base));
+        return Some(file.class_layout(base));
     }
     // Each member more of the family of EventEmitter is one more place where its fields may lie, and an access tests few places.
     if file.source != SourceKind::Program {
@@ -514,94 +697,7 @@ fn find_base_layout(
         class,
     };
     let parent = file.queries.class_parent(derived)?;
-    find_layout_of_parent(file, parent)
-}
-
-fn collect_implemented_layouts(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassId,
-) -> SmallVec<[LayoutId; 2]> {
-    let hir = file.hir;
-    let mut layouts = SmallVec::new();
-    for node in hir.ids(hir[class].implements) {
-        let Some(ty) = file.queries.written_type(node).written() else {
-            continue;
-        };
-        let Ok(shape) = file.queries.type_shape(ty) else {
-            continue;
-        };
-        match classify_heritage_shape(shape.kind) {
-            HeritageShape::ObjectType => {
-                if let Some(layout) = super::object_type_layout(file, ty) {
-                    layouts.push(layout);
-                }
-            }
-            HeritageShape::Class(implemented) => {
-                layouts.push(super::class_layout(file, implemented));
-            }
-            HeritageShape::ClassConstructor(_) | HeritageShape::NoLayout => {}
-        }
-    }
-    layouts
-}
-
-fn collect_supertypes(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    class: ClassId,
-    base: Option<LayoutId>,
-) -> Supertypes {
-    let mut supertypes: Supertypes = base.into_iter().collect();
-    for implemented in collect_implemented_layouts(file, class) {
-        if implemented != layout && !supertypes.contains(&implemented) {
-            supertypes.push(implemented);
-        }
-    }
-    supertypes
-}
-
-fn find_field_origin(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    supertypes: &[LayoutId],
-    key: PropertyKeyId,
-) -> Option<(LayoutId, u32)> {
-    supertypes.iter().find_map(|&supertype| {
-        let field = super::own_fields(file, supertype).find(key)?;
-        Some((supertype, field))
-    })
-}
-
-fn set_field_origins(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    fields: &mut [Field],
-    supertypes: &[LayoutId],
-) {
-    for field in fields {
-        let Some(key) = field.key else {
-            continue;
-        };
-        if field.flags.contains(FieldFlags::IS_PRIVATE) {
-            continue;
-        }
-        if let Some((origin_layout, origin_field)) = find_field_origin(file, supertypes, key) {
-            field.origin_layout = Some(origin_layout);
-            field.origin_field = Some(origin_field);
-        }
-    }
-}
-
-fn create_static_field(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassRef,
-    key: PropertyKeyId,
-    member: MemberId,
-) -> StaticField {
-    let slot = ClassSlot::StaticField(member);
-    StaticField {
-        key: Some(key),
-        computed_key: None,
-        variable: scope::ensure_variable(file, VariableKey::ClassSlot { class, slot }),
-    }
+    file.find_layout_of_parent(parent)
 }
 
 fn compute_static_fields(
@@ -633,7 +729,7 @@ fn compute_static_fields(
             continue;
         };
         if keys.insert(key) {
-            static_fields.push(create_static_field(file, reference, key, node));
+            static_fields.push(file.create_static_field(reference, key, node));
         }
     }
     static_fields
@@ -648,7 +744,7 @@ pub(super) fn define_class_layout(
         file: file.file,
         class,
     };
-    let layout = super::class_layout(file, reference);
+    let layout = file.class_layout(reference);
     if file.fragment.is_layout_defined(layout) {
         debug_assert!(false, "a class is defined once");
         return layout;
@@ -656,16 +752,16 @@ pub(super) fn define_class_layout(
     let node = file.hir[class];
     let base_class = find_base_class(file, class);
     let base = find_base_layout(file, class, base_class).filter(|&it| it != layout);
-    let supertypes = collect_supertypes(file, layout, class, base);
+    let supertypes = file.collect_supertypes(layout, class, base);
     let mut fields = super::own_fields(file, layout).as_slice().to_vec();
-    set_field_origins(file, &mut fields, &supertypes);
+    file.set_field_origins(&mut fields, &supertypes);
     let flags = match class::is_derived_class(file.hir, class) {
         true => LayoutFlags::HAS_HERITAGE,
         false => LayoutFlags::default(),
     };
     let definition = Layout {
         kind: LayoutKind::Instance,
-        name: node.name.is_some().then(|| intern_class_name(file, class)),
+        name: node.name.is_some().then(|| file.intern_class_name(class)),
         module: Some(file.module_id()),
         position: class_position(&node),
         base,
@@ -677,9 +773,9 @@ pub(super) fn define_class_layout(
     };
     file.fragment.define_layout(layout, definition);
     for supertype in supertypes {
-        super::add_conversion(file, layout, supertype);
+        file.add_conversion(layout, supertype);
     }
-    record_heritage_flows(file, reference, base_class);
+    file.record_heritage_flows(reference, base_class);
     layout
 }
 
@@ -711,152 +807,11 @@ fn find_inherited_types(
     inherited
 }
 
-fn record_heritage_flows(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassRef,
-    base: Option<ClassRef>,
-) {
-    if let Some(base) = base {
-        let derived_type = function_types::find_class_function_type(file, class);
-        let base_type = function_types::find_class_function_type(file, base);
-        file.fragment
-            .add_function_type_edge(derived_type, base_type);
-    }
-    let Ok(instance) = file.queries.declared_class_type(class) else {
-        return;
-    };
-    let position = class_position(&file.hir[class.class]);
-    for inherited in find_inherited_types(file, class.class, base) {
-        convert::record_heritage_flow(file, instance, inherited, position);
-    }
-}
-
 fn can_be_constructor_function(node: &hir::Func) -> bool {
     let is_ordinary_function = matches!(node.kind, FnKind::Decl | FnKind::Expr);
     is_ordinary_function
         && hir::has_body(node)
         && !node.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
-}
-
-// `a.b = function () {}`, `{ b: function () {} }`: nobody can name the function behind `new`.
-fn is_stored_as_property(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> bool {
-    let FnOwner::Expr(expression) = file.bound.fns[function.idx()].owner else {
-        return false;
-    };
-    match file.bound.parent_of_expr(expression) {
-        Parent::Prop(_) => true,
-        Parent::Expr(parent) => match file.hir[parent].kind {
-            ExprKind::Assign {
-                op: None,
-                target,
-                value,
-            } => {
-                let is_member = matches!(
-                    file.hir[target].kind,
-                    ExprKind::Dot { .. } | ExprKind::Index { .. }
-                );
-                value == expression && is_member
-            }
-            _ => false,
-        },
-        _ => false,
-    }
-}
-
-// The type of the objects that the function makes.
-fn find_declared_this_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionRef,
-) -> Option<LayoutId> {
-    if is_stored_as_property(file, function.function) {
-        return None;
-    }
-    let signature = file.queries.function_signature(function);
-    let ty = signature.this_type.written.written()?;
-    let shape = file.queries.type_shape(ty).ok()?;
-    match classify_heritage_shape(shape.kind) {
-        HeritageShape::ObjectType => super::object_type_layout(file, ty),
-        HeritageShape::Class(class) => Some(super::class_layout(file, class)),
-        HeritageShape::ClassConstructor(_) | HeritageShape::NoLayout => None,
-    }
-}
-
-fn find_parent_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionRef,
-) -> Option<LayoutId> {
-    let parent = file.queries.constructor_function_parent(function)?;
-    find_layout_of_parent(file, parent)
-}
-
-fn define_constructor_function_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    layout: LayoutId,
-    function: FunctionRef,
-) {
-    let node = file.hir[function.function];
-    let constructor = match file.decisions().is_dead_function(function.function) {
-        true => None,
-        false => Some(file.reference_function(FunctionKey::Source(function))),
-    };
-    let declared_this = find_declared_this_layout(file, function);
-    let supertypes: Supertypes = declared_this
-        .into_iter()
-        .filter(|&it| it != layout)
-        .collect();
-    let mut fields = super::own_fields(file, layout).as_slice().to_vec();
-    set_field_origins(file, &mut fields, &supertypes);
-    let base = find_parent_layout(file, function).filter(|&it| it != layout);
-    let definition = Layout {
-        kind: LayoutKind::Instance,
-        name: node
-            .name
-            .is_some()
-            .then(|| function::intern_own_name(file, function.function)),
-        module: Some(file.module_id()),
-        position: node.start,
-        base,
-        constructor,
-        fields,
-        flags: LayoutFlags::IS_CONSTRUCTOR_FUNCTION,
-        ..Layout::default()
-    };
-    file.fragment.define_layout(layout, definition);
-    for supertype in supertypes {
-        super::add_conversion(file, layout, supertype);
-    }
-}
-
-fn declare_constructor_function_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionRef,
-) -> Option<LayoutId> {
-    let hir = file.queries.files().hir(function.file);
-    if !can_be_constructor_function(&hir[function.function]) {
-        return None;
-    }
-    file.queries.constructor_function_shape(function)?;
-    if function.file == file.file {
-        match module::library_function_form(file, function.function) {
-            Some(LibraryFunctionForm::Method | LibraryFunctionForm::NakedConstructor) => {
-                return None;
-            }
-            Some(LibraryFunctionForm::Constructor) | None => {}
-        }
-    }
-    let key = LayoutKey::ConstructorFunction(function);
-    Some(file.fragment.declare_layout(key))
-}
-
-pub(crate) fn constructor_function_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FunctionRef,
-) -> Option<LayoutId> {
-    let layout = declare_constructor_function_layout(file, function)?;
-    if function.file == file.file && !file.fragment.is_layout_defined(layout) {
-        define_constructor_function_layout(file, layout, function);
-    }
-    Some(layout)
 }
 
 pub(super) fn define_remaining_class_layouts(file: &mut FileLowering<'_, '_, '_, '_>) {
@@ -870,7 +825,7 @@ pub(super) fn define_remaining_class_layouts(file: &mut FileLowering<'_, '_, '_,
             file: file.file,
             class,
         };
-        let layout = super::class_layout(file, reference);
+        let layout = file.class_layout(reference);
         if !file.fragment.is_layout_defined(layout) {
             define_class_layout(file, class, None);
         }
@@ -880,6 +835,6 @@ pub(super) fn define_remaining_class_layouts(file: &mut FileLowering<'_, '_, '_,
             file: file.file,
             function,
         };
-        constructor_function_layout(file, reference);
+        file.constructor_function_layout(reference);
     }
 }

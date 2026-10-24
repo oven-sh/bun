@@ -130,6 +130,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             TypeData::Tuple {
                 flags, readonly, ..
             } => self.shape_of_tuple(ty, flags, *readonly),
+            // `{} & Schema.Strict` is `Schema.Strict` to the checker.
+            TypeData::Anon { .. } if self.is_schema_part(ty) => {
+                return self.walk_intersection(ty, &[ty]);
+            }
             TypeData::Anon { origin, .. } => self.shape_of_anonymous_type(ty, *origin),
             TypeData::Fns { .. } | TypeData::Synth(_) | TypeData::ReverseMapped { .. } => {
                 self.shape_of_object_type(ty)

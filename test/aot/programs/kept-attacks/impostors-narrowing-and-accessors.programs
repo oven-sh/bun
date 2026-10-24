@@ -1,0 +1,770 @@
+////: Cell
+class Cell {
+  leaf: Leaf | null = new Leaf();
+}
+////: Circle
+class Circle extends Shape {
+  radius = 5;
+}
+////: Circle-2
+class Circle {
+  radius = 5;
+}
+////: Holder
+class Holder {
+  shape: Shape = new Square();
+  value: number | string = 1;
+  holdsANumber(): this is Holder & { value: number } {
+    return typeof this.value === "number";
+  }
+}
+////: Leaf-4
+////= Leaf-3
+
+////= Cell
+////: Leaf-6
+////= Leaf-4
+
+////= weigh
+////: Returns
+class Returns {
+  constructor(o: object) {
+    return o;
+  }
+}
+////: Shape-2
+class Shape {
+  sides = 4;
+  isSquare(): this is Square {
+    return this instanceof Square;
+  }
+}
+////: Square-2
+class Square extends Shape {
+  edge = 2;
+}
+////: Stamp
+class Stamp extends Returns {
+  #mark = 1;
+  static marked(o: object): boolean {
+    return #mark in o;
+  }
+}
+////: attempt-3
+function attempt(label: string, run: () => unknown): void {
+  try {
+    console.log(label + ": " + text(run()));
+  } catch (error) {
+    console.log(label + ": threw " + (error instanceof Error ? error.constructor.name : typeof error));
+  }
+}
+////: isNumber
+function isNumber(v: number | string): v is number {
+  return typeof v === "number";
+}
+////: isSquare
+function isSquare(s: Shape): s is Square {
+  return s instanceof Square;
+}
+////: lines-23
+class «1» {
+  «2» = «3»;
+}
+////: lines-42
+class «1» {
+  «2»: «3» | «4» = «5»;
+}
+////: mustBeNumber
+function mustBeNumber(v: number | string): asserts v is number {
+  if (typeof v !== "number") throw new RangeError("not a number");
+}
+////: mustBeSquare
+function mustBeSquare(s: Shape): asserts s is Square {
+  if (!(s instanceof Square)) throw new RangeError("not a square");
+}
+////: mustHold
+function mustHold(condition: boolean): asserts condition {
+  if (!condition) throw new RangeError("does not hold");
+}
+////: proxy
+const proxy = new Proxy([10, 20, 30], {
+  get(t, key, receiver) {
+    log.push("get " + String(key));
+    return Reflect.get(t, key, receiver);
+  },
+});
+////: round-2
+function round(label: string, between: Between): void {
+  for (const [name, use] of uses) attempt(label + ": " + name, () => use(new Holder(), between));
+}
+////: text
+function text(value: unknown): string {
+  if (typeof value === "number") return "number " + (Object.is(value, -0) ? "-0" : String(value));
+  if (typeof value === "bigint") return "bigint " + String(value);
+  if (typeof value === "string") return "string " + JSON.stringify(value);
+  if (typeof value === "function") return "function";
+  if (Array.isArray(value)) return "[" + value.map(text).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return value.constructor.name + " " + JSON.stringify(value);
+  return String(value);
+}
+////: text-2
+////= text
+
+////= attempt-3
+
+////= Shape-2
+
+////= Square-2
+
+////= Circle
+
+////= Holder
+
+////= isSquare
+
+////= isNumber
+
+////= mustBeSquare
+
+////= mustBeNumber
+
+////= mustHold
+////: toBase
+const toBase: Between = h => {
+  h.shape = new Shape();
+  h.value = "text";
+};
+////: toSibling
+const toSibling: Between = h => {
+  h.shape = new Circle();
+  h.value = "";
+};
+////: weigh
+function weigh(c: Cell): number {
+  return c.leaf === null ? -1 : c.leaf.weight;
+}
+//// impostors-narrowing-and-accessors/wg-probes-ice-5.ts
+// Impostors narrowing and accessors: wg probes ice. It prints what plain Bun prints.
+////= text-2
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= toBase
+////= toSibling
+
+const uses: [string, (h: Holder, between: Between) => unknown][] = [
+  ["an assertion over a class", (h, between) => {
+    mustBeSquare(h.shape);
+    between(h);
+    return [h.shape.edge, h.shape.edge * 2, h.shape.sides];
+  }],
+];
+
+////= round-2
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Holder(), keep);
+round("the base class and a string", toBase);
+round("a sibling and an empty string", toSibling);
+round("honest again", keep);
+//// impostors-narrowing-and-accessors/wg-probes-ice-6.ts
+// Impostors narrowing and accessors: wg probes ice. It prints what plain Bun prints.
+////= text-2
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= toBase
+////= toSibling
+
+const uses: [string, (h: Holder, between: Between) => unknown][] = [
+  ["an assertion over a number", (h, between) => {
+    mustBeNumber(h.value);
+    between(h);
+    return [h.value, h.value + 1, h.value * 2];
+  }],
+];
+
+////= round-2
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Holder(), keep);
+round("the base class and a string", toBase);
+round("a sibling and an empty string", toSibling);
+round("honest again", keep);
+//// impostors-narrowing-and-accessors/wg-probes-ice-7.ts
+// Impostors narrowing and accessors: wg probes ice. It prints what plain Bun prints.
+////= text-2
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= toBase
+////= toSibling
+
+const uses: [string, (h: Holder, between: Between) => unknown][] = [
+  ["an asserted condition over a class", (h, between) => {
+    mustHold(h.shape instanceof Square);
+    between(h);
+    return [h.shape.edge, h.shape.edge * 2, h.shape.sides];
+  }],
+];
+
+////= round-2
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Holder(), keep);
+round("the base class and a string", toBase);
+round("a sibling and an empty string", toSibling);
+round("honest again", keep);
+//// impostors-narrowing-and-accessors/wg-probes-ice-8.ts
+// Impostors narrowing and accessors: wg probes ice. It prints what plain Bun prints.
+////= text-2
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= toBase
+////= toSibling
+
+const uses: [string, (h: Holder, between: Between) => unknown][] = [
+  ["an asserted condition over a number", (h, between) => {
+    mustHold(typeof h.value === "number");
+    between(h);
+    return [h.value, h.value + 1, h.value * 2];
+  }],
+];
+
+////= round-2
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Holder(), keep);
+round("the base class and a string", toBase);
+round("a sibling and an empty string", toSibling);
+round("honest again", keep);
+//// impostors-narrowing-and-accessors/wg-probes-ice-9.ts
+// Impostors narrowing and accessors: wg probes ice. It prints what plain Bun prints.
+////= text-2
+
+type Between = (h: Holder) => void;
+const keep: Between = () => {};
+////= toBase
+////= toSibling
+
+const uses: [string, (h: Holder, between: Between) => unknown][] = [
+  ["the guard says no", (h, between) => (!isSquare(h.shape) ? "other" : (between(h), h.shape.edge))],
+];
+
+////= round-2
+
+round("honest", keep);
+for (let i = 0; i < 2000; i++) for (const [, use] of uses) use(new Holder(), keep);
+round("the base class and a string", toBase);
+round("a sibling and an empty string", toSibling);
+round("honest again", keep);
+//// impostors-narrowing-and-accessors/wg-probes-mark-1.ts
+// Impostors narrowing and accessors: wg probes mark. It prints what plain Bun prints.
+////= Returns
+
+////= Stamp
+
+////= Circle-2
+
+const circle = new Circle();
+new Stamp(circle);
+console.log(Stamp.marked(circle));
+//// impostors-narrowing-and-accessors/wg-probes-mark-2-a-literal.ts
+// Impostors narrowing and accessors: wg probes mark  a literal. It prints what plain Bun prints.
+////= Returns
+
+class Stamp extends Returns {
+  #mark = 1;
+  static marked(o: object): boolean {
+    return #mark in o;
+  }
+  static read(o: Stamp): number {
+    return o.#mark;
+  }
+}
+
+const literal = { radius: 5 };
+const stamped = new Stamp(literal);
+console.log(Stamp.marked(literal), Stamp.marked(stamped), Stamp.read(stamped), Object.is(literal, stamped));
+//// impostors-narrowing-and-accessors/wg-probes-mark-3-asked-before-and-after.ts
+// Impostors narrowing and accessors: wg probes mark  asked before and after. It prints what plain Bun prints.
+////= Returns
+
+////= Stamp
+
+////= Circle-2
+
+const circle = new Circle();
+console.log(Stamp.marked(circle));
+new Stamp(circle);
+console.log(Stamp.marked(circle));
+console.log(Stamp.marked(new Circle()));
+//// impostors-narrowing-and-accessors/wg-probes-mark-4-no-return-override.ts
+// Impostors narrowing and accessors: wg probes mark  no return override. It prints what plain Bun prints.
+class Stamp {
+  #mark = 1;
+  static marked(o: object): boolean {
+    return #mark in o;
+  }
+}
+
+////= Circle-2
+
+console.log(Stamp.marked(new Stamp()), Stamp.marked(new Circle()), Stamp.marked({}));
+//// impostors-narrowing-and-accessors/wg-probes-mark-5-a-private-method.ts
+// Impostors narrowing and accessors: wg probes mark  a private method. It prints what plain Bun prints.
+////= Returns
+
+class Stamp extends Returns {
+  #secret(): number {
+    return 7;
+  }
+  static marked(o: object): boolean {
+    return #secret in o;
+  }
+  static call(o: Stamp): number {
+    return o.#secret();
+  }
+}
+
+////= Circle-2
+
+const circle = new Circle();
+const stamped = new Stamp(circle);
+console.log(Stamp.marked(circle), Stamp.call(stamped));
+//// impostors-narrowing-and-accessors/wg-probes-mark-6-narrowed-read.ts
+// Impostors narrowing and accessors: wg probes mark  narrowed read. It prints what plain Bun prints.
+////= Returns
+
+class Stamp extends Returns {
+  #mark = 1;
+  static read(o: object): number {
+    return #mark in o ? o.#mark : -1;
+  }
+}
+
+////= Circle-2
+
+const circle = new Circle();
+new Stamp(circle);
+console.log(Stamp.read(circle), Stamp.read(new Circle()), Stamp.read(new Stamp({})));
+//// impostors-narrowing-and-accessors/wg-probes-nat-1.ts
+// Impostors narrowing and accessors: wg probes nat. It prints what plain Bun prints.
+const log: string[] = [];
+const proxy = new Proxy([10, 20, 30], {
+  get(t, key, receiver) {
+    log.push("get " + String(key));
+    return Reflect.get(t, key, receiver);
+  },
+  set(t, key, value, receiver) {
+    return Reflect.set(t, key, value, receiver);
+  },
+});
+proxy.push(40);
+console.log(log.join());
+//// impostors-narrowing-and-accessors/wg-probes-nat-2-no-set-trap.ts
+// Impostors narrowing and accessors: wg probes nat  no set trap. It prints what plain Bun prints.
+const log: string[] = [];
+////= proxy
+proxy.push(40);
+console.log(log.join());
+//// impostors-narrowing-and-accessors/wg-probes-nat-3-a-plain-read.ts
+// Impostors narrowing and accessors: wg probes nat  a plain read. It prints what plain Bun prints.
+const log: string[] = [];
+////= proxy
+console.log(proxy[1], proxy.length, log.join());
+//// impostors-narrowing-and-accessors/wg-probes-nat-4-an-object.ts
+// Impostors narrowing and accessors: wg probes nat  an object. It prints what plain Bun prints.
+const log: string[] = [];
+const proxy = new Proxy({ a: 1 }, {
+  get(t, key, receiver) {
+    log.push("get " + String(key));
+    return Reflect.get(t, key, receiver);
+  },
+});
+console.log(proxy.a, log.join());
+//// impostors-narrowing-and-accessors/wg-probes-nat-5-join.ts
+// Impostors narrowing and accessors: wg probes nat  join. It prints what plain Bun prints.
+const log: string[] = [];
+////= proxy
+console.log(proxy.join(), log.join());
+//// impostors-narrowing-and-accessors/wg-probes-oa-1-methods-onto-a-prototype.ts
+// Impostors narrowing and accessors: wg probes oa  methods onto a prototype. It prints what plain Bun prints.
+////= lines-23	Cell	value	1
+
+interface Cell {
+  twice(): number;
+}
+
+Object.assign(Cell.prototype, {
+  twice(this: Cell): number {
+    return this.value * 2;
+  },
+});
+
+console.log(new Cell().twice());
+//// impostors-narrowing-and-accessors/wg-probes-oa-10-an-optional-member-is-filled.ts
+// Impostors narrowing and accessors: wg probes oa  an optional member is filled. It prints what plain Bun prints.
+class Cell {
+  value = 1;
+  note?: string;
+}
+
+const cell = new Cell();
+Object.assign(cell, { note: "filled" });
+console.log(cell.note === undefined ? "missing" : cell.note.length, typeof cell.note);
+//// impostors-narrowing-and-accessors/wg-probes-oa-11-a-number-becomes-a-fraction.ts
+// Impostors narrowing and accessors: wg probes oa  a number becomes a fraction. It prints what plain Bun prints.
+////= lines-23	Cell	count	1
+
+const cell = new Cell();
+Object.assign(cell, { count: 2.5 });
+console.log(cell.count, cell.count + 1, cell.count * 2, cell.count | 0);
+const big = new Cell();
+Object.assign(big, { count: 2 ** 40 });
+console.log(big.count, big.count + 1);
+//// impostors-narrowing-and-accessors/wg-probes-oa-12-a-boolean-flips.ts
+// Impostors narrowing and accessors: wg probes oa  a boolean flips. It prints what plain Bun prints.
+////= lines-23	Cell	ready	false
+
+const cell = new Cell();
+Object.assign(cell, { ready: true });
+console.log(cell.ready, cell.ready ? "ready" : "not ready", !cell.ready);
+//// impostors-narrowing-and-accessors/wg-probes-oa-13-a-callback-is-replaced.ts
+// Impostors narrowing and accessors: wg probes oa  a callback is replaced. It prints what plain Bun prints.
+class Cell {
+  run: () => number = () => 1;
+}
+
+const cell = new Cell();
+Object.assign(cell, { run: () => 2 });
+console.log(cell.run());
+//// impostors-narrowing-and-accessors/wg-probes-oa-14-an-array-is-replaced.ts
+// Impostors narrowing and accessors: wg probes oa  an array is replaced. It prints what plain Bun prints.
+class Cell {
+  list: number[] = [1, 2, 3];
+}
+
+const cell = new Cell();
+Object.assign(cell, { list: [] });
+console.log(cell.list.length, cell.list[0], cell.list.join());
+Object.assign(cell, { list: [1.5, 2.5] });
+console.log(cell.list.length, cell.list[0], cell.list.join());
+//// impostors-narrowing-and-accessors/wg-probes-oa-2-a-method-is-replaced-on-an-instance.ts
+// Impostors narrowing and accessors: wg probes oa  a method is replaced on an instance. It prints what plain Bun prints.
+class Cell {
+  value = 1;
+  twice(): number {
+    return this.value * 2;
+  }
+}
+
+const cell = new Cell();
+Object.assign(cell, { twice: () => 99 });
+console.log(cell.twice(), new Cell().twice());
+//// impostors-narrowing-and-accessors/wg-probes-oa-3-a-static-member.ts
+// Impostors narrowing and accessors: wg probes oa  a static member. It prints what plain Bun prints.
+////= Leaf-3
+
+class Cell {
+  static shared: Leaf | null = new Leaf();
+}
+
+Object.assign(Cell, { shared: null });
+console.log(Cell.shared === null ? -1 : Cell.shared.weight);
+//// impostors-narrowing-and-accessors/wg-probes-oa-4-a-field-of-the-base-class.ts
+// Impostors narrowing and accessors: wg probes oa  a field of the base class. It prints what plain Bun prints.
+////= Leaf-3
+
+class Base {
+  leaf: Leaf | null = new Leaf();
+}
+
+////= lines-24	Cell	Base	other	1
+
+const cell = new Cell();
+Object.assign(cell, { leaf: null });
+console.log(cell.leaf === null ? -1 : cell.leaf.weight);
+//// impostors-narrowing-and-accessors/wg-probes-oa-5-a-getter-in-the-source.ts
+// Impostors narrowing and accessors: wg probes oa  a getter in the source. It prints what plain Bun prints.
+////= Leaf-4
+
+const cell = new Cell();
+Object.assign(cell, {
+  get leaf(): null {
+    return null;
+  },
+});
+console.log(cell.leaf === null ? -1 : cell.leaf.weight);
+//// impostors-narrowing-and-accessors/wg-probes-oa-6-a-computed-name-in-the-source.ts
+// Impostors narrowing and accessors: wg probes oa  a computed name in the source. It prints what plain Bun prints.
+////= Leaf-4
+
+const cell = new Cell();
+const spelled = ["le", "af"].join("");
+Object.assign(cell, { [spelled]: null });
+console.log(cell.leaf === null ? -1 : cell.leaf.weight);
+//// impostors-narrowing-and-accessors/wg-probes-oa-7-a-nested-target.ts
+// Impostors narrowing and accessors: wg probes oa  a nested target. It prints what plain Bun prints.
+////= Leaf-4
+
+class Outer {
+  cell = new Cell();
+}
+
+const outer = new Outer();
+Object.assign(outer.cell, { leaf: null });
+console.log(outer.cell.leaf === null ? -1 : outer.cell.leaf.weight);
+//// impostors-narrowing-and-accessors/wg-probes-oa-8-a-function-returns-the-source.ts
+// Impostors narrowing and accessors: wg probes oa  a function returns the source. It prints what plain Bun prints.
+////= Leaf-4
+
+function defaults(): { leaf: Leaf | null } {
+  return { leaf: null };
+}
+
+const cell = new Cell();
+Object.assign(cell, defaults());
+console.log(cell.leaf === null ? -1 : cell.leaf.weight);
+//// impostors-narrowing-and-accessors/wg-probes-oa-9-a-new-member-is-added.ts
+// Impostors narrowing and accessors: wg probes oa  a new member is added. It prints what plain Bun prints.
+////= lines-23	Cell	value	1
+
+const cell = Object.assign(new Cell(), { extra: "added" });
+const same: Cell & { extra?: string } = cell;
+console.log(same.extra, Object.keys(cell).join(), "extra" in cell, cell.extra.length);
+const plain: Cell & { extra?: string } = new Cell();
+Object.assign(plain, { extra: "later" });
+console.log(plain.extra === undefined ? "missing" : plain.extra.length, Object.keys(plain).join());
+//// impostors-narrowing-and-accessors/wg-probes-shrink-1-leaf.ts
+// Impostors narrowing and accessors: wg probes shrink  leaf. It prints what plain Bun prints.
+////= Leaf-6
+
+const cell = new Cell();
+Object.assign(cell, { leaf: null });
+console.log(weigh(cell));
+//// impostors-narrowing-and-accessors/wg-probes-shrink-10-source-is-a-class-with-initial-values.ts
+// Impostors narrowing and accessors: wg probes shrink  source is a class with initial values. It prints what plain Bun prints.
+////= Leaf-4
+
+////= lines-23	Empty	leaf	null
+
+////= weigh
+
+const cell = new Cell();
+Object.assign(cell, new Empty());
+console.log(weigh(cell));
+//// impostors-narrowing-and-accessors/wg-probes-shrink-11-spread-typed-as-the-class.ts
+// Impostors narrowing and accessors: wg probes shrink  spread typed as the class. It prints what plain Bun prints.
+////= Leaf-6
+
+const cell: Cell = { ...new Cell(), ...{ leaf: null } };
+console.log(weigh(cell));
+console.log(weigh(new Cell()));
+//// impostors-narrowing-and-accessors/wg-probes-shrink-12-two-sources.ts
+// Impostors narrowing and accessors: wg probes shrink  two sources. It prints what plain Bun prints.
+////= Leaf-3
+
+class Cell {
+  leaf: Leaf | null = new Leaf();
+  other = 1;
+}
+
+////= weigh
+
+const cell = new Cell();
+Object.assign(cell, { other: 2 }, { leaf: null });
+console.log(weigh(cell), cell.other);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-13-a-subclass-initializes-the-field-with-null.ts
+// Impostors narrowing and accessors: wg probes shrink  a subclass initializes the field with null. It prints what plain Bun prints.
+////= Leaf-4
+
+////= lines-24	Bare	Cell	leaf	null
+
+////= weigh
+
+console.log(weigh(new Cell()), weigh(new Bare()));
+//// impostors-narrowing-and-accessors/wg-probes-shrink-14-a-literal-typed-as-the-class.ts
+// Impostors narrowing and accessors: wg probes shrink  a literal typed as the class. It prints what plain Bun prints.
+////= Leaf-6
+
+const bare: Cell = { leaf: null };
+console.log(weigh(new Cell()), weigh(bare));
+//// impostors-narrowing-and-accessors/wg-probes-shrink-15-object-assign-returns-the-target.ts
+// Impostors narrowing and accessors: wg probes shrink  object assign returns the target. It prints what plain Bun prints.
+////= Leaf-4
+
+const cell: Cell = Object.assign(new Cell(), { leaf: null });
+console.log(cell.leaf === null ? -1 : cell.leaf.weight);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-2-value.ts
+// Impostors narrowing and accessors: wg probes shrink  value. It prints what plain Bun prints.
+////= lines-42	Cell	value	number	string	1
+
+function describe(c: Cell): string {
+  return typeof c.value === "number" ? "number " + (c.value + 1) : "string " + c.value.length;
+}
+
+const cell = new Cell();
+Object.assign(cell, { value: "text" });
+console.log(describe(cell));
+//// impostors-narrowing-and-accessors/wg-probes-shrink-20-value-straight.ts
+// Impostors narrowing and accessors: wg probes shrink  value straight. It prints what plain Bun prints.
+////= lines-42	Cell	value	number	string	1
+
+const cell = new Cell();
+Object.assign(cell, { value: "text" });
+console.log(typeof cell.value === "number" ? cell.value + 1 : cell.value.length);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-21-this-in-a-method.ts
+// Impostors narrowing and accessors: wg probes shrink  this in a method. It prints what plain Bun prints.
+////= Leaf-3
+
+class Cell {
+  leaf: Leaf | null = new Leaf();
+  reset(): void {
+    Object.assign(this, { leaf: null });
+  }
+  weigh(): number {
+    return this.leaf === null ? -1 : this.leaf.weight;
+  }
+}
+
+const cell = new Cell();
+console.log(cell.weigh());
+cell.reset();
+console.log(cell.weigh());
+//// impostors-narrowing-and-accessors/wg-probes-shrink-22-a-partial-patch.ts
+// Impostors narrowing and accessors: wg probes shrink  a partial patch. It prints what plain Bun prints.
+////= Leaf-3
+
+class Cell {
+  leaf: Leaf | null = new Leaf();
+  count = 1;
+  update(patch: Partial<Cell>): void {
+    Object.assign(this, patch);
+  }
+  weigh(): number {
+    return this.leaf === null ? -1 : this.leaf.weight;
+  }
+}
+
+const cell = new Cell();
+cell.update({ count: 2 });
+console.log(cell.weigh(), cell.count);
+cell.update({ leaf: null });
+console.log(cell.weigh(), cell.count);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-23-a-number-field-gets-a-string.ts
+// Impostors narrowing and accessors: wg probes shrink  a number field gets a string. It prints what plain Bun prints.
+////= lines-23	Cell	value	1
+
+const cell = new Cell();
+Object.assign(cell, { value: "text" });
+console.log(typeof cell.value, cell.value + 1);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-24-optional-chain.ts
+// Impostors narrowing and accessors: wg probes shrink  optional chain. It prints what plain Bun prints.
+////= Leaf-4
+
+const cell = new Cell();
+Object.assign(cell, { leaf: null });
+console.log(cell.leaf?.weight, cell.leaf ?? "nothing", cell.leaf ? "truthy" : "falsy", cell.leaf === null);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-25-a-null-is-also-stored-plainly.ts
+// Impostors narrowing and accessors: wg probes shrink  a null is also stored plainly. It prints what plain Bun prints.
+////= Leaf-4
+
+const other = new Cell();
+other.leaf = null;
+const cell = new Cell();
+Object.assign(cell, { leaf: null });
+console.log(cell.leaf === null ? -1 : cell.leaf.weight);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-26-constructor-takes-options.ts
+// Impostors narrowing and accessors: wg probes shrink  constructor takes options. It prints what plain Bun prints.
+////= Leaf-3
+
+class Cell {
+  leaf: Leaf | null = new Leaf();
+  constructor(options: { leaf?: Leaf | null } = {}) {
+    Object.assign(this, options);
+  }
+}
+
+const cell = new Cell({ leaf: null });
+console.log(cell.leaf === null ? -1 : cell.leaf.weight);
+console.log(new Cell().leaf === null);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-3-leaf-no-function.ts
+// Impostors narrowing and accessors: wg probes shrink  leaf no function. It prints what plain Bun prints.
+////= Leaf-4
+
+const cell = new Cell();
+Object.assign(cell, { leaf: null });
+console.log(cell.leaf === null ? -1 : cell.leaf.weight);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-4-value-read.ts
+// Impostors narrowing and accessors: wg probes shrink  value read. It prints what plain Bun prints.
+////= lines-42	Cell	value	number	string	1
+
+const cell = new Cell();
+Object.assign(cell, { value: "text" });
+console.log(typeof cell.value, cell.value);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-5-literal-target.ts
+// Impostors narrowing and accessors: wg probes shrink  literal target. It prints what plain Bun prints.
+type Cell = { leaf: { weight: number } | null };
+
+function make(): Cell {
+  return { leaf: { weight: 7 } };
+}
+
+////= weigh
+
+const cell = make();
+Object.assign(cell, { leaf: null });
+console.log(weigh(cell));
+//// impostors-narrowing-and-accessors/wg-probes-shrink-6-mode.ts
+// Impostors narrowing and accessors: wg probes shrink  mode. It prints what plain Bun prints.
+////= lines-42	Switch	mode	"on"	"off"	"on"
+
+function cost(s: Switch): number {
+  return s.mode === "on" ? 10 : 20;
+}
+
+const s = new Switch();
+Object.assign(s, { mode: "off" });
+console.log(cost(s), s.mode);
+//// impostors-narrowing-and-accessors/wg-probes-shrink-7-undefined.ts
+// Impostors narrowing and accessors: wg probes shrink  undefined. It prints what plain Bun prints.
+////= Leaf-3
+
+class Cell {
+  leaf: Leaf | undefined = new Leaf();
+}
+
+function weigh(c: Cell): number {
+  return c.leaf === undefined ? -1 : c.leaf.weight;
+}
+
+const cell = new Cell();
+Object.assign(cell, { leaf: undefined });
+console.log(weigh(cell));
+//// impostors-narrowing-and-accessors/wg-probes-shrink-8-two-classes.ts
+// Impostors narrowing and accessors: wg probes shrink  two classes. It prints what plain Bun prints.
+////= lines-23	Shape	sides	4
+
+////= Square-2
+
+class Holder {
+  shape: Shape = new Square();
+}
+
+function edgeOf(h: Holder): unknown {
+  return h.shape instanceof Square ? h.shape.edge : "no square";
+}
+
+const holder = new Holder();
+Object.assign(holder, { shape: new Shape() });
+console.log(edgeOf(holder));
+//// impostors-narrowing-and-accessors/wg-probes-shrink-9-source-in-a-variable.ts
+// Impostors narrowing and accessors: wg probes shrink  source in a variable. It prints what plain Bun prints.
+////= Leaf-6
+
+const cell = new Cell();
+const source = { leaf: null };
+Object.assign(cell, source);
+console.log(weigh(cell));

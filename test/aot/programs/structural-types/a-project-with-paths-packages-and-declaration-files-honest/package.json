@@ -1,7 +1,0 @@
-{
-  "name": "honest-app",
-  "type": "module",
-  "imports": {
-    "#settings": "./src/settings.json"
-  }
-}

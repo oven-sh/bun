@@ -28,7 +28,6 @@ import { writeIfChanged } from "./fs.ts";
 const ruleVars = {
   // aot.ts
   aot_check: ["cwd", "args", "desc"],
-  cut_profiles: [],
   // bun.ts
   binary_verify: ["spec"],
   copy_exe: [],

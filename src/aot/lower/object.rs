@@ -4,11 +4,10 @@ mod literal;
 use bun_sema::hir::ExprId;
 use smallvec::SmallVec;
 
-pub(crate) use self::builder::emit_object_rest;
 pub(in crate::lower) use self::builder::set_prototype;
-pub(crate) use self::literal::{holds_dictionary_literal, lower_object_literal};
+pub(crate) use self::literal::lower_object_literal;
+use super::FunctionLowering;
 use super::member::PropertyName;
-use super::{FunctionLowering, layouts};
 use crate::ir::{LayoutId, ValueId};
 
 pub(crate) struct ObjectBuilder {
@@ -50,81 +49,69 @@ impl InitialFields {
     }
 }
 
-// Each object of a record of data has a layout, so a literal of constants that holds a dictionary is built by operations.
-pub(crate) fn begin_object(
-    _lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    layout: LayoutId,
-) -> ObjectBuilder {
-    ObjectBuilder {
-        layout,
-        state: ObjectState::Pending(InitialFields::default()),
-        is_dictionary: false,
-        is_finished: false,
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    // Each object of a record of data has a layout, so a literal of constants that holds a dictionary is built by operations.
+    pub(crate) fn begin_object(&mut self, layout: LayoutId) -> ObjectBuilder {
+        ObjectBuilder {
+            layout,
+            state: ObjectState::Pending(InitialFields::default()),
+            is_dictionary: false,
+            is_finished: false,
+        }
     }
-}
 
-// The layout has no field, so every member is defined by name.
-pub(crate) fn begin_dictionary(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-) -> ObjectBuilder {
-    let head = lowering.builder.new_dictionary();
-    ObjectBuilder {
-        layout: layouts::untyped_layout(lowering.file, &[]),
-        state: ObjectState::Open { head },
-        is_dictionary: true,
-        is_finished: false,
+    // The layout has no field, so every member is defined by name.
+    pub(crate) fn begin_dictionary(&mut self) -> ObjectBuilder {
+        let head = self.builder.new_dictionary();
+        ObjectBuilder {
+            layout: self.file.untyped_layout(&[]),
+            state: ObjectState::Open { head },
+            is_dictionary: true,
+            is_finished: false,
+        }
     }
-}
 
-// The copy makes the object, with the layout of the source where that is a record. Every later member is defined by name.
-pub(crate) fn begin_copy(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    source: ValueId,
-) -> ObjectBuilder {
-    let head = lowering.builder.copy_object(source, &[], &[]);
-    ObjectBuilder {
-        layout: layouts::untyped_layout(lowering.file, &[]),
-        state: ObjectState::Open { head },
-        is_dictionary: true,
-        is_finished: false,
+    // The copy makes the object, with the layout of the source where that is a record. Every later member is defined by name.
+    pub(crate) fn begin_copy(&mut self, source: ValueId) -> ObjectBuilder {
+        let head = self.builder.copy_object(source, &[], &[]);
+        ObjectBuilder {
+            layout: self.file.untyped_layout(&[]),
+            state: ObjectState::Open { head },
+            is_dictionary: true,
+            is_finished: false,
+        }
     }
-}
 
-pub(crate) fn add_property(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: &mut ObjectBuilder,
-    name: PropertyName,
-    value: ValueId,
-) {
-    builder::add_member(lowering, object, name, value, None);
-}
+    pub(crate) fn add_property(
+        &mut self,
+        object: &mut ObjectBuilder,
+        name: PropertyName,
+        value: ValueId,
+    ) {
+        builder::add_member(self, object, name, value, None);
+    }
 
-pub(in crate::lower) fn add_property_with_source(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: &mut ObjectBuilder,
-    name: PropertyName,
-    value: ValueId,
-    source: ExprId,
-) {
-    builder::add_member(lowering, object, name, value, Some(source));
-}
+    pub(in crate::lower) fn add_property_with_source(
+        &mut self,
+        object: &mut ObjectBuilder,
+        name: PropertyName,
+        value: ValueId,
+        source: ExprId,
+    ) {
+        builder::add_member(self, object, name, value, Some(source));
+    }
 
-pub(crate) fn add_spread(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: &mut ObjectBuilder,
-    source: ValueId,
-) {
-    let head = builder::open_head(lowering, object);
-    lowering
-        .builder
-        .copy_data_properties(head, source, &[], &[]);
+    pub(crate) fn add_spread(&mut self, object: &mut ObjectBuilder, source: ValueId) {
+        let head = self.open_head(object);
+        self.builder.copy_data_properties(head, source, &[], &[]);
+    }
 }
 
 pub(crate) fn finish_object(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     mut object: ObjectBuilder,
 ) -> ValueId {
-    let head = builder::open_head(lowering, &mut object);
+    let head = lowering.open_head(&mut object);
     // `FinishObject` closes a `NewObject`.
     if object.is_dictionary || object.is_finished {
         return head;

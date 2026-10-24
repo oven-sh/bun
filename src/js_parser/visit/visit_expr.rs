@@ -906,8 +906,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if !p.parse_members_with_type_arguments.is_empty() {
-            p.check_type_arguments_of_parse(e_.index.loc, e_.target);
+        if p.may_name_json_of_bun()
+            && matches!(e_.index.data, Data::EString(key) if key.eql_comptime(b"parse"))
+        {
+            let member = e_.index.loc;
+            p.visit_parse_of_json(member, &mut e_.target, is_call_target);
         }
 
         p.visit_expr_in_out(
@@ -1356,8 +1359,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_template_tag = matches!(p.template_tag, Data::EDot(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
 
-        if !p.parse_members_with_type_arguments.is_empty() {
-            p.check_type_arguments_of_parse(e_.name_loc, e_.target);
+        if e_.name == b"parse" && p.may_name_json_of_bun() {
+            let member = e_.name_loc;
+            p.visit_parse_of_json(member, &mut e_.target, is_call_target);
         }
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is

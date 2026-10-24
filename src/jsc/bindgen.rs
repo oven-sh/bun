@@ -1181,14 +1181,6 @@ pub mod to_js {
     }
 
     #[inline(always)]
-    pub fn local_string<'a>(
-        _: &JsHeap<'a>,
-        value: JsLocal<'a, JSString>,
-    ) -> Result<'a, JsLocal<'a>> {
-        Ok(value.as_value())
-    }
-
-    #[inline(always)]
     pub fn utf8<'a>(heap: &JsHeap<'a>, value: impl AsRef<[u8]>) -> Result<'a, JsLocal<'a>> {
         heap.create_utf8_string(value.as_ref())
             .map(JsLocal::as_value)

@@ -141,7 +141,6 @@ impl MachoFile {
 
         let mut found_bun = false;
 
-        let names = KnownSection::Payload.names();
         let lc_base = size_of::<macho::mach_header_64>();
         let mut iter = self.iterator();
 
@@ -152,7 +151,7 @@ impl MachoFile {
                     let command = entry
                         .cast::<macho::segment_command_64>()
                         .ok_or(MachoError::InvalidObject)?;
-                    if command.seg_name() == names.macho_segment {
+                    if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
                             let section_offset = lc_base + entry.offset;
                             let sections_base =
@@ -173,7 +172,7 @@ impl MachoFile {
                                 let sect_off = sections_base + i * sect_sz;
                                 let sect: macho::section_64 =
                                     read_struct(&self.data[sect_off..][..sect_sz]);
-                                if sect.sect_name() == names.macho_section {
+                                if sect.sect_name() == b"__bun" {
                                     found_bun = true;
                                     original_fileoff = sect.offset as u64;
                                     let original_vmaddr = sect.addr;

@@ -4,12 +4,12 @@ use smallvec::SmallVec;
 
 use super::{
     AccessorFunction, ClassPlan, ClassTransform, declare_accessor_function, decorators_of,
-    has_decorators, is_declaration_only, runtime_members, set_class_slot,
+    has_decorators, is_declaration_only, runtime_members,
 };
 use crate::ir::generated::{ClassSide, MethodKind, RuntimeErrorKind};
 use crate::ir::{ClassSlot, Edge, LayoutId, TypeTable, ValueId};
-use crate::lower::member::{self, PropertyName};
-use crate::lower::{FunctionLowering, exception, expression, function, layouts};
+use crate::lower::member::PropertyName;
+use crate::lower::{FunctionLowering, layouts};
 
 #[derive(Default)]
 pub(super) struct MemberValues {
@@ -24,63 +24,195 @@ pub(super) struct ClassHead {
     pub(super) value: ValueId,
 }
 
-pub(super) fn emit_decorator_array(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    modifiers: Span<ModifierId>,
-) -> ValueId {
-    let mut decorators: SmallVec<[ValueId; 4]> = SmallVec::new();
-    for decorator in decorators_of(lowering.file.hir, modifiers) {
-        decorators.push(expression::lower_expression(lowering, decorator));
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(super) fn emit_decorator_array(&mut self, modifiers: Span<ModifierId>) -> ValueId {
+        let mut decorators: SmallVec<[ValueId; 4]> = SmallVec::new();
+        for decorator in decorators_of(self.file.hir, modifiers) {
+            decorators.push(self.lower_expression(decorator));
+        }
+        self.builder
+            .new_array(TypeTable::ANYTHING, &[], &decorators)
     }
-    lowering
-        .builder
-        .new_array(TypeTable::ANYTHING, &[], &decorators)
-}
 
-pub(super) fn define_members(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    head: ClassHead,
-    plan: &ClassPlan,
-) -> MemberValues {
-    let hir = lowering.file.hir;
-    let is_standard = plan.transform == ClassTransform::Standard;
-    let mut values = MemberValues::default();
-    let mut next_method_index = 0;
-    for member in runtime_members(hir, head.class) {
-        let modifiers = hir[member].modifiers;
-        if is_standard && has_decorators(hir, modifiers) {
-            let decorators = emit_decorator_array(lowering, modifiers);
-            values.decorators.push((member, decorators));
+    pub(super) fn define_members(&mut self, head: ClassHead, plan: &ClassPlan) -> MemberValues {
+        let hir = self.file.hir;
+        let is_standard = plan.transform == ClassTransform::Standard;
+        let mut values = MemberValues::default();
+        let mut next_method_index = 0;
+        for member in runtime_members(hir, head.class) {
+            let modifiers = hir[member].modifiers;
+            if is_standard && has_decorators(hir, modifiers) {
+                let decorators = self.emit_decorator_array(modifiers);
+                values.decorators.push((member, decorators));
+            }
+            if let Some(name) = self.lower_member_name(head, member, &mut values) {
+                define_member(self, head, plan, member, name, &mut next_method_index);
+            }
         }
-        if let Some(name) = lower_member_name(lowering, head, member, &mut values) {
-            define_member(lowering, head, plan, member, name, &mut next_method_index);
+        values
+    }
+
+    fn lower_member_name(
+        &mut self,
+        head: ClassHead,
+        member: MemberId,
+        values: &mut MemberValues,
+    ) -> Option<PropertyName> {
+        let key = self.file.hir.runtime_member_key(member);
+        match key {
+            PropKey::Name(name) => {
+                let key = self.file.name_key(name);
+                Some(PropertyName::Constant(key))
+            }
+            PropKey::Computed(_) => {
+                let name = self.lower_property_name(key);
+                values.names.push((member, name));
+                Some(name)
+            }
+            PropKey::Private(name) => {
+                let key = layouts::private_key(self.file, head.layout, name);
+                Some(PropertyName::Constant(key))
+            }
+            PropKey::None => None,
         }
     }
-    values
-}
 
-fn lower_member_name(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    head: ClassHead,
-    member: MemberId,
-    values: &mut MemberValues,
-) -> Option<PropertyName> {
-    let key = lowering.file.hir.runtime_member_key(member);
-    match key {
-        PropKey::Name(name) => {
-            let key = member::name_key(lowering.file, name);
-            Some(PropertyName::Constant(key))
+    fn check_static_field_key(&mut self, name: PropertyName) {
+        match name {
+            PropertyName::Constant(key) => {
+                if key == self.file.name_key(known::prototype) {
+                    let error = RuntimeErrorKind::StaticPrototypeKey;
+                    self.emit_throw_runtime_error(error, None);
+                }
+            }
+            PropertyName::Computed(value) => {
+                let prototype = self.file.intern_atom(known::prototype);
+                let prototype = self.builder.string(prototype);
+                let is_prototype = self.builder.strict_eq(value, prototype);
+                let invalid = self.create_unlikely_block();
+                let valid = self.create_block();
+                self.builder
+                    .branch(is_prototype, Edge::to(invalid), Edge::to(valid));
+                self.continue_in(invalid);
+                let error = RuntimeErrorKind::StaticPrototypeKey;
+                self.emit_throw_runtime_error(error, None);
+                self.continue_in(valid);
+            }
         }
-        PropKey::Computed(_) => {
-            let name = member::lower_property_name(lowering, key);
-            values.names.push((member, name));
-            Some(name)
+    }
+
+    fn record_field_key(&mut self, class: ClassId, member: MemberId, name: PropertyName) {
+        match name {
+            PropertyName::Constant(key) => {
+                self.file.classes.constant_keys.insert(member, key);
+            }
+            PropertyName::Computed(_) => {}
         }
-        PropKey::Private(name) => {
-            let key = layouts::private_key(lowering.file, head.layout, name);
-            Some(PropertyName::Constant(key))
+        let value = self.emit_name_value(name);
+        self.set_class_slot(class, ClassSlot::ComputedKey(member), value);
+    }
+
+    #[allow(clippy::needless_pass_by_value)] // made for this call
+    fn emit_method_definition(
+        &mut self,
+        head: ClassHead,
+        definition: MethodDefinition,
+        next_method_index: &mut u32,
+    ) {
+        let (computed, constant) = definition.name.key_operands();
+        if let Some(key) = constant {
+            self.file.fragment.note_write(key);
         }
-        PropKey::None => None,
+        self.builder.define_method(
+            head.value,
+            definition.closure,
+            computed,
+            head.layout,
+            definition.side,
+            definition.kind,
+            *next_method_index,
+            constant,
+        );
+        *next_method_index += 1;
+    }
+
+    fn define_method(
+        &mut self,
+        head: ClassHead,
+        member: MemberId,
+        name: PropertyName,
+        next_method_index: &mut u32,
+    ) {
+        let node = self.file.hir[member];
+        let kind = match self.file.hir.runtime_member_kind(member) {
+            MemberKind::Method => MethodKind::Method,
+            MemberKind::Getter => MethodKind::Getter,
+            MemberKind::Setter => MethodKind::Setter,
+            _ => {
+                debug_assert!(false, "only a method, getter or setter is a method piece");
+                return;
+            }
+        };
+        self.set_position(node.name_pos);
+        let closure = self.lower_method(node.func, name, head.value);
+        let definition = MethodDefinition {
+            side: class_side(node),
+            kind,
+            name,
+            closure,
+        };
+        self.emit_method_definition(head, definition, next_method_index);
+    }
+
+    fn define_accessor_pair(
+        &mut self,
+        head: ClassHead,
+        member: MemberId,
+        name: PropertyName,
+        next_method_index: &mut u32,
+    ) {
+        let hir = self.file.hir;
+        let node = hir[member];
+        self.set_position(node.name_pos);
+        let computed_name = match hir.runtime_member_key(member) {
+            PropKey::Computed(_) => Some(self.emit_name_value(name)),
+            PropKey::Name(_) | PropKey::Private(_) | PropKey::None => None,
+        };
+        let halves = [
+            (AccessorFunction::Getter, MethodKind::Getter),
+            (AccessorFunction::Setter, MethodKind::Setter),
+        ];
+        for (accessor, kind) in halves {
+            let id = declare_accessor_function(self.file, member, accessor);
+            let closure = self.emit_closure(id, None);
+            if let Some(key) = computed_name {
+                self.builder.set_function_name(closure, key, kind);
+            }
+            let definition = MethodDefinition {
+                side: class_side(node),
+                kind,
+                name,
+                closure,
+            };
+            self.emit_method_definition(head, definition, next_method_index);
+        }
+    }
+
+    fn create_private_function(
+        &mut self,
+        head: ClassHead,
+        plan: &ClassPlan,
+        member: MemberId,
+        name: PropertyName,
+    ) {
+        let hir = self.file.hir;
+        let node = hir[member];
+        if plan.transform == ClassTransform::Standard && has_decorators(hir, node.modifiers) {
+            return;
+        }
+        self.set_position(node.name_pos);
+        let closure = self.lower_method(node.func, name, head.value);
+        self.set_class_slot(head.class, ClassSlot::PrivateMethod(member), closure);
     }
 }
 
@@ -100,23 +232,23 @@ fn define_member(
         MemberKind::Property if is_declaration_only(node) => {}
         MemberKind::Property if node.flags.contains(Flags::ACCESSOR) => {
             if !is_private {
-                define_accessor_pair(lowering, head, member, name, next_method_index);
+                lowering.define_accessor_pair(head, member, name, next_method_index);
             }
         }
         MemberKind::Property => {
             lowering.set_position(node.name_pos);
             if is_static_field(node) {
-                check_static_field_key(lowering, name);
+                lowering.check_static_field_key(name);
             }
             if matches!(key, PropKey::Computed(_)) {
-                record_field_key(lowering, head.class, member, name);
+                lowering.record_field_key(head.class, member, name);
             }
         }
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
             if is_private {
-                create_private_function(lowering, head, plan, member, name);
+                lowering.create_private_function(head, plan, member, name);
             } else {
-                define_method(lowering, head, member, name, next_method_index);
+                lowering.define_method(head, member, name, next_method_index);
             }
         }
         MemberKind::Constructor
@@ -134,47 +266,6 @@ fn is_static_field(node: Member) -> bool {
         && !is_declaration_only(node)
 }
 
-fn check_static_field_key(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, name: PropertyName) {
-    match name {
-        PropertyName::Constant(key) => {
-            if key == member::name_key(lowering.file, known::prototype) {
-                let error = RuntimeErrorKind::StaticPrototypeKey;
-                exception::emit_throw_runtime_error(lowering, error, None);
-            }
-        }
-        PropertyName::Computed(value) => {
-            let prototype = lowering.file.intern_atom(known::prototype);
-            let prototype = lowering.builder.string(prototype);
-            let is_prototype = lowering.builder.strict_eq(value, prototype);
-            let invalid = lowering.create_unlikely_block();
-            let valid = lowering.create_block();
-            lowering
-                .builder
-                .branch(is_prototype, Edge::to(invalid), Edge::to(valid));
-            lowering.continue_in(invalid);
-            let error = RuntimeErrorKind::StaticPrototypeKey;
-            exception::emit_throw_runtime_error(lowering, error, None);
-            lowering.continue_in(valid);
-        }
-    }
-}
-
-fn record_field_key(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    class: ClassId,
-    member: MemberId,
-    name: PropertyName,
-) {
-    match name {
-        PropertyName::Constant(key) => {
-            lowering.file.classes.constant_keys.insert(member, key);
-        }
-        PropertyName::Computed(_) => {}
-    }
-    let value = member::emit_name_value(lowering, name);
-    set_class_slot(lowering, class, ClassSlot::ComputedKey(member), value);
-}
-
 fn class_side(node: Member) -> ClassSide {
     if node.flags.contains(Flags::STATIC) {
         ClassSide::Static
@@ -188,112 +279,4 @@ struct MethodDefinition {
     kind: MethodKind,
     name: PropertyName,
     closure: ValueId,
-}
-
-#[allow(clippy::needless_pass_by_value)] // made for this call
-fn emit_method_definition(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    head: ClassHead,
-    definition: MethodDefinition,
-    next_method_index: &mut u32,
-) {
-    let (computed, constant) = definition.name.key_operands();
-    if let Some(key) = constant {
-        lowering.file.fragment.note_write(key);
-    }
-    lowering.builder.define_method(
-        head.value,
-        definition.closure,
-        computed,
-        head.layout,
-        definition.side,
-        definition.kind,
-        *next_method_index,
-        constant,
-    );
-    *next_method_index += 1;
-}
-
-fn define_method(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    head: ClassHead,
-    member: MemberId,
-    name: PropertyName,
-    next_method_index: &mut u32,
-) {
-    let node = lowering.file.hir[member];
-    let kind = match lowering.file.hir.runtime_member_kind(member) {
-        MemberKind::Method => MethodKind::Method,
-        MemberKind::Getter => MethodKind::Getter,
-        MemberKind::Setter => MethodKind::Setter,
-        _ => {
-            debug_assert!(false, "only a method, getter or setter is a method piece");
-            return;
-        }
-    };
-    lowering.set_position(node.name_pos);
-    let closure = function::lower_method(lowering, node.func, name, head.value);
-    let definition = MethodDefinition {
-        side: class_side(node),
-        kind,
-        name,
-        closure,
-    };
-    emit_method_definition(lowering, head, definition, next_method_index);
-}
-
-fn define_accessor_pair(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    head: ClassHead,
-    member: MemberId,
-    name: PropertyName,
-    next_method_index: &mut u32,
-) {
-    let hir = lowering.file.hir;
-    let node = hir[member];
-    lowering.set_position(node.name_pos);
-    let computed_name = match hir.runtime_member_key(member) {
-        PropKey::Computed(_) => Some(member::emit_name_value(lowering, name)),
-        PropKey::Name(_) | PropKey::Private(_) | PropKey::None => None,
-    };
-    let halves = [
-        (AccessorFunction::Getter, MethodKind::Getter),
-        (AccessorFunction::Setter, MethodKind::Setter),
-    ];
-    for (accessor, kind) in halves {
-        let id = declare_accessor_function(lowering.file, member, accessor);
-        let closure = function::emit_closure(lowering, id, None);
-        if let Some(key) = computed_name {
-            lowering.builder.set_function_name(closure, key, kind);
-        }
-        let definition = MethodDefinition {
-            side: class_side(node),
-            kind,
-            name,
-            closure,
-        };
-        emit_method_definition(lowering, head, definition, next_method_index);
-    }
-}
-
-fn create_private_function(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    head: ClassHead,
-    plan: &ClassPlan,
-    member: MemberId,
-    name: PropertyName,
-) {
-    let hir = lowering.file.hir;
-    let node = hir[member];
-    if plan.transform == ClassTransform::Standard && has_decorators(hir, node.modifiers) {
-        return;
-    }
-    lowering.set_position(node.name_pos);
-    let closure = function::lower_method(lowering, node.func, name, head.value);
-    set_class_slot(
-        lowering,
-        head.class,
-        ClassSlot::PrivateMethod(member),
-        closure,
-    );
 }

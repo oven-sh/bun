@@ -6,10 +6,7 @@ use super::PropertyName;
 use crate::ir::generated::{NullishAccess, RuntimeErrorKind};
 use crate::ir::{TypeTable, ValueId, VariableId};
 use crate::lower::scope::{self, IdentifierTarget};
-use crate::lower::{
-    FileLowering, FunctionLowering, commonjs, condition, convert, exception, expression, function,
-    private_names,
-};
+use crate::lower::{FileLowering, FunctionLowering, commonjs, expression};
 
 pub(in crate::lower) enum Reference {
     Identifier {
@@ -48,94 +45,229 @@ pub(in crate::lower) enum KeyConversion {
     Once,
 }
 
-pub(in crate::lower) fn lower_reference(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    target: ExprId,
-    conversion: KeyConversion,
-) -> Reference {
-    let hir = lowering.file.hir;
-    let target = expression::skip_type_syntax(lowering.file, target);
-    lowering.set_position(hir[target].pos);
-    match hir[target].kind {
-        ExprKind::Ident(_) => lower_identifier_reference(lowering, target),
-        ExprKind::Dot {
-            chain: Chain::No, ..
-        }
-        | ExprKind::Index {
-            chain: Chain::No, ..
-        } => lower_member_reference(lowering, target, conversion),
-        ExprKind::Missing
-        | ExprKind::PrivateIdentifier(_)
-        | ExprKind::This
-        | ExprKind::Super
-        | ExprKind::Null
-        | ExprKind::True
-        | ExprKind::False
-        | ExprKind::Number(_)
-        | ExprKind::String(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::Regex { .. }
-        | ExprKind::Template { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Array(_)
-        | ExprKind::Object(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::Dot {
-            chain: Chain::Start | Chain::Continue,
-            ..
-        }
-        | ExprKind::Index {
-            chain: Chain::Start | Chain::Continue,
-            ..
-        }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Assign { .. }
-        | ExprKind::Cond { .. }
-        | ExprKind::Spread(_)
-        | ExprKind::Await(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::As { .. }
-        | ExprKind::Satisfies { .. }
-        | ExprKind::AsConst(_)
-        | ExprKind::NonNull(_)
-        | ExprKind::Instantiation { .. }
-        | ExprKind::Jsx(_)
-        | ExprKind::ImportCall { .. }
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget(_)
-        | ExprKind::JsxText(_) => lower_invalid_reference(lowering, target),
-    }
-}
-
-fn lower_identifier_reference(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    identifier: ExprId,
-) -> Reference {
-    match lowering.file.decisions().decision(identifier) {
-        Decision::GlobalPath(path) => lower_global_path_reference(lowering, path),
-        Decision::Unknown | Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {
-            let target = scope::resolve_identifier_target(lowering, identifier);
-            Reference::Identifier { target, identifier }
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(in crate::lower) fn lower_reference(
+        &mut self,
+        target: ExprId,
+        conversion: KeyConversion,
+    ) -> Reference {
+        let hir = self.file.hir;
+        let target = self.file.skip_type_syntax(target);
+        self.set_position(hir[target].pos);
+        match hir[target].kind {
+            ExprKind::Ident(_) => self.lower_identifier_reference(target),
+            ExprKind::Dot {
+                chain: Chain::No, ..
+            }
+            | ExprKind::Index {
+                chain: Chain::No, ..
+            } => lower_member_reference(self, target, conversion),
+            ExprKind::Missing
+            | ExprKind::PrivateIdentifier(_)
+            | ExprKind::This
+            | ExprKind::Super
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex { .. }
+            | ExprKind::Template { .. }
+            | ExprKind::TaggedTemplate(_)
+            | ExprKind::Array(_)
+            | ExprKind::Object(_)
+            | ExprKind::Fn(_)
+            | ExprKind::Class(_)
+            | ExprKind::Dot {
+                chain: Chain::Start | Chain::Continue,
+                ..
+            }
+            | ExprKind::Index {
+                chain: Chain::Start | Chain::Continue,
+                ..
+            }
+            | ExprKind::Call(_)
+            | ExprKind::New(_)
+            | ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Assign { .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::Spread(_)
+            | ExprKind::Await(_)
+            | ExprKind::Yield { .. }
+            | ExprKind::As { .. }
+            | ExprKind::Satisfies { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::NonNull(_)
+            | ExprKind::Instantiation { .. }
+            | ExprKind::Jsx(_)
+            | ExprKind::ImportCall { .. }
+            | ExprKind::ImportMeta
+            | ExprKind::NewTarget(_)
+            | ExprKind::JsxText(_) => self.lower_invalid_reference(target),
         }
     }
-}
 
-fn lower_global_path_reference(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    path: &[Atom],
-) -> Reference {
-    let member = expression::lower_global_path_holder(lowering, path);
-    match member.holder {
-        Some(object) => Reference::Property {
-            object,
-            name: PropertyName::Constant(lowering.file.atom_key(member.name)),
-            access: None,
-        },
-        None => Reference::FreeName(member.name),
+    fn lower_identifier_reference(&mut self, identifier: ExprId) -> Reference {
+        match self.file.decisions().decision(identifier) {
+            Decision::GlobalPath(path) => self.lower_global_path_reference(path),
+            Decision::Unknown
+            | Decision::Constant(_)
+            | Decision::Data(_)
+            | Decision::DeferredData => {
+                let target = self.resolve_identifier_target(identifier);
+                Reference::Identifier { target, identifier }
+            }
+        }
+    }
+
+    fn lower_global_path_reference(&mut self, path: &[Atom]) -> Reference {
+        let member = self.lower_global_path_holder(path);
+        match member.holder {
+            Some(object) => Reference::Property {
+                object,
+                name: PropertyName::Constant(self.file.atom_key(member.name)),
+                access: None,
+            },
+            None => Reference::FreeName(member.name),
+        }
+    }
+
+    fn lower_invalid_reference(&mut self, target: ExprId) -> Reference {
+        self.lower_expression_for_effect(target);
+        self.set_position(self.file.hir[target].pos);
+        self.emit_throw_runtime_error(RuntimeErrorKind::UnresolvableReference, None);
+        Reference::Invalid
+    }
+
+    fn convert_key(
+        &mut self,
+        object: ValueId,
+        name: PropertyName,
+        conversion: KeyConversion,
+    ) -> PropertyName {
+        match (conversion, name) {
+            (KeyConversion::AtAccess, _) | (KeyConversion::Once, PropertyName::Constant(_)) => name,
+            (KeyConversion::Once, PropertyName::Computed(key)) => {
+                PropertyName::Computed(self.convert_key_once(object, key))
+            }
+        }
+    }
+
+    fn convert_key_once(&mut self, object: ValueId, key: ValueId) -> ValueId {
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        let split = self.split_on_type(key, TypeTable::OBJECT);
+
+        self.builder.switch_to(split.taken);
+        self.builder
+            .require_object_coercible(object, NullishAccess::Read, None);
+        let converted = self.builder.to_property_key(split.taken_value);
+        self.builder.write_variable(result, converted);
+        self.jump(join);
+
+        self.builder.switch_to(split.not_taken);
+        self.builder.write_variable(result, split.not_taken_value);
+        self.jump(join);
+
+        self.continue_in(join);
+        self.builder.read_variable(result)
+    }
+
+    pub(in crate::lower) fn get_reference(&mut self, reference: &Reference) -> ValueId {
+        match *reference {
+            Reference::Identifier { ref target, .. } => self.get_identifier_target(target),
+            Reference::FreeName(name) => self.emit_free_name_get(name, false),
+            Reference::Property {
+                object,
+                name,
+                access: Some(access),
+            } => super::emit_member_read(self, access, object, name),
+            Reference::Property {
+                object,
+                name,
+                access: None,
+            } => self.emit_get(object, name),
+            Reference::Super { base, name } => {
+                let receiver = self.get_this();
+                let (computed_key, key) = name.key_operands();
+                self.builder.super_get(base, receiver, computed_key, key)
+            }
+            Reference::Private { object, access } => self.emit_private_get(object, access),
+            Reference::ModuleVariable { variable, holder } => {
+                self.test_holder(holder, NullishAccess::Read);
+                self.builder.get_module_variable(variable)
+            }
+            Reference::Discarded { holder } => {
+                self.test_holder(holder, NullishAccess::Read);
+                self.builder.undefined()
+            }
+            Reference::Invalid => self.builder.undefined(),
+        }
+    }
+
+    pub(in crate::lower) fn put_reference(
+        &mut self,
+        reference: &Reference,
+        value: ValueId,
+        source: Option<ExprId>,
+    ) -> ValueId {
+        match *reference {
+            Reference::Identifier {
+                ref target,
+                identifier,
+            } => {
+                self.set_identifier_target(target, value, source);
+                match scope::find_tested_local(self, identifier) {
+                    Some(_) => self.lower_identifier(identifier),
+                    None => value,
+                }
+            }
+            Reference::FreeName(name) => {
+                self.emit_free_name_set(name, value);
+                value
+            }
+            Reference::Property {
+                object,
+                name,
+                access: Some(access),
+            } => {
+                let converted = self.convert_to_member(access, value, source);
+                self.emit_set(object, name, converted);
+                converted
+            }
+            Reference::Property {
+                object,
+                name,
+                access: None,
+            } => {
+                self.emit_set(object, name, value);
+                value
+            }
+            Reference::Super { base, name } => {
+                let receiver = self.get_this();
+                let (computed_key, key) = name.key_operands();
+                let mode = self.mode();
+                self.builder
+                    .super_set(mode, base, receiver, value, computed_key, key);
+                value
+            }
+            Reference::Private { object, access } => {
+                self.emit_private_set(object, access, value, source);
+                value
+            }
+            Reference::ModuleVariable { variable, holder } => {
+                self.test_holder(holder, NullishAccess::Write);
+                self.builder.put_module_variable(variable, value);
+                value
+            }
+            Reference::Discarded { holder } => {
+                self.test_holder(holder, NullishAccess::Write);
+                value
+            }
+            Reference::Invalid => value,
+        }
     }
 }
 
@@ -149,7 +281,7 @@ fn lower_member_reference(
         unreachable!("lower_member_reference takes a Dot or an Index expression");
     };
     if matches!(member, MemberKey::PrivateName(_)) {
-        let object = expression::lower_expression(lowering, object);
+        let object = lowering.lower_expression(object);
         return Reference::Private {
             object,
             access: target,
@@ -159,18 +291,18 @@ fn lower_member_reference(
         lowering.set_position(hir[target].pos);
         return reference;
     }
-    let conversion = resolve_key_conversion(lowering.file, member, conversion);
+    let conversion = lowering.file.resolve_key_conversion(member, conversion);
     if matches!(hir[object].kind, ExprKind::Super) {
-        let (home_kind, home) = function::get_home_object(lowering);
+        let (home_kind, home) = lowering.get_home_object();
         let base = lowering.builder.get_super_base(home_kind, home);
-        let name = super::lower_member_key(lowering, member);
+        let name = lowering.lower_member_key(member);
         lowering.set_position(hir[target].pos);
-        let name = convert_key(lowering, base, name, conversion);
+        let name = lowering.convert_key(base, name, conversion);
         return Reference::Super { base, name };
     }
     let (object, name) = super::lower_member_operands(lowering, target, None);
     lowering.set_position(hir[target].pos);
-    let name = convert_key(lowering, object, name, conversion);
+    let name = lowering.convert_key(object, name, conversion);
     Reference::Property {
         object,
         name,
@@ -178,170 +310,14 @@ fn lower_member_reference(
     }
 }
 
-fn lower_invalid_reference(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    target: ExprId,
-) -> Reference {
-    expression::lower_expression_for_effect(lowering, target);
-    lowering.set_position(lowering.file.hir[target].pos);
-    exception::emit_throw_runtime_error(lowering, RuntimeErrorKind::UnresolvableReference, None);
-    Reference::Invalid
-}
-
-fn resolve_key_conversion(
-    file: &FileLowering<'_, '_, '_, '_>,
-    member: MemberKey,
-    requested: KeyConversion,
-) -> KeyConversion {
-    match member {
-        MemberKey::Name(_) | MemberKey::PrivateName(_) => KeyConversion::AtAccess,
-        MemberKey::Computed(key) => match expression::find_constant(file, key) {
-            Some(_) => KeyConversion::AtAccess,
-            None => requested,
-        },
-    }
-}
-
-fn convert_key(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ValueId,
-    name: PropertyName,
-    conversion: KeyConversion,
-) -> PropertyName {
-    match (conversion, name) {
-        (KeyConversion::AtAccess, _) | (KeyConversion::Once, PropertyName::Constant(_)) => name,
-        (KeyConversion::Once, PropertyName::Computed(key)) => {
-            PropertyName::Computed(convert_key_once(lowering, object, key))
+impl FileLowering<'_, '_, '_, '_> {
+    fn resolve_key_conversion(&self, member: MemberKey, requested: KeyConversion) -> KeyConversion {
+        match member {
+            MemberKey::Name(_) | MemberKey::PrivateName(_) => KeyConversion::AtAccess,
+            MemberKey::Computed(key) => match expression::find_constant(self, key) {
+                Some(_) => KeyConversion::AtAccess,
+                None => requested,
+            },
         }
-    }
-}
-
-fn convert_key_once(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: ValueId,
-    key: ValueId,
-) -> ValueId {
-    let result = lowering.builder.create_variable(None);
-    let join = lowering.create_block();
-    let split = condition::split_on_type(lowering, key, TypeTable::OBJECT);
-
-    lowering.builder.switch_to(split.taken);
-    lowering
-        .builder
-        .require_object_coercible(object, NullishAccess::Read, None);
-    let converted = lowering.builder.to_property_key(split.taken_value);
-    lowering.builder.write_variable(result, converted);
-    lowering.jump(join);
-
-    lowering.builder.switch_to(split.not_taken);
-    lowering
-        .builder
-        .write_variable(result, split.not_taken_value);
-    lowering.jump(join);
-
-    lowering.continue_in(join);
-    lowering.builder.read_variable(result)
-}
-
-pub(in crate::lower) fn get_reference(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    reference: &Reference,
-) -> ValueId {
-    match *reference {
-        Reference::Identifier { ref target, .. } => scope::get_identifier_target(lowering, target),
-        Reference::FreeName(name) => expression::emit_free_name_get(lowering, name, false),
-        Reference::Property {
-            object,
-            name,
-            access: Some(access),
-        } => super::emit_member_read(lowering, access, object, name),
-        Reference::Property {
-            object,
-            name,
-            access: None,
-        } => super::emit_get(lowering, object, name),
-        Reference::Super { base, name } => {
-            let receiver = function::get_this(lowering);
-            let (computed_key, key) = name.key_operands();
-            lowering
-                .builder
-                .super_get(base, receiver, computed_key, key)
-        }
-        Reference::Private { object, access } => {
-            private_names::emit_private_get(lowering, object, access)
-        }
-        Reference::ModuleVariable { variable, holder } => {
-            commonjs::test_holder(lowering, holder, NullishAccess::Read);
-            lowering.builder.get_module_variable(variable)
-        }
-        Reference::Discarded { holder } => {
-            commonjs::test_holder(lowering, holder, NullishAccess::Read);
-            lowering.builder.undefined()
-        }
-        Reference::Invalid => lowering.builder.undefined(),
-    }
-}
-
-pub(in crate::lower) fn put_reference(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    reference: &Reference,
-    value: ValueId,
-    source: Option<ExprId>,
-) -> ValueId {
-    match *reference {
-        Reference::Identifier {
-            ref target,
-            identifier,
-        } => {
-            scope::set_identifier_target(lowering, target, value, source);
-            match scope::find_tested_local(lowering, identifier) {
-                Some(_) => scope::lower_identifier(lowering, identifier),
-                None => value,
-            }
-        }
-        Reference::FreeName(name) => {
-            expression::emit_free_name_set(lowering, name, value);
-            value
-        }
-        Reference::Property {
-            object,
-            name,
-            access: Some(access),
-        } => {
-            let converted = convert::convert_to_member(lowering, access, value, source);
-            super::emit_set(lowering, object, name, converted);
-            converted
-        }
-        Reference::Property {
-            object,
-            name,
-            access: None,
-        } => {
-            super::emit_set(lowering, object, name, value);
-            value
-        }
-        Reference::Super { base, name } => {
-            let receiver = function::get_this(lowering);
-            let (computed_key, key) = name.key_operands();
-            let mode = lowering.mode();
-            lowering
-                .builder
-                .super_set(mode, base, receiver, value, computed_key, key);
-            value
-        }
-        Reference::Private { object, access } => {
-            private_names::emit_private_set(lowering, object, access, value, source);
-            value
-        }
-        Reference::ModuleVariable { variable, holder } => {
-            commonjs::test_holder(lowering, holder, NullishAccess::Write);
-            lowering.builder.put_module_variable(variable, value);
-            value
-        }
-        Reference::Discarded { holder } => {
-            commonjs::test_holder(lowering, holder, NullishAccess::Write);
-            value
-        }
-        Reference::Invalid => value,
     }
 }

@@ -5,15 +5,12 @@ use bun_sema::fold::Constant;
 use bun_sema::hir::{ExprId, ExprKind, MemberKey, PatId};
 use bun_sema::program::FileRole;
 
-use super::members;
 use crate::ir::generated::{FunctionFlags, FunctionKind, TypeSiteKind};
-use crate::ir::{DeclaredType, LayoutId, PositionFlags, TypeId, TypeTable, ValueId};
+use crate::ir::{DeclaredType, Id, LayoutId, Mapped, PositionFlags, TypeId, TypeTable, ValueId};
 use crate::lower::positions::SiteOrigin;
-use crate::lower::private_names::{self, PrivateHolder};
-use crate::lower::types::{has_layout_in_every_value, map_type_at};
-use crate::lower::{
-    CheckerTypeId, FileLowering, FunctionLowering, expression, function, layouts, member, positions,
-};
+use crate::lower::private_names::PrivateHolder;
+use crate::lower::types::has_layout_in_every_value;
+use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, expression, function};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Reference {
@@ -40,53 +37,231 @@ struct Slot {
     field: u32,
 }
 
-// `X["foo"]` is `X.foo`.
-fn has_constant_key(file: &FileLowering<'_, '_, '_, '_>, key: MemberKey) -> bool {
-    match key {
-        MemberKey::Name(_) | MemberKey::PrivateName(_) => true,
-        MemberKey::Computed(index) => match expression::find_constant(file, index) {
-            Some(Constant::String(_) | Constant::Number(_)) => true,
-            Some(
-                Constant::Undefined | Constant::Null | Constant::Boolean(_) | Constant::BigInt(_),
-            )
-            | None => false,
-        },
-    }
-}
-
-fn classify_member(file: &FileLowering<'_, '_, '_, '_>, access: ExprId) -> Reference {
-    let mut root = access;
-    while let Some((object, key)) = file.hir.member_key(root) {
-        if !has_constant_key(file, key) {
-            return Reference::NotAReference;
+impl FileLowering<'_, '_, '_, '_> {
+    // `X["foo"]` is `X.foo`.
+    fn has_constant_key(&self, key: MemberKey) -> bool {
+        match key {
+            MemberKey::Name(_) | MemberKey::PrivateName(_) => true,
+            MemberKey::Computed(index) => match expression::find_constant(self, index) {
+                Some(Constant::String(_) | Constant::Number(_)) => true,
+                Some(
+                    Constant::Undefined
+                    | Constant::Null
+                    | Constant::Boolean(_)
+                    | Constant::BigInt(_),
+                )
+                | None => false,
+            },
         }
-        root = expression::skip_type_syntax(file, object);
     }
-    match classify_reference(file, root) {
-        Reference::Binding(_) | Reference::This | Reference::Member => Reference::Member,
-        Reference::NotAReference => Reference::NotAReference,
-    }
-}
 
-fn classify_reference(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> Reference {
-    match file.hir[expression].kind {
-        ExprKind::Ident(_) => match file.bound.binding(expression) {
-            Binding::Symbol(symbol) => Reference::Binding(symbol),
-            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {
-                Reference::NotAReference
+    fn classify_member(&self, access: ExprId) -> Reference {
+        let mut root = access;
+        while let Some((object, key)) = self.hir.member_key(root) {
+            if !self.has_constant_key(key) {
+                return Reference::NotAReference;
             }
-        },
-        ExprKind::This => Reference::This,
-        ExprKind::Dot { .. } | ExprKind::Index { .. } => classify_member(file, expression),
-        _ => Reference::NotAReference,
+            root = self.skip_type_syntax(object);
+        }
+        match self.classify_reference(root) {
+            Reference::Binding(_) | Reference::This | Reference::Member => Reference::Member,
+            Reference::NotAReference => Reference::NotAReference,
+        }
     }
-}
 
-// A built-in that the table resolves says more than the type the checker has for it.
-fn names_resolved_builtin(file: &FileLowering<'_, '_, '_, '_>, reference: Reference) -> bool {
-    match reference {
-        Reference::Binding(symbol) => file.builtins.of_symbol(symbol).is_some(),
-        Reference::This | Reference::Member | Reference::NotAReference => false,
+    fn classify_reference(&self, expression: ExprId) -> Reference {
+        match self.hir[expression].kind {
+            ExprKind::Ident(_) => match self.bound.binding(expression) {
+                Binding::Symbol(symbol) => Reference::Binding(symbol),
+                Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {
+                    Reference::NotAReference
+                }
+            },
+            ExprKind::This => Reference::This,
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => self.classify_member(expression),
+            _ => Reference::NotAReference,
+        }
+    }
+
+    // A built-in that the table resolves says more than the type the checker has for it.
+    fn names_resolved_builtin(&self, reference: Reference) -> bool {
+        match reference {
+            Reference::Binding(symbol) => self.builtins.of_symbol(symbol).is_some(),
+            Reference::This | Reference::Member | Reference::NotAReference => false,
+        }
+    }
+
+    // The types of the fields of a class are only expected where nobody checked the file of the class.
+    fn has_typed_fields(&self, class: ClassRef) -> bool {
+        match self.queries.role(class.file) {
+            FileRole::Checked => true,
+            FileRole::Inferred | FileRole::TypesOnly => false,
+        }
+    }
+
+    fn classify_receiver_type(&mut self, ty: CheckerTypeId) -> Receiver {
+        let Ok(shape) = self.queries.type_shape(ty) else {
+            return Receiver::WithoutSlots;
+        };
+        match shape.kind {
+            ShapeKind::Class(class) if !self.has_typed_fields(class) => Receiver::WithoutSlots,
+            ShapeKind::Class(class) if class.file == self.file => {
+                Receiver::Class(self.class_layout(class))
+            }
+            ShapeKind::Class(_) => Receiver::Declared,
+            ShapeKind::Object if !has_layout_in_every_value(self, ty) => Receiver::WithoutSlots,
+            ShapeKind::Object => match self.object_type_layout(ty) {
+                Some(layout) => Receiver::ObjectType(layout),
+                None => Receiver::WithoutSlots,
+            },
+            ShapeKind::Union(members) => {
+                let has_slots_in_every_member =
+                    members
+                        .iter()
+                        .all(|&member| match self.classify_receiver_type(member) {
+                            Receiver::ObjectType(_) | Receiver::Class(_) | Receiver::Declared => {
+                                true
+                            }
+                            Receiver::WithoutSlots => false,
+                        });
+                match has_slots_in_every_member {
+                    true => Receiver::Declared,
+                    false => Receiver::WithoutSlots,
+                }
+            }
+            _ => Receiver::WithoutSlots,
+        }
+    }
+
+    fn classify_receiver(&mut self, object: ExprId) -> Receiver {
+        let receiver = self.queries.expression_type(object);
+        match receiver.and_then(|receiver| self.queries.without_nullish(receiver)) {
+            Ok(receiver) => self.classify_receiver_type(receiver),
+            Err(_) => Receiver::WithoutSlots,
+        }
+    }
+
+    fn find_listed_slot(&mut self, receiver: Receiver, key: MemberKey) -> Option<Slot> {
+        let layout = match receiver {
+            Receiver::ObjectType(layout) | Receiver::Class(layout) => layout,
+            Receiver::Declared | Receiver::WithoutSlots => return None,
+        };
+        let name = find_constant_name(self, key)?;
+        let key = self.name_key(name);
+        let field = self.find_field(layout, key)?;
+        Some(Slot { layout, field })
+    }
+
+    fn find_private_slot(&mut self, access: ExprId) -> Option<Slot> {
+        let name = self.bound.private_name_of_reference(access)?;
+        let binding = self.resolve_private_name(name);
+        let is_read_from_slot = match binding.members {
+            PrivateMembers::Field(_) => true,
+            PrivateMembers::AutoAccessor(_) => !binding.is_decorated,
+            PrivateMembers::Method(_) | PrivateMembers::Accessor { .. } => false,
+        };
+        match binding.holder {
+            PrivateHolder::Instance { layout, field } if is_read_from_slot => {
+                Some(Slot { layout, field })
+            }
+            PrivateHolder::Instance { .. } | PrivateHolder::ClassObject => None,
+        }
+    }
+
+    fn map_position(&mut self, access: ExprId, ty: Option<CheckerTypeId>) -> DeclaredType {
+        let Some(ty) = ty else {
+            return DeclaredType::untyped();
+        };
+        let mapped = self.map_type_at(ty, self.hir[access].pos);
+        DeclaredType::new(mapped, None, PositionFlags::default())
+    }
+
+    // What is written at a field of a class is the type of its slot, whoever inherits or instantiates the class.
+    fn find_declared_position(&mut self, access: ExprId, fields_have_slots: bool) -> DeclaredType {
+        match self.queries.member_access(access) {
+            Ok(MemberLookup::Member(member)) => match member.kind {
+                ObjectMemberKind::Method => method_position(),
+                ObjectMemberKind::Field if fields_have_slots => {
+                    let declared = member
+                        .types
+                        .written
+                        .written()
+                        .or_else(|| member.types.checked.ok());
+                    let position = self.map_position(access, declared);
+                    match member.is_optional {
+                        true => self.add_undefined(position),
+                        false => position,
+                    }
+                }
+                _ => DeclaredType::untyped(),
+            },
+            Ok(MemberLookup::Index(signature)) => {
+                self.map_position(access, signature.types.checked.ok())
+            }
+            Ok(MemberLookup::Absent) | Err(_) => DeclaredType::untyped(),
+        }
+    }
+
+    fn find_member_position(&mut self, access: ExprId) -> DeclaredType {
+        let Some((object, key)) = self.hir.member_key(access) else {
+            debug_assert!(false, "a member is a Dot or an Index expression");
+            return DeclaredType::untyped();
+        };
+        let (slot, fields_have_slots) = match key {
+            MemberKey::PrivateName(_) => (self.find_private_slot(access), false),
+            MemberKey::Name(_) | MemberKey::Computed(_) => {
+                let receiver = self.classify_receiver(object);
+                let fields_have_slots = match receiver {
+                    Receiver::Class(_) | Receiver::Declared => true,
+                    Receiver::ObjectType(_) | Receiver::WithoutSlots => false,
+                };
+                (self.find_listed_slot(receiver, key), fields_have_slots)
+            }
+        };
+        let Some(slot) = slot else {
+            return self.find_declared_position(access, fields_have_slots);
+        };
+        match self.is_method_field(slot.layout, slot.field) {
+            true => method_position(),
+            false => {
+                let position = self.field_position(slot.layout, slot.field);
+                self.widen_int32_of_united_layout(slot.layout, position)
+            }
+        }
+    }
+
+    // What is an `int32` in the definitions seen so far may be a `number` in one that comes later or lies in another file, so each read claims the `int32` for itself.
+    fn widen_int32_of_united_layout(
+        &mut self,
+        layout: LayoutId,
+        position: DeclaredType,
+    ) -> DeclaredType {
+        let is_united = self.fragment.layout_keys()[layout.index()].has_united_definitions();
+        if !is_united || !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
+            return position;
+        }
+        let ty = self.fragment.types.union(position.ty, TypeTable::NUMBER);
+        let flags = position.flags.without(PositionFlags::IS_INT32_PROMISE);
+        DeclaredType::new(Mapped::checked(ty), position.site, flags)
+    }
+
+    // A type that lists all that the position lists adds nothing to it.
+    fn includes_all_of(&mut self, ty: TypeId, position: TypeId) -> bool {
+        if ty == position || position == TypeTable::ANYTHING {
+            return ty == position;
+        }
+        self.fragment.types.union(ty, position) == ty
+    }
+
+    // TypeScript gives `C.prototype` the type of the instances of `C`. The object has their methods and none of their fields: it is no instance.
+    fn reads_prototype_object_of_declaration(&mut self, access: ExprId) -> bool {
+        match self.hir.member_key(access) {
+            Some((owner, MemberKey::Name(name))) if name == known::prototype => {
+                let declaration = self.queries.constructed_declaration(self.file, owner);
+                declaration.is_some()
+            }
+            _ => false,
+        }
     }
 }
 
@@ -104,54 +279,6 @@ fn find_this_position(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) -> De
             true => function.this_type,
             false => DeclaredType::untyped(),
         },
-    }
-}
-
-// The types of the fields of a class are only expected where nobody checked the file of the class.
-fn has_typed_fields(file: &FileLowering<'_, '_, '_, '_>, class: ClassRef) -> bool {
-    match file.queries.role(class.file) {
-        FileRole::Checked => true,
-        FileRole::Inferred | FileRole::TypesOnly => false,
-    }
-}
-
-fn classify_receiver_type(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> Receiver {
-    let Ok(shape) = file.queries.type_shape(ty) else {
-        return Receiver::WithoutSlots;
-    };
-    match shape.kind {
-        ShapeKind::Class(class) if !has_typed_fields(file, class) => Receiver::WithoutSlots,
-        ShapeKind::Class(class) if class.file == file.file => {
-            Receiver::Class(layouts::class_layout(file, class))
-        }
-        ShapeKind::Class(_) => Receiver::Declared,
-        ShapeKind::Object if !has_layout_in_every_value(file, ty) => Receiver::WithoutSlots,
-        ShapeKind::Object => match layouts::object_type_layout(file, ty) {
-            Some(layout) => Receiver::ObjectType(layout),
-            None => Receiver::WithoutSlots,
-        },
-        ShapeKind::Union(members) => {
-            let has_slots_in_every_member =
-                members
-                    .iter()
-                    .all(|&member| match classify_receiver_type(file, member) {
-                        Receiver::ObjectType(_) | Receiver::Class(_) | Receiver::Declared => true,
-                        Receiver::WithoutSlots => false,
-                    });
-            match has_slots_in_every_member {
-                true => Receiver::Declared,
-                false => Receiver::WithoutSlots,
-            }
-        }
-        _ => Receiver::WithoutSlots,
-    }
-}
-
-fn classify_receiver(file: &mut FileLowering<'_, '_, '_, '_>, object: ExprId) -> Receiver {
-    let receiver = file.queries.expression_type(object);
-    match receiver.and_then(|receiver| file.queries.without_nullish(receiver)) {
-        Ok(receiver) => classify_receiver_type(file, receiver),
-        Err(_) => Receiver::WithoutSlots,
     }
 }
 
@@ -173,217 +300,101 @@ fn find_constant_name(file: &FileLowering<'_, '_, '_, '_>, key: MemberKey) -> Op
     }
 }
 
-fn find_listed_slot(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    receiver: Receiver,
-    key: MemberKey,
-) -> Option<Slot> {
-    let layout = match receiver {
-        Receiver::ObjectType(layout) | Receiver::Class(layout) => layout,
-        Receiver::Declared | Receiver::WithoutSlots => return None,
-    };
-    let name = find_constant_name(file, key)?;
-    let key = member::name_key(file, name);
-    let field = layouts::find_field(file, layout, key)?;
-    Some(Slot { layout, field })
-}
-
-fn find_private_slot(file: &mut FileLowering<'_, '_, '_, '_>, access: ExprId) -> Option<Slot> {
-    let name = file.bound.private_name_of_reference(access)?;
-    let binding = private_names::resolve_private_name(file, name);
-    let is_read_from_slot = match binding.members {
-        PrivateMembers::Field(_) => true,
-        PrivateMembers::AutoAccessor(_) => !binding.is_decorated,
-        PrivateMembers::Method(_) | PrivateMembers::Accessor { .. } => false,
-    };
-    match binding.holder {
-        PrivateHolder::Instance { layout, field } if is_read_from_slot => {
-            Some(Slot { layout, field })
-        }
-        PrivateHolder::Instance { .. } | PrivateHolder::ClassObject => None,
-    }
-}
-
 // Nothing narrows a method: its type names its declaration, whatever the type arguments of the receiver are.
 fn method_position() -> DeclaredType {
     DeclaredType::from_compiler(TypeTable::FUNCTION)
 }
 
-fn map_position(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    access: ExprId,
-    ty: Option<CheckerTypeId>,
-) -> DeclaredType {
-    let Some(ty) = ty else {
-        return DeclaredType::untyped();
-    };
-    let mapped = map_type_at(file, ty, file.hir[access].pos);
-    DeclaredType::new(mapped, None, PositionFlags::default())
-}
-
-// What is written at a field of a class is the type of its slot, whoever inherits or instantiates the class.
-fn find_declared_position(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    access: ExprId,
-    fields_have_slots: bool,
-) -> DeclaredType {
-    match file.queries.member_access(access) {
-        Ok(MemberLookup::Member(member)) => match member.kind {
-            ObjectMemberKind::Method => method_position(),
-            ObjectMemberKind::Field if fields_have_slots => {
-                let declared = member
-                    .types
-                    .written
-                    .written()
-                    .or_else(|| member.types.checked.ok());
-                let position = map_position(file, access, declared);
-                match member.is_optional {
-                    true => positions::add_undefined(file, position),
-                    false => position,
-                }
-            }
-            _ => DeclaredType::untyped(),
-        },
-        Ok(MemberLookup::Index(signature)) => {
-            map_position(file, access, signature.types.checked.ok())
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    // The position that the reference reads. It is untyped where nothing holds what is read to a type.
+    fn find_position_before_narrowing(
+        &mut self,
+        expression: ExprId,
+        reference: Reference,
+    ) -> DeclaredType {
+        match reference {
+            Reference::Binding(symbol) => self.file.binding_position(symbol),
+            Reference::This => find_this_position(self),
+            Reference::Member => self.file.find_member_position(expression),
+            Reference::NotAReference => DeclaredType::untyped(),
         }
-        Ok(MemberLookup::Absent) | Err(_) => DeclaredType::untyped(),
     }
-}
 
-fn find_member_position(file: &mut FileLowering<'_, '_, '_, '_>, access: ExprId) -> DeclaredType {
-    let Some((object, key)) = file.hir.member_key(access) else {
-        debug_assert!(false, "a member is a Dot or an Index expression");
-        return DeclaredType::untyped();
-    };
-    let (slot, fields_have_slots) = match key {
-        MemberKey::PrivateName(_) => (find_private_slot(file, access), false),
-        MemberKey::Name(_) | MemberKey::Computed(_) => {
-            let receiver = classify_receiver(file, object);
-            let fields_have_slots = match receiver {
-                Receiver::Class(_) | Receiver::Declared => true,
-                Receiver::ObjectType(_) | Receiver::WithoutSlots => false,
-            };
-            (find_listed_slot(file, receiver, key), fields_have_slots)
+    // The checker keeps what it knows of a member across calls and aliases, so each read has its own conversion and nothing rests on an earlier one.
+    pub(in crate::lower) fn convert_narrowed_reference(
+        &mut self,
+        expression: ExprId,
+        value: ValueId,
+    ) -> ValueId {
+        if !self.file.is_checked() {
+            return value;
         }
-    };
-    let Some(slot) = slot else {
-        return find_declared_position(file, access, fields_have_slots);
-    };
-    match layouts::is_method_field(file, slot.layout, slot.field) {
-        true => method_position(),
-        false => layouts::field_position(file, slot.layout, slot.field),
-    }
-}
-
-// The position that the reference reads. It is untyped where nothing holds what is read to a type.
-fn find_position_before_narrowing(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    reference: Reference,
-) -> DeclaredType {
-    match reference {
-        Reference::Binding(symbol) => positions::binding_position(lowering.file, symbol),
-        Reference::This => find_this_position(lowering),
-        Reference::Member => find_member_position(lowering.file, expression),
-        Reference::NotAReference => DeclaredType::untyped(),
-    }
-}
-
-// A type that lists all that the position lists adds nothing to it.
-fn includes_all_of(file: &mut FileLowering<'_, '_, '_, '_>, ty: TypeId, position: TypeId) -> bool {
-    if ty == position || position == TypeTable::ANYTHING {
-        return ty == position;
-    }
-    file.fragment.types.union(ty, position) == ty
-}
-
-// TypeScript gives `C.prototype` the type of the instances of `C`. The object has their methods and none of their fields: it is no instance.
-fn reads_prototype_object_of_declaration(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    access: ExprId,
-) -> bool {
-    match file.hir.member_key(access) {
-        Some((owner, MemberKey::Name(name))) if name == known::prototype => {
-            let declaration = file.queries.constructed_declaration(file.file, owner);
-            declaration.is_some()
+        let reference = self.file.classify_reference(expression);
+        if reference == Reference::NotAReference || self.file.names_resolved_builtin(reference) {
+            return value;
         }
-        _ => false,
+        if self.file.reads_prototype_object_of_declaration(expression) {
+            return value;
+        }
+        let before = self.find_position_before_narrowing(expression, reference);
+        // The compiler says which function, class or instance it is.
+        if before.flags.contains(PositionFlags::IS_FROM_COMPILER) {
+            return value;
+        }
+        let Ok(ty) = self.file.queries.expression_type(expression) else {
+            return value;
+        };
+        let position = self.file.hir[expression].pos;
+        let narrowed = self.file.map_type_at(ty, position);
+        if self.file.includes_all_of(narrowed.ty, before.ty) {
+            return value;
+        }
+        // The type that the receiver's type declares for a member is as much written as that of a field. What the checker concludes from the control flow is not.
+        let is_declared = reference == Reference::Member
+            && self.file.find_declared_member_type(expression) == Some(ty);
+        let origin = is_declared.then_some(SiteOrigin {
+            kind: TypeSiteKind::PropertyRead,
+            position,
+        });
+        self.convert_narrowed(value, before.ty, narrowed, origin)
     }
-}
 
-// The checker keeps what it knows of a member across calls and aliases, so each read has its own conversion and nothing rests on an earlier one.
-pub(in crate::lower) fn convert_narrowed_reference(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    value: ValueId,
-) -> ValueId {
-    if !lowering.file.is_checked() {
-        return value;
+    // The build proves the promise from what is known about the value before it enters the binding.
+    fn is_int32_promise(&mut self, pattern: PatId) -> bool {
+        match self.file.bound.initialized_binding(pattern) {
+            Binding::Symbol(symbol) => self
+                .file
+                .binding_position(symbol)
+                .flags
+                .contains(PositionFlags::IS_INT32_PROMISE),
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
+        }
     }
-    let reference = classify_reference(lowering.file, expression);
-    if reference == Reference::NotAReference || names_resolved_builtin(lowering.file, reference) {
-        return value;
-    }
-    if reads_prototype_object_of_declaration(lowering.file, expression) {
-        return value;
-    }
-    let before = find_position_before_narrowing(lowering, expression, reference);
-    // The compiler says which function, class or instance it is.
-    if before.flags.contains(PositionFlags::IS_FROM_COMPILER) {
-        return value;
-    }
-    let Ok(ty) = lowering.file.queries.expression_type(expression) else {
-        return value;
-    };
-    let position = lowering.file.hir[expression].pos;
-    let narrowed = map_type_at(lowering.file, ty, position);
-    if includes_all_of(lowering.file, narrowed.ty, before.ty) {
-        return value;
-    }
-    // The type that the receiver's type declares for a member is as much written as that of a field. What the checker concludes from the control flow is not.
-    let is_declared = reference == Reference::Member
-        && members::find_declared_member_type(lowering.file, expression) == Some(ty);
-    let origin = is_declared.then_some(SiteOrigin {
-        kind: TypeSiteKind::PropertyRead,
-        position,
-    });
-    super::convert_narrowed(lowering, value, before.ty, narrowed, origin)
-}
 
-// The build proves the promise from what is known about the value before it enters the binding.
-fn is_int32_promise(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, pattern: PatId) -> bool {
-    match lowering.file.bound.initialized_binding(pattern) {
-        Binding::Symbol(symbol) => positions::binding_position(lowering.file, symbol)
-            .flags
-            .contains(PositionFlags::IS_INT32_PROMISE),
-        Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
+    // A variable and a parameter have the type in their position, and the pattern itself makes what a rest element receives.
+    pub(in crate::lower) fn convert_pattern_element(
+        &mut self,
+        pattern: PatId,
+        value: ValueId,
+    ) -> ValueId {
+        if !self.file.is_checked() {
+            return value;
+        }
+        let hir = self.file.hir;
+        let parent = self.file.bound.pat_parent[pattern.idx()];
+        let is_taken_out = match parent {
+            PatParent::Prop(..) | PatParent::Elem(..) => !parent.has_dot_dot_dot_token(hir),
+            PatParent::None | PatParent::Var(_) | PatParent::Param(_) => false,
+        };
+        if !is_taken_out || self.is_int32_promise(pattern) {
+            return value;
+        }
+        let Ok(ty) = self.file.queries.binding_type(pattern) else {
+            return value;
+        };
+        let taken_out = self.file.map_type_at(ty, hir[pattern].pos);
+        self.convert_narrowed(value, TypeTable::ANYTHING, taken_out, None)
     }
-}
-
-// A variable and a parameter have the type in their position, and the pattern itself makes what a rest element receives.
-pub(in crate::lower) fn convert_pattern_element(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    pattern: PatId,
-    value: ValueId,
-) -> ValueId {
-    if !lowering.file.is_checked() {
-        return value;
-    }
-    let hir = lowering.file.hir;
-    let parent = lowering.file.bound.pat_parent[pattern.idx()];
-    let is_taken_out = match parent {
-        PatParent::Prop(..) | PatParent::Elem(..) => !parent.has_dot_dot_dot_token(hir),
-        PatParent::None | PatParent::Var(_) | PatParent::Param(_) => false,
-    };
-    if !is_taken_out || is_int32_promise(lowering, pattern) {
-        return value;
-    }
-    let Ok(ty) = lowering.file.queries.binding_type(pattern) else {
-        return value;
-    };
-    let taken_out = map_type_at(lowering.file, ty, hir[pattern].pos);
-    super::convert_narrowed(lowering, value, TypeTable::ANYTHING, taken_out, None)
 }
 
 #[cfg(test)]
@@ -535,6 +546,26 @@ interface B { kind: 2; b: number }
 export function probe(node: A | B) { return node.kind; }
 ";
         let narrowed = narrowed_types(source, "probe");
+        assert!(narrowed.is_empty(), "{narrowed:?}");
+    }
+
+    #[test]
+    fn int32_member_of_a_plain_object_is_converted_at_each_read() {
+        let main = "/// <reference path=\"./bun-declarations.d.ts\" />
+import type { int32 } from \"bun\";
+interface Point { x: int32; y?: int32 }
+class Pixel { x: int32 = 0; }
+export function plain(point: Point) { return [point.x, point[\"x\"], point.y]; }
+export function instance(pixel: Pixel) { return pixel.x; }
+";
+        let declarations = "declare module \"bun\" {
+  type int32 = number & { readonly \"bun.int32\"?: true };
+}
+";
+        let files = [("main.ts", main), ("bun-declarations.d.ts", declarations)];
+        let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
+        assert_eq!(narrowed_types_in(&files, "plain"), vec![int32; 3]);
+        let narrowed = narrowed_types_in(&files, "instance");
         assert!(narrowed.is_empty(), "{narrowed:?}");
     }
 

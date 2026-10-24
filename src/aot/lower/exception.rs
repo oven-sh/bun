@@ -1,21 +1,23 @@
 use bun_sema::hir::{StmtId, StmtKind};
 
-use super::{FunctionLowering, control, expression, pattern, scope, statement};
+use super::FunctionLowering;
 use crate::ir::generated::{BlockRole, RuntimeErrorKind};
 use crate::ir::{StringId, ValueId};
 
-pub(crate) fn emit_throw(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, value: ValueId) {
-    lowering.builder.throw(value);
-    lowering.begin_unreachable_block();
-}
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn emit_throw(&mut self, value: ValueId) {
+        self.builder.throw(value);
+        self.begin_unreachable_block();
+    }
 
-pub(crate) fn emit_throw_runtime_error(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    error: RuntimeErrorKind,
-    name: Option<StringId>,
-) {
-    let value = lowering.builder.new_runtime_error(error, name);
-    emit_throw(lowering, value);
+    pub(crate) fn emit_throw_runtime_error(
+        &mut self,
+        error: RuntimeErrorKind,
+        name: Option<StringId>,
+    ) {
+        let value = self.builder.new_runtime_error(error, name);
+        self.emit_throw(value);
+    }
 }
 
 pub(in crate::lower) fn lower_throw(
@@ -26,9 +28,9 @@ pub(in crate::lower) fn lower_throw(
     let StmtKind::Throw(expression) = stmt.kind else {
         unreachable!("lower_throw takes a Throw statement");
     };
-    let value = expression::lower_expression(lowering, expression);
+    let value = lowering.lower_expression(expression);
     lowering.set_position(stmt.start);
-    emit_throw(lowering, value);
+    lowering.emit_throw(value);
 }
 
 pub(in crate::lower) fn lower_try(
@@ -42,10 +44,10 @@ pub(in crate::lower) fn lower_try(
         lower_try_and_catch(lowering, statement);
         return;
     }
-    control::begin_cleanup(lowering, BlockRole::CleanupHandler, None);
+    lowering.begin_cleanup(BlockRole::CleanupHandler, None);
     lower_try_and_catch(lowering, statement);
-    control::end_cleanup_shared(lowering, &mut |lowering| {
-        statement::lower_statement(lowering, finalizer);
+    lowering.end_cleanup_shared(&mut |lowering| {
+        lowering.lower_statement(finalizer);
     });
 }
 
@@ -61,14 +63,14 @@ fn lower_try_and_catch(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, stat
         unreachable!("lower_try_and_catch takes a Try statement");
     };
     if catch_body.is_none() {
-        statement::lower_statement(lowering, block);
+        lowering.lower_statement(block);
         return;
     }
 
     let after = lowering.create_block();
-    let handler = control::begin_handler(lowering, BlockRole::CatchHandler, None);
-    statement::lower_statement(lowering, block);
-    control::end_handler(lowering, handler);
+    let handler = lowering.begin_handler(BlockRole::CatchHandler, None);
+    lowering.lower_statement(block);
+    lowering.end_handler(handler);
     lowering.jump(after);
 
     lowering.continue_in(handler.block());
@@ -76,14 +78,14 @@ fn lower_try_and_catch(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, stat
     let caught = lowering.builder.catch_value();
     let scope = lowering.file.bound.own_scope(statement);
     if scope.is_some() {
-        scope::enter_scope(lowering, scope);
+        lowering.enter_scope(scope);
     }
     if param.is_some() {
-        pattern::bind_pattern(lowering, hir[param].pat, caught, None);
+        lowering.bind_pattern(hir[param].pat, caught, None);
     }
-    statement::lower_statement(lowering, catch_body);
+    lowering.lower_statement(catch_body);
     if scope.is_some() {
-        scope::leave_scope(lowering, scope);
+        lowering.leave_scope(scope);
     }
     lowering.jump(after);
     lowering.continue_in(after);

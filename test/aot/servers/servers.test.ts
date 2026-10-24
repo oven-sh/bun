@@ -30,7 +30,7 @@ import { join } from "path";
 import { canTrim } from "../../bundler/compile-trim-features";
 import { built, spawned, unsupported } from "../run-programs";
 import { invalidOrderBody, invalidOrders, routes, type Route } from "./answers";
-import { filterRequested, installPackages, requestedServers, startServer } from "./run-servers";
+import { filterRequested, installPackages, removeFolders, requestedServers, startServer } from "./run-servers";
 
 const servers = filterRequested([
   "bun",
@@ -162,7 +162,7 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
     "fastify",
   ];
   // Each executable is as large as Bun itself.
-  afterAll(() => [app, tanstack].forEach(folder => rmSync(folder, { recursive: true, force: true })));
+  afterAll(() => removeFolders(app, tanstack));
 
   beforeAll(async () => {
     if (servers.some(name => name !== "tanstack")) {

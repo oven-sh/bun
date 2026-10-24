@@ -10,7 +10,7 @@
 //
 // See ./servers.test.ts for AOT_SERVERS and AOT_SERVERS_MODULES.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, rmSync } from "fs";
+import { cpSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../run-programs";
@@ -19,6 +19,7 @@ import {
   installPackages,
   moreEnvironment,
   moreFlags,
+  removeFolders,
   requestedServers,
   startServer,
 } from "./run-servers";
@@ -361,14 +362,7 @@ if (!requestedServers)
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/features", () => {
   const folder = String(tempDir("aot-servers-features", {}));
   // Each executable is as large as Bun itself.
-  afterAll(() => {
-    try {
-      rmSync(folder, { recursive: true, force: true });
-    } catch (error) {
-      // On Windows the file of an executable that has just ended may still be held.
-      if (process.platform !== "win32") throw error;
-    }
-  });
+  afterAll(() => removeFolders(folder));
 
   beforeAll(async () => {
     cpSync(join(import.meta.dir, "app"), folder, { recursive: true });

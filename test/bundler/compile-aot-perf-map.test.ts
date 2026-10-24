@@ -85,9 +85,10 @@ test.if(isLinux)("BUN_JSC_useAOTPerfMap=1 writes a map that perf reads: names, i
     .map(row => [parseInt(row[1], 16), parseInt(row[1], 16) + parseInt(row[2], 16)])
     .sort((a, b) => a[0] - b[0]);
   expect(ranges.slice(1).filter(([start], i) => start !== ranges[i][1])).toEqual([]);
+  // Anonymous memory that two mappings share is listed under this name.
   const anonymous = maps
     .split("\n")
-    .map(line => /^([0-9a-f]+)-([0-9a-f]+) r-xp \S+ \S+ 0\s*$/.exec(line))
+    .map(line => /^([0-9a-f]+)-([0-9a-f]+) r-xs \S+ \S+ \d+\s+\/dev\/zero \(deleted\)$/.exec(line))
     .filter(found => found !== null)
     .map(found => [BigInt("0x" + found[1]), BigInt("0x" + found[2])]);
   for (const [, start, size] of rows) {

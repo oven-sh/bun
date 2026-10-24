@@ -8,7 +8,8 @@ const respond = () => {
   return response;
 };
 const server = Bun.serve({ port: 0, idleTimeout: 0, fetch: async () => { await Promise.resolve(); return respond(); } });
-for (let i = 0; i < 8; i++) {
+// One more than are counted: a stale word on the stack can name the last stream for as long as the process runs.
+for (let i = 0; i < 9; i++) {
   const ac = new AbortController();
   const res = await fetch(server.url, { signal: ac.signal });
   const reader = res.body.getReader();
@@ -17,6 +18,7 @@ for (let i = 0; i < 8; i++) {
   await reader.closed.catch(() => {});
 }
 await server.stop();
+streams.length = 8;
 let alive = 8;
 // A collection that starts under a resumed async function scans that call's native frames too, and a stale word in a slot they never write can name the last stream. A timer's callback has no such frame above it.
 for (let i = 0; i < 20 && alive > 0; i++) { await new Promise(resolve => setTimeout(() => { Bun.gc(true); resolve(); }, 1)); alive = streams.filter(ref => ref.deref() !== undefined).length; }

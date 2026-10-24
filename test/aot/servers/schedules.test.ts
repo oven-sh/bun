@@ -8,13 +8,13 @@
 //
 // Each server prints one line that begins with SCHEDULES: the bytes of code and the functions under each schedule.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, rmSync } from "fs";
+import { cpSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { buildUnderEachSchedule } from "../harness/flow-schedules";
 import { spawned, unsupported } from "../run-programs";
 import { routes } from "./answers";
-import { filterRequested, installPackages, requestedServers, startServer } from "./run-servers";
+import { filterRequested, installPackages, removeFolders, requestedServers, startServer } from "./run-servers";
 
 const servers = filterRequested(["hono", "elysia", "node", "express", "fastify", "tanstack"]);
 
@@ -26,7 +26,7 @@ if (!requestedServers)
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/schedules", () => {
   const app = String(tempDir("aot-schedules", {}));
   const tanstack = String(tempDir("aot-schedules-tanstack", {}));
-  afterAll(() => [app, tanstack].forEach(folder => rmSync(folder, { recursive: true, force: true })));
+  afterAll(() => removeFolders(app, tanstack));
 
   beforeAll(async () => {
     if (servers.some(name => name !== "tanstack")) {

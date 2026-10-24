@@ -1,7 +1,7 @@
 // Bun's own test files as compiled code: `bun test <file>` against `bun test --debug-aot <file>`, which compiles the file and all it imports and runs that. The verdicts are compared
 // test by test (other-suites/bun-tests.ts). other-suites/bun-tests.same.txt lists the files of test/js and test/regression in which every test has the same verdict both ways.
 //
-// A run takes one file in eighty, others for each commit of Bun (run-programs.ts):
+// A run takes one file in eighty, others for each commit of Bun (run-programs.ts), and a few that every run takes:
 //   AOT_SHARE=all bun test test/aot/buns-own-tests-as-compiled-code            every file: an hour at sixteen files at a time
 //   AOT_PROGRAMS=<part of a path> bun test test/aot/buns-own-tests-as-compiled-code
 import { expect } from "bun:test";
@@ -9,17 +9,21 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
-import { inShare, wanted } from "./run-programs";
+import { inShare, takesWhatIsFixed, wanted } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
 const root = join(import.meta.dir, "..", "..");
 const driver = join(import.meta.dir, "other-suites", "bun-tests.ts");
+// Every run takes these. The first reads members of what `JSON.parse(text)` returns: a declaration somewhere below test/ that changes a type of the standard library for the whole project stops its build.
+const inEveryRun = new Set(["test/js/bun/jsonc/jsonc.test.ts"]);
 const files = readFileSync(join(import.meta.dir, "other-suites", "bun-tests.same.txt"), "utf8")
   .split("\n")
   .filter(
     file =>
       file &&
-      (wanted === "" || wanted === "quick" ? inShare(file, isASAN || isDebug ? 800 : 80, true) : file.includes(wanted)),
+      (wanted === "" || wanted === "quick"
+        ? (takesWhatIsFixed && inEveryRun.has(file)) || inShare(file, isASAN || isDebug ? 800 : 80, true)
+        : file.includes(wanted)),
   );
 
 /** What differs, one line each, by file. A test that runs out of its own time limit says little about the compiler. A file of which nothing was judged differs too. */

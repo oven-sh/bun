@@ -8,7 +8,7 @@
 //
 // See ./servers.test.ts for AOT_SERVERS and AOT_SERVERS_MODULES.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, rmSync } from "fs";
+import { cpSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../run-programs";
@@ -23,7 +23,7 @@ import {
   validatedRoutes,
   type Route,
 } from "./answers";
-import { filterRequested, installPackages, requestedServers, startServer } from "./run-servers";
+import { filterRequested, installPackages, removeFolders, requestedServers, startServer } from "./run-servers";
 
 const servers = filterRequested(["bun-validated", "hono-validated", "express-validated"]);
 const zodRoute = routes.find(route => route.name === "post")!;
@@ -44,7 +44,7 @@ if (!requestedServers)
 
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/validated", () => {
   const app = String(tempDir("aot-servers-validated", {}));
-  afterAll(() => rmSync(app, { recursive: true, force: true }));
+  afterAll(() => removeFolders(app));
 
   beforeAll(async () => {
     cpSync(join(import.meta.dir, "app"), app, { recursive: true });

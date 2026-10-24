@@ -14,7 +14,7 @@ function frames(error: unknown): string {
     const isNative = location === "unknown" || location === "[native code]" || location.startsWith("native");
     if (!isNative) sawProgramFrame = true;
     else if (sawProgramFrame) continue;
-    list.push(isNative ? name + " (native)" : name + ":" + (/:(\d+):\d+$/.exec(location)?.[1] ?? location));
+    list.push(isNative ? name + " (native)" : location.startsWith("node:") ? name + " (library)" : name + ":" + (/:(\d+):\d+$/.exec(location)?.[1] ?? location));
     if (name === "root") break;
   }
   return list.join(" < ");

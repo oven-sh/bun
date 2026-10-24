@@ -119,12 +119,13 @@ ${acts.map(act => `      sum = fold(sum, ${act});`).join("\n")}
   }
   return sum + " failed " + failed;
 }`;
+  // Nothing is printed while the heap is full.
   const go =
-    letGo === "left" ? `console.log("${n} filled", fill${n}());`
-    : letGo === "new list" ? `console.log("${n} filled", fill${n}(held));\nheld = [];`
-    : letGo === "length" ? `console.log("${n} filled", fill${n}(held));\nheld.length = 0;`
-    : `console.log("${n} filled", fill${n}(held));\nfor (let at = 0; at < held.length; at += 2) held[at] = null;`; // prettier-ignore
-  return `${fill}\n${works}\n${go}\nconsole.log("${n} work", work${n}());${letGo === "half" ? "\nheld = [];" : ""}`;
+    letGo === "left" ? `const filled${n} = fill${n}();`
+    : letGo === "new list" ? `const filled${n} = fill${n}(held);\nheld = [];`
+    : letGo === "length" ? `const filled${n} = fill${n}(held);\nheld.length = 0;`
+    : `const filled${n} = fill${n}(held);\nfor (let at = 0; at < held.length; at += 2) held[at] = null;`; // prettier-ignore
+  return `${fill}\n${works}\n${go}\nconst worked${n} = work${n}();\nconsole.log("${n} filled", filled${n}, "work", worked${n});${letGo === "half" ? "\nheld = [];" : ""}`;
 }
 
 export function generate(random: Random): string {

@@ -18,7 +18,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { appendFileSync, copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { dirname, join, relative, sep } from "path";
+import { dirname, join, normalize, relative, sep } from "path";
 import {
   besideOf,
   expectStored,
@@ -89,6 +89,9 @@ async function spawnedFor(seconds: number, cmd: string[], cwd: string) {
 /** As an entry point is spelled for a build in `root`, and for the starter there. */
 const fromStarter = (root: string, path: string) => "./" + relative(root, path).replaceAll("\\", "/");
 
+/** Windows has several spellings for one path: either separator, either case. */
+const spelledOneWay = (path: string) => (isWindows ? normalize(path.replace(/^\/(?=[a-z]:)/i, "")).toLowerCase() : path);
+
 /** The programs that the errors of a build point into, each with the first of its errors. */
 function refusedBy(stderr: string, programs: string[]): Map<string, string> {
   const refused = new Map<string, string>();
@@ -97,7 +100,8 @@ function refusedBy(stderr: string, programs: string[]): Map<string, string> {
     if (/^error\b/.test(line)) error = line;
     const [, file] = /^\s+at (.+):\d+:\d+$/.exec(line) ?? /^error\b.* at (\S+):\d+:\d+$/.exec(line) ?? [];
     if (!file || error === undefined) continue;
-    const program = programs.find(path => path === file || (/[\\/]main\.[a-z]+$/.test(path) && file.startsWith(dirname(path) + sep)));
+    const named = spelledOneWay(file);
+    const program = programs.find(path => spelledOneWay(path) === named || (/[\\/]main\.[a-z]+$/.test(path) && named.startsWith(spelledOneWay(dirname(path) + sep))));
     if (program && !refused.has(program)) refused.set(program, `${error} ${line.trim()}`);
     error = undefined;
   }
@@ -144,7 +148,7 @@ class Way {
     }
     rmSync(executable, { force: true });
     const refused = refusedBy(ran.stderr, programs);
-    const said = `${ran.signal ?? `exit code ${ran.exitCode}`}: ${(/^error\b.*$/m.exec(ran.stderr)?.[0] ?? ran.stderr.trim().split("\n").slice(-3).join(" | ")).slice(0, 400)}`;
+    const said = `${ran.signal ?? `exit code ${ran.exitCode}`}: ${(/^error\b.*(?:\r?\n\s+at .*)?$/m.exec(ran.stderr)?.[0].replace(/\r?\n\s+/, " ") ?? ran.stderr.trim().split("\n").slice(-3).join(" | ")).slice(0, 600)}`;
     if (programs.length === 1) return void this.refused.set(programs[0], refused.get(programs[0]) ?? said);
     if (refused.size === 0 || refused.size === programs.length) {
       console.error(`IN HALVES: the build of ${programs.length} programs, ${this.name}, ended with ${said}`);

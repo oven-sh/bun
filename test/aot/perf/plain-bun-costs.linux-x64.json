@@ -326,5 +326,15 @@
     "thousandInstructions": 197554,
     "pageFaults": 3354,
     "peakKilobytes": 28392
+  },
+  "interpreter streams-made.js": {
+    "thousandInstructions": 5332219,
+    "pageFaults": 3754,
+    "peakKilobytes": 30688
+  },
+  "jit streams-made.js": {
+    "thousandInstructions": 677558,
+    "pageFaults": 5300,
+    "peakKilobytes": 49024
   }
 }

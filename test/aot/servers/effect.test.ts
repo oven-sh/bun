@@ -14,12 +14,12 @@
 //
 // See ./servers.test.ts for AOT_SERVERS. ./measure/measure.py measures the same servers: `--servers effect`.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, mkdirSync, readdirSync, realpathSync, rmSync, symlinkSync } from "fs";
+import { cpSync, mkdirSync, readdirSync, realpathSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, unsupported } from "../run-programs";
 import { effectRoutes, type Route } from "./answers";
-import { filterRequested, installPackages, requestedServers, startServer } from "./run-servers";
+import { filterRequested, installPackages, removeFolders, requestedServers, startServer } from "./run-servers";
 
 const isRequested = !!requestedServers && filterRequested(["effect"]).length > 0;
 
@@ -50,10 +50,7 @@ if (!isRequested)
 describe.skipIf(!isRequested || !!unsupported)("compile/aot/servers/effect", () => {
   const folder = String(tempDir("aot-servers-effect", {}));
   const sourcesFolder = String(tempDir("aot-servers-effect-sources", {}));
-  afterAll(() => {
-    rmSync(folder, { recursive: true, force: true });
-    rmSync(sourcesFolder, { recursive: true, force: true });
-  });
+  afterAll(() => removeFolders(folder, sourcesFolder));
 
   beforeAll(async () => {
     cpSync(join(import.meta.dir, "effect"), folder, { recursive: true });

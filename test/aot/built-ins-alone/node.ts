@@ -966,7 +966,8 @@ const modules: [string, string[], string[]][] = [
     ],
     [
       'import { getSystemErrorMap, getSystemErrorName } from "node:util";',
-      "console.log(getSystemErrorName(-2), getSystemErrorMap() instanceof Map, getSystemErrorMap().get(-2)[0]);",
+      'const [number] = [...getSystemErrorMap()].find(([, [name]]) => name === "ENOENT");',
+      "console.log(getSystemErrorName(number), getSystemErrorMap() instanceof Map, getSystemErrorMap().get(number)[0]);",
     ],
   ],
   [

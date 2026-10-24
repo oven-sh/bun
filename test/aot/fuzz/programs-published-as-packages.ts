@@ -1,7 +1,7 @@
 // Every typed program that a source of this folder draws, published as a package and installed: `bun compile --library` writes `index.js`, `index.d.ts`, `index.full.ts` and `package.json`; the folder is laid into
 // `node_modules` of a program that imports it; `bun compile` builds that program from the package's full types. The executable prints what plain Bun prints for the program itself.
 //
-//   bun programs-published-as-packages.ts --bun <bun> --work <folder> --out <folder> [--seconds 300] [--jobs 8] [--seed 1] [--sources a,b,c]
+//   bun programs-published-as-packages.ts --bun <bun> --work <folder> --out <folder> [--seconds 300] [--jobs 8] [--seed 1] [--sources a,b,c] [--flags "<flags of the build of the program>"]
 //
 //   the package   the program as its one entry point; or with a second module that the first imports; with functions and a class that the importer uses: records, instances and callbacks cross the border, those that the
 //                 package declares and those that it does not, once and three hundred times
@@ -29,6 +29,7 @@ const work = argument("work");
 const out = argument("out");
 const until = Date.now() + Number(argument("seconds", "300")) * 1000;
 const firstSeed = Number(argument("seed", "1"));
+const flags = argument("flags", "").split(/\s+/).filter(Boolean);
 const names = argument("sources", "closures-read-through-array-methods,objects-that-live-for-one-turn-of-a-loop,one-key-asked-in-every-way,objects-read-where-they-are-made,lists-read-where-they-are-made,typed-instances-changed-through-built-ins,several-changes-behind-a-declared-type,two-names-where-ways-meet,one-name-for-many-kinds-of-things").split(",");
 const generators = await Promise.all(names.map(async name => (await import(`./${name}.ts`)).generate as (random: Random, typed?: boolean) => string));
 
@@ -182,7 +183,7 @@ export function toldByThePackage(asked: AskedOfThePackage, kept: KeptByThePackag
   if (!holdsInOrder(installedPlain.out, plain.out)) return finding("index.js prints something else than the sources", folder, seed, notes, firstDifference(plain.out, installedPlain.out));
   const expected = installedPlain.out;
 
-  const build = await run([bun, "compile", "./main.ts", "--outfile", "app"], join(folder, "app"), 300);
+  const build = await run([bun, "compile", ...flags, "./main.ts", "--outfile", "app"], join(folder, "app"), 300);
   if (build.signal || build.late) return finding(build.late ? "the build hangs" : "the build ends by a signal", folder, seed, notes, build.text);
   if (build.code !== 0) return finding("the build is refused", folder, seed, notes, build.text);
   const isFromFullTypes = /is compiled from its full types/.test(build.text);

@@ -8,7 +8,7 @@ console.log(Bun.TOML.parse('title = "x"\n[server]\nport = 80\ntags = ["a", "b"]\
 const glob = new Bun.Glob("**/*.{js,ts}");
 console.log(glob.match("src/a/b.ts"), glob.match("src/a/b.css"), new Bun.Glob("a?c").match("abc"), new Bun.Glob("!x").match("y"));
 console.log(typeof Bun.nanoseconds(), typeof Bun.version, /^[0-9a-f]+$/.test(Bun.revision), Bun.which("sh") !== null, Bun.which("no-such-tool-anywhere"), Bun.env === process.env || typeof Bun.env.PATH, /^[0-9a-f-]{36}$/.test(Bun.randomUUIDv7()), Bun.isMainThread);
-console.log(Bun.peek(Promise.resolve(5)), Bun.peek.status(new Promise(() => {})), Bun.peek(7), Bun.fileURLToPath("file:///a%20b"), Bun.pathToFileURL("/a b").href, Bun.color("red", "hex"), Bun.color("#0f0", "[rgb]"), Bun.color("nope", "css"));
+console.log(Bun.peek(Promise.resolve(5)), Bun.peek.status(new Promise(() => {})), Bun.peek(7), Bun.fileURLToPath(Bun.pathToFileURL("/a b")), Bun.pathToFileURL("/a b").href, Bun.color("red", "hex"), Bun.color("#0f0", "[rgb]"), Bun.color("nope", "css"));
 const sink = new Bun.ArrayBufferSink();
 sink.start({ asUint8Array: true });
 sink.write("ab");
@@ -19,4 +19,4 @@ cookies.set("c", "3", { httpOnly: true, path: "/", maxAge: 60 });
 cookies.delete("a");
 console.log(cookies.get("b"), cookies.has("a"), cookies.size, cookies.toSetCookieHeaders(), Bun.Cookie.parse("id=7; Secure; SameSite=Lax").sameSite);
 console.log(await Bun.password.verify("secret", await Bun.password.hash("secret", { algorithm: "bcrypt", cost: 4 })), Bun.password.verifySync("wrong", Bun.password.hashSync("secret", { algorithm: "bcrypt", cost: 4 })));
-console.log((await Bun.$`echo shell $(echo nested)`.text()).trim(), (await Bun.$`exit 3`.nothrow().quiet()).exitCode, (await Bun.$`echo ${"a b; c"}`.text()).trim(), await Bun.$`printf '{"a":1}'`.json(), (await Bun.$`printf 'x\ny\n'`.lines().next()).value);
+console.log((await Bun.$`echo shell $(echo nested)`.text()).trim(), (await Bun.$`exit 3`.nothrow().quiet()).exitCode, (await Bun.$`echo ${"a b; c"}`.text()).trim(), await Bun.$`echo '{"a":1}'`.json(), (await Bun.$`echo x; echo y`.lines().next()).value);

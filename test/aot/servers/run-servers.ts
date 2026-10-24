@@ -1,7 +1,7 @@
 // Helpers shared by ./servers.test.ts and ./features.test.ts.
 import { expect } from "bun:test";
-import { symlinkSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { rmSync, symlinkSync } from "fs";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 import { spawned } from "../run-programs";
 
@@ -24,10 +24,30 @@ export async function installPackages(folder: string) {
   expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
 }
 
+const exits: Promise<number>[] = [];
+
+/** Removes the folders once every server has exited: Windows removes neither the file of an executable that runs nor the folder it runs in. */
+export async function removeFolders(...folders: string[]) {
+  await Promise.all(exits);
+  const deadline = Date.now() + 10_000;
+  for (const folder of folders) {
+    while (true) {
+      try {
+        rmSync(folder, { recursive: true, force: true });
+        break;
+      } catch (error) {
+        if (!isWindows || Date.now() > deadline) throw error;
+        await Bun.sleep(100);
+      }
+    }
+  }
+}
+
 /** Starts a server on a free port and waits for it to print `listening <port>`. */
 export async function startServer(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   // stderr is piped because Express logs every error it responds to with 400.
   const proc = Bun.spawn({ cmd, cwd, env: { ...env, PORT: "0", NODE_ENV: "production" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  exits.push(proc.exited);
   const errors = proc.stderr.text();
   let output = "";
   for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {

@@ -482,19 +482,6 @@ impl Reader {
         }
     }
 
-    /// How long the current entry's contents are, if none were read yet and the archive stores them all.
-    pub(crate) fn unread_plain_data(&self) -> Option<usize> {
-        let [block] = self.sparse.as_slice() else {
-            return None;
-        };
-        let plain = matches!(self.state, State::Data)
-            && !block.hole
-            && block.offset == 0
-            && block.remaining == self.bytes_remaining
-            && self.bytes_remaining == self.entry.size;
-        usize::try_from(self.bytes_remaining).ok().filter(|_| plain)
-    }
-
     /// `None` when `input` ran out first.
     fn fill_block(&mut self, input: &[u8], used: &mut usize) -> Option<()> {
         let want = self.block.len().saturating_sub(self.block_len);

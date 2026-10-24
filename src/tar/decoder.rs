@@ -4,7 +4,6 @@ use crate::error::{Error, Result};
 use crate::gzip::{self, Progress};
 use crate::output::Output as _;
 use crate::reader::{Entry, Event, Options, Poll, Reader};
-use core::ops::Range;
 
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_filter_gzip.c#L306
 const BLOCK: usize = 64 * 1024;
@@ -300,17 +299,6 @@ impl<'a> MemoryDecoder<'a> {
             }
         }
         Ok(Some(self.entry()))
-    }
-
-    /// Where in the input the current entry's contents are, if they are there in one piece. Reads nothing.
-    pub fn data_range(&self) -> Option<Range<usize>> {
-        if !self.decoder.layers.is_empty() {
-            return None;
-        }
-        let end = self
-            .pos
-            .checked_add(self.decoder.tar.unread_plain_data()?)?;
-        (end <= self.data.len()).then_some(self.pos..end)
     }
 
     /// Appends at most `size` bytes of the current entry's contents. Holes read as zeros.

@@ -1671,6 +1671,14 @@ describe("Bun.Archive", () => {
         );
       });
 
+      test("print like any other File", async () => {
+        const [whole, one] = [await archive().files(), await archive().files("a")];
+        const shown = (file: Blob) => Bun.inspect(file).replace(/\s+/g, " ");
+        expect(shown(whole.get("a")!)).toBe('File (3.0 KB) { name: "a" }');
+        expect(shown(one.get("a")!)).toBe(shown(whole.get("a")!));
+        expect(shown(whole.get("a")!.slice(1, 3))).toContain("offset: 1 ");
+      });
+
       test("outlive the archive", async () => {
         const files = await archive().files();
         Bun.gc(true);
@@ -1688,18 +1696,6 @@ describe("Bun.Archive", () => {
         await Bun.write(join(String(dir), "b"), (await archive().files()).get("b")!);
         expect(readFileSync(join(String(dir), "b"))).toEqual(b);
       });
-    });
-
-    test("does not copy the contents of an uncompressed archive", async () => {
-      const size = 128 * 1024 * 1024;
-      const bytes = Buffer.concat([ustarHeader("big", size), Buffer.alloc(size, "x"), Buffer.alloc(1024)]);
-      const archive = new Bun.Archive(bytes);
-      const before = process.memoryUsage.rss();
-      const files = await archive.files();
-      const grown = process.memoryUsage.rss() - before;
-      expect(files.get("big")!.size).toBe(size);
-      expect(bytes.length).toBeGreaterThan(size);
-      expect(grown).toBeLessThan(size / 2);
     });
 
     test("returns empty Map for empty archive", async () => {

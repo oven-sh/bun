@@ -2,7 +2,7 @@
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::{SizeType, Store};
+use crate::webcore::blob::Store;
 use bun_archive::tar;
 use bun_core::{self, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
@@ -11,7 +11,6 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JS
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
-use core::ops::Range;
 
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
@@ -859,15 +858,9 @@ fn start_write_task(
     ))
 }
 
-enum FileData {
-    Owned(Vec<u8>),
-    /// A part of the archive's store, which the `File` shares instead of copying.
-    Shared(Range<usize>),
-}
-
 struct FileEntry {
     path: Box<[u8]>,
-    data: FileData,
+    data: Vec<u8>,
     mtime: i64,
 }
 
@@ -901,14 +894,13 @@ impl FilesContext {
             tar::Error::Alloc(err) => Err(err),
             err => Ok(FilesResult::ArchiveErr(err)),
         };
-        let archive = self.store.shared_view();
-        let mut reader = match bun_archive::open_memory(archive, tar::Dialect::General) {
-            Ok(reader) => reader,
-            Err(err) => return read_error(err),
-        };
+        let mut reader =
+            match bun_archive::open_memory(self.store.shared_view(), tar::Dialect::General) {
+                Ok(reader) => reader,
+                Err(err) => return read_error(err),
+            };
 
         let mut entries: FileEntryList = Vec::new();
-        let mut shared_len = 0usize;
 
         loop {
             let entry_ref = match reader.next_entry() {
@@ -934,39 +926,16 @@ impl FilesContext {
 
             let path_copy: Box<[u8]> = Box::from(pathname);
 
-            let data = match reader.data_range().filter(|range| !range.is_empty()) {
-                Some(range) => {
-                    shared_len += range.len();
-                    FileData::Shared(range)
-                }
-                None => {
-                    let mut data: Vec<u8> = Vec::new();
-                    if let Err(err) = reader.read_data(size, &mut data) {
-                        return read_error(err);
-                    }
-                    FileData::Owned(data)
-                }
-            };
+            let mut data: Vec<u8> = Vec::new();
+            if let Err(err) = reader.read_data(size, &mut data) {
+                return read_error(err);
+            }
 
             entries.push(FileEntry {
                 path: path_copy,
                 data,
                 mtime,
             });
-        }
-
-        // A `File` keeps what it shares alive, so a few files out of many get copies of their own.
-        if shared_len < archive.len() / 2 {
-            for entry in &mut entries {
-                if let FileData::Shared(range) = &entry.data {
-                    let bytes = &archive[range.clone()];
-                    let mut copy = Vec::new();
-                    copy.try_reserve_exact(bytes.len())
-                        .map_err(|_| bun_alloc::AllocError)?;
-                    copy.extend_from_slice(bytes);
-                    entry.data = FileData::Owned(copy);
-                }
-            }
         }
 
         Ok(FilesResult::Success(entries))
@@ -992,19 +961,9 @@ impl TaskContext for FilesContext {
                 };
 
                 for entry in entries.iter_mut() {
-                    let blob_ptr = Blob::new(match &mut entry.data {
-                        FileData::Owned(data) => Blob::create_with_bytes_and_allocator(
-                            core::mem::take(data), // Ownership transferred
-                            global,
-                            false,
-                        ),
-                        FileData::Shared(range) => {
-                            let blob = Blob::init_with_store(self.store.clone(), global);
-                            blob.offset.set(range.start as SizeType);
-                            blob.size.set(range.len() as SizeType);
-                            blob
-                        }
-                    });
+                    let data = core::mem::take(&mut entry.data); // Ownership transferred
+                    let blob_ptr =
+                        Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
                     let blob = unsafe { &mut *blob_ptr };
                     blob.is_jsdom_file.set(true);

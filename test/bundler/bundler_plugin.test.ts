@@ -257,6 +257,71 @@ describe("bundler", () => {
     });
   }
 
+  // An onResolve callback that returns nothing leaves the import to the
+  // resolver. The module then has the side effects the resolver found for it,
+  // as in a build with no plugin.
+  const sideEffectsFalsePackage = {
+    "/node_modules/pure/package.json": /* json */ `{ "name": "pure", "sideEffects": false }`,
+    "/node_modules/pure/index.js": /* js */ `
+      console.log("pure ran");
+      export const value = "pure value";
+    `,
+  };
+  itBundled("plugin/ResolveReturnsNothingDropsUnusedImportOfSideEffectsFalse", {
+    files: {
+      "/entry.js": /* js */ `
+        import { value } from "pure";
+        import * as namespace from "pure";
+        import "pure";
+        console.log("entry");
+      `,
+      ...sideEffectsFalsePackage,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: { stdout: "entry" },
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe('// entry.js\nconsole.log("entry");\n');
+    },
+  });
+  itBundled("plugin/ResolveReturnsNothingKeepsUsedImportOfSideEffectsFalse", {
+    files: {
+      "/entry.js": /* js */ `
+        import { value } from "pure";
+        console.log(value);
+      `,
+      ...sideEffectsFalsePackage,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: { stdout: "pure ran\npure value" },
+  });
+  // For a Node builtin that stays external, the resolver says that an import
+  // of it has no side effects.
+  itBundled("plugin/ResolveReturnsNothingDropsUnusedImportOfExternalBuiltin", {
+    files: {
+      "/entry.js": /* js */ `
+        import { readFileSync } from "node:fs";
+        import * as os from "node:os";
+        import "node:url";
+        import { basename } from "node:path";
+        console.log(basename("/dir/used"));
+      `,
+    },
+    target: "node",
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: { stdout: "used" },
+    onAfterBundle(api) {
+      api
+        .expectFile("out.js")
+        .toBe('// entry.js\nimport { basename } from "node:path";\nconsole.log(basename("/dir/used"));\n');
+    },
+  });
+
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {
     files: resolveFixture,

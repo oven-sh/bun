@@ -1581,8 +1581,7 @@ pub fn become_watcher_manager() -> ! {
         ));
     }
 
-    // A run of the watched script moves a regular-file stdin, and the next run shares it.
-    // Each run must read the same input as the first one.
+    // Each run of the watched script reads a regular-file stdin from where the first run did.
     let stdin_offset = if GetFileType(Fd::stdin().native()) == FILE_TYPE_DISK {
         bun_sys::lseek(Fd::stdin(), 0, libc::SEEK_CUR).ok()
     } else {

@@ -213,11 +213,9 @@ fn read_until_delimiter_array_list_infinity<R: ReadByte>(
     }
 }
 
-/// `prompt()` takes one line, but its buffer reads up to 4096 bytes. A regular-file stdin is moved
-/// back over the rest, so that the next reader of stdin starts after that line.
+/// Moves a regular-file stdin back over the bytes that `prompt()` buffered past its line.
 fn give_back_unread_stdin() {
-    // SAFETY: process-global static that only the JS thread touches. `prompt()` is done with its
-    // own borrow when this runs.
+    // SAFETY: process-global static on the JS thread, after `prompt()`'s own borrow ended.
     let reader = unsafe { &mut *Output::buffered_stdin_reader() };
     let unread = reader.buffered_len();
     if unread == 0 {

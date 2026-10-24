@@ -551,8 +551,7 @@ impl ReadableStream {
                 reader.to_readable_stream(cx)
             }
             webcore::blob::store::Data::File(file) => {
-                // stdin shares its position with the process that started this one, so a read
-                // that starts at byte 0 continues from the position and advances it.
+                // stdin shares its position with the parent, so a read from byte 0 continues there.
                 let from_position = blob.offset.get() == 0
                     && matches!(
                         &file.pathlike,

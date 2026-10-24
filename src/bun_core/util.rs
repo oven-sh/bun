@@ -4323,9 +4323,7 @@ pub fn maybe_handle_panic_during_process_reload() {
 static STDIN_OFFSET_FOR_RELOAD: core::sync::atomic::AtomicI64 =
     core::sync::atomic::AtomicI64::new(-1);
 
-/// Records where stdin is, so that `reload_process` can put it back there. The next run of a
-/// watched script shares this process's stdin, and must read the same input as the first run.
-/// On Windows the watcher-manager parent does this (`become_watcher_manager`).
+/// Records where stdin is, so that `reload_process` can put it back for the next run.
 pub fn remember_stdin_offset_for_reload() {
     #[cfg(unix)]
     {

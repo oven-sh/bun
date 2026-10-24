@@ -37,9 +37,13 @@ test("the garbage collector knows the size of a histogram", () => {
 });
 
 test("histograms that grew are collected without an explicit GC", () => {
-  // 360 KB each.
-  for (let i = 0; i < 200; i++) perf.createHistogram().record(Number.MAX_SAFE_INTEGER);
-  expect(heapStats().objectTypeCounts.Histogram).toBeLessThan(100);
+  // 360 KB each. How many it takes depends on the size of the heap, but 720 MB is far more than enough.
+  let created = 0;
+  do {
+    for (let i = 0; i < 100; i++) perf.createHistogram().record(Number.MAX_SAFE_INTEGER);
+    created += 100;
+  } while (created < 2000 && heapStats().objectTypeCounts.Histogram > created / 2);
+  expect(created).toBeLessThan(2000);
 });
 
 test("doesn't throw", () => {

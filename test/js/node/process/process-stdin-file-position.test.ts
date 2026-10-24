@@ -33,21 +33,22 @@ describe("process.stdin over a regular file that the parent already read from", 
 
   // The parent reads the first line, starts the child with the descriptor as its stdin,
   // and reads the descriptor again after the child exits.
-  function runAfterParentRead(js: string) {
+  async function runAfterParentRead(js: string) {
     const fd = fs.openSync(path.join(dir, "in.txt"), "r");
-    fs.readSync(fd, Buffer.alloc(consumed.length));
-    const child = spawn(process.execPath, ["-e", js], { stdio: [fd, "pipe", "inherit"] });
-    let stdout = "";
-    child.stdout!.setEncoding("utf8").on("data", chunk => (stdout += chunk));
-    return new Promise<{ stdout: string; code: number | null; left: string }>((resolve, reject) => {
-      child.on("error", reject);
-      child.on("close", code => {
-        const buf = Buffer.alloc(consumed.length + rest.length);
-        const left = buf.toString("utf8", 0, fs.readSync(fd, buf));
-        fs.closeSync(fd);
-        resolve({ stdout, code, left });
+    try {
+      fs.readSync(fd, Buffer.alloc(consumed.length));
+      const child = spawn(process.execPath, ["-e", js], { stdio: [fd, "pipe", "inherit"] });
+      let stdout = "";
+      child.stdout!.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", resolve);
       });
-    });
+      const buf = Buffer.alloc(consumed.length + rest.length);
+      return { stdout, code, left: buf.toString("utf8", 0, fs.readSync(fd, buf)) };
+    } finally {
+      fs.closeSync(fd);
+    }
   }
 
   const print = "process.stdout.write(JSON.stringify(s))";

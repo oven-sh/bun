@@ -61,6 +61,7 @@ const streamText = async (stream: ReadableStream<Uint8Array>) => {
 // started it. The parent here reads the first line before it starts the child, and reads
 // again after the child exits. A stream of stdin that starts at byte 0 starts at the
 // position and leaves it after the bytes it took, and `left` is what the next reader gets.
+// These tests are not concurrent: with three children at a time a test stays far below its timeout on a debug build.
 describe("a stream of stdin when stdin is a regular file inherited at an offset", () => {
   const consumed = "SECRET-HEADER\n";
   const rest = "body1\nbody2\n";

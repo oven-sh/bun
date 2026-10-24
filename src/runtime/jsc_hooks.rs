@@ -333,6 +333,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
     RUNTIME_STATE.set(state);
 
     vm.transpiler.with_mut(|t| {
+        t.resolver.validate_package_config = true;
         // With a module graph, `apply_standalone_runtime_flags` has yet to apply `compile.autoloadTsconfig: false`.
         let reads_tsconfig = opts.graph.is_none_or(|graph| {
             graph
@@ -1142,9 +1143,7 @@ mod vm_loader_ctx {
             read_dir_info_package_json(dir) => {
                 match (*(*this).transpiler.as_ptr()).resolver.read_dir_info(dir) {
                     Ok(Some(dir_info)) => {
-                        dir_info
-                            .package_json()
-                            .or(dir_info.enclosing_package_json)
+                        dir_info.package_json_for_node_scope()
                     }
                     _ => None,
                 }
@@ -2369,7 +2368,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             (*transpiler).resolver.read_dir_info(source.path.name().dir)
                         } {
                             Ok(Some(dir_info)) => {
-                                dir_info.package_json().or(dir_info.enclosing_package_json)
+                                dir_info.package_json_for_node_scope()
                             }
                             _ => None,
                         };
@@ -2500,8 +2499,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             // stable cache slot.
                             match unsafe { (*transpiler).resolver.read_dir_info(dir) } {
                                 Ok(Some(dir_info)) => dir_info
-                                    .package_json()
-                                    .or(dir_info.enclosing_package_json)
+                                    .package_json_for_node_scope()
                                     .map_or(module_type, |p| p.module_type),
                                 _ => module_type,
                             }
@@ -3417,7 +3415,7 @@ fn package_json_of<'a>(
     }
     // SAFETY: `read_dir_info` is re-entrant on the JS thread.
     match unsafe { (*jsc_vm.transpiler.as_ptr()).resolver.read_dir_info(dir) } {
-        Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+        Ok(Some(dir_info)) => dir_info.package_json_for_node_scope(),
         _ => None,
     }
 }
@@ -3805,6 +3803,20 @@ fn transpile_file<const DATA_ONLY: bool>(
         return ptr::null_mut();
     }
 
+    if matches!(lr.path.name().ext, b".js" | b".ts") {
+        // SAFETY: the resolver belongs to this live VM on its JS thread.
+        if let Some(error) = unsafe {
+            (*jsc_vm)
+                .transpiler
+                .resolver
+                .node_package_scope_error(lr.path.text, false)
+        } {
+            *ret = ErrorableResolvedSource::err(bun_jsc::ResolveMessage::from_node_module_error(
+                global, &error, false, b"", b"",
+            ));
+            return ptr::null_mut();
+        }
+    }
     let module_type = module_type_of(&lr.path, lr.package_json);
     let pkg_name: Option<&[u8]> = lr
         .package_json

@@ -1199,6 +1199,7 @@ pub(crate) fn scan_imports_and_exports(
                                     let to_esm_flags = this.to_esm_flags(
                                         source_index,
                                         part_index,
+                                        kind,
                                         rec_source_index.get(),
                                     );
                                     col!(import_records_list)[id].as_mut_slice()
@@ -1250,8 +1251,12 @@ pub(crate) fn scan_imports_and_exports(
                                         .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)))
                             && output_format != Format::InternalBakeDev
                         {
-                            let to_esm_flags =
-                                this.to_esm_flags(source_index, part_index, other_source_index);
+                            let to_esm_flags = this.to_esm_flags(
+                                source_index,
+                                part_index,
+                                kind,
+                                other_source_index,
+                            );
                             col!(import_records_list)[id].as_mut_slice()
                                 [import_record_index as usize]
                                 .flags

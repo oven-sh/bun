@@ -915,9 +915,29 @@ describe("bundler", async () => {
       run: { file: "/out/entry.js", stdout: `${whole} true true 1` },
     });
 
+    // What an onLoad plugin returns keeps CommonJS interop: a result with
+    // `loader: "object"` is the exports of a module.
+    itBundled("bun/loader-data-default-plugin-object-keeps-interop", {
+      files: {
+        "/entry.js": /* js */ `
+          import json from "./data.json";
+          import object from "virtual:object";
+          console.log(JSON.stringify(json), object, JSON.stringify(require("virtual:object")), typeof require("./data.json"));
+        `,
+        "/data.json": dataFiles.json,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path, namespace: "virtual" }));
+        builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+          exports: { __esModule: true, default: 5, x: 1 },
+          loader: "object",
+        }));
+      },
+      run: { stdout: `${whole} 5 ${whole} object` },
+    });
+
     // A data file in a package on the CommonJS unwrap list. A default import
-    // alone gives it the CommonJS form. A require() of it is an import there,
-    // and keeps the namespace object it has.
+    // alone gives it the CommonJS form.
     itBundled("bun/loader-data-default-in-unwrapped-package", {
       files: {
         "/entry.js": /* js */ `
@@ -927,6 +947,20 @@ describe("bundler", async () => {
         "/node_modules/react/data.json": dataFiles.json,
       },
       run: { stdout: whole },
+    });
+
+    // For that list the parser turns a require() into an import. It keeps the
+    // namespace object it has, whose `default` is the `default` key of the data.
+    itBundled("bun/loader-data-default-beside-unwrapped-require", {
+      files: {
+        "/entry.js": /* js */ `
+          import json from "react/data.json";
+          const required = require("react/data.json");
+          console.log(JSON.stringify(json), required.default, required.x);
+        `,
+        "/node_modules/react/data.json": dataFiles.json,
+      },
+      run: { stdout: `${whole} 5 1` },
     });
     itBundled("bun/loader-data-default-require-in-unwrapped-package", {
       files: {
@@ -939,6 +973,23 @@ describe("bundler", async () => {
         "/node_modules/react/data.json": dataFiles.json,
       },
       run: { stdout: `${whole} 5 1` },
+    });
+    // `module.exports = require()` of such a file is an `export *` there.
+    itBundled("bun/loader-data-default-module-exports-of-unwrapped-package", {
+      files: {
+        "/entry.js": /* js */ `
+          const react = require("react");
+          import("react/data.json").then(ns => {
+            console.log(react.default, react.x, JSON.stringify(ns.default));
+          });
+        `,
+        "/node_modules/react/index.js": /* js */ `
+          globalThis.sideEffect = 1;
+          module.exports = require("./data.json");
+        `,
+        "/node_modules/react/data.json": dataFiles.json,
+      },
+      run: { stdout: `5 1 ${whole}` },
     });
   });
 

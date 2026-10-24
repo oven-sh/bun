@@ -4444,21 +4444,25 @@ impl<'a> LinkerContext<'a> {
         {
             return false;
         }
-        match self.parse_graph().input_files.items_loader()[id] {
-            Loader::Json
-            | Loader::Jsonc
-            | Loader::Json5
-            | Loader::Toml
-            | Loader::Yaml
-            | Loader::Xml => true,
-            // A string: both modes give the same namespace.
+        let input_files = &self.parse_graph().input_files;
+        // A plugin's `loader: "object"` result is the exports of a module, and
+        // it arrives as JSON.
+        if input_files.items_flags()[id].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+        {
+            return false;
+        }
+        match input_files.items_loader()[id] {
+            Loader::Json | Loader::Jsonc | Loader::Json5 | Loader::Toml | Loader::Yaml => true,
+            // A string, or an object with one key (the root element): both
+            // modes give the same namespace.
             Loader::Text
             | Loader::Md
             | Loader::File
             | Loader::Wasm
             | Loader::Base64
             | Loader::Dataurl
-            | Loader::Bunsh => false,
+            | Loader::Bunsh
+            | Loader::Xml => false,
             // A module, or an object that is not parsed data.
             Loader::Jsx
             | Loader::Js
@@ -4478,15 +4482,20 @@ impl<'a> LinkerContext<'a> {
         &self,
         source_index: crate::IndexInt,
         part_index: usize,
+        kind: ImportKind,
         importee: crate::IndexInt,
     ) -> bun_ast::ImportRecordFlags {
         use bun_ast::ImportRecordFlags as Flags;
-        // A `require()` that the parser turned into `import * as ns` keeps the
-        // namespace it has today.
-        if self.is_commonjs_data_file(importee)
-            && self.graph.ast.items_parts()[source_index as usize].as_slice()[part_index].tag
-                != bun_ast::PartTag::ImportToConvertFromRequire
-        {
+        let id = source_index as usize;
+        // A `require()` that the parser turned into an import keeps the
+        // namespace it has today. That is `import * as ns` in a part of its
+        // own, and each statement of a lifted CommonJS file, whose
+        // `module.exports = require(x)` is an `export *`.
+        let was_require = self.graph.ast.items_parts()[id].as_slice()[part_index].tag
+            == bun_ast::PartTag::ImportToConvertFromRequire
+            || (kind == ImportKind::Stmt
+                && self.graph.ast.items_flags()[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM));
+        if !was_require && self.is_commonjs_data_file(importee) {
             Flags::WRAP_WITH_TO_ESM | Flags::TO_ESM_NODE_MODE
         } else {
             Flags::WRAP_WITH_TO_ESM

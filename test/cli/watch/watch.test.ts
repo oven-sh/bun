@@ -37,6 +37,24 @@ function streamWaiter(stream: ReadableStream<Uint8Array>) {
   };
 }
 
+// Runs `edit`, then waits for `needle` in the output. The Windows watcher
+// loses a change that lands before its thread first asks for changes, so
+// there the edit is repeated until the reload shows. The interval doubles, so
+// that a repeat cannot keep ending a slow restart before it prints.
+async function editUntil(
+  out: { waitFor(needle: string): Promise<void> },
+  needle: string,
+  edit: () => Promise<unknown>,
+) {
+  let reloaded = false;
+  const seen = out.waitFor(needle).finally(() => (reloaded = true));
+  for (let interval = 1000; !reloaded; interval *= 2) {
+    await edit();
+    await (isWindows ? Promise.race([seen, Bun.sleep(interval)]) : seen);
+  }
+  await seen;
+}
+
 for (const dir of ["dir", "©️"]) {
   it.todoIf(isBroken && isWindows)(
     `should watch files${dir === "dir" ? "" : " (non-ascii path)"}`,
@@ -708,11 +726,12 @@ setInterval(() => {}, 1e6);
   const out = stdoutWaiter(proc);
   await out.waitFor("run dep single 1");
 
-  await Bun.write(join(cwd, "node_modules", "dep", "index.js"), `module.exports = "dep";`);
-  await Bun.write(join(cwd, "node_modules", "single.js"), `module.exports = "single";`);
-  await Bun.write(join(cwd, "node_modules", "added.js"), "");
-  await Bun.write(join(cwd, "sentinel.js"), "module.exports = 2;");
-  await out.waitFor("run dep single 2");
+  await editUntil(out, "run dep single 2", async () => {
+    await Bun.write(join(cwd, "node_modules", "dep", "index.js"), `module.exports = "dep";`);
+    await Bun.write(join(cwd, "node_modules", "single.js"), `module.exports = "single";`);
+    await Bun.write(join(cwd, "node_modules", "added.js"), "");
+    await Bun.write(join(cwd, "sentinel.js"), "module.exports = 2;");
+  });
   out.release();
   proc.kill("SIGKILL");
   await proc.exited;
@@ -780,8 +799,7 @@ describe("a path that only holds the letters node_modules", () => {
     const cwd = join(String(dir), folder);
     await using run = spawnWatchee(cwd, args);
     await run.waitFor(first);
-    await edit(cwd);
-    await run.waitFor(second);
+    await editUntil(run, second, () => edit(cwd));
   }
 
   const layouts = [

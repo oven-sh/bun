@@ -2358,13 +2358,18 @@ bool Bun__deepMatch(
 }
 
 // Reads the own property of `target` as it is stored. False if a direct put over it could not be undone.
-static bool readReplaceableProperty(JSGlobalObject* globalObject, JSObject* target, const Identifier& key, JSValue& value, unsigned& attributes)
+static bool readReplaceableProperty(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* target, const Identifier& key, JSValue& value, unsigned& attributes)
 {
     VM& vm = globalObject->vm();
     if (std::optional<uint32_t> index = parseIndex(key)) {
-        PropertySlot slot(target, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        // Only an element the target stores: a typed array or a Proxy converts or forwards a put, and a new element can grow an array.
-        if (!JSObject::getOwnPropertySlotByIndex(target, globalObject, *index, slot)) return false;
+        JSC::JSType type = target->type();
+        // These keep their elements elsewhere, but take a put and take the element back. A BigInt array throws on a matcher.
+        bool asksClass = type == ProxyObjectType || (isTypedArrayType(type) && type != BigInt64ArrayType && type != BigUint64ArrayType);
+        PropertySlot slot(target, asksClass ? PropertySlot::InternalMethodType::GetOwnProperty : PropertySlot::InternalMethodType::VMInquiry, asksClass ? nullptr : &vm);
+        bool hasOwnProperty = asksClass ? target->methodTable()->getOwnPropertySlotByIndex(target, globalObject, *index, slot) : JSObject::getOwnPropertySlotByIndex(target, globalObject, *index, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        // A new element can grow an array.
+        if (!hasOwnProperty) return false;
         value = slot.isAccessor() ? JSValue(slot.getterSetter()) : slot.getValue(globalObject, *index);
         attributes = slot.attributes();
         return true;
@@ -2380,7 +2385,8 @@ void Bun::DeferredMatcherWrites::apply(JSGlobalObject* globalObject, ThrowScope&
         Write& write = m_writes[i];
         JSObject* target = asObject(m_values.at(i * 2));
         JSValue previous;
-        bool replaceable = readReplaceableProperty(globalObject, target, write.key, previous, write.previousAttributes);
+        bool replaceable = readReplaceableProperty(globalObject, scope, target, write.key, previous, write.previousAttributes);
+        RETURN_IF_EXCEPTION(scope, );
         m_previousValues.append(previous);
         if (!replaceable) continue;
         write.written = target->putDirectMayBeIndex(globalObject, write.key, m_values.at(i * 2 + 1));
@@ -2390,6 +2396,7 @@ void Bun::DeferredMatcherWrites::apply(JSGlobalObject* globalObject, ThrowScope&
 
 void Bun::DeferredMatcherWrites::undo(JSGlobalObject* globalObject, ThrowScope& scope)
 {
+    JSC::Exception* failure = nullptr;
     // Last first: two matchers can be written over one property.
     for (size_t i = m_writes.size(); i--;) {
         const Write& write = m_writes[i];
@@ -2406,8 +2413,15 @@ void Bun::DeferredMatcherWrites::undo(JSGlobalObject* globalObject, ThrowScope& 
             target->putDirectIndex(globalObject, *index, previous, write.previousAttributes, PutDirectIndexLikePutDirect);
         else
             target->putDirect(globalObject->vm(), write.key, previous, write.previousAttributes);
-        RETURN_IF_EXCEPTION(scope, );
+
+        // A Proxy trap can throw. The other properties are still put back.
+        if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException()) return;
+            if (!failure) failure = exception;
+        }
     }
+    if (failure) [[unlikely]]
+        scope.throwException(globalObject, failure);
 }
 
 // anonymous namespace to avoid name collision

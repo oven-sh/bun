@@ -3919,10 +3919,6 @@ describe("expect()", () => {
         });
 
         test("when the match fails after a matcher passed on a property that cannot hold one", () => {
-          const bytes = new Uint8Array([7, 2]);
-          expect(changedLines(bytes, { 0: expect.any(Number), 1: 3 })).toContain("+   7,");
-          expect(bytes[0]).toBe(7);
-
           const bigints = new BigInt64Array([7n, 2n]);
           expect(changedLines(bigints, { 0: expect.any(BigInt), 1: 3n })).toContain("+   7,");
           expect(bigints[0]).toBe(7n);
@@ -3935,10 +3931,6 @@ describe("expect()", () => {
           changedLines(frozen, [expect.any(Number), 3]);
           expect(frozen[0]).toBe(1);
           expect(Object.isFrozen(frozen)).toBe(true);
-
-          const target = [1, 2];
-          changedLines(new Proxy(target, {}), { 0: expect.any(Number), 1: 3 });
-          expect(target[0]).toBe(1);
 
           class List extends Array {}
           List.prototype[5] = "inherited";
@@ -3958,6 +3950,35 @@ describe("expect()", () => {
             enumerable: false,
             configurable: true,
           });
+        });
+
+        test("when the matcher passed on an element of a typed array or of a Proxy", () => {
+          for (const make of [
+            (/** @type {number} */ n) => new Uint8Array([n, 2]),
+            (/** @type {number} */ n) => new Float64Array([n, 2]),
+            (/** @type {number} */ n) => Buffer.from([n, 2]),
+            (/** @type {number} */ n) => new Proxy([n, 2], {}),
+          ]) {
+            const received = make(7);
+            const expected = { 0: expect.any(Number), 1: 3 };
+            // The element is not printed, so a snapshot of a value that differs from run to run stays the same.
+            expect(changedLines(received, expected)).toEqual(changedLines(make(9), expected));
+            expect(received[0]).toBe(7);
+          }
+        });
+
+        test("when a Proxy trap throws while the properties are put back", () => {
+          let defines = 0;
+          const proxy = new Proxy([1, 2], {
+            defineProperty(target, key, descriptor) {
+              if (++defines === 2) throw new Error("thrown by the trap");
+              return Reflect.defineProperty(target, key, descriptor);
+            },
+          });
+          const received = { id: 5, proxy };
+          const expected = { id: expect.any(Number), proxy: { 0: expect.any(Number) }, missing: 1 };
+          expect(() => expect(received).toMatchObject(expected)).toThrow("thrown by the trap");
+          expect(received.id).toBe(5);
         });
 
         test("and runs getters and custom matchers once when the match fails", () => {

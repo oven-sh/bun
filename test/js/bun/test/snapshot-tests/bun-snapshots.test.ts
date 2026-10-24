@@ -275,7 +275,7 @@ describe("property matchers leave the received value as it was", () => {
         if (inTrap) break;
       }
       expect(ownState(received, matchers)).toBe(before);
-      expect(() => expect({ id: received.id }).toEqual({ id: 999 })).toThrow();
+      expect(() => expect({ id: received.id }).toEqual({ id: 999 })).toThrow("toEqual");
     }
   });
 });

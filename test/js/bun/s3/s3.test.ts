@@ -8,13 +8,11 @@ import { spawnServer } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
-// The `it` for the cases of a service. R2 is a live service. At times it
-// answers a request with ServiceUnavailable or InternalError after about 4 s,
-// for some minutes. Each CI attempt of this file then failed on other cases.
-// A case that fails against R2 runs once more. Against the local server it has
-// no second run, so a defect in Bun still fails there. A case with a limit of
-// its own has no second run either: two runs of it do not fit in the time that
-// the CI runner gives this file.
+// The `it` for the cases of a service. A case that fails against R2 runs once
+// more: R2 is a live service, and at times it answers ServiceUnavailable or
+// InternalError for some minutes. A case has no second run against the local
+// server, so a defect in Bun still fails there, and none with a limit of its
+// own, because two such runs do not fit in the time of a CI attempt.
 function itFor(service: string, base = it): typeof it {
   if (service !== "R2") return base;
   const call: (...args: any[]) => void = base;

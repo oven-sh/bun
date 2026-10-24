@@ -1793,10 +1793,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(chunk)
     }
 
-    /// One part of the current server chunk as a program of its own, for
-    /// JSC's parser. It does not start with `(` as the chunk does: after an
-    /// error, JSC reads a leading `(` again as the parameters of an arrow
-    /// function and reports the wrapper in place of the error.
+    /// One part of the chunk as its own program. It starts with `0,` because JSC misreports an error after a leading `(`.
     pub(crate) fn current_chunk_part_alone(&self, part: usize) -> Vec<u8> {
         debug_assert!(matches!(SIDE, Side::Server));
         const START: &[u8] = b"0,{";
@@ -1809,9 +1806,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         text
     }
 
-    /// Takes a part that the server runtime will not get out of the current
-    /// server chunk. `receive_chunk` listed its file as a client component to
-    /// register, which holds only while another part of that file remains.
+    /// Removes a part from the current server chunk. Its file leaves `client_components_added` unless another part remains.
     pub(crate) fn remove_current_chunk_part(&mut self, part: usize) -> CurrentChunkSourceMapData {
         debug_assert!(matches!(SIDE, Side::Server));
         self.current_chunk_len -= self.current_chunk_code.remove(part).len();

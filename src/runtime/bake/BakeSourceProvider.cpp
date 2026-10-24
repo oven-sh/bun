@@ -82,8 +82,7 @@ extern "C" JSC::EncodedJSValue BakeLoadModuleByKey(JSC::JSGlobalObject* global, 
   return JSC::JSValue::encode(promise);
 }
 
-// Parses `source` without running it. Returns true when JSC's parser rejects it: `errorLine` and `errorColumn` (both
-// 0-based) then hold the position of the token it stopped at, and `errorMessage` holds its message.
+// Returns true when JSC's parser rejects `source`. `errorLine` and `errorColumn` are then 0-based.
 extern "C" bool BakeFindServerCodeSyntaxError(JSC::JSGlobalObject* global, BunString source, uint32_t* errorLine, uint32_t* errorColumn, BunString* errorMessage) {
   auto& vm = JSC::getVM(global);
   JSC::SourceCode sourceCode = JSC::makeSource(source.transferToWTFString(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted);

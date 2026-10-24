@@ -760,15 +760,15 @@ pub struct Options {
     pub resolves_like_node16: bool,
     /// `ModuleResolution` is `GetModuleResolutionKind()`: it is specified, and still supported.
     pub specifies_module_resolution: bool,
-    /// `baseUrl`, only with `INSTALLED_MAJOR` below 7. A non-relative name is looked up there
+    /// `baseUrl`, only with `INSTALLED_VERSION` below 7. A non-relative name is looked up there
     /// first, and `paths` are relative to it. Empty if unspecified.
     pub base_url: Vec<u8>,
-    /// `moduleResolution` is `classic`, only with `INSTALLED_MAJOR` below 7.
+    /// `moduleResolution` is `classic`, only with `INSTALLED_VERSION` below 7.
     pub is_classic: bool,
-    /// `moduleResolution` is `node10`, only with `INSTALLED_MAJOR` below 7: no
+    /// `moduleResolution` is `node10`, only with `INSTALLED_VERSION` below 7: no
     /// `NodeResolutionFeatures.SelfName`.
     pub forbids_self_name_references: bool,
-    /// `allowSyntheticDefaultImports` is off, only with `INSTALLED_MAJOR` below 7.
+    /// `allowSyntheticDefaultImports` is off, only with `INSTALLED_VERSION` below 7.
     pub forbids_synthetic_default_imports: bool,
     /// `GetEmitModuleDetectionKind`: the effective `moduleDetection`, specified or defaulted.
     pub module_detection: ModuleDetection,
@@ -945,11 +945,11 @@ impl Options {
     }
 }
 
-/// A key in `compilerOptions` that no configuration file can contain. Its value is the major version of the TypeScript
-/// installed for the project. Below 6, unspecified options get TypeScript 5's defaults. Below 7, what 7 removed still
-/// works: `baseUrl`, `node10` and `classic`, `amd` and the like, and turning interop off. For a tool that replaces one
-/// that runs on the project's own compiler.
-pub const INSTALLED_MAJOR: &[u8] = b"(the major version of the TypeScript that is installed)";
+/// A key in `compilerOptions` that no configuration file can contain. Its value is the version of the TypeScript
+/// installed for the project, as the number `major.minor`. Below 6, unspecified options get TypeScript 5's defaults.
+/// Below 7, what 7 removed still works: `baseUrl`, `node10` and `classic`, `amd` and the like, and turning interop off.
+/// Below 7.1, the default `target` is es2025. For a tool that replaces one that runs on the project's own compiler.
+pub const INSTALLED_VERSION: &[u8] = b"(the version of the TypeScript that is installed)";
 
 impl Options {
     /// Builds the options from `compiler`, the `compilerOptions` of a configuration file in
@@ -975,14 +975,15 @@ impl Options {
             None | Some(b"") => Vec::new(),
             Some(specified) => join(base_dir, specified),
         };
-        let installed = match compiler.get(INSTALLED_MAJOR) {
-            Some(Json::Number(major)) => *major,
+        let installed = match compiler.get(INSTALLED_VERSION) {
+            Some(Json::Number(version)) => *version,
             _ => f64::INFINITY,
         };
         let (before_6, before_7) = (installed < 6.0, installed < 7.0);
-        // `getEmitScriptTarget` of TypeScript 5
+        // `getEmitScriptTarget` of that TypeScript
         let target = lower(b"target").or_else(|| {
-            before_6.then(|| match lower(b"module").as_deref() {
+            (installed < 7.1).then(|| match lower(b"module").as_deref() {
+                _ if !before_6 => b"es2025".to_vec(),
                 Some(b"node16" | b"node18") => b"es2022".to_vec(),
                 Some(b"node20") => b"es2023".to_vec(),
                 Some(b"nodenext") => b"esnext".to_vec(),

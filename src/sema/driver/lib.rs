@@ -503,7 +503,7 @@ pub struct PlanOptions {
     /// A program's `lib.*.d.ts` files come from the `typescript` installed for it: the first `node_modules/typescript`
     /// from the configuration file's directory upwards, if it has the files that `lib` and `target` require. Otherwise
     /// they're `Request::libs`. That way this reads the same declaration of `Element` as the project's own compiler.
-    /// The configuration file is also interpreted the way that compiler does. See `resolve::INSTALLED_MAJOR`.
+    /// The configuration file is also interpreted the way that compiler does. See `resolve::INSTALLED_VERSION`.
     pub prefers_project_typescript_libs: bool,
     /// Selects what a request's programs share, parsed once and kept until the end (`program::Run`). Off (`bun check`):
     /// the declaration files. On (`bun lint`): every file, including sources, because a typed run over a monorepo loads
@@ -838,7 +838,7 @@ fn installed_typescript(host: &dyn Host, config: &[u8]) -> Option<Vec<u8>> {
         .find(|package| host.is_dir(package))
 }
 
-/// `resolve::INSTALLED_MAJOR` for the configuration file at `config`. See
+/// `resolve::INSTALLED_VERSION` for the configuration file at `config`. See
 /// `PlanOptions::prefers_project_typescript_libs`.
 fn installed_typescript_defaults(
     host: &dyn Host,
@@ -848,22 +848,23 @@ fn installed_typescript_defaults(
     if !request.plan_options.prefers_project_typescript_libs {
         return None;
     }
-    installed_major(host, config)
+    installed_version(host, config)
 }
 
-/// `resolve::INSTALLED_MAJOR`
-fn installed_major(host: &dyn Host, config: &[u8]) -> Option<(Vec<u8>, Json)> {
-    major_of_typescript_at(host, &installed_typescript(host, config)?)
+/// `resolve::INSTALLED_VERSION`
+fn installed_version(host: &dyn Host, config: &[u8]) -> Option<(Vec<u8>, Json)> {
+    version_of_typescript_at(host, &installed_typescript(host, config)?)
 }
 
-fn major_of_typescript_at(host: &dyn Host, package: &[u8]) -> Option<(Vec<u8>, Json)> {
+fn version_of_typescript_at(host: &dyn Host, package: &[u8]) -> Option<(Vec<u8>, Json)> {
     let text = host.read(&inside(package, b"package.json"))?;
     let fields = host.parse_package_json(Session::new().arena(), &text)?;
     let version = fields.get(b"version")?.as_str()?;
-    let major = &version[..strings::index_of_char_usize(version, b'.')?];
-    let major: u32 = std::str::from_utf8(major).ok()?.parse().ok()?;
-    let name = bun_sema::resolve::INSTALLED_MAJOR.to_vec();
-    Some((name, Json::Number(f64::from(major))))
+    let minor = strings::index_of_char_usize(version, b'.')? + 1;
+    let end = minor + strings::index_of_char_usize(&version[minor..], b'.')?;
+    let version: f64 = std::str::from_utf8(&version[..end]).ok()?.parse().ok()?;
+    let name = bun_sema::resolve::INSTALLED_VERSION.to_vec();
+    Some((name, Json::Number(version)))
 }
 
 /// The TypeScript version that the type checker is a port of.

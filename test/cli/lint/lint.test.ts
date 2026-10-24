@@ -9935,17 +9935,18 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(1);
     });
 
+    const names = ["Boolean", "CallableFunction", "Function", "IArguments", "NewableFunction", "Number", "Object"];
+    const library = (marker: string) =>
+      [
+        "interface Array<T> { length: number; [n: number]: T }",
+        ...[...names, "RegExp", "String"].map(it => `interface ${it} {}`),
+        `declare const marker: ${marker};`,
+        "",
+      ].join("\n");
+
     // `Element.textContent` is `string | null` up to TypeScript 5.8 and `string` after that. Removing a `!` that's
     // unnecessary with the built-in library would be an error for the project's own compiler.
     test("uses the lib files of the typescript installed in the project", async () => {
-      const names = ["Boolean", "CallableFunction", "Function", "IArguments", "NewableFunction", "Number", "Object"];
-      const library = (marker: string) =>
-        [
-          "interface Array<T> { length: number; [n: number]: T }",
-          ...[...names, "RegExp", "String"].map(it => `interface ${it} {}`),
-          `declare const marker: ${marker};`,
-          "",
-        ].join("\n");
       const config = (lib: string) =>
         JSON.stringify({ compilerOptions: { strict: true, noEmit: true, lib: [lib], types: [] } });
       const { stdout, exitCode } = await lint(
@@ -9970,6 +9971,38 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           .filter(it => it.includes("[Error/"))
           .map(it => it.split(": ")[0]),
       ).toEqual(["<dir>/b/b.ts:1:18"]);
+      expect(exitCode).toBe(1);
+    });
+
+    // TypeScript 7.1 made es2026 the default `target` and moved lib.esnext.array.d.ts to lib.es2026.array.d.ts.
+    test.each([
+      ["5.9.3", "lib.d.ts", "lib.esnext.array.d.ts"],
+      ["6.0.3", "lib.es2025.full.d.ts", "lib.esnext.array.d.ts"],
+      ["7.0.2", "lib.es2025.full.d.ts", "lib.esnext.array.d.ts"],
+      ["7.1.0", "lib.es2026.full.d.ts", "lib.es2026.array.d.ts"],
+    ])("uses the lib files of the installed typescript %s without `lib`", async (version, byDefault, array) => {
+      const config = (options: object) =>
+        JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [], ...options } });
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.js": files["eslint.config.js"],
+          "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }),
+          [`node_modules/typescript/lib/${byDefault}`]: library("string"),
+          "node_modules/typescript/lib/lib.esnext.full.d.ts": `/// <reference lib="esnext.array" />\n${library("string")}`,
+          [`node_modules/typescript/lib/${array}`]: "declare const moved: string;\n",
+          "a/tsconfig.json": config({}),
+          "a/a.ts": "export const a = marker!;\n",
+          "b/tsconfig.json": config({ target: "esnext", module: "esnext" }),
+          "b/b.ts": "export const b = moved!;\n",
+        },
+        ["-f", "unix"],
+      );
+      expect(
+        stdout
+          .split("\n")
+          .filter(it => it.includes("[Error/"))
+          .map(it => it.split(": ")[0]),
+      ).toEqual(["<dir>/a/a.ts:1:18", "<dir>/b/b.ts:1:18"]);
       expect(exitCode).toBe(1);
     });
 

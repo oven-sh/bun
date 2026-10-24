@@ -2862,10 +2862,14 @@ fn lib_file_stem(lib: &[u8]) -> &[u8] {
     crate::resolve::LIB_FALLBACKS.get(lib).map_or(lib, |it| *it)
 }
 
-/// `GetLibFileName` of the name `reference_text` in a `/// <reference lib>`. Another TypeScript version's
-/// library directory may lack the file, in which case the name counts as unknown too.
+/// `GetLibFileName` of the name `reference_text` in a `/// <reference lib>`. An older TypeScript's library directory
+/// has a library that moved later (`LIB_FALLBACKS`) under the name itself. Without either file, the name counts as
+/// unknown too.
 fn referenced_lib(host: &dyn Host, options: &Options, reference_text: &[u8]) -> Option<Vec<u8>> {
-    get_lib_file_name(reference_text).filter(|lib| host.is_file(&lib_file(options, lib)))
+    let is_there = |lib: &Vec<u8>| host.is_file(&lib_file(options, lib));
+    let lib = get_lib_file_name(reference_text)?;
+    let unmoved = || Some(reference_text.to_ascii_lowercase()).filter(is_there);
+    Some(lib).filter(is_there).or_else(unmoved)
 }
 
 /// `ForEachDynamicImportOrRequireCall`: it looks at each `import` and `require` in the text, and

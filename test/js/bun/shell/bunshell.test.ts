@@ -3593,10 +3593,8 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
 });
 
 describe("stdin redirect from a Response", () => {
-  // `< ${response}` hands the command the whole body when the command starts.
-  // A body with no bytes to give by then (a ReadableStream, a fetch() body that
-  // is still arriving) used to become empty input: the command read zero bytes
-  // and exited 0. So did a body that was already used.
+  // `< ${response}` takes the whole body when the command starts. A stream, an unfinished
+  // fetch() body or a used body has no bytes to give by then, and used to read as empty input.
   const payload = "hello from a response body\n";
   const encoder = new TextEncoder();
   const readStdin = "process.stdout.write(await Bun.stdin.text())";
@@ -3700,7 +3698,7 @@ describe("stdin redirect from a Response", () => {
       expect(await rejection($`cat < ${new Response(body())}`)).toBe(unsupported);
     });
 
-    test("a fetch() body that is still arriving", async () => {
+    test.concurrent("a fetch() body that is still arriving", async () => {
       await using held = serveHeldBody();
       const response = await fetch(held.url);
       expect(await rejection($`cat < ${response}`)).toBe(unsupported);
@@ -3719,14 +3717,14 @@ describe("stdin redirect from a Response", () => {
       expect(await rejection(run(response))).toBe(alreadyUsed);
     });
 
-    test("the redirect uses the body, so a second redirect of the same Response rejects", async () => {
+    test.concurrent("the redirect uses the body, so a second redirect of the same Response rejects", async () => {
       const response = new Response(payload);
       expect(await $`cat < ${response}`.text()).toBe(payload);
       expect(response.bodyUsed).toBe(true);
       expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
     });
 
-    test("a stream body that a reader has started to read", async () => {
+    test.concurrent("a stream body that a reader has started to read", async () => {
       const response = new Response(streamOf("a", "b"));
       const reader = response.body!.getReader();
       await reader.read();
@@ -3734,7 +3732,7 @@ describe("stdin redirect from a Response", () => {
       expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
     });
 
-    test("an in-memory body whose stream has a reader", async () => {
+    test.concurrent("an in-memory body whose stream has a reader", async () => {
       // A reader on the native stream of an in-memory body disturbs the body at once.
       const response = new Response(payload);
       response.body!.getReader();
@@ -3742,7 +3740,7 @@ describe("stdin redirect from a Response", () => {
       expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
     });
 
-    test("a stream body that text() is reading", async () => {
+    test.concurrent("a stream body that text() is reading", async () => {
       const rest = Promise.withResolvers<void>();
       const response = new Response(
         new ReadableStream({
@@ -3760,7 +3758,7 @@ describe("stdin redirect from a Response", () => {
       expect(await text).toBe("first second");
     });
 
-    test("a fetch() body that text() is reading", async () => {
+    test.concurrent("a fetch() body that text() is reading", async () => {
       await using held = serveHeldBody();
       const response = await fetch(held.url);
       const text = response.text();
@@ -3769,7 +3767,7 @@ describe("stdin redirect from a Response", () => {
       expect(await text).toBe("first second");
     });
 
-    test("a fetch() body that Bun.write() is reading", async () => {
+    test.concurrent("a fetch() body that Bun.write() is reading", async () => {
       using dir = tempDir("shell-response-redirect", {});
       await using held = serveHeldBody();
       const response = await fetch(held.url);
@@ -3780,7 +3778,7 @@ describe("stdin redirect from a Response", () => {
     });
   });
 
-  test("a stream body that a reader holds rejects the way blob() does", async () => {
+  test.concurrent("a stream body that a reader holds rejects the way blob() does", async () => {
     const response = new Response(streamOf(payload));
     const reader = response.body!.getReader();
     const locked = "ERR_INVALID_STATE: Invalid state: ReadableStream is locked";
@@ -3792,7 +3790,7 @@ describe("stdin redirect from a Response", () => {
     expect(await $`cat < ${await response.blob()}`.text()).toBe(payload);
   });
 
-  test("a fetch() body that failed rejects with its error", async () => {
+  test.concurrent("a fetch() body that failed rejects with its error", async () => {
     await using held = serveHeldBody();
     for (const [, run] of commands) {
       const controller = new AbortController();
@@ -3843,7 +3841,7 @@ describe("stdin redirect from a Response", () => {
       expect(s3.requests).toEqual(["GET /bucket/key"]);
     });
 
-    test("a fetch() of an object URL for an S3File", async () => {
+    test.concurrent("a fetch() of an object URL for an S3File", async () => {
       await using s3 = serveS3();
       const url = URL.createObjectURL(s3.file());
       try {
@@ -3856,7 +3854,7 @@ describe("stdin redirect from a Response", () => {
       }
     });
 
-    test("new Response(s3file) is a redirect with no body, so the command reads nothing", async () => {
+    test.concurrent("new Response(s3file) is a redirect with no body, so the command reads nothing", async () => {
       await using s3 = serveS3();
       const response = new Response(s3.file());
       expect({ status: response.status, body: response.body }).toEqual({ status: 302, body: null });

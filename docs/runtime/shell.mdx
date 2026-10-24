@@ -176,7 +176,7 @@ You can redirect from these JavaScript objects:
 
 - `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (reads from the underlying buffer)
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
-- `Blob` (reads from the blob)
+- `Blob` (reads from the blob). To redirect from an [`S3File`](/runtime/s3), pass `await s3file.bytes()`.
 - `Response` (reads from the body)
 
 Bun takes the whole `Response` body when the command starts. A body that is in memory works with every command. A body that is still streaming throws an error, for example a `ReadableStream` from your code or a `fetch()` response that is still downloading. Buffer the body into a `Blob` first:

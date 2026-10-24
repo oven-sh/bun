@@ -869,10 +869,7 @@ impl BlobExt for Blob {
                 ),
             );
         }
-        /// Throws the `TypeError` for the first entry that is an S3 object.
-        /// This is a second walk: the serializing walk only records that it
-        /// met one, so the entries it can serialize carry nothing for this
-        /// refusal.
+        /// A second walk, so that the first one keeps no entry name for this.
         #[cold]
         fn throw_for_s3_entry(global_this: &JSGlobalObject, form_data: *mut jsc::DOMFormData) {
             extern "C" fn find_thunk(
@@ -3494,8 +3491,7 @@ struct FormDataContext<'a> {
     joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
     failed: bool,
-    /// The failure is an entry that is an S3 object. `from_dom_form_data`
-    /// throws for it after the walk.
+    /// `from_dom_form_data` throws for an S3 entry after the walk.
     s3_entry: bool,
     global_this: &'a JSGlobalObject,
 }
@@ -3640,9 +3636,7 @@ impl FormDataContext<'_> {
                         .expect("infallible: store present");
                     match &store.data {
                         store::Data::S3(_) => {
-                            // An S3 object can only be read asynchronously. An
-                            // empty window of one (`slice(n, n)`) has no bytes
-                            // to read, so its part is empty.
+                            // An empty window (`slice(n, n)`) is an empty part.
                             if blob.size.get() != 0 {
                                 self.failed = true;
                                 self.s3_entry = true;

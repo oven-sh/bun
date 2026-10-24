@@ -313,9 +313,9 @@ JSC::EncodedJSValue Bun__SharedBlock__wrap(JSC::JSGlobalObject* globalObject, co
 const void* Bun__SharedBlock__fromJS(JSC::EncodedJSValue encoded)
 {
     JSC::JSValue value = JSC::JSValue::decode(encoded);
-    if (auto* view = JSC::dynamicDowncast<Bun::JSSharedStruct>(value))
+    if (auto* view = dynamicDowncast<Bun::JSSharedStruct>(value))
         return view->block();
-    if (auto* view = JSC::dynamicDowncast<Bun::JSSharedArray>(value))
+    if (auto* view = dynamicDowncast<Bun::JSSharedArray>(value))
         return view->block();
     return nullptr;
 }

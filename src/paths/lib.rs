@@ -943,6 +943,12 @@ pub mod fs {
             crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
         }
 
+        /// A CSS module: a stylesheet that exports its class names.
+        pub fn is_css_module(&self) -> bool {
+            const SUFFIX: &[u8] = b".module.css";
+            self.pretty.len() > SUFFIX.len() && self.pretty.ends_with(SUFFIX)
+        }
+
         /// Key used to identify this path in the incremental graph: the real
         /// `text` for `file:` paths, the `pretty` form otherwise.
         #[inline]

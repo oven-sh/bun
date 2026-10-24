@@ -749,5 +749,29 @@ describe("bundler", async () => {
         expect(api.readFile(join("/out", cssFile))).toContain("color: red");
       },
     });
+
+    // Without a dev server, the module of a stylesheet is in the bundle, and `require()` loads it.
+    itBundled("bake-dev/loader-css-require", {
+      format: "internal_bake_dev",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          const plain = require("./plain.css");
+          const styles = require("./styles.module.css");
+          console.log(plain, styles.foo);
+        `,
+        "/plain.css": `.plain { color: blue; }`,
+        "/styles.module.css": `.foo { color: red; }`,
+      },
+      onAfterBundle(api) {
+        const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+        const output = api.readFile(join("/out", jsFile));
+        expect(output).toContain('"plain.css"(hmr, module, exports) {');
+        expect(output).toContain('hmr.require("plain.css")');
+        expect(output).toContain('"styles.module.css"(hmr, module, exports) {');
+        expect(output).toMatch(/foo: "foo_[\w-]+"/);
+        expect(output).toContain('hmr.require("styles.module.css")');
+      },
+    });
   });
 });

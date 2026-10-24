@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -808,6 +808,292 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+
+// The dev server serves a stylesheet apart from its modules. `require()` and `import()` of a plain stylesheet
+// give the values of a bundle from `bun build`, however the dev server got the stylesheet.
+// The page logs `typeof` with each value, because a function does not reach the test over JSON.
+const shapeOf = `const shape = (value: unknown) => typeof value + " " + JSON.stringify(value);`;
+// `pass` tells one bundle of the importer from the next. A rejected `import()` is logged as its message.
+const readsStylesheets = (pass: string, sheets: string[]) => `
+  ${shapeOf}
+  const required = [${sheets.map(sheet => `require("./${sheet}")`).join(", ")}].map(shape);
+  const pending = [${sheets.map(sheet => `import("./${sheet}")`).join(", ")}];
+  const promises = pending.map(value => value instanceof Promise);
+  Promise.all(pending)
+    .then(imported => imported.map(shape), String)
+    .then(imported => console.log({ pass: ${JSON.stringify(pass)}, required, promises, imported }));
+  import.meta.hot.accept();
+`;
+const emptyModules = (pass: string, count: number) => ({
+  pass,
+  required: Array(count).fill("object {}"),
+  promises: Array(count).fill(true),
+  imported: Array(count).fill('object {"default":{}}'),
+});
+devTest("require() and import() of a stylesheet give an empty module", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+    "a.css": `.a { color: red; }`,
+    "b.css": `.b { color: green; }`,
+    "app.ts": readsStylesheets("bundled together", ["a.css"]),
+    "second.ts": readsStylesheets("another page", ["a.css"]),
+  },
+  async test(dev) {
+    await using c = await dev.client("/index");
+    await c.expectMessage(emptyModules("bundled together", 1));
+    await c.style(".a").color.expect.toBe("red");
+
+    // The stylesheet is not bundled again for a page that is loaded later.
+    // The importer gets the stylesheet from the cache of the dev server.
+    {
+      await using other = await dev.client("/second");
+      await other.expectMessage(emptyModules("another page", 1));
+      await other.style(".a").color.expect.toBe("red");
+    }
+
+    // The same is true when only the importer is edited.
+    await dev.write("app.ts", readsStylesheets("importer edited", ["a.css"]));
+    await c.expectMessage(emptyModules("importer edited", 1));
+    await c.style(".a").color.expect.toBe("red");
+
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write("app.ts", readsStylesheets("both edited", ["a.css"]));
+      await dev.write("a.css", `.a { color: blue; }`);
+    }
+    await c.expectMessage(emptyModules("both edited", 1));
+    await c.style(".a").color.expect.toBe("#00f");
+
+    // A stylesheet that is new to the dev server, beside one from its cache.
+    await dev.write("app.ts", readsStylesheets("stylesheet added", ["a.css", "b.css"]));
+    await c.expectMessage(emptyModules("stylesheet added", 2));
+    await c.style(".a").color.expect.toBe("#00f");
+    await c.style(".b").color.expect.toBe("green");
+
+    // The page has a stylesheet only while a module requires it.
+    await dev.write("app.ts", readsStylesheets("stylesheet removed", ["b.css"]));
+    await c.expectMessage(emptyModules("stylesheet removed", 1));
+    await c.style(".a").notFound();
+    await dev.write("app.ts", readsStylesheets("stylesheet required again", ["a.css", "b.css"]));
+    await c.expectMessage(emptyModules("stylesheet required again", 2));
+    await c.style(".a").color.expect.toBe("#00f");
+  },
+});
+devTest("require() and import() of a stylesheet that failed to build with its importer", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "a.css": `.a { color: red; }}`,
+    "app.ts": readsStylesheets("stylesheet repaired", ["a.css"]),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["a.css:1:20: error: Unexpected end of input"],
+    });
+    // The importer is not bundled again.
+    await c.expectReload(async () => {
+      await dev.write("a.css", `.a { color: red; }`);
+    });
+    await c.expectMessage(emptyModules("stylesheet repaired", 1));
+    await c.style(".a").color.expect.toBe("red");
+  },
+});
+devTest("require() of a stylesheet in CommonJS, in a package, in try, and as a TypeScript import", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["forms.ts"] }),
+    "a.css": `.a { color: red; }`,
+    "legacy.cjs": `
+      require("./a.css");
+      module.exports = require("./a.css");
+    `,
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+    "node_modules/pkg/index.js": `
+      require("./pkg.css");
+      exports.loaded = true;
+    `,
+    "node_modules/pkg/pkg.css": `.pkg { color: blue; }`,
+    "forms.ts": `
+      import inCommonJS from "./legacy.cjs";
+      import { loaded as inPackage } from "pkg";
+      import inTypeScript = require("./a.css");
+      ${shapeOf}
+      let inTry;
+      try {
+        inTry = require("./a.css");
+      } catch (e) {
+        inTry = String(e);
+      }
+      const inArrow = () => require("./a.css");
+      // The printed value needs its parentheses in these places. The page does not load without them.
+      require("./a.css").written = true;
+      function neverCalled() {
+        new (require("./a.css"))();
+        new (import("./a.css"))();
+        require("./a.css")\`tag\`;
+      }
+      (async () => {
+        console.log({
+          inCommonJS: shape(inCommonJS),
+          inPackage,
+          inTypeScript: shape(inTypeScript),
+          inTry: shape(inTry),
+          inArrow: shape(inArrow()),
+          afterAwait: shape((await import("./a.css")).default),
+        });
+      })();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage({
+      inCommonJS: "object {}",
+      inPackage: true,
+      inTypeScript: "object {}",
+      inTry: "object {}",
+      inArrow: "object {}",
+      afterAwait: "object {}",
+    });
+    await c.style(".a").color.expect.toBe("red");
+    await c.style(".pkg").color.expect.toBe("#00f");
+  },
+});
+// A CSS module exports its class names. It does not get the value of a plain stylesheet.
+const readsCssModule = (pass: string) => `
+  ${shapeOf}
+  let required;
+  try {
+    required = shape(require("./card.module.css"));
+  } catch (e) {
+    required = "threw";
+  }
+  import("./card.module.css")
+    .then(shape, () => "rejected")
+    .then(imported =>
+      console.log({
+        pass: ${JSON.stringify(pass)},
+        requiredIsEmptyModule: required === "object {}",
+        importedIsEmptyModule: imported === 'object {"default":{}}',
+      }),
+    );
+  import.meta.hot.accept();
+`;
+devTest("require() and import() of a CSS module do not give an empty module", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "card.module.css": `.card { color: green; }`,
+    "app.ts": readsCssModule("bundled together"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage({ pass: "bundled together", requiredIsEmptyModule: false, importedIsEmptyModule: false });
+    await dev.write("app.ts", readsCssModule("importer edited"));
+    await c.expectMessage({ pass: "importer edited", requiredIsEmptyModule: false, importedIsEmptyModule: false });
+  },
+});
+// A record that a plugin answers keeps its source index under the dev server, as the record of a stylesheet does.
+// A plugin can answer with a module for a path that looks like a stylesheet, or with a stylesheet for any specifier.
+devTest("require() and import() of what a plugin resolves or loads", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import * as path from "path";
+      const files = { "virtual:tokens": "tokens.ts", "virtual:sheet": "sheet.css", "virtual:card": "card.module.css" };
+      export default {
+        name: "modules",
+        setup(build) {
+          build.onLoad({ filter: /theme\\.css$/ }, () => ({ contents: "export const color = 'red';", loader: "js" }));
+          build.onResolve({ filter: /^virtual:/ }, args => ({ path: path.join(import.meta.dirname, files[args.path]) }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "theme.css": `.theme { color: red; }`,
+    "tokens.ts": `export const size = 4;`,
+    "sheet.css": `.sheet { color: red; }`,
+    "card.module.css": `.card { color: green; }`,
+    "app.ts": `
+      ${shapeOf}
+      const read = (load: () => unknown) => {
+        try {
+          return shape(load());
+        } catch {
+          return "threw";
+        }
+      };
+      const modules = [require("./theme.css").color, require("virtual:tokens").size];
+      const stylesheet = read(() => require("virtual:sheet"));
+      const cssModule = read(() => require("virtual:card"));
+      Promise.all([import("./theme.css"), import("virtual:tokens")]).then(([theme, tokens]) =>
+        console.log({
+          modules,
+          imported: [theme.color, tokens.size],
+          stylesheet,
+          cssModuleIsEmptyModule: cssModule === "object {}",
+        }),
+      );
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage({
+      modules: ["red", 4],
+      imported: ["red", 4],
+      stylesheet: "object {}",
+      cssModuleIsEmptyModule: false,
+    });
+    await c.style(".sheet").color.expect.toBe("red");
+  },
+});
+devTest("require() and import() of a stylesheet in a server module", {
+  framework: minimalFramework,
+  files: {
+    "a.css": `.a { color: red; }`,
+    "routes/index.ts": `
+      export default async function (req, meta) {
+        ${shapeOf}
+        const required = shape(require("../a.css"));
+        const pending = import("../a.css");
+        const promise = pending instanceof Promise;
+        return Response.json({ required, promise, imported: shape(await pending) });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ required: "object {}", promise: true, imported: 'object {"default":{}}' });
+  },
+});
+// The server graph takes a stylesheet from the cache of the dev server only after its first 512 files.
+const serverRouteWithModules = (body: string) => `
+  ${modulesPastFirstBitsetStep.map(name => `import "../modules/${name}";`).join("\n  ")}
+  import "../a.css";
+  export default async function (req, meta) {
+    ${body}
+  }
+`;
+devTest("require() and import() of a stylesheet from the cache in a server module", {
+  framework: minimalFramework,
+  files: {
+    "a.css": `.a { color: red; }`,
+    ...Object.fromEntries(modulesPastFirstBitsetStep.map(name => [`modules/${name}.ts`, `export default "${name}";`])),
+    "routes/index.ts": serverRouteWithModules(`return Response.json({ pass: "stylesheet imported" });`),
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ pass: "stylesheet imported" });
+    await dev.write(
+      "routes/index.ts",
+      serverRouteWithModules(`
+        ${shapeOf}
+        const required = shape(require("../a.css"));
+        const imported = await import("../a.css").then(shape, String);
+        return Response.json({ pass: "importer edited", required, imported });
+      `),
+    );
+    await dev.fetch("/").equals({ pass: "importer edited", required: "object {}", imported: 'object {"default":{}}' });
   },
 });
 

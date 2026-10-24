@@ -2700,6 +2700,26 @@ pub(crate) mod __gated_printer {
             self.print(b");})()");
         }
 
+        /// A CSS module exports its class names, so its module is not empty.
+        #[inline]
+        fn is_empty_stylesheet_module(record: &ImportRecord) -> bool {
+            record
+                .flags
+                .contains(ImportRecordFlags::IS_DEV_SERVER_STYLESHEET)
+                && !record.path.is_css_module()
+        }
+
+        /// The empty module that `bun build` gives it. The caller prints the promise of `import()`.
+        #[cold]
+        #[inline(never)]
+        fn print_empty_stylesheet_module(&mut self, kind: ImportKind) {
+            self.print(if kind == ImportKind::Dynamic {
+                b"({ default: {} })".as_slice()
+            } else {
+                b"({})".as_slice()
+            });
+        }
+
         #[inline]
         pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord {
             // detached from `&self` so callers can interleave `&mut self` printing.
@@ -2845,12 +2865,16 @@ pub(crate) mod __gated_printer {
 
                 if let Some(input_files) = self.options.input_files_for_dev_server {
                     debug_assert!(module_type == bundle_opts::Format::InternalBakeDev);
-                    self.print_space_before_identifier();
-                    self.print_symbol(self.options.hmr_ref);
-                    self.print(b".require(");
-                    let path = &input_files[record.source_index.get() as usize].path;
-                    self.print_string_literal_utf8(path.pretty, false);
-                    self.print(b")");
+                    if Self::is_empty_stylesheet_module(record) {
+                        self.print_empty_stylesheet_module(record.kind);
+                    } else {
+                        self.print_space_before_identifier();
+                        self.print_symbol(self.options.hmr_ref);
+                        self.print(b".require(");
+                        let path = &input_files[record.source_index.get() as usize].path;
+                        self.print_string_literal_utf8(path.pretty, false);
+                        self.print(b")");
+                    }
                 } else if !meta.was_unwrapped_require {
                     // Call the wrapper
                     if meta.wrapper_ref.is_valid() {
@@ -2929,7 +2953,11 @@ pub(crate) mod __gated_printer {
                     }
 
                     if record.path.is_disabled {
-                        self.print_disabled_import();
+                        if Self::is_empty_stylesheet_module(record) {
+                            self.print_empty_stylesheet_module(record.kind);
+                        } else {
+                            self.print_disabled_import();
+                        }
                         if wrap {
                             self.print(b")");
                         }
@@ -3024,6 +3052,15 @@ pub(crate) mod __gated_printer {
             if module_type != bundle_opts::Format::InternalBakeDev {
                 self.print(b"import(");
                 self.print_import_record_path(record);
+            } else if Self::is_empty_stylesheet_module(record) {
+                self.print(b"Promise.resolve()");
+                let _ = self.print_dot_then_prefix();
+                self.print_empty_stylesheet_module(record.kind);
+                self.print_dot_then_suffix();
+                if wrap {
+                    self.print(b")");
+                }
+                return;
             } else {
                 self.print_symbol(self.options.hmr_ref);
                 self.print(b".dynamicImport(");

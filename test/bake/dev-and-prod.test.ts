@@ -114,6 +114,61 @@ devAndProductionTest("missing all meta tags works fine", {
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
+// The dev server and a production bundle give `require()` and `import()` of a stylesheet the same values:
+// an empty CommonJS module.
+devAndProductionTest("require() and import() of a stylesheet", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const shape = (value: unknown) => typeof value + " " + JSON.stringify(value);
+      const required = shape(require("./styles.css"));
+      const pending = import("./styles.css");
+      const promise = pending instanceof Promise;
+      pending.then(imported => console.log({ required, promise, imported: shape(imported) }));
+      // A production page does not run a script that is a CommonJS module. This makes the file an ES module.
+      export {};
+    `,
+    "styles.css": `
+      body {
+        background-color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage({ required: "object {}", promise: true, imported: 'object {"default":{}}' });
+    await c.style("body").backgroundColor.expect.toBe("red");
+  },
+});
+// The page above also calls `import()`, which puts `__commonJS` in the production bundle. Without it, the
+// production bundle of an ES module throws "ReferenceError: __commonJS is not defined", so this case runs
+// under the dev server only.
+devTest("require() of a stylesheet in a module that has no other use of the runtime", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const required = require("./styles.css");
+      console.log(typeof required + " " + JSON.stringify(required));
+      export {};
+    `,
+    "styles.css": `
+      body {
+        background-color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("object {}");
+    await c.style("body").backgroundColor.expect.toBe("red");
+  },
+});
 devAndProductionTest("inline script and styles appear", {
   files: {
     "public/index.html": `

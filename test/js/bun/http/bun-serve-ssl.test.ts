@@ -870,7 +870,7 @@ test("stop(true) survives a handler that closes other connections and runs the e
     cmd: [bunExe(), "test", "stop.test.js"],
     env: { ...bunEnv, TEST_TLS: JSON.stringify({ key: tlsCert.key, cert: tlsCert.cert }) },
     cwd: String(dir),
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

@@ -849,5 +849,8 @@ test("composes reports a list-style that the class and the composed class both s
     "b.module.css": `.b { list-style: circle; } .b { color: red; }`,
   });
   const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], throw: false });
-  expect(result.logs.map(({ message }) => message)).toEqual(["The value of list-style in the class a is undefined."]);
+  // The message holds ANSI escapes when colors are on.
+  expect(result.logs.map(({ message }) => Bun.stripANSI(message))).toEqual([
+    "The value of list-style in the class a is undefined.",
+  ]);
 });

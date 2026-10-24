@@ -13,21 +13,25 @@ test("stubs", () => {
 });
 
 test("the garbage collector knows the size of a histogram", () => {
-  // 8 bytes for each bucket.
-  expect(estimateShallowMemoryUsageOf(perf.createHistogram())).toBeWithin(45056 * 8, 45056 * 8 + 1024);
-  expect(estimateShallowMemoryUsageOf(perf.createHistogram({ figures: 5 }))).toBeWithin(
-    4849664 * 8,
-    4849664 * 8 + 1024,
-  );
-  expect(estimateShallowMemoryUsageOf(perf.monitorEventLoopDelay())).toBeWithin(46080 * 8, 46080 * 8 + 1024);
+  // 8 bytes for each bucket, up to that of the largest value.
+  for (const [figures, buckets] of [
+    [3, 45056],
+    [5, 4849664],
+  ]) {
+    const histogram = perf.createHistogram({ figures });
+    expect(estimateShallowMemoryUsageOf(histogram)).toBeLessThan(1024);
+    histogram.record(100);
+    expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(101 * 8, 101 * 8 + 1024);
+    histogram.record(Number.MAX_SAFE_INTEGER);
+    expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(buckets * 8, buckets * 8 + 1024);
 
-  // A structured clone shares the buckets.
-  const histogram = perf.createHistogram();
-  const clone = structuredClone(histogram);
-  expect(estimateShallowMemoryUsageOf(histogram) + estimateShallowMemoryUsageOf(clone)).toBeWithin(
-    45056 * 8,
-    45056 * 8 + 1024,
-  );
+    // A structured clone shares the buckets.
+    const clone = structuredClone(histogram);
+    expect(estimateShallowMemoryUsageOf(histogram) + estimateShallowMemoryUsageOf(clone)).toBeWithin(
+      buckets * 8,
+      buckets * 8 + 1024,
+    );
+  }
 });
 
 test("doesn't throw", () => {

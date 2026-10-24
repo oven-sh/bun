@@ -28,7 +28,8 @@ pub struct Histogram {
     highest_trackable_value: u64,
     unit_magnitude: u32,
     sub_bucket_half_count_magnitude: u32,
-    counts: Box<[u64]>,
+    /// As far as the last slot that was ever used. A histogram of small values stays small.
+    counts: Vec<u64>,
     /// The sum of `counts`, so no slot and no partial sum overflows.
     count: u64,
     exceeds: u64,
@@ -70,20 +71,11 @@ impl Histogram {
         if unit_magnitude + sub_bucket_half_count_magnitude > 61 {
             return None;
         }
-
-        let mut bucket_count: usize = 1;
-        let mut smallest_untrackable_value = sub_bucket_count << unit_magnitude;
-        while smallest_untrackable_value <= highest {
-            smallest_untrackable_value <<= 1;
-            bucket_count += 1;
-        }
-
         Some(Self {
             highest_trackable_value: highest,
             unit_magnitude,
             sub_bucket_half_count_magnitude,
-            counts: vec![0; (bucket_count + 1) << sub_bucket_half_count_magnitude]
-                .into_boxed_slice(),
+            counts: Vec::new(),
             count: 0,
             exceeds: 0,
             first: usize::MAX,
@@ -97,11 +89,14 @@ impl Histogram {
     }
 
     fn record_n(&mut self, value: u64, n: u64) -> bool {
-        if value <= self.highest_trackable_value {
+        if value <= self.highest_trackable_value
+            && let Some(count) = self.count.checked_add(n)
+        {
             let index = self.index_of(value);
-            if let (Some(slot), Some(count)) =
-                (self.counts.get_mut(index), self.count.checked_add(n))
-            {
+            if index >= self.counts.len() {
+                self.counts.resize(index + 1, 0);
+            }
+            if let Some(slot) = self.counts.get_mut(index) {
                 *slot += n;
                 self.count = count;
                 self.first = self.first.min(index);
@@ -183,7 +178,7 @@ impl Histogram {
     }
 
     /// The highest value of the slot at or below which `percentile` percent of the values are, or 0 if the histogram
-    /// is empty.
+    /// is empty. `percentile` is above 0 and at most 100.
     pub fn value_at_percentile(&self, percentile: f64) -> u64 {
         if self.count == 0 {
             return 0;
@@ -253,9 +248,9 @@ impl Histogram {
         percentiles
     }
 
-    /// The bytes this histogram occupies. It never changes.
+    /// The bytes this histogram occupies. Recording a value can raise it.
     pub fn memory_size(&self) -> usize {
-        size_of::<Self>() + size_of_val(&*self.counts)
+        size_of::<Self>() + self.counts.capacity() * size_of::<u64>()
     }
 
     /// `value` is at most `highest_trackable_value`.

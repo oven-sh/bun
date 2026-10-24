@@ -2,6 +2,7 @@
 //! `src/js/internal/perf_hooks/histogram.ts`.
 
 use core::cell::{Cell, RefCell};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -16,8 +17,16 @@ use crate::timer::event_loop_delay_monitor;
 pub(crate) struct Histogram {
     kind: Kind,
     counts: RefCell<Counts>,
-    /// The bytes of the counts. The histograms that share them share this too.
-    memory_size: Arc<usize>,
+    memory: Arc<Memory>,
+}
+
+/// What the garbage collector is told, from its own threads. The numbers are only a hint to it, and nothing is read in
+/// the light of them, so every access is relaxed.
+struct Memory {
+    /// The bytes of the counts.
+    size: AtomicUsize,
+    /// How many objects share the counts.
+    owners: AtomicUsize,
 }
 
 enum Kind {
@@ -47,6 +56,7 @@ struct State {
 /// An `ELDHistogram`, as the timer that samples the event loop sees it.
 pub(crate) struct Interval {
     state: Arc<Guarded<State>>,
+    memory: Arc<Memory>,
     /// Never 0.
     pub(crate) resolution_ms: u32,
 }
@@ -77,34 +87,52 @@ impl Interval {
     /// Returns the time of the sample.
     pub(crate) fn sample(&self) -> Timespec {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
-        self.state.lock().record_delta(now);
+        let mut state = self.state.lock();
+        state.record_delta(now);
+        self.memory.update(&state);
         now
     }
 }
 
+impl Memory {
+    fn update(&self, state: &State) {
+        self.size
+            .store(state.histogram.memory_size(), Ordering::Relaxed);
+    }
+}
+
 impl Histogram {
-    fn new(kind: Kind, counts: Counts, memory_size: Arc<usize>) -> Self {
+    fn new(kind: Kind, counts: Counts, memory: Arc<Memory>) -> Self {
+        memory.owners.fetch_add(1, Ordering::Relaxed);
         Self {
             kind,
             counts: RefCell::new(counts),
-            memory_size,
+            memory,
         }
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
-        *self.memory_size / Arc::strong_count(&self.memory_size)
+        self.memory.size.load(Ordering::Relaxed) / self.memory.owners.load(Ordering::Relaxed).max(1)
     }
 
     /// `f` does not reach another histogram.
     fn with<T>(&self, f: impl FnOnce(&mut State) -> T) -> T {
+        let with = |state: &mut State| {
+            let result = f(state);
+            self.memory.update(state);
+            result
+        };
         match &mut *self.counts.borrow_mut() {
-            Counts::Own(state) => f(state),
-            Counts::Shared(state) => f(&mut state.lock()),
+            Counts::Own(state) => with(state),
+            Counts::Shared(state) => with(&mut state.lock()),
         }
     }
 
     fn read<T>(&self, read: impl FnOnce(&bun_histogram::Histogram) -> T) -> T {
-        self.with(|state| read(&state.histogram))
+        match &*self.counts.borrow() {
+            Counts::Own(state) => read(&state.histogram),
+            Counts::Shared(state) => read(&state.lock().histogram),
+        }
     }
 
     fn share(&self) -> Arc<Guarded<State>> {
@@ -118,13 +146,22 @@ impl Histogram {
     }
 }
 
-fn new_state(histogram: bun_histogram::Histogram) -> (State, Arc<usize>) {
-    let memory_size = Arc::new(histogram.memory_size());
+impl Drop for Histogram {
+    fn drop(&mut self) {
+        self.memory.owners.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn new_state(histogram: bun_histogram::Histogram) -> (State, Arc<Memory>) {
+    let memory = Arc::new(Memory {
+        size: AtomicUsize::new(histogram.memory_size()),
+        owners: AtomicUsize::new(0),
+    });
     let state = State {
         histogram,
         previous_ns: 0,
     };
-    (state, memory_size)
+    (state, memory)
 }
 
 pub(crate) fn create_recordable<'a>(
@@ -133,24 +170,25 @@ pub(crate) fn create_recordable<'a>(
     highest: u64,
     figures: u32,
 ) -> Option<JsWrapper<'a, Histogram>> {
-    let (state, memory_size) = new_state(bun_histogram::Histogram::new(lowest, highest, figures)?);
-    Some(Histogram::new(Kind::Recordable, Counts::Own(state), memory_size).into_js(heap))
+    let (state, memory) = new_state(bun_histogram::Histogram::new(lowest, highest, figures)?);
+    Some(Histogram::new(Kind::Recordable, Counts::Own(state), memory).into_js(heap))
 }
 
 pub(crate) fn create_interval<'a>(heap: &JsHeap<'a>, resolution: f64) -> JsWrapper<'a, Histogram> {
     // https://github.com/nodejs/node/blob/v26.3.0/src/node_perf.cc#L298
     let histogram = bun_histogram::Histogram::new(1000, i64::MAX as u64, 3);
-    let (state, memory_size) = new_state(histogram.expect("a valid range"));
+    let (state, memory) = new_state(histogram.expect("a valid range"));
     let state = Arc::new(Guarded::new(state));
     let kind = Kind::Interval {
         interval: Rc::new(Interval {
             state: Arc::clone(&state),
+            memory: Arc::clone(&memory),
             // `as` saturates.
             resolution_ms: (resolution as u32).max(1),
         }),
         enabled: Cell::new(false),
     };
-    Histogram::new(kind, Counts::Shared(state), memory_size).into_js(heap)
+    Histogram::new(kind, Counts::Shared(state), memory).into_js(heap)
 }
 
 pub(crate) fn is_histogram(value: JsLocal<'_>) -> bool {
@@ -364,6 +402,7 @@ pub(crate) fn add<'a>(
             this.lock().add(&other);
         }
     }
+    this.with(|_| {});
     Ok(true)
 }
 
@@ -404,7 +443,7 @@ static IN_FLIGHT: Guarded<BTreeMap<u64, InFlight>> = Guarded::new(BTreeMap::new(
 
 struct InFlight {
     state: Arc<Guarded<State>>,
-    memory_size: Arc<usize>,
+    memory: Arc<Memory>,
     recordable: bool,
 }
 
@@ -416,7 +455,7 @@ pub(crate) extern "C" fn Histogram__retainForStructuredClone(histogram: JSValue)
     };
     let in_flight = InFlight {
         state: histogram.share(),
-        memory_size: Arc::clone(&histogram.memory_size),
+        memory: Arc::clone(&histogram.memory),
         recordable: matches!(histogram.kind, Kind::Recordable),
     };
     // Not one that bytes from elsewhere (IPC, `v8.deserialize()`) can guess.
@@ -444,7 +483,7 @@ pub(crate) extern "C" fn Histogram__fromStructuredClone(
             Kind::Plain
         };
         let counts = Counts::Shared(Arc::clone(&found.state));
-        Histogram::new(kind, counts, Arc::clone(&found.memory_size))
+        Histogram::new(kind, counts, Arc::clone(&found.memory))
     };
     histogram.into_js_wrapper(global).to_js()
 }

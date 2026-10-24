@@ -791,6 +791,12 @@ fn install_features(manager: &PackageManager) -> InstallFeatures {
     )
 }
 
+/// Returns true if `--production` / `--omit` leave no dependency type out of this run.
+pub(crate) fn lays_out_every_dependency(manager: &PackageManager) -> bool {
+    let own = install_features(manager);
+    own == full_install_features(own)
+}
+
 /// Every dependency type an install can lay out, whatever `--production` / `--omit` say for this run.
 fn full_install_features((mut local, mut remote): InstallFeatures) -> InstallFeatures {
     local.dev_dependencies = true;
@@ -1933,25 +1939,83 @@ fn links_package(
     link.st_ino == target.st_ino && link.st_dev == target.st_dev
 }
 
-/// Removes the entries of `node_modules/.bun` that no install of the saved lockfile links to. The
-/// isolated linker names an entry after the package and its peers, so a re-resolved dependency or
-/// a new naming rule leaves the entry of the old name behind.
+/// Removes the entries of `node_modules/.bun` that no install of the saved lockfile links to, and
+/// the links into them. The isolated linker names an entry after the package and its peers, so a
+/// re-resolved dependency or a new naming rule leaves the entry of the old name behind.
 ///
-/// The caller only calls this after an install that created an entry in an existing store. The
-/// wanted set has every dependency type, so `--production` and `--omit` keep the entries of a
-/// full install.
-pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager) {
+/// The caller only calls this after an install that laid out every dependency of every workspace
+/// (no `--production`, `--omit` or `--filter`) and that created or re-linked an entry, or dropped
+/// a dependency, in an existing store. So the install re-pointed every link of a dependency the
+/// lockfile still has, and a link into a removed entry belongs to a dependency it dropped.
+///
+/// `installed` is the store of that install. The entries it wrote are kept even when the saved
+/// lockfile names them differently: a tarball's integrity is recorded while it installs, and it
+/// is part of the entry name.
+pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager, installed: &Store) {
     let mut plan = Plan::default();
-    // The root `node_modules` is checked because the store is inside it.
-    drop(open_workspace_folder(ROOT_DIR, &mut plan.linked_folders));
-    let wanted = with_install_features(
-        manager,
-        full_install_features(install_features(manager)),
-        |manager| wanted_packages(manager, None),
-    );
-    let (names, _) = store_entry_names(manager, &wanted);
-    plan_store(&names, &mut plan);
+    // The store is inside the root `node_modules`. Nothing is removed from behind a symlink, and
+    // `bun prune` tells the user why.
+    if open_workspace_folder(ROOT_DIR, &mut plan.linked_folders).is_none() {
+        return;
+    }
+    // An install for another platform keeps its entries: the ones of this platform are not
+    // re-created when the user runs `bun install --os` or `--cpu` again.
+    let mut names = with_all_platforms(manager, |manager| {
+        let wanted = with_install_features(
+            manager,
+            full_install_features(install_features(manager)),
+            |manager| wanted_packages(manager, None),
+        );
+        store_entry_names(manager, &wanted).0
+    });
+    let manager: &PackageManager = manager;
+    push_store_entry_names(&manager.lockfile, installed, None, &mut names);
+    sort_names(&mut names);
+    names.dedup();
+    let removed_store = plan_store(&names, &mut plan);
+    if removed_store.is_empty() {
+        return;
+    }
+    // The links in the plan's folders are removed by `housekeeping`, in `remove_planned`.
     remove_planned(plan, Layout::Isolated, manager);
+    unlink_links_into(manager, &removed_store);
+}
+
+/// Removes the links of the root and of each workspace that point into one of the store entries
+/// `removed`, and the bins that pointed into them.
+fn unlink_links_into(manager: &PackageManager, removed: &[Box<[u8]>]) {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let pkg_res = lockfile.packages.items_resolution();
+    let mut linked_folders = Vec::new();
+    for pkg_id in 0..lockfile.packages.len() {
+        let folder_path: Box<[u8]> = match pkg_res[pkg_id].tag {
+            ResolutionTag::Root if pkg_id == 0 => ROOT_DIR.into(),
+            _ => match workspace_node_modules(lockfile, pkg_id as PackageID) {
+                Some(folder_path) if !is_pruned_workspace(manager, pkg_id) => folder_path,
+                _ => continue,
+            },
+        };
+        let Some(dir) = open_workspace_folder(&folder_path, &mut linked_folders) else {
+            continue;
+        };
+        unlink_links(&dir, &|dir, _, name| {
+            store_link_target(dir, name).is_some_and(|target| contains(removed, &target))
+        });
+        prune_bins(&dir);
+    }
+}
+
+/// Runs `f` with every CPU, OS and libc enabled.
+fn with_all_platforms<T>(manager: &mut PackageManager, f: impl FnOnce(&mut PackageManager) -> T) -> T {
+    use bun_install_types::{Architecture, Libc, NegatableEnum, OperatingSystem};
+    let options = &mut manager.options;
+    let saved = (options.cpu, options.os, options.libc);
+    options.cpu = <Architecture as NegatableEnum>::ALL;
+    options.os = <OperatingSystem as NegatableEnum>::ALL;
+    options.libc = <Libc as NegatableEnum>::ALL;
+    let result = f(manager);
+    (manager.options.cpu, manager.options.os, manager.options.libc) = saved;
+    result
 }
 
 /// The isolated linker only visits the names in the new lockfile, so this removes the symlink of
@@ -2409,10 +2473,12 @@ fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> 
     })
 }
 
+/// Pushes the name of each store entry of a package in `wanted`, or of every package if `wanted`
+/// is `None`.
 fn push_store_entry_names(
     lockfile: &Lockfile,
     store: &Store,
-    wanted: &DynamicBitSet,
+    wanted: Option<&DynamicBitSet>,
     names: &mut Vec<Box<[u8]>>,
 ) {
     let pkg_res = lockfile.packages.items_resolution();
@@ -2426,7 +2492,7 @@ fn push_store_entry_names(
             pkg_res[pkg_id].tag,
             ResolutionTag::Root | ResolutionTag::Workspace
         ) || entry_nested_folder[entry_idx]
-            || !wanted.is_set(pkg_id)
+            || wanted.is_some_and(|wanted| !wanted.is_set(pkg_id))
         {
             continue;
         }
@@ -2459,7 +2525,7 @@ fn store_entry_names(
         .flatten()
     {
         let store = build_store_with(manager, features);
-        push_store_entry_names(&manager.lockfile, &store, wanted, &mut names);
+        push_store_entry_names(&manager.lockfile, &store, Some(wanted), &mut names);
         own_store = Some(store);
     }
     sort_names(&mut names);

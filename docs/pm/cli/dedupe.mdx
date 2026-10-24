@@ -54,4 +54,4 @@ bun dedupe v1.4.0 (abc12345)
 - Dependencies on a dist-tag, git URL, or tarball keep their resolved version.
 - Requires a lockfile that matches `package.json`. If dependencies changed since the last install, it exits with `bun.lock does not match package.json`. Run `bun install` first. Bun migrates a `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` automatically.
 - Cannot be combined with `--frozen-lockfile`, `--production`, or `--no-save`; use `--check` instead.
-- With the isolated linker, several copies of the _same_ version that differ only in peer dependencies are not duplicates, and Bun does not report them. `bun install` removes the store entries it stops linking to, and [`bun prune`](/pm/cli/prune) cleans up the rest.
+- With the isolated linker, several copies of the _same_ version that differ only in peer dependencies are not duplicates, and Bun does not report them. `bun dedupe` removes the store entry of the dropped version when it re-links a package in the store to the kept version. When only a direct dependency of the project moves, [`bun prune`](/pm/cli/prune) removes the entry.

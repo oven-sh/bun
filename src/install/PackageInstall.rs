@@ -72,9 +72,8 @@ pub struct Summary {
     /// holds no entry of an earlier install.
     pub(crate) fresh_store: bool,
 
-    /// Set by the isolated linker only. True if the project's `node_modules` is a symlink. An
-    /// install never removes from the folder behind it.
-    pub(crate) linked_node_modules: bool,
+    /// Set by the isolated linker only. The store this install laid out.
+    pub(crate) store: Option<crate::isolated_install::Store>,
 
     pub(crate) offline_misses: OfflineMisses,
 }

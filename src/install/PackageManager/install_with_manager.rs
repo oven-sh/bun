@@ -1086,16 +1086,21 @@ pub fn install_with_manager(
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
-    // `success > 0` means this install created a store entry, so an entry of an earlier install
-    // may have lost its last link. A fresh store holds no earlier entry.
+    // `success > 0` means this install created a store entry or re-pointed a link of an existing
+    // one, and `remove > 0` that it dropped a dependency. Either way an entry of an earlier install
+    // may have lost its last link. A fresh store holds no earlier entry. An install that leaves out
+    // a dependency group or a workspace does not re-point the links of what it leaves out.
     if isolated
         && install_summary.fail == 0
-        && install_summary.success > 0
         && !install_summary.fresh_store
-        && !install_summary.linked_node_modules
-        && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
+        && (install_summary.success > 0
+            || manager.summary.remove > 0
+            || !manager.summary.removed_extension_rows.is_empty())
+        && workspace_filters.is_empty()
+        && crate::prune::lays_out_every_dependency(manager)
+        && let Some(store) = install_summary.store.take()
     {
-        crate::prune::remove_unreferenced_store_entries(manager);
+        crate::prune::remove_unreferenced_store_entries(manager, &store);
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;

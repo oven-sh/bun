@@ -135,6 +135,68 @@ async function runAutoInstallWithEnv(env: Record<string, string>, cwd: string, .
 
 const printNoDepsVersion = `console.log(require("no-deps").version);\n`;
 
+// The failed require() caches "not found" for `pages/a`. `pages/a/b` was then cached with no
+// parent: the project's node_modules was not searched, and the registry copy ran.
+test.concurrent("an installed package is not fetched for a directory created after a failed import", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-created-dir", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
+    "node_modules/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+    "node_modules/no-deps/index.js": `module.exports = require("./package.json");\n`,
+    "pages/keep.js": "",
+    "index.js": `
+      const fs = require("fs");
+      const path = require("path");
+      const page = path.join(__dirname, "pages", "a", "b", "page.js");
+      try {
+        require(page);
+      } catch {}
+      fs.mkdirSync(path.dirname(page), { recursive: true });
+      fs.writeFileSync(page, ${JSON.stringify(printNoDepsVersion)});
+      require(page);
+    `,
+    "bunfig.toml": registry.bunfig,
+  });
+
+  const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+  expect(stdout).toBe("1.0.0\n");
+  expect(stderr).not.toContain("error");
+  expect(registry.requests).toEqual([]);
+  expect(exitCode).toBe(0);
+});
+
+// `app` is the cwd and cannot be listed, so it is cached as a directory that does not open. When
+// `app/src` is read, the resolver opens `app` again. That fails, and `app` must not turn into an
+// empty directory: the registry would be asked for a package that is installed.
+// Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+test.skipIf(isWindows)("an installed package is not fetched below a project directory that does not open", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-unreadable-cwd", {
+    "app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
+    "app/node_modules/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+    "app/node_modules/no-deps/index.js": `module.exports = require("./package.json");\n`,
+    "app/src/index.js": printNoDepsVersion,
+    "app/bunfig.toml": registry.bunfig,
+  });
+  const app = join(String(dir), "app");
+  using unprivileged = unprivilegedSpawnOptions(String(dir));
+  chmodSync(app, 0o311);
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "src/index.js"],
+      cwd: app,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(app, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, requests: registry.requests, exitCode }).toEqual({ stdout: "", requests: [], exitCode: 1 });
+  } finally {
+    chmodSync(app, 0o755);
+  }
+});
+
 // docs/runtime/auto-install.mdx: a bare import resolves to the version range the
 // nearest package.json declares for it, and only falls back to `latest` when no
 // package.json lists the package.

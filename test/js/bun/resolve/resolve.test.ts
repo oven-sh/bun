@@ -2230,6 +2230,219 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
   });
 });
 
+// A failed lookup caches "not found" for the first directory of the path that is missing. A directory
+// created below it later was cached with no parent, so its modules did not see the node_modules,
+// tsconfig.json and package.json of the directories above it.
+describe.concurrent("a directory created below one that was looked up while it was missing", () => {
+  const project = {
+    "package.json": JSON.stringify({ name: "project", imports: { "#lib": "./lib.js" } }),
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@lib": ["./lib.js"] } } }),
+    "lib.js": `module.exports = "lib";`,
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js" }),
+    "node_modules/pkg/index.js": `module.exports = "pkg";`,
+    "node_modules/dep/index.js": `module.exports = "dep of the project";`,
+    "pages/keep.ts": `export default "keep";`,
+  };
+  const prelude = /* ts */ `
+    import fs from "node:fs";
+    import { createRequire } from "node:module";
+    import path from "node:path";
+    const root = import.meta.dir;
+    const pages = path.join(root, "pages");
+    const relative = file => path.relative(root, file).split(path.sep).join("/");
+    const resolve = (specifier, from) => {
+      try {
+        return relative(Bun.resolveSync(specifier, from));
+      } catch (e) {
+        return e.code;
+      }
+    };
+    const load = async file => {
+      try {
+        return (await import(file)).default;
+      } catch (e) {
+        return e.code;
+      }
+    };
+    const write = (file, contents) => {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), contents);
+    };
+  `;
+
+  // One process for each order: the resolver's directory cache lasts as long as the process.
+  async function run(script: string, files: Record<string, string> = {}) {
+    using dir = tempDir("resolve-below-missing", { ...project, ...files, "main.ts": prelude + script });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  it("its modules find the node_modules, tsconfig paths and package.json imports of the project", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const dir = path.join(pages, "a", "b");
+      console.log(resolve("./a/b/page.ts", pages));
+      write(
+        "pages/a/b/page.ts",
+        'import pkg from "pkg"; import alias from "@lib"; import subpath from "#lib"; export default [pkg, alias, subpath].join(" ");',
+      );
+      console.log(resolve("./a/b/page.ts", pages));
+      console.log(resolve("pkg", dir));
+      console.log(resolve("@lib", dir));
+      console.log(resolve("#lib", dir));
+      console.log(await load(path.join(dir, "page.ts")));
+    `);
+    expect(stdout).toEqual([
+      "ERR_MODULE_NOT_FOUND",
+      "pages/a/b/page.ts",
+      "node_modules/pkg/index.js",
+      "lib.js",
+      "lib.js",
+      "pkg lib lib",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("the directory that was missing is read: its node_modules, package.json and tsconfig.json apply", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const dir = path.join(pages, "a", "b");
+      console.log(resolve("./a/b/page.ts", pages));
+      write("pages/a/node_modules/dep/index.js", 'module.exports = "dep of pages/a";');
+      write("pages/a/package.json", JSON.stringify({ name: "a", imports: { "#local": "./local.js" } }));
+      write("pages/a/tsconfig.json", JSON.stringify({ compilerOptions: { paths: { "@local": ["./local.js"] } } }));
+      write("pages/a/local.js", 'module.exports = "local";');
+      write(
+        "pages/a/b/page.ts",
+        'import pkg from "pkg"; import dep from "dep"; import subpath from "#local"; import alias from "@local"; export default [pkg, dep, subpath, alias].join(", ");',
+      );
+      console.log(resolve("./a/b/page.ts", pages));
+      console.log(resolve("pkg", dir));
+      console.log(resolve("dep", dir));
+      console.log(resolve("#local", dir));
+      console.log(resolve("@local", dir));
+      console.log(await load(path.join(dir, "page.ts")));
+    `);
+    expect(stdout).toEqual([
+      "ERR_MODULE_NOT_FOUND",
+      "pages/a/b/page.ts",
+      "node_modules/pkg/index.js",
+      "pages/a/node_modules/dep/index.js",
+      "pages/a/local.js",
+      "pages/a/local.js",
+      "pkg, dep of pages/a, local, local",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("every level that was looked up while it was missing gets its parent", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      // Each lookup caches one more level: pages/a, then pages/a/b, then pages/a/b/c.
+      for (let i = 0; i < 4; i++) console.log(resolve("./a/b/c/d/page.ts", pages));
+      write("pages/a/b/node_modules/mid/index.js", 'module.exports = "mid";');
+      write("pages/a/b/c/d/page.ts", 'import pkg from "pkg"; import mid from "mid"; export default pkg + " " + mid;');
+      console.log(resolve("./a/b/c/d/page.ts", pages));
+      for (const dir of ["a/b/c/d", "a/b/c", "a/b", "a"]) console.log(resolve("pkg", path.join(pages, dir)));
+      console.log(await load(path.join(pages, "a", "b", "c", "d", "page.ts")));
+      console.log(resolve("./a/b/c/still-missing/page.ts", pages));
+    `);
+    expect(stdout).toEqual([
+      "ERR_MODULE_NOT_FOUND",
+      "ERR_MODULE_NOT_FOUND",
+      "ERR_MODULE_NOT_FOUND",
+      "ERR_MODULE_NOT_FOUND",
+      "pages/a/b/c/d/page.ts",
+      "node_modules/pkg/index.js",
+      "node_modules/pkg/index.js",
+      "node_modules/pkg/index.js",
+      "node_modules/pkg/index.js",
+      "pkg mid",
+      "ERR_MODULE_NOT_FOUND",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("require() resolves a package from it as it did before the directory existed", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const dir = path.join(pages, "a", "b");
+      const resolvePkg = () => {
+        try {
+          return relative(createRequire(dir + path.sep).resolve("pkg"));
+        } catch (e) {
+          return e.code;
+        }
+      };
+      console.log(resolvePkg());
+      write("pages/a/b/page.cjs", 'module.exports = require("pkg");');
+      console.log(resolvePkg());
+      try {
+        console.log(require(path.join(dir, "page.cjs")));
+      } catch (e) {
+        console.log(e.code);
+      }
+    `);
+    expect(stdout).toEqual(["node_modules/pkg/index.js", "node_modules/pkg/index.js", "pkg"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a directory that replaces a file which was read as a directory", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `
+      console.log(resolve("./x", path.join(pages, "was-a-file")));
+      fs.rmSync(path.join(pages, "was-a-file"));
+      write("pages/was-a-file/b/page.ts", 'import pkg from "pkg"; export default pkg;');
+      console.log(resolve("pkg", path.join(pages, "was-a-file", "b")));
+      console.log(await load(path.join(pages, "was-a-file", "b", "page.ts")));
+    `,
+      { "pages/was-a-file": "" },
+    );
+    expect(stdout).toEqual(["ERR_MODULE_NOT_FOUND", "node_modules/pkg/index.js", "pkg"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A failed build caches "not found" for the first two levels of the path that are missing. The next
+  // build lists the directory of the file: that drops the directory's own "not found". The levels above
+  // it are opened again.
+  it("Bun.build() after a build that failed on the missing path, one to three levels below", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const build = entry => Bun.build({ entrypoints: [path.join(root, entry)], throw: false });
+      for (const dir of ["one", "two/b", "three/b/c"]) {
+        const top = dir.split("/")[0];
+        write(top + ".ts", 'import page from "./pages/' + dir + '/page.ts"; console.log(page);');
+        const failed = await build(top + ".ts");
+        write("pages/" + top + "/node_modules/dep/index.js", 'module.exports = "dep of pages/' + top + '";');
+        write(
+          "pages/" + dir + "/page.ts",
+          'import pkg from "pkg"; import dep from "dep"; import alias from "@lib"; export default [pkg, dep, alias];',
+        );
+        const result = await build(top + ".ts");
+        const bundle = result.success
+          ? await result.outputs[0].text()
+          : result.logs.map(log => String(log.message)).join("; ");
+        const modules = ["node_modules/pkg/index.js", "dep of pages/" + top, "dep of the project", "lib.js"];
+        console.log(failed.success, modules.filter(module => bundle.includes(module)).join(", ") || bundle);
+      }
+    `);
+    expect(stdout).toEqual([
+      "false node_modules/pkg/index.js, dep of pages/one, lib.js",
+      "false node_modules/pkg/index.js, dep of pages/two, lib.js",
+      "false node_modules/pkg/index.js, dep of pages/three, lib.js",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // On Windows these are not how the resolver spells the path, and it was asked again about its own spelling.
 test.concurrent.each(["import", "require"])(
   "%s() of a file written after its directory was read, by an absolute path with forward slashes",

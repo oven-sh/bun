@@ -99,7 +99,7 @@ function madeArchives() {
     return copy;
   };
   const end = Buffer.alloc(1024);
-  const file = (name: string, body: Uint8Array | string = "x", type = "0") =>
+  const file = (name: Buffer | string, body: Uint8Array | string = "x", type = "0") =>
     Buffer.concat([tarHeader(name, body.length, type), tarPadded(Buffer.from(body))]);
   const tar = Buffer.concat([file("a", "hello"), file("b", Buffer.alloc(600, "b")), end]);
   const gz = gzipStored(tar);
@@ -191,7 +191,7 @@ function madeArchives() {
     }
     add(`gzip of ${length} bytes, trailer damaged`, changed(gzipStored(many.subarray(0, length)), -6, 1));
   }
-  add("a tar whose first name looks like gzip", file("\x1f\x8b\x08"), end);
+  add("a tar whose first name looks like gzip", file(Buffer.from([0x1f, 0x8b, 8])), end);
 
   const pax = (records: Uint8Array[], then = file("short")) =>
     Buffer.concat([paxHeader(...records), then, file("after"), end]);

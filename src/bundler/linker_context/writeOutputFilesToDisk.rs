@@ -153,7 +153,6 @@ pub(crate) fn write_output_files_to_disk(
                             size: Some(output_source_map.len()),
                             data: OutputFileData::Saved(0),
                             side: Some(options::Side::Client),
-                            entry_point_index: None,
                             is_executable: false,
                             hash: None,
                             source_map_index: None,
@@ -184,7 +183,6 @@ pub(crate) fn write_output_files_to_disk(
                 bytecode_index: None,
                 module_info_index: None,
                 side: Some(options::Side::Client),
-                entry_point_index: None,
                 referenced_css_chunks: Box::default(),
                 size: None,
                 source_index: IndexOptional::NONE,
@@ -349,7 +347,6 @@ pub(crate) fn write_output_files_to_disk(
                     size: Some(output_source_map.len()),
                     data: OutputFileData::Saved(0),
                     side: Some(options::Side::Client),
-                    entry_point_index: None,
                     is_executable: false,
                     hash: None,
                     source_map_index: None,
@@ -472,7 +469,6 @@ pub(crate) fn write_output_files_to_disk(
                             display_size: bytecode.len() as u32,
                             data: OutputFileData::Saved(0),
                             side: None,
-                            entry_point_index: None,
                             is_executable: false,
                             source_map_index: None,
                             bytecode_index: None,
@@ -548,18 +544,6 @@ pub(crate) fn write_output_files_to_disk(
             is_executable: chunk.flags.contains(ChunkFlags::IS_EXECUTABLE),
             data: OutputFileData::Saved(0),
             side: Some(c.chunk_side(chunk)),
-            entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                // Server-components builds insert 2 extra synthetic sources
-                // before user entry points, so the source-index offset is 3.
-                let offset: u32 = if c.framework.is_some_and(|fw| fw.server_components.is_some()) {
-                    3
-                } else {
-                    1
-                };
-                Some(chunk.entry_point.source_index() - offset)
-            } else {
-                None
-            },
             referenced_css_chunks: match &chunk.content {
                 Content::Javascript(js) => {
                     // `Index` is `#[repr(transparent)]` over u32.

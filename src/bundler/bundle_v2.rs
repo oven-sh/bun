@@ -143,6 +143,10 @@ pub struct BundleV2<'a> {
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
+
+    /// `bun build --app`: the source index each key of the `EntryPointMap` resolved to, by
+    /// key index. `Index::INVALID` for a key with no source. Empty in every other build.
+    pub(crate) bake_entry_point_sources: Vec<Index>,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -644,7 +648,7 @@ pub mod bv2_impl {
             #[derive(Copy, Clone)]
             pub struct InputFile {
                 abs_path: bun_ptr::RawSlice<u8>,
-                pub(crate) side: Side,
+                pub side: Side,
             }
             impl InputFile {
                 #[inline]
@@ -674,11 +678,13 @@ pub mod bv2_impl {
             }
             impl Eq for InputFile {}
 
-            /// Value side is `OutputFile.Index` — left as a placeholder until the
-            /// bundle is indexed; the bundler never reads it.
-            pub use crate::output_file::Index as OutputFileIndex;
+            /// The output file of an entry point: the chunk of the file it resolved to.
+            /// `NONE` until `BundleV2::generate_from_bake_production_cli` binds it, and
+            /// after that for an entry point with no chunk of its own.
+            pub use crate::output_file::IndexOptional as OutputFileIndexOptional;
 
-            pub type EntryPointHashMap = bun_collections::ArrayHashMap<InputFile, OutputFileIndex>;
+            pub type EntryPointHashMap =
+                bun_collections::ArrayHashMap<InputFile, OutputFileIndexOptional>;
 
             #[derive(Default)]
             pub struct EntryPointMap {
@@ -707,9 +713,8 @@ pub mod bv2_impl {
                     let key = InputFile::init(&owned, side);
                     self.owned_paths.push(owned);
                     let index = self.files.count();
-                    // Value is the post-bundle output index; left as a placeholder until
-                    // the bundle is indexed.
-                    self.files.put_no_clobber(key, OutputFileIndex::init(0))?;
+                    self.files
+                        .put_no_clobber(key, OutputFileIndexOptional::NONE)?;
                     Ok(OpaqueFileId::init(index as u32))
                 }
             }
@@ -1085,6 +1090,9 @@ pub mod bv2_impl {
                 pub(crate) namespace: Box<[u8]>,
                 pub(crate) specifier: Box<[u8]>,
                 pub(crate) importer_source_index: u32,
+                /// An entry point has no import record. For an entry point of `bun build --app`
+                /// this is the index of its key in the `EntryPointMap`, which `on_resolve` binds
+                /// to the file the plugins answer with. For any other entry point it is 0.
                 pub(crate) import_record_index: u32,
                 pub(crate) range: bun_ast::Range,
                 pub(crate) original_target: Target,
@@ -3315,6 +3323,7 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
+                bake_entry_point_sources: Vec::new(),
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
@@ -3772,15 +3781,21 @@ pub mod bv2_impl {
             self.graph
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
+            self.bake_entry_point_sources = vec![Index::INVALID; num_entry_points];
 
-            for key in data.files.keys() {
+            for (key_index, key) in data.files.keys().iter().enumerate() {
                 let abs_path = key.abs_path();
                 let target = match key.side {
                     bake::Side::Client => Target::Browser,
                     bake::Side::Server => self.transpiler.options.target,
                 };
 
-                if self.enqueue_entry_point_on_resolve_plugin_if_needed(abs_path, target, None) {
+                if self.enqueue_entry_point_key_on_resolve_plugin_if_needed(
+                    abs_path,
+                    target,
+                    None,
+                    key_index as u32,
+                ) {
                     continue;
                 }
 
@@ -3791,11 +3806,92 @@ pub mod bv2_impl {
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target, None)? else {
-                    continue;
-                };
+                let source_index =
+                    match self.enqueue_entry_item(&mut resolved, true, target, None)? {
+                        Some(source_index) => Some(source_index),
+                        // Nothing is parsed yet, so the file in the graph is an earlier key.
+                        None => self.source_index_of_entry_item(&resolved, target),
+                    };
+                if let Some(source_index) = source_index {
+                    self.bind_bake_entry_point(key_index as u32, source_index);
+                }
             }
             Ok(())
+        }
+
+        /// The file `enqueue_entry_item` found in the graph when it returned `None` for `resolved`.
+        fn source_index_of_entry_item(
+            &mut self,
+            resolved: &_resolver::Result,
+            target: options::Target,
+        ) -> Option<IndexInt> {
+            let path = resolved.path_const()?;
+            self.path_to_source_index_map(target).get_path(path)
+        }
+
+        /// Whether the request of an entry point came from a key of the `EntryPointMap` of
+        /// `bun build --app`. No other build has keys.
+        #[inline(always)]
+        fn is_bake_entry_point_key(&self, key_index: u32) -> bool {
+            (key_index as usize) < self.bake_entry_point_sources.len()
+        }
+
+        /// `bun build --app`: key `key_index` of the `EntryPointMap` is the file at `source_index`.
+        #[inline]
+        fn bind_bake_entry_point(&mut self, key_index: u32, source_index: IndexInt) {
+            if let Some(bound) = self.bake_entry_point_sources.get_mut(key_index as usize) {
+                debug_assert!(bound.is_invalid(), "each entry point key is bound once");
+                *bound = Index::source(source_index);
+            }
+        }
+
+        /// `bun build --app`: an onResolve plugin passed on a key, and its file was in the graph
+        /// already, as an earlier key or as an import of one. An import becomes an entry point
+        /// here, so that the key has a chunk of its own.
+        fn promote_to_bake_entry_point(
+            &mut self,
+            resolved: &_resolver::Result,
+            target: options::Target,
+        ) -> Option<IndexInt> {
+            let source_index = self.source_index_of_entry_item(resolved, target)?;
+            self.graph.entry_points.push(Index::init(source_index));
+            Some(source_index)
+        }
+
+        /// `bun build --app`: gives each key of `entry_points` the output file of the chunk of
+        /// its entry point.
+        fn bind_bake_entry_point_outputs(
+            &self,
+            entry_points: &mut bake_types::production::EntryPointMap,
+            chunks: &[Chunk],
+            output_files: &[options::OutputFile],
+        ) {
+            use crate::output_file::{Index as OutputFileIndex, IndexOptional};
+
+            let mut output_of_source = vec![IndexOptional::NONE; self.graph.input_files.len()];
+            for (chunk_index, chunk) in chunks.iter().enumerate() {
+                if self.linker.chunk_output_kind(chunk) != options::OutputKind::EntryPoint {
+                    continue;
+                }
+                // `generate_chunks_in_parallel` gives the output file of a chunk the index of
+                // the chunk.
+                debug_assert!(
+                    output_files[chunk_index].output_kind == options::OutputKind::EntryPoint
+                );
+                output_of_source[chunk.entry_point.source_index() as usize] =
+                    OutputFileIndex::init(chunk_index as u32).to_optional();
+            }
+
+            for (output, source_index) in entry_points
+                .files
+                .values_mut()
+                .iter_mut()
+                .zip(&self.bake_entry_point_sources)
+            {
+                if source_index.is_valid() {
+                    *output = output_of_source[source_index.get() as usize];
+                }
+            }
         }
 
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
@@ -4617,8 +4713,9 @@ pub mod bv2_impl {
             Ok(this)
         }
 
+        /// Gives each key of `entry_points` its output file, when it has one.
         pub fn generate_from_bake_production_cli(
-            entry_points: &bake_types::production::EntryPointMap,
+            entry_points: &mut bake_types::production::EntryPointMap,
             server_transpiler: &'a mut Transpiler<'a>,
             bake_options: BakeOptions<'a>,
             alloc: &'a bun_alloc::Arena,
@@ -4683,10 +4780,12 @@ pub mod bv2_impl {
                     return Ok(Vec::new());
                 }
 
-                crate::linker_context_mod::generate_chunks_in_parallel::<false>(
+                let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
                     &mut this.linker,
                     &mut chunks,
-                )
+                )?;
+                this.bind_bake_entry_point_outputs(entry_points, &chunks, &output_files);
+                Ok(output_files)
             })();
 
             this.deinit_without_freeing_arena();
@@ -4907,7 +5006,6 @@ pub mod bv2_impl {
                                         .content_hash(content_hashes_for_additional_files[index]),
                                 ),
                                 side: Some(crate::options::Side::Client),
-                                entry_point_index: None,
                                 is_executable: false,
                                 ..Default::default()
                             },
@@ -5294,6 +5392,15 @@ pub mod bv2_impl {
                                     .entry_point_original_names
                                     .put(idx, &resolve.import_record.specifier);
                             }
+                            let key_index = resolve.import_record.import_record_index;
+                            if this.is_bake_entry_point_key(key_index) {
+                                let source_index = source_index.or_else(|| {
+                                    this.promote_to_bake_entry_point(&resolved, target)
+                                });
+                                if let Some(source_index) = source_index {
+                                    this.bind_bake_entry_point(key_index, source_index);
+                                }
+                            }
                             return;
                         }
 
@@ -5526,6 +5633,10 @@ pub mod bv2_impl {
                                 .graph
                                 .entry_point_original_names
                                 .put(source_index.get(), &resolve.import_record.specifier);
+                            this.bind_bake_entry_point(
+                                resolve.import_record.import_record_index,
+                                source_index.get(),
+                            );
                         } else {
                             let source_import_records =
                                 &mut this.graph.ast.items_import_records_mut()
@@ -5882,7 +5993,6 @@ pub mod bv2_impl {
             output_kind,
             is_executable: false,
             side: None,
-            entry_point_index: None,
             ..Default::default()
         }));
         Ok(())
@@ -6357,6 +6467,18 @@ pub mod bv2_impl {
             target: options::Target,
             loader: Option<Loader>,
         ) -> bool {
+            self.enqueue_entry_point_key_on_resolve_plugin_if_needed(entry_point, target, loader, 0)
+        }
+
+        /// `key_index`: see `MiniImportRecord::import_record_index`.
+        #[inline(always)]
+        fn enqueue_entry_point_key_on_resolve_plugin_if_needed(
+            &mut self,
+            entry_point: &[u8],
+            target: options::Target,
+            loader: Option<Loader>,
+            key_index: u32,
+        ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
                 let mut temp_path = Fs::Path::init(entry_point);
                 temp_path.namespace = b"file";
@@ -6381,7 +6503,7 @@ pub mod bv2_impl {
                             namespace: (&b"file"[..]).into(),
                             specifier: entry_point.into(),
                             importer_source_index: u32::MAX, // Sentinel value for entry points
-                            import_record_index: 0,
+                            import_record_index: key_index,
                             range: bun_ast::Range::NONE,
                             original_target: target,
                             loader,

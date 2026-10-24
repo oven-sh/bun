@@ -270,6 +270,15 @@ fn write_sourcemap_to_disk(
     let source_map_index = file.source_map_index;
     debug_assert!(bundled_outputs[source_map_index as usize].output_kind == OutputKind::Sourcemap);
 
+    source_maps.put(
+        &module_map_key(file),
+        OutputFileIndex::init(source_map_index),
+    )?;
+    Ok(())
+}
+
+/// The key of a server output file in the module map: `bake:/` and its path in the build.
+fn module_map_key(file: &OutputFile) -> Vec<u8> {
     let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
         || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
     {
@@ -280,8 +289,7 @@ fn write_sourcemap_to_disk(
 
     let mut key = Vec::with_capacity(6 + without_prefix.len());
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
-    source_maps.put(&key, OutputFileIndex::init(source_map_index))?;
-    Ok(())
+    key
 }
 
 fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
@@ -637,7 +645,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // valid inputs, and any `BuildFailed` indicates a bug upstream
         // (in the bundler), not a user-facing diagnostic to swallow.
         BundleV2::generate_from_bake_production_cli(
-            &entry_points,
+            &mut entry_points,
             // SAFETY: see `server_ptr` comment above.
             unsafe { &mut *server_ptr },
             bun_bundler::bundle_v2::BakeOptions {
@@ -670,20 +678,24 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // Index all bundled outputs.
     // Client files go to disk.
     // Server files get loaded in memory.
-    // Populate indexes in `entry_points` to be looked up during prerendering
-    let mut module_keys: Vec<BunString> = vec![BunString::DEAD; entry_points.files.count()];
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
-        let output_indexes = entry_points.files.values_mut();
+        for (input, output) in entry_points.files.iter() {
+            log!(
+                "entry point side={} src={} output={:?}\n",
+                side_name(input.side),
+                BStr::new(input.abs_path()),
+                output.unwrap(),
+            );
+        }
         for (i, file) in bundled_outputs_list.iter().enumerate() {
             log!(
-                "src_index={:?} side={} src={} dest={} - {:?}\n",
+                "src_index={:?} side={} src={} dest={}\n",
                 file.source_index,
                 file.side.map(side_name).unwrap_or("null"),
                 BStr::new(&file.src_path.text),
                 BStr::new(&file.dest_path),
-                file.entry_point_index,
             );
             if file.loader.is_css() {
                 if css_chunks_count == 0 {
@@ -692,13 +704,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     css_chunks_first = css_chunks_first.min(i);
                 }
                 css_chunks_count += 1;
-            }
-
-            if let Some(entry_point) = file.entry_point_index {
-                if (entry_point as usize) < output_indexes.len() {
-                    output_indexes[entry_point as usize] =
-                        OutputFileIndex::init(u32::try_from(i).expect("int cast"));
-                }
             }
 
             // The output file which contains the runtime (Index.runtime, contains
@@ -747,34 +752,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
                     match file.output_kind {
                         OutputKind::EntryPoint | OutputKind::Chunk => {
-                            let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-                                || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-                            {
-                                &file.dest_path[2..]
-                            } else {
-                                &file.dest_path[..]
-                            };
-
-                            if let Some(entry_point_index) = file.entry_point_index {
-                                if (entry_point_index as usize) < module_keys.len() {
-                                    let str = BunString::create_format(format_args!(
-                                        "bake:/{}",
-                                        BStr::new(without_prefix)
-                                    ));
-                                    module_keys[entry_point_index as usize] =
-                                        str.thread_isolated_copy();
-                                }
-                            }
+                            let key = module_map_key(file);
 
                             log!(
-                                "  adding module map entry: output_module_map(bake:/{}) = {}\n",
-                                BStr::new(without_prefix),
+                                "  adding module map entry: output_module_map({}) = {}\n",
+                                BStr::new(&key),
                                 i
                             );
 
-                            let mut key = Vec::with_capacity(6 + without_prefix.len());
-                            write!(&mut key, "bake:/{}", BStr::new(without_prefix))
-                                .expect("infallible: in-memory write");
                             output_module_map.put(
                                 &key,
                                 OutputFileIndex::init(u32::try_from(i).expect("int cast")),
@@ -824,7 +809,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         vm_ptr,
         entry_points,
         bundled_outputs_list,
-        module_keys,
         output_module_map,
         source_maps,
     )?;
@@ -843,7 +827,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             let str = BunString::create_format(format_args!(
                 "{}{}",
                 BStr::new(public_path),
-                BStr::new(&pt.output_file(client_file).dest_path),
+                BStr::new(&pt.output_file(client_file).map_err(js_err)?.dest_path),
             ))
             .into_js(global)
             .map_err(js_err)?;
@@ -1020,6 +1004,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .map_err(js_err)?;
         for r#ref in pt
             .output_file(main_file_route_index)
+            .map_err(js_err)?
             .referenced_css_chunks
             .iter()
         {
@@ -1040,7 +1025,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     pt.preload_bundled_module(file).map_err(js_err)?,
                 )
                 .map_err(js_err)?;
-            for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
+            for r#ref in pt
+                .output_file(file)
+                .map_err(js_err)?
+                .referenced_css_chunks
+                .iter()
+            {
                 styles
                     .put_index(
                         global,
@@ -1063,7 +1053,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         pt.preload_bundled_module(file).map_err(js_err)?,
                     )
                     .map_err(js_err)?;
-                for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
+                for r#ref in pt
+                    .output_file(file)
+                    .map_err(js_err)?
+                    .referenced_css_chunks
+                    .iter()
+                {
                     styles
                         .put_index(
                             global,
@@ -1115,6 +1110,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     TypeAndFlags::new(
                         route.r#type.get(),
                         pt.output_file(main_file_route_index)
+                            .map_err(js_err)?
                             .bake_extra
                             .route
                             .is_fully_static(),

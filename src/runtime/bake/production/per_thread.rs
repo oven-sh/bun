@@ -12,8 +12,6 @@ pub(crate) struct PerThread {
     /// Owns `input_files` (keys) and `output_indexes` (values).
     pub(crate) entry_points: EntryPointMap,
     pub(crate) bundled_outputs: Vec<OutputFile>,
-    /// Indexed by entry point index (OpaqueFileId)
-    pub(crate) module_keys: Vec<BunString>,
     /// Unordered
     pub(crate) module_map: StringArrayHashMap<OutputFileIndex>,
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
@@ -61,7 +59,6 @@ impl PerThread {
         PerThread {
             entry_points: EntryPointMap::default(),
             bundled_outputs: Vec::new(),
-            module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
             // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
@@ -78,7 +75,6 @@ impl PerThread {
         vm: *mut VirtualMachine,
         entry_points: EntryPointMap,
         bundled_outputs: Vec<OutputFile>,
-        module_keys: Vec<BunString>,
         module_map: StringArrayHashMap<OutputFileIndex>,
         source_maps: StringArrayHashMap<OutputFileIndex>,
     ) -> crate::Result<PerThread> {
@@ -98,7 +94,6 @@ impl PerThread {
         Ok(PerThread {
             entry_points,
             bundled_outputs,
-            module_keys,
             module_map,
             source_maps,
             vm,
@@ -118,16 +113,39 @@ impl PerThread {
         self.attached = true;
     }
 
-    pub(crate) fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
-        self.entry_points.files.values()[id.get() as usize]
+    pub(crate) fn output_index(&self, id: OpaqueFileId) -> Option<OutputFileIndex> {
+        self.entry_points.files.values()[id.get() as usize].unwrap()
     }
 
     pub(crate) fn input_file(&self, id: OpaqueFileId) -> InputFile {
         self.entry_points.files.keys()[id.get() as usize]
     }
 
-    pub(crate) fn output_file(&self, id: OpaqueFileId) -> &OutputFile {
-        &self.bundled_outputs[self.output_index(id).get() as usize]
+    /// The entry point output of `id`. Throws when the build for its side has none: a
+    /// stylesheet has no entry point output, and a client component has its own in the
+    /// client build.
+    pub(crate) fn output_file(&self, id: OpaqueFileId) -> JsResult<&OutputFile> {
+        let input = self.input_file(id);
+        if let Some(index) = self.output_index(id) {
+            let file = &self.bundled_outputs[index.get() as usize];
+            if file.side == Some(input.side) {
+                return Ok(file);
+            }
+        }
+        Err(self.global().throw(format_args!(
+            "The {} build has no entry point output for {}",
+            side_name(input.side),
+            bun_core::fmt::quote(resolve_path::relative(
+                &self.entry_points.root,
+                input.abs_path()
+            )),
+        )))
+    }
+
+    /// The key of the module of a server entry point in `module_map`.
+    fn module_key(&self, id: OpaqueFileId) -> JsResult<JSValue> {
+        let file = self.output_file(id)?;
+        bun_string_jsc::create_utf8_for_js(self.global(), &module_map_key(file))
     }
 
     // Must be run at the top of the event loop
@@ -136,9 +154,7 @@ impl PerThread {
         load_module(
             self.vm.as_ptr(),
             global,
-            self.module_keys[id.get() as usize]
-                .to_js(global)
-                .map_err(js_err)?,
+            self.module_key(id).map_err(js_err)?,
         )
     }
 
@@ -152,12 +168,13 @@ impl PerThread {
     pub(crate) fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
         let global = self.global();
         if !self.loaded_files.is_set(id.get() as usize) {
+            let key = self.module_key(id)?;
             self.loaded_files.set(id.get() as usize);
-            self.all_server_files.as_ref().unwrap().get().put_index(
-                global,
-                id.get(),
-                self.module_keys[id.get() as usize].to_js(global)?,
-            )?;
+            self.all_server_files
+                .as_ref()
+                .unwrap()
+                .get()
+                .put_index(global, id.get(), key)?;
         }
 
         Ok(JSValue::js_number_from_int32(

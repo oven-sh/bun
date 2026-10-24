@@ -465,7 +465,6 @@ impl Default for output_file::Options {
             is_executable: false,
             data: output_file::OptionsData::default(),
             side: None,
-            entry_point_index: None,
             referenced_css_chunks: Box::default(),
             bake_extra: output_file::BakeExtra::default(),
         }

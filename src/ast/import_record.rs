@@ -108,9 +108,7 @@ bitflags::bitflags! {
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
 
-        /// The importee is a data file (JSON, TOML, YAML) that the linker gave
-        /// the CommonJS form, not a CommonJS module: `__toESM` gets
-        /// `isNodeMode`, so `default` is the whole value.
+        /// `__toESM` gets `isNodeMode`: the importee is a data file, not a CommonJS module.
         const TO_ESM_NODE_MODE = 1 << 19;
     }
 }

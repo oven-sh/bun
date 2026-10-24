@@ -4434,10 +4434,7 @@ impl<'a> LinkerContext<'a> {
             && exports.contains(b"default")
     }
 
-    /// A data file in the CommonJS form (`module.exports = value`) is a value,
-    /// not a CommonJS module: its default export is the whole value whatever
-    /// keys it has, as in `bun run` and Node. (esbuild applies the
-    /// `__esModule` interop to it.)
+    /// A data file in the CommonJS form: `default` is the whole value, as in Node (not esbuild).
     fn is_commonjs_data_file(&self, source_index: crate::IndexInt) -> bool {
         let id = source_index as usize;
         if id >= self.graph.ast.len() || self.graph.ast.items_exports_kind()[id] != ExportsKind::Cjs
@@ -4445,16 +4442,14 @@ impl<'a> LinkerContext<'a> {
             return false;
         }
         let input_files = &self.parse_graph().input_files;
-        // A plugin's `loader: "object"` result is the exports of a module, and
-        // it arrives as JSON.
+        // A plugin's `loader: "object"` result arrives as JSON and is the exports of a module.
         if input_files.items_flags()[id].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
         {
             return false;
         }
         match input_files.items_loader()[id] {
             Loader::Json | Loader::Jsonc | Loader::Json5 | Loader::Toml | Loader::Yaml => true,
-            // A string, or an object with one key (the root element): both
-            // modes give the same namespace.
+            // A string, or one root key: both modes give the same namespace.
             Loader::Text
             | Loader::Md
             | Loader::File
@@ -4476,8 +4471,7 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// The flags step 6 gives the record of an ES import of `importee`, a
-    /// file in the CommonJS form.
+    /// The flags step 6 gives an ES import record of `importee`, a file in the CommonJS form.
     pub(crate) fn to_esm_flags(
         &self,
         source_index: crate::IndexInt,
@@ -4487,15 +4481,13 @@ impl<'a> LinkerContext<'a> {
     ) -> bun_ast::ImportRecordFlags {
         use bun_ast::ImportRecordFlags as Flags;
         let id = source_index as usize;
-        // A `require()` that the parser turned into an import keeps the
-        // namespace it has today. That is `import * as ns` in a part of its
-        // own, and each statement of a lifted CommonJS file, whose
-        // `module.exports = require(x)` is an `export *`.
-        let was_require = self.graph.ast.items_parts()[id].as_slice()[part_index].tag
-            == bun_ast::PartTag::ImportToConvertFromRequire
-            || (kind == ImportKind::Stmt
-                && self.graph.ast.items_flags()[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM));
-        if !was_require && self.is_commonjs_data_file(importee) {
+        // A `require()` that the parser turned into an import keeps the namespace it has.
+        let in_require_part = self.graph.ast.items_parts()[id].as_slice()[part_index].tag
+            == bun_ast::PartTag::ImportToConvertFromRequire;
+        // In a lifted CommonJS file every statement was a `require()`, also its `export *`.
+        let in_lifted_file = kind == ImportKind::Stmt
+            && self.graph.ast.items_flags()[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+        if !in_require_part && !in_lifted_file && self.is_commonjs_data_file(importee) {
             Flags::WRAP_WITH_TO_ESM | Flags::TO_ESM_NODE_MODE
         } else {
             Flags::WRAP_WITH_TO_ESM

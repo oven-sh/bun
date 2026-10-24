@@ -3058,8 +3058,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// `__toESM` gets `isNodeMode` when the importer is an ES module by
-        /// type, or the importee is a data file.
+        /// `isNodeMode`: the importer is an ES module by type, or the importee is a data file.
         fn to_esm_is_node_mode(&self, record: &ImportRecord) -> bool {
             self.options.input_module_type == bundle_opts::ModuleType::Esm
                 || record.flags.contains(ImportRecordFlags::TO_ESM_NODE_MODE)

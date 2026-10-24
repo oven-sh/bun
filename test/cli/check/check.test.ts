@@ -17167,6 +17167,69 @@ export function pattern() { let w: number; return \`x\${[w] = [1]}\`; }
       expect(exitCode).toBe(1);
     });
 
+    // The name of an `@overload` signature is a clone of the function's name, so its error is the function's. The expected output is tsc's.
+    test("an unused function or private method with `@overload` tags is reported once, at its name", async () => {
+      using dir = project({
+        "a.js": `/**
+ * @overload
+ * @param {string} a
+ * @returns {string}
+ */
+/**
+ * @overload
+ * @param {number} a
+ * @returns {number}
+ */
+/**
+ * @param {any} a
+ * @returns {any}
+ */
+function unused(a) { return a; }
+/**
+ * @overload
+ * @param {string} a
+ * @returns {string}
+ *
+ * @param {any} a
+ * @returns {any}
+ */
+function used(a) { return a; }
+export function outer() {
+  /**
+   * @overload
+   * @param {string} a
+   * @returns {string}
+   */
+  /**
+   * @param {any} a
+   * @returns {any}
+   */
+  function local(a) { return a; }
+  return used("");
+}
+export class C {
+  /**
+   * @overload
+   * @param {string} a
+   * @returns {string}
+   */
+  /**
+   * @param {any} a
+   * @returns {any}
+   */
+  #unused(a) { return a; }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--allowJs", "--checkJs", "--noUnusedLocals"]);
+      expect(stdout.split("\n")).toEqual([
+        `a.js(15,10): error TS6133: 'unused' is declared but its value is never read.`,
+        `a.js(35,12): error TS6133: 'local' is declared but its value is never read.`,
+        `a.js(48,3): error TS6133: '#unused' is declared but its value is never read.`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2775 only for the CommonJS-exported assertion functions that tsc rejects", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,

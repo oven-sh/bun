@@ -1862,7 +1862,7 @@ impl Checker<'_, '_> {
             } {
                 continue;
             }
-            for &decl in symbol.decls {
+            for (i, &decl) in symbol.decls.iter().enumerate() {
                 let declaration = hir.node(decl);
                 match hir.kind(declaration) {
                     Kind::VariableDeclaration | Kind::Parameter | Kind::BindingElement => {
@@ -1904,7 +1904,15 @@ impl Checker<'_, '_> {
                                     | Decl::ImportEquals(_)
                             ) =>
                     {
-                        self.report_unused_local(u, declaration, name)
+                        // The name of an `@overload` signature is a clone of the function's name.
+                        let is_reparsed = |d: &Node| hir.flags(*d).contains(Flags::REPARSED);
+                        let mut later = symbol.decls[i..].iter().map(|&d| hir.node(d));
+                        let named = match hir.kind(declaration) {
+                            Kind::FunctionDeclaration => later.find(|d| !is_reparsed(d)),
+                            _ => None,
+                        };
+                        let named = hir.name(named.unwrap_or(declaration));
+                        self.report_unused_local(u, declaration, named, name)
                     }
                     _ => {}
                 }
@@ -1959,14 +1967,15 @@ impl Checker<'_, '_> {
                 self.report_unused(u, clause, false, at, 6192, &[]);
             } else {
                 for &(_, unused) in unuseds {
-                    self.report_unused_local(u, unused, hir.text(hir.name(unused)));
+                    let named = hir.name(unused);
+                    self.report_unused_local(u, unused, named, hir.text(named));
                 }
             }
         }
     }
 
-    /// `reportUnusedLocal`
-    fn report_unused_local(&mut self, u: &Unused<'_, '_>, node: Node, name: Atom) {
+    /// `reportUnusedLocal`. `named` is `node.Name()`.
+    fn report_unused_local(&mut self, u: &Unused<'_, '_>, node: Node, named: Node, name: Atom) {
         let hir = u.hir;
         // `IsTypeDeclaration`: the bindings of `import type` are type declarations. (Not those of `import { type T }`,
         // nor `* as ns`.)
@@ -1986,7 +1995,7 @@ impl Checker<'_, '_> {
             }
             _ => false,
         };
-        let at = self.span_of_token(u.file, hir.start(hir.name(node)));
+        let at = self.span_of_token(u.file, hir.start(named));
         let code = if is_type_declaration { 6196 } else { 6133 };
         self.report_unused(u, node, false, at, code, &[Arg::Atom(name)]);
     }
@@ -2100,7 +2109,12 @@ impl Checker<'_, '_> {
                         continue;
                     }
                     if !u.is_referenced(symbol.id) {
-                        let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
+                        // The name of an `@overload` signature is a clone of the method's name.
+                        let is_written = |it: &Member| !it.flags.contains(Flags::REPARSED);
+                        let named = hir.members[i..].iter().position(is_written);
+                        let named = MemberId((i + named.unwrap_or(0)) as u32);
+                        let (start, end) =
+                            (hir[named].name_pos, self.end_of_member_name(file, named));
                         let name = hir.text.get(start as usize..end as usize);
                         let (at, name) = ((file, start, end), Arg::Bytes(name.unwrap_or_default()));
                         self.report_unused(u, hir.node(m), false, at, 6133, &[name]);

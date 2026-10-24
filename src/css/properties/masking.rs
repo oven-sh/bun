@@ -142,6 +142,7 @@ impl Mask {
         let mut composite: Option<MaskComposite> = None;
         let mut mode: Option<MaskMode> = None;
 
+        let start = input.position();
         loop {
             if image.is_none() {
                 if let Ok(value) = input.try_parse(Image::parse) {
@@ -200,6 +201,7 @@ impl Mask {
 
             break;
         }
+        input.expect_advanced_from(start)?;
 
         if clip.is_none() {
             if let Some(o) = origin {

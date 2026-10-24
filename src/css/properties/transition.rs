@@ -50,6 +50,7 @@ impl Transition {
         let mut delay: Option<Time> = None;
         let mut timing_function: Option<EasingFunction> = None;
 
+        let start = parser.position();
         loop {
             if duration.is_none() {
                 if let Ok(value) = parser.try_parse(Time::parse) {
@@ -81,6 +82,7 @@ impl Transition {
 
             break;
         }
+        parser.expect_advanced_from(start)?;
 
         Ok(Self {
             property: property.unwrap_or(PropertyId::All),

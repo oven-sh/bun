@@ -7965,6 +7965,151 @@ describe("css tests", () => {
   });
 
   describe("edge cases", () => {
+    // The grammar of these six shorthands is a `||` group, which needs one or
+    // more of its components. An empty value and an empty item of a
+    // comma-separated list are invalid, and a browser drops the declaration. It
+    // stays as written and does not replace the declaration before it in the
+    // same block.
+    describe("empty value of a shorthand whose components are all optional", () => {
+      minify_test(".a{background:red;background:}", ".a{background:red;background:}");
+      minify_test(".b{animation:spin 1s;animation:}", ".b{animation:1s spin;animation:}");
+      minify_test(".c{transition:color 1s;transition:}", ".c{transition:color 1s;transition:}");
+      minify_test(".d{flex-flow:column;flex-flow:}", ".d{flex-flow:column;flex-flow:}");
+      minify_test(".e{mask:url(#m);mask:}", ".e{mask:url(#m);mask:}");
+      minify_test(".f{flex:2;flex:}", ".f{flex:2;flex:}");
+      // `font` and `border` need a component, so they never parsed an empty value.
+      minify_test(".g{font:12px a;font:}", ".g{font:12px a;font:}");
+      minify_test(".h{border:1px solid red;border:}", ".h{border:1px solid red;border:}");
+      cssTest(".a { background: red; background: }", ".a { background: red; background: ; }");
+
+      // Each name with a valid value, in the form that the minifier prints.
+      const single = {
+        "flex-flow": "column",
+        "-webkit-flex-flow": "column",
+        "-ms-flex-flow": "column",
+        "flex": "2",
+        "-webkit-flex": "2",
+        "-ms-flex": "2",
+      };
+      const commaSeparated = {
+        "background": "red",
+        "transition": "color 1s",
+        "-webkit-transition": "color 1s",
+        "-moz-transition": "color 1s",
+        "-ms-transition": "color 1s",
+        "animation": "1s spin",
+        "-webkit-animation": "1s spin",
+        "-moz-animation": "1s spin",
+        "-ms-animation": "1s spin",
+        "-o-animation": "1s spin",
+        "mask": "url(#m)",
+        "-webkit-mask": "url(#m)",
+      };
+      const emptyValues = ["", " ", "\n\t", "/**/", " /* c */ ", "!important", " !important"];
+      const emptyItems = (valid: string) => [
+        `${valid},`,
+        `,${valid}`,
+        `${valid},,${valid}`,
+        ",",
+        `${valid}, `,
+        `${valid},/**/`,
+        `${valid},!important`,
+      ];
+      // Which blanks and comments an unparsed value keeps is not the subject here.
+      const withoutBlanks = (css: string) => css.replace(/\s+|\/\*.*?\*\//g, "");
+
+      function keepsBothDeclarations(name: string, valid: string, values: string[]) {
+        test(name, () => {
+          const sources = values.map(value => `.a{${name}:${valid};${name}:${value}}`);
+          expect(sources.map(source => withoutBlanks(minify_test_with_options(source, "")))).toEqual(
+            sources.map(withoutBlanks),
+          );
+        });
+      }
+      for (const [name, valid] of Object.entries(single)) keepsBothDeclarations(name, valid, emptyValues);
+      for (const [name, valid] of Object.entries(commaSeparated)) {
+        keepsBothDeclarations(name, valid, [...emptyValues, ...emptyItems(valid)]);
+      }
+
+      // The invalid declaration does not merge with the declarations around it.
+      minify_test(".a{transition:opacity 2s;transition:color 1s,}", ".a{transition:opacity 2s;transition:color 1s,}");
+      minify_test(".a{background-color:red;background:}", ".a{background-color:red;background:}");
+      minify_test(".a{flex-grow:2;flex:}", ".a{flex-grow:2;flex:}");
+      minify_test(".a{flex-direction:column;flex-flow:}", ".a{flex-direction:column;flex-flow:}");
+      minify_test(
+        ".a{transition:color 1s;transition:;transition-duration:2s}",
+        ".a{transition:color 1s;transition:;transition-duration:2s}",
+      );
+      minify_test(".a{background:;background:red}", ".a{background:;background:red}");
+      minify_test(
+        ".a{background:red;background:!important;background:blue}",
+        ".a{background:#00f;background:!important}",
+      );
+
+      // Two rules with the same selector. Adjacent rules merge into one block, and an at-rule
+      // between them keeps both.
+      minify_test(".a{background:red}.a{background:}", ".a{background:red;background:}");
+      minify_test(
+        ".a{background:red}@media print{.q{top:0}}.a{background:}",
+        ".a{background:red}@media print{.q{top:0}}.a{background:}",
+      );
+      // With a style rule between them, the duplicate-rule check (`StyleRule::is_duplicate`)
+      // removes the first rule: it compares the property names only, for every unparsed value.
+      cssTestTodo(
+        ".a { background: red } .b { color: red } .a { background: }",
+        ".a { background: red; } .b { color: red; } .a { background: ; }",
+      );
+
+      // Declarations that the shorthand handlers do not see.
+      minify_test(
+        "@keyframes k{from{background:red;background:}to{flex:2;flex:}}",
+        "@keyframes k{0%{background:red;background:}to{flex:2;flex:}}",
+      );
+      minify_test("@container style(background:){.a{color:red}}", "@container style(background:){.a{color:red}}");
+      minify_test(
+        "@container style(transition:color 1s,){.a{color:red}}",
+        "@container style(transition:color 1s,){.a{color:red}}",
+      );
+
+      // One component is enough.
+      minify_test(".a{background:none}", ".a{background:0 0}");
+      minify_test(".a{flex:0%}", ".a{flex:1}");
+      minify_test(".a{flex-flow:nowrap}", ".a{flex-flow:row}");
+      minify_test(".a{transition:0s}", ".a{transition:all}");
+      minify_test(".a{animation:0s}", ".a{animation:none}");
+      minify_test(".a{mask:match-source}", ".a{mask:none}");
+      // An empty value is valid for a custom property.
+      minify_test(".a{--x:1;--x:}", ".a{--x:1;--x:}");
+
+      // The names come from the typed property table in the source, so the check also runs for a
+      // property that gets a typed parser later. Only an unparsed value keeps the blank, so a
+      // typed parser whose empty value prints as nothing fails too.
+      test("no known property parses an empty value or a lone comma", async () => {
+        const rust = await Bun.file(join(__dirname, "../../../../src/css/properties/properties_generated.rs")).text();
+        const start = rust.search(/static KNOWN\b[^{]*\{/);
+        const table = rust.slice(start, rust.indexOf("};", start));
+        const names: string[] = [];
+        for (const [, name, prefixes] of table.matchAll(/b"([a-z-]+)" => \(([^,]+),/g)) {
+          names.push(name);
+          for (const [, prefix] of prefixes.matchAll(/VendorPrefix::(WEBKIT|MOZ|MS|O)\b/g)) {
+            names.push(`-${prefix.toLowerCase()}-${name}`);
+          }
+        }
+        expect(names.length).toBeGreaterThan(350);
+
+        const parsed: string[] = [];
+        for (const name of names) {
+          // `composes:` is a parse error.
+          if (name === "composes") continue;
+          for (const source of [`.x{${name}: }`, `.x{${name}:,}`]) {
+            const output = minify_test_with_options(source, "");
+            if (output !== source) parsed.push(`${source} -> ${output}`);
+          }
+        }
+        expect(parsed).toEqual([]);
+      });
+    });
+
     describe("invalid gradient", () => {
       cssTest(
         `

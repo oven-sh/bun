@@ -46,6 +46,7 @@ impl Background {
         let mut origin: Option<BackgroundOrigin> = None;
         let mut clip: Option<BackgroundClip> = None;
 
+        let start = input.position();
         loop {
             // TODO: only allowed on the last background.
             if color.is_none() {
@@ -107,6 +108,7 @@ impl Background {
 
             break;
         }
+        input.expect_advanced_from(start)?;
 
         if clip.is_none() {
             if let Some(o) = origin {

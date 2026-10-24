@@ -3650,6 +3650,18 @@ impl<'a> Parser<'a> {
         result
     }
 
+    /// A CSS `||` group needs one or more of its operands. Its parser calls this
+    /// after it tried them: fails when no token was consumed since `start`, an
+    /// earlier `position()`. Lightning CSS returns a value of defaults there.
+    /// A browser drops the declaration.
+    #[inline]
+    pub(crate) fn expect_advanced_from(&self, start: usize) -> CssResult<()> {
+        if self.position() == start {
+            return Err(self.new_custom_error(ParserError::invalid_declaration));
+        }
+        Ok(())
+    }
+
     pub(crate) fn skip_cdc_and_cdo(&mut self) {
         if let Some(block_type) = self.at_start_of.take() {
             consume_until_end_of_block(block_type, &mut self.input.tokenizer);

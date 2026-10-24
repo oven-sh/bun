@@ -62,6 +62,7 @@ impl Animation {
         let mut fill_mode: Option<AnimationFillMode> = None;
         let mut timeline: Option<AnimationTimeline> = None;
 
+        let start = input.position();
         loop {
             if duration.is_none() {
                 if let Ok(value) = input.try_parse(Time::parse) {
@@ -119,6 +120,7 @@ impl Animation {
             }
             break;
         }
+        input.expect_advanced_from(start)?;
 
         css::Result::Ok(Animation {
             name: name.unwrap_or(AnimationName::None),

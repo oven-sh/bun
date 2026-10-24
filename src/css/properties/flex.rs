@@ -66,6 +66,7 @@ impl FlexFlow {
         let mut direction: Option<FlexDirection> = None;
         let mut wrap: Option<FlexWrap> = None;
 
+        let start = input.position();
         loop {
             if direction.is_none() {
                 if let Ok(value) = input.try_parse(FlexDirection::parse) {
@@ -81,6 +82,7 @@ impl FlexFlow {
             }
             break;
         }
+        input.expect_advanced_from(start)?;
 
         Ok(FlexFlow {
             direction: direction.unwrap_or(FlexDirection::Row),
@@ -139,6 +141,7 @@ impl Flex {
         let mut shrink: Option<CSSNumber> = None;
         let mut basis: Option<LengthPercentageOrAuto> = None;
 
+        let start = input.position();
         loop {
             if grow.is_none() {
                 if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
@@ -157,6 +160,7 @@ impl Flex {
 
             break;
         }
+        input.expect_advanced_from(start)?;
 
         Ok(Flex {
             grow: grow.unwrap_or(1.0),

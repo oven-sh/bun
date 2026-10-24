@@ -1899,13 +1899,14 @@ function getNodeHTTPServerSocket() {
       //
       // `#pendingAbortMessage` is the `_httpMessage` captured when the destroy
       // was initiated from JS (`#closeHandle`). It is only honoured when the
-      // captured response was itself destroy()ed: a `res.end()` followed by a
-      // JS-initiated socket.destroy() also reaches detachSocket() via the
-      // dispatcher's finished branch, and Node.js does not abort the request
-      // once the response has finished (resOnFinish shifts state.incoming).
+      // captured response was itself destroy()ed before it finished: a
+      // `res.end()` followed by a JS-initiated socket.destroy() also reaches
+      // detachSocket() via the dispatcher's finished branch, and Node.js does
+      // not abort the request once the response has finished (resOnFinish
+      // shifts state.incoming).
       const pending = this.#pendingAbortMessage;
       this.#pendingAbortMessage = undefined;
-      const message = this._httpMessage ?? (pending?.destroyed ? pending : undefined);
+      const message = this._httpMessage ?? (pending?.destroyed && !pending.writableFinished ? pending : undefined);
       const writeFailure = errored ?? $ERR_STREAM_DESTROYED("write");
       if (message) {
         failPendingWriteCallbacks(message, writeFailure);

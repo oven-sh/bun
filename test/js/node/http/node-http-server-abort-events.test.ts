@@ -660,6 +660,33 @@ describe("res.destroy() defers 'close'", () => {
     expect(received).toEndWith("\r\n\r\nhello");
   });
 
+  // Node's resOnFinish takes the request off the connection, so the close of the socket no longer aborts it.
+  test.concurrent("inside the end() callback, with half of the request body still to come", async () => {
+    const events: string[] = [];
+    const socketClosed = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.on("aborted", () => events.push("req.aborted"));
+      req.on("error", () => events.push("req.error"));
+      recordResponse(res, events, () => {});
+      req.socket.on("close", () => socketClosed.resolve());
+      // After the handler has returned, the response is still the one its socket knows when it ends.
+      setImmediate(() => res.end("hello", () => void res.destroy()));
+    });
+    let client: ReturnType<typeof connect> | undefined;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      client.on("error", () => {});
+      client.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nhello");
+      await socketClosed.promise;
+      expect(events).toEqual(["res.finish", "res.close (closed: true)"]);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
   const destroyedBeforeFinishing = [
     "destroy()",
     "destroy() returned (closed: false)",

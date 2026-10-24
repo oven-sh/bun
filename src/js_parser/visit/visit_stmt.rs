@@ -36,6 +36,26 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
 }
 
+/// The binary operators of a numeric constant expression in tsc's `evaluate`. The visitor folds each on numbers.
+fn is_ts_numeric_binary_operator(op: js_ast::OpCode) -> bool {
+    use js_ast::OpCode as Op;
+    matches!(
+        op,
+        Op::BinAdd
+            | Op::BinSub
+            | Op::BinMul
+            | Op::BinDiv
+            | Op::BinRem
+            | Op::BinPow
+            | Op::BinShl
+            | Op::BinShr
+            | Op::BinUShr
+            | Op::BinBitwiseAnd
+            | Op::BinBitwiseOr
+            | Op::BinBitwiseXor
+    )
+}
+
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
@@ -2285,6 +2305,123 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// The number of the `const` `ref_`, when its statement comes before the enum being visited, in the same list.
+    fn ts_enum_sibling_number(&mut self, ref_: Ref) -> Option<f64> {
+        let earlier = self.ts_enum_siblings.earlier?;
+        let earlier: &[Stmt] = earlier.get();
+        let mut numbers = self.ts_enum_siblings.numbers.take().unwrap_or_default();
+        for stmt in earlier.get(numbers.read..).unwrap_or_default() {
+            let StmtData::SLocal(local) = stmt.data else {
+                continue;
+            };
+            if local.kind != S::Kind::KConst {
+                continue;
+            }
+            // `exports.replace` gives a module export another value, or removes it, when its statement is visited.
+            let is_replaceable = local.is_export
+                && self.enclosing_namespace_arg_ref.is_none()
+                && self.options.features.replace_exports.count() > 0;
+            for decl in local.decls.slice() {
+                let (js_ast::binding::Data::BIdentifier(id), Some(mut value)) =
+                    (decl.binding.data, decl.value)
+                else {
+                    continue;
+                };
+                if is_replaceable {
+                    let name = self.load_name_from_ref(id.r#ref);
+                    match self.options.features.replace_exports.get_ptr(name) {
+                        Some(ReplaceableExport::Replace(replacement)) => value = *replacement,
+                        Some(_) => continue,
+                        None => {}
+                    }
+                }
+                let number = match value.data {
+                    js_ast::ExprData::ENumber(num) => num.value(),
+                    // The parser leaves a negative literal as a unary expression.
+                    js_ast::ExprData::EUnary(unary) if unary.op == js_ast::OpCode::UnNeg => {
+                        let js_ast::ExprData::ENumber(num) = unary.value.data else {
+                            continue;
+                        };
+                        -num.value()
+                    }
+                    _ => continue,
+                };
+                numbers.values.insert(id.r#ref, number);
+            }
+        }
+        numbers.read = earlier.len();
+        let number = numbers.values.get(&ref_).copied();
+        self.ts_enum_siblings.numbers = Some(numbers);
+        number
+    }
+
+    /// The number that an initializer of the enum being visited folds the name `ref_` to (TypeScript 5.0).
+    fn ts_enum_const_number(&mut self, ref_: Ref) -> Option<f64> {
+        if !ref_.is_symbol()
+            || self.symbols[ref_.inner_index() as usize].kind != js_ast::symbol::Kind::Constant
+        {
+            return None;
+        }
+        // Holds a const of an enclosing scope once its statement is visited, not one of the enum's own list.
+        let Some(visited) = self.const_values.get(&ref_) else {
+            return self.ts_enum_sibling_number(ref_);
+        };
+        match visited.unwrap_inlined().data {
+            js_ast::ExprData::ENumber(num) => Some(num.value()),
+            _ => None,
+        }
+    }
+
+    /// `Some(true)`: `expr` is a numeric constant expression that names a number const. `replace` writes the numbers in.
+    fn substitute_ts_enum_numbers(&mut self, expr: &mut Expr, replace: bool) -> Option<bool> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return None;
+        }
+        match expr.data {
+            js_ast::ExprData::ENumber(_) => Some(false),
+            js_ast::ExprData::EInlinedEnum(inlined) => {
+                matches!(inlined.value.data, js_ast::ExprData::ENumber(_)).then_some(false)
+            }
+            js_ast::ExprData::EIdentifier(ident) => {
+                let number = self.ts_enum_const_number(ident.ref_)?;
+                if replace {
+                    self.ignore_usage(ident.ref_);
+                    expr.data = js_ast::ExprData::ENumber(E::Number::new(number));
+                }
+                Some(true)
+            }
+            js_ast::ExprData::EUnary(mut unary) => {
+                if !matches!(
+                    unary.op,
+                    js_ast::OpCode::UnPos | js_ast::OpCode::UnNeg | js_ast::OpCode::UnCpl
+                ) {
+                    return None;
+                }
+                self.substitute_ts_enum_numbers(&mut unary.value, replace)
+            }
+            js_ast::ExprData::EBinary(mut binary) => {
+                if !is_ts_numeric_binary_operator(binary.op) {
+                    return None;
+                }
+                let left = self.substitute_ts_enum_numbers(&mut binary.left, replace)?;
+                let right = self.substitute_ts_enum_numbers(&mut binary.right, replace)?;
+                Some(left || right)
+            }
+            _ => None,
+        }
+    }
+
+    /// Folds an enum initializer that the visit left as a numeric expression over number consts. All of it, or nothing.
+    #[cold]
+    #[inline(never)]
+    fn fold_ts_enum_numbers(&mut self, visited: &mut Expr) {
+        if self.substitute_ts_enum_numbers(visited, false) == Some(true) {
+            self.substitute_ts_enum_numbers(visited, true);
+            // Only numbers and operators that the visitor folds on numbers are left.
+            self.visit_expr(visited);
+        }
+    }
+
     fn s_enum(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
@@ -2353,6 +2490,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let mut visited = enum_value;
                 p.visit_expr(&mut visited);
+                // The visit leaves the name of a `const` as it is. tsc folds it when the const is a number.
+                if TYPESCRIPT
+                    && !matches!(
+                        visited.data,
+                        js_ast::ExprData::ENumber(_)
+                            | js_ast::ExprData::EString(_)
+                            | js_ast::ExprData::EInlinedEnum(_)
+                    )
+                {
+                    p.fold_ts_enum_numbers(&mut visited);
+                }
 
                 // "See through" any wrapped comments
                 let underlying_value = if let js_ast::ExprData::EInlinedEnum(ie) = visited.data {

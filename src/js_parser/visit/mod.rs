@@ -1511,6 +1511,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         shadow_ref
     }
 
+    /// Pre-visits an enum with `earlier` before it in its list. `list` keeps what is read from them for the next enum.
+    pub(crate) fn with_ts_enum_siblings<R>(
+        &mut self,
+        list: &mut crate::p::TsEnumSiblings,
+        earlier: &[Stmt],
+        visit: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        list.earlier = Some(bun_ptr::BackRef::new(earlier));
+        core::mem::swap(&mut self.ts_enum_siblings, list);
+        let result = visit(self);
+        core::mem::swap(&mut self.ts_enum_siblings, list);
+        result
+    }
+
     // Try separating the list for appending, so that it's not a pointer.
     pub(crate) fn visit_stmts(
         &mut self,
@@ -1555,9 +1569,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // The TypeScript compiler itself contains code with this pattern, so
             // it's important to implement this optimization.
             let mut preprocessed_enums: ListManaged<'a, &'a [Stmt]> = ListManaged::new_in(p.arena);
-            if p.scopes_in_order_for_enum.count() > 0 {
-                for stmt in stmts.iter_mut() {
-                    if matches!(stmt.data, StmtData::SEnum(_)) {
+            if TYPESCRIPT && p.scopes_in_order_for_enum.count() > 0 {
+                let mut siblings = crate::p::TsEnumSiblings::default();
+                for i in 0..stmts.len() {
+                    if matches!(stmts[i].data, StmtData::SEnum(_)) {
+                        let (earlier, rest) = stmts.split_at_mut(i);
+                        let stmt = &mut rest[0];
                         // `scope_order_to_visit: &'a [ScopeOrder<'a>]` is `Copy`;
                         // plain save/restore.
                         let old_scopes_in_order = p.scope_order_to_visit;
@@ -1566,7 +1583,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc);
 
                         let mut temp = ListManaged::new_in(p.arena);
-                        let res = p.visit_and_append_stmt(&mut temp, stmt);
+                        // A top-level enum comes as a list of one. It keeps the siblings that the top-level loop set.
+                        let res = if i > 0 {
+                            p.with_ts_enum_siblings(&mut siblings, earlier, |p| {
+                                p.visit_and_append_stmt(&mut temp, stmt)
+                            })
+                        } else {
+                            p.visit_and_append_stmt(&mut temp, stmt)
+                        };
                         p.scope_order_to_visit = old_scopes_in_order;
                         res?;
                         preprocessed_enums.push(temp.into_bump_slice());

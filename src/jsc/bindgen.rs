@@ -67,6 +67,15 @@ impl<'a> JsHeap<'a> {
         }
     }
 
+    /// `owner` has come to own `size` more bytes since it was created. From `estimated_size` alone the GC learns that
+    /// only when it next marks `owner`, which it has no reason to do soon. This can collect.
+    #[inline]
+    pub fn report_extra_memory<T>(&self, owner: JsLocal<'a, T>, size: usize) {
+        self.global_object()
+            .vm()
+            .report_extra_memory_allocated(owner.0, size);
+    }
+
     /// An array of what `convert`, a function of [`to_js`], makes of each item.
     #[inline]
     pub fn create_array<I: IntoIterator>(

@@ -616,6 +616,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_histogram"
+version = "0.0.0"
+
+[[package]]
 name = "bun_http"
 version = "0.0.0"
 dependencies = [
@@ -1491,6 +1495,7 @@ dependencies = [
  "bun_glob",
  "bun_hash",
  "bun_highway",
+ "bun_histogram",
  "bun_http",
  "bun_http_jsc",
  "bun_http_types",

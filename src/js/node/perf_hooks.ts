@@ -9,12 +9,6 @@ const {
 } = require("internal/shared");
 const { validateFunction, validateObject } = require("internal/validators");
 
-const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
-  min: number,
-  max: number,
-  figures: number,
-) => import("node:perf_hooks").RecordableHistogram;
-
 var {
   Performance,
   PerformanceEntry,
@@ -217,14 +211,11 @@ function timerify(fn, options = kEmptyObject) {
   validateFunction(fn, "fn");
   validateObject(options, "options");
   const { histogram } = options;
-  // Node brand-checks with isHistogram (kHandle presence); Bun duck-types on
-  // .record for now — a native brand-check helper on
-  // JSNodePerformanceHooksHistogram would tighten this if it ever matters.
   if (
     histogram !== undefined &&
-    (histogram === null || typeof histogram !== "object" || typeof histogram.record !== "function")
+    (!require("internal/perf_hooks/histogram").isHistogram(histogram) || typeof histogram.record !== "function")
   ) {
-    throw $ERR_INVALID_ARG_TYPE("options.histogram", "RecordableHistogram", histogram);
+    throw $ERR_INVALID_ARG_TYPE("options.histogram", ["RecordableHistogram"], histogram);
   }
 
   function timerified(...args) {
@@ -313,69 +304,13 @@ export default {
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
   eventLoopUtilization,
-  monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
-    const impl = require("internal/perf_hooks/monitorEventLoopDelay");
-    return impl(options);
+  monitorEventLoopDelay: function monitorEventLoopDelay(options: { resolution?: number } = kEmptyObject) {
+    return require("internal/perf_hooks/histogram").monitorEventLoopDelay(options);
   },
   createHistogram: function createHistogram(
-    options: {
-      lowest?: number | bigint;
-      highest?: number | bigint;
-      figures?: number;
-    } = kEmptyObject,
+    options: { lowest?: number | bigint; highest?: number | bigint; figures?: number } = kEmptyObject,
   ): import("node:perf_hooks").RecordableHistogram {
-    // kEmptyObject default, and validate rather than `options || {}`: the reads
-    // below must not see a polluted Object.prototype, and node rejects a
-    // non-object argument instead of silently ignoring it.
-    validateObject(options, "options");
-
-    let lowest = 1;
-    let highest = Number.MAX_SAFE_INTEGER;
-    let figures = 3;
-
-    const lowestOpt = options.lowest;
-    if (lowestOpt !== undefined) {
-      if (typeof lowestOpt === "bigint") {
-        lowest = Number(lowestOpt);
-      } else if (typeof lowestOpt === "number") {
-        lowest = lowestOpt;
-      } else {
-        throw $ERR_INVALID_ARG_TYPE("options.lowest", ["number", "bigint"], lowestOpt);
-      }
-    }
-
-    const highestOpt = options.highest;
-    if (highestOpt !== undefined) {
-      if (typeof highestOpt === "bigint") {
-        highest = Number(highestOpt);
-      } else if (typeof highestOpt === "number") {
-        highest = highestOpt;
-      } else {
-        throw $ERR_INVALID_ARG_TYPE("options.highest", ["number", "bigint"], highestOpt);
-      }
-    }
-
-    const figuresOpt = options.figures;
-    if (figuresOpt !== undefined) {
-      if (typeof figuresOpt !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.figures", "number", figuresOpt);
-      }
-      if (figuresOpt < 1 || figuresOpt > 5) {
-        throw $ERR_OUT_OF_RANGE("options.figures", ">= 1 && <= 5", figuresOpt);
-      }
-      figures = figuresOpt;
-    }
-
-    // Node.js validation - highest must be >= 2 * lowest
-    if (lowest < 1) {
-      throw $ERR_OUT_OF_RANGE("options.lowest", ">= 1 && <= 9007199254740991", lowest);
-    }
-
-    if (highest < 2 * lowest) {
-      throw $ERR_OUT_OF_RANGE("options.highest", `>= ${2 * lowest} && <= 9007199254740991`, highest);
-    }
-
-    return cppCreateHistogram(lowest, highest, figures);
+    return require("internal/perf_hooks/histogram").createHistogram(options);
   },
   PerformanceResourceTiming,
 };

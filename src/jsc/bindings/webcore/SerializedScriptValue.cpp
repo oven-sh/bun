@@ -94,6 +94,7 @@
 #include "blob.h"
 #include "GeneratedBlob.h"
 #include "GeneratedBlockList.h"
+#include "GeneratedHistogram.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
 #include "JSKeyObject.h"
@@ -101,7 +102,6 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
-#include "JSNodePerformanceHooksHistogram.h"
 #include "../napi.h"
 #include <limits>
 #include <algorithm>
@@ -212,6 +212,11 @@ extern "C" JSC::EncodedJSValue BlockList__onStructuredCloneDeserialize(JSC::JSGl
 // shared backing is freed once the SerializedScriptValue holding the raw
 // pointer is gone.
 extern "C" void BlockList__onStructuredCloneDestroy(void*);
+// A clone of a `node:perf_hooks` histogram shares its counts. The wire has an id, which keeps the
+// counts alive until `Histogram__releaseStructuredClone`.
+extern "C" uint64_t Histogram__retainForStructuredClone(JSC::EncodedJSValue histogram);
+extern "C" JSC::EncodedJSValue Histogram__fromStructuredClone(JSC::JSGlobalObject*, uint64_t id);
+extern "C" void Histogram__releaseStructuredClone(uint64_t id);
 
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
@@ -730,6 +735,7 @@ public:
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
         Vector<void*>& serializedBlockListRefs,
+        Vector<uint64_t>& serializedHistogramIds,
         SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
@@ -740,6 +746,7 @@ public:
             out, context, sharedBuffers, forStorage, forTransfer);
         auto code = serializer.serialize(value);
         serializedBlockListRefs = WTF::move(serializer.m_serializedBlockListRefs);
+        serializedHistogramIds = WTF::move(serializer.m_serializedHistogramIds);
         return code;
     }
 
@@ -1407,6 +1414,21 @@ private:
                 return true;
             }
 
+            if (auto* histogram = dynamicDowncast<Bun::Bindgen::Generated::JSHistogram>(obj)) {
+                // The clone shares the counts, which bytes that leave the process cannot.
+                if (m_forTransfer == SerializationForCrossProcessTransfer::Yes || m_forStorage == SerializationForStorage::Yes) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+                if (!startObjectInternal(histogram)) // handle duplicates
+                    return true;
+                uint64_t id = Histogram__retainForStructuredClone(JSValue::encode(histogram));
+                m_serializedHistogramIds.append(id);
+                write(Bun__NodePerformanceHooksHistogramTag);
+                write(id);
+                return true;
+            }
+
             if (auto* x509 = dynamicDowncast<Bun::JSX509Certificate>(obj)) {
                 if (checkForDuplicate(x509))
                     return true;
@@ -1482,30 +1504,6 @@ private:
                     return true;
                 }
                 }
-            }
-
-            if (auto* histogram = dynamicDowncast<Bun::JSNodePerformanceHooksHistogram>(obj)) {
-                if (m_context != SerializationContext::WorkerPostMessage && m_context != SerializationContext::WindowPostMessage) {
-                    // Don't allow cloning of histograms if it's not a simple .postMessage().
-                    code = SerializationReturnCode::DataCloneError;
-                    return true;
-                }
-
-                // Serialize histogram configuration
-                hdr_histogram* hdr = histogram->m_histogramData.histogram;
-                if (!hdr) {
-                    // Histogram is not initialized
-                    code = SerializationReturnCode::DataCloneError;
-                    return true;
-                }
-
-                write(Bun__NodePerformanceHooksHistogramTag);
-                // TODO: write the index into the histograms vector on SerializedScriptValue
-                // make it ThreadSafeRefCounted
-                // and then we can just write the index
-                code = SerializationReturnCode::DataCloneError;
-
-                return true;
             }
 
             return false;
@@ -1978,6 +1976,7 @@ private:
     SerializationContext m_context;
     ArrayBufferContentsArray& m_sharedBuffers;
     Vector<void*> m_serializedBlockListRefs;
+    Vector<uint64_t> m_serializedHistogramIds;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray& m_wasmModules;
     WasmMemoryHandleArray& m_wasmMemoryHandles;
@@ -3384,6 +3383,36 @@ private:
         return toJS(m_lexicalGlobalObject, uncheckedDowncast<JSDOMGlobalObject>(m_globalObject), std::forward<T>(nativeObj));
     }
 
+    JSValue readHistogram()
+    {
+        VM& vm = m_globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        uint64_t id;
+        if (!read(id)) {
+            fail();
+            return JSValue();
+        }
+        auto* globalObject = defaultGlobalObject(m_globalObject);
+        JSValue histogram = JSValue::decode(Histogram__fromStructuredClone(globalObject, id));
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        // Empty: no message in flight has this id.
+        if (histogram.isEmpty()) {
+            fail();
+            return JSValue();
+        }
+        // The classes are written in JavaScript.
+        JSValue module = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalPerfHooksHistogram);
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        JSValue adopt = module.get(globalObject, Identifier::fromString(vm, "adopt"_s));
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        MarkedArgumentBuffer args;
+        args.append(histogram);
+        JSC::call(globalObject, adopt, args, "adopt is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, JSValue());
+        addTerminalToObjectPool(histogram);
+        return histogram;
+    }
+
     JSValue readBunType(JSC::EncodedJSValue (*deserialize)(JSC::JSGlobalObject*, const uint8_t** ptr, const uint8_t* end))
     {
         JSValue deserialized = JSValue::decode(deserialize(m_lexicalGlobalObject, &m_ptr, m_end));
@@ -3900,8 +3929,8 @@ private:
         case Bun__KeyObjectTag:
             return readKeyObject();
 
-            // case Bun__NodePerformanceHooksHistogramTag:
-            // ?
+        case Bun__NodePerformanceHooksHistogramTag:
+            return readHistogram();
 
         default:
             m_ptr = preTagPtr; // Push the tag back
@@ -4163,6 +4192,8 @@ SerializedScriptValue::~SerializedScriptValue()
 {
     for (auto* ptr : m_serializedBlockListRefs)
         BlockList__onStructuredCloneDestroy(ptr);
+    for (uint64_t id : m_serializedHistogramIds)
+        Histogram__releaseStructuredClone(id);
 }
 
 SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::unique_ptr<ArrayBufferContentsArray>&& arrayBufferContentsArray)
@@ -4758,17 +4789,21 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
     std::unique_ptr<ArrayBufferContentsArray> sharedBuffers = makeUnique<ArrayBufferContentsArray>();
     Vector<void*> serializedBlockListRefs;
+    Vector<uint64_t> serializedHistogramIds;
     auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, arrayBuffers,
 #if ENABLE(WEBASSEMBLY)
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, serializedBlockListRefs, forStorage, forTransfer);
+        buffer, context, *sharedBuffers, serializedBlockListRefs, serializedHistogramIds, forStorage, forTransfer);
 
-    auto releaseSerializedBlockListRefs = [&] {
+    auto releaseSerializedRefs = [&] {
         for (auto* ptr : serializedBlockListRefs)
             BlockList__onStructuredCloneDestroy(ptr);
         serializedBlockListRefs.clear();
+        for (uint64_t id : serializedHistogramIds)
+            Histogram__releaseStructuredClone(id);
+        serializedHistogramIds.clear();
     };
 
     // Serialize may throw an exception. This code looks weird, but we'll rethrow it
@@ -4781,7 +4816,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     // If we rethrew an exception just now, or we failed with a status code other than success,
     // we should exit right now.
     if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
-        releaseSerializedBlockListRefs();
+        releaseSerializedRefs();
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
     }
 
@@ -4789,12 +4824,12 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray;
     if (!transferList.isEmpty()) {
         if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
-            releaseSerializedBlockListRefs();
+            releaseSerializedRefs();
             RELEASE_AND_RETURN(scope, WTF::move(*exception));
         }
         auto transferred = transferArrayBuffers(vm, arrayBuffers);
         if (transferred.hasException()) {
-            releaseSerializedBlockListRefs();
+            releaseSerializedRefs();
             RELEASE_AND_RETURN(scope, transferred.releaseException());
         }
         arrayBufferContentsArray = transferred.releaseReturnValue();
@@ -4808,6 +4843,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
         ));
     result->m_serializedBlockListRefs = WTF::move(serializedBlockListRefs);
+    result->m_serializedHistogramIds = WTF::move(serializedHistogramIds);
     return result;
 }
 

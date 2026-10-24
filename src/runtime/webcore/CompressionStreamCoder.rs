@@ -102,9 +102,9 @@ enum Progress {
 }
 
 enum Backend {
-    Deflate(Box<zlib::z_stream>),
+    Deflate(zlib::ZStream),
     Inflate {
-        state: Box<zlib::z_stream>,
+        state: zlib::ZStream,
         /// Gzip only: after the first member ends, any further bytes must be
         /// another gzip member (RFC 1952 §2.2) — the decoder resets and
         /// continues. Deflate/deflate-raw have no such concatenation, so
@@ -159,10 +159,10 @@ impl Drop for CompressionStreamCoder {
         unsafe {
             match &mut self.backend {
                 Backend::Deflate(s) => {
-                    zlib::deflateEnd(&raw mut **s);
+                    zlib::deflateEnd(s.as_ptr());
                 }
                 Backend::Inflate { state, .. } => {
-                    zlib::inflateEnd(&raw mut **state);
+                    zlib::inflateEnd(state.as_ptr());
                 }
                 Backend::BrotliEncode(p) => brotli::BrotliEncoderDestroyInstance(p.as_ptr()),
                 Backend::BrotliDecode(p) => brotli::BrotliDecoderDestroyInstance(p.as_ptr()),
@@ -197,38 +197,23 @@ impl CompressionStreamCoder {
     ) -> Result<Box<Self>, CodecError> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
-                let mut s = Box::new(bun_core::ffi::zeroed::<zlib::z_stream>());
+                let mut s = zlib::ZStream::new();
                 // Spec: "default compression level". Z_DEFAULT_COMPRESSION = -1.
-                // SAFETY: `s` is a zeroed, #[repr(C)] z_stream; zlibVersion() is
-                // a static C string.
-                let rc = unsafe {
-                    zlib::deflateInit2_(
-                        &raw mut *s,
-                        level.unwrap_or(-1),
-                        8, // Z_DEFLATED
-                        format.window_bits(),
-                        8, // default mem_level
-                        0, // Z_DEFAULT_STRATEGY
-                        zlib::zlibVersion().cast(),
-                        core::mem::size_of::<zlib::z_stream>() as c_int,
-                    )
-                };
+                let rc = s.deflate_init(
+                    level.unwrap_or(-1),
+                    8, // Z_DEFLATED
+                    format.window_bits(),
+                    8, // default mem_level
+                    0, // Z_DEFAULT_STRATEGY
+                );
                 if rc != zlib::ReturnCode::Ok {
                     return Err(CodecError::Message("failed to initialize deflate"));
                 }
                 Backend::Deflate(s)
             }
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, true) => {
-                let mut s = Box::new(bun_core::ffi::zeroed::<zlib::z_stream>());
-                // SAFETY: as above.
-                let rc = unsafe {
-                    zlib::inflateInit2_(
-                        &raw mut *s,
-                        format.window_bits(),
-                        zlib::zlibVersion().cast(),
-                        core::mem::size_of::<zlib::z_stream>() as c_int,
-                    )
-                };
+                let mut s = zlib::ZStream::new();
+                let rc = s.inflate_init(format.window_bits());
                 if rc != zlib::ReturnCode::Ok {
                     return Err(CodecError::Message("failed to initialize inflate"));
                 }
@@ -392,20 +377,18 @@ impl CompressionStreamCoder {
                     } else {
                         zlib::FlushValue::NoFlush
                     };
-                    s.next_in = remaining.as_ptr();
-                    s.avail_in = take as u32;
+                    s.set_input(remaining.as_ptr(), take as u32);
                     let spare = spare(out, cap)?;
-                    s.next_out = spare.as_mut_ptr().cast();
-                    s.avail_out = spare.len().min(u32::MAX as usize) as u32;
-                    let before = s.avail_out;
+                    let before = spare.len().min(u32::MAX as usize) as u32;
+                    s.set_output(spare.as_mut_ptr().cast(), before);
                     // SAFETY: `s` was initialized by `deflateInit2_`; next_in/
                     // avail_in borrow `remaining`, next_out/avail_out borrow
                     // the Vec's spare capacity for this one call.
-                    let rc = unsafe { zlib::deflate(&raw mut **s, flush) };
-                    let written = (before - s.avail_out) as usize;
+                    let rc = unsafe { zlib::deflate(s.as_ptr(), flush) };
+                    let written = (before - s.avail_out()) as usize;
                     // SAFETY: deflate wrote exactly `written` bytes.
                     unsafe { out.set_len(out.len() + written) };
-                    let consumed = take - s.avail_in as usize;
+                    let consumed = take - s.avail_in() as usize;
                     remaining = &remaining[consumed..];
                     match rc {
                         zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
@@ -413,7 +396,7 @@ impl CompressionStreamCoder {
                         zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
                         _ => return Err(CodecError::Message("deflate failed")),
                     }
-                    if s.avail_out != 0 && remaining.is_empty() {
+                    if s.avail_out() != 0 && remaining.is_empty() {
                         return Ok(Progress::Done);
                     }
                 }
@@ -429,7 +412,7 @@ impl CompressionStreamCoder {
                             return Err(CodecError::TrailingJunk);
                         }
                         // SAFETY: `s` is an initialized inflate stream.
-                        if unsafe { zlib::inflateReset(&raw mut **s) } != zlib::ReturnCode::Ok {
+                        if unsafe { zlib::inflateReset(s.as_ptr()) } != zlib::ReturnCode::Ok {
                             return Err(CodecError::Message("inflate failed"));
                         }
                         self.ended = false;
@@ -452,19 +435,17 @@ impl CompressionStreamCoder {
                     } else {
                         zlib::FlushValue::NoFlush
                     };
-                    s.next_in = remaining.as_ptr();
-                    s.avail_in = take as u32;
+                    s.set_input(remaining.as_ptr(), take as u32);
                     let spare = spare(out, cap)?;
-                    s.next_out = spare.as_mut_ptr().cast();
-                    s.avail_out = spare.len().min(u32::MAX as usize) as u32;
-                    let before = s.avail_out;
+                    let before = spare.len().min(u32::MAX as usize) as u32;
+                    s.set_output(spare.as_mut_ptr().cast(), before);
                     // SAFETY: `s` was initialized by `inflateInit2_`; buffers
                     // as in the deflate arm.
-                    let rc = unsafe { zlib::inflate(&raw mut **s, flush) };
-                    let written = (before - s.avail_out) as usize;
+                    let rc = unsafe { zlib::inflate(s.as_ptr(), flush) };
+                    let written = (before - s.avail_out()) as usize;
                     // SAFETY: inflate wrote exactly `written` bytes.
                     unsafe { out.set_len(out.len() + written) };
-                    let consumed = take - s.avail_in as usize;
+                    let consumed = take - s.avail_in() as usize;
                     remaining = &remaining[consumed..];
                     match rc {
                         zlib::ReturnCode::Ok => {}
@@ -482,7 +463,7 @@ impl CompressionStreamCoder {
                                 return Err(CodecError::TrailingJunk);
                             }
                             // SAFETY: `s` is an initialized inflate stream.
-                            if unsafe { zlib::inflateReset(&raw mut **s) } != zlib::ReturnCode::Ok {
+                            if unsafe { zlib::inflateReset(s.as_ptr()) } != zlib::ReturnCode::Ok {
                                 return Err(CodecError::Message("inflate failed"));
                             }
                             self.ended = false;
@@ -494,7 +475,7 @@ impl CompressionStreamCoder {
                         zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
                         _ => return Err(CodecError::Message("inflate failed")),
                     }
-                    if s.avail_out != 0 && remaining.is_empty() {
+                    if s.avail_out() != 0 && remaining.is_empty() {
                         if finish && !self.ended {
                             return Err(CodecError::Message("unexpected end of file"));
                         }

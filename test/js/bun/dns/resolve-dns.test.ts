@@ -242,6 +242,20 @@ describe("dns", () => {
     expect(isIP(result[0].address)).toBeGreaterThan(0);
   });
 
+  test.each([
+    { port: "80" },
+    { flags: "0" },
+    { family: true },
+    { socketType: false },
+    { protocol: {} },
+    { backend: 0 },
+  ])("lookup with %p throws ERR_INVALID_ARG_TYPE", options => {
+    // @ts-expect-error
+    expect(() => dns.lookup("localhost", options)).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
   describe("setServers", () => {
     test("triple with non-int32 family (double) throws TypeError", () => {
       // @ts-expect-error
@@ -260,7 +274,7 @@ describe("dns", () => {
     });
 
     test("valid triple should succeed", () => {
-      expect(() => dns.setServers([[4, "8.8.8.8", 53]])).not.toThrow();
+      expect(() => (dns as any).setServers([[4, "8.8.8.8", 53]])).not.toThrow();
     });
   });
 

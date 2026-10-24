@@ -279,6 +279,8 @@ fn dispatch_frame(
                     0,
                     &payload[0..8],
                 );
+            } else {
+                session.awaiting_ping_ack = false;
             }
         }
         FT_PRIORITY => {
@@ -332,6 +334,7 @@ fn dispatch_frame(
                     session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
                     return;
                 }
+                reset_stream_frame_received(session);
                 session.orphan_header_block.clear();
                 session.orphan_header_block.extend_from_slice(fragment);
                 if flags & wire::HeadersFrameFlags::END_HEADERS as u8 != 0 {
@@ -344,6 +347,7 @@ fn dispatch_frame(
             // SAFETY: stream pointer from map is valid for session lifetime.
             let stream = stream_mut(maybe_stream.unwrap());
             session.stream_progressed = true;
+            session.liveness_ping_spent = false;
             if flags & wire::HeadersFrameFlags::PADDED as u8 != 0 {
                 fragment = match strip_padding(fragment) {
                     Some(f) => f,
@@ -426,12 +430,14 @@ fn dispatch_frame(
                     if stream_id == 0 || stream_id & 1 == 0 || stream_id >= session.next_stream_id {
                         session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
                     }
+                    reset_stream_frame_received(session);
                     return;
                 }
             };
             // SAFETY: stream pointer valid for session lifetime.
             let stream = stream_mut(stream_ptr);
             session.stream_progressed = true;
+            session.liveness_ping_spent = false;
             // §8.1.1: DATA before the *final* response HEADERS is malformed —
             // a 1xx alone (status_code still 0) doesn't satisfy this.
             if stream.status_code == 0 {
@@ -731,6 +737,13 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
             .decoded_headers
             .push(picohttp::Header::new(name, value));
     }
+}
+
+/// HEADERS or DATA the peer sent before it saw the RST_STREAM of their stream. They are in
+/// front of the ACK of a liveness PING, and a server's PING limit counts them as a response.
+fn reset_stream_frame_received(session: &mut ClientSession) {
+    session.stream_progressed |= session.awaiting_ping_ack;
+    session.liveness_ping_spent = false;
 }
 
 fn strip_padding(payload: &[u8]) -> Option<&[u8]> {

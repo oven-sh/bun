@@ -62,6 +62,7 @@ export function loadAndResolvePluginsForServe(
   plugins: Array<string | BunPlugin>,
   bunfig_folder: string,
   runSetupFn: typeof runSetupFunction,
+  sourcemap: BuildConfig["sourcemap"],
 ) {
   // Same config as created in HTMLBundle.init
   let config: SetupConfig = {
@@ -69,6 +70,7 @@ export function loadAndResolvePluginsForServe(
     experimentalHtml: true,
     target: "browser",
     root: bunfig_folder,
+    sourcemap,
   };
 
   class InvalidBundlerPluginError extends TypeError {

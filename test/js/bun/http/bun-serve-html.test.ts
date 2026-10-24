@@ -740,7 +740,7 @@ test("serve html whose file is deleted before its first bundle", async () => {
 });
 
 /** Runs the `serve.ts` of a fixture directory to completion. */
-async function runServeFixture(dir: { toString(): string }, env: Record<string, string> = {}) {
+async function runServeFixture(dir: { toString(): string }, env: Record<string, string | undefined> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "serve.ts"],
     env: { ...bunEnv, ...env },
@@ -1952,6 +1952,99 @@ describe("production headers and import.meta.env", () => {
     expect(a).toMatch(/^"[0-9a-f]{16}"$/);
     expect(b).toMatch(/^"[0-9a-f]{16}"$/);
     expect(a).not.toBe(b);
+  });
+
+  const observeSourcemapPlugin = /*js*/ `
+    export default {
+      name: "observe-sourcemap",
+      setup(build) {
+        const setup = build.config.sourcemap ?? null;
+        build.onLoad({ filter: /app\\.ts$/ }, async ({ path }) => {
+          console.log(JSON.stringify({ setup, onLoad: build.config.sourcemap ?? null }));
+          return { loader: "ts", contents: await Bun.file(path).text() };
+        });
+      },
+    };
+  `;
+
+  test.concurrent.each([
+    ["true", undefined, "external", true, false, 200],
+    ["true", false, "external", true, false, 200],
+    ["{ hmr: false }", undefined, "linked", true, false, 200],
+    ["false", undefined, "none", false, false, 404],
+    ["false", "none", "none", false, false, 404],
+    ["false", "linked", "linked", true, false, 200],
+    ["false", "inline", "inline", false, true, 404],
+    ["false", "external", "external", false, false, 200],
+    ["{ hmr: false }", false, "none", false, false, 404],
+  ])(
+    "serve plugins observe the effective sourcemap mode (development: %s, sourcemap: %s)",
+    async (development, sourcemap, expectedMode, hasLinkedMapComment, hasInlineMapComment, mapStatus) => {
+      using dir = tempDir("html-plugin-sourcemap", {
+        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+        "app.ts": `console.log("hello" as string);`,
+        "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n${
+          sourcemap === undefined ? "" : `sourcemap = ${JSON.stringify(sourcemap)}`
+        }`,
+        "plugin.ts": observeSourcemapPlugin,
+        "serve.ts": /*js*/ `
+          import index from "./index.html";
+          using server = Bun.serve({ hostname: "127.0.0.1", port: 0, development: ${development}, routes: { "/": index } });
+          const htmlResponse = await fetch(server.url);
+          const html = await htmlResponse.text();
+          const jsPath = html.match(/<script[^>]*src="([^"]+)"/)[1];
+          const jsResponse = await fetch(new URL(jsPath, server.url));
+          const js = await jsResponse.text();
+          const mapURL = js.match(/sourceMappingURL=(\\S+)/)?.[1];
+          const inline = mapURL?.startsWith("data:") ?? false;
+          const mapResponse = await fetch(new URL(mapURL && !inline ? mapURL : jsPath + ".map", server.url));
+          console.log(JSON.stringify({
+            htmlStatus: htmlResponse.status,
+            jsStatus: jsResponse.status,
+            hasLinkedMapComment: !!mapURL && !inline,
+            hasInlineMapComment: inline,
+            mapStatus: mapResponse.status,
+          }));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runServeFixture(dir, { NODE_ENV: undefined });
+      expect({ stdout, exitCode }, stderr).toEqual({
+        stdout: [
+          JSON.stringify({ setup: expectedMode, onLoad: expectedMode }),
+          JSON.stringify({ htmlStatus: 200, jsStatus: 200, hasLinkedMapComment, hasInlineMapComment, mapStatus }),
+        ].join("\n"),
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.concurrent("serve plugins keep sourcemap configuration isolated between servers", async () => {
+    using dir = tempDir("html-plugin-sourcemap-servers", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+      "app.ts": `console.log("hello" as string);`,
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]`,
+      "plugin.ts": observeSourcemapPlugin,
+      "serve.ts": /*js*/ `
+        import index from "./index.html";
+        using production = Bun.serve({ hostname: "127.0.0.1", port: 0, development: false, routes: { "/": index } });
+        using development = Bun.serve({ hostname: "127.0.0.1", port: 0, development: { hmr: false }, routes: { "/": index } });
+        for (const server of [production, development]) {
+          const response = await fetch(server.url);
+          if (response.status !== 200) {
+            throw new Error(await response.text());
+          }
+          await response.text();
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir, { NODE_ENV: undefined });
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: [
+        JSON.stringify({ setup: "none", onLoad: "none" }),
+        JSON.stringify({ setup: "linked", onLoad: "linked" }),
+      ].join("\n"),
+      exitCode: 0,
+    });
   });
 
   test("bunfig [serve.static] sourcemap overrides the per-mode default", async () => {

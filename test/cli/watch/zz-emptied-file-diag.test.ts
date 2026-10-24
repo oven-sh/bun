@@ -46,8 +46,9 @@ type Hot = {
 
 async function withHot<T>(body: (hot: Hot) => Promise<T>) {
   using dir = tempDir("emptied-diag-hot", {
-    "app/main.js": `import "./dep.js";\nconsole.log("end");\n`,
+    "app/main.js": `import "./dep.js";\nimport "./other.js";\nconsole.log("end");\n`,
     "app/dep.js": text(0),
+    "app/other.js": otherText(0),
     "source.txt": "",
   });
   const cwd = join(String(dir), "app");
@@ -114,6 +115,10 @@ async function withHot<T>(body: (hot: Hot) => Promise<T>) {
 }
 
 const loadLine = (marker: number) => "load v=" + String(marker).padStart(6, "0");
+const otherLine = (marker: number) => "other v=" + String(marker).padStart(6, "0");
+function otherText(marker: number) {
+  return `console.log("${otherLine(marker)}");`;
+}
 const count = (lines: string[], start: string) => lines.filter(line => line.startsWith(start)).length;
 /** Long enough for a reload that was started to print. This file measures. It does not assert on time. */
 const settle = () => Bun.sleep(isDebug ? 2000 : 500);
@@ -366,6 +371,39 @@ const tally = (into: Record<string, number>, key: string) => void (into[key] = (
         "the text that came after loaded": loaded,
         "ms": Math.round(performance.now() - start),
       };
+    });
+  },
+  120_000,
+);
+
+// The watch loop waits for the write of a save in place. How long does a save of another file wait
+// when it comes right after a save that empties a file?
+(isWindows ? test.skip : test)(
+  "a save of another file right after a save that empties a file",
+  async () => {
+    report["ms from a save of another file to its load"] = await withHot(async hot => {
+      await settle();
+      const other = join(hot.cwd, "other.js");
+      const alone: number[] = [];
+      const afterEmptied: number[] = [];
+      let marker = 0;
+      const save = async (into: number[], before?: () => void) => {
+        const wanted = otherLine(++marker);
+        const start = performance.now();
+        before?.();
+        writeFileSync(other, otherText(marker));
+        const seen = await hot.until(lines => lines.includes(wanted), 5000);
+        into.push(seen === undefined ? -1 : Math.round((seen - start) * 10) / 10);
+        await settle();
+      };
+      for (let i = 1; i <= 5; i++) {
+        await save(alone);
+        await save(afterEmptied, () => truncateSync(hot.dep, 0));
+        writeFileSync(hot.dep, text(i));
+        if (!(await hot.loaded(i))) return { alone, afterEmptied, stopped: `no load of dep.js at ${i}` };
+        await settle();
+      }
+      return { alone, "right after a save that empties a file": afterEmptied };
     });
   },
   120_000,

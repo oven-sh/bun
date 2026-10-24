@@ -1738,6 +1738,9 @@ booga"
               '${U:-"" ""}',
               '${U:-"" }',
               '${U:-"" }{a,b}',
+              // A `~` before an expansion that gives nothing is no argument.
+              "~$U",
+              "~${HOME:+ x}",
             ]),
           ).toEqual([
             ["/home/user/.cache", "force"],
@@ -1750,6 +1753,8 @@ booga"
             ["", ""],
             [""],
             ["", "a", "b"],
+            [],
+            ["x"],
           ]);
         });
 
@@ -1767,7 +1772,7 @@ booga"
             ["${U:-~/bin /opt/bin}", "${U:-~/bin $(echo /opt/bin)}", ["/home/user/bin", "/opt/bin"]],
             ["${U:-~abc}", "${U:-~abc$(echo)}", ["~abc"]],
             ["${U:-~}", "${U:-~}$(true)", ["/home/user"]],
-            ["${U:-src/*.ts}", "${U:-$(echo src)/*.ts}", ["src/x.ts"]],
+            ["${U:-src/*.ts}", "${U:-$(echo src)/*.ts}", [join("src", "x.ts")]],
             ["${U:-a.*}", "${U:-$(echo a).*}", ["a.txt"]],
             ["${U:-*.txt}$E", "${U:-*.txt$(true)}", ["a.txt"]],
           ];
@@ -1915,6 +1920,7 @@ booga"
           .runAsTest("set is the value");
       });
 
+
       // sh reads the `A` of the same command. Bun's shell does not, for $A too.
       test("an assignment before a command is not read by a later one, like $NAME", async () => {
         const printB = "console.log(process.env.B)";
@@ -1951,11 +1957,18 @@ booga"
         const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
         const nested = (depth: number) => ({ raw: repeat("${A:-", depth) + "x" + repeat("}", depth) });
         expect(await $`echo ${nested(128)}`.text()).toBe("x\n");
-        expect(await $`echo ${nested(129)}`.text()).toBe(nested(129).raw + "\n");
+        // A form past the limit is text.
+        expect(await $`echo ${nested(129)}`.text()).toBe("${A:-x}\n");
         // A form counts as one level of $(...).
         const inSubst = (depth: number) => ({ raw: repeat("$(echo ", depth) + "${A:-x}" + repeat(")", depth) });
         expect(await $`echo ${inSubst(127)}`.text()).toBe("x\n");
         expect(await $`echo ${inSubst(128)}`.text()).toBe("${A:-x}\n");
+        // The forms after it are read: a guard still stops its command.
+        const guard = { raw: 'true "${SHELL_TEST_UNSET:?}" && echo RAN' };
+        const { stdout, stderr, exitCode } = await $`echo ${nested(129)}; ${guard}`.nothrow().quiet();
+        expect(stderr.toString()).toBe("bun: SHELL_TEST_UNSET: parameter null or not set\n");
+        expect(stdout.toString()).toBe("${A:-x}\n");
+        expect(exitCode).toBe(1);
       });
     });
   });

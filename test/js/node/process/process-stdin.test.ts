@@ -609,13 +609,18 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
       stderr: "pipe",
       env: bunEnv,
     });
+    // Drained from the start, so a child that fails before its marker shows why.
+    const stderr = proc.stderr.text();
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
     let stdout = "";
     for (const [marker, input] of steps) {
       while (marker && !stdout.includes(marker)) {
         const { value, done } = await reader.read();
-        if (done) throw new Error(`stdout ended before ${marker}; stdout=${JSON.stringify(stdout)}`);
+        if (done) {
+          const output = JSON.stringify({ stdout, stderr: await stderr });
+          throw new Error(`stdout ended before ${JSON.stringify(marker)}: ${output}`);
+        }
         stdout += decoder.decode(value, { stream: true });
       }
       proc.stdin.write(input);
@@ -625,8 +630,7 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
     for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
       stdout += decoder.decode(chunk.value, { stream: true });
     }
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+    return { stdout, stderr: await stderr, exitCode: await proc.exited, signalCode: proc.signalCode };
   }
 
   describe.each(Object.entries(doors))("%s", (_, { first, seen, door }) => {

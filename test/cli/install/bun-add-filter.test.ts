@@ -904,7 +904,7 @@ test.concurrent.each(["[ws]", "{a,b}"])("path selectors under a directory named 
 
   {
     const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "./packages/api"], dir);
-    expect(stderr).not.toContain("error:");
+    expect(stderr).toBe("Saved lockfile\n");
     expect(exitCode).toBe(0);
     await expectAddedOnlyTo(dir, before, ["api"]);
   }
@@ -916,7 +916,7 @@ test.concurrent.each(["[ws]", "{a,b}"])("path selectors under a directory named 
     const { stderr, exitCode } = await run(["add", "a-dep", "--filter", "!../api"], dir, {
       cwd: join(dir, "packages", "web"),
     });
-    expect(stderr).not.toContain("error:");
+    expect(stderr).toBe("Saved lockfile\n");
     expect(exitCode).toBe(0);
     expect(await declaring(dir, "a-dep")).toStrictEqual(["web", "pkg-a", "pkg-b"]);
     expect(await pkgText(dir, "api")).toBe(apiBefore);
@@ -925,7 +925,7 @@ test.concurrent.each(["[ws]", "{a,b}"])("path selectors under a directory named 
   {
     const pkgABefore = await pkgText(dir, "pkg-a");
     const { stderr, exitCode } = await run(["remove", "a-dep", "--filter", "!{./packages/pkg-a}"], dir);
-    expect(stderr).not.toContain("error:");
+    expect(stderr).toBe("Saved lockfile\n");
     expect(exitCode).toBe(0);
     expect(await declaring(dir, "a-dep")).toStrictEqual(["pkg-a"]);
     expect(await pkgText(dir, "pkg-a")).toBe(pkgABefore);
@@ -953,7 +953,7 @@ test.concurrent("path selectors for a workspace directory named [x]", async () =
     [["add", "basic-1", "--filter", "./packages/[x]"], dir],
   ] as const) {
     const { stderr, exitCode } = await run([...args], dir, { cwd });
-    expect(stderr).not.toContain("error:");
+    expect(stderr).toBe("Saved lockfile\n");
     expect(exitCode).toBe(0);
   }
 

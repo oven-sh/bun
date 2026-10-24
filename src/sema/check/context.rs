@@ -2237,6 +2237,27 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    // Where Bun's types are not installed what the run time provides is of type `any`, which does not say what a function that it is given is called with.
+    pub(super) fn is_given_to_what_has_no_declaration(&mut self, file: FileId, func: FnId) -> bool {
+        if !self.lacks_bun_types() {
+            return false;
+        }
+        let Some(mut given) = self.takes_context(file, func) else {
+            return false;
+        };
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        loop {
+            if let Some(context) = self.contextual_type(file, given, ContextFlags::empty()) {
+                return context == TypeId::ANY;
+            }
+            given = match bound.parent_of_expr(given) {
+                Parent::Prop(p) => bound.prop_owner[p.idx()],
+                Parent::Expr(list) if matches!(hir[list].kind, ExprKind::Array(_)) => list,
+                _ => return false,
+            };
+        }
+    }
+
     /// `getContextualSignature`: the signature a function expression is expected to have.
     pub fn contextual_signature(&mut self, file: FileId, func: FnId) -> Option<SigId> {
         let owner = self.takes_context(file, func)?;

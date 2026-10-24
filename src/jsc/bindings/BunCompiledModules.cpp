@@ -21,6 +21,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExp.h>
+#include <wtf/SetForScope.h>
 
 #if ENABLE(AOT)
 
@@ -381,6 +382,21 @@ static JSObject* createEmptyJSONBodyError(JSGlobalObject* realm)
     return asObject(JSValue::decode(Blob__createEmptyJSONBodyError(realm)));
 }
 
+static thread_local bool isAskingWhyFileFailsToLoad = false;
+
+// The file is read and parsed as `require` reads it, and nothing of it runs.
+static JSValue createLoadError(JSGlobalObject* realm, const String& path)
+{
+    if (!Bun__compiledProgramRunsInPlace())
+        return {};
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(realm);
+    BunString specifier = Bun::toString(path);
+    ErrorableResolvedSource source;
+    SetForScope isAsking(isAskingWhyFileFailsToLoad, true);
+    Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, nullptr, &source, false, true, BunLoaderTypeNone);
+    return source.success ? JSValue() : JSValue::decode(source.result.err);
+}
+
 const AOT::ModuleHost compiledModuleHost = {
     &createModuleObject,
     &createRequirer,
@@ -393,6 +409,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &requireExtensions,
     &createAsyncModuleRequiredError,
     &createEmptyJSONBodyError,
+    &createLoadError,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
@@ -405,10 +422,14 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
 
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode code, const String& path)
 {
-    if (!hasCompiledModules() || !AOT::refusesCodeOutsideImage(globalObject))
+    if (!hasCompiledModules() || isAskingWhyFileFailsToLoad)
         return {};
-    if (isCompiledModule(path))
+    bool refusesCode = AOT::refusesCodeOutsideImage(globalObject);
+    // An executable does not hold the text of a compiled module.
+    if (isCompiledModule(path) && (refusesCode || !compiledModulesRunInPlaceOfFiles()))
         return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it's compiled into this executable, and a compiled module can't be loaded a second time (for example into a Bun.ModuleGraph)."_s));
+    if (!refusesCode)
+        return {};
     return createNotInExecutableError(globalObject, code, path);
 }
 

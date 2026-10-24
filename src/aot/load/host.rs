@@ -8,8 +8,9 @@ use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Interner;
+use bun_sema::check::aot::DiagnosticClass;
 use bun_sema::erasure::{Erasure, check_erasure};
-use bun_sema::hir::ExprId;
+use bun_sema::hir::{self, DiagnosticKind, ExprId};
 use bun_sema::hir_from_data::HostValue;
 use bun_sema::program::{HostLoader, HostModuleId};
 use bun_sema::resolve::{
@@ -56,6 +57,28 @@ use crate::options::Options;
 use crate::statistics::LimitValues;
 
 const BUNDLE_MODULE: &[u8] = b"bun:bundle";
+const IN_PLACE_OF_NO_PROGRAM: &[u8] = b"export {};";
+
+// The first sentence of the parser on a text that ECMAScript refuses, and where.
+fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
+    let mut diagnostics = hir.diagnostics.iter();
+    let first = diagnostics
+        .find(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)?;
+    let mut sentence = Vec::new();
+    if let Some((_, template)) = bun_sema::messages::message(first.code) {
+        bun_sema::messages::format(&mut sentence, template, &first.args);
+    }
+    let before = &text[..text.len().min(first.start as usize)];
+    let line = before.iter().filter(|&&byte| byte == b'\n').count() + 1;
+    let column = before
+        .iter()
+        .rev()
+        .take_while(|&&byte| byte != b'\n')
+        .count()
+        + 1;
+    sentence.extend_from_slice(format!(" ({line}:{column})").as_bytes());
+    Some(sentence)
+}
 
 pub(crate) fn create_disk(options: &Options<'_>, threads: NonZeroUsize) -> Disk {
     let load = &options.load;
@@ -710,7 +733,7 @@ impl CodeHost for LoadHost<'_> {
         };
         let is_from_plugin = plugin_loader.is_some();
         let plugin_module = self.plugin_module_name(path);
-        let Some(script_kind) = script_kind_of(loader) else {
+        let parse_data = |loader: Loader, plugin_module: Option<PluginModuleName>| {
             let source = SourceFile {
                 path: self.plugins.provider_path(path),
                 contents: text,
@@ -718,7 +741,7 @@ impl CodeHost for LoadHost<'_> {
             };
             let (provider, messages) = (self.input.provider, self.input.messages);
             let parsed = parse_data_module(provider, messages, &source, arena, atoms);
-            return ParsedCode {
+            ParsedCode {
                 hir: parsed.hir,
                 host_values: parsed.host_values,
                 payload: Some(Box::new(ParsedSource {
@@ -729,7 +752,10 @@ impl CodeHost for LoadHost<'_> {
                     is_page: parsed.is_page,
                     ..ParsedSource::new(SourceKind::Data, loader)
                 })),
-            };
+            }
+        };
+        let Some(script_kind) = script_kind_of(loader) else {
+            return parse_data(loader, plugin_module);
         };
         let source_kind = match served_by {
             ServedBy::EvaluatedText => SourceKind::EvaluatedText,
@@ -748,7 +774,17 @@ impl CodeHost for LoadHost<'_> {
         let is_language_assumed = matches!(served_by, ServedBy::Disk)
             && !is_from_plugin
             && loader_named_by_path(&self.input.options.load.loaders, path).is_none();
-        if is_language_assumed && hir.check_directive.is_none() {
+        let parse_failure = match is_language_assumed && !self.is_entry_point(path) {
+            true => describe_parse_failure(&hir, text),
+            false => None,
+        };
+        // An executable carries it, like a file of a kind that nothing names. `bun run` fails where the program loads it.
+        if parse_failure.is_some() && !self.input.options.aot.runs_in_place {
+            return parse_data(Loader::File, plugin_module);
+        }
+        if parse_failure.is_some() {
+            hir = parse_for_compile(arena, &compile_options, IN_PLACE_OF_NO_PROGRAM, atoms);
+        } else if is_language_assumed && hir.check_directive.is_none() {
             let javascript_options = CompileParseOptions {
                 script_kind: Some(ScriptKind::Jsx),
                 ..compile_options
@@ -766,6 +802,7 @@ impl CodeHost for LoadHost<'_> {
                 byte_count: text.len(),
                 is_from_plugin,
                 plugin_module,
+                parse_failure,
                 ..ParsedSource::new(source_kind, loader)
             })),
         }
@@ -845,6 +882,7 @@ impl CodeHost for LoadHost<'_> {
         source.library_modules_passed_for_parameters = named.passed_for_parameters;
         source.library_modules_written_as_values = named.written_as_values;
         source.loads_by_unknown_name = named.loads_by_unknown_name;
+        source.unknown_names_at = named.unknown_names_at;
         source.imports_given_unknown_names = named.imports_given_unknown_names;
         answers
     }

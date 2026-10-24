@@ -205,7 +205,13 @@ impl Build<'_> {
             graph: &bound.projects.runtime.graph,
             names: loaded.builtin_names,
             platform: self.platform,
-            can_load_code_at_run_time: loaded.can_load_code_at_run_time,
+            can_load_code_at_run_time: loaded.can_load_code_at_run_time
+                && !(loaded.loads_code_by_unknown_names_alone
+                    && bound
+                        .projects
+                        .application
+                        .left_out
+                        .holds_every_load_by_unknown_name),
         };
         let reached = find_reached_runtime_code(&reach_input, &self.parallel_runner());
         let files_to_lower = &mut decided.runtime.files_to_lower;
@@ -372,6 +378,7 @@ impl Build<'_> {
             builtin_names: loaded.builtin_names,
             typed_packages: loaded.typed_packages,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time,
+            loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
             finish_asset_reads: loaded.finish_asset_reads,
         };
         let Ok(bound) = self.bind_modules(&world_build) else {

@@ -78,31 +78,43 @@ pub(crate) fn finish_build(
 fn collect_output_files(
     entry_paths: Vec<EntryPointPaths>,
     names: &EntryPointNames<'_>,
-    embedded: Vec<OutputFile>,
+    mut embedded: Vec<OutputFile>,
 ) -> (Vec<OutputFile>, Vec<AotEntryPoint>) {
-    let entry_count = entry_paths.len();
-    let mut output_files = Vec::with_capacity(entry_count + embedded.len());
-    let mut entry_points = Vec::with_capacity(entry_count);
+    let mut output_files = Vec::with_capacity(entry_paths.len() + embedded.len());
+    let mut entry_points = Vec::with_capacity(entry_paths.len());
+    for file in &mut embedded {
+        file.entry_point_index = None;
+    }
     for (index, entry) in entry_paths.into_iter().enumerate() {
         // The files of an executable are named with forward slashes on every host.
         let mut graph_path = entry.public_path.clone();
         bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut graph_path);
         let dest_path = names.file_name(&graph_path);
-        output_files.push(create_entry_file(
-            dest_path,
-            &entry.source_path,
-            index as u32,
-        ));
+        // An entry point that has the path of an embedded copy of its source: the copy is its file.
+        let is_copy = |file: &&mut OutputFile| {
+            !names.module_prefix.is_empty()
+                && file.output_kind == OutputKind::Asset
+                && file.entry_point_index.is_none()
+                && bun_core::strings::remove_leading_dot_slash(&file.dest_path) == dest_path
+        };
+        match embedded.iter_mut().find(is_copy) {
+            Some(copy) => copy.entry_point_index = Some(index as u32),
+            None => output_files.push(create_entry_file(
+                dest_path,
+                &entry.source_path,
+                index as u32,
+            )),
+        }
         entry_points.push(AotEntryPoint {
             source_path: entry.source_path,
             module_path: entry.public_path,
         });
     }
+    let entry_count = output_files.len();
     for mut file in embedded {
         if file.source_map_index != u32::MAX {
             file.source_map_index += entry_count as u32;
         }
-        file.entry_point_index = None;
         // In place, an entry point that is embedded, a native addon, has one name for its file and for its bytes, and of two files with one name the executable keeps the first.
         let entry_files = &mut output_files[..entry_count];
         if let Some(entry_file) = entry_files
@@ -238,6 +250,32 @@ mod tests {
         assert_eq!(files[0].entry_point_index, Some(0));
         assert_eq!(&*files[1].dest_path, b"page.js");
         assert_eq!(files[1].entry_point_index, None);
+    }
+
+    #[test]
+    fn embedded_copy_is_the_file_of_the_entry_point_with_its_path() {
+        let (files, entries) = collect_output_files(
+            vec![
+                entry(b"/$bunfs/root/a.ts", b"/project/a.ts"),
+                entry(b"/$bunfs/root/worker-1a2b.js", b"/project/worker.js"),
+            ],
+            &EntryPointNames {
+                module_prefix: PREFIX,
+                shown: &names(&["a.ts"]),
+                embedded: &names(&["a.js"]),
+            },
+            vec![
+                embedded_file(b"./c.js.map", None),
+                embedded_file(b"./worker-1a2b.js", Some(0)),
+            ],
+        );
+        let paths: Vec<&[u8]> = files.iter().map(|file| &*file.dest_path).collect();
+        assert_eq!(paths, [&b"a.js"[..], b"./c.js.map", b"./worker-1a2b.js"]);
+        assert_eq!(files[1].entry_point_index, None);
+        assert_eq!(files[2].entry_point_index, Some(1));
+        assert_eq!(files[2].output_kind, OutputKind::Asset);
+        assert_eq!(files[2].source_map_index, 1);
+        assert_eq!(entries[1].module_path, b"/$bunfs/root/worker-1a2b.js");
     }
 
     #[test]

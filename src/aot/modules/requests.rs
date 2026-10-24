@@ -19,7 +19,7 @@ use crate::load::Sources;
 use crate::load::named_loads::{NamedModule, modules_named_in};
 use crate::load::sources::parsed_source;
 use bun_sema::atom::Atom;
-use bun_sema::hir::{self, ExprId, ImportId, NodeData, StmtId, StmtKind};
+use bun_sema::hir::{self, ExportId, ExprId, ImportId, NodeData, StmtId, StmtKind};
 use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{
     CodeAnswer, CompiledModule, ComputedTarget, ComputedTargets, FileId, Files,
@@ -106,6 +106,24 @@ fn scan_file(files: &Files<'_>, sources: &Sources, file: FileId) -> FileScan {
         sites_over_candidate_limit: Vec::new(),
     };
     let sites = scanner.scan_sites();
+    if parsed_source(files, file).is_some_and(|source| source.parse_failure.is_some()) {
+        debug_assert!(sites.is_empty());
+        scanner.failures.push(PendingFailure {
+            order: FailureOrder {
+                site: 0,
+                part: SitePart::Specifier,
+            },
+            failure: ModuleFailure {
+                kind: ModuleFailureKind::NotAProgram {
+                    is_loaded_at_start: true,
+                },
+                importer: file,
+                site: ImportSiteKind::ExportFrom(ExportId(0)),
+                start: 0,
+                end: 0,
+            },
+        });
+    }
     let named_modules = scanner
         .named_in_choices
         .iter()

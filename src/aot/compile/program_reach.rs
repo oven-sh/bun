@@ -24,6 +24,7 @@ use crate::builtins::resolve::{ModuleObjectOwner, ModuleObjectUse};
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
+use crate::load::named_loads::gives_unknown_name_to_imported_loader;
 use crate::load::sources::{SourceKind, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
@@ -76,6 +77,8 @@ enum Interest {
     CalledName(SyntheticExportId, ModuleRef),
     // A mention of an object of the loader that stands for a module.
     ModuleObject(ModuleObjectOwner, ModuleObjectUse),
+    // A loader is given a name that the build does not know.
+    LoadByUnknownName,
 }
 
 // What of a unit that is not reached the program does without.
@@ -1128,6 +1131,20 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    fn add_loads_by_unknown_names(&mut self) {
+        let files = self.input.files;
+        let source = parsed_source(files, self.file);
+        let positions = source.map_or(&[][..], |source| &source.unknown_names_at);
+        for &position in positions {
+            self.add_interest(position, Interest::LoadByUnknownName);
+        }
+        if source.is_none_or(|source| source.builtins.loads_unknown_modules())
+            || gives_unknown_name_to_imported_loader(files, self.file)
+        {
+            self.units.interests[TOP_LEVEL as usize].push(Interest::LoadByUnknownName);
+        }
+    }
+
     fn add_loads(&mut self) {
         let graph = self.input.graph;
         let analysis = self.input.files.analysis(self.file);
@@ -1268,6 +1285,7 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_sites();
         self.add_holders();
         self.add_loads();
+        self.add_loads_by_unknown_names();
         self.add_module_objects();
         self.units.this_positions = ThisPositions::of(self.hir);
         self.units
@@ -1331,6 +1349,7 @@ struct Walk<'a, 's> {
     required: FxHashSet<(ModuleRef, ModuleRef)>,
     // By a module: the modules that have a call of `require` for it. Made when something asks.
     requirers: Option<FxHashMap<ModuleRef, Vec<ModuleRef>>>,
+    reaches_load_by_unknown_name: bool,
 }
 
 impl<'a, 's> Walk<'a, 's> {
@@ -1393,6 +1412,7 @@ impl<'a, 's> Walk<'a, 's> {
             files_naming_ways: Vec::new(),
             required: FxHashSet::default(),
             requirers: None,
+            reaches_load_by_unknown_name: false,
         }
     }
 
@@ -1919,6 +1939,7 @@ impl<'a, 's> Walk<'a, 's> {
     fn follow(&mut self, file: FileId, interest: Interest) {
         match interest {
             Interest::Unit(unit) => self.reach_region(file, unit + 1),
+            Interest::LoadByUnknownName => self.reaches_load_by_unknown_name = true,
             Interest::Binding(defined) => {
                 self.reach_files_between(file, HandedOn::Variable(defined));
                 self.reach_binding(defined);
@@ -2087,6 +2108,8 @@ pub(crate) struct LeftOutCode {
     files_read_by_name: Vec<FileId>,
     names_read_from_objects: FxHashSet<(FileId, Atom)>,
     bound_variables: FxHashSet<Sym>,
+    // No code that stays gives a loader a name that the build does not know.
+    pub holds_every_load_by_unknown_name: bool,
 }
 
 impl LeftOutCode {
@@ -2128,6 +2151,7 @@ impl LeftOutCode {
                     })
                 })
                 .collect(),
+            holds_every_load_by_unknown_name: self.holds_every_load_by_unknown_name,
         }
     }
 
@@ -2256,5 +2280,13 @@ pub(crate) fn find_left_out_code(
     reached_modules.naming_ways = take(&mut walk.files_naming_ways);
     left_out.names_read_from_objects = walk.names_read_from_objects;
     left_out.bound_variables = walk.bound_variables;
+    let loads_outside_units = |&file: &FileId| {
+        walk.files[file.idx()].is_none()
+            && parsed_source(input.files, file).is_none_or(|source| {
+                source.loads_by_unknown_name || !source.unknown_names_at.is_empty()
+            })
+    };
+    left_out.holds_every_load_by_unknown_name = !walk.reaches_load_by_unknown_name
+        && !input.files.compiled_files().iter().any(loads_outside_units);
     (left_out, reached_modules)
 }

@@ -57,6 +57,16 @@ console.log(await show(imported), imported === require("./library.so"), imported
     },
     prints: `string ${library.length} true true\n`,
   },
+  "a shared library whose name has no extension": {
+    files: {
+      "main.ts": `// @ts-ignore
+import imported from "./native/library";
+${show}
+console.log(await show(imported), imported === require("./native/library"));`,
+      "native/library": library,
+    },
+    prints: `string ${library.length} true\n`,
+  },
   "text of a kind that nothing names": {
     files: {
       "main.ts": `${show}

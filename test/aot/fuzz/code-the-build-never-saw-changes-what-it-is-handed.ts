@@ -10,6 +10,8 @@
 //                a method of the class is replaced, a class below it is declared in the file and its instance comes back; the closure is called with what it does not expect, or from inside its own call;
 //                the file throws half way; it answers with a proxy, with an object of the same names in another order, with an object whose getters count
 //   then         the loop reads on, the fields are printed with their kinds, stored to again, and all of it once more behind a collection
+//   the other way  compiled code uses what the file made: a class of the program stands below a class of the file; records come out of the file, one in seven of another make; its generator is walked, its promise awaited;
+//                it calls a callback of the program for each element, at once, in a microtask, in a timer; it throws an error, a text, nothing, through frames of the program that hold a finally
 //
 // The program loads code by a name that the build cannot know, which changes what the compiler may take for granted in the whole build: it stands alone in its build.
 import type { Random } from "./random";
@@ -333,6 +335,133 @@ ${
 }`;
 }
 
+const made = `class Base {
+  constructor(n) {
+    this.n = n;
+    this.kind = "base";
+  }
+  size() {
+    return this.n;
+  }
+  get twice() {
+    return this.n * 2;
+  }
+  static make(n) {
+    return new this(n);
+  }
+}
+function record(i) {
+  return i % 7 === 6 ? ODD : { a: i, b: i / 2 };
+}
+function* steps(n) {
+  for (let i = 0; i < n; i++) yield i % 5 === 4 ? STEP : i;
+}
+async function later(value) {
+  await null;
+  return value;
+}
+function each(list, call) {
+  for (let i = 0; i < list.length; i++) call(list[i], i, list);
+  return list.length;
+}
+function soon(call) {
+  queueMicrotask(() => call("microtask"));
+  setTimeout(() => call("timer"), 0);
+  return Promise.resolve().then(() => call("then"));
+}
+function fails(kind) {
+  throw kind === 0 ? new RangeError("of the file") : kind === 1 ? "text" : kind === 2 ? null : kind === 3 ? { code: 7 } : new (class Own extends Error {})("own");
+}
+`;
+
+// Compiled code uses what the file made.
+function theOtherWay(random: Random, index: number): string {
+  const isCommon = random.chance(0.3);
+  const names = "Base, record, steps, later, each, soon, fails";
+  const text =
+    made.replace("ODD", random.pick([`{ b: i, a: i }`, `{ a: "odd", b: i }`, `{ a: i }`, `{ a: i, b: i, c: i }`, `Object.create({ a: i, b: 1 })`, `{ get a() { return i; }, b: 0.5 }`, `[i, i]`, `null`])).replace("STEP", random.pick([`i / 2`, `"step"`, `undefined`, `-0`, `2 ** 31`, `{ valueOf() { return 1; } }`])) +
+    (isCommon ? `module.exports = { ${names} };\n` : `export { ${names} };\n`);
+  const path = `path${index}`;
+  const load = isCommon ? random.pick([`require(${path})`, `createRequire(import.meta.url)(${path})`]) : random.pick([`await import(${path})`, `require(${path})`, `await import(pathToFileURL(${path}).href)`]);
+  const turns = random.pick([50, 700]);
+  const inTheCallback = random.pick(["", "if (i === 1) all.push(0.5);", "if (i === 1) all.length = 2;", "if (i === 0) all[2] = each / 2;", `if (i === 2) throw new RangeError("of the program");`, "if (i === 1) all.reverse();"]);
+  return `interface Made${index} {
+  Base: { new (n: number): { n: number; kind: string; size(): number; readonly twice: number }; make(n: number): { n: number; size(): number } };
+  record(i: number): { a: number; b: number };
+  steps(n: number): Generator<number>;
+  later<T>(value: T): Promise<T>;
+  each(list: number[], call: (each: number, i: number, all: number[]) => void): number;
+  soon(call: (when: string) => void): Promise<void>;
+  fails(kind: number): never;
+}
+const ${path} = laid(${JSON.stringify(`made${index}.${isCommon ? "cjs" : random.pick(["js", "mjs", "ts"])}`)}, ${JSON.stringify(text)});
+const made${index}: Made${index} = ${load};
+class Mine${index} extends made${index}.Base {
+  extra: number = 1;
+  constructor(n: number) {
+    super(n);
+    this.extra += n;
+  }
+  override size(): number {
+    return super.size() + this.extra;
+  }
+}
+attempt("${index} below the file's class", () => {
+  let sum = 0;
+  for (let i = 0; i < ${turns}; i++) {
+    const mine = new Mine${index}(i);
+    sum += mine.size() + mine.twice + mine.n + mine.extra + mine.kind.length;
+  }
+  const one = Mine${index}.make(3);
+  return [sum, one instanceof Mine${index}, one.size(), Object.keys(one)];
+});
+attempt("${index} records", () => {
+  let sum = 0;
+  for (let i = 0; i < ${turns}; i++) {
+    const each = made${index}.record(i);
+    sum += each.a + each.b;
+  }
+  return sum;
+});
+attempt("${index} steps", () => {
+  let sum = 0;
+  for (const step of made${index}.steps(${turns})) sum += step;
+  return sum;
+});
+attempt("${index} each", () => {
+  let sum = 0;
+  const list = [1, 2, 3, 4, 5];
+  const count = made${index}.each(list, (each, i, all) => {
+    ${inTheCallback}
+    sum += each;
+  });
+  return [sum, count, list];
+});
+for (let kind = 0; kind < 5; kind++) {
+  let passed = "";
+  try {
+    try {
+      passed += "in ";
+      made${index}.fails(kind);
+    } finally {
+      passed += "finally ";
+    }
+  } catch (error) {
+    passed += error instanceof Error ? error.constructor.name + " " + error.message : show(error);
+  }
+  console.log(${index}, "fails", kind, passed);
+}
+{
+  const held = new Thing(${index});
+  console.log(${index}, "later", (await made${index}.later(held)) === held, held.total());
+  const order: string[] = [];
+  await made${index}.soon(when => void order.push(when));
+  order.push("awaited");
+  await new Promise<void>(resolve => setTimeout(resolve, 5));
+  console.log(${index}, "order", order.join(" "));
+}`;
+}
+
 export function generate(random: Random): string {
-  return [prelude, ...Array.from({ length: random.between(1, 3) }, (_, index) => scene(random, index))].join("\n") + "\n";
+  return [prelude, ...Array.from({ length: random.between(1, 3) }, (_, index) => (random.chance(0.3) ? theOtherWay(random, index) : scene(random, index)))].join("\n") + "\n";
 }

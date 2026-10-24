@@ -743,7 +743,14 @@ ObjectDefineProperties(WritableState.prototype, {
 
 function WritableState(this: WritableState, options?, stream?, isDuplex?) {
   // Bit map field to store WritableState more efficiently with 1 bit per field instead of a V8 slot per field.
-  this[kState] = WritableFlag.Sync | Flag.Constructed | Flag.EmitClose | Flag.AutoDestroy;
+  // The last two are those of an empty buffer.
+  this[kState] =
+    WritableFlag.Sync |
+    Flag.Constructed |
+    Flag.EmitClose |
+    Flag.AutoDestroy |
+    WritableFlag.AllBuffers |
+    WritableFlag.AllNoop;
 
   if (options?.objectMode) this[kState] |= Flag.ObjectMode;
 
@@ -785,11 +792,10 @@ function WritableState(this: WritableState, options?, stream?, isDuplex?) {
   // The amount that is being written when _write is called.
   this.writelen = 0;
 
-  // What resetBuffer(this) does. The constructor creates every property itself, so that all states have the same shape.
+  // What resetBuffer(this) does, but for the flags, which the first store has. The constructor creates every property itself, so that
+  // all states have the same shape. With two more stores of flags it is too large for the JIT to put it where it is called.
   this[kBufferedValue] = null;
   this.bufferedIndex = 0;
-  this[kState] |= WritableFlag.AllBuffers | WritableFlag.AllNoop;
-  this[kState] &= ~WritableFlag.Buffered;
 
   // Number of pending user-supplied write callbacks; 0 before 'finish' can be emitted.
   this.pendingcb = 0;

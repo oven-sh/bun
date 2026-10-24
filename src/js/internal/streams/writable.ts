@@ -155,6 +155,13 @@ function preallocatedEvents(): $Node.Events {
   };
 }
 
+// A function of its own: a closure over `this` in the constructor is an environment that every stream would make, also the many without _construct().
+function runConstruct(stream: $Node.Writable) {
+  destroyImpl.construct(stream, () => {
+    stream._writableState[kOnConstructed](stream);
+  });
+}
+
 function Writable(this: $Node.Writable, options?: $Node.WritableOptions): void {
   if (!(this instanceof Writable)) return new Writable(options) as any;
 
@@ -179,11 +186,7 @@ function Writable(this: $Node.Writable, options?: $Node.WritableOptions): void {
 
   Stream.$call(this, options);
 
-  if (this._construct != null) {
-    destroyImpl.construct(this, () => {
-      this._writableState[kOnConstructed](this);
-    });
-  }
+  if (this._construct != null) runConstruct(this);
 }
 $toClass(Writable, "Writable", Stream);
 

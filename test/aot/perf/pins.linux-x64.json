@@ -1408,12 +1408,8 @@
     "jit": 12
   },
   "function/makers-made-by-one-function-each-with-its-own-prototype": {
-    "typed": 378,
-    "untyped": 376.3,
-    "jit": 268.4,
-    "best": {
-      "typed": 132.9,
-      "untyped": 132.8
-    }
+    "typed": 132.9,
+    "untyped": 132.8,
+    "jit": 268.4
   }
 }

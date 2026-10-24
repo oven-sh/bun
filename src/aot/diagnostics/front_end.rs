@@ -17,6 +17,7 @@ use crate::builtins::table;
 use crate::diagnostic_codes::Code;
 use crate::emit::EmitError;
 use crate::link::LinkError;
+use crate::load::sources::parsed_source;
 use crate::modules::{FailureEffect, ModuleFailureKind, ModuleGraph, ModuleRef};
 use crate::statistics::{LimitValues, Stage};
 
@@ -92,6 +93,13 @@ impl Diagnostics {
                 ModuleFailureKind::Unresolved { specifier, reason }
                 | ModuleFailureKind::UnresolvedAtLoad { specifier, reason } => {
                     Diagnostic::new(code_of_failure(reason), span, &[atoms.bytes(specifier)])
+                }
+                ModuleFailureKind::NotAProgram { .. } => {
+                    let source = parsed_source(view.files(), failure.importer);
+                    let reason = source.and_then(|source| source.parse_failure.as_deref());
+                    let path = module_name(view, ModuleRef::File(failure.importer));
+                    let arguments = [path, reason.unwrap_or_default()];
+                    Diagnostic::new(Code::FileIsNotAProgram, None, &arguments)
                 }
                 ModuleFailureKind::ExportNotFound { exporter, name } => Diagnostic::new(
                     Code::ExportNotFound,

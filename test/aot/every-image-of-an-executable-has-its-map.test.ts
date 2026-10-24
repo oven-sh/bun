@@ -2,7 +2,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync, rmSync } from "node:fs";
-import { release } from "node:os";
 import { join } from "node:path";
 import { built, slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
@@ -31,10 +30,6 @@ const build = async (folder: string, env: Record<string, string> = {}) =>
     }),
   );
 
-// Linux since 6.7.
-const [major, minor] = release().split(".").map(Number);
-const kernelForbidsNewExecutableMemory = isLinux && (major > 6 || (major === 6 && minor >= 7));
-
 describe("compile/aot/every-image-of-an-executable-has-its-map", () => {
   test(
     "the build's map",
@@ -58,8 +53,7 @@ describe("compile/aot/every-image-of-an-executable-has-its-map", () => {
     240_000,
   );
 
-  // TODO: not yet where the kernel forbids new executable memory.
-  (isLinux ? test.todoIf(kernelForbidsNewExecutableMemory) : test.skip)(
+  (isLinux ? test : test.skip)(
     "perf's map",
     () =>
       slot(async () => {

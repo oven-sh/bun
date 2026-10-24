@@ -125,6 +125,12 @@ extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes image)
     return !flags || flags->contains(JSC::AOT::ImageFlag::AdmitsUnknownJavaScript);
 }
 
+extern "C" bool Bun__AOT__loadsCodeOutsideImage(BunAOTBytes image)
+{
+    auto flags = JSC::AOT::Image::flags({ image.ptr, image.len });
+    return !JSC::AOT::runsOnlyCodeOfImage && flags && flags->contains(JSC::AOT::ImageFlag::LoadsCodeOutsideImage);
+}
+
 extern "C" BunAOTBytes Bun__AOT__imageCode()
 {
     const JSC::AOT::Image* image = JSC::AOT::Image::current();
@@ -218,6 +224,7 @@ extern "C" size_t Bun__AOT__describeAddresses(const size_t* addresses, size_t co
 extern "C" uint32_t Bun__AOT__useImage(BunAOTBytes, BunAOTBytes, const BunAOTImageFile*, const uint8_t*) { return 0; }
 extern "C" bool Bun__AOT__admittedCode(BunAOTBytes, uint32_t*) { return false; }
 extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes) { return true; }
+extern "C" bool Bun__AOT__loadsCodeOutsideImage(BunAOTBytes) { return true; }
 extern "C" BunAOTBytes Bun__AOT__imageCode() { return { nullptr, 0 }; }
 extern "C" void Bun__AOT__setMismatchLog(intptr_t, bool) {}
 extern "C" void Bun__AOT__setMismatchLogFormat(bool) {}

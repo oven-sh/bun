@@ -10,6 +10,7 @@
 //   prints    what all three print
 //   flags     more flags for all three builds
 //   aotFlags  more flags for the two builds with --aot
+//   env       more of the environment in which all three run
 //   differs   what the two builds with --aot print where they are meant to differ from the first, and the case says why
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -25,6 +26,7 @@ type Case = {
   prints: string;
   flags?: string[];
   aotFlags?: string[];
+  env?: Record<string, string>;
   entryPoints?: string[];
   differs?: string;
 };
@@ -245,6 +247,27 @@ const cases: Record<string, Case> = {
     },
     prints: `plugin: {"hash":"2d711642","zip":"zipped","args":"1","shown":"{ a: [ 1, { b: 2 } ] }","chunks":["a","b"],"eol":"string","dgram":"function","readline":"function","row":{"two":2},"query":"a=1","required":"function","assert":"function"}\n`,
   },
+  "a path of which the build knows how it ends, and built-in modules of which the program holds a part": {
+    program: {
+      "main.ts":
+        prelude +
+        `import { Readable } from "node:stream";
+        console.log(typeof Readable.from);
+        await shown("import()", () => import(folder + "/plugin.ts"));
+        await shown("require()", () => require(folder + "/common.cjs"));`,
+    },
+    disk: {
+      "plugin.ts": `import { createHash } from "node:crypto";
+        import * as http from "node:http";
+        const server = http.createServer((request, response) => response.end("served"));
+        await new Promise<void>(resolve => server.listen(0, resolve));
+        const served = await (await fetch("http://localhost:" + (server.address() as { port: number }).port)).text();
+        server.close();
+        export default { hash: createHash("sha256").update("x").digest("hex").slice(0, 8), served };`,
+      "common.cjs": kinds["common.cjs"],
+    },
+    prints: `function\nimport(): {"hash":"2d711642","served":"served"}\nrequire(): {"kind":"cjs","named":"cjs"} cjs\n`,
+  },
   "the two sides call each other, share objects, throw and await across the border": {
     program: {
       "main.ts":
@@ -432,6 +455,36 @@ const cases: Record<string, Case> = {
       `tool.config.ts {"mode":"test","plugins":[{"name":"local"}]} local:X\ntool.config.mjs {"mode":"mjs"} undefined\n` +
       `tool.config.cjs {"mode":"cjs","plugins":[{"name":"inline"}]} inline:xx\n.toolrc.json {"mode":"json"} undefined\n`,
   },
+  "a program that loads files takes the options that load a file in front of it": {
+    program: { "main.ts": prelude + `await shown("plugin", () => import(at("plain.js")));\nconsole.log((globalThis as any).order);` },
+    env: { BUN_OPTIONS: "--preload ./first.ts -r ./second.cjs --import ./third.mjs" },
+    disk: {
+      ...kinds,
+      "first.ts": `(globalThis as any).order = ["preload"];`,
+      "second.cjs": `globalThis.order.push("require");`,
+      "third.mjs": `globalThis.order.push("import");`,
+    },
+    prints: `plugin: {"kind":"js"} js\n[ "preload", "require", "import" ]\n`,
+  },
+  "so it does without the text of its functions": {
+    program: { "main.ts": prelude + `await shown("plugin", () => import(at("plain.js")));\nconsole.log((globalThis as any).order);` },
+    aotFlags: ["--no-compile-function-source"],
+    env: { BUN_OPTIONS: "--preload ./first.ts" },
+    disk: { ...kinds, "first.ts": `(globalThis as any).order = ["preload"];` },
+    prints: `plugin: {"kind":"js"} js\n[ "preload" ]\n`,
+  },
+  "text that is evaluated loads files where the program does": {
+    program: {
+      "main.ts":
+        prelude +
+        `await shown("plugin", () => import(at("plain.js")));
+        await shown("import() in eval", () => (0, eval)("import(" + JSON.stringify(at("module.mjs")) + ")"));
+        await shown("import() in new Function", () => new Function("path", "return import(path)")(at("typed.ts")));
+        await shown("require() in new Function", () => new Function("require", "path", "return require(path)")(require, at("common.cjs")));`,
+    },
+    disk: kinds,
+    prints: `plugin: {"kind":"js"} js\nimport() in eval: {"kind":"mjs"} mjs\nimport() in new Function: {"kind":"ts"} ts\nrequire() in new Function: {"kind":"cjs","named":"cjs"} cjs\n`,
+  },
   "without the text of its functions an executable still loads files": {
     program: {
       "main.ts":
@@ -477,7 +530,7 @@ describe.concurrent("code from disk", () => {
             const { stdout, stderr, exitCode, signal } = await spawned(
               [executable, disk.replaceAll("\\", "/")],
               disk,
-              bunEnv,
+              { ...bunEnv, ...it.env },
             );
             return { stdout, stderr: exitCode === 0 ? "" : stderr, exitCode, signal };
           };

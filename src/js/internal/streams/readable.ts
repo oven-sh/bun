@@ -199,6 +199,13 @@ function preallocatedEvents(): $Node.Events {
   };
 }
 
+// A function of its own: a closure over `this` in the constructor is an environment that every stream would make, also the many without _construct().
+function runConstruct(stream: $Node.Readable) {
+  destroyImpl.construct(stream, () => {
+    stream._readableState[kOnConstructed](stream);
+  });
+}
+
 function Readable(this: $Node.Readable, options?: $Node.ReadableOptions): void {
   if (new.target !== Readable && !(this instanceof Readable)) {
     ("unlikely");
@@ -222,11 +229,7 @@ function Readable(this: $Node.Readable, options?: $Node.ReadableOptions): void {
 
   Stream.$call(this, options);
 
-  if (this._construct != null) {
-    destroyImpl.construct(this, () => {
-      this._readableState[kOnConstructed](this);
-    });
-  }
+  if (this._construct != null) runConstruct(this);
 }
 $toClass(Readable, "Readable", Stream);
 
@@ -239,11 +242,7 @@ function constructReadable(stream: $Node.Readable, highWaterMark: unknown): void
 
   Stream.$call(stream, undefined);
 
-  if (stream._construct != null) {
-    destroyImpl.construct(stream, () => {
-      stream._readableState[kOnConstructed](stream);
-    });
-  }
+  if (stream._construct != null) runConstruct(stream);
 }
 
 internals.constructReadable = constructReadable;

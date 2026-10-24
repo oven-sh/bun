@@ -123,22 +123,24 @@ fn write_product(
         &build.root_directory,
         &mut build.output_files,
     )?;
-    // The first entry point of a program begins it.
+    // A program behind the first begins at one entry point. The first holds all the others.
     let first_module_id = |program: &EngineResult| program.entry_module_ids().first().copied();
-    let module_ids: Vec<EngineModuleId> = match build.further_programs.len() {
-        0 => build.engine.entry_module_ids().to_vec(),
-        _ => core::iter::once(&build.engine)
-            .chain(&build.further_programs)
-            .map(first_module_id)
-            .collect::<Option<_>>()
-            .ok_or_else(corrupted_program)?,
+    let count_of_first = (build.entry_points.len())
+        .checked_sub(build.further_programs.len())
+        .ok_or_else(corrupted_program)?;
+    let ids_of_first = build.engine.entry_module_ids();
+    let ids_of_first = match build.further_programs.len() {
+        0 => Some(ids_of_first),
+        _ => ids_of_first.get(..count_of_first),
     };
+    let mut module_ids: Vec<EngineModuleId> = ids_of_first.ok_or_else(corrupted_program)?.to_vec();
+    for program in &build.further_programs {
+        module_ids.push(first_module_id(program).ok_or_else(corrupted_program)?);
+    }
     let mut entry_points =
         pair_entry_points(&build.entry_points, &module_ids, options.runs_in_place)?;
-    if !build.further_programs.is_empty() {
-        for (index, entry_point) in (0..).zip(&mut entry_points) {
-            entry_point.image_index = index;
-        }
+    for (index, entry_point) in (1..).zip(entry_points.iter_mut().skip(count_of_first)) {
+        entry_point.image_index = index;
     }
     // In place a file that is embedded keeps the path of its source, which names the entry point already.
     if !options.runs_in_place {

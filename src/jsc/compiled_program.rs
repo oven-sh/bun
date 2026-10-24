@@ -42,6 +42,7 @@ unsafe extern "C" {
     ) -> u32;
     fn Bun__AOT__admittedCode(image: Bytes, admitted: *mut u32) -> bool;
     fn Bun__AOT__admitsUnknownJavaScript(image: Bytes) -> bool;
+    fn Bun__AOT__loadsCodeOutsideImage(image: Bytes) -> bool;
     fn Bun__AOT__omitsFunctionSource(image: Bytes) -> bool;
     safe fn Bun__AOT__imageCode() -> Bytes;
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
@@ -105,6 +106,12 @@ pub fn admits_unknown_javascript(program: &CompiledProgram) -> bool {
     // SAFETY: the engine reads the image before it returns.
     let admits = |image: &[u8]| unsafe { Bun__AOT__admitsUnknownJavaScript(bytes_of(image)) };
     program.images().any(admits)
+}
+
+/// Whether the program itself loads files with code that the build has not seen.
+pub fn loads_code_outside_image(program: &CompiledProgram) -> bool {
+    // SAFETY: the engine reads the image before it returns.
+    unsafe { Bun__AOT__loadsCodeOutsideImage(image_of(program)) }
 }
 
 /// Whether the program was built with `--no-compile-function-source`.

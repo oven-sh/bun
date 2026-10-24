@@ -235,13 +235,21 @@ fn with_host_in<R>(
     in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
     then: impl FnOnce(&Fixture<'_, '_>) -> R,
 ) -> R {
+    with_host_under(AotOptions::default(), root, in_memory_files, then)
+}
+
+fn with_host_under<R>(
+    aot: AotOptions,
+    root: &[u8],
+    in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
+    then: impl FnOnce(&Fixture<'_, '_>) -> R,
+) -> R {
     let mut load = LoadOptions::new(root.to_vec());
     load.in_memory_files = in_memory_files;
     load.externals.packages = vec![b"claimed-package".to_vec(), b"react".to_vec()];
     load.loaders.push((b".vue".to_vec(), Loader::Tsx));
     load.loaders.sort_by(|a, b| a.0.cmp(&b.0));
     let entry_points = [&b"main.ts"[..], b"tool", b"with.dots.in-its-name"].map(<[u8]>::to_vec);
-    let aot = AotOptions::default();
     let options = Options {
         aot: &aot,
         executable_identity: ExecutableIdentity([0; 16]),
@@ -566,6 +574,75 @@ fn required_file_without_loader_is_carried_like_an_imported_one() {
             kind_for(b"/project/a.txt", CodeImportKind::Require),
             by_name
         );
+    });
+}
+
+const TEXTS_THAT_ONLY_THEIR_LOAD_CALLS_PROGRAMS: [(&[u8], &[u8]); 4] = [
+    (b"/project/library.so", b"\x7fELF\x02\x01"),
+    (b"/project/program.so", b"module.exports = 1;"),
+    (b"/project/prose", b"first();\nthis is no program"),
+    (b"/project/wrong.ts", b"this is no program"),
+];
+
+fn with_texts_that_only_their_load_calls_programs(
+    runs_in_place: bool,
+    then: impl FnOnce(&Fixture<'_, '_>),
+) {
+    let aot = AotOptions {
+        runs_in_place,
+        ..AotOptions::default()
+    };
+    let files = TEXTS_THAT_ONLY_THEIR_LOAD_CALLS_PROGRAMS
+        .map(|(path, text)| (path.to_vec(), text.to_vec()))
+        .to_vec();
+    with_host_under(aot, b"/project", files, then);
+}
+
+fn parse_as_required<'s>(fixture: &Fixture<'_, 's>, path: &[u8]) -> ParsedCode<'s> {
+    fixture.parse(path, to_host_loader(Loader::Ts, path))
+}
+
+#[test]
+fn empty_module_stands_in_place_of_text_that_is_no_program_where_code_runs_in_place() {
+    with_texts_that_only_their_load_calls_programs(true, |fixture| {
+        let failure_of = |path: &[u8]| {
+            let parsed = parse_as_required(fixture, path);
+            payload_of(&parsed).parse_failure.clone()
+        };
+        let said = |text: &str| Some(text.as_bytes().to_vec());
+        assert_eq!(
+            failure_of(b"/project/library.so"),
+            said("Invalid character. (1:1)")
+        );
+        assert_eq!(failure_of(b"/project/prose"), said("';' expected. (2:6)"));
+        for path in [&b"/project/library.so"[..], b"/project/prose"] {
+            let parsed = parse_as_required(fixture, path);
+            assert!(parsed.hir.diagnostics.is_empty() && parsed.hir.has_module_syntax);
+            assert_eq!(payload_of(&parsed).kind, SourceKind::Program);
+        }
+        assert_eq!(failure_of(b"/project/program.so"), None);
+        // The name says that it is TypeScript: the build reports what is wrong with it.
+        assert_eq!(failure_of(b"/project/wrong.ts"), None);
+        let wrong = parse_as_required(fixture, b"/project/wrong.ts");
+        assert!(!wrong.hir.diagnostics.is_empty());
+    });
+}
+
+#[test]
+fn executable_carries_text_that_is_no_program() {
+    with_texts_that_only_their_load_calls_programs(false, |fixture| {
+        let read_as = |path: &[u8]| {
+            let parsed = parse_as_required(fixture, path);
+            let source = payload_of(&parsed);
+            assert_eq!(source.parse_failure, None);
+            (source.kind, source.loader)
+        };
+        let carried = (SourceKind::Data, Loader::File);
+        assert_eq!(read_as(b"/project/library.so"), carried);
+        assert_eq!(read_as(b"/project/prose"), carried);
+        let code = (SourceKind::Program, Loader::Ts);
+        assert_eq!(read_as(b"/project/program.so"), code);
+        assert_eq!(read_as(b"/project/wrong.ts"), code);
     });
 }
 

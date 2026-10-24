@@ -38,6 +38,10 @@ pub enum ModuleFailureKind {
         specifier: Atom,
         reason: CodeFailure,
     },
+    /// The importer is a file that nothing but the way it is loaded calls a program, and that is none. The site is the statement that stands in place of its text.
+    NotAProgram {
+        is_loaded_at_start: bool,
+    },
     ExportNotFound {
         exporter: ModuleRef,
         name: Atom,
@@ -57,6 +61,13 @@ impl ModuleFailure {
     pub fn effect(&self) -> FailureEffect {
         match self.kind {
             ModuleFailureKind::Unresolved { .. } => unresolved_site_effect(self.site),
+            ModuleFailureKind::NotAProgram {
+                is_loaded_at_start: true,
+            } => FailureEffect::StopsBuild,
+            // The body of the module that stands in its place throws it.
+            ModuleFailureKind::NotAProgram {
+                is_loaded_at_start: false,
+            } => FailureEffect::ThrowsAtSite,
             ModuleFailureKind::ExportNotFound { .. }
             | ModuleFailureKind::ExportAmbiguous { .. } => FailureEffect::StopsBuild,
             // The body of each module whose load it fails throws it.

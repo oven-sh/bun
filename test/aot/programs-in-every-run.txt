@@ -15,6 +15,7 @@ arrays/a-worker-is-terminated-between-loops-over-arrays-and-strings
 arrays/an-array-of-int32s-is-pushed-an-element-that-is-kept-as-a-double
 arrays/an-element-is-read-of-a-variable-that-holds-a-list-a-record-and-a-bound-function
 arrays/array-from-a-length-and-a-mapper-that-is-no-closure
+arrays/array-methods-with-a-function-written-at-the-call-in-cold-code
 arrays/arrays-of-the-greatest-length-are-read-and-stored-into
 arrays/element-reads-with-double-keys
 arrays/elements-of-frozen-arrays-that-fit-are-not-coerced
@@ -162,6 +163,7 @@ calls/text-is-encoded-into-a-range-counted-from-the-end-at-every-level-on-the-wa
 calls/the-stack-ends-at-the-entry-of-a-function-that-reads-its-arguments-from-the-stack
 calls/unused-results
 calls/what-a-function-did-before-the-stack-ended-is-undone-by-its-finally
+calls/what-call-reaches-through-another-function-makes-what-it-declares-anew-at-each-entry
 classes-and-closures/a-closure-made-anew-beside-a-way-that-calls-is-read-on-that-turn
 classes-and-closures/a-closure-made-anew-in-a-callback-of-an-array-method-is-read-on-that-turn
 classes-and-closures/a-closure-made-anew-in-the-callback-of-map-binds-what-that-turn-handed-it
@@ -870,6 +872,7 @@ structural-types/static-members-of-a-class-are-deleted-beside-two-other-modules
 structural-types/the-largest-index-and-the-first-key-that-is-no-index
 structural-types/the-object-of-an-enum-and-of-a-namespace-is-an-ordinary-object
 structural-types/the-tags-of-a-union-stand-in-constant-literals-and-change-later
+structural-types/twenty-subclasses-override-one-method-in-a-program-that-loads-a-file-named-at-run-time
 structural-types/typed-arrays-are-read-past-their-end-into-an-int32
 tree-shaking/a-call-that-nothing-makes-names-a-file-of-a-pure-package
 tree-shaking/a-comment-imports-a-type-under-the-name-of-what-the-file-declares

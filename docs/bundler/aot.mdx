@@ -158,6 +158,8 @@ The build doesn't report errors in code that it removes, such as the `process.pl
 
 Bun reads a file without an extension, like the `bin/tool` of many packages, as TypeScript. If the file is already valid JavaScript, the build doesn't check its types, as in a `.js` file.
 
+If such a file isn't code at all, the executable carries it as it is and your program gets its path, as in an executable built without `--aot`. Under `bun run --aot` and `bun test --aot`, loading it throws where your program loads it, as in `bun run`, and the build only warns. That also goes for `require()` of a file with an extension that Bun has no loader for, like the `require("./native.so")` in a `try` that some packages use to look for a library. The build stops if the entry point reaches the file through `import` statements alone.
+
 ### Compile a project
 
 Without an entry point, `bun compile` reads `package.json`. It compiles the file that `"bin"` points to. If there's no `"bin"`, it uses `"module"`, then `"main"`, then `index.ts`. The executable is named after the `"bin"` entry, or after the package without its scope.

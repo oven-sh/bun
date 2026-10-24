@@ -192,6 +192,34 @@ server.stop(true);
     checkSays: [],
     prints: "/path\nexit 0\n",
   },
+  "parameters without types in functions that are handed to what has no declaration, under a strict tsconfig.json": {
+    files: {
+      "main.ts": `import { readFile } from "node:fs";
+process.on("exit", code => console.log("exit", code));
+const target = new EventTarget();
+target.addEventListener("e", event => console.log(event.type));
+target.addEventListener("e", ({ type }) => console.log(type));
+target.addEventListener("e", (...all) => console.log(all.length));
+target.dispatchEvent(new Event("e"));
+new Headers({ a: "1" }).forEach((value, key) => console.log(key, value));
+const stream = new ReadableStream({ start(controller) { controller.enqueue("a"); controller.close(); } });
+console.log((await stream.getReader().read()).value);
+await new Promise<void>(done => readFile("note.txt", "utf8", (error, text) => { console.log(error, text.trim()); done(); }));
+const { port1, port2 } = new MessageChannel();
+await new Promise<void>(done => {
+  port1.onmessage = event => { console.log(event.data); port1.close(); done(); };
+  port2.postMessage("said");
+});
+const server = Bun.serve({ port: 0, routes: { "/a": { GET: request => new Response(request.method) } }, fetch(request) { return new Response(new URL(request.url).pathname); } });
+console.log(await (await fetch(new URL("/a", server.url))).text(), await (await fetch(new URL("/b", server.url))).text());
+server.stop(true);
+`,
+      "note.txt": "note\n",
+      "tsconfig.json": JSON.stringify({ compilerOptions: { lib: ["esnext"], strict: true } }),
+    },
+    checkSays: [],
+    prints: "e\ne\n1\na 1\na\nnull note\nsaid\nGET /b\nexit 0\n",
+  },
   "what TypeScript's own libraries declare, with its types": {
     files: {
       "main.ts": `function shout(word: string | undefined): string { if (word === undefined) return "none"; return word.toUpperCase(); }
@@ -621,10 +649,11 @@ describe.concurrent("without Bun's type declarations", () => {
     () =>
       slot(async () => {
         using dir = tempDir("aot-missing-bun-types", {
-          "main.ts": `function twice(n) { return n * 2; }\nconsole.log(twice(2));\n`,
+          "main.ts": `function twice(n) { return n * 2; }\nconst thrice = n => n * 3;\nconst all = { four: n => n * 4 };\nconsole.log(twice(2), thrice(2), all.four(2));\n`,
           "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
         });
-        expect(await build(String(dir))).toEqual({ errors: ["TS7006"], warnings: [], exitCode: 1, signal: null });
+        const errors = ["TS7006", "TS7006", "TS7006"];
+        expect(await build(String(dir))).toEqual({ errors, warnings: [], exitCode: 1, signal: null });
       }),
     buildTimeout,
   );

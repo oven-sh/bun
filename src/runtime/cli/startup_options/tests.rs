@@ -12,18 +12,27 @@ const NO_DEBUGGER: &str =
 const DEFAULT_BUILD: BuildRecord = BuildRecord {
     omits_function_source: false,
     admits_inspector: false,
+    loads_code_from_disk: false,
 };
 const WITHOUT_FUNCTION_SOURCE: BuildRecord = BuildRecord {
     omits_function_source: true,
     admits_inspector: false,
+    loads_code_from_disk: false,
 };
 const WITH_INSPECTOR: BuildRecord = BuildRecord {
     omits_function_source: false,
     admits_inspector: true,
+    loads_code_from_disk: false,
 };
 const WITH_INSPECTOR_WITHOUT_FUNCTION_SOURCE: BuildRecord = BuildRecord {
     omits_function_source: true,
     admits_inspector: true,
+    loads_code_from_disk: false,
+};
+const LOADS_CODE_FROM_DISK: BuildRecord = BuildRecord {
+    omits_function_source: false,
+    admits_inspector: false,
+    loads_code_from_disk: true,
 };
 const DEBUG_ONLY_ROW: RowName = RowName::Long(b"breakpoint-resolve");
 
@@ -87,6 +96,23 @@ fn message_untrimmed(options: &str, build: Option<BuildRecord>) -> Option<String
 
 fn names_of_long(name: &[u8]) -> &'static clap::Names {
     &AUTO_PARAMS[index_of_long(AUTO_PARAMS, name)].names
+}
+
+#[test]
+fn program_that_loads_code_from_disk_takes_options_that_load_code() {
+    for omits_function_source in [false, true] {
+        let build = BuildRecord {
+            omits_function_source,
+            ..LOADS_CODE_FROM_DISK
+        };
+        assert_eq!(build.obstacle_to(RuntimeRequirement::RuntimeCode), None);
+        assert!(
+            build
+                .obstacle_to(RuntimeRequirement::WholeRuntime)
+                .is_some()
+        );
+        assert!(build.obstacle_to(INSPECTOR_REQUIREMENT).is_some());
+    }
 }
 
 #[test]

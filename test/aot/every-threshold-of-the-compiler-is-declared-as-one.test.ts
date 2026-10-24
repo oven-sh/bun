@@ -183,7 +183,7 @@ const plainConstantsOfTheFrontEnd: Record<string, number> = {
   "aot/report/remaining_checks.rs": 1,
   "aot/report/summary.rs": 1,
   "aot/diagnostics/sink.rs": 2,
-  "aot/compile/load_stage.rs": 4,
+  "aot/compile/load_stage.rs": 1,
   "aot/compile/lower_stage.rs": 1,
   "aot/load/module_paths.rs": 1,
   "aot/load/loader_aliases.rs": 1,

@@ -65,6 +65,7 @@ fn failure_key(failure: &ModuleFailure) -> FailureKey {
     let (exporter, name) = match failure.kind {
         ModuleFailureKind::Unresolved { specifier, .. }
         | ModuleFailureKind::UnresolvedAtLoad { specifier, .. } => (None, specifier),
+        ModuleFailureKind::NotAProgram { .. } => (None, bun_sema::atom::known::default),
         ModuleFailureKind::ExportNotFound { exporter, name }
         | ModuleFailureKind::ExportAmbiguous { exporter, name }
         | ModuleFailureKind::ExportMayBeAbsent { exporter, name } => (Some(exporter), name),

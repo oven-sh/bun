@@ -2,11 +2,12 @@ use super::call_sites::{expr_kind, is_free_common_js};
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
-    InitialState, SymbolId, has_mapped_arguments,
+    FnOwner, InitialState, Parent, PatParent, SymbolId, has_mapped_arguments,
 };
 use crate::fold::Decisions;
 use crate::hir::{
-    Branches, Chain, ExprId, ExprKind, File, Flags, FnBody, FnKind, MemberKey, NodeData, StmtKind,
+    Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList, MemberKey,
+    NodeData, PatKind, StmtKind,
 };
 
 fn is_node_module(specifier: Atom) -> bool {
@@ -148,6 +149,7 @@ pub enum OwnRequire {
 }
 
 const LONGEST_CHAIN_OF_BINDINGS: usize = 8;
+const LONGEST_CHAIN_OF_PARAMETERS: usize = 3;
 
 fn iife_return_value(hir: &File<'_>, e: ExprId) -> Option<ExprId> {
     let Some(ExprKind::Call(call)) = expr_kind(hir, e) else {
@@ -197,13 +199,126 @@ pub fn find_result_expression(
     live_branch(hir, decisions, e).or_else(|| iife_return_value(hir, e))
 }
 
-// The `require` of the file, or `createRequire(import.meta.url)`, which resolves what it is given as that one does: written on the spot, or held by a binding that nothing stores to, which may start as another such binding.
+// The parameter that `e` names, where nothing stores to it: its function, and its place among the parameters.
+fn find_settled_parameter(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<(FnId, usize)> {
+    let Some(ExprKind::Ident(_)) = expr_kind(hir, e) else {
+        return None;
+    };
+    let Binding::Symbol(symbol) = bound.binding(e) else {
+        return None;
+    };
+    let &[Decl::Param(pattern)] = bound.symbol(symbol).decls else {
+        return None;
+    };
+    let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let is_settled = bound.stores_to(symbol).is_empty()
+        && !bound.is_visible_to_eval(symbol)
+        && bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
+        && !hir[id].flags.contains(Flags::REST)
+        && hir[id].default.is_none();
+    let function = bound.param_fn[id.idx()];
+    let index = hir[function].params.iter().position(|it| it == id)?;
+    is_settled.then_some((function, index))
+}
+
+fn argument_at(hir: &File<'_>, arguments: IdList<ExprId>, index: usize) -> Option<ExprId> {
+    let mut passed = hir.ids(arguments).take(index + 1);
+    let is_spread = |it| matches!(expr_kind(hir, it), Some(ExprKind::Spread(_)));
+    match passed.clone().any(is_spread) {
+        true => None,
+        false => passed.nth(index),
+    }
+}
+
+// The call in which a function expression stands, as what is called or as an argument.
+fn find_call_around(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<(ExprId, Call)> {
+    let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
+        return None;
+    };
+    let Parent::Expr(above) = bound.parent_of_expr(expression) else {
+        return None;
+    };
+    match expr_kind(hir, above) {
+        Some(ExprKind::Call(call)) => Some((expression, hir[call])),
+        _ => None,
+    }
+}
+
+// `(function (load) { .. })(require)`, and what TypeScript writes for "module": "umd": `(function (factory) { .. factory(require, exports) .. })(function (require, exports) { .. })`.
+// Another call may pass something else, so a call of the parameter tests what it holds.
+fn is_given_require_of_file(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
+    (function, index): (FnId, usize),
+    parameters_left: usize,
+) -> bool {
+    let Some((expression, call)) = find_call_around(hir, bound, function) else {
+        return false;
+    };
+    let is_require_of_file = |arguments: IdList<ExprId>| {
+        argument_at(hir, arguments, index).is_some_and(|argument| {
+            follow_to_own_require(hir, bound, decisions, argument, parameters_left)
+                == Some(OwnRequire::OfFile)
+        })
+    };
+    if call.callee == expression {
+        return is_require_of_file(call.args);
+    }
+    let Some(ExprKind::Fn(caller)) = expr_kind(hir, hir.skip_type_assertions(call.callee)) else {
+        return false;
+    };
+    let place = hir.ids(call.args).position(|it| it == expression);
+    let Some(place) = place.filter(|&place| argument_at(hir, call.args, place).is_some()) else {
+        return false;
+    };
+    let Some(held_by) = hir[caller].params.iter().nth(place).map(|id| hir[id]) else {
+        return false;
+    };
+    let PatKind::Ident(name) = hir[held_by.pat].kind else {
+        return false;
+    };
+    if held_by.flags.contains(Flags::REST) {
+        return false;
+    }
+    let held_by = Binding::Symbol(bound.declared_symbol(Decl::Param(held_by.pat)));
+    (0..hir.exprs.len() as u32).map(ExprId).any(|e| {
+        let ExprKind::Call(inner) = hir[e].kind else {
+            return false;
+        };
+        let inner = hir[inner];
+        matches!(expr_kind(hir, inner.callee), Some(ExprKind::Ident(it)) if it == name)
+            && bound.binding(inner.callee) == held_by
+            && !decisions.is_some_and(|decisions| decisions.is_dead_expr(e))
+            && is_require_of_file(inner.args)
+    })
+}
+
+// The `require` of the file, or `createRequire(import.meta.url)`, which resolves what it is given as that one does: written on the spot, or held by a binding that nothing stores to, which may start as another such binding. The `require` of the file also where a parameter gets it.
 pub fn find_own_require(
     hir: &File<'_>,
     bound: &Bound<'_>,
     decisions: Option<&Decisions<'_>>,
     e: ExprId,
 ) -> Option<OwnRequire> {
+    follow_to_own_require(hir, bound, decisions, e, LONGEST_CHAIN_OF_PARAMETERS)
+}
+
+fn follow_to_own_require(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
+    e: ExprId,
+    parameters_left: usize,
+) -> Option<OwnRequire> {
+    let is_parameter_with_require_of_file = |e: ExprId| {
+        parameters_left > 0
+            && find_settled_parameter(hir, bound, e).is_some_and(|parameter| {
+                is_given_require_of_file(hir, bound, decisions, parameter, parameters_left - 1)
+            })
+    };
     let mut e = hir.skip_type_assertions(e);
     for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
         if is_free_common_js(hir, bound, e, CommonJsVariable::Require) {
@@ -216,11 +331,14 @@ pub fn find_own_require(
             continue;
         }
         let Some(symbol) = settled_symbol(hir, bound, e) else {
-            return is_made_for_own_file(hir, bound, e).then_some(OwnRequire::Made);
+            if is_made_for_own_file(hir, bound, e) {
+                return Some(OwnRequire::Made);
+            }
+            return is_parameter_with_require_of_file(e).then_some(OwnRequire::OfFile);
         };
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(source) => e = hir.skip_type_assertions(source),
-            _ => return None,
+            _ => return is_parameter_with_require_of_file(e).then_some(OwnRequire::OfFile),
         }
     }
     None

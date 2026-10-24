@@ -274,7 +274,7 @@ const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
     (
         "a.cjs",
         r#"const load = (r => r)(require); load("a");"#,
-        &[],
+        &["a"],
     ),
     (
         "a.cjs",
@@ -291,7 +291,7 @@ const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
         r#"function f(load) { load("a"); } f(require);"#,
         &[],
     ),
-    ("a.cjs", r#"(r => r("a"))(require);"#, &[]),
+    ("a.cjs", r#"(r => r("a"))(require);"#, &["a"]),
     (
         "a.cjs",
         r#"const holder = { load: require }; holder.load("a");"#,
@@ -481,7 +481,8 @@ fn builtin_module_call_needs_constant_specifier() {
 
 #[test]
 fn call_of_require_made_for_own_file_is_site() {
-    for &(path, text, specifiers) in MADE_REQUIRES.iter().chain(REQUIRES_AS_VALUES) {
+    let programs = MADE_REQUIRES.iter().chain(REQUIRES_AS_VALUES);
+    for &(path, text, specifiers) in programs.chain(REQUIRES_AS_ARGUMENTS) {
         analyzed(path, text, |s| {
             let sites = s.analysis.import_sites.iter();
             let required = sites.filter_map(|site| match (site.kind, site.specifier) {
@@ -494,6 +495,105 @@ fn call_of_require_made_for_own_file_is_site() {
         });
     }
 }
+
+const REQUIRES_AS_ARGUMENTS: &[(&str, &str, &[&str])] = &[
+    (
+        "a.cjs",
+        r#"(function (load) { load("./a"); load("b"); })(require);"#,
+        &["./a", "b"],
+    ),
+    ("a.cjs", r#"(load => load("./a"))(require);"#, &["./a"]),
+    (
+        "a.cjs",
+        r#"(function (one, load) { load("./a"); one("./b"); })(exports, require);"#,
+        &["./a"],
+    ),
+    (
+        "a.cjs",
+        r#"(function (factory) { if (typeof module === "object") factory(require, exports); else define(["./c"], factory); })(function (require, exports) { require("./a"); require("./" + "b"); });"#,
+        &["./a", "./b"],
+    ),
+    (
+        "a.cjs",
+        r#"(function (factory) { factory(other); factory(require); })(function (load) { load("./a"); });"#,
+        &["./a"],
+    ),
+    (
+        "a.cjs",
+        r#"(function (outer) { (function (inner) { inner("./a"); })(outer); })(require);"#,
+        &["./a"],
+    ),
+    (
+        "a.cjs",
+        r#"const own = require; (load => load("./a"))(own);"#,
+        &["./a"],
+    ),
+    (
+        "a.cjs",
+        r#"(function (load) { load.call(null, "./a"); load.apply(null, ["./b"]); })(require);"#,
+        &["./a", "./b"],
+    ),
+    (
+        "a.cjs",
+        r#"(function (load) { load("./a"); })(other);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"(function (load) { load("./a"); load = other; })(require);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"(function (load = other) { load("./a"); })(require);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"(function (...loaders) { loaders("./a"); })(require);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"(function ({ load }) { load("./a"); })(require);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"(function (one, load) { load("./a"); })(...list, require);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"(function (load) { eval(text); load("./a"); })(require);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"(function (factory) { if (false) factory(require); })(function (load) { load("./a"); });"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"(function (factory) { other(factory, require); })(function (load) { load("./a"); });"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"other(function (load) { load("./a"); }, require);"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"function f(require) { (load => load("./a"))(require); }"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; (load => load("./a"))(createRequire(import.meta.url));"#,
+        &[],
+    ),
+];
 
 #[test]
 fn call_of_binding_that_holds_import_meta_require_is_site() {

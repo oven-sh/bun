@@ -25,6 +25,7 @@ pub mod source_provider;
 pub mod sources;
 pub(crate) mod test_runner_names;
 pub(crate) mod typed_packages;
+pub(crate) mod worker_files;
 
 #[cfg(not(test))]
 pub use bun_aot_interface::load::source_provider;

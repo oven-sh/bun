@@ -415,6 +415,33 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn import_of_module_field_records_file_that_require_gets() {
+        let host = package(MODULE_AND_MAIN, &["/p/x/esm.js", "/p/x/cjs.js"]);
+        let required_in_place_of_module = |prefers_module_field: bool, kind: CodeImportKind| {
+            let code = CodeOptions {
+                prefers_module_field,
+                ..CodeOptions::bun_run(b"/p")
+            };
+            let (session, options) = (Session::new(), Options::default());
+            let resolver = Resolver::for_compile(&session, &host, &options, &code);
+            resolver.resolve_code(&CodeRequest {
+                specifier: b"./x",
+                importer: b"/p/main.ts",
+                directory: b"/p",
+                kind,
+                form: CodeImportForm::Static,
+            });
+            let required = resolver.file_required_in_place_of(b"/p/x/esm.js");
+            assert_eq!(resolver.file_required_in_place_of(b"/p/x/cjs.js"), None);
+            text(required.map(<[u8]>::to_vec))
+        };
+        assert_eq!(required_in_place_of_module(true, Import), "/p/x/cjs.js");
+        assert_eq!(required_in_place_of_module(true, Require), "None");
+        assert_eq!(required_in_place_of_module(false, Import), "None");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn custom_main_fields_use_list_order() {
         let host = package(MODULE_AND_MAIN, &["/p/x/esm.js", "/p/x/cjs.js"]);
         let module_first = CodeOptions {

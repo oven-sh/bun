@@ -480,6 +480,17 @@ bun compile ./app.ts --outfile elsewhere/app && cd elsewhere && ./app json
 json
 ```
 
+The `require` doesn't have to be called under its own name. The compiler follows it into a variable that's never assigned again, and into a parameter of a function that's called where it's written. That covers the wrapper that TypeScript writes for `"module": "umd"`, which an executable built without `--aot` doesn't follow.
+
+```js lib.js icon="/icons/javascript.svg"
+(function (factory) {
+  if (typeof module === "object" && typeof module.exports === "object") factory(require, exports);
+  else if (typeof define === "function" && define.amd) define(["require", "exports", "./part"], factory);
+})(function (require, exports) {
+  exports.part = require("./part");
+});
+```
+
 A path with no constant start, like `require(name)`, adds nothing to the executable. Of your own files it finds the entry points, by the path the file had at build time, as in an executable built without `--aot`. A file that's only in the executable because another file imports it isn't found, even after it has run.
 
 ```txt
@@ -831,6 +842,16 @@ bun compile ./spawn.ts ./worker.ts --outfile spawn && rm worker.ts && ./spawn
 ```txt
 42
 ```
+
+You don't have to list a worker that you embed with the `file` loader and start by the path of the copy. The compiler follows the import to `new Worker()` and compiles the file, with everything it imports, as one more entry point:
+
+```ts spawn.ts icon="/icons/typescript.svg"
+import path from "./worker.ts" with { type: "file" };
+
+const worker = new Worker(path);
+```
+
+A file that you embed for another use, like a script that a server sends to browsers, stays a file.
 
 A Worker that you create from a file on disk or from a `blob:` or `data:` URL runs [code that isn't in the executable](#code-that-isnt-in-the-executable). It loads in a program that also has a dynamic `import()` or `require()`. In any other program it fails to load: put the code in a file and pass it as an entry point.
 

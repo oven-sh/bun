@@ -147,11 +147,14 @@ pub(crate) const INSPECTOR_REQUIREMENT: RuntimeRequirement =
 struct BuildRecord {
     omits_function_source: bool,
     admits_inspector: bool,
+    loads_code_from_disk: bool,
 }
 
 impl BuildRecord {
     fn obstacle_to(self, requirement: RuntimeRequirement) -> Option<Obstacle> {
         match requirement {
+            // The build allowed for files that it has not seen, whoever names them.
+            RuntimeRequirement::RuntimeCode if self.loads_code_from_disk => None,
             // What the build proved holds while nothing but the code it saw runs.
             RuntimeRequirement::RuntimeCode | RuntimeRequirement::WholeRuntime
                 if self.omits_function_source =>
@@ -445,6 +448,7 @@ fn build_of_this_executable() -> Option<BuildRecord> {
     Some(BuildRecord {
         omits_function_source: bun_jsc::compiled_program::omits_function_source(program),
         admits_inspector: admitted.contains(AdmittedCode::INSPECTOR),
+        loads_code_from_disk: bun_jsc::compiled_program::loads_code_outside_image(program),
     })
 }
 

@@ -1,4 +1,4 @@
-use super::{Build, LoadedBuild, LoadedProject, mentions_worker_constructor};
+use super::{Build, LoadedBuild, LoadedProject, ProgramsOfOneLoad, mentions_worker_constructor};
 use crate::builtins::{BuiltinNames, RuntimeModule};
 use crate::diagnostics::{Diagnostics, LoadMessages, ProgramView};
 use crate::load::fold_inputs::{
@@ -14,7 +14,8 @@ use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
 use crate::load::typed_packages::TypedPackages;
-use crate::load::{PerProject, ProjectId, Sources};
+use crate::load::worker_files::{WorkerFileInput, find_embedded_files_that_start_workers};
+use crate::load::{PerProject, ProjectId, SourceKind, Sources};
 use crate::options::Options;
 use crate::package_diagnostics::{PackageView, report_rejected_versions};
 use crate::statistics::{LimitId, LimitValues, Stage, StatisticId, Statistics};
@@ -327,6 +328,7 @@ impl<'a> Build<'a> {
         resolve_loads_through_imported_loaders(application.files());
 
         let files = application.files();
+        self.find_started_workers(files, shared);
         let view = |first: Option<FileId>| {
             // SAFETY: the load has ended, and between two programs no thread works for the build.
             unsafe { files.view_program(first) };
@@ -334,9 +336,26 @@ impl<'a> Build<'a> {
         // Each program with its position and the file it begins at. A build of one program looks at all that was loaded.
         let programs: Vec<(usize, Option<FileId>)> = match self.programs {
             None => vec![(0, None)],
+            Some(ProgramsOfOneLoad {
+                held_elsewhere: Some(held),
+                indexes,
+                ..
+            }) => {
+                let most = self.limits.get(LimitId::MaxProgramsPerBuild);
+                if indexes[0] as u64 >= most || repeats_much_text(files, held, &self.limits) {
+                    self.is_one_program = true;
+                    return Err(Stage::Load);
+                }
+                let first_files = files.entry_points().iter().copied().map(Some);
+                positions.iter().copied().zip(first_files).collect()
+            }
             Some(of_one_load)
                 if files.entry_points().len() != positions.len()
-                    || are_one_program(files, of_one_load.indexes[positions[0]] == 0) =>
+                    || are_one_program(
+                        files,
+                        of_one_load.indexes[positions[0]] == 0,
+                        &self.limits,
+                    ) =>
             {
                 let holds_all = of_one_load.are_all_of_the_build
                     && of_one_load.indexes.len() == positions.len();
@@ -377,7 +396,7 @@ impl<'a> Build<'a> {
                 && a.host_loaded_modules == b.host_loaded_modules
                 && a.imports_cluster == b.imports_cluster
                 && a.imports_uncompiled_code == b.imports_uncompiled_code
-                && a.loads_by_unknown_name == b.loads_by_unknown_name
+                && a.loads_by_unknown_path == b.loads_by_unknown_path
         };
         let mut groups: Vec<Vec<usize>> = Vec::new();
         for (index, asked) in roots.iter().enumerate() {
@@ -395,9 +414,11 @@ impl<'a> Build<'a> {
                 _ => &shared.further_runtime_sessions[group_index - 1],
             };
             // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
-            let can_load_code_at_run_time = options.can_load_code_at_run_time()
-                || roots.imports_uncompiled_code
-                || (roots.loads_by_unknown_name && options.aot.loads_code_from_disk);
+            let is_told_of_code =
+                options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
+            let loads_code_by_unknown_names_alone =
+                !is_told_of_code && roots.loads_by_unknown_path && options.aot.loads_code_from_disk;
+            let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
             let runtime_fold = create_runtime_fold_inputs(&RuntimeFoldRequest {
                 manifest: shared.manifest,
                 arena: session.arena(),
@@ -469,12 +490,29 @@ impl<'a> Build<'a> {
                     builtin_names: shared.builtin_names,
                     typed_packages: shared.typed_packages,
                     can_load_code_at_run_time,
+                    loads_code_by_unknown_names_alone,
                     finish_asset_reads,
                 };
                 result = Some(then(self, loaded)?);
             }
         }
         Ok(result.expect("a build has a program"))
+    }
+
+    fn find_started_workers(&mut self, files: &Files<'_>, shared: &SharedLoadInputs<'_, '_>) {
+        self.started_workers = Default::default();
+        if self.options.aot.checks_only || !mentions_worker_constructor(files) {
+            return;
+        }
+        self.started_workers.files = find_embedded_files_that_start_workers(&WorkerFileInput {
+            files,
+            runtime_modules: shared.runtime_modules,
+            limits: &self.limits,
+            loaders: &self.options.load.loaders,
+        });
+        self.started_workers.held_texts = texts_of_program_files(files)
+            .map(|(path, size)| (path.to_vec(), size))
+            .collect();
     }
 
     /// The positions of the entry points that are loaded now. The others are left for loads of their own.
@@ -692,17 +730,14 @@ impl<'a> Build<'a> {
     }
 }
 
-const MAX_PROGRAMS: usize = 128;
-const MAX_REPEATED_TEXT: usize = 256 << 10;
-const MAX_REPEATED_PERCENT: usize = 5;
-
 // Of the files of several entry points. A global begins at each of them, and what the compiler proves holds for one global, so each begins
 // a program of its own. They are one program where that gains nothing or costs the executable its size:
 // - nothing starts a Worker, so there is one global;
 // - a program loads a module by a name that the build does not know, which may be that of any entry point: it has to hold them all;
 // - the programs share much of their files, and a file is compiled once for each program that holds it;
 // - there are very many: pages or plugins that a pattern has found.
-fn are_one_program(files: &Files<'_>, has_first_of_build: bool) -> bool {
+fn are_one_program(files: &Files<'_>, has_first_of_build: bool, limits: &LimitValues) -> bool {
+    let limit = |limit: LimitId| usize::try_from(limits.get(limit)).unwrap_or(usize::MAX);
     let entry_points = files.entry_points();
     let view = |first: Option<FileId>| {
         // SAFETY: the load has ended, and no thread works for the build.
@@ -716,7 +751,7 @@ fn are_one_program(files: &Files<'_>, has_first_of_build: bool) -> bool {
     };
     let mut is_held = vec![false; files.modules.len()];
     let (mut size_of_all, mut size_of_each) = (0, 0);
-    let mut are_one = entry_points.len() > MAX_PROGRAMS;
+    let mut are_one = entry_points.len() > limit(LimitId::MaxProgramsPerBuild);
     for (position, &first) in entry_points.iter().enumerate() {
         if are_one {
             break;
@@ -734,7 +769,37 @@ fn are_one_program(files: &Files<'_>, has_first_of_build: bool) -> bool {
     }
     view(None);
     let repeated = size_of_each - size_of_all;
-    are_one || repeated > MAX_REPEATED_TEXT.max(size_of_all / 100 * MAX_REPEATED_PERCENT)
+    let share = size_of_all / 100 * limit(LimitId::MaxRepeatedSourcePercent);
+    are_one || repeated > limit(LimitId::MaxRepeatedSourceBytes).max(share)
+}
+
+fn texts_of_program_files<'f, 's>(
+    files: &'f Files<'s>,
+) -> impl Iterator<Item = (&'s [u8], usize)> + use<'f, 's> {
+    let compiled = files.compiled_files().iter();
+    let programs = compiled.filter(|&&file| {
+        parsed_source(files, file).is_some_and(|source| source.kind == SourceKind::Program)
+    });
+    programs.map(|&file| {
+        let module = files.module(file);
+        (module.file_name(), module.hir.text.len())
+    })
+}
+
+// The rule of `are_one_program` for the files of a program that is loaded behind the others.
+fn repeats_much_text(files: &Files<'_>, held: &[(Vec<u8>, usize)], limits: &LimitValues) -> bool {
+    let limit = |limit: LimitId| usize::try_from(limits.get(limit)).unwrap_or(usize::MAX);
+    let is_held = |path: &[u8]| held.binary_search_by(|it| it.0[..].cmp(path)).is_ok();
+    let mut size_of_all: usize = held.iter().map(|it| it.1).sum();
+    let mut repeated = 0;
+    for (path, size) in texts_of_program_files(files) {
+        match is_held(path) {
+            true => repeated += size,
+            false => size_of_all += size,
+        }
+    }
+    let share = size_of_all / 100 * limit(LimitId::MaxRepeatedSourcePercent);
+    repeated > limit(LimitId::MaxRepeatedSourceBytes).max(share)
 }
 
 // No fewer than `loads_modules_by_computed_names` finds once the modules are bound.

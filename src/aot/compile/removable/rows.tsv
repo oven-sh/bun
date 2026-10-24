@@ -246,10 +246,12 @@
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() !== a;
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = (f(), a);
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = (a, f());
--	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a ?? f();
++	-	-	folded	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a ?? f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; a = b; function f(...a: any[]): any {} const MARK = a ?? f();
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() ?? a;
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() || a;
--	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a || f();
++	-	-	folded	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a || f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; a = b; function f(...a: any[]): any {} const MARK = a || f();
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a && f();
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() && a;
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; const MARK = a == b;
@@ -357,7 +359,8 @@
 +	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a ? 1 : 2;
 +	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = a ? b : a;
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a ? f() : 2;
--	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a ? 1 : f();
++	-	-	folded	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = a ? 1 : f();
+-	-	-	-	-	ts	let a: any = 1, b: any = 2; a = b; function f(...a: any[]): any {} const MARK = a ? 1 : f();
 -	-	-	-	-	ts	let a: any = 1, b: any = 2; function f(...a: any[]): any {} const MARK = f() ? 1 : 2;
 # templates
 +	+	+	-	-	ts	const MARK = `a`;

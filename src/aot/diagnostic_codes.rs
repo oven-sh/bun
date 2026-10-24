@@ -84,6 +84,7 @@ diagnostic_codes! {
         EntryPointNotFound = 100160, Error, "Entry point \"{0}\" was not found";
         EntryPointIsBuiltinModule = 100161, Error, "Cannot use \"{0}\" as an entry point: it resolves to a builtin module";
         EntryPointIsExternal = 100162, Error, "The entry point \"{0}\" cannot be marked as external";
+        FileIsNotAProgram = 100163, Error, "\"{0}\" is loaded as JavaScript, because nothing says what else it is, and it isn't JavaScript: {1}";
     }
     Link 100200..=100299 {
         ExportNotFound = 100200, Error, "No matching export in \"{0}\" for import \"{1}\"";

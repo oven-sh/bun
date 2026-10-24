@@ -122,6 +122,17 @@ fn site_number(failure: &ModuleFailure) -> u32 {
 }
 
 #[test]
+fn file_that_is_no_program_stops_build_only_where_it_is_loaded_at_start() {
+    let site = ImportSiteKind::ExportFrom(ExportId(0));
+    let effect_where = |is_loaded_at_start: bool| {
+        let kind = ModuleFailureKind::NotAProgram { is_loaded_at_start };
+        create_failure(kind, FileId(0), site).effect()
+    };
+    assert_eq!(effect_where(true), FailureEffect::StopsBuild);
+    assert_eq!(effect_where(false), FailureEffect::ThrowsAtSite);
+}
+
+#[test]
 fn ids_ascend_by_importer_site_and_name() {
     let shuffled_orders = [
         name_order(1, 2),

@@ -1933,6 +1933,11 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.module_options(file).no_implicit_any || hir.is_js && !self.is_check_js(file) {
             return;
         }
+        if let PatParent::Param(root) = root_declaration(bound, pat)
+            && self.is_given_to_what_has_no_declaration(file, bound.param_fn[root.idx()])
+        {
+            return;
+        }
         let start = hir[pat].pos;
         let is_missing = matches!(
             hir[pat].kind,

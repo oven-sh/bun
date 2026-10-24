@@ -43,10 +43,12 @@ pub(crate) struct NamedLoads {
     pub passed_for_parameters: Vec<RuntimeModule>,
     pub written_as_values: Vec<RuntimeModule>,
     pub loads_by_unknown_name: bool,
+    // Where a loader is given a name that the build does not know, also one that no module of the library has. A loader that goes somewhere as a value has no place here.
+    pub unknown_names_at: Vec<u32>,
     pub imports_given_unknown_names: Vec<SymbolId>,
 }
 
-struct Scan<'a, 's> {
+pub(crate) struct Scan<'a, 's> {
     request: &'a FinishedFile<'a, 's>,
     builtins: &'a ResolvedBuiltins,
     runtime_modules: &'a RuntimeModules,
@@ -55,6 +57,7 @@ struct Scan<'a, 's> {
     passed_to_imports: Vec<(SymbolId, NamedModule)>,
     passed_for_parameters: Vec<RuntimeModule>,
     loads_by_unknown_name: bool,
+    unknown_names_at: Vec<u32>,
     imports_given_unknown_names: Vec<SymbolId>,
 }
 
@@ -106,17 +109,7 @@ pub(crate) fn find_library_modules_named_in_choices(
     runtime_modules: &RuntimeModules,
     limits: &LimitValues,
 ) -> NamedLoads {
-    let mut scan = Scan {
-        request,
-        builtins,
-        runtime_modules,
-        limits,
-        named: Vec::new(),
-        passed_to_imports: Vec::new(),
-        passed_for_parameters: Vec::new(),
-        loads_by_unknown_name: builtins.loads_unknown_modules(),
-        imports_given_unknown_names: Vec::new(),
-    };
+    let mut scan = Scan::new(request, builtins, runtime_modules, limits);
     scan.visit_import_sites();
     scan.visit_calls_of_other_loaders();
     sort_named_modules(&mut scan.named);
@@ -131,6 +124,7 @@ pub(crate) fn find_library_modules_named_in_choices(
         passed_for_parameters: scan.passed_for_parameters,
         written_as_values,
         loads_by_unknown_name: scan.loads_by_unknown_name,
+        unknown_names_at: scan.unknown_names_at,
         imports_given_unknown_names: scan.imports_given_unknown_names,
     }
 }
@@ -181,19 +175,33 @@ fn imports_loader(files: &Files<'_>, mut file: FileId, mut symbol: SymbolId) -> 
     false
 }
 
+// Whether a function that the file imports and gives a name that the build does not know is a loader.
+pub(crate) fn gives_unknown_name_to_imported_loader(application: &Files<'_>, file: FileId) -> bool {
+    parsed_source(application, file).is_some_and(|source| {
+        let mut callees = source.imports_given_unknown_names.iter();
+        callees.any(|&callee| imports_loader(application, file, callee))
+    })
+}
+
 // Whether some loader may be given a name that the build does not know.
 pub(crate) fn loads_by_unknown_name(application: &Files<'_>) -> bool {
     let loads_by_unknown_name = |&file: &FileId| {
-        parsed_source(application, file).is_none_or(|source| {
-            let mut callees = source.imports_given_unknown_names.iter();
-            source.loads_by_unknown_name
-                || callees.any(|&callee| imports_loader(application, file, callee))
-        })
+        parsed_source(application, file).is_none_or(|source| source.loads_by_unknown_name)
+            || gives_unknown_name_to_imported_loader(application, file)
     };
     application
         .compiled_files()
         .iter()
         .any(loads_by_unknown_name)
+}
+
+// Whether some loader may be given the path of a file that the build has not seen.
+pub(crate) fn loads_by_unknown_path(application: &Files<'_>) -> bool {
+    let names_unknown_path = |&file: &FileId| {
+        parsed_source(application, file).is_some_and(|source| !source.unknown_names_at.is_empty())
+    };
+    loads_by_unknown_name(application)
+        || application.compiled_files().iter().any(names_unknown_path)
 }
 
 // A loader that is given a parameter is given what the calls pass for it. One that is given a name the build does not know may be given any text that the program writes as a value, in whichever file. In the order of the registry.
@@ -245,7 +253,27 @@ pub(crate) fn resolve_loads_through_imported_loaders(application: &Files<'_>) {
     }
 }
 
-impl Scan<'_, '_> {
+impl<'a, 's> Scan<'a, 's> {
+    pub(crate) fn new(
+        request: &'a FinishedFile<'a, 's>,
+        builtins: &'a ResolvedBuiltins,
+        runtime_modules: &'a RuntimeModules,
+        limits: &'a LimitValues,
+    ) -> Scan<'a, 's> {
+        Scan {
+            request,
+            builtins,
+            runtime_modules,
+            limits,
+            named: Vec::new(),
+            passed_to_imports: Vec::new(),
+            passed_for_parameters: Vec::new(),
+            loads_by_unknown_name: builtins.loads_unknown_modules(),
+            unknown_names_at: Vec::new(),
+            imports_given_unknown_names: Vec::new(),
+        }
+    }
+
     fn visit_import_sites(&mut self) {
         for site in self.request.analysis.import_sites {
             let loads = matches!(
@@ -264,9 +292,22 @@ impl Scan<'_, '_> {
                 }
                 ImportSpecifier::Unknown => true,
             };
-            if loads && may_name_library_module && site.specifier_node.is_some() {
-                self.loads_by_unknown_name |= self.add_names_in(site.specifier_node, true);
+            if !loads || site.specifier_node.is_none() {
+                continue;
             }
+            if may_name_library_module {
+                self.add_names_given_to_loader(site.specifier_node);
+            } else if !matches!(site.specifier, ImportSpecifier::Constant(_)) {
+                let position = self.request.hir[site.specifier_node].pos;
+                self.unknown_names_at.push(position);
+            }
+        }
+    }
+
+    fn add_names_given_to_loader(&mut self, name: ExprId) {
+        if self.add_names_in(name, true) {
+            self.loads_by_unknown_name = true;
+            self.unknown_names_at.push(self.request.hir[name].pos);
         }
     }
 
@@ -654,13 +695,11 @@ impl Scan<'_, '_> {
             };
             let loader = self.builtins.builtin_of_expression(callee);
             if loader == Some(BuiltinId::ProcessGetBuiltinModule) {
-                self.loads_by_unknown_name |= self.add_names_in(argument, true);
+                self.add_names_given_to_loader(argument);
                 continue;
             }
             match resolve_loader_alias(hir, bound, &analysis.decisions, callee) {
-                Some(LoaderAlias::Local) => {
-                    self.loads_by_unknown_name |= self.add_names_in(argument, true);
-                }
+                Some(LoaderAlias::Local) => self.add_names_given_to_loader(argument),
                 // Whether what is imported is a loader is known once the exporting file is loaded.
                 Some(LoaderAlias::Import(symbol)) => {
                     let first_new = self.named.len();
@@ -707,7 +746,10 @@ impl Scan<'_, '_> {
     }
 
     // `function load(name) { return require(name); }`, where every mention of `load` calls it: what the calls pass for `name`.
-    fn find_values_of_parameter(&self, mention: ExprId) -> Option<SmallVec<[ExprId; 4]>> {
+    pub(crate) fn find_values_of_parameter(
+        &self,
+        mention: ExprId,
+    ) -> Option<SmallVec<[ExprId; 4]>> {
         let &FinishedFile {
             hir,
             bound,

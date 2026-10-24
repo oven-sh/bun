@@ -506,12 +506,22 @@ impl RecordBuilder<'_, '_, '_> {
         project: ProjectId,
         failure: &modules::ModuleFailure,
     ) -> generated::ModuleFailure {
+        if let ModuleFailureKind::NotAProgram { .. } = failure.kind {
+            let sources = self.input.projects.get(project).sources;
+            let path = sources.module_paths(failure.importer).public_path;
+            return generated::ModuleFailure {
+                importer: self.input.id_of(project, ModuleRef::File(failure.importer)),
+                specifier: self.strings.intern(path),
+                exporter: None,
+            };
+        }
         // Where a module lacks a name, the name stands in the place of the specifier.
         let (specifier, exporter) = match failure.kind {
             ModuleFailureKind::Unresolved { specifier, .. }
             | ModuleFailureKind::UnresolvedAtLoad { specifier, .. } => (specifier, None),
             ModuleFailureKind::ExportMayBeAbsent { exporter, name } => (name, Some(exporter)),
-            ModuleFailureKind::ExportNotFound { .. }
+            ModuleFailureKind::NotAProgram { .. }
+            | ModuleFailureKind::ExportNotFound { .. }
             | ModuleFailureKind::ExportAmbiguous { .. } => {
                 unreachable!("a name that cannot be bound stops the build")
             }

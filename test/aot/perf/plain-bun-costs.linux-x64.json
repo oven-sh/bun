@@ -88,12 +88,12 @@
     "peakKilobytes": 51564
   },
   "interpreter events-and-streams.js": {
-    "thousandInstructions": 4198135,
+    "thousandInstructions": 4159481,
     "pageFaults": 3838,
     "peakKilobytes": 33420
   },
   "jit events-and-streams.js": {
-    "thousandInstructions": 1219995,
+    "thousandInstructions": 1134050,
     "pageFaults": 7067,
     "peakKilobytes": 58184
   },
@@ -188,7 +188,7 @@
     "peakKilobytes": 26316
   },
   "interpreter emit-to-one-listener.js": {
-    "thousandInstructions": 3828771,
+    "thousandInstructions": 3798513,
     "pageFaults": 3078,
     "peakKilobytes": 29564
   },
@@ -198,12 +198,12 @@
     "peakKilobytes": 41428
   },
   "interpreter emit-to-two-listeners.js": {
-    "thousandInstructions": 5416916,
+    "thousandInstructions": 4770824,
     "pageFaults": 3060,
     "peakKilobytes": 29524
   },
   "jit emit-to-two-listeners.js": {
-    "thousandInstructions": 839074,
+    "thousandInstructions": 776064,
     "pageFaults": 4200,
     "peakKilobytes": 43280
   },

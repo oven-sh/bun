@@ -16,20 +16,19 @@ pub(super) struct UnloadableModule {
     through: Option<FileId>,
 }
 
-fn is_unresolved_import(pending: &PendingFailure) -> bool {
-    matches!(pending.failure.kind, ModuleFailureKind::Unresolved { .. })
-        && pending.failure.effect() == FailureEffect::StopsBuild
+fn fails_load(pending: &PendingFailure) -> bool {
+    matches!(
+        pending.failure.kind,
+        ModuleFailureKind::Unresolved { .. } | ModuleFailureKind::NotAProgram { .. }
+    ) && pending.failure.effect() == FailureEffect::StopsBuild
 }
 
-fn find_unresolved_import(scans: &Scans, file: FileId) -> Option<FailureOrder> {
+fn find_load_failure(scans: &Scans, file: FileId) -> Option<FailureOrder> {
     let scan = scans.find(file)?;
     if scan.interop.kind != ModuleKind::SourceText {
         return None;
     }
-    let first = scan
-        .failures
-        .iter()
-        .find(|pending| is_unresolved_import(pending));
+    let first = scan.failures.iter().find(|pending| fails_load(pending));
     first.map(|pending| pending.order)
 }
 
@@ -53,14 +52,14 @@ fn find_modules_loaded_at_start(input: &BindInput<'_, '_>, scans: &Scans) -> Vec
     is_loaded
 }
 
-// An `import` or `export .. from` that names nothing fails the load of every module that reaches it through such statements, before one of them runs.
+// An `import` or `export .. from` that names nothing, or a file that is no program, fails the load of every module that reaches it through such statements, before one of them runs.
 pub(super) fn find_unloadable_modules(
     input: &BindInput<'_, '_>,
     scans: &mut Scans,
 ) -> Vec<UnloadableModule> {
     let files = input.files.compiled_files();
-    let with_unresolved_import = files.iter().filter_map(|&file| {
-        let order = find_unresolved_import(scans, file)?;
+    let with_failure_of_their_own = files.iter().filter_map(|&file| {
+        let order = find_load_failure(scans, file)?;
         Some(UnloadableModule {
             file,
             importer: file,
@@ -68,7 +67,7 @@ pub(super) fn find_unloadable_modules(
             through: None,
         })
     });
-    let mut found: Vec<UnloadableModule> = with_unresolved_import.collect();
+    let mut found: Vec<UnloadableModule> = with_failure_of_their_own.collect();
     if found.is_empty() {
         return found;
     }
@@ -112,14 +111,16 @@ pub(super) fn find_unloadable_modules(
         scan.candidates.clear();
         scan.spellings.clear();
         scan.sites.fill(ScannedSite::Erased);
-        for pending in scan
-            .failures
-            .iter_mut()
-            .filter(|pending| is_unresolved_import(pending))
-        {
-            if let ModuleFailureKind::Unresolved { specifier, reason } = pending.failure.kind {
-                pending.failure.kind = ModuleFailureKind::UnresolvedAtLoad { specifier, reason };
-            }
+        for pending in scan.failures.iter_mut().filter(|it| fails_load(it)) {
+            pending.failure.kind = match pending.failure.kind {
+                ModuleFailureKind::Unresolved { specifier, reason } => {
+                    ModuleFailureKind::UnresolvedAtLoad { specifier, reason }
+                }
+                ModuleFailureKind::NotAProgram { .. } => ModuleFailureKind::NotAProgram {
+                    is_loaded_at_start: false,
+                },
+                kind => kind,
+            };
         }
     }
     found.shared_sort_unstable_by_key(|module| module.file);

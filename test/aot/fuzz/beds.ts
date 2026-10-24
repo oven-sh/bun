@@ -367,7 +367,8 @@ export class ProductBed implements Bed {
     const errors = this.#checkers.get(name)?.([this.#written(program)])[0];
     if (!errors) return verdict;
     if (errors.length) return { kind: "skipped", why: `${verdict.why}, as in TypeScript` };
-    return { kind: "build refused", detail: `${verdict.refusal.slice(0, 200)} | TypeScript accepts the program`, signature: normalized(verdict.refusal) };
+    // The names stay in what tells two refusals apart: a member that is missing on one class says nothing about another.
+    return { kind: "build refused", detail: `${verdict.refusal.slice(0, 200)} | TypeScript accepts the program`, signature: verdict.refusal.replace(/\d+/g, "N").slice(0, 200) };
   }
 
   #run(folder: string, cmd: string[], flags: string[]) {

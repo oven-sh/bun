@@ -39,6 +39,7 @@ use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_
 use crate::load::source_provider::SourceProvider;
 use crate::load::sources::parsed_source;
 use crate::load::typed_packages::TypedPackages;
+use crate::load::worker_files::WorkerFile;
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
@@ -108,6 +109,27 @@ pub struct Compilation {
     /// Of a build whose entry points begin programs of their own: the program of each entry point behind the first, in their order.
     /// `summary.entry_points` lists all of them then, and `engine` is the program of the first.
     pub further_programs: Vec<EngineResult>,
+    pub(crate) started_workers: StartedWorkers,
+}
+
+/// What the programs that are compiled say about the Workers that they start.
+#[derive(Default)]
+pub(crate) struct StartedWorkers {
+    /// `find_embedded_files_that_start_workers`
+    pub files: Vec<WorkerFile>,
+    /// The files of the application that the programs hold, each once, with the sizes of their texts.
+    pub held_texts: Vec<(Vec<u8>, usize)>,
+    pub writes_preload: bool,
+}
+
+impl StartedWorkers {
+    fn add(&mut self, further: StartedWorkers) {
+        self.files.extend(further.files);
+        self.held_texts.extend(further.held_texts);
+        self.held_texts.shared_sort_unstable();
+        self.held_texts.dedup();
+        self.writes_preload |= further.writes_preload;
+    }
 }
 
 pub struct BuildFailed {
@@ -161,6 +183,7 @@ pub(crate) struct Build<'a> {
     /// No failure: none of the programs that were loaded together can be compiled out of that load.
     pub(crate) has_left_all_entry_points: bool,
     pub(crate) is_one_program: bool,
+    pub(crate) started_workers: StartedWorkers,
 }
 
 #[derive(Copy, Clone)]
@@ -171,6 +194,8 @@ pub(crate) struct ProgramsOfOneLoad<'a> {
     pub options: &'a [Options<'a>],
     /// The build has no other entry points.
     pub are_all_of_the_build: bool,
+    /// Of the program of a `WorkerFile`: `StartedWorkers::held_texts` of the programs before it.
+    pub held_elsewhere: Option<&'a [(Vec<u8>, usize)]>,
 }
 
 pub(crate) struct LoadedProject<'b, 's> {
@@ -192,6 +217,8 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub builtin_names: &'b BuiltinNames,
     pub typed_packages: &'b TypedPackages<'b>,
     pub can_load_code_at_run_time: bool,
+    /// It can for no other reason than that a loader is given a name that the build does not know.
+    pub loads_code_by_unknown_names_alone: bool,
     /// Waits until the plugins have answered for every asset. False: one of them is no asset, and the caller gives up.
     pub finish_asset_reads: &'b dyn Fn() -> bool,
 }
@@ -415,7 +442,6 @@ impl Drop for KeepsFreeBlocksBelowThePeak {
 // A global begins at an entry point: the process at the first, a Worker at the one that it names. What the compiler proves about a
 // program holds for one global, so each entry point begins a program of its own, with an image of its own.
 fn begins_program_at_each_entry_point(options: &Options<'_>) -> bool {
-    let aot = options.aot;
     let is_code = |path: &Vec<u8>| {
         let mut loaders = options.load.loaders.iter().rev();
         let loader = loaders.find(|(extension, _)| path.ends_with(extension));
@@ -423,13 +449,15 @@ fn begins_program_at_each_entry_point(options: &Options<'_>) -> bool {
             matches!(loader, Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx)
         })
     };
-    // A hardened run time executes only what the loader of the system has mapped to be executed, and that is the code of one image.
     options.entry_points.len() > 1
-        && !cfg!(bun_hardened)
-        && !aot.checks_only
-        && !aot.runs_in_place
-        && !aot.runs_tests
+        && can_have_several_programs(options)
         && options.entry_points.iter().all(is_code)
+}
+
+fn can_have_several_programs(options: &Options<'_>) -> bool {
+    let aot = options.aot;
+    // A hardened run time executes only what the loader of the system has mapped to be executed, and that is the code of one image.
+    !cfg!(bun_hardened) && !aot.checks_only && !aot.runs_in_place && !aot.runs_tests
 }
 
 fn options_with_entry_points<'a>(options: &Options<'a>, entry_points: &[usize]) -> Options<'a> {
@@ -484,14 +512,136 @@ fn loads_modules_by_name(engine: &EngineResult) -> bool {
 }
 
 // By what the program names. Text that it evaluates, and a constructor that it finds under a computed name, are not asked.
-fn names(program: &Compilation, feature: Feature) -> bool {
-    let mut uses = program.engine.features_used().iter();
+fn names(program: &EngineResult, feature: Feature) -> bool {
+    let mut uses = program.features_used().iter();
     uses.any(|record| {
         record.kind == FeatureUseKind::Named && feature_of(record.feature) == Some(feature)
     })
 }
 
 pub fn compile(
+    options: &Options<'_>,
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> Result<Compilation, BuildFailed> {
+    let said_before = (log.msgs.len(), log.warnings, log.errors);
+    let mut with_worker_files: Option<Options<'_>> = None;
+    loop {
+        let options = with_worker_files.as_ref().unwrap_or(options);
+        let compiled = match with_worker_files {
+            None => compile_written_entry_points(options, provider, log)?,
+            Some(_) => compile_program(options, ProgramPlace::Only, provider, log)?,
+        };
+        let splits = with_worker_files.is_none() && can_have_several_programs(options);
+        let found = match add_programs_of_worker_files(options, compiled, splits, provider, log)? {
+            Ok(compiled) => return Ok(compiled),
+            Err(found) => found,
+        };
+        log.msgs.truncate(said_before.0);
+        (log.warnings, log.errors) = (said_before.1, said_before.2);
+        provider.clear_embedded_files();
+        let longer = options_with_worker_files(options, &found);
+        remove_program_files_of_further_entry_points(&longer);
+        with_worker_files = Some(longer);
+    }
+}
+
+fn options_with_worker_files<'a>(options: &Options<'a>, files: &[WorkerFile]) -> Options<'a> {
+    let all: Vec<usize> = (0..options.entry_points.len()).collect();
+    let mut longer = options_with_entry_points(options, &all);
+    for file in files {
+        let prefix = &options.paths.module_prefix[..];
+        let name = file.embedded_path.strip_prefix(prefix);
+        longer.entry_points.push(file.source_path.clone());
+        let names = &mut longer.paths.entry_point_names;
+        names.push(name.unwrap_or(&file.embedded_path).to_vec());
+    }
+    longer
+}
+
+// The build has seen the code of such a file, so it is compiled: the file is one more entry point, under the path of its copy. Nothing but a
+// Worker begins there, and whoever loads the path as a module gets the text of the copy, so the file begins a program of its own whatever
+// names the other programs load. `Err`: one program has to hold these files with all the entry points.
+fn add_programs_of_worker_files(
+    options: &Options<'_>,
+    mut first: Compilation,
+    splits: bool,
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> Result<Result<Compilation, Vec<WorkerFile>>, BuildFailed> {
+    let mut pending: VecDeque<WorkerFile> =
+        core::mem::take(&mut first.started_workers.files).into();
+    let mut found: Vec<WorkerFile> = Vec::new();
+    let mut are_one_program = !splits;
+    while let Some(file) = pending.pop_front() {
+        let mut entry_points = first.summary.entry_points.iter();
+        if entry_points.any(|it| it.source_path == file.source_path) || found.contains(&file) {
+            continue;
+        }
+        found.push(file);
+        let index = first.summary.entry_points.len();
+        are_one_program |= first.started_workers.writes_preload;
+        if are_one_program {
+            continue;
+        }
+        let said_before = log.msgs.len();
+        let own = options_with_worker_files(options, &found[found.len() - 1..]);
+        let own = options_with_entry_points(&own, &[options.entry_points.len()]);
+        let of_one_load = ProgramsOfOneLoad {
+            indexes: &[index],
+            options: core::slice::from_ref(&own),
+            are_all_of_the_build: false,
+            held_elsewhere: Some(&first.started_workers.held_texts),
+        };
+        let compiled = compile_programs(&own, Some(of_one_load), provider, log);
+        forget_repeated_messages(log, said_before);
+        let program = match compiled {
+            Err(failure) if failure.is_one_program => None,
+            Err(failure) => return Err(failure),
+            Ok(mut compiled) => compiled.programs.pop().map(|it| it.1),
+        };
+        // The host loads node:worker_threads into the global of a Worker of that module.
+        let mut programs = core::iter::once(&first.engine).chain(&first.further_programs);
+        let starts_node_workers = programs.any(|program| names(program, Feature::NodeWorker));
+        match program {
+            Some(program)
+                if !starts_node_workers || names(&program.engine, Feature::WorkerConstructor) =>
+            {
+                pending.extend(program.started_workers.files.iter().cloned());
+                add_program(&mut first, program);
+            }
+            _ => are_one_program = true,
+        }
+    }
+    if found.is_empty() {
+        return Ok(Ok(first));
+    }
+    first.summary.folders.shared_sort_unstable();
+    first.summary.folders.dedup();
+    match are_one_program {
+        true => Ok(Err(found)),
+        false => Ok(Ok(first)),
+    }
+}
+
+fn add_program(first: &mut Compilation, program: Compilation) {
+    let Compilation {
+        engine,
+        summary,
+        started_workers,
+        ..
+    } = program;
+    first.further_programs.push(engine);
+    first.summary.entry_points.extend(summary.entry_points);
+    first.summary.folders.extend(summary.folders);
+    first.summary.validates_by_type |= summary.validates_by_type;
+    if let (Some(listed), Some(further)) = (&mut first.summary.modules, summary.modules) {
+        add_modules(listed, further);
+    }
+    first.started_workers.add(started_workers);
+}
+
+fn compile_written_entry_points(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
     log: &mut Log,
@@ -542,6 +692,7 @@ fn compile_program_at_each_entry_point(
             indexes: &indexes,
             options: &each,
             are_all_of_the_build: indexes.len() == count,
+            held_elsewhere: None,
         };
         let compiled = compile_programs(&together, Some(of_one_load), provider, log);
         forget_repeated_messages(log, said_before);
@@ -573,24 +724,15 @@ fn compile_program_at_each_entry_point(
     // The host loads node:worker_threads into the global of a Worker of that module.
     let starts_node_workers = programs
         .iter()
-        .any(|program| names(program, Feature::NodeWorker));
-    let lacks_module = |program: &Compilation| !names(program, Feature::WorkerConstructor);
+        .any(|program| names(&program.engine, Feature::NodeWorker));
+    let lacks_module = |program: &Compilation| !names(&program.engine, Feature::WorkerConstructor);
     if starts_node_workers && programs[1..].iter().any(lacks_module) {
         return None;
     }
     let mut programs = programs.into_iter();
     let mut first = programs.next().expect("it was pushed");
-    for Compilation {
-        engine, summary, ..
-    } in programs
-    {
-        first.further_programs.push(engine);
-        first.summary.entry_points.extend(summary.entry_points);
-        first.summary.folders.extend(summary.folders);
-        first.summary.validates_by_type |= summary.validates_by_type;
-        if let (Some(listed), Some(further)) = (&mut first.summary.modules, summary.modules) {
-            add_modules(listed, further);
-        }
+    for program in programs {
+        add_program(&mut first, program);
     }
     first.summary.folders.shared_sort_unstable();
     first.summary.folders.dedup();
@@ -746,6 +888,10 @@ fn compile_programs<'a>(
     let is_internal_error = build.diagnostics.has_internal_errors();
     let refused_entry_points = build.find_refused_entry_points();
     let left_entry_points = core::mem::take(&mut build.left_entry_points);
+    let mut started_workers = core::mem::take(&mut build.started_workers);
+    started_workers.held_texts.shared_sort_unstable();
+    started_workers.writes_preload = compiled.iter().any(|it| it.2.writes_preload);
+    let mut started_workers = Some(started_workers);
     let statistics = build.finish_writing_messages(log);
     let mut programs: Vec<(ProgramPlace, Compilation)> = compiled
         .into_iter()
@@ -755,6 +901,8 @@ fn compile_programs<'a>(
                 engine,
                 summary,
                 further_programs: Vec::new(),
+                // Of all that was loaded.
+                started_workers: started_workers.take().unwrap_or_default(),
             };
             (place, compilation)
         })
@@ -828,6 +976,7 @@ impl<'a> Build<'a> {
             left_entry_points: Vec::new(),
             has_left_all_entry_points: false,
             is_one_program: false,
+            started_workers: StartedWorkers::default(),
         }
     }
 
@@ -874,7 +1023,10 @@ impl<'a> Build<'a> {
             let bound = build.bind_modules(&loaded)?;
             build.stop_if_errors(Stage::BindModules)?;
             // What the engine finds out about such names comes a whole program later.
+            let begins_at_worker_file =
+                (build.programs).is_some_and(|programs| programs.held_elsewhere.is_some());
             if build.place != ProgramPlace::Only
+                && !begins_at_worker_file
                 && loads_modules_by_computed_names(application, &bound.projects.application.graph)
             {
                 build.is_one_program = true;

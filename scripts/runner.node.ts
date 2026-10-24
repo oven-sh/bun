@@ -2767,7 +2767,7 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
   const oneIn = parseInt(options["one-in"] ?? "1");
   if (oneIn > 1) {
     // Every shard draws the same files, because it draws by the path and the commit.
-    const commit = process.env.BUILDKITE_COMMIT ?? "";
+    const commit = process.env.AOT_SHARE ?? process.env.BUILDKITE_COMMIT ?? "";
     const isDrawn = (testPath: string) =>
       createHash("sha1")
         .update(`${commit} ${testPath.replaceAll("\\", "/")}`)

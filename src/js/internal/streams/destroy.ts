@@ -69,7 +69,7 @@ function checkError(err: Error | null | undefined, w: WritableState | undefined,
   if (err) {
     ("unlikely");
     // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
-    err.stack; // eslint-disable-line no-unused-expressions
+    err.stack; // oxlint-disable-line bun/no-unused-expressions
 
     if (w && (w[kState] & Flag.Errored) === 0) {
       w[kErroredValue] = err;
@@ -292,7 +292,7 @@ function errorOrDestroy(stream: $Node.AnyStream, err: Error | null | undefined, 
     stream.destroy!(err);
   } else if (err) {
     // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
-    err.stack; // eslint-disable-line no-unused-expressions
+    err.stack; // oxlint-disable-line bun/no-unused-expressions
 
     if (w && (flagsOf(w) & Flag.Errored) === 0) {
       w.errored = err;

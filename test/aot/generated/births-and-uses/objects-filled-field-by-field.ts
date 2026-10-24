@@ -6,18 +6,18 @@ import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 type Maker = { declare: (between: (self: string) => string | undefined) => string | undefined; make: (seed: string) => string };
 const wrap = (text: (between: string) => string, self: string): Maker["declare"] => between => { const made = between(self); return made === undefined ? undefined : text(made); };
 const makers: Record<string, Maker> = {
-  constructorStores: { declare: wrap(b => `class Thing { a: number; b: string; c: number; constructor(seed: number) { this.a = seed; ${b} this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
-  beforeTheLastStore: { declare: wrap(b => `class Thing { a: number; b: string; c: number; constructor(seed: number) { this.a = seed; this.b = "b" + seed; ${b} this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
-  beforeTheFirstStore: { declare: wrap(b => `class Thing { a: number; b: string; c: number; constructor(seed: number) { ${b} this.a = seed; this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
+  constructorStores: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; constructor(seed: number) { this.a = seed; ${b} this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
+  beforeTheLastStore: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; constructor(seed: number) { this.a = seed; this.b = "b" + seed; ${b} this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
+  beforeTheFirstStore: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; constructor(seed: number) { ${b} this.a = seed; this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
   initialValues: { declare: wrap(b => `function interrupt(self: Thing): string { ${b} return "b"; }\nclass Thing { a: number = 1; b: string = interrupt(this); c: number = 3; constructor(seed: number) { this.a += seed; } }`, "self"), make: seed => `new Thing(${seed})` },
-  inTheParent: { declare: wrap(b => `class Base { a: number; constructor(seed: number) { this.a = seed; ${b} } }\nclass Thing extends Base { b: string; c: number; constructor(seed: number) { super(seed); this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
-  behindTheParent: { declare: wrap(b => `class Base { a: number; constructor(seed: number) { this.a = seed; } }\nclass Thing extends Base { b: string; c: number; constructor(seed: number) { super(seed); this.b = "b" + seed; ${b} this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
+  inTheParent: { declare: wrap(b => `class Base { a!: number; constructor(seed: number) { this.a = seed; ${b} } }\nclass Thing extends Base { b!: string; c!: number; constructor(seed: number) { super(seed); this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
+  behindTheParent: { declare: wrap(b => `class Base { a!: number; constructor(seed: number) { this.a = seed; } }\nclass Thing extends Base { b!: string; c!: number; constructor(seed: number) { super(seed); this.b = "b" + seed; ${b} this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
   plainFunction: { declare: wrap(b => `interface Thing { a: number; b: string; c: number }\nfunction ThingMaker(this: Thing, seed: number) { this.a = seed; ${b} this.b = "b" + seed; this.c = seed + 2; }\nconst Thing = ThingMaker as unknown as new (seed: number) => Thing;`, "this"), make: seed => `new Thing(${seed})` },
   filledFromOutside: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; }\nfunction fill(seed: number): Thing { const made = new Thing(); made.a = seed; ${b} made.b = "b" + seed; made.c = seed + 2; return made; }`, "made"), make: seed => `fill(${seed})` },
   literalFilledLater: { declare: wrap(b => `type Thing = { a: number; b: string; c: number };\nfunction fill(seed: number): Thing { const made = { a: seed } as Thing; ${b} made.b = "b" + seed; made.c = seed + 2; return made; }`, "made"), make: seed => `fill(${seed})` },
-  inAnotherOrder: { declare: wrap(b => `class Thing { a: number; b: string; c: number; constructor(seed: number) { this.c = seed + 2; ${b} this.a = seed; this.b = "b" + seed; } }`, "this"), make: seed => `new Thing(${seed})` },
-  onTwoWays: { declare: wrap(b => `class Thing { a: number; b: string; c: number; constructor(seed: number) { if (seed % 2) { this.a = seed; ${b} this.b = "b" + seed; this.c = seed + 2; } else { this.c = seed; this.b = "e"; this.a = -seed; } } }`, "this"), make: seed => `new Thing(${seed})` },
-  oneStoreOnSomeWays: { declare: wrap(b => `class Thing { a: number; b!: string; c: number; constructor(seed: number) { this.a = seed; ${b} if (seed % 2) this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
+  inAnotherOrder: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; constructor(seed: number) { this.c = seed + 2; ${b} this.a = seed; this.b = "b" + seed; } }`, "this"), make: seed => `new Thing(${seed})` },
+  onTwoWays: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; constructor(seed: number) { if (seed % 2) { this.a = seed; ${b} this.b = "b" + seed; this.c = seed + 2; } else { this.c = seed; this.b = "e"; this.a = -seed; } } }`, "this"), make: seed => `new Thing(${seed})` },
+  oneStoreOnSomeWays: { declare: wrap(b => `class Thing { a!: number; b!: string; c!: number; constructor(seed: number) { this.a = seed; ${b} if (seed % 2) this.b = "b" + seed; this.c = seed + 2; } }`, "this"), make: seed => `new Thing(${seed})` },
 };
 
 const betweens: Record<string, (self: string) => string | undefined> = {
@@ -78,7 +78,7 @@ function left(): string { const text = seen.map(each => JSON.stringify(each) + O
 
 const somePlaces = ["once", "often", "moduleLoop", "loop", "loopThatStartsAnew", "twoLoopsStartedBetween", "handlerInALoop", "loopUnderAHandler", "copiedIntoALoop", "alsoCalledWhereItSeldomRuns", "inAClosure", "method", "loopWithAYield", "loopWithAnAwait"];
 
-export const oneIn = 150;
+export const oneIn = 90;
 
 export function programs(isTyped?: boolean) {
   const all: Stretch[] = [];

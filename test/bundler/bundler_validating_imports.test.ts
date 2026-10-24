@@ -6,7 +6,7 @@ import { run as runCommand, run as spawned } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
 
 // Today only an ahead-of-time build makes the checks. `bun run`, `bun build` and `bun build --compile` have no validators yet: there "bun:bundle" has no export named
-// `validate`, and `JSON.parse<T>` parses without a look at `T`. What they are to do stands here as todo.
+// `validate`, `JSON.parse<T>` through the `JSON` of "bun" is an error, and through the global `JSON` it parses without a look at `T`. What they are to do stands here as todo.
 const whereNothingIsCompiled = test.todoIf(true);
 
 const ways: Record<
@@ -339,4 +339,153 @@ whereNothingIsCompiled.each(["bun run", "bun build"])(
     }
     expect((await run("./unrelated.ts")).exitCode).toBe(0);
   },
+);
+
+// Until then a call that would check nothing says so, where the program asked Bun for the check by name. The global `JSON` is left as it was:
+// a program may have declared `interface JSON { parse<T>(text: string): T }` itself.
+const onlyWithAot = `JSON.parse<T>() from "bun" only validates with --aot. Use "bun run --aot", "bun test --aot" or "bun compile", or remove the type argument`;
+const text = `'{"id":"1"}'`;
+const refusedWhereNothingIsCompiled: Record<string, string> = {
+  "JSON imported from bun": `import { JSON } from "bun";\nconsole.log(JSON.parse<User>(${text}));`,
+  "JSON imported under another name": `import { JSON as Codec } from "bun";\nconsole.log(Codec.parse<User>(${text}));`,
+  "JSON imported twice": `import { JSON as First } from "bun";\nimport { JSON as Second } from "bun";\nconsole.log(First.stringify(1), Second.parse<User>(${text}));`,
+  "a call above the import": `console.log(load());\nfunction load() {\n  return JSON.parse<User>(${text});\n}\nimport { JSON } from "bun";`,
+  "Bun.JSON": `console.log(Bun.JSON.parse<User>(${text}));`,
+  "JSON of the whole module": `import * as runtime from "bun";\nconsole.log(runtime.JSON.parse<User>(${text}));`,
+  "JSON of the default export": `import runtime from "bun";\nconsole.log(runtime.JSON.parse<User>(${text}));`,
+  "JSON of the default export by its name": `import { default as runtime } from "bun";\nconsole.log(runtime.JSON.parse<User>(${text}));`,
+  "the name in brackets": `import { JSON } from "bun";\nconsole.log(JSON["parse"]<User>(${text}));`,
+  "an optional call": `import { JSON } from "bun";\nconsole.log(JSON.parse?.<User>(${text}));`,
+  "a type argument that starts with <": `import { JSON } from "bun";\nconsole.log(JSON.parse<<T>(value: T) => T>(${text}));`,
+  "no call": `import { JSON } from "bun";\nconst parseUser = JSON.parse<User>;\nconsole.log(parseUser(${text}));`,
+  "a name for any": `import { JSON } from "bun";\ntype Anything = any;\nconsole.log(JSON.parse<Anything>(${text}));`,
+};
+const user = `interface User { id: number }\n`;
+const leftAsItWas: Record<string, [program: string, stdout: string]> = {
+  "the global JSON": [`console.log(JSON.parse<User>(${text}).id);`, "1\n"],
+  "the global JSON with a type parameter that the program declares": [
+    `declare global {\n  interface JSON {\n    parse<T>(text: string): T;\n  }\n}\nconsole.log(JSON.parse<User>(${text}).id);\nexport {};`,
+    "1\n",
+  ],
+  "the global JSON by other roads": [
+    `const { parse } = JSON;\nconsole.log(JSON["parse"]<User>(${text}).id, globalThis.JSON.parse<User>(${text}).id, parse<User>(${text}).id);`,
+    "1 1 1\n",
+  ],
+  "any and unknown": [
+    `import { JSON } from "bun";\nconsole.log(JSON.parse<any>(${text}).id, JSON.parse< unknown >("2"), Bun.JSON.parse<any>("3"));`,
+    "1 2 3\n",
+  ],
+  "no type argument, and other members": [
+    `import { JSON } from "bun";\nconsole.log(JSON.parse(${text}).id, JSON.stringify([2]), JSON === globalThis.JSON);`,
+    "1 [2] true\n",
+  ],
+  "other things named JSON, Bun and parse": [
+    `import { JSON as Codec, inspect } from "bun";
+const own = { parse: <T,>(text: string) => ("its own parse of " + text) as T };
+function withParameter(Codec: typeof own) {
+  return Codec.parse<string>("a");
+}
+function withItsOwnBun() {
+  const Bun = { JSON: own };
+  return Bun.JSON.parse<string>("b");
+}
+function withItsOwnJSON() {
+  const JSON = own;
+  return JSON.parse<string>("c");
+}
+console.log(withParameter(own), withItsOwnBun(), withItsOwnJSON(), own.parse<string>("d"), inspect<number>(1), Codec.stringify(2));`,
+    "its own parse of a its own parse of b its own parse of c its own parse of d 1 2\n",
+  ],
+  "a call that never runs": [
+    `import { JSON } from "bun";\nif (false) JSON.parse<User>(${text});\nconsole.log(JSON.stringify(1));`,
+    "1\n",
+  ],
+};
+
+describe.each(Object.keys(ways))("%s has no validators yet:", way => {
+  const reachesBun = (program: string) => !way.includes("browser") || !program.includes(`from "bun"`);
+  test.concurrent.each(
+    Object.keys(refusedWhereNothingIsCompiled).filter(name => reachesBun(refusedWhereNothingIsCompiled[name])),
+  )(
+    "JSON.parse<T> is an error: %s",
+    async name => {
+      using dir = tempDir("validating-imports-refused", { "program.ts": user + refusedWhereNothingIsCompiled[name] });
+      const { stdout, stderr, exitCode } = await ways[way](String(dir), "./program.ts");
+      expect(stderr).toContain(onlyWithAot);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    },
+    120_000,
+  );
+  test.concurrent.each(Object.keys(leftAsItWas).filter(name => reachesBun(leftAsItWas[name][0])))(
+    "JSON.parse<T> is JSON.parse: %s",
+    async name => {
+      using dir = tempDir("validating-imports-erased", { "program.ts": user + leftAsItWas[name][0] });
+      expect(await ways[way](String(dir), "./program.ts")).toEqual({
+        stdout: leftAsItWas[name][1],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+});
+
+test("Bun.Transpiler and bun build --no-bundle have no validators either", async () => {
+  const program = user + refusedWhereNothingIsCompiled["JSON imported from bun"];
+  expect(() => new Bun.Transpiler({ loader: "ts" }).transformSync(program)).toThrow(onlyWithAot);
+  expect(new Bun.Transpiler({ loader: "ts" }).transformSync(user + leftAsItWas["the global JSON"][0])).toContain(
+    "JSON.parse(",
+  );
+  using dir = tempDir("validating-imports-no-bundle", { "program.ts": program });
+  const { stderr, exitCode } = await spawned([bunExe(), "build", "--no-bundle", "./program.ts"], String(dir));
+  expect(stderr).toContain(onlyWithAot);
+  expect(exitCode).toBe(1);
+});
+
+test("a package that ships TypeScript is held to the same", async () => {
+  using dir = tempDir("validating-imports-package", {
+    "program.ts": `import { load } from "ships-typescript";\nconsole.log(load(${text}));`,
+    "node_modules/ships-typescript/package.json": `{ "name": "ships-typescript", "version": "1.0.0", "exports": "./index.ts" }`,
+    "node_modules/ships-typescript/index.ts": `import { JSON } from "bun";\nexport const load = (text: string) => JSON.parse<{ id: number }>(text);`,
+  });
+  const { stdout, stderr, exitCode } = await spawned([bunExe(), "run", "./program.ts"], String(dir));
+  expect(stderr).toContain(onlyWithAot);
+  expect(stderr).toContain("ships-typescript");
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
+test.skipIf(!!unsupported)(
+  "a file that an ahead-of-time executable loads at run time is held to the same",
+  async () => {
+    using dir = tempDir("validating-imports-loaded-later", {
+      "program.ts": `import { JSON } from "bun";
+console.log("compiled in:", JSON.parse<number>("1"));
+for (const name of process.argv.slice(2)) {
+  try {
+    console.log(name, (await import(process.cwd() + "/" + name)).said);
+  } catch (error) {
+    console.log(name, "caught", (error as Error).message);
+  }
+}`,
+      "later/imported.ts": `import { JSON } from "bun";\nexport const said = JSON.parse<number>('"2"');`,
+      "later/of-the-bun-object.ts": `export const said = Bun.JSON.parse<number>('"3"');`,
+      "later/global.ts": `export const said = JSON.parse<number>('"4"');`,
+    });
+    const built = await spawned(
+      [bunExe(), "build", "--compile", "--aot", "--compile-inspector", "./program.ts", "--outfile", "out"],
+      String(dir),
+    );
+    expect(built.exitCode).toBe(0);
+    expect(
+      await spawned(
+        [join(String(dir), "out"), "imported.ts", "of-the-bun-object.ts", "global.ts"],
+        join(String(dir), "later"),
+      ),
+    ).toEqual({
+      stdout: `compiled in: 1\nimported.ts caught ${onlyWithAot}\nof-the-bun-object.ts caught ${onlyWithAot}\nglobal.ts 4\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  120_000,
 );

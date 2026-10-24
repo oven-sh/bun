@@ -14,8 +14,6 @@ import { closingOf, filesOfCompiler, sayWhenSkipped, sources } from "./harness/e
 sayWhenSkipped("test/aot/lists-of-operations-in-the-compiler-only-shrink.test.ts");
 
 const known: Record<string, number> = {
-  "analysis/AOTDefinitions.cpp findDefinitions": 3,
-  "analysis/AOTDefinitions.cpp isPartOfDefinition": 12,
   "analysis/AOTGuardFacts.cpp fillsSlotWithDeclaredType": 3,
   "analysis/AOTInductionVariables.cpp isBoundingRelation": 4,
   "analysis/AOTInductionVariables.h relationalOperators": 4,
@@ -74,8 +72,6 @@ const known: Record<string, number> = {
   "passes/AOTArrayElementPresence.cpp localArrayAllocations": 6,
   "passes/AOTArrayElementPresence.cpp operatorsOnNumericOperands": 23,
   "passes/AOTArrayElementTests.cpp resolvedAccessesWithPresenceTest": 4,
-  "passes/AOTArrayNarrowStorage.cpp collectUse": 10,
-  "passes/AOTArrayNarrowStorage.cpp guardedArrayAccesses": 3,
   "passes/AOTCallModules.cpp isMarkOfRequireSpelled": 10,
   "passes/AOTCallModules.cpp opcodesOfSites": 5,
   "passes/AOTCallModules.cpp opcodesThatSpellKeys": 10,
@@ -98,10 +94,6 @@ const known: Record<string, number> = {
   "passes/AOTExpandOwnKeysInternal.h opcodesOfWalks": 3,
   "passes/AOTExpandOwnKeysStringify.cpp OwnKeyWalkExpander::expandStringify": 3,
   "passes/AOTFinishBirths.cpp operationsThatKeepObjectPrivate": 14,
-  "passes/AOTFlattenInnerObjects.cpp isAccessOfSlot": 3,
-  "passes/AOTFlattenInnerObjects.cpp namesLayoutWithoutMakingObjects": 14,
-  "passes/AOTFlattenInnerObjects.cpp servedBySlotThatDefers": 5,
-  "passes/AOTFlattenInnerObjects.cpp slotOperations": 4,
   "passes/AOTFoldConstants.cpp becomeConstant": 6,
   "passes/AOTFoldConstants.cpp foldOnce": 16,
   "passes/AOTFoldConstants.cpp foldTypeOfComparison": 3,

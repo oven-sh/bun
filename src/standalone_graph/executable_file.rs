@@ -186,11 +186,8 @@ fn fill_behind_end(file: &bun_sys::File, bytes: &[u8], position: u64) -> bool {
         .len()
         .div_ceil(threads)
         .next_multiple_of(MappedFile::page_size());
-    std::thread::scope(|scope| {
-        for (target, bytes) in target.chunks_mut(share).zip(bytes.chunks(share)) {
-            scope.spawn(move || target.copy_from_slice(bytes));
-        }
-    });
+    let shares = target.chunks_mut(share).zip(bytes.chunks(share));
+    bun_core::for_each_in_parallel(shares, |(target, bytes)| target.copy_from_slice(bytes));
     let _ = bun_sys::munmap(pointer, length);
     true
 }

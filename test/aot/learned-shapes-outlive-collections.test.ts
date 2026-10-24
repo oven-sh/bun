@@ -89,7 +89,7 @@ describe("compile/aot/learned-shapes-outlive-collections", () => {
   test.each([
     "counter:CompiledStructuresMade",
     "operation:operationAOTGetByIdAndCache",
-    "operation:operationAOTToString",
+    "operation:operationAOTIntToString",
   ])("%s is the same with twenty full collections as with none", name => {
     expect(runs.none.of(name)).toBeGreaterThan(0);
     expect({ name, count: runs.many.of(name) }).toEqual({ name, count: runs.none.of(name) });

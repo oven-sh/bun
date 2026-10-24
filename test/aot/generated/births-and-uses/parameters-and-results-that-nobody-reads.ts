@@ -1,6 +1,7 @@
 // A parameter that the body never reads need not be passed, and a result that no caller reads need not be made. What stands in the call is still evaluated, in its order; a default, a pattern
 // or a rest parameter still does its work; `arguments`, `length` and a caller that the compiler does not see still find the function as it was written.
 // How the parameter is declared x what is passed for it x how the function is called, each in every place.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const common = `function note(label: string, value: number): number { say(label); return value; }
@@ -21,7 +22,7 @@ const declarations: Record<string, string> = {
   seenThroughArguments: `function taker(used: number, unused?: unknown): number { calls++; return used + arguments.length; }`,
   readThroughArguments: `function taker(used: number, unused?: unknown): number { calls++; return used + (typeof arguments[1]).length; }`,
   writtenOnly: `function taker(used: number, unused?: unknown): number { calls++; unused = used; return used + 1; }`,
-  handedOnToOneThatIgnoresIt: `function inner(used: number, unused?: unknown): number { return used + 1; }\nfunction taker(used: number, unused?: unknown): number { calls++; return inner(used, unused); }`,
+  handedOnToOneThatIgnoresIt: `function innermost(used: number, unused?: unknown): number { return used + 1; }\nfunction taker(used: number, unused?: unknown): number { calls++; return innermost(used, unused); }`,
   handedOnToItself: `function taker(used: number, unused?: unknown, depth = 0): number { calls++; return depth < 2 ? taker(used + 1, unused, depth + 1) : used; }`,
   heldByAClosureNobodyCalls: `function taker(used: number, unused?: unknown): number { calls++; const never = () => unused; return used + never.length + 1; }`,
   readOnAWayNeverTaken: `function taker(used: number, unused?: unknown): number { calls++; if (used < -1000) return Number(unused); return used + 1; }`,
@@ -86,5 +87,5 @@ export function programs(isTyped?: boolean) {
           body: turn => callers[caller].replaceAll("A", () => given[gift](turn) + (isTyped && /takenApart/.test(declaration) && gift !== "nothing" ? " as never" : "")),
           after: `base + ":" + calls`,
         });
-  return [...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)];
+  return alsoWithTypesErased([...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)], isTyped);
 }

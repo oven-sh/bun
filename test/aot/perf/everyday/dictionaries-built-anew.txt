@@ -1,0 +1,221 @@
+//// names-seen.read-12
+const rows: { name: string }[] = [];
+for (const name of ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliett", "kilo", "lima"]) rows.push({ name });
+function turn(i: number): number {
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen[key] !== undefined) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.in-12
+const rows: { name: string }[] = [];
+for (const name of ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliett", "kilo", "lima"]) rows.push({ name });
+function turn(i: number): number {
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (key in seen) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.read-48
+const rows: { name: string }[] = JSON.parse("[" + Array.from({ length: 48 }, (_, k) => `{"name":"tool_${k * 7}"}`).join(",") + "]");
+function turn(i: number): number {
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen[key] !== undefined) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.in-48
+const rows: { name: string }[] = JSON.parse("[" + Array.from({ length: 48 }, (_, k) => `{"name":"tool_${k * 7}"}`).join(",") + "]");
+function turn(i: number): number {
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (key in seen) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.long-names-48
+const rows: { name: string }[] = JSON.parse("[" + Array.from({ length: 48 }, (_, k) => `{"name":"service__a_tool_with_a_long_name_${k * 7}"}`).join(",") + "]");
+function turn(i: number): number {
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen[key] !== undefined) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.read-240
+const rows: { name: string }[] = JSON.parse("[" + Array.from({ length: 240 }, (_, k) => `{"name":"tool_${k * 7}"}`).join(",") + "]");
+function turn(i: number): number {
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen[key] !== undefined) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.literal-48
+const rows: { name: string }[] = JSON.parse("[" + Array.from({ length: 48 }, (_, k) => `{"name":"tool_${k * 7}"}`).join(",") + "]");
+function turn(i: number): number {
+  const seen: Record<string, number> = {};
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen[key] !== undefined) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.every-other-name-twice-48
+const rows: { name: string }[] = JSON.parse("[" + Array.from({ length: 48 }, (_, k) => `{"name":"tool_${(k >> 1) * 7}"}`).join(",") + "]");
+function turn(i: number): number {
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen[key] !== undefined) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.hash-of-a-library-48
+const unset = "__unset__";
+class Hash {
+  data: Record<string, unknown> = Object.create(null);
+  size = 0;
+  has(key: string): boolean {
+    return this.data[key] !== undefined;
+  }
+  get(key: string): unknown {
+    const result = this.data[key];
+    return result === unset ? undefined : result;
+  }
+  set(key: string, value: unknown): this {
+    this.size += this.has(key) ? 0 : 1;
+    this.data[key] = value === undefined ? unset : value;
+    return this;
+  }
+}
+const rows: { name: string }[] = JSON.parse("[" + Array.from({ length: 48 }, (_, k) => `{"name":"tool_${k * 7}"}`).join(",") + "]");
+function turn(i: number): number {
+  const seen = new Hash();
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen.has(key)) continue;
+    seen.set(key, unset);
+    count++;
+  }
+  return count + seen.size;
+}
+//// names-seen.kept-and-asked-48
+const rows: { name: string }[] = JSON.parse("[" + Array.from({ length: 48 }, (_, k) => `{"name":"tool_${k * 7}"}`).join(",") + "]");
+const kept: Record<string, number> = Object.create(null);
+for (let k = 0; k < rows.length; k += 2) kept[rows[k]!.name] = k;
+function turn(i: number): number {
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    if (kept[rows[k]!.name] !== undefined) count++;
+  }
+  return count;
+}
+//// names-seen.one-of-256-lists-of-40
+const lists: { name: string }[][] = Array.from({ length: 256 }, (_, list) => JSON.parse("[" + Array.from({ length: 40 }, (_, k) => `{"name":"tool_${list}_${k * 7}"}`).join(",") + "]"));
+function turn(i: number): number {
+  const rows = lists[i & 255]!;
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen[key] !== undefined) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.one-of-256-lists-of-40-by-in
+const lists: { name: string }[][] = Array.from({ length: 256 }, (_, list) => JSON.parse("[" + Array.from({ length: 40 }, (_, k) => `{"name":"tool_${list}_${k * 7}"}`).join(",") + "]"));
+function turn(i: number): number {
+  const rows = lists[i & 255]!;
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (key in seen) continue;
+    seen[key] = k;
+    count++;
+  }
+  return count;
+}
+//// names-seen.one-of-256-lists-of-40-in-a-map
+const lists: { name: string }[][] = Array.from({ length: 256 }, (_, list) => JSON.parse("[" + Array.from({ length: 40 }, (_, k) => `{"name":"tool_${list}_${k * 7}"}`).join(",") + "]"));
+function turn(i: number): number {
+  const rows = lists[i & 255]!;
+  const seen = new Map<string, number>();
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen.get(key) !== undefined) continue;
+    seen.set(key, k);
+    count++;
+  }
+  return count;
+}
+//// names-seen.one-of-256-lists-of-40-kept
+const lists: { name: string }[][] = Array.from({ length: 256 }, (_, list) => JSON.parse("[" + Array.from({ length: 40 }, (_, k) => `{"name":"tool_${list}_${k * 7}"}`).join(",") + "]"));
+const kept: Record<string, number>[] = lists.map(rows => {
+  const seen: Record<string, number> = Object.create(null);
+  for (let k = 0; k < rows.length; k += 2) seen[rows[k]!.name] = k;
+  return seen;
+});
+function turn(i: number): number {
+  const rows = lists[i & 255]!;
+  const seen = kept[i & 255]!;
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    if (seen[rows[k]!.name] !== undefined) count++;
+  }
+  return count;
+}
+//// names-seen.one-of-256-lists-of-40-and-the-last-dictionary-stays
+const lists: { name: string }[][] = Array.from({ length: 256 }, (_, list) => JSON.parse("[" + Array.from({ length: 40 }, (_, k) => `{"name":"tool_${list}_${k * 7}"}`).join(",") + "]"));
+const last: Record<string, number>[] = [];
+function turn(i: number): number {
+  const rows = lists[i & 255]!;
+  const seen: Record<string, number> = Object.create(null);
+  let count = i & 1;
+  for (let k = 0; k < rows.length; k++) {
+    const key = rows[k]!.name;
+    if (seen[key] !== undefined) continue;
+    seen[key] = k;
+    count++;
+  }
+  last[i & 255] = seen;
+  return count;
+}

@@ -173,7 +173,6 @@ impl EngineOptions {
     pub fn new(request: &EngineRequest<'_>) -> Result<EngineOptions, RejectedOptionWord> {
         let mut record = default_record();
         fill_record(&mut record, request);
-        apply_option_word(&mut record, b"disable=pass:AllocateInFrames")?;
         for word in &request.options.option_words {
             apply_option_word(&mut record, word)?;
         }

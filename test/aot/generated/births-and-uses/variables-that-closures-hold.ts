@@ -1,6 +1,7 @@
 // A variable that a closure holds lives as long as the closure, and there is one of it for each time its scope was entered: for each call, each turn of a loop, each level of a function that
 // calls itself. Where the scope is entered once the variable may live in a fixed place; where it never changes the closure may hold its value.
 // What kind of variable x who writes it and when x who reads it, each in every place. What one run of the stretch made is read again after the next run.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const beside = `type Pair = { read: () => unknown; write: (value: number) => void };
@@ -42,9 +43,9 @@ const variables: Record<string, string> = {
 const scopeWrites: Record<string, string> = {
   never: ``,
   once: `held = 70;`,
-  addsToIt: `held += 70;`,
+  addsToIt: `held! += 70;`,
   onOneWay: `if (pair.read() === 1) held = 71;`,
-  inALoop: `for (let at = 0; at < 2; at++) held++;`,
+  inALoop: `for (let at = 0; at < 2; at++) held!++;`,
 };
 
 const uses: Record<string, (turn: string) => string> = {
@@ -80,5 +81,5 @@ export function programs(isTyped?: boolean) {
           after: "tellOlder() + base",
         });
     }
-  return inEveryPlace(all.map(named), isTyped);
+  return alsoWithTypesErased(inEveryPlace(all.map(named), isTyped), isTyped);
 }

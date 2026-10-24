@@ -277,13 +277,9 @@
     "jit": 543.1
   },
   "for-of/Map": {
-    "typed": 340.1,
-    "untyped": 342.3,
-    "jit": 355.4,
-    "best": {
-      "typed": 286,
-      "untyped": 288.1
-    }
+    "typed": 286,
+    "untyped": 288.1,
+    "jit": 355.4
   },
   "for-of/map-values-in-function": {
     "typed": 174,
@@ -678,13 +674,19 @@
     }
   },
   "built-in/process-argv": {
-    "typed": 116,
-    "untyped": 116,
-    "jit": 53,
-    "best": {
-      "typed": 111,
-      "untyped": 111
-    }
+    "typed": 51,
+    "untyped": 51,
+    "jit": 10
+  },
+  "built-in/process-argv-includes": {
+    "typed": 174,
+    "untyped": 174,
+    "jit": 57
+  },
+  "built-in/process-env-by-key": {
+    "typed": 46,
+    "untyped": 46,
+    "jit": 70
   },
   "built-in/process-members": {
     "typed": 23,
@@ -1146,13 +1148,9 @@
     "jit": 179.7
   },
   "enumerate/values-of-an-element-of-a-local-list": {
-    "typed": 60,
-    "untyped": 59.8,
-    "jit": 419.5,
-    "best": {
-      "typed": 51.5,
-      "untyped": 51.5
-    }
+    "typed": 51.5,
+    "untyped": 51.5,
+    "jit": 419.5
   },
   "array/sum-of-a-float64-array": {
     "typed": 82,
@@ -1232,6 +1230,11 @@
     "typed": 93,
     "untyped": 83,
     "jit": 10
+  },
+  "guess/options-are-another-literal-of-the-program": {
+    "typed": 55,
+    "untyped": 55,
+    "jit": 48
   },
   "guess/read-of-one-receiver-right": {
     "typed": 5,

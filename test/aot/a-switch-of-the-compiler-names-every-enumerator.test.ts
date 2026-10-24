@@ -15,7 +15,6 @@ sayWhenSkipped("test/aot/a-switch-of-the-compiler-names-every-enumerator.test.ts
 const enumerationsOfOthers = new Set(["B3", "Air", "MacroAssembler", "ValueRep", "JSRegExpResult"]);
 
 const known: Record<string, string> = {
-  "analysis/AOTDefinitions.cpp": "Opcode 3",
   "analysis/AOTInductionVariables.cpp": "Opcode 4",
   "analysis/AOTUnspecifiedValuePaths.cpp": "Opcode 2",
   "analysis/AOTVisibleStores.cpp": "Opcode 2",
@@ -49,7 +48,6 @@ const known: Record<string, string> = {
   "passes/AOTArrayCapacityPlanner.cpp": "Opcode 1",
   "passes/AOTArrayCapacityTripCounts.cpp": "Opcode 3",
   "passes/AOTArrayElementTests.cpp": "Opcode 1",
-  "passes/AOTArrayNarrowStorage.cpp": "Opcode 2",
   "passes/AOTArrayStorageForms.cpp": "Opcode 1",
   "passes/AOTCallModules.cpp": "Opcode 3",
   "passes/AOTDeferDefinitions.cpp": "Opcode 2",

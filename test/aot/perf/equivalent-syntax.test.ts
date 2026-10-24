@@ -37,6 +37,8 @@ const pairs: [baseline: string, other: string, allowance: number][] = [
   ["typeof compared with undefined", "typeof above u", 4],
   ["class below a class", "class below a class as written for ES5", 60],
   ["names that the type of the literal lists", "names under the index signature of the type of the literal", 4],
+  ["keys out of a list of strings", "keys out of a list of a union of texts", 4],
+  ["comparisons of a string out of a list", "comparisons of one of a union of texts out of a list", 4],
 ];
 
 const skipped =

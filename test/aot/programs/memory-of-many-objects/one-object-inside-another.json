@@ -1,8 +1,0 @@
-{
-  "build": [
-    "--aot-testing=FlattenUntilHeldWhereverLegal"
-  ],
-  "skipInShell": "asks bun:jsc for the size of the heap",
-  "skipWithASAN": "the bound is for a build without the red zones and the shadow memory of AddressSanitizer",
-  "skipInVariants": "the bound is for the default build"
-}

@@ -96,7 +96,7 @@ function stretch(homeName: string, growName: string, countName: string, itemName
 
 const somePlaces = ["once", "often", "moduleLoop", "loop", "loopThatStartsAnew", "twoLoopsStartedBetween", "loopWithBreak", "handlerInALoop", "loopUnderAHandler", "copiedIntoALoop", "alsoCalledWhereItSeldomRuns", "inAClosure", "loopWithAYield", "loopWithAnAwait"];
 
-export const oneIn = 300;
+export const oneIn = 130;
 
 export function programs(isTyped?: boolean) {
   const [itemNames, lookerNames, homeNames, countNames] = [items, lookers, homes, counts].map(Object.keys);

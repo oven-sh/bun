@@ -51,6 +51,8 @@ export interface Compared {
   causes: { tests: number; message: string; place: string }[];
   filesNotBuilt?: { file: string; error: string }[];
   filesEndedBySignal?: { file: string; signal: string }[];
+  filesBuiltUnchecked?: { file: string; unchecked: string[] }[];
+  passOnlyInCompany?: number;
 }
 
 interface Counts {
@@ -71,6 +73,7 @@ const environment = {
   NO_COLOR: "1",
   BUN_ENABLE_CRASH_REPORTING: "0",
   DO_NOT_TRACK: "1",
+  ...(process.env.ASAN_OPTIONS && { ASAN_OPTIONS: process.env.ASAN_OPTIONS }),
 };
 
 export class Runner {
@@ -175,9 +178,29 @@ export class Runner {
     const waiting = [...new Set([...first.verdicts].filter(([, verdict]) => verdict === "pass").map(([name]) => name.slice(0, name.indexOf(" > "))))];
     const all: Tests = { run: { exitCode: 0, signal: null, output: "", seconds: 0, peakMegabytes: 0 }, verdicts: new Map(), errors: new Map(), filesRefused: 0, typeErrors: 0, source };
     const [filesNotBuilt, filesEndedBySignal]: [Compared["filesNotBuilt"] & {}, Compared["filesEndedBySignal"] & {}] = [[], []];
+    const filesBuiltUnchecked: Compared["filesBuiltUnchecked"] & {} = [];
+    let passOnlyInCompany = 0;
+    // Type errors stop a build. The jail throws away what is written, so there the files that the errors name can be marked as unchecked, and the test file runs as compiled code all the same.
+    const mark = `bun=$1; test=$2; shift 2; for file; do sed -i '1s;^;// @ts-nocheck\\n;' "$file"; done; exec "$bun" test --debug-aot "$test" --timeout 60000`;
     const worker = async () => {
       for (let file; (file = waiting.shift()); ) {
-        const one = readTests(await test(["--debug-aot", "./" + file]), source);
+        let one = readTests(await test(["--debug-aot", "./" + file]), source);
+        const unchecked = new Set<string>();
+        for (let round = 0; this.usesJail && round < 5 && one.verdicts.size === 0 && !one.run.signal; round++) {
+          const named = new Set(one.run.output.matchAll(/^error: TS\d+: [^]*?\n +at (\/.+?):\d+:\d+$/gm).map(match => match[1]));
+          if (named.isSubsetOf(unchecked)) break;
+          for (const path of named) unchecked.add(path);
+          one = readTests(await this.spawn(project, cwd, ["/bin/sh", "-c", mark, "sh", this.bun, "./" + file, ...unchecked]), source);
+        }
+        if (unchecked.size && one.verdicts.size) filesBuiltUnchecked.push({ file, unchecked: [...unchecked].map(path => path.replace(source + "/", "")) });
+        // The plain runs have all files in one process. A test that needs what another file left behind fails alone in plain Bun too, and does not count.
+        const lost = [...first.verdicts].filter(([name, verdict]) => verdict === "pass" && name.startsWith(file + " > ") && one.verdicts.get(name) !== "pass");
+        const alone = lost.length ? readTests(await test(["./" + file]), source) : undefined;
+        for (const [name] of lost) {
+          if (alone!.verdicts.get(name) === "pass") continue;
+          first.verdicts.delete(name);
+          passOnlyInCompany++;
+        }
         for (const [name, verdict] of one.verdicts) all.verdicts.set(name, verdict);
         for (const [name, block] of one.errors) all.errors.set(name, block);
         all.typeErrors += one.typeErrors;
@@ -190,7 +213,7 @@ export class Runner {
       }
     };
     await Promise.all(Array.from({ length: this.filesAtATime }, worker));
-    return { ...compare(first, second, all), filesNotBuilt, filesEndedBySignal };
+    return { ...compare(first, second, all), filesNotBuilt, filesEndedBySignal, filesBuiltUnchecked, passOnlyInCompany };
   }
 }
 
@@ -292,7 +315,7 @@ export function rowOf(result: Result) {
     tests ? `${tests.failedOnlyUnderAot.length} failed, ${tests.neverReportedUnderAot.length} never reported, ${tests.filesRefused} files refused` : "",
     tests?.aot.signal ?? tests?.causes[0]?.message ?? "",
     compiled ? `${compiled.plain.pass} | ${compiled.aot.pass}` : "",
-    compiled ? `${compiled.failedOnlyUnderAot.length} failed, ${compiled.neverReportedUnderAot.length} never reported, ${compiled.filesNotBuilt!.length} files not built, ${compiled.filesEndedBySignal!.length} files ended by a signal` : "",
+    compiled ? `${compiled.failedOnlyUnderAot.length} failed, ${compiled.neverReportedUnderAot.length} never reported, ${compiled.filesNotBuilt!.length} files not built, ${compiled.filesBuiltUnchecked!.length} built with files unchecked, ${compiled.filesEndedBySignal!.length} files ended by a signal` : "",
     compiled?.filesEndedBySignal![0]?.file ?? compiled?.causes[0]?.message ?? "",
   ].join(" | ");
 }

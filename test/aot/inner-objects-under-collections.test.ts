@@ -20,3 +20,9 @@ programsBuiltWith("inner-objects", "no-marking-beside-the-program", [], {
   BUN_JSC_slowPathAllocsBetweenGCs: "25",
   ...overwriting,
 });
+// The checks of the run time on code that was built without them. Nothing is written over what is freed: that pattern is zero in half of the bytes of a word, which is what an empty slot of one byte holds.
+programsBuiltWith("inner-objects", "checked-by-the-run-time-alone", [], {
+  BUN_JSC_validateAOTRuntime: "1",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_slowPathAllocsBetweenGCs: "10",
+});

@@ -49,10 +49,16 @@ bag.a = 7;
 show("back again", [bag.a, Object.keys(bag), sum(bag)]);
 
 const plain: Bag = { size: 1 };
-const mixed: Bag[] = [plain, make(2), constant, { size: 3, z: "z" }, { size: 5, a: "a", ["c" + total % 2]: 1 }];
-show("mixed", mixed.map(each => [each.size, each.a, each.z, sum(each), Object.keys(each).join()]));
+const mixed: Bag[] = [plain, make(2), constant, { size: 3, z: "z" }, { size: 5, a: "a", ["c" + (total % 2)]: 1 }];
+show(
+  "mixed",
+  mixed.map(each => [each.size, each.a, each.z, sum(each), Object.keys(each).join()]),
+);
 for (const each of mixed) each.a = each.size;
-show("mixed stored", mixed.map(each => [each.a, sum(each), Object.keys(each).join()]));
+show(
+  "mixed stored",
+  mixed.map(each => [each.a, sum(each), Object.keys(each).join()]),
+);
 
 const copy: Bag = { ...make(3), size: 8, d: 4 };
 show("copy", [copy, Object.entries(copy)]);
@@ -62,11 +68,16 @@ show("rest", [size, rest]);
 function describe(options: Options): string {
   return [options.name, options.depth, options.extra, Object.keys(options).length].join("|");
 }
-show("options", [describe({}), describe({ name: "n" }), describe({ extra: [1], depth: 2 }), describe({ name: "n", extra: null, other: {} })]);
+show("options", [
+  describe({}),
+  describe({ name: "n" }),
+  describe({ extra: [1], depth: 2 }),
+  describe({ name: "n", extra: null, other: {} }),
+]);
 
 const frozen: Bag = Object.freeze({ size: 1, a: 2 });
 try {
-  "use strict";
+  ("use strict");
   frozen.a = 3;
 } catch (error) {
   show("frozen throws", (error as Error).constructor.name);

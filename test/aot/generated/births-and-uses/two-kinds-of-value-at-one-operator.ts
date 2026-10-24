@@ -1,5 +1,6 @@
 // An operator is compiled for the way in which each of its two operands is kept: a whole number in a register, a fraction, a number that may be missing, one of a few texts, a reference.
 // Every kind of value on the left x every kind on the right, through every operator, as a value, as the test of a branch and as what a field is given.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const beside = `const table: Record<string, (given: unknown) => unknown> = { same: given => given };
@@ -73,5 +74,5 @@ export function programs(isTyped?: boolean) {
           after: `hits + ":" + misses`,
         });
       }
-  return inEveryPlace(all.map(named), isTyped, somePlaces);
+  return alsoWithTypesErased(inEveryPlace(all.map(named), isTyped, somePlaces), isTyped);
 }

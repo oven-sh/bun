@@ -1,1 +1,8 @@
-{"skipInShell": "it uses Buffer, process and Bun, which the jsc shell does not have", "skipInVariants": "its output is what a program refuses that the flow analysis found closed, and a variant without the results of the analysis refuses nothing", "skipInVariant": { "trimmed-runtime": "the text it evaluates calls process.openStdin, which the source never calls: --trim removes it, and the call throws" }}
+{
+  "skipInShell": "it uses Buffer, process and Bun, which the jsc shell does not have",
+  "skipInVariants": "its output is what a program refuses that the flow analysis found closed, and a variant without the results of the analysis refuses nothing",
+  "skipInVariant": {
+    "trimmed-runtime": "the text it evaluates calls process.openStdin, which the source never calls: --trim removes it, and the call throws"
+  },
+  "skipWithASAN": "TODO: a build with assertions asks for an exception check in takeMessageOfErrorOfCodeLeftOut"
+}

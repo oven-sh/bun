@@ -839,7 +839,7 @@ impl<'a, 's> Syntax<'a, 's> {
                 let pairs = spans.iter().zip(spans.iter().skip(1));
                 let on_one_line = pairs.filter(|(before, after)| {
                     let between = self.text.get(before.1 as usize..after.0 as usize);
-                    between.is_some_and(|between| !between.contains(&b'\n'))
+                    between.is_some_and(|between| !bun_core::strings::contains_char(between, b'\n'))
                 });
                 on_one_line.map(|(_, after)| after.0).collect::<Vec<u32>>()
             })

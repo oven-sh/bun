@@ -63,7 +63,7 @@ function stretch(thingName: string, storeName: string, namingName: string, patte
   };
 }
 
-export const oneIn = 300;
+export const oneIn = 60;
 
 export function programs(isTyped?: boolean) {
   const patternNames = Object.keys(patterns);

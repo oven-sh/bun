@@ -245,11 +245,80 @@ const noDuplicateConditionalPropertyAccess = {
   },
 };
 
+/** Whether evaluating `expression` and dropping its value does nothing that a reader would expect of a statement. */
+function isOnlyAValue(expression) {
+  switch (expression.type) {
+    case "ArrayExpression":
+    case "ArrowFunctionExpression":
+    case "BinaryExpression":
+    case "ClassExpression":
+    case "ConditionalExpression":
+    case "FunctionExpression":
+    case "Identifier":
+    case "Literal":
+    case "LogicalExpression":
+    case "MemberExpression":
+    case "MetaProperty":
+    case "ObjectExpression":
+    case "SequenceExpression":
+    case "TaggedTemplateExpression":
+    case "TemplateLiteral":
+    case "ThisExpression":
+      return true;
+    case "UnaryExpression":
+      return expression.operator !== "void" && expression.operator !== "delete";
+    case "ChainExpression":
+    case "TSInstantiationExpression":
+    case "TSTypeAssertion":
+      return isOnlyAValue(expression.expression);
+    default:
+      return isErasedWrapper(expression) && isOnlyAValue(expression.expression);
+  }
+}
+
+/** `"unlikely";` where `bun build --compile --aot` reads it: the first statement of a block that is an arm of an `if`. */
+function isUnlikelyMark(statement) {
+  let { expression } = statement;
+  if (expression.type === "ParenthesizedExpression") expression = expression.expression;
+  const block = statement.parent;
+  return (
+    expression.type === "Literal" &&
+    expression.value === "unlikely" &&
+    block.type === "BlockStatement" &&
+    block.body[0] === statement &&
+    block.parent.type === "IfStatement"
+  );
+}
+
+const noUnusedExpressions = {
+  meta: {
+    type: "problem",
+    docs: {
+      description:
+        "ESLint's `no-unused-expressions` with its default options, " +
+        'except that `"unlikely";` may be the first statement of an arm of an `if`.',
+    },
+    messages: {
+      unused: "Expected expression to be used",
+    },
+    schema: [],
+  },
+  create(context) {
+    return {
+      ExpressionStatement(node) {
+        if (typeof node.directive === "string" || !isOnlyAValue(node.expression) || isUnlikelyMark(node)) return;
+        context.report({ node, messageId: "unused" });
+      },
+    };
+  },
+};
+
 export default {
   meta: {
     name: "bun",
   },
   rules: {
     "no-duplicate-conditional-property-access": noDuplicateConditionalPropertyAccess,
+    "no-unused-expressions": noUnusedExpressions,
   },
 };

@@ -1,6 +1,8 @@
 // Each time the text of a program comes to a pattern literal there is a new object, which starts its search at the front and bears no name that an older one was given. One object may serve
 // every time as long as nobody can tell.
-// The literal x what is done with it, each in every place: most of all those that come to the literal again and again.
+// The literal x what is done with it x whether the program then asks where the search stopped, each in every place: most of all those that come to the literal again and again.
+// Who does not ask still finds out: the next search through the same object begins where the last one ended.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const beside = `function uses(pattern: RegExp, text: string): string { return pattern.test(text) + ":" + pattern.lastIndex; }
@@ -64,18 +66,19 @@ const uses: Record<string, (turn: string) => string> = {
 /** A place may write the turn as a literal, which TypeScript does not let a stretch compare with another. */
 const named = (stretch: Stretch): Stretch => ({ ...stretch, body: turn => `const now: number = ${turn}; ${stretch.body("now")}` });
 
-export const oneIn = 60;
+export const oneIn = 120;
 
 export function programs(isTyped?: boolean) {
   const all: Stretch[] = [];
   for (const literal in literals)
     for (const use in uses)
+      for (const behind of ["whereItStoppedIsRead", "nothingMoreIsAsked"])
       all.push({
-        name: `${literal}-${use}`,
+        name: `${literal}-${use}-${behind}`,
         beside,
         before: seed => `const text = "aXbaaXab" + ${seed}; const kept: RegExp[] = []; const asked: (() => string)[] = [];`,
-        body: turn => `const pattern = ${literals[literal]}; ${uses[use](turn)} say(pattern.lastIndex);`,
+        body: turn => `const pattern = ${literals[literal]}; ${uses[use](turn)} ${behind === "whereItStoppedIsRead" ? "say(pattern.lastIndex);" : ""}`,
         after: `kept.map(each => each.lastIndex + each.source).join("/") + asked.map(each => each()).join("/")`,
       });
-  return inEveryPlace(all.map(named), isTyped);
+  return alsoWithTypesErased(inEveryPlace(all.map(named), isTyped), isTyped);
 }

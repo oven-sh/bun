@@ -1,6 +1,7 @@
 // Where two ways through a function meet, a test that follows may already be decided for one of them, two ways that do the same may become one, and a test may say what a later test will say.
 // Whatever stood on the way that is skipped or joined still happens, once, and a value that both ways hand on is the one of the way that was taken.
 // How the ways part x what stands on them x how they are told apart again behind the place where they meet, each in every place.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const beside = `function note(label: string, value: number): number { say(label); return value; }
@@ -82,5 +83,5 @@ export function programs(isTyped?: boolean) {
             after: `count + ":" + carried + ":" + box.value`,
           });
       }
-  return [...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)];
+  return alsoWithTypesErased([...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)], isTyped);
 }

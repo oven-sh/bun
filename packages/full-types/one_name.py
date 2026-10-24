@@ -160,12 +160,12 @@ def finish(lay, installed):
     if WRITES and not failures:
         for path, content in files.items():
             os.makedirs(os.path.dirname(COMMITTED + '/' + path), exist_ok=True)
-            open(COMMITTED + '/' + path, 'w').write(content)
+            open(COMMITTED + '/' + path, 'wb').write(content.encode())
         print('--   wrote ' + ' '.join(files))
     else:
         different = [
             path for path, content in files.items()
-            if not os.path.exists(COMMITTED + '/' + path) or open(COMMITTED + '/' + path).read() != content
+            if not os.path.exists(COMMITTED + '/' + path) or open(COMMITTED + '/' + path, 'rb').read() != content.encode()
         ]
         different += [
             'lay/' + os.path.relpath(os.path.join(folder, file), COMMITTED + '/lay')

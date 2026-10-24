@@ -21,7 +21,8 @@ generated(
   "two names are two objects once one of them was given another",
   Array.from({ length: 160 }, (_, index) => ({
     name: `seed ${(index >> 1) + 1}${index & 1 ? ", every function hot." : "."}`,
-    isAlwaysRun: onceWrong.includes((index >> 1) + 1),
+    isAlwaysRun: false,
+    wasOnceWrong: onceWrong.includes((index >> 1) + 1),
     isOnlyCompiled: true as const,
     flags: index & 1 ? ["--aot-heat=everything-is-hot"] : [],
     make: () => ({

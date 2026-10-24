@@ -165,7 +165,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // Each Rust crate produces an rlib the link takes beside the C/C++
   // objects. Rust `include!`s codegen
   // `.rs` outputs (written as side effects of the bindgen /
-  // bundle-modules / generate-jssink edges), so the codegen output set
+  // bundle-modules edges), so the codegen output set
   // is forwarded to order the workspace crates after it (order-only; the
   // crates' dep-info then tracks exactly the files they read).
   // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`

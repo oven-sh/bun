@@ -1,6 +1,7 @@
 // The call of a generator function evaluates the parameters and stops. The body runs at the first step, whenever that comes and whoever takes it. The start may be put off to the first step
 // where nobody can look in between: not at what the parameters did, not at the generator, not at what the body reads.
 // How the generator begins x what happens before its first step x who takes that step, each in every place.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const common = `let shared = 0;
@@ -89,5 +90,5 @@ export function programs(isTyped?: boolean) {
   const everywhere: Stretch[] = [], inFewPlaces: Stretch[] = [];
   let at = 0;
   for (const head in heads) for (const between in betweens) for (const firstStep in firstSteps) (at++ % 7 ? inFewPlaces : everywhere).push(stretch(head, between, firstStep));
-  return [...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)];
+  return alsoWithTypesErased([...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)], isTyped);
 }

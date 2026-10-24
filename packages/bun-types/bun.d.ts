@@ -105,7 +105,8 @@ declare module "bun" {
   /**
    * The global `JSON` (`JSON === globalThis.JSON`), typed so that `JSON.parse<T>(text)` type-checks.
    * `bun build --compile --aot`, `bun run --aot` and `bun test --aot` compile that call into a parser that validates
-   * the result against `T`. Everywhere else the type argument is erased like any other type.
+   * the result against `T`. Everywhere else that call is an error, so the check is never skipped by accident.
+   * The type argument of the global `JSON` is erased there like any other type.
    *
    * ```ts
    * import { JSON, type Schema } from "bun";

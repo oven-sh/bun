@@ -17,16 +17,12 @@ pub fn compute(payload: &[u8]) -> [u8; SIZE] {
     let mut digests = vec![[0u8; 32]; chunks.len()];
     let threads = std::thread::available_parallelism().map_or(1, |count| count.get());
     let chunks_per_thread = chunks.len().div_ceil(threads.min(MAX_THREADS)).max(1);
-    std::thread::scope(|scope| {
-        let parts = chunks
-            .chunks(chunks_per_thread)
-            .zip(digests.chunks_mut(chunks_per_thread));
-        for (chunks, digests) in parts {
-            scope.spawn(move || {
-                for (chunk, digest) in chunks.iter().zip(digests) {
-                    sha256_hash(chunk, digest);
-                }
-            });
+    let parts = chunks
+        .chunks(chunks_per_thread)
+        .zip(digests.chunks_mut(chunks_per_thread));
+    bun_core::for_each_in_parallel(parts, |(chunks, digests)| {
+        for (chunk, digest) in chunks.iter().zip(digests) {
+            sha256_hash(chunk, digest);
         }
     });
     let mut digest = [0u8; 32];

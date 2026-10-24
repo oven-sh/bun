@@ -1,6 +1,7 @@
 // A list that one operation alone takes may be made right in front of that operation. It is still one list however often the operation runs, it still holds what its members were when the
 // text made it, and a function's own `arguments` still hold what the caller gave.
 // What is made x what happens between the making and the taking x who takes it, each in every place.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const beside = `function next(): number { return ++handedOut; }
@@ -82,5 +83,5 @@ export const oneIn = 150;
 export function programs(isTyped?: boolean) {
   const all: Stretch[] = [...ofArguments];
   for (const maker in makers) for (const between in betweens) for (const taker in takers) all.push(stretch(maker, between, taker));
-  return inEveryPlace(all.map(named), isTyped);
+  return alsoWithTypesErased(inEveryPlace(all.map(named), isTyped), isTyped);
 }

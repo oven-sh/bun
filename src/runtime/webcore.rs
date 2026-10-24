@@ -338,7 +338,6 @@ pub enum SinkHandle {
     HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
     HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
     HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
-    ArrayBuffer(bun_ptr::BackRef<sink::ArrayBufferSink, bun_ptr::Mut>),
 }
 
 use bun_removable_features::{removable_body, removable_body_of_either};
@@ -380,8 +379,6 @@ impl SinkHandle {
                 // SAFETY: live backref; transform detaches before the JSSink is finalized.
                 unsafe { p.get_mut() }.write(data)
             }),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
         }
     }
 
@@ -408,7 +405,6 @@ impl SinkHandle {
             }
             SinkHandle::HttpResponse(_) => {}
             SinkHandle::HttpsResponse(_) => {}
-            SinkHandle::ArrayBuffer(_) => {}
         }
     }
 }

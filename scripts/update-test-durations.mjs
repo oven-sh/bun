@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { units as partsOfOneTestFile } from "../test/aot/parts.mts";
+import { aotTests } from "./buildkite.ts";
 import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -49,16 +50,7 @@ const lanes = {
 };
 
 const aotStepOf = stepKey => stepKey.replace(/-test-bun$/, "-test-aot");
-// `aotTests` of .buildkite/ci.ts: what the test-aot steps run.
-const aotTests = [
-  "aot/",
-  "bundler/bundler_compile_aot",
-  "bundler/compile-aot",
-  "bundler/compile-trim",
-  "bundler/trim-runtime-icu/",
-  "cli/aot-",
-];
-const isAotTest = path => aotTests.some(group => path.startsWith(group));
+export const isAotTest = path => aotTests.some(group => path.startsWith(group));
 
 const api = async path => {
   for (let attempt = 0; ; attempt++) {

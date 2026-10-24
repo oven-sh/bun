@@ -23,7 +23,8 @@ else {
         .filter(seed => !options.leftOut?.includes(seed))
         .map((seed, index) => ({
           name: `${title} ${seed}`,
-          isAlwaysRun: index < 2 || (options.foundByFreshSeeds ?? []).includes(seed),
+          isAlwaysRun: index < 2,
+          wasOnceWrong: options.foundByFreshSeeds?.includes(seed),
           plainEnv: options.plainEnv,
           failsToday: typeof options.failsToday === "string" ? options.failsToday : options.failsToday?.[seed],
           modeFailsToday: options.modeFailsToday?.[seed],

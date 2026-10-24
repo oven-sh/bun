@@ -115,6 +115,35 @@ show("linked by a helper", () => new S(25));
 Q.call = function (self, a) { self.stopped = a; };
 show("one in the middle hides call", () => new S(26));
 
+function DefinesOther(a) { this.a = a; }
+Object.defineProperty(DefinesOther, "super_", { value: Top, writable: true, configurable: true });
+function BelowDefinesOther(a) { DefinesOther.call(this, a); }
+show("another name defined", () => new BelowDefinesOther(27));
+
+function DefinedByKey(a) { this.a = a; }
+Object.defineProperty(DefinedByKey, names[1], { value(self, a) { self.definedByKey = a; } });
+function BelowDefinedByKey(a) { DefinedByKey.call(this, a); }
+show("call defined under a computed key", () => new BelowDefinedByKey(28));
+
+function DefinedByMap(a) { this.a = a; }
+Object.defineProperties(DefinedByMap, { limit: { value: 1 }, call: { value(self, a) { self.definedByMap = a; } } });
+function BelowDefinedByMap(a) { DefinedByMap.call(this, a); }
+show("call defined by a map", () => new BelowDefinedByMap(29));
+
+function DefinedByReflect(a) { this.a = a; }
+Reflect.defineProperty(DefinedByReflect, "apply", { value(self, list) { self.definedByReflect = list[0]; } });
+function BelowDefinedByReflect() { DefinedByReflect.apply(this, arguments); }
+show("apply defined by Reflect", () => new BelowDefinedByReflect(30));
+
+function DefinedAbove(a) { this.a = a; }
+function Above() {}
+Above();
+Object.setPrototypeOf(DefinedAbove, Above);
+function BelowDefinedAbove(a) { DefinedAbove.call(this, a); }
+show("before the function above defines call", () => new BelowDefinedAbove(31));
+Object.defineProperty(Above, "call", { configurable: true, value(self, a) { self.definedAbove = a; } });
+show("after", () => new BelowDefinedAbove(32));
+
 let sum = 0;
 for (let i = 0; i < 2000; i++) sum += new BelowWithStatic(i & 7).a + new Last(i & 3).top + new AppliesWithStatic(i & 1).a;
 lines.push("sum " + sum);

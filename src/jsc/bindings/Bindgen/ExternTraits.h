@@ -12,6 +12,7 @@
 #include <wtf/RefPtr.h>
 #include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
+#include "helpers.h"
 
 namespace Bun::Bindgen {
 
@@ -123,6 +124,16 @@ template<> struct ExternTraits<JSStringUTF8View> {
     static ExternType convertToExtern(JSStringUTF8View&& cppValue)
     {
         return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+template<> struct ExternTraits<JSC::GCOwnedDataScope<WTF::StringView>> {
+    using ExternType = EncodedSlice;
+
+    // The caller's `cppValue` keeps the characters' owner alive for the whole call.
+    static ExternType convertToExtern(JSC::GCOwnedDataScope<WTF::StringView>&& cppValue)
+    {
+        return Zig::toEncodedSlice(cppValue.data);
     }
 };
 

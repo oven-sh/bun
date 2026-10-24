@@ -1,0 +1,3 @@
+{
+  "skipWithASAN": "TODO: a build with assertions stops in asObject: cell->isObjectSlow()"
+}

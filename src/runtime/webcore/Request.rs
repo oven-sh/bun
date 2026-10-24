@@ -374,7 +374,7 @@ impl Request {
     pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<NonNull<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
-        let cx = global_this.js_thread_of_caller_no_frame();
+        let cx = global_this.js_thread_of_caller();
         NonNull::new(self.clone(&cx).ok()?)
     }
 

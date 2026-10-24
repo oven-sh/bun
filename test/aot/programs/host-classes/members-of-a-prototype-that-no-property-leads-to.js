@@ -1,5 +1,5 @@
 // node:worker_threads reaches Bun's stream code, which calls methods of Bun.ArrayBufferSink. The compiler takes those methods for constants and start-up fixes them.
-// The constructor has no property "prototype", so start-up finds the prototype object through the class.
+// Start-up finds the prototype object through the class, whether or not the constructor has a property "prototype".
 import { isMainThread } from "node:worker_threads";
 
 console.log(isMainThread, Object.hasOwn(Bun.ArrayBufferSink, "prototype"));

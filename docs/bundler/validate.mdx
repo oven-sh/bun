@@ -7,6 +7,8 @@ description: "Check JSON and other unchecked data against a TypeScript type you 
 <Warning>`JSON.parse<T>()` and `validate<T>()` are experimental.</Warning>
 
 ```ts
+import { JSON } from "bun";
+
 const user = JSON.parse<User>(text);
 ```
 
@@ -18,10 +20,10 @@ It works under [`bun compile`](/bundler/aot), `bun run --aot` and `bun test --ao
 
 ## Parse JSON
 
-Pass the type of the data as the type argument.
+Import `JSON` from `"bun"` and pass the type of the data as the type argument.
 
 ```ts user.ts icon="/icons/typescript.svg"
-import type { Schema } from "bun";
+import { JSON, type Schema } from "bun";
 
 interface User {
   id: number;
@@ -58,7 +60,8 @@ TypeError: id: expected number, received string (and 2 more)
 | `JSON.parse<any>(text)` | Returns the value | Returns the value                              | Throws a `SyntaxError` |
 
 - **The result is what `JSON.parse(text)` returns.** Properties that `T` doesn't declare, such as `role`, are still there. To reject them, use [`T & Schema.Strict`](#rules-that-a-type-cant-express).
-- **`import { JSON } from "bun"` is the global `JSON`, typed with the type argument.** It's the same object. See [Types in your editor](#types-in-your-editor) for the global name.
+- **`JSON` from `"bun"` is the global `JSON`, typed with the type argument.** It's the same object. The import tells Bun that you count on the check, so the check can't be skipped by accident: [without `--aot`](#where-it-works), `JSON.parse<User>(text)` is an error.
+- **The global `JSON` validates too, but nothing stops you from running it unchecked.** Without `--aot`, its type argument is erased and `JSON.parse<User>(text)` is `JSON.parse(text)`. See [Types in your editor](#types-in-your-editor).
 - **Only a call with a type argument checks.** `JSON.parse(text)` is the ordinary call and returns `any`. `JSON.parse(text) as User`, `const user: User = ...` and `.then(JSON.parse)` check nothing.
 - **Bun goes by what the name refers to, not by how the call is spelled.** `const { parse } = JSON; parse<User>(text)` checks too.
 - **The reviver runs first.** `JSON.parse<T>(text, reviver)` checks what the reviver returns and hands it to you as it is: an object that the reviver returned is that same object in the result. So `Schema.Default` fills nothing in when you pass a reviver.
@@ -68,7 +71,7 @@ TypeError: id: expected number, received string (and 2 more)
 
 A build knows the type argument by itself. Your editor and `tsc` learn it from `@types/bun`, in one of two ways.
 
-Import `JSON` from `"bun"`. Nothing else changes.
+Import `JSON` from `"bun"`. Nothing else changes, and the call is an error wherever it wouldn't validate.
 
 ```ts
 import { JSON } from "bun";
@@ -82,7 +85,11 @@ Or add the type argument to the global `JSON`, with one line in any file of the 
 /// <reference types="bun-types/aot" />
 ```
 
-The second way gives the global `JSON.parse` a second signature for the whole project. You can see that in two places, even in a file that never passes a type argument. That's why you have to ask for it.
+<Warning>
+  Without `--aot`, the type argument of the global `JSON` is erased. The call parses, checks nothing and doesn't say so.
+</Warning>
+
+The second way also gives the global `JSON.parse` a second signature for the whole project. You can see that in two places, even in a file that never passes a type argument. That's why you have to ask for it.
 
 - A function expression that you type as `typeof JSON.parse` needs types on its parameters, because TypeScript doesn't infer them from an overloaded type. So does a `parse` method in an object that you type as `JSON`.
 - A call with a wrong argument, such as `JSON.parse(buffer)`, is error TS2769 ("No overload matches this call") and no longer TS2345.
@@ -130,6 +137,8 @@ For JSON text, prefer `JSON.parse<T>(await request.text())` to `validate<T>(awai
 The `TypeError` has an `issues` array. To TypeScript, that error is a `Schema.Error`. `Schema` only exists in types, so there's no class to test with `instanceof`. Test for `issues` instead.
 
 ```ts server.ts icon="/icons/typescript.svg"
+import { JSON } from "bun";
+
 interface Order {
   sku: string;
   quantity: number;
@@ -245,14 +254,34 @@ If `T` refers to itself and the JSON is nested thousands of levels deep, the cal
 
 ## Where it works
 
-| Command                                                                       | `JSON.parse<T>(text)`           | `validate<T>(value)`   |
-| ----------------------------------------------------------------------------- | ------------------------------- | ---------------------- |
-| `bun compile`, `bun build --compile --aot`, `bun run --aot`, `bun test --aot` | Validates                       | Validates              |
-| `bun run`, `bun test`, `bun build`, `Bun.Transpiler`                          | Is `JSON.parse(text)`: no check | The import is an error |
+| Command                                                                       | `JSON.parse<T>(text)`, `JSON` from `"bun"` | `JSON.parse<T>(text)`, global `JSON` | `validate<T>(value)`   |
+| ----------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------ | ---------------------- |
+| `bun compile`, `bun build --compile --aot`, `bun run --aot`, `bun test --aot` | Validates                                  | Validates                            | Validates              |
+| `bun run`, `bun test`, `bun build`, `Bun.Transpiler`                          | The call is an error                       | Is `JSON.parse(text)`: no check      | The import is an error |
 
-**Without `--aot`, the type argument is erased.** Bun removes it like any other type, and so do `tsc`, esbuild, swc and Vite. `JSON.parse<User>(text)` then parses and checks nothing, and nothing says so. If your program relies on the check, run its tests with `bun test --aot`. `validate` can't be skipped that way, because it only exists while Bun compiles the file.
+**Without `--aot`, Bun can't validate, and it says so if you asked it by name.** `JSON.parse<User>(text)` is an error if `JSON` comes from `"bun"`: an import under any name, or `Bun.JSON`. So is the import of `validate`. `JSON.parse<any>(text)` and `JSON.parse<unknown>(text)` check nothing anywhere, so they're fine everywhere.
 
-**A file that an executable loads at run time isn't compiled.** Calls that Bun compiled into the executable validate. In a TypeScript file that the executable loads from disk, `JSON.parse<T>(text)` is `JSON.parse(text)`.
+```ts user.ts icon="/icons/typescript.svg"
+import { JSON } from "bun";
+
+console.log(JSON.parse<{ id: number }>('{"id":"7"}'));
+```
+
+```bash terminal icon="terminal"
+bun run user.ts
+```
+
+```txt
+error: JSON.parse<T>() from "bun" only validates with --aot. Use "bun run --aot", "bun test --aot" or "bun compile", or remove the type argument
+```
+
+**The type argument of the global `JSON` is erased.** Bun removes it like any other type, because a program may have declared that type parameter itself, long before Bun gave it a meaning. `JSON.parse<User>(text)` then parses and checks nothing, and nothing says so. If your program relies on the check, import `JSON` from `"bun"`.
+
+**Other tools erase both.** `tsc`, esbuild, swc and Vite remove the type argument whichever `JSON` it is. What they emit checks nothing.
+
+**Bun looks at one file at a time here.** It finds `JSON` from `"bun"` where the file names it. It doesn't follow `const codec = Bun.JSON` or a `JSON` that another file of yours exports again.
+
+**A file that an executable loads at run time isn't compiled.** Calls that Bun compiled into the executable validate. A TypeScript file that the executable loads from disk is treated as under `bun run`.
 
 ## In a compiled executable
 

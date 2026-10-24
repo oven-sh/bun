@@ -20,6 +20,7 @@ import {
   AnyType,
   ArrayType,
   ClassType,
+  Constant,
   DictionaryType,
   FunctionDefinition,
   Getter,
@@ -36,7 +37,6 @@ import {
   type ValueKind,
 } from "../bindgen-lib-internal.ts";
 import { loadSchemaFile } from "../bindgen-load.ts";
-import { parseDeclaredType } from "../declared-type-checks.ts";
 import { nativeCallList } from "../generate-js2native.ts";
 import {
   GeneratorError,
@@ -136,21 +136,6 @@ function setMemberParts(
   return declarations.map(declaration =>
     declaration.declares === "Member" ? { ...declaration, ...parts } : declaration,
   );
-}
-
-/** The row of a prototype's function of which a generator other than bindgen declares and checks the result, in the grammar of `parseDeclaredType`. */
-export function methodReturning(declaredText: string): b.FunctionField {
-  parseDeclaredType(declaredText);
-  const words = declaredText.split("|").map(word => word.trim());
-  return {
-    args: { operands: b.any.rest },
-    returns: createStrictType(new AnyType().returning(...words).resultType),
-    resultIsDeclaredOnly: true,
-    capability: "js",
-    throws: true,
-    uses: { this: b.handedOver, operands: b.handedOver },
-    implementation: b.hostCall,
-  };
 }
 
 const immediatePrimitives: Readonly<Record<Primitive, boolean>> = {
@@ -783,6 +768,12 @@ function collectAccessor(type: ClassType, accessor: Getter | InternalFieldAccess
   });
 }
 
+/** A property that can be redefined may hold something else. */
+function collectConstant(type: ClassType, constant: Constant, path: BuiltinPath): Declaration[] {
+  const isConfigurable = constant.configurable ?? type.configurable;
+  return b.method(path, isConfigurable ? b.property(b.any) : b.constant(constant.value));
+}
+
 function collectBuiltin(type: ClassType, builtin: Builtin, path: BuiltinPath): Declaration[] {
   const implementation = b.compiled(`builtins/${type.name}`, builtin.name);
   return setMemberParts(b.method(path, b.otherwiseBy(implementation)), { length: builtin.length });
@@ -801,6 +792,7 @@ function directEntryOfMethod(type: ClassType, fn: FunctionDefinition): DirectEnt
 
 function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinPath, isStatic: boolean): Declaration[] {
   if (member instanceof Getter || member instanceof InternalFieldAccessor) return collectAccessor(type, member, path);
+  if (member instanceof Constant) return collectConstant(type, member, path);
   if (!(member instanceof FunctionDefinition)) return collectBuiltin(type, member, path);
   const methods = member.signatures as readonly Method[];
   if (methods.some(method => method.privateSymbol !== undefined)) return [];

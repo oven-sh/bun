@@ -18,6 +18,7 @@ arrays/frozen-array-error-messages
 arrays/hundreds-of-names-that-are-no-index-in-a-validating-build
 arrays/includes-and-index-of-short-and-long
 arrays/index-fill-grows-like-push
+arrays/lists-of-numbers-are-given-undefined-null-nan-and-holes
 arrays/lists-with-names-of-their-own-lose-and-gain-elements-at-the-front
 arrays/lists-written-in-the-place-of-a-spread
 arrays/map-then-join-not-fused
@@ -154,6 +155,7 @@ calls/unused-results
 calls/what-a-function-did-before-the-stack-ended-is-undone-by-its-finally
 classes-and-closures/a-closure-made-anew-beside-a-way-that-calls-is-read-on-that-turn
 classes-and-closures/a-closure-made-anew-in-a-callback-of-an-array-method-is-read-on-that-turn
+classes-and-closures/a-closure-made-anew-in-the-callback-of-map-binds-what-that-turn-handed-it
 classes-and-closures/a-closure-made-anew-on-every-turn-holds-what-that-turn-captured
 classes-and-closures/a-closure-made-anew-on-every-turn-is-called-by-a-function-that-many-makers-share
 classes-and-closures/a-closure-made-anew-on-every-turn-is-read-on-that-turn
@@ -183,6 +185,7 @@ classes-and-closures/native-code-puts-a-property-on-a-class
 classes-and-closures/own-accessor-hides-a-getter-and-a-setter
 classes-and-closures/own-property-hides-a-method-in-the-middle-of-a-loop
 classes-and-closures/property-stores-on-new-functions
+classes-and-closures/things-made-once-beside-a-loop-and-things-made-on-odd-cycles-are-read-as-they-were-made
 classes-and-closures/typed-class-factory-over-private-fields
 classes-below-built-in-classes/a-class-below-proxy-in-an-imported-file
 classes-below-built-in-classes/a-class-below-proxy-that-is-exported-and-never-used
@@ -314,6 +317,7 @@ enums/a-number-outside-the-enum-is-given-for-a-parameter-with-a-default-and-read
 enums/a-number-outside-the-enum-is-given-for-it-and-read-in-a-closure
 enums/constant-pow-matches-engine
 enums/enums-with-reverse-keys-of-every-kind
+errors/a-definition-by-descriptor-that-is-refused
 errors/a-read-through-super-under-a-null-prototype-quotes-the-expression
 errors/classes-that-extend-error
 errors/every-kind-of-place-that-throws
@@ -341,13 +345,6 @@ escape-analysis/pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-look
 escape-analysis/pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-looks-at-untyped
 escape-analysis/results-forwarded-by-functions
 every-member-of-a-host-object/every-getter-is-read-by-evaluated-text-in-a-program-that-names-none
-flattened-objects/an-old-outer-object-gets-young-objects
-flattened-objects/inner-objects-meet-in-one-name
-flattened-objects/one-value-goes-into-both-objects-in-two-forms
-flattened-objects/outer-objects-that-nothing-is-laid-into
-flattened-objects/snapshots-and-censuses-over-pairs
-flattened-objects/the-outer-object-is-looked-at-as-a-whole
-flattened-objects/what-an-inner-object-in-its-room-held-is-let-go
 function-prototypes/a-bound-plain-function-is-constructed-and-the-function-went-through-a-call
 function-prototypes/constructor-function-prototype-mutations
 function-prototypes/functions-that-hold-names-of-their-own-are-called-through-call-and-apply
@@ -452,6 +449,7 @@ initializers-run-at-the-first-read/a-static-setter-under-a-computed-key-that-spe
 initializers-run-at-the-first-read/a-store-to-a-property-of-a-function-that-a-descriptor-made-read-only
 initializers-run-at-the-first-read/objects-filled-under-another-name
 initializers-run-at-the-first-read/stores-to-new-functions-that-the-objects-above-them-refuse
+inner-objects/a-collection-meets-the-outer-object-before-its-booleans-are-written
 inner-objects/many-hold-one-inner-object-while-several-threads-mark
 inner-objects/the-class-of-the-inner-object-is-evaluated-again
 jsdoc-types/a-js-function-that-reads-arguments-gets-operands-from-typescript
@@ -482,6 +480,7 @@ keys-passed-as-constants/a-function-that-makes-closures-over-a-name-is-handed-ev
 keys-passed-as-constants/a-maker-of-closures-over-a-name-itself-captures-typed-variables
 keys-passed-as-constants/accessors-a-helper-has-defined-are-redefined-deleted-and-shadowed
 keys-passed-as-constants/names-out-of-a-written-list-become-members-and-the-list-changes
+keys-passed-as-constants/names-out-of-written-lists-that-change-behind-their-birth
 keys-passed-as-constants/two-makers-of-one-name-take-names-of-different-types
 known-helpers/create-binding-look-alikes
 known-helpers/stars-looked-at-late
@@ -548,10 +547,9 @@ library-modules/create-require-leaves-other-imports-read-by-name
 library-modules/esbuild-require-shim
 library-modules/functions-of-the-bun-object
 library-modules/members-of-library-objects-under-computed-names
+literal-strings/a-collection-falls-while-a-list-of-very-many-keys-is-printed
 literal-strings/a-million-texts-from-outside-equal-a-member-that-no-code-spells
 literal-strings/texts-from-outside-equal-members-that-no-code-spells
-memory-of-many-objects/one-object-inside-another
-memory-of-many-objects/one-object-inside-another-in-untyped-code
 memory-of-many-objects/records-made-by-a-callback-for-each-element
 modules/a-computed-path-is-required-again-and-again
 modules/a-file-without-an-extension-lies-beside-a-computed-path
@@ -592,6 +590,13 @@ native-callbacks/what-code-of-an-operand-hands-back-is-used
 nothing-throws-because-of-a-type/a-test-that-only-null-and-undefined-should-fail-is-failed-by-other-values
 nothing-throws-because-of-a-type/tests-that-a-declared-type-would-decide-are-met-by-other-values
 null-where-the-type-says-none/a-field-declared-and-never-made-is-read-in-a-callback-of-a-function-called-twice
+objects-inside-objects/an-old-outer-object-gets-young-objects
+objects-inside-objects/inner-objects-meet-in-one-name
+objects-inside-objects/one-value-goes-into-both-objects-in-two-forms
+objects-inside-objects/outer-objects-that-nothing-is-laid-into
+objects-inside-objects/snapshots-and-censuses-over-pairs
+objects-inside-objects/the-outer-object-is-looked-at-as-a-whole
+objects-inside-objects/what-an-inner-object-in-its-room-held-is-let-go
 objects-that-are-not-what-their-layout-says/a-lone-read-in-cold-code-meets-every-stranger
 objects-that-are-not-what-their-layout-says/a-variable-of-a-class-or-null-holds-what-object-create-made
 objects-that-are-not-what-their-layout-says/an-accessor-is-defined-on-what-from-entries-or-group-by-answered
@@ -605,6 +610,7 @@ objects/a-required-field-that-one-of-two-literals-leaves-out-is-filled-on-demand
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned-through-two-functions
 objects/a-typed-literal-stands-above-what-object-create-makes-while-it-changes
+objects/dictionaries-are-built-anew-from-the-same-names-between-collections
 objects/every-way-an-allocation-site-meets-its-record
 objects/fields-created-by-name-beside-extra-properties-keep-the-order-of-keys
 objects/literals-with-computed-index-keys
@@ -627,6 +633,7 @@ relational-summaries/a-constructor-function-fills-an-object-below-a-prototype-an
 relational-summaries/a-store-on-every-path-but-the-thrown-one
 relational-summaries/accessors-arrive-on-the-chain-in-every-way
 runtime-caches/a-built-in-object-gets-a-name-of-its-own-through-one-store-that-runs-many-times
+runtime-caches/a-method-assigned-behind-the-birth-of-a-record-is-called
 runtime-caches/byte-length-of-typed-arrays-by-name
 runtime-caches/evaluated-text-char-code-at
 runtime-caches/evaluated-text-extra-properties-of-compiled-objects
@@ -812,7 +819,11 @@ typed-functions-called-from-run-time-text/a-literal-in-run-time-text-holds-undef
 typed-functions-called-from-run-time-text/a-literal-in-run-time-text-spells-members-that-only-the-type-spells
 typed-functions-called-from-run-time-text/literals-in-run-time-text-get-many-kinds-of-values-for-declared-fields-with-collections-in-between
 typed-objects/a-function-field-declared-and-never-stored-is-applied-in-a-callback
+typed-objects/a-getter-for-a-read-only-member-beside-objects-parsed-under-the-same-interface
 typed-objects/a-literal-kept-in-a-field-is-changed-by-a-call-before-the-constructor-stores-into-it-in-hot-code
+typed-objects/a-literal-with-a-getter-and-a-parsed-object-come-to-one-typed-parameter
+typed-objects/a-literal-with-a-getter-and-parsed-objects-are-held-under-one-type-in-two-functions
+typed-objects/a-literal-writes-names-that-only-the-index-signature-of-its-type-allows
 typed-objects/a-typed-object-is-reached-through-every-form-of-the-language
 typed-objects/a-typed-object-is-the-global-object-of-a-context
 typed-objects/brand-fields-stored-by-unseen-code

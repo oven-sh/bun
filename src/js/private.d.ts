@@ -826,7 +826,7 @@ declare namespace $Node {
     stderr: MessagePort;
   }
 
-  // src/codegen/generate-jssink.ts, src/runtime/webcore/FileSink.rs
+  // src/runtime/webcore/Sink.bind.ts, src/runtime/webcore/FileSink.rs
   interface FileSink {
     /** The number of bytes written, or a promise for it while the write is pending. */
     write(chunk: string | AnyView | ArrayBuffer | SharedArrayBuffer): number | Promise<number>;

@@ -26,11 +26,13 @@
 //                                         "skipInVariants": why variant() leaves the program out
 //                                         "skipInVariant": { "<label>": why variant("<label>", ..) or programsBuiltWith(.., "<label>", ..) alone leaves the program out }
 //                                         "todoOn": { "<process.platform>": what happens there today }: the program is listed as a todo and not run on that platform alone
+//                                         "alone": why programs-as-entry-points.ts leaves the program out: what it prints hangs on being the first entry point, or on what else the executable holds
 //   // STATISTIC: <name> (= | >= | <=) <n>  a line of the entry point: what the build counted under that `StatisticId`, as the hidden `--explain=statistics` prints it.
 //                                         It shows that an optimization ran on a host built-in, which `testaot` and so shell/expectations.py do not have.
 //                                         Checked on the build that keeps the types, and not where a variant adds build flags
 //   programs/**/tsconfig.json             the compiler options for the programs below it
 //   programs/jsc-shell-functions.ts       noInline(), gc() and similar functions, for the programs that import it
+//   programs/start-the-entry-point-named.ts  the first entry point of an executable that holds many programs (programs-as-entry-points.ts)
 //   programs/changes-to-builtins.js       tries every way to change a property of a built-in object, for the programs about locked built-ins
 //   programs/changes-to-builtins-sloppy.cjs  the store and the `delete` in sloppy code, for changes-to-builtins.js
 //   programs/generate-copies-born-in-their-holders.ts  writes the programs of copies-born-in-their-holders
@@ -115,6 +117,9 @@ export function inShare(name: string, oneIn: number, alsoOfQuickSubset = false):
   hasSaidShare = true;
   return BigInt(Bun.hash(seedOfShare + " " + name.replaceAll("\\", "/"))) % BigInt(oneIn) === 0n;
 }
+
+/** Whether a debug or ASAN build of Bun, which takes a tenth of what others take, takes `name`, the `index`-th of its list: by the commit, as every share, so that in time all are taken. */
+export const inTenthOfSlowBuild = (name: string, index: number) => (isToldWhatToTake ? index % 10 === 0 : inShare(name, 10, true));
 
 // One build takes about as long as the whole default limit of bun:test. This holds for every file that imports this one or supported.ts.
 setDefaultTimeout(120_000);
@@ -212,7 +217,7 @@ export function pathOfWrittenProgram(name: string): string | undefined {
 export const isGroup = (path: string) => groups.has(path);
 
 /** The programs of one topic, or of all. */
-function find(topic?: string): string[] {
+export function find(topic?: string): string[] {
   const all: string[] = [];
   if (topic === undefined || existsSync(join(root, topic))) findKept(join(root, topic ?? ""), all);
   for (const each of topic === undefined ? Object.keys(generators) : topic in generators ? [topic] : []) findWritten(each, all);
@@ -484,7 +489,7 @@ async function expectBuildErrors(program: CompiledProgram, stored: string) {
   }
 }
 
-function expectStored(file: string, result: RunResult) {
+export function expectStored(file: string, result: RunResult) {
   // What is stored names the files of an executable as they are named elsewhere than on Windows.
   const text = (result.stdout + (result.exitCode ? `exit code ${result.exitCode}\n${result.stderr}\n` : result.stderr)).replace(
     /B:\\~BUN\\root[^\s'":]*/g,
@@ -580,7 +585,7 @@ const isQuick = (path: string) => (hash(path) >> 8n) % 10n === 0n;
 // AOT_PROGRAMS=quick names the same tenth every time. The tenth that a debug or ASAN build takes by itself goes by the commit, as every share does: in time all are taken.
 const isInTenthOfSlowBuild = (path: string) =>
   process.env.AOT_PROGRAMS === undefined && seedOfShare !== "all" ? inShare(inPrograms(path), 10, true) : isQuick(path);
-const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
+export const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
 const runsWithASAN = (path: string) => isASAN && existsSync(besideOf(path) + ".json") && !!JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).runWithASAN;
 
 function define(title: string, chosen: string[], settings: Omit<Setup, "folder" | "carrier">) {
@@ -679,12 +684,13 @@ export function programsBuiltWith(topic: string, label: string, buildFlags: stri
 }
 
 /**
- * Runs the quick subset of all topics once more, built with flags that force the compiler down a path which small programs
+ * Runs programs of all topics once more, built with flags that force the compiler down a path which small programs
  * otherwise never take. Each program is built once and compared with plain Bun: programs() covers the build with erased types.
- * AOT_PROGRAMS=<text> selects other programs, as above. `runEnv` is set where the executable runs. A run that is told nothing takes a fortieth of that subset, by `inShare`.
+ * A run that is told nothing takes one program in four hundred, by `inShare`: others for each commit and each label, and in time all of them. AOT_SHARE=all and AOT_PROGRAMS=quick take the
+ * quick subset, AOT_PROGRAMS=<text> selects as above. `runEnv` is set where the executable runs.
  * It is split into `parts` as a large folder is. A build with a sanitizer takes a third of them. The programs `always` are taken in any case.
  * `stubCopies`: each program is laid out so that it needs about that many copies of the shared stubs.
- * A list of environments: the one executable runs once in each. `ofAllPrograms`: not the quick subset but every program in time: a run that is told nothing takes one in four hundred.
+ * A list of environments: the one executable runs once in each.
  */
 export function variant(
   label: string,
@@ -694,9 +700,11 @@ export function variant(
   parts = 1,
   always: string | string[] = [],
   stubCopies?: number,
-  ofAllPrograms = false,
 ) {
   const isAlwaysTaken = (path: string) => [always].flat().includes(besideOf(inPrograms(path)).replaceAll("\\", "/"));
+  // Two draws, since a group is drawn before its programs have names: one path or group in forty, then one program in ten.
+  const isInTenth = (path: string) => (isToldWhatToTake ? isQuick(path) : inShare(`${label} tenth ${inPrograms(path)}`, 10, true));
+  const isInThird = (path: string) => (isToldWhatToTake ? (hash(path) >> 32n) % 3n === 0n : inShare(`${label} third ${inPrograms(path)}`, 3, true));
   define(
     `compile/aot/variant/${label}`,
     taken(
@@ -707,9 +715,9 @@ export function variant(
         .filter(
           path =>
             isAlwaysTaken(path) ||
-            (inShare(label + " " + inPrograms(path), ofAllPrograms ? 400 : 40, true) && Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 && (!isASAN || (hash(path) >> 32n) % 3n === 0n)),
+            (inShare(label + " " + inPrograms(path), 40, true) && Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 && (!isASAN || isInThird(path))),
         ),
-      path => isAlwaysTaken(path) || (wanted === "" || wanted === "quick" ? ofAllPrograms || isQuick(path) : isWanted(path)),
+      path => isAlwaysTaken(path) || (wanted === "" || wanted === "quick" ? isInTenth(path) : isWanted(path)),
     )
       // Nothing is compiled for a program that the build rejects.
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt"))

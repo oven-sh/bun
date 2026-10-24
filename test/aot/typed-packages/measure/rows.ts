@@ -62,6 +62,12 @@ export const rows: Row[] = [
     workloads: pages.map(page => ({ name: page, arguments: [page] })),
   },
   {
+    name: "react-reconciler",
+    entry: "react-reconciler.tsx",
+    typedVersions: ["react", "react-reconciler"],
+    workloads: ["reconciled", "painted"].map(how => ({ name: how, arguments: [how] })),
+  },
+  {
     name: "zod",
     entry: "zod.ts",
     typedSources: true,

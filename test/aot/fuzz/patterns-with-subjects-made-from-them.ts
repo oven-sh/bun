@@ -251,7 +251,7 @@ export function generate(random: Random): string {
       if (random.chance(0.4)) tail = some(2) + tail + some(2);
     }
     cases.push({ pieces: cut(pattern.text), flags, head: random.chance(0.15) ? some(2) : "", unit, count: many, tail });
-    // One in four is also written into the program, where the compiler sees it.
+    // One in four is also written into the program, where the compiler sees it. Nothing prints the source of such a one: plain Bun writes the characters beyond ASCII of a literal as escapes before it runs the program.
     let written = "undefined";
     if (random.chance(0.25))
       try {
@@ -283,7 +283,7 @@ ${chosen
     name => `  {
     const re = made(one);
     if (typeof re === "string") line += " " + re;
-    else line += " ${name} " + ${uses[name]} + "," + re.lastIndex;
+    else${name === "source" ? " if (!written[at])" : ""} line += " ${name} " + ${uses[name]} + "," + re.lastIndex;
   }`,
   )
   .join("\n")}

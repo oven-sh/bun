@@ -1,5 +1,6 @@
 // A quotient of two whole numbers that is rounded at once may be computed in whole numbers: where the divisor is not zero, the result is not a negative zero, and nothing is too large.
 // What is divided x by what x how the quotient is rounded, each in some places. Every result is printed so that a negative zero shows.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const beside = `function written(value: number): string { return Object.is(value, -0) ? "-0" : String(value); }\nconst lengths = [[], [1], [1, 2, 3], [1, 2, 3, 4, 5, 6, 7]];\n`;
@@ -72,5 +73,5 @@ export function programs(isTyped?: boolean) {
           body: turn => `const by = (${turn}) % 5; for (let n = start; n < start + 12; n++) text += written(${roundings[rounding](`(${dividends[dividend]}) / (${divisors[divisor]})`)}) + " ";`,
           after: "text",
         });
-  return inEveryPlace(all.map(named), isTyped, somePlaces);
+  return alsoWithTypesErased(inEveryPlace(all.map(named), isTyped, somePlaces), isTyped);
 }

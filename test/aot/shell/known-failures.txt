@@ -26,13 +26,6 @@ arrays/flat-map-of-array-literals	// IR= 1 bothEnds = NewArray - \(
 arrays/flat-map-of-array-literals	// IR= 1 bothEnds NewArray(Like|WithCapacity)
 arrays/flat-map-of-array-literals	// IR= 1 withWhatItCaptures = NewArray - \(
 arrays/flat-map-of-array-literals	// IR= 1 withWhatItCaptures NewArray(Like|WithCapacity)
-arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 askedForItsLength CallBuiltin .* overload=Uint8Array/
-arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 bornInALoop CallBuiltin .* overload=Uint8Array/
-arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 bornTrue CallBuiltin .* overload=Uint8Array/
-arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 ofAConstantLength CallBuiltin .* overload=Uint8Array/
-arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 paintedPosts CallBuiltin .* overload=Uint8Array/
-arrays/local-boolean-arrays-kept-as-bytes	// IR= 2 storesWhatATestSays CallBuiltin .* overload=Uint8Array/
-arrays/local-boolean-arrays-kept-as-bytes	// IR= 2 twoAtOnce CallBuiltin .* overload=Uint8Array/
 arrays/map-then-join-not-fused	// IR= 0 thisArgument StringBuilderBegin
 arrays/map-then-join-not-fused	// IR= 0 unknownCallback StringBuilderBegin
 arrays/method-chains-left-as-written	// IR= 2 callsWhatItIsGiven NewArray(Like|WithCapacity)

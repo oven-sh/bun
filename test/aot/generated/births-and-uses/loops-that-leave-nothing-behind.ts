@@ -1,5 +1,6 @@
 // A loop that only counts, and whose turns leave nothing behind, may go. What a turn asks may still run code, throw, or never stop being asked; what the loop has counted may still be read.
 // How the loop counts x how far x what a turn does, each in every place.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const beside = `const counted = { get size(): number { say("size"); return 3; } };
@@ -106,5 +107,5 @@ export function programs(isTyped?: boolean) {
           after: `total + ":" + readers.map(each => each()).join("")`,
         });
       }
-  return [...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)];
+  return alsoWithTypesErased([...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)], isTyped);
 }

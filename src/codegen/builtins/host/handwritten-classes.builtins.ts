@@ -1,6 +1,4 @@
 import * as b from "bun-builtins-table";
-import { prototypeMembersOf, classes as sinkNames } from "../../generate-jssink.ts";
-import { methodReturning } from "../collect-bindgen.ts";
 
 const externalState = ["ExternalState"];
 const objectOrUndefined = b.union(b.object, b.undefined);
@@ -38,26 +36,6 @@ const codecStream = (name: string) =>
       },
       b.otherwise,
     ],
-  });
-
-const sinkPaths = sinkNames.map(name => `%${name}%`);
-// generate-jssink.ts: they do nothing to a receiver that is no sink, and return.
-const sinkMembersOfAnyReceiver = ["ref", "unref"];
-
-const sinkClass = (name: string) =>
-  b.class(`%${name}%`, {
-    instanceCppClass: b.cppClass(`JS${name}`, "JSSink.h"),
-    prototypeCppExpression: `globalObject->${name}Structure()->storedPrototypeObject()`,
-    // generate-jssink.ts initializeProperties: `length` and `name`.
-    constructorHoldsPrototype: false,
-    proto: Object.fromEntries(
-      Object.entries(prototypeMembersOf(name)).map(([member, { returns }]) => [
-        member,
-        sinkMembersOfAnyReceiver.includes(member)
-          ? { ...methodReturning(returns), this: b.any }
-          : methodReturning(returns),
-      ]),
-    ),
   });
 
 export default b.declarations(
@@ -151,7 +129,4 @@ export default b.declarations(
   }),
   ["CryptoKey", "URLPattern"].flatMap(path => constructorOnly(path)),
   ["Bun.Cookie", "Bun.CookieMap"].flatMap(path => [...constructorOnly(path), ...b.inherits(path, "Object.prototype")]),
-
-  sinkNames.flatMap(sinkClass),
-  b.seenCodeOnly({ holders: sinkPaths }),
 );

@@ -1798,7 +1798,7 @@ pub(crate) mod js_bundler {
         }
 
         let vm = global_this.bun_vm();
-        let context = vm.context_of_caller_no_frame().id();
+        let context = vm.context_of_caller().id();
 
         // Detect and prevent calling Bun.build from within a macro during bundling.
         // This would cause a deadlock because:

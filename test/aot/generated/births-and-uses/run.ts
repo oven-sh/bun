@@ -1,7 +1,7 @@
 // Every birth of a kind of value against every use of it. A rule of the compiler about what a built-in makes, or about what a use may take for granted, is written for the births and uses
 // that its author thought of: the pairs that nobody thought of are here. Each pair is a program of its own, so that nothing but that birth decides what the compiler believes at that use.
 //
-//   bun test test/aot/generated-births-and-uses                          one pair in forty, the same ones every time, and every pair that once showed a fault (once-wrong.json)
+//   bun test test/aot/generated-births-and-uses                          a quarter of one pair in forty, and every pair that once showed a fault (once-wrong.json)
 //   AOT_GENERATED=all bun test test/aot/generated-births-and-uses        every pair: 56,000 programs, and 54,000 more as TypeScript
 //   AOT_GENERATED=template- bun test test/aot/generated-births-and-uses  the pairs whose name contains the text
 import { join } from "path";
@@ -24,7 +24,8 @@ export function birthsAndUses(title: string, from: string, isTyped?: boolean, pa
     programs.filter(({ name }) => Number(BigInt(Bun.hash(name)) % BigInt(parts)) === part - 1).map(program => ({
       name: program.name,
       // A generator of very many programs says how few of them every run takes.
-      isAlwaysRun: wasWrong.has(program.name) || Number(BigInt(Bun.hash(title + "/" + program.name)) % BigInt(generator.oneIn ?? 40)) === 0,
+      isAlwaysRun: Number(BigInt(Bun.hash(title + "/" + program.name)) % BigInt(generator.oneIn ?? 40)) === 0,
+      wasOnceWrong: wasWrong.has(program.name),
       isOnlyCompiled: true as const,
       // Some pairs are no program: a use that does not parse behind that birth, or that TypeScript rejects.
       mayBeUnjudgeable: true as const,

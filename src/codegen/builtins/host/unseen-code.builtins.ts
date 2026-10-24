@@ -68,6 +68,7 @@ const hostObjects = ["Bun", "console", "globalThis", "performance", "process"];
 
 const classesWithConstructor = [
   "%Archive%",
+  "%ArrayBufferSink%",
   "%Blob%",
   "%BlockList%",
   "%BuildMessage%",
@@ -75,6 +76,7 @@ const classesWithConstructor = [
   "%Expect%",
   "%ExpectTypeOf%",
   "%FetchSession%",
+  "%FileSink%",
   "%FileSystemRouter%",
   "%FrameworkFileSystemRouter%",
   "%H2FrameParser%",
@@ -84,6 +86,7 @@ const classesWithConstructor = [
   "%NativeBrotli%",
   "%NativeZlib%",
   "%NativeZstd%",
+  "%NetworkSink%",
   "%QuicEndpoint%",
   "%RedisClient%",
   "%Request%",
@@ -145,6 +148,7 @@ const prototypesWithoutConstructor = [
   "%PostgresSQLQuery%.prototype",
   "%QuicSession%.prototype",
   "%QuicStream%.prototype",
+  "%ReadableSinkController%.prototype",
   "%ResourceUsage%.prototype",
   "%S3File%.prototype",
   "%ScopeFunctions%.prototype",

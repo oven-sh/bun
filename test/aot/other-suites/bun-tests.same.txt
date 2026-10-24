@@ -394,7 +394,6 @@ test/js/bun/transpiler/transpiler-tsconfig-uaf.test.ts
 test/js/bun/transpiler/transpiler-unsupported-loader.test.ts
 test/js/bun/transpiler/transpiler-utf16-loader.test.ts
 test/js/bun/typescript/type-export.test.ts
-test/js/bun/udp/udp_socket.test.ts
 test/js/bun/udp/udp_socket_recv_flags.test.ts
 test/js/bun/util/arraybuffersink.test.ts
 test/js/bun/util/base64-url-safe-encode.test.ts
@@ -930,7 +929,6 @@ test/js/third_party/solc/solc.test.ts
 test/js/third_party/st/st.test.ts
 test/js/third_party/stripe/stripe.test.ts
 test/js/third_party/undici-h2/run.test.ts
-test/js/third_party/vitest/vitest.test.ts
 test/js/third_party/webpack/webpack.test.ts
 test/js/third_party/wpt-h2/run.test.ts
 test/js/third_party/yargs/yargs-cjs.test.js

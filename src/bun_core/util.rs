@@ -2897,20 +2897,41 @@ pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
     }
     let share = len.div_ceil(threads).next_multiple_of(1 << 16);
     let (to, from) = (to as usize, from as usize);
-    std::thread::scope(|scope| {
-        for start in (share..len).step_by(share) {
-            // SAFETY: a part of what the caller's contract covers, and no two threads get the same
-            // part.
-            scope.spawn(move || unsafe {
-                core::ptr::copy_nonoverlapping(
-                    (from + start) as *const u8,
-                    (to + start) as *mut u8,
-                    share.min(len - start),
-                )
-            });
+    for_each_in_parallel((0..len).step_by(share), |start| {
+        // SAFETY: a part of what the caller's contract covers, and no two calls get the same part.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                (from + start) as *const u8,
+                (to + start) as *mut u8,
+                share.min(len - start),
+            )
         }
-        // SAFETY: the first part, which no thread above was given.
-        unsafe { core::ptr::copy_nonoverlapping(from as *const u8, to as *mut u8, share.min(len)) };
+    });
+}
+
+/// Calls `work` once with each of `items`, on this thread and on one more for each item after the first.
+/// Every thread takes the next item until none is left, so the items of a thread that the system does not start go to the others.
+pub fn for_each_in_parallel<T: Send>(
+    items: impl ExactSizeIterator<Item = T> + Send,
+    work: impl Fn(T) + Sync,
+) {
+    let more_threads = items.len().saturating_sub(1);
+    let items = Mutex::new(items);
+    let work_through_items = || {
+        loop {
+            let item = items.lock().next();
+            let Some(item) = item else { break };
+            work(item);
+        }
+    };
+    std::thread::scope(|scope| {
+        for _ in 0..more_threads {
+            let thread = std::thread::Builder::new();
+            if thread.spawn_scoped(scope, &work_through_items).is_err() {
+                break;
+            }
+        }
+        work_through_items();
     });
 }
 

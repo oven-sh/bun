@@ -220,3 +220,17 @@ const subjects: string[] = ["a".repeat(13) + "c" + nothing, "aab" + nothing];
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
+//// whole-words-whatever-their-case-in-unicode-mode
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\b(?:error|warning|fatal)\\b" + nothing, "iu");
+const subjects: string[] = ["2026-10-24 00:36:12 info the request for /api/v1/items ended in order after 12 ms, no Warning" + nothing, "2026-10-24 00:36:13 info the request for /api/v1/items ended in order after 9 ms" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-group-that-ignores-case
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?i:get|post|put) /[a-z/]+ HTTP/1\\.[01]$" + nothing);
+const subjects: string[] = ["Post /api/items HTTP/1.1" + nothing, "PATCH /api/items HTTP/1.1" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}

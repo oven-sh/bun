@@ -76,7 +76,7 @@ function stretch(bodyName: string, walkName: string, endingName: string): Stretc
 
 const somePlaces = ["once", "often", "moduleLoop", "loop", "twoLoops", "loopWithContinue", "loopWithBreak", "handlerInALoop", "loopUnderAHandler", "cleanup", "copiedIntoALoop", "alsoCalledWhereItSeldomRuns", "inAClosure", "method", "callsItself", "loopWithAYield", "yieldUnderACleanup", "loopWithAnAwait"];
 
-export const oneIn = 100;
+export const oneIn = 50;
 
 export function programs(isTyped?: boolean) {
   const all: Stretch[] = [];

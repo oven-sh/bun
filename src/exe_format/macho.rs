@@ -806,20 +806,17 @@ impl MachoSigner {
         let pages_per_thread = total_pages
             .div_ceil(usize::from(bun_core::get_thread_count()).clamp(1, 16))
             .max(1024);
-        std::thread::scope(|scope| {
-            let page_runs = hashed[..self.sig_off].chunks(pages_per_thread * PAGE_SIZE);
-            for (pages, hashes) in page_runs.zip(hashes.chunks_mut(pages_per_thread * HASH_SIZE)) {
-                scope.spawn(move || {
-                    // The last partial page is hashed unpadded, as codesign does.
-                    for (page, hash) in pages
-                        .chunks(PAGE_SIZE)
-                        .zip(hashes.as_chunks_mut::<HASH_SIZE>().0)
-                    {
-                        let mut digest = [0u8; HASH_SIZE];
-                        sha256_hash(page, &mut digest);
-                        hash.copy_from_slice(&digest);
-                    }
-                });
+        let page_runs = hashed[..self.sig_off].chunks(pages_per_thread * PAGE_SIZE);
+        let runs = page_runs.zip(hashes.chunks_mut(pages_per_thread * HASH_SIZE));
+        bun_core::for_each_in_parallel(runs, |(pages, hashes)| {
+            // The last partial page is hashed unpadded, as codesign does.
+            for (page, hash) in pages
+                .chunks(PAGE_SIZE)
+                .zip(hashes.as_chunks_mut::<HASH_SIZE>().0)
+            {
+                let mut digest = [0u8; HASH_SIZE];
+                sha256_hash(page, &mut digest);
+                hash.copy_from_slice(&digest);
             }
         });
 

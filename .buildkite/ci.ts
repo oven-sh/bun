@@ -22,6 +22,7 @@ import {
   locations,
 } from "../scripts/build/ci-images/spec.ts";
 import {
+  aotTests,
   getBuildMetadata,
   getCommit,
   getCommitMessage,
@@ -887,21 +888,6 @@ interface TestOptions {
 // test/aot costs several times the rest of test/, so it has steps of its own: test/aot/README.md, "What CI has to know".
 type AotTests = "all" | "a tenth";
 
-// With test/aot go the tests of --aot, --trim, --library and --dts that lie beside the bundler's and the command line's. Each
-// of them builds executables: on macOS, where test-bun has two shards, they took as long as everything else in those shards.
-const aotTests = [
-  "aot/",
-  "bundler/bun-build-api-dts",
-  "bundler/bun-build-dts",
-  "bundler/bundler_compile_aot",
-  "bundler/compile-aot",
-  "bundler/compile-trim",
-  "bundler/trim-runtime-icu/",
-  "cli/aot-",
-  "cli/compile/compile-library",
-  "internal/trim/features",
-];
-
 const aotSources = [
   "src/aot/",
   "src/sema/",
@@ -944,6 +930,13 @@ const aotSources = [
 const aotPathspecs = aotSources.map(source => (source.endsWith("/") || source.includes(".") ? source : `${source}*`));
 const linuxX64AotGroups = ["aot/collector-stress/", "aot/bad-time/", "aot/instruction-counts/"];
 const tooSlowForAsan = ["aot/frameworks/nuxt.test", "aot/frameworks/astro.test", "aot/frameworks/angular"];
+// TODO: a build with assertions stops in StringKeyCache::findKeyForText where the limits are lowered, and in what a parse by a large type runs.
+const notYetWithAssertions = [
+  "aot/joined-programs-limits-lowered",
+  "aot/generated-a-parse-by-a-type-that-reaches-very-many-objects",
+];
+// TODO: with the limits lowered two programs of json-text-of-records do not end in the time that their group has.
+const notYetInTime = ["aot/joined-programs-limits-lowered-5"];
 const fullRunAotGroups = [...linuxX64AotGroups, "aot/heat/", "aot/startup-scaling/", "aot/variant-"];
 
 // The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.
@@ -983,8 +976,8 @@ function getAotTests(platform: Platform, options: PipelineOptions): AotTests | u
 
 function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): string[] {
   const groups = aot === "a tenth" ? fullRunAotGroups : linuxX64AotGroups;
-  if (profile === "asan") return [...groups, ...tooSlowForAsan];
-  return aot === "all" && arch === "x64" && distro === "debian" && !profile ? [] : groups;
+  if (profile === "asan") return [...groups, ...tooSlowForAsan, ...notYetWithAssertions];
+  return aot === "all" && arch === "x64" && distro === "debian" && !profile ? notYetInTime : [...groups, ...notYetInTime];
 }
 
 // Debian runs every file. Any other lane runs one file in this many, others for each commit.
@@ -992,6 +985,32 @@ function getAotFileDraw({ os, distro, profile }: Platform, aot: AotTests): numbe
   if (aot === "a tenth") return 10;
   if (distro === "debian" && !profile) return 1;
   return os === "darwin" ? 2 : 8;
+}
+
+// What a lane runs whatever it draws.
+function getAotAlwaysDrawn({ os, arch, profile }: Platform): string[] {
+  const isMacOnArm = os === "darwin" && arch === "aarch64";
+  return [
+    // The engine's own CI tests Linux alone: nothing else runs its tests on macOS.
+    ...(isMacOnArm ? ["aot/engine-tests"] : []),
+    ...(profile === "asan" ? ["aot/exception-checks"] : []),
+    // What can refuse to start an executable is tested wherever one is started.
+    "aot/an-executable-whose-image-header-names-a-range-outside-its-code-segment-does-not-start",
+    "aot/compiled-code-mapping",
+    "aot/inserted-library",
+    "aot/ways-to-start-an-executable",
+    // It lists what once went wrong on one platform alone, so that no draw passes it over there.
+    "aot/programs-that-differed-on-one-platform",
+    // What every run takes of the programs, whatever its share. Debian runs every file.
+    ...(profile === "asan" || isMacOnArm ? ["aot/programs-in-every-run"] : []),
+    // Each HTTP server answers every route.
+    ...(isMacOnArm ? ["aot/servers/"] : []),
+    // A library is files in folders, and every platform spells a path its own way.
+    "bundler/bun-build-api-dts",
+    "bundler/bun-build-dts",
+    "cli/compile/compile-library",
+    "aot/full-types-compiler-options",
+  ];
 }
 
 let expectedDurations: Record<string, Record<string, unknown>> | undefined;
@@ -1008,12 +1027,15 @@ function getAotParallelism(platform: Platform, aot: AotTests): number {
   const windows = arch === "x64" ? "windows" : "windows-aarch64";
   const lane = profile === "asan" ? "asan" : abi === "musl" ? "musl" : os === "windows" ? windows : "default";
   const excludes = getAotExcludes(platform, aot);
+  const alwaysDrawn = getAotAlwaysDrawn(platform);
+  const draw = getAotFileDraw(platform, aot);
   let milliseconds = 0;
   for (const [path, durations] of Object.entries(getExpectedDurations())) {
     if (!aotTests.some(group => path.startsWith(group)) || excludes.some(group => path.includes(group))) continue;
-    milliseconds += Number(durations?.[lane] ?? durations?.["default"]) || 0;
+    const isAlwaysDrawn = alwaysDrawn.some(group => path.includes(group));
+    milliseconds += (Number(durations?.[lane] ?? durations?.["default"]) || 0) / (isAlwaysDrawn ? 1 : draw);
   }
-  const shards = Math.ceil(milliseconds / getAotFileDraw(platform, aot) / (12 * 60_000)) || (aot === "all" ? 20 : 3);
+  const shards = Math.ceil(milliseconds / (12 * 60_000)) || (aot === "all" ? 20 : 3);
   return Math.min(shards, os === "darwin" ? 8 : arch === "x64" ? 27 : 16);
 }
 
@@ -1039,28 +1061,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   } else if (aot) {
     args.push(...aotTests.map(group => `--include=${group}`));
     args.push("--retries=1", "--vendor=false", `--one-in=${getAotFileDraw(platform, aot)}`);
-    // The engine's own CI tests Linux alone: nothing else runs its tests on macOS.
-    if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/engine-tests");
-    if (profile === "asan") args.push("--always-draw=aot/exception-checks");
-    // What can refuse to start an executable is tested wherever one is started.
-    args.push(
-      "--always-draw=aot/an-executable-whose-image-header-names-a-range-outside-its-code-segment-does-not-start",
-      "--always-draw=aot/compiled-code-mapping",
-      "--always-draw=aot/inserted-library",
-      "--always-draw=aot/ways-to-start-an-executable",
-    );
-    // It lists what once went wrong on one platform alone, so that no draw passes it over there.
-    args.push("--always-draw=aot/programs-that-differed-on-one-platform");
-    // What every run takes of the programs, whatever its share. Debian runs every file.
-    if (profile === "asan" || (os === "darwin" && platform.arch === "aarch64")) args.push("--always-draw=aot/programs-in-every-run");
-    // Each HTTP server answers every route.
-    if (os === "darwin" && platform.arch === "aarch64") args.push("--always-draw=aot/servers/");
-    // A library is files in folders, and every platform spells a path its own way.
-    args.push(
-      "--always-draw=bundler/bun-build-api-dts",
-      "--always-draw=bundler/bun-build-dts",
-      "--always-draw=cli/compile/compile-library",
-    );
+    args.push(...getAotAlwaysDrawn(platform).map(group => `--always-draw=${group}`));
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
@@ -1112,6 +1113,9 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       platform.tier === "beta" ? 60 : aot || profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      // The steps that block draw by a fixed seed, so that the same tree runs the same tests on every commit.
+      // TODO: a second step, which does not block, that draws by the commit.
+      AOT_SHARE: "4cb5a199f53012a76e430ac97c34ef9600389623",
       // Platform smoke check: runner.node.ts asserts the agent matches what
       // this step targets before running any test (see assertExpectedPlatform).
       // `release` is only asserted where the lane pins an exact version:

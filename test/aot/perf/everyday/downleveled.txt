@@ -884,3 +884,147 @@ function turn(i: number): number {
   const v = new B(i & 7);
   return v.b;
 }
+//// memo-cache.every-prop-given
+interface Props { text: string; background?: string; bold?: boolean; dim?: boolean }
+interface Style { background?: string; bold?: boolean; dim?: boolean }
+const $: any[] = new Array(7).fill(Symbol.for("react.memo_cache_sentinel"));
+function render(props: Props): number {
+  const { text, background, bold, dim } = props;
+  let style: Style;
+  if ($[0] !== background || $[1] !== bold || $[2] !== dim) {
+    style = { background, bold, dim };
+    $[0] = background;
+    $[1] = bold;
+    $[2] = dim;
+    $[3] = style;
+  } else {
+    style = $[3];
+  }
+  let line: { style: Style; text: string };
+  if ($[4] !== style || $[5] !== text) {
+    line = { style, text };
+    $[4] = style;
+    $[5] = text;
+    $[6] = line;
+  } else {
+    line = $[6];
+  }
+  return line.text.length + (line.style.bold ? 1 : 0);
+}
+const rows: Props[] = [{ text: "one", background: "red", bold: true, dim: false }, { text: "three", background: "red", bold: true, dim: false }];
+function turn(i: number): number {
+  return render(rows[(i >> 2) & 1]);
+}
+//// memo-cache.optional-props-omitted
+interface Props { text: string; background?: string; bold?: boolean; dim?: boolean }
+interface Style { background?: string; bold?: boolean; dim?: boolean }
+const $: any[] = new Array(7).fill(Symbol.for("react.memo_cache_sentinel"));
+function render(props: Props): number {
+  const { text, background, bold, dim } = props;
+  let style: Style;
+  if ($[0] !== background || $[1] !== bold || $[2] !== dim) {
+    style = { background, bold, dim };
+    $[0] = background;
+    $[1] = bold;
+    $[2] = dim;
+    $[3] = style;
+  } else {
+    style = $[3];
+  }
+  let line: { style: Style; text: string };
+  if ($[4] !== style || $[5] !== text) {
+    line = { style, text };
+    $[4] = style;
+    $[5] = text;
+    $[6] = line;
+  } else {
+    line = $[6];
+  }
+  return line.text.length + (line.style.bold ? 1 : 0);
+}
+const rows: Props[] = [{ text: "one" }, { text: "three" }];
+function turn(i: number): number {
+  return render(rows[(i >> 2) & 1]);
+}
+//// variant.direct-create-with-descriptor
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+B.prototype = Object.create(A.prototype, { constructor: { value: B, enumerable: false, writable: true, configurable: true } });
+function turn(i: number): number { const v = new (B as any)(i & 7); return v.a + v.b; }
+//// variant.helper-create-with-descriptor-one-class
+function inherits(ctor: any, superCtor: any) { ctor.prototype = Object.create(superCtor.prototype, { constructor: { value: ctor, enumerable: false, writable: true, configurable: true } }); }
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function turn(i: number): number { const v = new (B as any)(i & 7); return v.a + v.b; }
+//// variant.helper-create-with-descriptor-two-classes
+function inherits(ctor: any, superCtor: any) { ctor.prototype = Object.create(superCtor.prototype, { constructor: { value: ctor, enumerable: false, writable: true, configurable: true } }); }
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function C(this: any, a: number) { A.call(this, a); this.c = 3; }
+inherits(C, A);
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (C as any)(i & 3); return v.a + v.b + w.a + w.c; }
+//// variant.helper-plain-create-two-classes
+function inherits(ctor: any, superCtor: any) { ctor.prototype = Object.create(superCtor.prototype); ctor.prototype.constructor = ctor; }
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function C(this: any, a: number) { A.call(this, a); this.c = 3; }
+inherits(C, A);
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (C as any)(i & 3); return v.a + v.b + w.a + w.c; }
+//// variant.helper-plain-create-two-levels
+function inherits(ctor: any, superCtor: any) { ctor.prototype = Object.create(superCtor.prototype); ctor.prototype.constructor = ctor; }
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function D(this: any, a: number) { B.call(this, a); this.d = 3; }
+inherits(D, B);
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (D as any)(i & 3); return v.a + v.b + w.a + w.d; }
+//// variant.direct-plain-create-two-levels
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+B.prototype = Object.create(A.prototype); B.prototype.constructor = B;
+function D(this: any, a: number) { B.call(this, a); this.d = 3; }
+D.prototype = Object.create(B.prototype); D.prototype.constructor = D;
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (D as any)(i & 3); return v.a + v.b + w.a + w.d; }
+//// variant.util-inherits-two-levels
+import { inherits } from "node:util";
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function D(this: any, a: number) { B.call(this, a); this.d = 3; }
+inherits(D, B);
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (D as any)(i & 3); return v.a + v.b + w.a + w.d; }
+//// call-by-value.plain-one-of-four
+const fns = [function (this: any, a: number) { return this.k + a; }, function (this: any, a: number) { return this.k - a; }, function (this: any, a: number) { return this.k ^ a; }, function (this: any, a: number) { return this.k | a; }];
+const o = { k: 3 };
+function turn(i: number): number { return fns[i & 3].call(o, i & 7); }
+//// call-by-value.direct-one-of-four
+const fns = [function (o: any, a: number) { return o.k + a; }, function (o: any, a: number) { return o.k - a; }, function (o: any, a: number) { return o.k ^ a; }, function (o: any, a: number) { return o.k | a; }];
+const o = { k: 3 };
+function turn(i: number): number { return fns[i & 3](o, i & 7); }
+//// call-by-value.one-of-four-with-a-name-of-their-own
+const fns: any[] = [function (this: any, a: number) { return this.k + a; }, function (this: any, a: number) { return this.k - a; }, function (this: any, a: number) { return this.k ^ a; }, function (this: any, a: number) { return this.k | a; }];
+for (let n = 0; n < 4; n++) fns[n].order = n;
+const o = { k: 3 };
+function turn(i: number): number { return fns[i & 3].call(o, i & 7); }
+//// call-by-value.apply-arguments-one-of-four
+const fns = [function (this: any, a: number) { return this.k + a; }, function (this: any, a: number) { return this.k - a; }, function (this: any, a: number) { return this.k ^ a; }, function (this: any, a: number) { return this.k | a; }];
+const o = { k: 3, relay(n: number, a: number) { return fns[n].apply(this, [a]); } };
+function turn(i: number): number { return o.relay(i & 3, i & 7); }
+//// call-by-value.held-under-a-text
+const table: Record<string, any> = {};
+const names = ["add", "sub", "xor", "or"];
+table[names[0]] = function (this: any, a: number) { return this.k + a; };
+table[names[1]] = function (this: any, a: number) { return this.k - a; };
+table[names[2]] = function (this: any, a: number) { return this.k ^ a; };
+table[names[3]] = function (this: any, a: number) { return this.k | a; };
+const o = { k: 3 };
+function turn(i: number): number { return table[names[i & 3]].call(o, i & 7); }
+//// call-by-value.one-function-with-a-name-of-its-own-by-key
+const f: any = function (this: any, a: number) { return this.k + a; };
+const keys = ["listener"];
+f[keys[0]] = 1;
+const o = { k: 3 };
+function turn(i: number): number { return f.call(o, i & 7); }

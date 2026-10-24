@@ -3173,7 +3173,10 @@ pub mod bv2_impl {
                 "resolve_entry_point rejects disabled results and FileMap results have a path",
             );
 
-            path.assert_file_path_is_absolute();
+            // The path of a file in memory is its key in `files`, as the caller wrote it.
+            if !self.file_map.is_some_and(|files| files.contains(path.text)) {
+                path.assert_file_path_is_absolute();
+            }
             // borrowck: get-then-put instead of a single get-or-put.
             if self
                 .path_to_source_index_map(target)

@@ -1,5 +1,4 @@
-// A local array of small integers that is filled before it is read and indexed inside its length is kept as bytes. Its reads are operands of sums and results, so nothing asks whether an element is there, and the test that stands in front of such a read does not keep the array as it was written.
-// TODO: the build counts 0: STATISTIC: ArraysNarrowed >= 1
+// A local array of small integers that is filled before it is read and indexed inside its length. Its reads are operands of sums and results, so nothing asks whether an element is there.
 function histogram(bytes: number[]): number {
   const counts = new Array(256);
   counts.fill(0);

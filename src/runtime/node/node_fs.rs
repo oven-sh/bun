@@ -195,7 +195,8 @@ fn read_large_file(fd: FD, buf: &mut [u8], position: u64) -> Maybe<usize> {
     let threads = usize::from(bun_core::get_thread_count())
         .min(buf.len() / MIN_BYTES_PER_THREAD)
         .clamp(1, 8);
-    let part_len = buf.len().div_ceil(threads).next_multiple_of(1 << 16);
+    let len = buf.len();
+    let part_len = len.div_ceil(threads).next_multiple_of(1 << 16);
     let read_part = |part: &mut [u8], position: u64| -> Maybe<usize> {
         let mut count = 0;
         while count < part.len() {
@@ -206,25 +207,16 @@ fn read_large_file(fd: FD, buf: &mut [u8], position: u64) -> Maybe<usize> {
         }
         Ok(count)
     };
-    let counts: Vec<Maybe<usize>> = std::thread::scope(|scope| {
-        let mut parts = buf.chunks_mut(part_len).enumerate();
-        let first = parts.next();
-        let others: Vec<_> = parts
-            .map(|(index, part)| {
-                scope.spawn(move || read_part(part, position + (index * part_len) as u64))
-            })
-            .collect();
-        let first = first.map(|(_, part)| read_part(part, position));
-        let others = others
-            .into_iter()
-            .map(|thread| thread.join().expect("a reader thread panicked"));
-        first.into_iter().chain(others).collect()
+    let mut counts: Vec<Maybe<usize>> = (0..len.div_ceil(part_len)).map(|_| Ok(0)).collect();
+    let parts = buf.chunks_mut(part_len).zip(&mut counts).enumerate();
+    bun_core::for_each_in_parallel(parts, |(index, (part, count))| {
+        *count = read_part(part, position + (index * part_len) as u64);
     });
     let mut total = 0;
     for (index, count) in counts.into_iter().enumerate() {
         let count = count?;
         total += count;
-        if count < part_len.min(buf.len() - index * part_len) {
+        if count < part_len.min(len - index * part_len) {
             break;
         }
     }

@@ -88,13 +88,16 @@ export function inEveryPlace(stretches: Stretch[], isTyped: boolean | undefined,
       if (stretch.suspends && stretch.suspends !== place.kind) continue;
       if (stretch.returns && place.isOutsideFunctions) continue;
       const text = () => `${head}${stretch.beside ?? ""}\n${place.text(stretch)}\nexport {};\n`;
+      const name = `${stretch.name}-${placeName}`;
       made.push({
-        name: `${stretch.name}-${placeName}`,
+        name,
         file: isTyped ? "program.ts" : "program.mjs",
         get text() {
           return isTyped ? text() : new Bun.Transpiler({ loader: "ts" }).transformSync(text());
         },
       });
+      // One typed program in four is also built as if nothing had been declared.
+      if (isTyped && Bun.hash(name) % 4n === 0n) made.push({ name: `${name}-erased`, file: "program.ts", flags: ["--aot-erase-types"], get text() { return text(); } });
     }
   return made;
 }

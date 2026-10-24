@@ -1,2 +1,2 @@
-// Bun.ArrayBufferSink has no `prototype` property that a program can see: the read answers undefined.
+// The read answers what it answers in plain Bun.
 console.log(typeof Bun.ArrayBufferSink.prototype);

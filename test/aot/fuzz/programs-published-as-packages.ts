@@ -125,7 +125,7 @@ export function toldByThePackage(asked: AskedOfThePackage, kept: KeptByThePackag
     join(folder, "app/main.ts"),
     form === "one module"
       ? `import "published";\n`
-      : `import { handedOver, KeptByThePackage, toldByThePackage } from "published";\nfunction tell(run: () => unknown) {\n  try {\n    console.log(String(run()));\n  } catch (error) {\n    console.log((error as Error).name);\n  }\n}\nconsole.log(JSON.stringify(handedOver({ n: 1, t: "x" }, 2)), handedOver("a", 3).join(""), handedOver(1.5, 0).length, handedOver(1, "2" as any).length);\nfor (let turn = 0; turn < ${random.pick([1, 1, 300])}; turn++) {\n  if (turn > 1) console.log = () => {};\n${calls}\n}\n`,
+      : `import { handedOver, KeptByThePackage, toldByThePackage } from "published";\nlet quiet = false;\nfunction tell(run: () => unknown) {\n  let text: string;\n  try {\n    text = String(run());\n  } catch (error) {\n    text = (error as Error).name;\n  }\n  if (!quiet) console.log(text);\n}\nconsole.log(JSON.stringify(handedOver({ n: 1, t: "x" }, 2)), handedOver("a", 3).join(""), handedOver(1.5, 0).length, handedOver(1, "2" as any).length);\nfor (let turn = 0; turn < ${random.pick([1, 1, 300])}; turn++) {\n  quiet = turn > 1;\n${calls}\n}\n`,
   );
 
   // The package in plain Bun: index.js has to behave as the sources do.

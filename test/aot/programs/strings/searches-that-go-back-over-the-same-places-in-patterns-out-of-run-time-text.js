@@ -39,3 +39,8 @@ show("only at the end, after a lookahead that must fail", "(?!(?:.|a)*c)$", "u",
 show("only at the end, behind a lookbehind", "(?<=.)(?!(?:a|a)*c)$", "u", "α" + "a".repeat(30));
 show("only at the end, a class that takes pairs", "(?!(?:[^x]|a)+c)$", "u", "α" + "a".repeat(34));
 show("only at the end, behind a pair", "(?<=.)(?!(?:a|a)*c)$", "u", "a".repeat(30) + "😀");
+for (let count = 25; count <= 28; count++) show("up to ninety-nine turns, " + count, "(?:a|a){0,99}c|a+", "", "a".repeat(count));
+for (let count = 25; count <= 28; count++) show("three to two hundred turns, as few as may be, " + count, "(?:a|a){3,200}?c|a+", "", "a".repeat(count));
+for (let count = 25; count <= 28; count++) show("a group that ignores case, " + count, "(?i:a|A)*c|a+", "", "a".repeat(count));
+for (let count = 25; count <= 28; count++) show("an alternative that ignores case, " + count, "(?:a|(?i:A))*(?-i:c)|a+", "i", "a".repeat(count));
+show("a group where the dot takes line ends", "^(?s:.+)+(?-s:.)x$", "", "ab\n".repeat(9) + "y");

@@ -405,7 +405,7 @@ class AssertionError extends Error {
       }
     }
     // Create error message including the error code in the name.
-    this.stack; // eslint-disable-line no-unused-expressions
+    this.stack; // oxlint-disable-line bun/no-unused-expressions
     // Reset the name.
     this.name = "AssertionError";
     this.diff = diff;

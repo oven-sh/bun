@@ -27,7 +27,8 @@ function walk(steps: number): number {
   for (let i = 0; i < steps; i++) at = at.plus(step);
   return at.x + at.y;
 }
-console.log(JSON.stringify({ pid: process.pid, walked: walk(1000), maps: readFileSync("/proc/self/maps", "utf8") }));
+const applied = Reflect.apply(Vector.prototype.plus, new Vector(1, 1), [new Vector(2, 2)]).x;
+console.log(JSON.stringify({ pid: process.pid, walked: walk(1000), applied, maps: readFileSync("/proc/self/maps", "utf8") }));
 `,
   "tsconfig.json": JSON.stringify({
     compilerOptions: {

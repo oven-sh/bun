@@ -2,7 +2,8 @@
 // prints is compared, line by line, with what plain `bun run` prints for the same text. So is what `bun run --aot` prints, which runs the
 // sources under the rules of --aot without compiling them: it and the executable must agree, also where both depart from plain Bun.
 //
-//   bun test test/aot/generated-operands                     a quarter of the part of each generator's programs that is meant for every run, another for each commit (`inShare` in ../run-programs.ts)
+//   bun test test/aot/generated-operands                     a quarter of the part of each generator's programs that is meant for every run, another for each commit (`inShare` in ../run-programs.ts),
+//                                                            and every program that once showed a fault
 //   AOT_SHARE=all bun test test/aot/generated-operands       that part whole
 //   AOT_GENERATED=all bun test test/aot/generated-operands   all of them
 //   AOT_GENERATED=<text> bun test test/aot/generated-..      those whose name contains the text
@@ -12,11 +13,13 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { built, inShare, wanted as programsWanted, slot, spawned, unsupported, withoutCoreDump, withoutCrashReport } from "../run-programs";
+import { built, inShare, inTenthOfSlowBuild, wanted as programsWanted, slot, spawned, unsupported, withoutCoreDump, withoutCrashReport } from "../run-programs";
 
 export type Generated = {
   name: string;
   isAlwaysRun: boolean;
+  /** It once showed a fault. It is meant for every run, and no run leaves it to another commit. */
+  wasOnceWrong?: boolean;
   make: () => { file: string; text: string; files?: Record<string, string> };
   /** The program tries what --aot does not allow. It may fail to build, or catch a TypeError and print "THROWS TypeError". It may not print anything else that plain Bun does not. */
   mayBeRefused?: true;
@@ -72,10 +75,10 @@ export function generated(title: string, programs: Generated[]) {
   const root = kept ?? String(tempDir("aot-generated", {}));
   if (!kept) afterAll(() => rmSync(root, { recursive: true, force: true }));
   const chosen = programs
-    .filter(program => (wanted === "all" ? true : wanted ? program.name.includes(wanted) : program.isAlwaysRun))
+    .filter(program => (wanted === "all" ? true : wanted ? program.name.includes(wanted) : program.isAlwaysRun || program.wasOnceWrong))
     // A debug or ASAN build of Bun is many times slower.
-    .filter((_, index) => wanted || programsWanted !== "quick" || index % 10 === 0)
-    .filter(program => wanted || inShare(`${title} ${program.name}`, 4));
+    .filter((program, index) => wanted || programsWanted !== "quick" || inTenthOfSlowBuild(`${title} ${program.name}`, index))
+    .filter(program => wanted || program.wasOnceWrong || inShare(`${title} ${program.name}`, 4));
 
   describe.concurrent(`compile/aot/generated/${title}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});

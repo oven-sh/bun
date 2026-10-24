@@ -19,7 +19,6 @@ Checked against the IR that `testaot print --until=<PassID>` prints, on every pl
     // IRM= <n> <regex>                the same, in the top-level code of the program's own module
     // IR-UNTIL <PassID>               at most one in a program: its IR lines are read after the first run of that pass. Default: NumberLiteralStrings, the end
                                        of form Prepared. A line about a slot access or a grouped operation needs a pass of form Selected or later.
-                                       RemoveRedundantBarriers runs after placement and is the last that changes a body
 Checked against the allocation remarks (the test command `allocation-remarks` of `testaot run`), on every platform:
     <code> //! <remark> { ; <remark> } the allocations in this source line, in order of position. A remark is the start of what the compiler reports:
                                        removed | frame | heap [: <operation>] | allocated at <n> sites [: <operation>]. A line without the comment is not judged

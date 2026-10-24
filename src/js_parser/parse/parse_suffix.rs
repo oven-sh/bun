@@ -20,6 +20,26 @@ enum Continuation {
 type CResult = core::result::Result<Continuation, Error>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// The type arguments from `start` up to the current token followed `target`. `<any>` and
+    /// `<unknown>` ask for no check, and neither name can be declared to mean something else.
+    fn remember_type_arguments_of_parse(&mut self, target: Expr, start: usize) {
+        let member = match target.data {
+            ExprData::EDot(dot) if dot.name == b"parse" => dot.name_loc,
+            ExprData::EIndex(index) => match index.index.data {
+                ExprData::EString(key) if key.eql_comptime(b"parse") => index.index.loc,
+                _ => return,
+            },
+            _ => return,
+        };
+        let arguments = self.source.contents[start..self.lexer.start].trim_ascii();
+        let argument = (arguments.strip_prefix(b"<"))
+            .and_then(|rest| rest.strip_suffix(b">"))
+            .map(<[u8]>::trim_ascii);
+        if !matches!(argument, Some(b"any" | b"unknown")) {
+            self.parse_members_with_type_arguments.push(member);
+        }
+    }
+
     fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)
@@ -191,7 +211,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
+                let start = p.lexer.start;
                 let _ = p.skip_type_script_type_arguments::<false, false>()?;
+                p.remember_type_arguments_of_parse(*left, start);
                 if p.lexer.token != T::TOpenParen {
                     p.lexer.expected(T::TOpenParen)?;
                 }
@@ -878,9 +900,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
+        let start = p.lexer.start;
         if Self::IS_TYPESCRIPT_ENABLED
             && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
+            p.remember_type_arguments_of_parse(*left, start);
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -970,9 +994,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
+        let start = p.lexer.start;
         if Self::IS_TYPESCRIPT_ENABLED
             && p.try_skip_type_script_type_arguments_with_backtracking()?
         {
+            p.remember_type_arguments_of_parse(*left, start);
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }

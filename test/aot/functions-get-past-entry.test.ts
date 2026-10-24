@@ -3,7 +3,8 @@
 //
 // `--aot-check=functions-get-past-entry` names every function that is compiled and cannot get past its first block, unless it ends there in a throw that the program spells out.
 // It looks before anything is inlined, since an inlined body has no first block, and reports behind the removal of what nothing names any more, so code that is dropped is not named.
-// A program that is named is not wrong: a callback over a list that is always empty is dead code that nobody has called dead, and so is a read from what is always null.
+// A program that is named is not wrong: a callback over a list that is always empty is dead code that nobody has called dead, and so is a read from what is always null
+// or a call of what is always undefined: the language throws there, the program does not say so, and a store that the analysis missed looks the same.
 // The real programs have none, so there a name is worth reading.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -26,7 +27,12 @@ console.log("end");`,
 const byName = new Map();
 byName.forEach((value, name) => { console.log(value.x, name.length); });
 console.log("end");`,
+  "a call of what is not there": `
+const o = {};
+function call() { return o.absent(); }
+try { call(); } catch (e) { console.log(e.name); }`,
 };
+const endsBehind: Record<string, string> = { "a call of what is not there": "Call" };
 
 const passedOver: Record<string, string> = {
   "the callback over a list that holds something": `
@@ -37,10 +43,6 @@ console.log("end");`,
 function fail(text) { throw new Error(text); }
 function refuse() { fail("no"); }
 try { refuse(); } catch (e) { console.log(e.message); }`,
-  "a call of what is not there": `
-const o = {};
-function call() { return o.absent(); }
-try { call(); } catch (e) { console.log(e.name); }`,
   "a function that nobody calls": `
 function unused(x) { return x.y; }
 console.log(typeof unused);`,
@@ -79,7 +81,10 @@ async function build(name: string, source: string, ...flags: string[]) {
 }
 
 test.concurrent.each(Object.keys(named))("is named: %s", async name => {
-  expect(await build(name, named[name], check)).toEqual({ exitCode: 1, names: ["it ends behind PropGet, line 3"] });
+  expect(await build(name, named[name], check)).toEqual({
+    exitCode: 1,
+    names: [`it ends behind ${endsBehind[name] ?? "PropGet"}, line 3`],
+  });
   expect(await build(name, named[name])).toEqual({ exitCode: 0, names: [] });
 });
 

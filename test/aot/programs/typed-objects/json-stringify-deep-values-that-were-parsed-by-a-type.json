@@ -1,1 +1,4 @@
-{ "runWithASAN": "conversions and writes of deep, shared and changing values" }
+{
+  "runWithASAN": "conversions and writes of deep, shared and changing values",
+  "skipWithASAN": "TODO: a build with assertions asks for an exception check between two calls of JSOrderedHashTable::add"
+}

@@ -12,11 +12,22 @@ interface Named {
   tag: `id-${bigint}`;
   size: `${number}px`;
   code: number & Schema.Pattern<"^(1)(2)$">;
-  either: (string & Schema.Pattern<"^(e+)$">) | (string & Schema.Pattern<"^(f+)$">) | { deep: string & Schema.Format<"uuid"> };
+  either:
+    | (string & Schema.Pattern<"^(e+)$">)
+    | (string & Schema.Pattern<"^(f+)$">)
+    | { deep: string & Schema.Format<"uuid"> };
 }
 
 function lastMatch(): string {
-  return [RegExp.lastMatch, RegExp.$1, RegExp.$2, RegExp.input, RegExp.leftContext, RegExp.rightContext, RegExp.lastParen].join("|");
+  return [
+    RegExp.lastMatch,
+    RegExp.$1,
+    RegExp.$2,
+    RegExp.input,
+    RegExp.leftContext,
+    RegExp.rightContext,
+    RegExp.lastParen,
+  ].join("|");
 }
 
 function createValid(): any {

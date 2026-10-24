@@ -1,13 +1,11 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { readBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import type { BuiltinEntry, BuiltinKind } from "../../../scripts/build/trim/types.ts";
 import { Guards, textOfStaticTableEntry } from "../../../src/codegen/builtins/guards.ts";
-import { createHashTable } from "../../../src/codegen/create-hash-table.ts";
 import { removableFeatures } from "../../../src/codegen/removable-entry-points.ts";
 import { builtinUsesPath, builtinUsesSkipReason, skipNotice } from "./toy-program.ts";
 
@@ -28,10 +26,18 @@ const entry = (id: number, path: string, kind: BuiltinKind, uses: BuiltinEntry["
 const always = (name: string) => ({ feature: name, isConditional: false });
 const sometimes = (name: string) => ({ feature: name, isConditional: true });
 
+const createHashTable = join(import.meta.dir, "../../../src/codegen/create-hash-table.ts");
+
 function generate(tables: string): string {
   using dir = tempDir("generated-guards", { "tables.cpp": `/* Source for tables.lut.h\n${tables}\n*/\n` });
   const output = join(String(dir), "tables.lut.h");
-  createHashTable(join(String(dir), "tables.cpp"), output);
+  const { exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), createHashTable, join(String(dir), "tables.cpp"), output],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  expect(exitCode).toBe(0);
   return readFileSync(output, "utf8");
 }
 
@@ -41,7 +47,7 @@ const valuesOf = (text: string, entryKey: string) =>
     .filter(line => line.startsWith(`   { "${entryKey}"_s,`))
     .map(line => line.slice(line.indexOf("{ HashTableValue::")));
 
-describe.skipIf(Bun.which("perl") === null)("createHashTable", () => {
+describe.skipIf(Bun.which("perl") === null)("create-hash-table.ts", () => {
   test("a table holds the functions themselves: what was removed is replaced where a pointer becomes callable", () => {
     const text = generate(`@begin bunObjectTable
     call    functionCall    DontDelete|Function 2
@@ -122,24 +128,3 @@ test.skipIf(builtinUsesPath === undefined)(
     expect(guardedEntries.filter(({ inside, onEntry }) => !Bun.deepEquals(inside, onEntry))).toEqual([]);
   },
 );
-
-test("importing generate-jssink.ts writes no file", async () => {
-  const generator = pathToFileURL(join(import.meta.dir, "../../../src/codegen/generate-jssink.ts")).href;
-  using dir = tempDir("generated-guards-jssink", {
-    "import.ts": `const { classes } = await import(${JSON.stringify(generator)});\nconsole.log(JSON.stringify(classes));\n`,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "import.ts", "output"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-  const classes: string[] = JSON.parse(stdout);
-  expect(classes).toHaveLength(7);
-  expect(classes).toContain("FileSink");
-  expect(readdirSync(String(dir))).toEqual(["import.ts"]);
-  expect(exitCode).toBe(0);
-});

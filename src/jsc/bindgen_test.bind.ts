@@ -28,6 +28,11 @@ export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
+export const stringViewEcho = b.fn({ args: { text: b.string.view }, returns: b.string });
+export const stringOrObjectViewEcho = b.fn({
+  args: { text: b.string.allowStringObject.view.optional },
+  returns: b.string.optional,
+});
 export const stringLength = b.fn({ args: { text: b.string.default("absent") }, returns: b.usize });
 export const expectedByNode = b.fn({
   args: { text: b.string, data: b.bytes({ from: ["string", "buffer"] }).optional, flag: b.bool.default(false) },
@@ -312,6 +317,7 @@ export const TestError = b.class({
   proto: {
     code: { getter: b.i32 },
     nonConfigurableCode: { getter: b.i32, configurable: false },
+    enumerableCode: { getter: b.i32, enumerable: true },
     describe: { returns: b.string.utf8 },
     countArguments: { args: { args: b.any.variadic }, returns: b.usize },
     /** Computed once. Assigning replaces it without calling Rust. */
@@ -322,6 +328,47 @@ export const TestError = b.class({
   static: {
     /** Process-wide. */
     level: { getter: b.i32, setter: true },
+  },
+});
+
+/** `writable: false` and `constant`. */
+export const TestReadOnly = b.class({
+  rustPath: "crate::bindgen_test::TestReadOnly",
+  writable: false,
+  construct: {},
+  proto: {
+    answer: { returns: b.i32 },
+    "@@dispose": {},
+    kind: { constant: 3 },
+    hiddenKind: { constant: -1, enumerable: false, configurable: true },
+  },
+});
+
+/** `calledFromCpp` and `calledFromRust`. `BindgenTest.cpp` has the C++. */
+export const TestMemberFunctions = b.class({
+  rustPath: "crate::bindgen_test::TestMemberFunctions",
+  construct: {},
+  internalFields: { note: b.any, promise: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
+  proto: {
+    twice: { args: { n: b.i32 }, returns: b.i32, calledFromCpp: true },
+    run: { args: { n: b.any, fail: b.bool }, returns: b.any, capability: "js", throws: true, passThis: true },
+    /** Returns what the field holds afterwards. */
+    setNote: { args: { value: b.any }, returns: b.any, capability: "heap", passThis: true },
+    fail: { capability: "js", throws: true, passThis: true },
+    /** The same promise on every call. */
+    promise: { returns: b.any, capability: "js", passThis: true },
+  },
+  calledFromCpp: {
+    callCount: { returns: b.u32 },
+    sum: { args: { bytes: b.byteSpan }, returns: b.u32 },
+    failInRust: { capability: "heap", throws: true },
+  },
+  calledFromRust: {
+    runInCpp: { args: { n: b.any, fail: b.bool }, returns: b.any, throws: true },
+    setNoteInCpp: { args: { value: b.any } },
+    noteInCpp: { returns: b.any },
+    failInCpp: { throws: true },
+    promiseInCpp: { capability: "heap", returns: b.any },
   },
 });
 

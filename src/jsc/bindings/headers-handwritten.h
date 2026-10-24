@@ -199,8 +199,6 @@ typedef struct SystemError {
     BunString dest;
 } SystemError;
 
-typedef void* ArrayBufferSink;
-
 typedef uint8_t BunPluginTarget;
 inline constexpr BunPluginTarget BunPluginTargetBun = 0;
 inline constexpr BunPluginTarget BunPluginTargetBrowser = 1;

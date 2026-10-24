@@ -417,7 +417,7 @@ function onwrite(stream: $Node.Writable, er): void {
 
   if (er) {
     // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
-    er.stack; // eslint-disable-line no-unused-expressions
+    er.stack; // oxlint-disable-line bun/no-unused-expressions
 
     if ((state[kState] & Flag.Errored) === 0) {
       state[kErroredValue] = er;

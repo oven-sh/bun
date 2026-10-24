@@ -1,5 +1,3 @@
 {
-  "skipInVariant": {
-    "inner-objects-flattened-wherever-legal": "TODO: under --aot-testing=FlattenUntilHeldWhereverLegal the program did not end in 90 s on a loaded machine, and ends with the pass off: not looked into"
-  }
+  "skipWithASAN": "TODO: a build with assertions asks for an exception check between two calls of JSOrderedHashTable::add"
 }

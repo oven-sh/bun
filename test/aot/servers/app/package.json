@@ -15,5 +15,14 @@
   "devDependencies": {
     "@types/bun": "1.4.3",
     "@types/node": "26.6.5"
+  },
+  "overrides": {
+    "body-parser": "2.3.0",
+    "delegates": "1.0.0",
+    "ee-first": "1.1.1",
+    "finalhandler": "2.1.1",
+    "on-finished": "2.4.1",
+    "parseurl": "1.3.3",
+    "router": "2.2.0"
   }
 }

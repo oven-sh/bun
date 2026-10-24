@@ -33,6 +33,11 @@ interface OpenBag { size: number; [key: string]: number }
 const listedBags: ListedBag[] = [];
 const openBags: OpenBag[] = [];
 for (let i = 0; i < 64; i++) { listedBags.push({ size: i, a: i + 1, b: 2 }); openBags.push({ size: i, a: i + 1, b: 2 }); }
+type Level = "low" | "mid" | "high" | "top";
+const levels: Level[] = ["low", "mid", "high", "top"];
+const levelNames: string[] = ["low", "mid", "high", "top"];
+const worthOfLevel: Record<Level, number> = { low: 1, mid: 2, high: 3, top: 4 };
+const worthOfName: Record<string, number> = { low: 1, mid: 2, high: 3, top: 4 };
 const getters: WithGetter[] = [], methods: WithMethod[] = [], arrows: WithArrowField[] = [], plains: WithPlainMethod[] = [], hashes: WithPrivateNames[] = [], keywords: WithPrivateKeyword[] = [];
 for (let i = 0; i < 64; i++) { getters.push(new WithGetter(i, 2)); methods.push(new WithMethod(i, 2)); arrows.push(new WithArrowField()); plains.push(new WithPlainMethod()); hashes.push(new WithPrivateNames(i, 1)); keywords.push(new WithPrivateKeyword(i, 1)); }
 
@@ -103,6 +108,10 @@ const loops: Record<string, (n: number) => number> = {
   "class below a class as written for ES5": n => { let s = 0; for (let i = 0; i < n; i++) { const v = new BelowForES5(i & 7); s += v.a + v.b; } return s; },
   "names that the type of the literal lists": n => { let s = 0; for (let i = 0; i < n; i++) { const v = listedBags[i & 63]; s += v.size + v.a + v.b; } return s; },
   "names under the index signature of the type of the literal": n => { let s = 0; for (let i = 0; i < n; i++) { const v = openBags[i & 63]; s += v.size + v.a + v.b; } return s; },
+  "keys out of a list of strings": n => { let s = 0; for (let i = 0; i < n; i++) s += worthOfName[levelNames[i & 3]]; return s; },
+  "keys out of a list of a union of texts": n => { let s = 0; for (let i = 0; i < n; i++) s += worthOfLevel[levels[i & 3]]; return s; },
+  "comparisons of a string out of a list": n => { let s = 0; for (let i = 0; i < n; i++) { const v = levelNames[i & 3]; s += v === "low" ? 1 : v === "mid" ? 2 : 3; } return s; },
+  "comparisons of one of a union of texts out of a list": n => { let s = 0; for (let i = 0; i < n; i++) { const v = levels[i & 3]; s += v === "low" ? 1 : v === "mid" ? 2 : 3; } return s; },
 };
 let outersKeep: unknown = undefined;
 

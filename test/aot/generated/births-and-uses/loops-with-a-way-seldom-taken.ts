@@ -1,6 +1,7 @@
 // A loop that runs often and has a way through it that is seldom taken may be kept in two copies: one that knows what the usual turns leave behind, and one for the turns behind the rare way.
 // What goes round the loop is the same in both, a turn runs in one of them, and the loop may come back to the first copy only when everything is again as that copy takes it to be.
 // What goes round the loop x what the rare way does to it x when the rare way is taken, each in every place.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const beside = `const table: Record<string, (given: unknown) => unknown> = { same: given => given };
@@ -106,5 +107,5 @@ export function programs(isTyped?: boolean) {
             },
             after: `sum + ":" + kept.length`,
           });
-  return inEveryPlace(all.map(named), isTyped);
+  return alsoWithTypesErased(inEveryPlace(all.map(named), isTyped), isTyped);
 }

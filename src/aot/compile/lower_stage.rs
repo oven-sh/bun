@@ -220,8 +220,9 @@ impl Build<'_> {
             &bound.projects.application.graph,
             &mut checked.application,
         );
-        let mut units =
-            Vec::with_capacity(checked.application.lowered.len() + checked.runtime.lowered.len());
+        let unit_count =
+            checked.application.lowered.len() + checked.runtime.lowered.len() + worlds.units.len();
+        let mut units = Vec::with_capacity(unit_count);
         self.report_project(
             loaded,
             ProjectId::Application,

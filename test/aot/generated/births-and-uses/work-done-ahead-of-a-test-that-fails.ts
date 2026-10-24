@@ -1,6 +1,7 @@
 // A function that is written for one kind of object finds out somewhere in its body that it was given another. It may then begin again in a slower form of itself only if nothing that it did
 // so far can be told: whatever it counted, wrote, said or called is done once.
 // What the function does first x where it first looks at the object x what the object is instead, each in every place.
+import { alsoWithTypesErased } from "./also-with-types-erased";
 import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
 
 const common = `class Box { value: number; more: number; constructor(value: number, more: number) { this.value = value; this.more = more; } }
@@ -89,8 +90,8 @@ export function programs(isTyped?: boolean) {
           name: `${effect}-${body}-${stranger}`,
           beside: common + bodies[body].replace("E", () => effects[effect]) + "\n",
           before: seed => `let sum = ${seed};`,
-          body: turn => `for (let at = 0; at < 3; at++) sum += work(new Box(at, 1), ${turn}); say(work((${strangers[stranger](turn)}) as Box, ${turn} + 10));`,
+          body: turn => `for (let at = 0; at < 3; at++) sum += work(new Box(at, 1), ${turn}); say(work((${strangers[stranger](turn)}) as unknown as Box, ${turn} + 10));`,
           after: `sum + ":" + count + ":" + log.length + ":" + other.value + ":" + bumped + ":" + seenBoxes.size + ":" + steps.next().value`,
         });
-  return [...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)];
+  return alsoWithTypesErased([...inEveryPlace(everywhere.map(named), isTyped), ...inEveryPlace(inFewPlaces.map(named), isTyped, fewPlaces)], isTyped);
 }

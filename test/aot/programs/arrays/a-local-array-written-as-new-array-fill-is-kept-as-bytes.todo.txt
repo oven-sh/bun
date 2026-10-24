@@ -1,1 +1,0 @@
-ArraysNarrowed is 0: the front end lowers `Array(n).fill(v)` to a call of the library's filledArray (src/aot/lower/call/array_makers.rs), and narrowStorageOfLocalArrays (aot/passes/AOTArrayNarrowStorage.cpp) knows one form alone: the built-in Array with a length, then the built-in fill.

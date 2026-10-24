@@ -181,7 +181,10 @@ impl<'a> Build<'a> {
             messages: &messages,
             typed_packages: &typed_packages,
         };
-        self.load_projects(&shared, asset_reads, then)
+        let result = self.load_projects(&shared, asset_reads, then);
+        drop(typed_packages);
+        self.retire(Box::new(disk));
+        result
     }
 
     pub(super) fn reports_typed_versions(&self, project: ProjectId) -> bool {

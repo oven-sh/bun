@@ -381,7 +381,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `session.fetch()`: the session, which a `session` in the init does not replace.
     bound_session: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    let context = ctx.bun_vm().context_of_caller_no_frame();
+    let context = ctx.bun_vm().context_of_caller();
     // What script of a disposed `Bun.ModuleGraph` starts does not start, and reports nothing: no
     // connection goes out, and the promise stays pending.
     if context.is_stopped() {

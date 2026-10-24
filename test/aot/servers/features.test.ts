@@ -361,7 +361,14 @@ if (!requestedServers)
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers/features", () => {
   const folder = String(tempDir("aot-servers-features", {}));
   // Each executable is as large as Bun itself.
-  afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  afterAll(() => {
+    try {
+      rmSync(folder, { recursive: true, force: true });
+    } catch (error) {
+      // On Windows the file of an executable that has just ended may still be held.
+      if (process.platform !== "win32") throw error;
+    }
+  });
 
   beforeAll(async () => {
     cpSync(join(import.meta.dir, "app"), folder, { recursive: true });

@@ -1,7 +1,0 @@
-read through: 19999900000 object one cell a pair: true at most 32 bytes a pair: true
-held by a local name: 39999800000 object one cell a pair: true at most 32 bytes a pair: true
-passed to a function that reads: 19999900000 object one cell a pair: true at most 32 bytes a pair: true
-kept now and then: 19999900000 object one cell a pair: true at most 32 bytes a pair: true
-made by constructors: 19999900000 object one cell a pair: true at most 32 bytes a pair: true
-stored again: 39999800000 object one cell a pair: true at most 32 bytes a pair: true
-6

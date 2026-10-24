@@ -9,5 +9,5 @@ function inTry(a: number): number { try { const p = new PtConstructor(a, 1); ret
 async function inAsync(a: number): Promise<number> { const p = new PtConstructor(a, 2); await undefined; return p.x + p.y; }
 let s = 0;
 for (let i = 0; i < 3_000_000; i++) s += inTry(i & 7);
-inAsync(5).then(r => console.log(s, r, inTry));
+inAsync(5).then(r => console.log(s, r, [inTry].map(kept => kept(3)).join()));
 export {};

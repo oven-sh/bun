@@ -264,7 +264,7 @@ impl<'a> JsScope<'a> {
     /// For the APIs that take the tree's own proof of being on the JS thread.
     #[inline]
     pub fn js_thread(&mut self) -> JsThread<'_> {
-        self.heap.global_object().js_thread_of_caller_no_frame()
+        self.heap.global_object().js_thread_of_caller()
     }
 }
 
@@ -673,8 +673,9 @@ impl<'a> JsLocal<'a, BufferSource> {
     /// The bytes as they are now. A detached or out-of-bounds view is empty.
     #[inline]
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
-        let array_buffer = self.0.as_array_buffer(heap.global_object());
-        let result = f(array_buffer.as_ref().map_or(&[], ArrayBuffer::byte_slice));
+        // SAFETY: `self` holds the buffer until `f` returns, and only JavaScript moves its bytes, which takes the `&mut JsScope` that `heap` borrows.
+        let result =
+            f(unsafe { extern_types::Bun__Bindgen__bytesOfBlobOrBuffer(self.0).get(heap) });
         self.0.ensure_still_alive();
         result
     }
@@ -919,6 +920,16 @@ pub unsafe trait JsPayload: Sized + 'static {
     fn into_js_wrapper(self, global: &JSGlobalObject) -> JsWrapper<'_, Self> {
         // SAFETY: a `JsHeap` is the global object.
         self.into_js(unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() })
+    }
+
+    /// The JS object that owns `self`. In `Drop` the cell is dead: compare it by identity only.
+    ///
+    /// # Safety
+    /// `self` was given to [`into_js`](Self::into_js).
+    #[inline]
+    unsafe fn wrapper_value(&self) -> JSValue {
+        // SAFETY: the payload is at this offset in its cell.
+        JSValue::from_cell(unsafe { core::ptr::from_ref(self).byte_sub(Self::PAYLOAD_OFFSET) })
     }
 }
 

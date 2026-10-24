@@ -149,7 +149,8 @@ describe.concurrent("a package's full types mean what its package.json says", ()
         const built = await spawned([bunExe(), "compile", "./app.ts"], root, env);
         const said = (built.stdout + built.stderr)
           .split(/\r?\n/)
-          .filter(line => /full types|without .*types/.test(line));
+          .filter(line => /full types|without .*types/.test(line))
+          .map(line => line.replaceAll("\\", "/"));
         expect({ said: said.sort(), exitCode: built.exitCode }).toEqual({
           said: ["by-hand", ...Object.keys(libraries)]
             .sort()
@@ -167,7 +168,7 @@ describe.concurrent("a package's full types mean what its package.json says", ()
     [
       "says so",
       { strictNullChecks: false },
-      /^note: "lenient" 1\.0\.0 is compiled from its full types in node_modules\/lenient$/m,
+      /^note: "lenient" 1\.0\.0 is compiled from its full types in node_modules[\\/]lenient\r?$/m,
     ],
     ["does not say so", undefined, /TS100009: 'lenient' has 1 type error/],
   ])(

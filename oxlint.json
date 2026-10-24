@@ -91,12 +91,6 @@
       }
     },
     {
-      "files": ["src/js/builtins/**"],
-      "rules": {
-        "no-unused-expressions": "off"
-      }
-    },
-    {
       "files": ["src/js/private.d.ts"],
       "rules": {
         // `util.types.isNumberObject(value)` says that `value` is a `Number`.
@@ -111,8 +105,16 @@
         // cache the value in a local instead.
         "bun/no-duplicate-conditional-property-access": "error",
 
-        // `"unlikely";` at the start of a block tells `bun build --compile --aot` that the block rarely runs.
-        "no-unused-expressions": "off"
+        // The same rule, except that `"unlikely";` may be the first statement of an arm of an `if`, which tells
+        // `bun build --compile --aot` that the arm rarely runs.
+        "no-unused-expressions": "off",
+        "bun/no-unused-expressions": "error"
+      }
+    },
+    {
+      "files": ["src/js/builtins/**"],
+      "rules": {
+        "bun/no-unused-expressions": "off"
       }
     }
   ]

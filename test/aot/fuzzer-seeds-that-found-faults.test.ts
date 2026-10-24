@@ -22,7 +22,6 @@ const seeds = [
   "object-mutations:1792633492880",
   "object-mutations:1792654672417",
   "objects-read-where-they-are-made:81792802940847",
-  "objects-that-live-for-one-turn-of-a-loop:981792820338179",
   "protocols:1792625082015",
   "protocols:1792629290375",
   "protocols:1792629295471",

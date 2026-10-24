@@ -18,7 +18,7 @@ let sum = 0;
 for (let i = 0; i < kept.length; i++) sum += read(kept[i].a.r);
 console.log(sum);
 `;
-const staleCells = ["--aot-sabotage=RoomIsNotInReferenceList", "--aot-testing=FlattenUntilHeldWhereverLegal"];
+const staleCells = ["--aot-sabotage=InnerObjectIsVisitedWithoutItsFields"];
 const typedRead = "function read(leaf: Leaf): number { return leaf.v; }";
 const looseEquality = `function same(x: any, y: any): boolean { return x == y; }
 const mixed: any[] = [{ v: 1 }, 1, "s", function () {}, undefined, null];
@@ -35,21 +35,10 @@ test.skipIf(!isASAN || !isLinux || process.arch !== "x64").each(rows)(
   "AddressSanitizer reports a read of a dead cell by %s",
   async (_, read, expected, flags, report) => {
     using dir = tempDir("asan-compiled-code", { "entry.ts": leaves(read) });
-    for (const sabotage of [[], staleCells.slice(0, 1)]) {
+    for (const sabotage of [[], staleCells]) {
       const executable = join(String(dir), sabotage.length ? "sabotaged" : "sound");
       const build = await run(
-        [
-          bunExe(),
-          "build",
-          "--compile",
-          "--aot",
-          ...staleCells.slice(1),
-          ...sabotage,
-          ...flags,
-          "entry.ts",
-          "--outfile",
-          executable,
-        ],
+        [bunExe(), "build", "--compile", "--aot", ...sabotage, ...flags, "entry.ts", "--outfile", executable],
         String(dir),
       );
       expect({ stderr: build.exitCode ? build.stderr : "", exitCode: build.exitCode }).toEqual({

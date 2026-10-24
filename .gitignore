@@ -28,6 +28,7 @@ Library/Caches
 *.big
 *.blob
 *.bun
+!packages/full-types/**/*.bun/
 *.crash
 *.database
 *.db
@@ -46,6 +47,7 @@ Library/Caches
 *.tmp
 *.trace
 *.wat
+!test/aot/programs/**/*.wat
 *.zip
 **/.verdaccio-db.json
 **/*.dir
@@ -205,7 +207,8 @@ Heap-*.json
 Heap-*.json.*
 isolate-*.log
 core
-!test/aot/programs/**/core/
+!test/aot/**/core/
+!packages/full-types/**/core/
 core.[0-9]*
 # Legacy codegen outputs (no longer written, but old build trees still have
 # them on disk; keep ignored so they don't show as untracked).

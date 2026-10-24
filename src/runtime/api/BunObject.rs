@@ -1075,7 +1075,7 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
 pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
     let global_object = cx.global();
     // The server is the calling script's.
-    let context = global_object.bun_vm().context_of_caller_no_frame();
+    let context = global_object.bun_vm().context_of_caller();
     let mut config = crate::server::ServerConfig::from_js(
         global_object,
         options.to_js(),
@@ -1559,6 +1559,16 @@ pub(crate) mod environment_variables {
         let item: &[u8] = unsafe { &**ptr.add(i) };
         data_ptr.write(item.as_ptr());
         item.len()
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__getEnvValueAt<'a>(
+        global_object: &'a JSGlobalObject,
+        i: usize,
+        value: &mut core::mem::MaybeUninit<EncodedSlice<'a>>,
+    ) {
+        let env = global_object.bun_vm().env_loader();
+        value.write(EncodedSlice::from_bytes(&env.map.map.values()[i].value));
     }
 
     #[unsafe(no_mangle)]

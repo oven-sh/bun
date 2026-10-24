@@ -1977,7 +1977,11 @@ pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager, in
     push_store_entry_names(&manager.lockfile, installed, None, &mut names);
     sort_names(&mut names);
     names.dedup();
+    // Another install may be writing entries this lockfile does not name.
     let staging_lock = StagingLock::acquire();
+    if staging_lock.is_busy {
+        return;
+    }
     plan.staging = staging_lock.mode;
     let removed_store = plan_store(&names, &mut plan);
     if removed_store.is_empty() {
@@ -2867,6 +2871,7 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
 }
 
 /// Renamed aside first: a delete that stops midway must not leave the marker the next install checks.
+/// A refused rename keeps the entry whole.
 fn remove_store_entry(dir: &Dir, name: &[u8], staging: Staging) -> sys::Maybe<()> {
     let staged = StagingPath(name, staging).to_string();
     let (from, to) = (zname(name), zname(staged.as_bytes()));
@@ -2885,7 +2890,7 @@ fn remove_store_entry(dir: &Dir, name: &[u8], staging: Staging) -> sys::Maybe<()
     match moved {
         Ok(()) => dir.delete_tree(staged.as_bytes()),
         Err(err) if err.get_errno() == E::ENOENT => Ok(()),
-        Err(_) => dir.delete_tree(name),
+        Err(err) => Err(err),
     }
 }
 

@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { inspect } from "node:util";
+import { serialize } from "node:v8";
 import { MessageChannel, Worker } from "node:worker_threads";
 import { createHistogram, monitorEventLoopDelay } from "perf_hooks";
 
@@ -1309,6 +1310,15 @@ describe("Histogram", () => {
       assert.notStrictEqual(a, c);
       a.record(1);
       assert.deepStrictEqual([h.count, c.count], [1, 0]);
+    });
+
+    test("not into bytes", () => {
+      assert.throws(() => serialize({ nested: [createHistogram()] }), /could not be cloned|can not be cloned/);
+    });
+
+    // Node.js gives an empty object.
+    test("not into bytes, of an ELDHistogram", notInNode, () => {
+      assert.throws(() => serialize(monitorEventLoopDelay()), { name: "DataCloneError" });
     });
 
     test("through a MessagePort", async () => {

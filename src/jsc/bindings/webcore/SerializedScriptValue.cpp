@@ -1444,13 +1444,13 @@ private:
             }
 
             if (auto* histogram = dynamicDowncast<Bun::Bindgen::Generated::JSHistogram>(obj)) {
-                if (!startObjectInternal(histogram)) // handle duplicates
-                    return true;
+                // The clone shares the counts, which bytes that leave the process cannot.
                 if (m_forTransfer == SerializationForCrossProcessTransfer::Yes || m_forStorage == SerializationForStorage::Yes) {
-                    write(ObjectTag);
-                    write(TerminatorTag);
+                    code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
+                if (!startObjectInternal(histogram)) // handle duplicates
+                    return true;
                 uint64_t id = Histogram__retainForStructuredClone(JSValue::encode(histogram));
                 m_serializedHistogramIds.append(id);
                 write(Bun__NodePerformanceHooksHistogramTag);

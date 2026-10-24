@@ -46,6 +46,20 @@ test("histograms that grew are collected without an explicit GC", () => {
   expect(created).toBeLessThan(2000);
 });
 
+test("a histogram of a few values far apart only uses the memory it writes to", () => {
+  const before = process.memoryUsage.rss();
+  // 38 MB of buckets each.
+  const histograms = Array.from({ length: 10 }, () => perf.createHistogram({ figures: 5 }));
+  for (const histogram of histograms) {
+    histogram.record(1);
+    histogram.record(Number.MAX_SAFE_INTEGER);
+  }
+  // A structured clone moves the buckets.
+  const clones = structuredClone(histograms);
+  expect(process.memoryUsage.rss() - before).toBeLessThan(100 * 1024 * 1024);
+  expect(clones.map(clone => clone.count)).toEqual(histograms.map(() => 2));
+});
+
 test("doesn't throw", () => {
   expect(() => performance.mark("test")).not.toThrow();
   expect(() => performance.measure("test", "test")).not.toThrow();

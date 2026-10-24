@@ -46,7 +46,6 @@ enum Counts {
     Shared(Arc<Guarded<State>>),
 }
 
-#[derive(Clone)]
 struct State {
     histogram: bun_histogram::Histogram,
     /// When `record_delta` last ran, or 0.
@@ -151,8 +150,11 @@ impl Histogram {
 
     fn share(&self) -> Arc<Guarded<State>> {
         let mut counts = self.counts.borrow_mut();
-        let shared = match &*counts {
-            Counts::Own(state) => Arc::new(Guarded::new(state.clone())),
+        let shared = match &mut *counts {
+            Counts::Own(state) => Arc::new(Guarded::new(State {
+                histogram: state.histogram.take(),
+                previous_ns: state.previous_ns,
+            })),
             Counts::Shared(state) => return Arc::clone(state),
         };
         *counts = Counts::Shared(Arc::clone(&shared));

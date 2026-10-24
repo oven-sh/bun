@@ -23,12 +23,11 @@
 /// What an empty histogram reports as its minimum.
 const EMPTY_MIN: u64 = i64::MAX as u64;
 
-#[derive(Clone)]
 pub struct Histogram {
     highest_trackable_value: u64,
     unit_magnitude: u32,
     sub_bucket_half_count_magnitude: u32,
-    /// As far as the last slot that was ever used. A histogram of small values stays small.
+    /// As far as the last slot that was ever used, or further. A histogram of small values stays small.
     counts: Vec<u64>,
     /// The sum of `counts`, so no slot and no partial sum overflows.
     count: u64,
@@ -53,6 +52,15 @@ impl Slot {
 
     fn median(self) -> u64 {
         self.lowest + (self.width >> 1)
+    }
+}
+
+impl Clone for Histogram {
+    fn clone(&self) -> Self {
+        Self {
+            counts: self.copy_of_counts(self.counts.len()),
+            ..*self
+        }
     }
 }
 
@@ -108,16 +116,27 @@ impl Histogram {
         false
     }
 
-    /// Makes `index`, which is past the end of `counts`, its last slot.
+    /// Makes room for `index`, which is past the end of `counts`.
     #[cold]
     fn grow(&mut self, index: usize) {
-        let len = self.counts.len();
         // Twice as much as before, so that rising values do not copy the counts each time, but no slot that no value
         // can reach.
         let whole = self.index_of(self.highest_trackable_value) + 1;
-        let capacity = (index + 1).max(len * 2).min(whole);
-        self.counts.reserve_exact(capacity - len);
-        self.counts.resize(index + 1, 0);
+        self.counts = self.copy_of_counts((index + 1).max(self.counts.len() * 2).min(whole));
+    }
+
+    /// `len` is at least that of `counts`.
+    fn copy_of_counts(&self, len: usize) -> Vec<u64> {
+        // The allocator has zeroed memory that the system only backs with pages once they are written to. So only
+        // the slots in use are written: the counts of a few values far apart take a few pages, however long they are.
+        let mut counts = vec![0; len];
+        let occupied = self.first..=self.last;
+        if let (Some(to), Some(from)) =
+            (counts.get_mut(occupied.clone()), self.counts.get(occupied))
+        {
+            to.copy_from_slice(from);
+        }
+        counts
     }
 
     /// Counts everything `other` counted, each value as the lowest of its slot in `other`. All of it is refused if the
@@ -131,6 +150,16 @@ impl Histogram {
         for (slot, n) in other.slots() {
             self.record_n(slot.lowest, n);
         }
+    }
+
+    /// Moves the counts out, which leaves `self` as it was when it was created.
+    pub fn take(&mut self) -> Self {
+        let taken = Self {
+            counts: core::mem::take(&mut self.counts),
+            ..*self
+        };
+        self.reset();
+        taken
     }
 
     pub fn reset(&mut self) {

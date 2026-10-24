@@ -63,7 +63,7 @@ pub mod Macro {
 
     /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
     ///
-    /// Real fields (`env`, `macros`, `remap`, `resolver`, `bump`) reference
+    /// Real fields (`env`, `macros`, `remap`, `resolver`) reference
     /// `Transpiler` and JSC types that live in crates which depend on
     /// `bun_js_parser`. To break the dep cycle the higher-tier `_jsc` crate
     /// owns that state behind `data`; the visit pass reaches it via
@@ -76,7 +76,7 @@ pub mod Macro {
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
         /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/env/macros/remap/bump). Allocated by `init`, freed by
+        /// (resolver/env/macros/remap). Allocated by `init`, freed by
         /// `deinit`; `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }
@@ -108,7 +108,7 @@ pub mod Macro {
         safe fn __bun_macro_context_call(
             ctx: &mut MacroContext,
             import_record_path: &[u8],
-            source_dir: &[u8],
+            arena: &bun_alloc::Arena,
             log: &mut bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
@@ -141,11 +141,12 @@ pub mod Macro {
         __bun_macro_collect_vm_garbage();
     }
     impl MacroContext {
+        /// The returned `Expr` keeps its strings in `arena`, the arena of the calling parse.
         #[inline]
         pub(crate) fn call(
             &mut self,
             import_record_path: &[u8],
-            source_dir: &[u8],
+            arena: &bun_alloc::Arena,
             log: &mut bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
@@ -155,7 +156,7 @@ pub mod Macro {
             __bun_macro_context_call(
                 self,
                 import_record_path,
-                source_dir,
+                arena,
                 log,
                 source,
                 import_range,
@@ -180,9 +181,7 @@ pub mod Macro {
                 )
             }
         }
-        /// Free the boxed higher-tier state behind `data`. Its arena backs the
-        /// strings of every `Expr` its macros returned, so only call once the
-        /// ASTs that hold them are printed.
+        /// Free the boxed higher-tier state behind `data`.
         #[inline]
         pub fn deinit(self) {
             // SAFETY: `self.data` is either null (callee no-ops) or the exact

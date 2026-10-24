@@ -55,21 +55,6 @@ pub(crate) struct MacroContext {
     pub(crate) macros: MacroMap,
     pub(crate) remap: bun_ptr::BackRef<MacroRemap>,
     pub(crate) javascript_object: JSValue,
-    /// The AST takes lifetime-erased `&[u8]` arena slices (property keys /
-    /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
-    /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
-    /// every `Expr` it produces (the parser splices the result into the AST and
-    /// prints it before the context is freed).
-    ///
-    /// Lazy: `Arena::new()` calls `mi_heap_new()`, and `MacroContext::init`
-    /// runs once per `RuntimeTranspilerStore::TranspilerJob::run` iteration
-    /// (the worker bytewise-copies `vm.transpiler`, sets `macro_context =
-    /// None`, and `parse_maybe` re-creates it). `call()` is only reached when
-    /// a file actually invokes a macro, so deferring the heap until then
-    /// avoids one `mi_heap_new`/`mi_heap_destroy` pair on every dynamic
-    /// `import()` (require-cache.test.ts T040 — on macOS arm64 the per-iter
-    /// heap churn fragments mimalloc's segment cache).
-    pub(crate) bump: Option<bun_alloc::Arena>,
 }
 
 pub(crate) type MacroMap = ArrayHashMap<i32, Macro>;
@@ -95,15 +80,13 @@ impl MacroContext {
             transform_options: Arc::clone(&transpiler.options.transform_options),
             remap: bun_ptr::BackRef::new(&transpiler.options.macro_remap),
             javascript_object: JSValue::ZERO,
-            // Deferred until `call()` — see field doc.
-            bump: None,
         }
     }
 
     pub(crate) fn call(
         &mut self,
         import_record_path: &[u8],
-        source_dir: &[u8],
+        arena: &bun_alloc::Arena,
         log: &mut Log,
         source: &Source,
         import_range: Range,
@@ -144,7 +127,7 @@ impl MacroContext {
             }
 
             let resolve_result = match resolver.resolve(
-                source_dir,
+                source.path.source_dir(),
                 import_record_path_without_macro_prefix,
                 bun_ast::ImportKind::Stmt,
             ) {
@@ -231,21 +214,13 @@ impl MacroContext {
         unsafe { (*(*vm).event_loop()).ensure_waker() };
 
         let javascript_object = self.javascript_object;
-        // reshaped for borrowck — `self.bump` is shared-borrowed for
-        // the closure while `self.macros` was already released above; capture
-        // as a raw pointer so the closure does not extend `&mut self`.
-        // Lazy-init the backing arena now that a macro is actually being
-        // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
-        let bump: *const bun_alloc::Arena =
-            &raw const *self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let ret = VirtualMachine::get().run_with_api_lock(|| {
             // SAFETY: `macro_` points into `self.macros` which is not mutated
-            // for the duration of this closure; `bump` points into `*self`,
-            // which outlives the closure and is not otherwise borrowed.
+            // for the duration of this closure.
             Runner::run(
                 unsafe { &*macro_ },
                 log,
-                unsafe { &*bump },
+                arena,
                 function_name,
                 caller,
                 source,
@@ -276,10 +251,7 @@ fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Ma
     // stays with the long-lived `vm.transpiler` instance — but callers that run on a
     // short-lived bytewise-cloned `Transpiler` (e.g.
     // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
-    // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro
-    // was actually invoked, its lazily-created `bump` arena) leaks per
-    // iteration. `bump` is `None` on init, so this fn itself never calls
-    // `mi_heap_new()`.
+    // `__bun_macro_context_deinit` or the `Box<MacroContext>` leaks per iteration.
     let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
     let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
     js_parser::Macro::MacroContext {
@@ -294,9 +266,7 @@ fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
         return;
     }
     // SAFETY: `data` is exactly the `Box<MacroContext>` allocated in
-    // `__bun_macro_context_init` above; sole owner. Dropping the Box frees the
-    // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
-    // (→ `mi_heap_destroy`) on the lazily-created `bump`.
+    // `__bun_macro_context_init` above; sole owner.
     drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
     bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
 }
@@ -315,7 +285,7 @@ fn __bun_macro_collect_vm_garbage() {
 fn __bun_macro_context_call(
     ctx: &mut js_parser::Macro::MacroContext,
     import_record_path: &[u8],
-    source_dir: &[u8],
+    arena: &bun_alloc::Arena,
     log: &mut Log,
     source: &Source,
     import_range: Range,
@@ -336,7 +306,7 @@ fn __bun_macro_context_call(
     inner
         .call(
             import_record_path,
-            source_dir,
+            arena,
             log,
             source,
             import_range,
@@ -594,10 +564,7 @@ pub(crate) struct Run<'a> {
     pub(crate) global: &'a JSGlobalObject,
     // The AST uses arena-owned slices (`EString::init` lifetime-erases its borrow), so
     // `coerce` needs a bump arena to back property keys / UTF-16 string data /
-    // `from_blob` JSON sub-parsing. The arena is *borrowed* from
-    // `MacroContext` (stored long-term in the `Transpiler`) so the slices
-    // outlive `run_async` — the returned `Expr` is spliced into the AST and
-    // printed long after this frame returns.
+    // `from_blob` JSON sub-parsing: the arena of the parse that called the macro.
     pub(crate) bump: &'a bun_alloc::Arena,
     pub(crate) log: &'a mut Log,
     pub(crate) source: &'a Source,
@@ -840,7 +807,7 @@ impl<'a> Run<'a> {
 
                     // `EString::init` lifetime-erases its borrow
                     // (arena-owned per the parser's `Str` convention). Copy the
-                    // key into the `MacroContext` bump arena so it outlives the
+                    // key into the calling parse's arena so it outlives the
                     // temporary `to_owned_slice()` Vec and the returned `Expr`.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
                     let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
@@ -891,7 +858,7 @@ impl<'a> Run<'a> {
                 };
                 // `E::EString::init_utf16` lifetime-erases the slice
                 // (arena-owned per the parser's `Str` convention). Copy into
-                // the `MacroContext` bump arena.
+                // the calling parse's arena.
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
                 return Ok(Expr::init(
                     E::EString::init_utf16(arena_slice),

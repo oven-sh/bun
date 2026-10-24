@@ -101,8 +101,7 @@ impl<'a> Transpiler<'a> {
         // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` is
         // process-lifetime by default, but
         // worker VMs run `destroy()` on thread exit and would otherwise strand
-        // one box per worker. The box only owns a `MacroMap` and an optional
-        // `bun_alloc::Arena` — no JSC handles — so freeing it from either
+        // one box per worker. The box holds no JSC handles, so freeing it from either
         // worker section-5 teardown or main-thread `global_exit` is safe.
         if let Some(ctx) = self.macro_context.take() {
             ctx.deinit();

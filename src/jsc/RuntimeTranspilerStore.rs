@@ -726,10 +726,7 @@ impl TranspilerJob {
         // MUST free what `parse_maybe` allocates or every dynamic `import()`
         // leaks one `Box<MacroContext>` (require-cache.test.ts "files
         // transpiled and loaded don't leak file paths > via import()" OOMs at
-        // ~0.5 GB after 100k iterations). The owned `MimallocArena` inside is
-        // now lazy (`bump: Option<Arena>`, init on first `.call()`), so the
-        // per-iteration `mi_heap_new()` is gone; this guard just reclaims the
-        // small `Box`.
+        // ~0.5 GB after 100k iterations). This guard reclaims the small `Box`.
         let _macro_ctx_guard =
             scopeguard::guard(ptr::addr_of_mut!(transpiler.macro_context), |slot| {
                 // SAFETY: `slot` points into `transpiler_storage`, which is

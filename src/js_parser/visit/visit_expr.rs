@@ -754,6 +754,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // borrowck.
                         let log = p.lexer.log();
                         let source = p.source;
+                        let arena = p.arena;
                         let Ok(macro_result) = p
                             .options
                             .macro_context
@@ -761,7 +762,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("macro_context")
                             .call(
                                 record_path_text,
-                                source.path.source_dir(),
+                                arena,
                                 log,
                                 source,
                                 record_range,
@@ -1890,6 +1891,100 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
+    /// The macro arm of `e_call`. Returns `true` when `e_call` is done with `e`.
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
+    fn e_call_macro(p: &mut Self, e: &mut Expr) -> bool {
+        let expr = *e;
+        let e_ = expr.data.e_call().expect("infallible: variant checked");
+        let ref_ = match &e_.target.data {
+            Data::EImportIdentifier(ident) => ident.ref_,
+            Data::EDot(dot) => {
+                dot.target
+                    .data
+                    .e_identifier()
+                    .expect("infallible: variant checked")
+                    .ref_
+            }
+            _ => unreachable!(),
+        };
+
+        let macro_ref_data = *p.macro_.refs.get(&ref_).unwrap();
+        p.ignore_usage(ref_);
+        if p.is_control_flow_dead {
+            *e = p.new_expr(E::Undefined {}, e_.target.loc);
+            return true;
+        }
+
+        if p.options.features.no_macros {
+            p.log()
+                .add_error(Some(p.source), expr.loc, b"Macros are disabled");
+            *e = p.new_expr(E::Undefined {}, expr.loc);
+            return true;
+        }
+
+        if p.source.path.is_node_module() {
+            p.log().add_error(
+                Some(p.source),
+                expr.loc,
+                b"For security reasons, macros cannot be run from node_modules.",
+            );
+            *e = p.new_expr(E::Undefined {}, expr.loc);
+            return true;
+        }
+
+        let name: &[u8] = macro_ref_data.name.unwrap_or_else(|| {
+            e_.target
+                .data
+                .e_dot()
+                .expect("infallible: variant checked")
+                .name
+                .slice()
+        });
+        let (record_path_text, record_range) = {
+            let record = &p.import_records.items()[macro_ref_data.import_record_id as usize];
+            (record.path.text, record.range)
+        };
+        let copied = Expr {
+            loc: expr.loc,
+            data: expr.data,
+        };
+        let start_error_count = p.log().msgs.len();
+        p.macro_call_count += 1;
+        // `Lexer::log()` borrows only `p.lexer`, so `p.options` stays free for the call.
+        let log = p.lexer.log();
+        let source = p.source;
+        let arena = p.arena;
+        let macro_result = match p
+            .options
+            .macro_context
+            .as_deref_mut()
+            .expect("macro_context")
+            .call(
+                record_path_text,
+                arena,
+                log,
+                source,
+                record_range,
+                copied,
+                name,
+            ) {
+            Ok(r) => r,
+            Err(_) => {
+                if p.log().msgs.len() == start_error_count {
+                    p.log()
+                        .add_error(Some(p.source), expr.loc, b"macro threw exception");
+                }
+                return true;
+            }
+        };
+
+        if !matches!(macro_result.data, Data::ECall(..)) {
+            *e = macro_result;
+            p.visit_expr(e);
+            return true;
+        }
+        false
+    }
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
@@ -2300,102 +2395,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if Self::ALLOW_MACROS {
-            // After a stack overflow, some arguments weren't visited, so don't run the macro.
-            if is_macro_ref
-                && !p.options.features.is_macro_runtime
-                && !p.reported_stack_overflow.get()
-            {
-                let ref_ = match &e_.target.data {
-                    Data::EImportIdentifier(ident) => ident.ref_,
-                    Data::EDot(dot) => {
-                        dot.target
-                            .data
-                            .e_identifier()
-                            .expect("infallible: variant checked")
-                            .ref_
-                    }
-                    _ => unreachable!(),
-                };
-
-                let macro_ref_data = *p.macro_.refs.get(&ref_).unwrap();
-                p.ignore_usage(ref_);
-                if p.is_control_flow_dead {
-                    *e = p.new_expr(E::Undefined {}, e_.target.loc);
-                    return;
-                }
-
-                if p.options.features.no_macros {
-                    p.log()
-                        .add_error(Some(p.source), expr.loc, b"Macros are disabled");
-                    *e = p.new_expr(E::Undefined {}, expr.loc);
-                    return;
-                }
-
-                if p.source.path.is_node_module() {
-                    p.log().add_error(
-                        Some(p.source),
-                        expr.loc,
-                        b"For security reasons, macros cannot be run from node_modules.",
-                    );
-                    *e = p.new_expr(E::Undefined {}, expr.loc);
-                    return;
-                }
-
-                let name: &[u8] = macro_ref_data.name.unwrap_or_else(|| {
-                    e_.target
-                        .data
-                        .e_dot()
-                        .expect("infallible: variant checked")
-                        .name
-                        .slice()
-                });
-                let (record_path_text, record_range) = {
-                    let record =
-                        &p.import_records.items()[macro_ref_data.import_record_id as usize];
-                    (record.path.text, record.range)
-                };
-                let copied = Expr {
-                    loc: expr.loc,
-                    data: expr.data,
-                };
-                let start_error_count = p.log().msgs.len();
-                p.macro_call_count += 1;
-                // Reborrow via the field-disjoint `Lexer::log()` accessor
-                // so `&p.lexer` and `&mut p.options` split cleanly under
-                // borrowck.
-                let log = p.lexer.log();
-                let source = p.source;
-                let macro_result = match p
-                    .options
-                    .macro_context
-                    .as_deref_mut()
-                    .expect("macro_context")
-                    .call(
-                        record_path_text,
-                        source.path.source_dir(),
-                        log,
-                        source,
-                        record_range,
-                        copied,
-                        name,
-                    ) {
-                    Ok(r) => r,
-                    Err(_) => {
-                        if p.log().msgs.len() == start_error_count {
-                            p.log()
-                                .add_error(Some(p.source), expr.loc, b"macro threw exception");
-                        }
-                        return;
-                    }
-                };
-
-                if !matches!(macro_result.data, Data::ECall(..)) {
-                    *e = macro_result;
-                    p.visit_expr(e);
-                    return;
-                }
-            }
+        // After a stack overflow, some arguments weren't visited, so don't run the macro.
+        if Self::ALLOW_MACROS
+            && is_macro_ref
+            && !p.options.features.is_macro_runtime
+            && !p.reported_stack_overflow.get()
+            && Self::e_call_macro(p, e)
+        {
+            return;
         }
 
         // In fast refresh, any function call that looks like a hook (/^use[A-Z]/) is a

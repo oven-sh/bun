@@ -2333,6 +2333,7 @@ inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, 
 // Same type list as `matchAsymmetricMatcherAndGetFlags`.
 bool isAsymmetricMatcher(JSValue v)
 {
+    using namespace Bun::Bindgen::Generated;
     if (!v.isCell()) return false;
     JSCell* cell = v.asCell();
     if (cell->type() != JSC::JSType(JSDOMWrapperType)) return false;

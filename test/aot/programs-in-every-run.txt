@@ -328,6 +328,7 @@ data-from-outside/json-parse-type-argument-in-workers
 data-from-outside/json-parse-type-argument-more-orders-of-keys-than-a-table-holds
 data-from-outside/json-parse-type-argument-recursive-unions-take-linear-time
 data-from-outside/json-parse-type-argument-refuses-a-large-text-in-workers-that-are-ended
+data-from-outside/json-parse-type-argument-three-types-of-one-shape-with-an-optional-member
 data-from-outside/objects-in-many-orders-of-names-come-and-go-between-collections
 data-from-outside/parsed-via-untyped-literal
 data-from-outside/sql-typed-rows
@@ -370,12 +371,15 @@ errors/what-a-program-can-ask-about-a-stack
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made-in-a-very-large-program
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made-in-hot-code
+escape-analysis/a-callback-over-the-scope-of-a-function-calls-what-the-function-was-given-validated
 escape-analysis/a-default-array-or-an-iterator-is-made-into-json-in-hot-code-and-every-pass-is-verified
 escape-analysis/a-literal-is-kept-in-a-local-in-one-turn
 escape-analysis/a-literal-is-kept-in-a-local-in-one-turn-that-not-every-call-reaches
 escape-analysis/a-literal-is-kept-in-a-local-without-a-first-value-in-one-turn
+escape-analysis/a-parameter-gets-into-what-the-function-made-through-a-callee-and-is-written-there
 escape-analysis/a-variable-around-a-loop-holds-null-an-array-or-an-object-whose-methods-share-a-counter
 escape-analysis/an-array-literal-is-kept-in-a-local-in-one-turn
+escape-analysis/an-inner-function-reads-a-list-given-to-the-outer-one-and-writes-its-variable-validated
 escape-analysis/array-literals-reach-a-keeper-through-forwarded-arguments
 escape-analysis/array-literals-reach-a-keeper-through-forwarded-arguments-in-hot-code
 escape-analysis/array-literals-reach-a-keeper-through-forwarded-arguments-without-inlining
@@ -675,6 +679,8 @@ objects-that-are-not-what-their-layout-says/what-object-create-made-or-an-instan
 objects/a-field-kept-in-several-forms-is-asked-for-in-objects-that-nobody-followed
 objects/a-member-named-tojson-that-only-some-objects-get
 objects/a-member-of-what-object-create-made-is-read-twice-over-where-a-class-is-declared
+objects/a-name-of-an-object-filled-by-key-is-defined-anew-and-more-names-follow-across-collections
+objects/a-name-stored-by-key-behind-a-definition-answers-one-question-alone-behind-a-collection
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-filled-on-demand-and-returned
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned-through-two-functions
@@ -760,6 +766,9 @@ soundness/bindings-read-in-their-dead-zone-beside-many-shapes-with-the-same-fiel
 soundness/computed-stores-onto-names-stored-by-name-in-a-validating-build
 soundness/constructor-hands-this-out-before-a-field-is-stored
 soundness/each-function-called-by-native-code-sees-its-own-this
+soundness/elements-stored-into-objects-below-string-objects-typed-arrays-and-proxies
+soundness/elements-stored-into-objects-below-string-objects-typed-arrays-and-proxies-in-sloppy-code
+soundness/elements-stored-into-objects-below-string-objects-typed-arrays-and-proxies-typed
 soundness/evaluated-text-plants-to-json-on-map-prototype
 soundness/first-use-of-built-ins-in-the-handler-of-a-stack-overflow
 soundness/has-own-of-a-function-member-overwritten-through-a-wider-type

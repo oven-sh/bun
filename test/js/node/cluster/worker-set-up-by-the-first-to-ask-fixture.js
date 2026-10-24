@@ -7,35 +7,34 @@ if (kind === undefined) {
     k => k !== "dgram-only" || process.platform !== "win32",
   );
   let left = kinds.length;
+  const unfinished = new Map();
+  process.on("exit", () => {
+    for (const [k, seen] of unfinished) console.log(`${k}: ${seen.sort().join(" | ")} | has not exited`);
+  });
   lines.push(`primary ${cluster.isPrimary} ${cluster.isWorker} ${"NODE_UNIQUE_ID" in process.env} ${Object.keys(cluster).sort().join()}`);
   for (const k of kinds) {
     const worker = cluster.fork({ WORKER_KIND: k });
     const seen = [];
     worker.on("online", () => seen.push("online"));
     worker.on("listening", address => seen.push(`listening ${typeof address.port} ${address.addressType}`));
-    // Every worker sends one message and then exits. The two events come from different handles, in either order.
-    let exitCode;
-    let hasMessage = false;
-    const finish = () => {
-      if (exitCode === undefined || !hasMessage) return;
-      lines.push(`${k}: ${seen.sort().join(" | ")} | exit ${exitCode}`);
-      if (--left === 0) console.log(lines.sort().join("\n"));
-    };
+    unfinished.set(k, seen);
+    // A worker sends one message and exits when it is told that the message has come.
     worker.on("message", message => {
       seen.push(`message ${JSON.stringify(message)}`);
-      hasMessage = true;
-      finish();
+      worker.send("end");
     });
     worker.on("exit", code => {
-      exitCode = code;
-      finish();
+      unfinished.delete(k);
+      lines.push(`${k}: ${seen.sort().join(" | ")} | exit ${code}`);
+      if (--left === 0) console.log(lines.sort().join("\n"));
     });
   }
 } else {
   const had = "NODE_UNIQUE_ID" in process.env;
   const report = extra => {
     const cluster = require("node:cluster");
-    process.send({ had, has: "NODE_UNIQUE_ID" in process.env, isWorker: cluster.isWorker, id: typeof cluster.worker?.id, state: cluster.worker?.state, same: cluster.worker?.process === process, keys: Object.keys(cluster).sort().join(), extra }, () => process.exit(0));
+    process.on("message", message => message === "end" && process.exit(0));
+    process.send({ had, has: "NODE_UNIQUE_ID" in process.env, isWorker: cluster.isWorker, id: typeof cluster.worker?.id, state: cluster.worker?.state, same: cluster.worker?.process === process, keys: Object.keys(cluster).sort().join(), extra });
   };
   if (kind === "requires-cluster") {
     const cluster = require("node:cluster");

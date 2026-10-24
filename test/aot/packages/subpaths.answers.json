@@ -14,16 +14,16 @@
     "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
   },
   "exports.closed_literal0.cjs": {
-    "output": "require THROWS Error\n"
+    "output": "require THROWS Error MODULE_NOT_FOUND\n"
   },
   "exports.closed_literal0.mjs": {
-    "output": "import THROWS Error\n"
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
   },
   "exports.closed_literal6.cjs": {
-    "output": "require THROWS Error\n"
+    "output": "require THROWS Error MODULE_NOT_FOUND\n"
   },
   "exports.closed_literal6.mjs": {
-    "output": "import THROWS Error\n"
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
   },
   "imports.app_dyn.mjs": {
     "output": "two \"app:two\"\nvariable THROWS ResolveMessage ERR_MODULE_NOT_FOUND\nnone THROWS ResolveMessage ERR_MODULE_NOT_FOUND\n"

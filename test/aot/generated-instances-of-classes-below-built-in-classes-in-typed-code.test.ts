@@ -39,6 +39,8 @@ generated(
       isAlwaysRun: basesInEveryRun.has(base) && operationsInEveryRun.has(operation),
       isOnlyCompiled: true as const,
       failsToday: base === "Event" && listsTheHostsOwnNameFirst.has(operation) ? "the order of the keys" : undefined,
+      // `then` constructs the class with an executor, which the class of these programs does not hand on: the await throws, in plain Bun too, and nothing catches it.
+      leavesAnError: base === "Promise" && operation === "awaited" ? (true as const) : undefined,
       make: () => ({ file: "main.ts", text: textOf(base, operation) }),
     })),
   ),

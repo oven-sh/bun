@@ -22,7 +22,7 @@ function declaredConstants() {
     const files = constants.get(name)!;
     files.set(value, [...(files.get(value) ?? []), file]);
   };
-  for (const entry of readdirSync(root, { recursive: true }) as string[]) {
+  for (const entry of (readdirSync(root, { recursive: true }) as string[]).sort()) {
     if (!entry.endsWith(".ts") || entry.endsWith(".d.ts")) continue;
     const file = entry.replaceAll("\\", "/");
     let enumName: string | undefined;

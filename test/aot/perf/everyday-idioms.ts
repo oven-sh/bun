@@ -1,7 +1,8 @@
 // ./everyday/<group>.txt holds many small idioms, one under each line `//// <name>`: TypeScript that declares `function turn(i: number): number`, or the same
 // function async. everydayIdioms() puts each into a program of the form of ./idioms: a loop that calls turn() as often as ./idioms/host.ts says.
-// With `foundAtRunTime` the loop finds turn() in a property of the global object, and turn() begins with a branch that is never taken, which makes it a function of
-// ordinary size: it stays a function of its own with one caller, as most functions of a large program are. A very small one would be copied into the loop, or compiled as if it ran often.
+// With `foundAtRunTime` the loop finds turn() in a property of the global object, and turn() begins with a branch that is never taken, long enough that neither the
+// compiler nor the JIT copies turn() into the loop: it stays a function of its own with one caller, as most functions of a large program are, and both pay for the call.
+// With a third of the length the JIT copies it in, and whether the compiler does hangs on a budget of its inliner: then the table measures that budget.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 
@@ -10,7 +11,7 @@ const root = join(import.meta.dir, "everyday");
 const neverTaken = `
   if (i < 0) {
     let t = i | 0;
-${Array.from({ length: 16 }, (_, k) => `    t = ((t ^ ${k + 5}) * 3) | 0;`).join("\n")}
+${Array.from({ length: 48 }, (_, k) => `    t = ((t ^ ${k + 5}) * 3) | 0;`).join("\n")}
     (globalThis as any).neverStored = t;
   }`;
 

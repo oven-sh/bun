@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
@@ -713,6 +713,105 @@ for (const [what, fill] of fills) console.log(what, (run(fills[0][1], Infinity, 
       exitCode: 0,
     });
   }, 240_000);
+
+  // The fill, the error and its catch leave words on the stack that name the list. The frames of what runs next lie over them, and the collector reads every word of a frame, written or not.
+  // Which words lie where depends on the frames, so on the processor.
+  test.skipIf(!isLinux || isArm64).each([
+    [
+      "a built-in that a loop calls",
+      "filled true work 675208 failed 0\n",
+      `function mix(sum: number, value: unknown): number {
+  return (sum * 31 + String(value).length) % 1000003;
+}
+function fill(): boolean {
+  const kept: unknown[] = [];
+  try {
+    for (let n = 0; ; n++) {
+      kept.push([n + 0.5, n + 1.5, n + 2.5, n + 3.5]);
+      if (n >= 3000000) throw new RangeError("enough");
+    }
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+  }
+  return kept.length > 1000;
+}
+function work(): string {
+  let sum = 0;
+  let failed = 0;
+  for (let turn = 0; turn < 60000; turn++) {
+    try {
+      sum = mix(sum, Array.from({ length: 5 }, (_, at) => at).length);
+    } catch (error) {
+      failed++;
+    }
+  }
+  return sum + " failed " + failed;
+}
+const filled = fill();
+const worked = work();
+console.log("filled", filled, "work", worked);
+export {};
+`,
+    ],
+    [
+      "the loop itself",
+      "filled true true work 787028 failed 0\n",
+      `function mix(sum: number, value: unknown): number {
+  return (sum * 31 + String(value).length) % 1000003;
+}
+let kept: unknown[] = [];
+function fillOwnList(): boolean {
+  const kept: unknown[] = [];
+  try {
+    for (let n = 0; ; n++) {
+      kept.push({ a: { b: n }, c: [n] });
+      if (n >= 3000000) throw new RangeError("enough");
+    }
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+  }
+  return kept.length > 1000;
+}
+const filledOwnList = fillOwnList();
+function fill(kept: unknown[]): boolean {
+  try {
+    for (let n = 0; ; n++) {
+      kept.push([n + 0.5, n + 1.5, n + 2.5, n + 3.5]);
+      if (n >= 3000000) throw new RangeError("enough");
+    }
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+  }
+  return kept.length > 1000;
+}
+function work(): string {
+  let sum = 0;
+  let failed = 0;
+  for (let turn = 0; turn < 60000; turn++) {
+    try {
+      sum = mix(sum, JSON.stringify({ a: [turn, { b: "x" }] }));
+    } catch (error) {
+      failed++;
+    }
+  }
+  return sum + " failed " + failed;
+}
+const filled = fill(kept);
+kept = [];
+const worked = work();
+console.log("filled", filledOwnList, filled, "work", worked);
+export {};
+`,
+    ],
+  ])(
+    "behind a fill that was caught and let go there is room for %s",
+    async (_, expected, program) => {
+      using folder = tempDir("aot-heap-limit", { "program.ts": program });
+      const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    },
+    240_000,
+  );
 
   // A range that stays almost full of objects in use: every collection frees only what was made since the last one, so the program would collect
   // again for every few hundred objects it makes, and hardly move. After a few such collections in a row it gets the error.

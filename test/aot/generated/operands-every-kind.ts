@@ -254,7 +254,8 @@ export const operationsOnAnyValue: [string, boolean][] = [
   ["new TextEncoder().encode(X).length", false],
   ["new TextDecoder().decode(X)", false],
   ["new URL(X).href", false],
-  ["new URLSearchParams(X).toString()", false],
+  // An executable holds the text of a function as the bundler prints it: what is compared is without white space.
+  ["new URLSearchParams(X).toString().replace(/\\+|%0A/g, '')", false],
   ["new Headers(X).has(\"a\")", false],
   ["new Blob(X).size", false],
   ["new Blob([X]).size", false],

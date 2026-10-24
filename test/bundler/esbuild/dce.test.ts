@@ -775,8 +775,22 @@ describe("bundler", () => {
       run: { stdout },
     });
   }
+  // No package.json with a "name" encloses the file that the proxy names.
+  // Nothing decides its side effects, so the import stays, as in esbuild.
+  itBundled("dce/PackageJsonSideEffectsNamelessProxyNoNamedPackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "../lib/register"
+        console.log("entry")
+      `,
+      "/Users/user/project/lib/register/package.json": `{ "sideEffects": false, "module": "../../build/register.js" }`,
+      "/Users/user/project/build/register.js": `console.log("register")`,
+    },
+    run: { stdout: "register\nentry" },
+  });
   // A proxy package.json with a "name" still decides for files outside its
-  // directory. esbuild reads the package.json that encloses the file, and keeps it.
+  // directory: Bun drops the import and prints only "entry". esbuild reads the
+  // package.json that encloses the file, and keeps it.
   itBundled("dce/PackageJsonSideEffectsNamedProxyModuleMain", {
     todo: true,
     files: {
@@ -795,15 +809,17 @@ describe("bundler", () => {
     },
     run: { stdout: "register\nentry" },
   });
-  // "icons/outline" holds a package.json with no "name" and its own files. An
-  // import of the directory reads that package.json. An import of the file by
-  // path does not, and the first import to reach the file decides for both.
-  // esbuild reads it for the path import too, and drops the file in both orders.
-  for (const [id, imports, stdout] of [
-    ["DirectoryFirst", ["icons/outline", "icons/outline/esm/index.js"], "entry"],
-    ["PathFirst", ["icons/outline/esm/index.js", "icons/outline"], "outline\nentry"],
+  // "icons/outline" holds a package.json with no "name", `"sideEffects": false`
+  // and its own files. An import of the directory reads that package.json. An
+  // import of the file by path does not, and the first import to reach the file
+  // decides for both: with the path import first, Bun keeps the file and prints
+  // "outline". esbuild drops the file in both orders.
+  for (const [id, imports, todo] of [
+    ["DirectoryFirst", ["icons/outline", "icons/outline/esm/index.js"], false],
+    ["PathFirst", ["icons/outline/esm/index.js", "icons/outline"], true],
   ] as const) {
     itBundled(`dce/PackageJsonSideEffectsNamelessSubPackage${id}`, {
+      todo,
       files: {
         "/Users/user/project/src/entry.js": /* js */ `
           import "${imports[0]}"
@@ -815,13 +831,15 @@ describe("bundler", () => {
         "/Users/user/project/node_modules/icons/outline/esm/index.js": `console.log("outline")`,
         "/Users/user/project/node_modules/icons/outline/index.js": `console.log("main file")`,
       },
-      run: { stdout },
+      run: { stdout: "entry" },
     });
   }
   // The `{ "type": "module" }` package.json next to the "module" file has no
-  // "name" and is not the package.json of the import, so the "sideEffects" of
-  // the package applies. esbuild reads only the nearest one, and keeps the import.
+  // "name" and is not the package.json of the import. Bun applies the
+  // "sideEffects" of the package, drops the import and prints only "entry".
+  // esbuild reads only the nearest package.json, and keeps the import.
   itBundled("dce/PackageJsonSideEffectsFalseTypeModuleMarker", {
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -836,11 +854,10 @@ describe("bundler", () => {
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/dist/esm/package.json": `{ "type": "module" }`,
-      "/Users/user/project/node_modules/demo-pkg/dist/esm/index.js": `console.log('TEST FAILED')`,
-      "/Users/user/project/node_modules/demo-pkg/dist/cjs/index.js": `console.log('TEST FAILED')`,
+      "/Users/user/project/node_modules/demo-pkg/dist/esm/index.js": `console.log("module file")`,
+      "/Users/user/project/node_modules/demo-pkg/dist/cjs/index.js": `console.log("main file")`,
     },
-    dce: true,
-    run: { stdout: "entry" },
+    run: { stdout: "module file\nentry" },
   });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
     files: {

@@ -535,6 +535,30 @@ server.stop(true);
     checkSays: [],
     prints: "string\n",
   },
+  "a tsconfig.json that names type declarations that are not installed": {
+    files: {
+      "main.ts": `type IsAny<T> = 0 extends 1 & T ? true : false;
+type Known<T> = IsAny<T> extends true ? never : "known";
+process.on("exit", code => { const given: Known<typeof code> = "known"; console.log(given); });
+`,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, types: ["bun-types", "not-installed/globals"] },
+      }),
+    },
+    checkSays: [],
+    warnings: ["TS2688"],
+    prints: "known\n",
+  },
+  "a tsconfig.json that names type declarations of an installed package outside @types": {
+    files: {
+      "main.ts": `const count: number | undefined = globalThis.countOfRunner;\nconsole.log(typeof count, typeof process.pid);\n`,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: ["runner/globals"] } }),
+      "node_modules/runner/package.json": JSON.stringify({ name: "runner", version: "1.0.0" }),
+      "node_modules/runner/globals.d.ts": `declare var countOfRunner: number | undefined;\n`,
+    },
+    checkSays: [],
+    prints: "undefined number\n",
+  },
   "what Bun provides, with its types": {
     files: {
       "main.ts": `import { EventEmitter } from "node:events";
@@ -792,6 +816,41 @@ test(
 );
 
 test(
+  "bun test --aot knows the globals of the test runner, with their types",
+  () =>
+    slot(async () => {
+      using dir = tempDir("aot-missing-bun-types", {
+        "globals.test.ts": `type IsAny<T> = 0 extends 1 & T ? true : false;
+type Known<T> = IsAny<T> extends true ? never : "known";
+describe("globals", () => {
+  beforeEach(() => {});
+  it("spies", () => {
+    const spy = jest.fn();
+    spy();
+    expect(spy).toHaveBeenCalled();
+  });
+  test.each([1, 2])("each %d", n => {
+    const known: Known<typeof n> = "known";
+    expect(known.length + n).toBeGreaterThan(5);
+  });
+});
+`,
+      });
+      const { stderr, exitCode, signal } = await spawned(
+        [bunExe(), "test", "--aot", "globals.test.ts"],
+        String(dir),
+        env,
+      );
+      expect({ passed: /^ 3 pass$/m.test(stderr), exitCode, signal }).toEqual({
+        passed: true,
+        exitCode: 0,
+        signal: null,
+      });
+    }),
+  buildTimeout,
+);
+
+test(
   "the type declarations that a project has installed count, not the ones that Bun brings along",
   () =>
     slot(async () => {
@@ -808,6 +867,37 @@ test(
         "node_modules/@types/bun/index.d.ts": `declare var Bun: { version: number };\ndeclare var console: { log(...data: unknown[]): void };\n`,
       });
       expect(await build(String(dir))).toEqual({ errors: ["TS2322"], warnings: [], exitCode: 1, signal: null });
+      using alone = tempDir("aot-installed-bun-types", {
+        "main.ts": main,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: ["bun-types"] } }),
+        "node_modules/bun-types/package.json": JSON.stringify({
+          name: "bun-types",
+          version: "1.0.0",
+          types: "index.d.ts",
+        }),
+        "node_modules/bun-types/index.d.ts": `declare var Bun: { version: number };\n`,
+      });
+      expect(await build(String(alone))).toEqual({ errors: ["TS2322"], warnings: [], exitCode: 1, signal: null });
+      using withoutWhatItRefersTo = tempDir("aot-installed-bun-types", {
+        "main.ts": `type IsAny<T> = 0 extends 1 & T ? true : false;
+type Known<T> = IsAny<T> extends true ? never : "known";
+const version: number = Bun.version;
+process.on("exit", code => { const given: Known<typeof code> = "known"; console.log(given, typeof version); });
+`,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+        "node_modules/bun-types/package.json": JSON.stringify({
+          name: "bun-types",
+          version: "1.0.0",
+          types: "index.d.ts",
+        }),
+        "node_modules/bun-types/index.d.ts": `/// <reference types="node" />\ndeclare var Bun: { version: number };\n`,
+      });
+      expect(await build(String(withoutWhatItRefersTo))).toEqual(built);
+      expect(await run(String(withoutWhatItRefersTo), "compiled")).toEqual({
+        stdout: "known string\n",
+        exitCode: 0,
+        signal: null,
+      });
     }),
   buildTimeout,
 );

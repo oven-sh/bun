@@ -37,13 +37,22 @@ test.todo("an error inside an installed package's declaration file is a warning"
   expect({ stdout, exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
 });
 
-test(`types: ["bun-types"] without the package installed is a warning`, async () => {
+test(`a package under "types" that is not installed is a warning`, async () => {
   const { stdout, stderr, exitCode } = await run({
-    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: ["bun-types"] } }),
+    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: ["not-installed"] } }),
     "main.ts": `console.log(typeof Bun.version);\n`,
   });
   expect(stderr).toContain("TS2688");
   expect({ stdout, exitCode }).toEqual({ stdout: "string\n", exitCode: 0 });
+});
+
+test(`types: ["bun-types"] without the package installed is served by the copy that Bun carries`, async () => {
+  expect(
+    await run({
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: ["bun-types"] } }),
+      "main.ts": `const version: string = Bun.version;\nconsole.log(typeof version);\n`,
+    }),
+  ).toEqual({ stdout: "string\n", stderr: "", exitCode: 0 });
 });
 
 // TODO: as above: the text that names the remedy is not said.

@@ -3,6 +3,8 @@
 use bun_builtin_sources::Archive;
 
 pub(crate) const TYPE_ROOT: &[u8] = b"/$bun/packages/node_modules/@types";
+pub(crate) const GLOBALS_OF_TEST_RUNNER: &[u8] =
+    b"/$bun/packages/node_modules/bun-types/test-globals.d.ts";
 
 const PACKAGES: &[u8] = b"/$bun/packages/node_modules/";
 const IN_ARCHIVE: &[u8] = b"types/";
@@ -36,7 +38,7 @@ pub(crate) fn entries(path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
     };
     for name in Archive::names_that_begin_with(&directory) {
         let rest = &name[directory.len()..];
-        match rest.iter().position(|&byte| byte == b'/') {
+        match bun_core::strings::index_of_char_usize(rest, b'/') {
             None => files.push(rest.to_vec()),
             Some(end) if directories.last().is_none_or(|last| last != &rest[..end]) => {
                 directories.push(rest[..end].to_vec());
@@ -67,6 +69,7 @@ mod tests {
             assert!(is_file(&path) && !is_dir(&path), "{file}");
             assert!(read(&path).is_some_and(|text| !text.is_empty()), "{file}");
         }
+        assert!(is_file(GLOBALS_OF_TEST_RUNNER));
         for directory in [TYPE_ROOT, &PACKAGES[..PACKAGES.len() - 1]] {
             assert!(is_dir(directory) && !is_file(directory));
         }

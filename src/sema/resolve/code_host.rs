@@ -66,7 +66,7 @@ pub trait CodeHost: Host {
     }
 
     /// Declaration files that rest on `@types/bun`, for where it is installed.
-    fn declarations_beside_bun_types(&self) -> Vec<Vec<u8>> {
+    fn declarations_beside_bun_types(&self, _are_installed: bool) -> Vec<Vec<u8>> {
         Vec::new()
     }
 

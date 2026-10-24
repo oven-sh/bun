@@ -65,9 +65,11 @@ const stopped: Record<string, string[]> = {
     "sqlite-in-memory-with-no-optional-pass",
   ],
   "calls": [
+    "a-variable-that-holds-a-bound-function-an-object-or-a-class-is-constructed-and-called",
     "a-function-that-ends-only-by-a-throw-hands-its-rest-parameter-on",
     "calling-the-undefined-result-of-a-function-with-an-arrow-function-throws",
     "rest-arrays-handed-to-rest-parameters",
+    "what-one-call-reaches-through-call-or-through-a-bound-built-in-makes-what-it-declares-anew-at-each-entry",
   ],
   "classes": [
     "a-method-under-a-name-that-looks-like-a-number-is-hidden-by-a-store-to-the-class-below",

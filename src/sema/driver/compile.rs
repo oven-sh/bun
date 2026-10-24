@@ -97,6 +97,7 @@ impl<'s> LoadedProgram<'s> {
             origins: &self.origins,
             project_origin: self.project_origin,
             without_bun_types: self.without_bun_types.as_ref(),
+            lacks_installed_bun_types: self.brings_bun_types || self.without_bun_types.is_some(),
         }
     }
 }

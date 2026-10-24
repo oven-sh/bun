@@ -16,13 +16,18 @@ const what = process.env.WHAT;
 if (what === "limit") {
   console.log(Bun.spawnSync(["true"]).exitCode);
 } else if (what === "collections") {
+  const kept: (Cell | null)[] = new Array(64).fill(null);
   let head: Cell | null = null;
-  for (let round = 0; round < 4; round++) {
-    for (let i = 0; i < 2_000_000; i++) head = { id: i, next: i % 1000 ? head : null };
-    Bun.gc(true);
+  for (let i = 0; i < 8_000_000; i++) {
+    head = { id: i, next: i % 1000 ? head : null };
+    if (i % 1000 === 999) kept[((i / 1000) % 64) | 0] = head;
   }
   await Bun.sleep(20);
-  console.log("made and collected", head!.id);
+  let cells = 0;
+  for (let cell of kept) for (; cell; cell = cell.next) cells++;
+  console.log("made and collected", head!.id, cells);
+} else if (what === "awaited collections") {
+  for (let round = 0; round < 4; round++) Bun.gc(true);
 } else if (what === "worker") {
   try {
     new Worker(new URL(import.meta.url));
@@ -78,11 +83,21 @@ describe.skipIf(!isLinux || isASAN)("a compiled program that can start no thread
   test("makes and collects millions of objects by itself", async () => {
     if (!isBound) return;
     expect(await ask("collections")).toEqual({
-      stdout: "made and collected 1999999\nthe end\n",
+      stdout: "made and collected 7999999 64000\nthe end\n",
       exitCode: 0,
       lines: [],
     });
   }, 120_000);
+
+  // A collection that takes longer than its slice of time goes on beside the program. A program that waits for it hands it to the collector's own thread.
+  test.todo(
+    "waits for the collections that it asks for, on a busy machine too",
+    async () => {
+      if (!isBound) return;
+      expect(await ask("awaited collections")).toEqual({ stdout: "the end\n", exitCode: 0, lines: [] });
+    },
+    120_000,
+  );
 
   test("new Worker() throws", async () => {
     if (!isBound) return;

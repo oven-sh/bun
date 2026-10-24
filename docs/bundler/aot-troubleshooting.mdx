@@ -54,7 +54,7 @@ hello.ts(1,1): error TS2584: Cannot find name 'console'. Do you need to change y
 
 `bun compile` still builds the program, and it still knows the types of Bun's and Node.js's APIs. Bun carries a copy of `@types/bun` and of the two packages it depends on, `@types/node` and `undici-types`. A build reads the copy when `@types/bun` isn't installed, and so do `bun check --aot`, `bun run --aot` and `bun test --aot`. Plain `bun check` doesn't.
 
-What you install wins over the copy. With `@types/bun` in `node_modules`, the build doesn't read the copy at all. With only `@types/node` installed, the build reads your `@types/node` and takes the rest from the copy.
+What you install wins over the copy. With `@types/bun` in `node_modules`, the build doesn't read the copy at all. With only `@types/node` or only `bun-types` installed, the build reads yours and takes the rest from the copy. If your `tsconfig.json` lists a package under `"types"` that isn't installed, the build warns you (TS2688) and continues.
 
 The copy is there so the compiler knows Bun's APIs, not to hold your project to types it hasn't installed. If the program has a type error with the copy, the build starts over with whatever Bun provides typed as `any`. Code that uses it still works but [runs slower](/bundler/aot-explain). These aren't errors in that second build:
 

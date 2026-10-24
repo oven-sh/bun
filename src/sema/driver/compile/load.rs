@@ -67,7 +67,7 @@ pub fn load_program<'s>(
     // What a file of Bun's own says is the same in every program, whichever of the others the program asks for.
     options.orders_files_as_listed = !is_application;
     if is_application && has_bun_types {
-        last_files.append(&mut host.declarations_beside_bun_types());
+        last_files.append(&mut host.declarations_beside_bun_types(has_bun_types_installed));
     }
     if is_application && !has_bun_types {
         if let Some(path) = host.declarations_in_place_of_bun_types() {
@@ -130,6 +130,7 @@ pub fn load_program<'s>(
         origins: &origins,
         project_origin: request.project_origin,
         without_bun_types: without_bun_types.as_ref(),
+        lacks_installed_bun_types: is_application && !has_bun_types_installed,
     }
     .apply_effects(configuration_diagnostics(host, config_path, errors));
     Ok(LoadedProgram {
@@ -410,6 +411,7 @@ fn without_files(project_origin: FileOrigin) -> ProgramOrigins<'static, 'static>
         origins: &[],
         project_origin,
         without_bun_types: None,
+        lacks_installed_bun_types: false,
     }
 }
 
@@ -458,9 +460,23 @@ fn take_bun_types_of_host(host: &dyn CodeHost, options: &mut Options) -> bool {
     let Some(root) = host.type_root_in_place_of_bun_types() else {
         return false;
     };
-    let mut roots = options.effective_type_roots();
-    roots.push(root);
-    options.type_roots = Some(roots);
-    name_bun_types(options);
+    let roots = options.effective_type_roots();
+    // The package that `@types/bun` refers to. A project may have installed it alone.
+    let has_bun_types_package = roots.iter().any(|root| {
+        let directories = [Some(&root[..]), root.strip_suffix(b"/@types")];
+        (directories.into_iter().flatten())
+            .any(|it| host.is_file(&[it, b"/bun-types/package.json"].concat()))
+    });
+    options.type_root_of_last_resort = Some(root);
+    // One of the two, so that nothing is declared twice. What the installed one refers to and is not installed comes from the host.
+    let (named, other): (&[u8], &[u8]) = match has_bun_types_package {
+        true => (b"bun-types", b"bun"),
+        false => (b"bun", b"bun-types"),
+    };
+    let types = options.types.get_or_insert_default();
+    types.retain(|name| name != other);
+    if !types.iter().any(|name| name == named) {
+        types.push(named.to_vec());
+    }
     true
 }

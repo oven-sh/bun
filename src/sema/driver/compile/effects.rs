@@ -112,6 +112,7 @@ pub(super) struct ProgramOrigins<'a, 's> {
     pub origins: &'a [FileOrigin],
     pub project_origin: FileOrigin,
     pub without_bun_types: Option<&'a WithoutBunTypes>,
+    pub lacks_installed_bun_types: bool,
 }
 
 /// `Cannot find module '{0}'` and `Could not find a declaration file for module '{0}'`, for an import with and without names.
@@ -244,7 +245,7 @@ impl ProgramOrigins<'_, '_> {
             }
             let is_for_lack_of_bun_types = self.is_for_lack_of_bun_types(origin, &diagnostic);
             let names_missing_type_library =
-                self.without_bun_types.is_some() && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
+                self.lacks_installed_bun_types && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
             match effect_of(origin, diagnostic.class, diagnostic.category) {
                 Effect::Dropped => None,
                 Effect::StopsBuild | Effect::WithdrawsTrust
@@ -346,6 +347,7 @@ mod tests {
             origins: &[],
             project_origin: FileOrigin::NoFile,
             without_bun_types: None,
+            lacks_installed_bun_types: false,
         };
         let error = crate::global(5083, &["a"]);
         let message = Diagnostic {
@@ -383,6 +385,7 @@ mod tests {
                 origins: &[FileOrigin::ProgramSource],
                 project_origin: FileOrigin::NoFile,
                 without_bun_types,
+                lacks_installed_bun_types: without_bun_types.is_some(),
             };
             let diagnostic = Diagnostic {
                 file: Some(FileId(0)),
@@ -451,6 +454,7 @@ mod tests {
             origins: &[],
             project_origin: FileOrigin::Runtime,
             without_bun_types: None,
+            lacks_installed_bun_types: false,
         };
         let reported = origins.apply_effects(vec![crate::global(5083, &["a"])]);
         assert_eq!(reported[0].effect, Effect::InternalError);

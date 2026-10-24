@@ -615,11 +615,16 @@ impl CodeHost for LoadHost<'_> {
         vec![compiler_declarations::PATH.to_vec()]
     }
 
-    fn declarations_beside_bun_types(&self) -> Vec<Vec<u8>> {
-        match self.input.options.load.runs_tests {
-            true => vec![runtime_declarations::OTHER_NAMES_OF_TEST_RUNNER_PATH.to_vec()],
-            false => Vec::new(),
+    fn declarations_beside_bun_types(&self, are_installed: bool) -> Vec<Vec<u8>> {
+        if !self.input.options.load.runs_tests {
+            return Vec::new();
         }
+        let mut files = vec![runtime_declarations::OTHER_NAMES_OF_TEST_RUNNER_PATH.to_vec()];
+        // A project that has installed them refers to this file itself.
+        if !are_installed {
+            files.push(runtime_types::GLOBALS_OF_TEST_RUNNER.to_vec());
+        }
+        files
     }
 
     fn declarations_in_place_of_bun_types(&self) -> Option<Vec<u8>> {

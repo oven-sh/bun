@@ -756,6 +756,8 @@ pub struct Options {
     pub own_roots: Option<usize>,
     /// A root file, a script, whose global declarations and ambient modules count only where no other file declares the name.
     pub declarations_of_last_resort: Vec<u8>,
+    /// Where `/// <reference types>` and an entry of `types` are looked up that are found nowhere else. It is none of `typeRoots`.
+    pub type_root_of_last_resort: Option<Vec<u8>>,
     /// The declarations of one symbol in several files are considered in the order in which the directories list the files, whichever file refers to which.
     pub orders_files_as_listed: bool,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
@@ -3324,6 +3326,10 @@ impl<'h> Resolver<'h> {
             } else {
                 self.node_modules(name, from_dir, look).file()
             }
+        });
+        let found = found.or_else(|| {
+            let root = self.options.type_root_of_last_resort.as_ref()?;
+            self.in_type_roots(std::slice::from_ref(root), false, name, look)
         });
         // `createResolvedTypeReferenceDirective`: `typesVersions` can name any file, but only a
         // TypeScript file is accepted.

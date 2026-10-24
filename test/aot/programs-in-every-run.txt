@@ -132,6 +132,7 @@ calls/a-list-too-long-for-the-stack-fails-inside-the-try-around-the-call
 calls/a-number-bound-to-a-plain-function-is-there-when-it-is-called-and-when-it-is-constructed
 calls/a-spread-call-of-a-method-that-returns-this
 calls/a-spread-resolved-behind-the-last-round
+calls/a-variable-that-holds-a-bound-function-an-object-or-a-class-is-constructed-and-called
 calls/a-worker-is-terminated-inside-a-loop-that-calls-nothing
 calls/bind-found-by-name
 calls/bound-calls-beyond-the-argument-registers
@@ -164,6 +165,7 @@ calls/the-stack-ends-at-the-entry-of-a-function-that-reads-its-arguments-from-th
 calls/unused-results
 calls/what-a-function-did-before-the-stack-ended-is-undone-by-its-finally
 calls/what-call-reaches-through-another-function-makes-what-it-declares-anew-at-each-entry
+calls/what-one-call-reaches-through-call-or-through-a-bound-built-in-makes-what-it-declares-anew-at-each-entry
 claims-to-the-back-end/what-was-read-from-a-text-is-used-when-the-text-is-gone
 classes-and-closures/a-closure-made-anew-beside-a-way-that-calls-is-read-on-that-turn
 classes-and-closures/a-closure-made-anew-in-a-callback-of-an-array-method-is-read-on-that-turn
@@ -321,6 +323,7 @@ data-from-outside/json-parse-recursive-union-retry
 data-from-outside/json-parse-type-argument-in-workers
 data-from-outside/json-parse-type-argument-more-orders-of-keys-than-a-table-holds
 data-from-outside/json-parse-type-argument-recursive-unions-take-linear-time
+data-from-outside/json-parse-type-argument-refuses-a-large-text-in-workers-that-are-ended
 data-from-outside/objects-in-many-orders-of-names-come-and-go-between-collections
 data-from-outside/parsed-via-untyped-literal
 data-from-outside/sql-typed-rows

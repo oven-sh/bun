@@ -1,17 +1,17 @@
+use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
 
 use super::{throw, Expect};
 
 impl Expect {
-    pub(crate) fn to_be_object(
+    pub(crate) fn to_be_object<'a>(
         &self,
-        this_value: JsWrapper<'_, Self>,
+        this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let this_value = this_value.to_js();
-        let (this, value, not) = self.matcher_prelude(global, this_value, "toBeObject", "")?;
+        let (this, value, not) =
+            self.matcher_prelude(global, this_value.to_js(), "toBeObject", "")?;
 
         let pass = value.is_object() != not;
 

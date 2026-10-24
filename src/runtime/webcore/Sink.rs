@@ -160,7 +160,7 @@ pub(crate) trait ControlledSink: JsSinkType {
     unsafe fn close_with_error(
         this: *mut Self,
         _global: &JSGlobalObject,
-        _reason: JSValue,
+        _reason: JsLocal<'_>,
     ) -> sys::Result<()> {
         // SAFETY: caller contract; `end` does not free the sink.
         unsafe { (*this).end(None) }
@@ -184,12 +184,7 @@ fn throw_already_closed(global: &JSGlobalObject, name: &str) -> JsError {
 }
 
 #[cold]
-fn throw_invalid_chunk(global: &JSGlobalObject, chunk: JSValue) -> JsError {
-    let code = if chunk.is_undefined_or_null() {
-        ErrorCode::STREAM_NULL_VALUES
-    } else {
-        ErrorCode::INVALID_ARG_TYPE
-    };
+fn throw_invalid_chunk(global: &JSGlobalObject, code: ErrorCode) -> JsError {
     global.throw_value(global.to_type_error(
         code,
         format_args!("write() expects a string, ArrayBufferView, or ArrayBuffer"),
@@ -216,7 +211,18 @@ fn write_chunk<'a, T: JsSinkType>(
             bytemuck::cast_slice(text.utf16()),
         ))),
         SinkChunk::Text(text) => sink.write_latin1(&Temporary(RawSlice::new(text.latin1()))),
-        SinkChunk::Other(value) => return Err(throw_invalid_chunk(cx.global(), value.to_js())),
+        SinkChunk::Nullish => {
+            return Err(throw_invalid_chunk(
+                cx.global(),
+                ErrorCode::STREAM_NULL_VALUES,
+            ));
+        }
+        SinkChunk::Other => {
+            return Err(throw_invalid_chunk(
+                cx.global(),
+                ErrorCode::INVALID_ARG_TYPE,
+            ));
+        }
     };
     Ok(written.to_js(&cx.js_thread()))
 }
@@ -261,7 +267,7 @@ fn end_sink<T: JsSinkType>(sink: NonNull<T>, cx: &JsThread<'_>) -> JsResult<JSVa
 fn close_sink<T: ControlledSink>(
     sink: NonNull<T>,
     global: &JSGlobalObject,
-    reason: Option<JSValue>,
+    reason: Option<JsLocal<'_>>,
 ) -> JsResult<()> {
     let sink = sink.as_ptr();
     let result = match reason {
@@ -459,9 +465,9 @@ impl JSSink<FileSink> {
     pub(crate) fn start(
         &self,
         cx: &mut JsScope<'_>,
-        options: &FileSinkStartOptions<'_>,
+        options: &FileSinkStartOptions,
     ) -> JsResult<()> {
-        self.start_with_config(cx, streams::Start::file_sink(&options.path, options.fd))
+        self.start_with_config(cx, streams::Start::file_sink(&options.path, &options.fd))
     }
 }
 
@@ -657,16 +663,21 @@ impl ReadableSinkController {
         Some(sink)
     }
 
-    fn detach_with_reason(&self, global: &JSGlobalObject, reason: Option<JSValue>) -> JsResult<()> {
+    fn detach_with_reason(
+        &self,
+        global: &JSGlobalObject,
+        reason: Option<JsLocal<'_>>,
+    ) -> JsResult<()> {
         let controller = self.this_value();
         if let Some(reason) = reason {
             js::set_fail_reason(controller, reason);
         }
         self.take_sink();
         // A sink whose close re-enters here (FileSink's `on_close` runs inside `close(error)`) detaches before `close` passes the reason, which `failReason` already has.
-        let reason = reason
-            .or_else(|| js::fail_reason_get_cached(controller))
-            .unwrap_or(JSValue::UNDEFINED);
+        let Some(reason) = reason else {
+            let reason = js::fail_reason_get_cached(controller).unwrap_or(JSValue::UNDEFINED);
+            return js::on_close(controller, global, reason, /* sink_closed */ false);
+        };
         js::on_close(controller, global, reason, /* sink_closed */ false)
     }
 
@@ -675,7 +686,7 @@ impl ReadableSinkController {
     fn detach_and_return<R>(
         &self,
         global: &JSGlobalObject,
-        reason: Option<JSValue>,
+        reason: Option<JsLocal<'_>>,
         result: JsResult<R>,
     ) -> JsResult<R> {
         let Err(error) = result else {
@@ -699,17 +710,16 @@ impl ReadableSinkController {
         self.is_detached.get()
     }
 
-    /// `error` is `None` for a clean close, else why the source failed.
+    /// `reason` is `None` for a clean close, else why the source failed.
     pub(crate) fn close<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        error: Option<JsLocal<'a>>,
+        reason: Option<JsLocal<'a>>,
     ) -> JsResult<()> {
         let Some(sink) = self.take_sink() else {
             return Ok(());
         };
         let global = cx.global();
-        let reason = error.map(JsLocal::to_js);
         let result = match sink {
             AnyControlledSink::FileSink(sink) => close_sink(sink, global, reason),
             AnyControlledSink::RewriterPipe(sink) => close_sink(sink, global, reason),
@@ -763,7 +773,7 @@ impl ReadableSinkController {
     pub(crate) fn start(
         &self,
         cx: &mut JsScope<'_>,
-        options: &ReadableSinkControllerStartOptions<'_>,
+        options: &ReadableSinkControllerStartOptions,
     ) -> JsResult<()> {
         let Some(sink) = self.sink_or_throw(cx.global())? else {
             return Ok(());
@@ -772,7 +782,7 @@ impl ReadableSinkController {
         let chunk_size = streams::Start::chunk_size(options.high_water_mark);
         match sink {
             AnyControlledSink::FileSink(sink) => {
-                let config = streams::Start::file_sink(&options.path, options.fd);
+                let config = streams::Start::file_sink(&options.path, &options.fd);
                 start_sink(sink, cx, config)
             }
             AnyControlledSink::RewriterPipe(sink) => start_sink(sink, cx, chunk_size),

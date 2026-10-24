@@ -14,7 +14,7 @@ use bun_sys::{self as sys, Fd, FdExt};
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
 use crate::webcore::jsc::SysErrorJsc as _;
-use crate::webcore::jsc::bindgen::{JsLocal, JsScope};
+use crate::webcore::jsc::bindgen::JsScope;
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
 use crate::webcore::node_types::PathOrFileDescriptor;
@@ -1053,19 +1053,17 @@ impl readable_stream::SourceContext for FileReader {
 }
 
 impl Source {
-    pub fn set_raw_mode(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) -> JSValue {
-        let flag = flag.to_js();
-        debug_assert!(flag.is_boolean());
-        match self.context.set_raw_mode(flag == JSValue::TRUE) {
-            Ok(()) => JSValue::UNDEFINED,
-            Err(e) => e.to_js(cx.global()),
-        }
+    pub fn set_raw_mode(&self, cx: &mut JsScope<'_>, flag: Option<bool>) -> Option<JSValue> {
+        debug_assert!(flag.is_some());
+        self.context
+            .set_raw_mode(flag.unwrap_or(false))
+            .err()
+            .map(|e| e.to_js(cx.global()))
     }
 
-    pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
-        let flag = flag.to_js();
-        debug_assert!(flag.is_boolean());
-        self.context.set_flowing(flag == JSValue::TRUE);
+    pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: Option<bool>) {
+        debug_assert!(flag.is_some());
+        self.context.set_flowing(flag.unwrap_or(false));
     }
 }
 

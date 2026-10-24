@@ -1134,7 +1134,7 @@ describe("mkdirSync", () => {
         // @ts-expect-error
         { recursive: "lalala" },
       ),
-    ).toThrow('The "recursive" property must be of type boolean, got string');
+    ).toThrow(`The "options.recursive" property must be of type boolean. Received type string ('lalala')`);
   });
 });
 
@@ -2529,6 +2529,25 @@ describe("writeSync", () => {
 
     expect(readFileSync(dest, "latin1")).toBe("AAAA\x10");
     rmSync(dest, { force: true });
+  });
+
+  it("converts the encoding of a string once", () => {
+    using dir = tempDir("fs-write-encoding-once", {});
+    const fd = openSync(join(String(dir), "out.txt"), "w");
+    let calls = 0;
+    const encoding = Object.assign(new String("nope"), {
+      toString() {
+        calls++;
+        return "nope";
+      },
+    });
+    try {
+      // @ts-expect-error
+      expect(() => writeSync(fd, "a", null, encoding)).toThrow("encoding 'nope' is an invalid encoding");
+    } finally {
+      closeSync(fd);
+    }
+    expect(calls).toBe(1);
   });
 
   it("works with a position set to 0", () => {

@@ -5,9 +5,10 @@ use std::io::Write as _;
 use bun_ast::ImportKind;
 use bun_core::strings;
 
-use crate::bindgen::{JsLocal, JsScope};
+use crate::bindgen::JsScope;
 use crate::build_message::LogKindJsc as _;
 use crate::bun_string_jsc;
+use crate::generated_bindgen::resolve_message::ResolveMessageCode;
 use crate::{JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
 pub struct ResolveMessage {
@@ -73,46 +74,42 @@ fn esm_package_name(specifier: &[u8]) -> &[u8] {
 }
 
 impl ResolveMessage {
-    pub fn get_code(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn get_code(&self) -> Option<ResolveMessageCode> {
         match &self.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                let code: &'static [u8] = 'brk: {
-                    let specifier = resolve.specifier.slice(&self.msg.data.text);
+                let specifier = resolve.specifier.slice(&self.msg.data.text);
 
-                    break 'brk match resolve.import_kind {
-                        // Match Node.js error codes. CommonJS is historic
-                        // before they started prefixing with 'ERR_'
-                        ImportKind::Require => {
-                            if specifier.starts_with(b"node:") {
-                                break 'brk b"ERR_UNKNOWN_BUILTIN_MODULE";
-                            } else {
-                                break 'brk b"MODULE_NOT_FOUND";
-                            }
+                Some(match resolve.import_kind {
+                    // Match Node.js error codes. CommonJS is historic
+                    // before they started prefixing with 'ERR_'
+                    ImportKind::Require => {
+                        if specifier.starts_with(b"node:") {
+                            ResolveMessageCode::ErrUnknownBuiltinModule
+                        } else {
+                            ResolveMessageCode::ModuleNotFound
                         }
-                        // require resolve does not have the UNKNOWN_BUILTIN_MODULE error code
-                        ImportKind::RequireResolve => b"MODULE_NOT_FOUND",
-                        ImportKind::Stmt | ImportKind::Dynamic => {
-                            if specifier.starts_with(b"node:") {
-                                break 'brk b"ERR_UNKNOWN_BUILTIN_MODULE";
-                            } else {
-                                break 'brk b"ERR_MODULE_NOT_FOUND";
-                            }
+                    }
+                    // require resolve does not have the UNKNOWN_BUILTIN_MODULE error code
+                    ImportKind::RequireResolve => ResolveMessageCode::ModuleNotFound,
+                    ImportKind::Stmt | ImportKind::Dynamic => {
+                        if specifier.starts_with(b"node:") {
+                            ResolveMessageCode::ErrUnknownBuiltinModule
+                        } else {
+                            ResolveMessageCode::ErrModuleNotFound
                         }
+                    }
 
-                        ImportKind::HtmlManifest
-                        | ImportKind::EntryPointRun
-                        | ImportKind::EntryPointBuild
-                        | ImportKind::At
-                        | ImportKind::AtConditional
-                        | ImportKind::Url
-                        | ImportKind::Internal
-                        | ImportKind::Composes => b"RESOLVE_ERROR",
-                    };
-                };
-
-                bun_core::String::create_atom(code).into_js(cx.global())
+                    ImportKind::HtmlManifest
+                    | ImportKind::EntryPointRun
+                    | ImportKind::EntryPointBuild
+                    | ImportKind::At
+                    | ImportKind::AtConditional
+                    | ImportKind::Url
+                    | ImportKind::Internal
+                    | ImportKind::Composes => ResolveMessageCode::ResolveError,
+                })
             }
-            _ => Ok(JSValue::UNDEFINED),
+            _ => None,
         }
     }
 
@@ -235,19 +232,17 @@ impl ResolveMessage {
         self.to_string_fn(cx.global())
     }
 
-    pub fn to_primitive(&self, cx: &mut JsScope<'_>, hint: JsLocal<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        let hint = hint.to_js();
-        if !hint.is_string() {
-            return Ok(JSValue::NULL);
+    pub fn to_primitive(
+        &self,
+        cx: &mut JsScope<'_>,
+        hint: Option<bun_core::String>,
+    ) -> JsResult<Option<JSValue>> {
+        match hint {
+            Some(hint) if hint.eq_ascii(b"default") || hint.eq_ascii(b"string") => {
+                self.to_string_fn(cx.global()).map(Some)
+            }
+            _ => Ok(None),
         }
-
-        let str = hint.to_bun_string(global)?;
-        if str.eq_ascii(b"default") || str.eq_ascii(b"string") {
-            return self.to_string_fn(global);
-        }
-
-        Ok(JSValue::NULL)
     }
 
     pub fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -262,7 +257,8 @@ impl ResolveMessage {
         object.put(
             global,
             b"position",
-            crate::BuildMessage::generate_position_object(&self.msg, global)?,
+            crate::BuildMessage::generate_position_object(&self.msg, global)?
+                .unwrap_or(JSValue::NULL),
         );
         object.put(global, b"message", utf8(&self.get_message())?);
         object.put(global, b"level", self.msg.kind.to_js(global)?);
@@ -285,7 +281,7 @@ impl ResolveMessage {
         Ok(resolve_error.to_js(global))
     }
 
-    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
         crate::BuildMessage::generate_position_object(&self.msg, cx.global())
     }
 

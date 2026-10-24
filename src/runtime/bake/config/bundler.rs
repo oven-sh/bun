@@ -3,8 +3,12 @@
 use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 use crate::bake::jsc;
-use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::generated_bindgen::server::{
+    BakeMinify, BakePlugin, BakePluginList, BakeSourceMap, BuildConfigSubsetOptions,
+};
+use bun_jsc::bindgen::JsLocal;
+use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
+use bun_options_types::schema::api::SourceMapMode;
 use core::ptr::NonNull;
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
@@ -56,7 +60,7 @@ impl SplitBundlerOptions {
 
     pub(super) fn parse_plugin_array(
         &mut self,
-        plugin_array: JSValue,
+        plugin_array: BakePluginList<'_>,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         // Create the Plugin and assign it to `opts.plugin` BEFORE iterating,
@@ -73,15 +77,24 @@ impl SplitBundlerOptions {
         };
         let empty_object = JSValue::create_empty_object(global, 0);
 
-        let mut iter = plugin_array.array_iterator(global)?;
-        while let Some(plugin_config) = iter.next()? {
-            if !plugin_config.is_object() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("Expected plugin to be an object"))
-                );
-            }
+        let not_an_object =
+            || global.throw_invalid_arguments(format_args!("Expected plugin to be an object"));
+        let plugin_array = match plugin_array {
+            BakePluginList::List(list) => list,
+            // No element of these is an object.
+            BakePluginList::Text(text) if !text.is_empty() => return Err(not_an_object()),
+            BakePluginList::Symbol(_) | BakePluginList::BigInt(_) => return Err(not_an_object()),
+            BakePluginList::Text(_) | BakePluginList::Other => return Ok(()),
+        };
 
-            if let Some(slice) = plugin_config.get_optional_slice(global, "name")? {
+        let mut iter = plugin_array.to_js().array_iterator(global)?;
+        while let Some(plugin_config) = iter.next()? {
+            let Some(plugin_config) = JsLocal::<JSObject>::from_js(global, plugin_config) else {
+                return Err(not_an_object());
+            };
+            let plugin_config = BakePlugin::new(plugin_config);
+
+            if let Some(slice) = plugin_config.name(global)? {
                 if slice.slice().is_empty() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Expected plugin to have a non-empty name"
@@ -93,7 +106,7 @@ impl SplitBundlerOptions {
                 );
             }
 
-            let function = match plugin_config.get_function(global, "setup")? {
+            let function = match plugin_config.setup(global)? {
                 Some(f) => f,
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -105,7 +118,7 @@ impl SplitBundlerOptions {
             // `Plugin` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
             // deref. Handle held live in `self.plugin` (protected JSCell).
             let plugin_result = Plugin::opaque_mut(plugin.as_ptr()).add_plugin(
-                function,
+                function.to_js(),
                 empty_object,
                 JSValue::NULL,
                 false,
@@ -137,51 +150,32 @@ impl SplitBundlerOptions {
 }
 
 impl BuildConfigSubset {
-    pub(crate) fn from_js(
-        global: &JSGlobalObject,
-        js_options: JSValue,
-    ) -> JsResult<BuildConfigSubset> {
+    pub(crate) fn from_js(js_options: BuildConfigSubsetOptions) -> BuildConfigSubset {
         let mut options = BuildConfigSubset::default();
 
-        'brk: {
-            let Some(val) = js_options.get_optional::<JSValue>(global, "sourcemap")? else {
-                break 'brk;
+        if let Some(sourcemap) = js_options.sourcemap {
+            options.source_map = match sourcemap {
+                BakeSourceMap::None => SourceMapMode::None,
+                BakeSourceMap::Inline => SourceMapMode::Inline,
+                BakeSourceMap::External => SourceMapMode::External,
+                BakeSourceMap::Linked => SourceMapMode::Linked,
             };
-            if let Some(sourcemap) = source_map_mode_from_js(global, val)? {
-                options.source_map = sourcemap;
-                break 'brk;
-            }
-
-            return Err(crate::node::validators::throw_err_invalid_arg_type(
-                global,
-                format_args!("sourcemap"),
-                "\"inline\" | \"external\" | \"linked\"",
-                val,
-            ));
         }
 
-        'brk: {
-            let Some(minify_options) = js_options.get_optional::<JSValue>(global, "minify")? else {
-                break 'brk;
-            };
-            if minify_options.is_boolean() && minify_options.as_boolean() {
-                options.minify_syntax = Some(minify_options.as_boolean());
-                options.minify_identifiers = Some(minify_options.as_boolean());
-                options.minify_whitespace = Some(minify_options.as_boolean());
-                break 'brk;
+        match js_options.minify {
+            Some(BakeMinify::All(true)) => {
+                options.minify_syntax = Some(true);
+                options.minify_identifiers = Some(true);
+                options.minify_whitespace = Some(true);
             }
-
-            if let Some(value) = minify_options.get_boolean_loose(global, "whitespace")? {
-                options.minify_whitespace = Some(value);
+            Some(BakeMinify::Parts(parts)) => {
+                options.minify_whitespace = parts.whitespace;
+                options.minify_syntax = parts.syntax;
+                options.minify_identifiers = parts.identifiers;
             }
-            if let Some(value) = minify_options.get_boolean_loose(global, "syntax")? {
-                options.minify_syntax = Some(value);
-            }
-            if let Some(value) = minify_options.get_boolean_loose(global, "identifiers")? {
-                options.minify_identifiers = Some(value);
-            }
+            Some(BakeMinify::All(false) | BakeMinify::Other) | None => {}
         }
 
-        Ok(options)
+        options
     }
 }

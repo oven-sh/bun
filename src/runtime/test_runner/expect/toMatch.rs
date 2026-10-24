@@ -1,25 +1,24 @@
+use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
-use super::JSValueTestExt;
 
 use super::Expect;
 use super::throw;
+use crate::generated_bindgen::expect::StringOrRegExp;
 
 impl Expect {
     pub(crate) fn to_match(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        (pattern, expected): (StringOrRegExp<'_>, JsLocal<'_>),
+    ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) =
             self.matcher_prelude(global, this_value.to_js(), "toMatch", "<green>expected<r>")?;
 
         let mut formatter = super::make_formatter(global);
 
-        let expected = expected.to_js();
-        if !expected.is_string() && !expected.is_reg_exp() {
+        if matches!(pattern, StringOrRegExp::Other) {
             return Err(global.throw(format_args!(
                 "Expected value must be a string or regular expression: {}",
                 expected.to_fmt(&mut formatter),
@@ -33,20 +32,20 @@ impl Expect {
             )));
         }
 
-        let mut pass: bool = 'brk: {
-            if expected.is_string() {
-                break 'brk value.string_includes(global, expected)?;
-            } else if expected.is_reg_exp() {
-                break 'brk expected.to_match(global, value)?;
+        let mut pass: bool = match pattern {
+            StringOrRegExp::String(string) => value.string_includes(global, string.to_js())?,
+            StringOrRegExp::StringObject(object) => {
+                value.string_includes(global, object.to_js())?
             }
-            unreachable!();
+            StringOrRegExp::RegExp(reg_exp) => reg_exp.to_js().to_match(global, value)?,
+            StringOrRegExp::Other => unreachable!(),
         };
 
         if not {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let mut formatter2 = super::make_formatter(global);

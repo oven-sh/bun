@@ -6,9 +6,10 @@ use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
 
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
-    self as jsc, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult, VirtualMachine,
+    self as jsc, JSArray, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
+    VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
 #[cfg(not(windows))]
@@ -57,6 +58,64 @@ bun_output::declare_scope!(Subprocess, visible);
 bun_output::declare_scope!(IPC, visible);
 
 pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
+use crate::generated_bindgen::subprocess::{IpcMessage, IpcSendHandle, IpcSendOptions, Signal};
+
+pub(crate) fn signal_code(global_this: &JSGlobalObject, signal: Signal) -> JsResult<SignalCode> {
+    match signal {
+        Signal::Number(sig64) => {
+            // Node does this:
+            if sig64.is_nan() {
+                return Ok(SignalCode::DEFAULT);
+            }
+
+            // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
+            if sig64.is_infinite() || sig64.trunc() != sig64 {
+                return Err(global_this.throw_invalid_arguments(format_args!("Unknown signal")));
+            }
+
+            if sig64 < 0.0 {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Invalid signal: must be >= 0")));
+            }
+
+            if sig64 > 31.0 {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Invalid signal: must be < 32")));
+            }
+
+            // SignalCode is non-exhaustive over `u8`, so construct via the public
+            // ctor instead of a transmute.
+            Ok(SignalCode(sig64 as u8))
+        }
+        Signal::Name(name) => {
+            if name.length() == 0 {
+                return Ok(SignalCode::DEFAULT);
+            }
+            if let Some(code) = bun_core::SignalCode::from_name(name.to_utf8().slice()) {
+                return Ok(SignalCode::of(code));
+            }
+            // Expected-names list
+            // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
+            // canonical signal X-macro so names are never re-spelled.
+            let names = bun_core::SignalCode::ALL;
+            let mut one_of = std::string::String::from("'");
+            for (i, entry) in names.iter().enumerate() {
+                one_of.push_str(entry.name());
+                one_of.push('\'');
+                if i < names.len() - 2 {
+                    one_of.push_str(", '");
+                } else if i == names.len() - 2 {
+                    one_of.push_str(" or '");
+                }
+            }
+            Err(global_this.throw_invalid_arguments(format_args!("signal must be one of {one_of}")))
+        }
+        Signal::Missing => Ok(SignalCode::DEFAULT),
+        Signal::Other => Err(global_this.throw_invalid_arguments(format_args!(
+            "Invalid signal: must be a string or an integer"
+        ))),
+    }
+}
 
 /// Platform-dependent stdio result type.
 pub(crate) use bun_spawn::subprocess::StdioResult;
@@ -297,14 +356,14 @@ impl Subprocess<'_> {
         self.abort_handle.signal()
     }
 
-    pub(crate) fn resource_usage(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn resource_usage(&self, cx: &mut JsScope<'_>) -> Option<JSValue> {
         self.create_resource_usage_object(cx.global())
     }
 
     pub(crate) fn create_resource_usage_object(
         &self,
         global_object: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
+    ) -> Option<JSValue> {
         let rusage = 'brk: {
             if let Some(r) = self.pid_rusage.get() {
                 break 'brk r;
@@ -324,9 +383,9 @@ impl Subprocess<'_> {
                 }
             }
 
-            return Ok(JSValue::UNDEFINED);
+            return None;
         };
-        Ok(ResourceUsage { rusage }.to_js(global_object))
+        Some(ResourceUsage { rusage }.to_js(global_object))
     }
 
     pub(crate) fn has_exited(&self) -> bool {
@@ -538,10 +597,10 @@ impl Subprocess<'_> {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         if self.process().has_exited() {
             // rely on GC to clean everything up in this case
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         }
 
         // unref streams so that this disposed process will not prevent
@@ -559,7 +618,7 @@ impl Subprocess<'_> {
             }
         }
 
-        Ok(self.get_exited(this_value, cx))
+        Ok(Some(self.get_exited(this_value, cx)))
     }
 
     pub(crate) fn set_event_loop_timer_refd(&self, refd: bool) {
@@ -639,7 +698,7 @@ impl Subprocess<'_> {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        signal: JsLocal<'_>,
+        signal: Signal,
     ) -> JsResult<()> {
         let global_this = cx.global();
         // Safe: this method can only be called while the object is alive (reachable from JS)
@@ -649,7 +708,7 @@ impl Subprocess<'_> {
 
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal.to_js(), global_this)?;
+        let sig = signal_code(global_this, signal)?;
 
         match self.try_kill(sig) {
             bun_sys::Result::Ok(()) => {}
@@ -706,13 +765,13 @@ impl Subprocess<'_> {
         }
     }
 
-    pub(crate) fn send(
+    pub(crate) fn send<'a>(
         &self,
-        cx: &mut JsScope<'_>,
-        message: JsLocal<'_>,
-        handle: JsLocal<'_>,
-        options: JsLocal<'_>,
-        callback: JsLocal<'_>,
+        cx: &mut JsScope<'a>,
+        message: IpcMessage<'a>,
+        handle: IpcSendHandle<'a>,
+        options: IpcSendOptions<'a>,
+        callback: Option<JsLocal<'a, Callable>>,
     ) -> JsResult<bool> {
         bun_output::scoped_log!(IPC, "Subprocess#doSend");
 
@@ -726,12 +785,10 @@ impl Subprocess<'_> {
         crate::ipc_host::do_send(
             self.ipc(),
             cx.global(),
-            [
-                message.to_js(),
-                handle.to_js(),
-                options.to_js(),
-                callback.to_js(),
-            ],
+            message,
+            handle,
+            options,
+            callback,
             context,
             self.pid() as u32,
         )
@@ -764,13 +821,10 @@ impl Subprocess<'_> {
         self.has_killed()
     }
 
-    pub(crate) fn get_stdio(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        let array = JSValue::create_empty_array(global, 0)?;
-        array.push(global, JSValue::NULL)?;
-        array.push(global, JSValue::NULL)?; // TODO: align this with options
-        array.push(global, JSValue::NULL)?; // TODO: align this with options
-
+    pub(crate) fn get_stdio<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, JsLocal<'a, JSArray>> {
         // Once the values are visible to JS the caller owns them (it hands
         // them to `net.connect({ fd })`, which closes them with the socket).
         // Our `uv_pipe_t` would close the same HANDLE again when this
@@ -802,29 +856,32 @@ impl Subprocess<'_> {
             }
         });
 
-        for item in self.stdio_pipes.get().iter() {
+        // TODO: align this with options
+        let standard = [None; 3];
+        let extra = self.stdio_pipes.get().iter().map(|item| {
             #[cfg(windows)]
             {
                 if let StdioResult::UnownedFd(fd) = item {
                     // Expose the numeric HANDLE value.
                     let handle: usize = fd.native() as usize;
-                    array.push(global, JSValue::js_number(handle as f64))?;
+                    Some(handle as f64)
                 } else {
-                    array.push(global, JSValue::NULL)?;
+                    None
                 }
             }
             #[cfg(not(windows))]
             {
                 match item {
-                    ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => {
-                        array.push(global, JSValue::js_number(fd.native() as f64))?;
-                    }
-                    ExtraPipe::Unavailable => {
-                        array.push(global, JSValue::NULL)?;
-                    }
+                    ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => Some(fd.native() as f64),
+                    ExtraPipe::Unavailable => None,
                 }
             }
-        }
+        });
+        let array = heap.create_array(standard.into_iter().chain(extra), |heap, fd| match fd {
+            Some(fd) => bindgen::to_js::f64(heap, fd),
+            None => Ok(JsLocal::NULL),
+        })?;
+
         // The raw fd numbers are now visible to JS and the caller owns them.
         // Downgrade so finalize_streams never closes a number JS may have
         // already closed (whose value the kernel may have since recycled).
@@ -836,6 +893,7 @@ impl Subprocess<'_> {
                 }
             }
         });
+
         Ok(array)
     }
 

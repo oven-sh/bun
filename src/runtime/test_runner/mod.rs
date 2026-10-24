@@ -36,7 +36,7 @@ macro_rules! unary_predicate_matcher {
                 &self,
                 this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
                 cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+            ) -> ::bun_jsc::JsResult<()> {
                 self.run_unary_predicate(
                     cx.global(),
                     this_value.to_js(),
@@ -193,7 +193,9 @@ pub(crate) mod expect {
     // local FFI re-decls, no semantic divergence.
 
     use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+    use bun_jsc::bindgen::JsLocal;
     use bun_jsc::console_object::Formatter;
+    use crate::generated_bindgen::expect::NumberOrBigInt;
 
     pub(crate) trait JSValueTestExt {
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
@@ -221,8 +223,7 @@ pub(crate) mod expect {
             JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global,
-                core::slice::from_ref(&self),
-                1,
+                self,
                 out,
                 fmt_options,
             )?;
@@ -338,10 +339,10 @@ pub(crate) mod expect {
             &self,
             global: &JSGlobalObject,
             this_value: JSValue,
-            other_value: JSValue,
+            (other, other_value): (NumberOrBigInt<'_>, JsLocal<'_>),
             name: &'static str,
             rel: OrderingRelation,
-        ) -> JsResult<JSValue> {
+        ) -> JsResult<()> {
             let this = self.post_match_guard(global);
 
             this.increment_expect_call_counter();
@@ -349,25 +350,28 @@ pub(crate) mod expect {
             let value: JSValue =
                 this.get_value(global, this_value, name, "<green>expected<r>")?;
 
-            if (!value.is_number() && !value.is_big_int())
-                || (!other_value.is_number() && !other_value.is_big_int())
-            {
+            let other = match other {
+                NumberOrBigInt::Number(other) => Some(JSValue::js_double_number(other)),
+                NumberOrBigInt::BigInt(other) => Some(other.to_js()),
+                NumberOrBigInt::Other => None,
+            };
+            let Some(other) = other.filter(|_| value.is_number() || value.is_big_int()) else {
                 return Err(global.throw(format_args!(
                     "Expected and actual values must be numbers or bigints"
                 )));
-            }
+            };
 
             let not = this.flags.get().not();
-            let mut pass = if !value.is_big_int() && !other_value.is_big_int() {
-                rel.cmp_f64(value.as_number(), other_value.as_number())
+            let mut pass = if !value.is_big_int() && !other.is_big_int() {
+                rel.cmp_f64(value.as_number(), other.as_number())
             } else if value.is_big_int() {
-                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value))
+                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other))
             } else {
-                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value))
+                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other, value))
             };
 
             if not { pass = !pass; }
-            if pass { return Ok(JSValue::UNDEFINED); }
+            if pass { return Ok(()); }
 
             // failure path — two formatters because `to_fmt` borrows `&mut`.
             let mut f1 = make_formatter(global);

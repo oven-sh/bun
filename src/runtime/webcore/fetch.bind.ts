@@ -1,12 +1,60 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { S3Options } from "./Blob.bind.ts";
+import { FetchTlsMember, FlagOrNumber, ProxyInit, UnixPath } from "./fetch/FetchSession.bind.ts";
+import { BodyInit, HeadersInit, OptionName, SignalInit } from "./response.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::fetch" });
 
 const js = { capability: "js", throws: true } as const;
-/** An `input` that is neither a `Request` nor, after `ToString`, a URL is read as `init` is. */
+
+export const CompressEncodingName = b.union({ name: b.string.allowStringObject, other: b.opaque });
+export const CompressOptions = b.dictionary(
+  {
+    encoding: CompressEncodingName,
+    /** Its range is the one of `encoding`. */
+    level: b.opaque.nullable,
+  },
+  { deferred: true },
+);
+export const CompressInit = b.union({
+  missing: b.undefined,
+  null: b.null,
+  flag: b.bool,
+  name: b.string.allowStringObject,
+  options: CompressOptions,
+  other: b.opaque,
+});
+export const MaxRedirects = b.union({ missing: b.null, number: b.f64, other: b.ignored });
+export const Verbose = b.union({ name: b.string.allowStringObject, flag: b.bool, other: b.ignored });
+export const FetchInit = b.dictionary(
+  {
+    url: b.string.loose.optional,
+    method: b.string.loose.emptyStringAsNull,
+    decompress: FlagOrNumber,
+    compress: CompressInit,
+    maxRedirects: MaxRedirects,
+    /** A `Bun.FetchSession`. */
+    session: b.opaque.nullable,
+    tls: FetchTlsMember,
+    unix: UnixPath,
+    protocol: b.string.allowStringObject.otherAsNull,
+    timeout: FlagOrNumber,
+    redirect: OptionName,
+    keepalive: FlagOrNumber,
+    verbose: Verbose,
+    proxy: ProxyInit,
+    signal: SignalInit,
+    body: BodyInit,
+    headers: HeadersInit,
+    s3: S3Options.otherAsNull,
+  },
+  { deferred: true },
+);
+/** An `object` that is neither a `Request` nor, after `ToString`, a URL is read as `init` is. */
+export const FetchInput = b.union({ string: b.string.allowStringObject, object: FetchInit, other: b.opaque });
 const request = {
-  args: { input: b.any, init: b.any },
-  returns: b.any,
+  args: { input: FetchInput, init: FetchInit.otherAsNull },
+  returns: b.promise,
   ...js,
   rejects: true,
   requiredArguments: 1,

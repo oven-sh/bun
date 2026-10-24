@@ -5,6 +5,8 @@ use bun_core::Utf8Bytes;
 use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 
+use crate::generated_bindgen::server::FrameworkValue;
+
 /// `setConfigPlugins(plugins, names)`: `plugins` is an array of Bun plugin objects and `names` is
 /// an array of their names.
 pub(crate) fn set_config_plugins<'a>(
@@ -18,7 +20,7 @@ pub(crate) fn set_config_plugins<'a>(
     if names.is_empty() {
         vm.bake_config_plugins.deinit();
     } else {
-        vm.bake_config_plugins.set(global, plugins.to_js());
+        vm.bake_config_plugins.set(global, plugins);
     }
     vm.bake_config_plugin_names = names.into_iter().map(|name| Box::from(&*name)).collect();
 }
@@ -69,24 +71,24 @@ pub(crate) fn is_restarting() -> bool {
 
 /// `setPages(framework?)`: the next `Bun.serve()` adds the routers of `framework` (the `framework`
 /// object of a plugin), or of the default React framework when it is undefined.
-pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) {
+pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: Option<JsLocal<'a>>) {
     let global = cx.global();
-    let framework = framework.to_js();
     let vm = global.bun_vm().as_mut();
-    if framework.is_undefined_or_null() {
-        vm.bake_framework.deinit();
-    } else {
-        vm.bake_framework.set(global, framework);
+    match framework {
+        None => vm.bake_framework.deinit(),
+        Some(framework) => vm.bake_framework.set(global, framework),
     }
     vm.bake_pages = true;
 }
 
 /// `checkFramework(framework)`: throws the error that `Bun.serve()` would throw for this `framework`
 /// object of a plugin, so that `bun bake` reports it as an error of `bake.config.ts`.
-pub(crate) fn check_framework<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) -> JsResult<()> {
+pub(crate) fn check_framework<'a>(
+    cx: &mut JsScope<'a>,
+    framework: FrameworkValue<'a>,
+) -> JsResult<()> {
     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
-    let result =
-        crate::bake::Framework::from_js(framework.to_js(), cx.global(), &mut bundler_options);
+    let result = crate::bake::Framework::from_js(framework, cx.global(), &mut bundler_options);
     bundler_options.destroy_plugin();
     result?;
     Ok(())

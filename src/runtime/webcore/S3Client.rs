@@ -1,12 +1,16 @@
 use bstr::BStr;
 
+use crate::generated_bindgen::blob::{PathOrBlob, S3Options};
+use crate::generated_bindgen::blob_arguments::BunWriteData;
+use crate::generated_bindgen::node_fs_binding as fs_schema;
+use crate::generated_bindgen::s3_client::{ListObjectsInput, S3Path, S3PresignOptions};
 use crate::node::PathLike;
-use crate::node::types::PathLikeExt as _;
+use crate::node::types::{Flavor, Parsing, PathLikeExt as _};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::{ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
 use super::s3_file as S3File;
@@ -43,7 +47,7 @@ pub(crate) trait S3CredentialsExt {
         // real impl in `s3/credentials_jsc.rs` deep-copies internally.
         this: &S3Credentials,
         default_options: MultiPartUploadOptions,
-        options: Option<JSValue>,
+        options: Option<S3Options<'_>>,
         default_acl: Option<ACL>,
         default_storage_class: Option<StorageClass>,
         default_request_payer: bool,
@@ -63,7 +67,7 @@ impl S3CredentialsExt for S3Credentials {
     fn get_credentials_with_options(
         this: &S3Credentials,
         default_options: MultiPartUploadOptions,
-        options: Option<JSValue>,
+        options: Option<S3Options<'_>>,
         default_acl: Option<ACL>,
         default_storage_class: Option<StorageClass>,
         default_request_payer: bool,
@@ -88,27 +92,14 @@ enum MissingPathError {
     AlwaysMissingArgs,
 }
 
-#[inline]
-fn opt_js(v: JSValue) -> Option<JSValue> {
-    if v.is_undefined_or_null() {
-        None
-    } else {
-        Some(v)
-    }
-}
-
-fn path_from_js(global: &JSGlobalObject, path: JSValue) -> JsResult<Option<PathLike<'static>>> {
-    let vm = global.bun_vm();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, core::slice::from_ref(&path));
-    PathLike::from_js(global, &mut args)
-}
-
-/// `presign(path, undefined)` signs with the `acl` and `storageClass` of the store, `presign(path)` without.
-fn presign_args(args: &[JsLocal<'_>]) -> (JSValue, Option<JSValue>) {
-    (
-        args.first().map_or(JSValue::UNDEFINED, |path| path.to_js()),
-        args.get(1).map(|options| options.to_js()),
-    )
+fn path_from_js(global: &JSGlobalObject, path: S3Path<'_>) -> JsResult<Option<PathLike<'static>>> {
+    let path = match path {
+        S3Path::Missing | S3Path::Other => return Ok(None),
+        S3Path::String(string) => fs_schema::PathLike::String(string),
+        S3Path::Buffer(buffer) => fs_schema::PathLike::Buffer(buffer),
+        S3Path::Url(url) => fs_schema::PathLike::Url(url),
+    };
+    Ok(PathLike::from_js(global, path, &mut Parsing::new(Flavor::Sync))?.ok())
 }
 
 pub(crate) fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
@@ -266,7 +257,10 @@ pub(crate) struct S3Client {
 }
 
 impl S3Client {
-    pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
+    pub(crate) fn constructor(
+        cx: &mut JsScope<'_>,
+        options: Option<S3Options<'_>>,
+    ) -> JsResult<Self> {
         let global = cx.global();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init). `get_s3_credentials` takes `&mut self`
@@ -282,7 +276,7 @@ impl S3Client {
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
             MultiPartUploadOptions::default(),
-            Some(options.to_js()),
+            options,
             None,
             None,
             false,
@@ -347,7 +341,7 @@ impl S3Client {
         &self,
         global: &JSGlobalObject,
         path: PathLike<'static>,
-        options: Option<JSValue>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<crate::webcore::blob::Blob> {
         S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
@@ -365,14 +359,15 @@ impl S3Client {
     fn blob_for_path(
         &self,
         global: &JSGlobalObject,
-        path: JSValue,
-        options: Option<JSValue>,
+        path: S3Path<'_>,
+        options: Option<S3Options<'_>>,
         verb: &str,
         missing_path: MissingPathError,
     ) -> JsResult<crate::webcore::blob::Blob> {
+        let is_missing = matches!(path, S3Path::Missing);
         let Some(path) = path_from_js(global, path)? else {
             return Err(match missing_path {
-                MissingPathError::MissingOrInvalid if !path.is_undefined() => {
+                MissingPathError::MissingOrInvalid if !is_missing => {
                     global.throw_invalid_arguments(format_args!("Expected a path to {verb}"))
                 }
                 _ => global
@@ -389,14 +384,15 @@ impl S3Client {
     pub(crate) fn file(
         &self,
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: S3Path<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let path: PathLike = match path_from_js(global, path.to_js())? {
+        let is_missing = matches!(path, S3Path::Missing);
+        let path: PathLike = match path_from_js(global, path)? {
             Some(p) => p,
             None => {
-                if path.to_js().is_undefined() {
+                if is_missing {
                     return Err(global
                         .err(ErrorCode::MISSING_ARGS, format_args!("Expected a path "))
                         .throw());
@@ -404,7 +400,6 @@ impl S3Client {
                 return Err(global.throw_invalid_arguments(format_args!("Expected a path")));
             }
         };
-        let options = opt_js(options.to_js());
         // `Blob::new` heap-promotes and marks `ref_count = 1` so
         // the JSS3File wrapper's `finalize` knows to free the blob.
         let blob = crate::webcore::blob::Blob::new(self.construct_blob(global, path, options)?);
@@ -417,13 +412,18 @@ impl S3Client {
         Ok(unsafe { &mut *blob }.to_js(global))
     }
 
-    pub(crate) fn presign(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    pub(crate) fn presign(
+        &self,
+        cx: &mut JsScope<'_>,
+        path: S3Path<'_>,
+        options: Option<S3PresignOptions<'_>>,
+    ) -> JsResult<JSValue> {
         let global = cx.global();
-        let (path, options) = presign_args(args);
+        let options = options.map(S3File::presign_options);
         let blob = self.blob_for_path(
             global,
             path,
-            options,
+            options.flatten(),
             "presign",
             MissingPathError::MissingOrInvalid,
         )?;
@@ -433,14 +433,14 @@ impl S3Client {
     pub(crate) fn exists(
         &self,
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: S3Path<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let blob = self.blob_for_path(
             cx.global(),
-            path.to_js(),
-            opt_js(options.to_js()),
+            path,
+            options,
             "check if it exists",
             MissingPathError::MissingOrInvalid,
         )?;
@@ -450,14 +450,14 @@ impl S3Client {
     pub(crate) fn size(
         &self,
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: S3Path<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let mut blob = self.blob_for_path(
             cx.global(),
-            path.to_js(),
-            opt_js(options.to_js()),
+            path,
+            options,
             "check the size of",
             MissingPathError::MissingOrInvalid,
         )?;
@@ -467,14 +467,14 @@ impl S3Client {
     pub(crate) fn stat(
         &self,
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: S3Path<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let blob = self.blob_for_path(
             cx.global(),
-            path.to_js(),
-            opt_js(options.to_js()),
+            path,
+            options,
             "check the stat of",
             MissingPathError::MissingOrInvalid,
         )?;
@@ -484,13 +484,13 @@ impl S3Client {
     pub(crate) fn write(
         &self,
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        data: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: S3Path<'_>,
+        data: BunWriteData<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let path: PathLike = match path_from_js(global, path.to_js())? {
+        let path: PathLike = match path_from_js(global, path)? {
             Some(p) => p,
             None => {
                 return Err(global
@@ -501,8 +501,7 @@ impl S3Client {
                     .throw());
             }
         };
-        let data = data.to_js();
-        if data.is_undefined() {
+        if matches!(data, BunWriteData::Undefined) {
             return Err(global
                 .err(
                     ErrorCode::MISSING_ARGS,
@@ -511,7 +510,6 @@ impl S3Client {
                 .throw());
         }
 
-        let options = opt_js(options.to_js());
         let blob = self.construct_blob(global, path, options)?;
         // Move into `PathOrBlob` directly; cleanup of the moved-out value is
         // handled by `Drop`.
@@ -531,11 +529,10 @@ impl S3Client {
     pub(crate) fn list(
         &self,
         cx: &mut JsScope<'_>,
-        input: JsLocal<'_>,
-        options: JsLocal<'_>,
+        input: ListObjectsInput<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let options = opt_js(options.to_js());
 
         let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             cx.global(),
@@ -552,20 +549,19 @@ impl S3Client {
         store
             .data
             .as_s3()
-            .list_objects(store.clone(), &cx, input.to_js(), options)
+            .list_objects(store.clone(), &cx, input, options)
     }
 
     pub(crate) fn unlink(
         &self,
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: S3Path<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let options = opt_js(options.to_js());
         let blob = self.blob_for_path(
             cx.global(),
-            path.to_js(),
+            path,
             options,
             "unlink",
             MissingPathError::AlwaysMissingArgs,
@@ -578,17 +574,16 @@ impl S3Client {
 
     pub(crate) fn static_write(
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        data: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: PathOrBlob<'_>,
+        data: BunWriteData<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
         let error_message = "Expected a S3 or path to upload";
-        let path_or_blob = S3File::parse_s3_path_or_blob(global, path.to_js(), error_message)?;
+        let path_or_blob = S3File::parse_s3_path_or_blob(global, path, error_message)?;
 
-        let data = data.to_js();
-        if data.is_undefined() {
+        if matches!(data, BunWriteData::Undefined) {
             return Err(global
                 .err(
                     ErrorCode::MISSING_ARGS,
@@ -597,7 +592,6 @@ impl S3Client {
                 .throw());
         }
 
-        let options = opt_js(options.to_js());
         let blob = S3File::resolve_s3_blob(global, options, path_or_blob, error_message)?;
         let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(blob);
         crate::webcore::blob::write_file_internal(
@@ -612,24 +606,32 @@ impl S3Client {
         )
     }
 
-    pub(crate) fn static_presign(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    pub(crate) fn static_presign(
+        cx: &mut JsScope<'_>,
+        path: PathOrBlob<'_>,
+        options: Option<S3PresignOptions<'_>>,
+    ) -> JsResult<JSValue> {
         let global = cx.global();
-        let (path, options) = presign_args(args);
-        let blob =
-            S3File::s3_blob_from_js(global, path, options, "Expected a S3 or path to presign")?;
+        let options = options.map(S3File::presign_options);
+        let blob = S3File::s3_blob_from_js(
+            global,
+            path,
+            options.flatten(),
+            "Expected a S3 or path to presign",
+        )?;
         S3File::get_presign_url_from(&blob, global, options)
     }
 
     pub(crate) fn static_exists(
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: PathOrBlob<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let blob = S3File::s3_blob_from_js(
             cx.global(),
-            path.to_js(),
-            opt_js(options.to_js()),
+            path,
+            options,
             "Expected a S3 or path to check if it exists",
         )?;
         S3File::S3BlobStatTask::exists(&cx, &blob)
@@ -637,31 +639,30 @@ impl S3Client {
 
     pub(crate) fn static_size(
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: PathOrBlob<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
         let error_message = "Expected a S3 or path to get size";
-        let mut blob = match S3File::parse_s3_path_or_blob(global, path.to_js(), error_message)? {
+        let mut blob = match S3File::parse_s3_path_or_blob(global, path, error_message)? {
             crate::webcore::node_types::PathOrBlob::Blob(blob) => {
                 return Ok(JSValue::js_number(blob.get_size()));
             }
-            path => S3File::resolve_s3_blob(global, opt_js(options.to_js()), path, error_message)?,
+            path => S3File::resolve_s3_blob(global, options, path, error_message)?,
         };
         S3File::S3BlobStatTask::size(&cx, &mut blob)
     }
 
     pub(crate) fn static_unlink(
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: PathOrBlob<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let options = opt_js(options.to_js());
         let blob = S3File::s3_blob_from_js(
             cx.global(),
-            path.to_js(),
+            path,
             options,
             "Expected a S3 or path to delete",
         )?;
@@ -671,27 +672,27 @@ impl S3Client {
 
     pub(crate) fn static_file(
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: S3Path<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let Some(path) = path_from_js(global, path.to_js())? else {
+        let Some(path) = path_from_js(global, path)? else {
             return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));
         };
 
-        S3File::construct_internal_js(global, path, opt_js(options.to_js()))
+        S3File::construct_internal_js(global, path, options)
     }
 
     pub(crate) fn static_stat(
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: PathOrBlob<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let blob = S3File::s3_blob_from_js(
             cx.global(),
-            path.to_js(),
-            opt_js(options.to_js()),
+            path,
+            options,
             "Expected a S3 or path to get size",
         )?;
         S3File::S3BlobStatTask::stat(&cx, &blob)
@@ -699,12 +700,11 @@ impl S3Client {
 
     pub(crate) fn static_list(
         cx: &mut JsScope<'_>,
-        input: JsLocal<'_>,
-        options: JsLocal<'_>,
+        input: ListObjectsInput<'_>,
+        options: Option<S3Options<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let options = opt_js(options.to_js());
 
         // get credentials from env — `Transpiler::env_mut` is the safe accessor
         // for the process-singleton dotenv loader (set during init).
@@ -728,7 +728,7 @@ impl S3Client {
         store
             .data
             .as_s3()
-            .list_objects(store.clone(), &cx, input.to_js(), options)
+            .list_objects(store.clone(), &cx, input, options)
     }
 }
 

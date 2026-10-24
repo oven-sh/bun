@@ -200,3 +200,24 @@ struct WebCore::Converter<Bun::Bindgen::IDLLooseInteger<T, allowBigInt>>
         RELEASE_AND_RETURN(scope, Bun::convertIDL<Strict>(globalObject, numeric, ctx));
     }
 };
+
+template<>
+struct WebCore::Converter<Bun::Bindgen::IDLBigIntAsInt64>
+    : Bun::DefaultTryConverter<Bun::Bindgen::IDLBigIntAsInt64> {
+
+    static constexpr bool conversionHasSideEffects = false;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<int64_t> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!value.isBigInt())
+            return std::nullopt;
+        return JSC::JSBigInt::toBigInt64(value);
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "a bigint"_s);
+    }
+};

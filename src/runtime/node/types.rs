@@ -15,45 +15,20 @@ use bun_paths::WPathBuffer;
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
+use crate::generated_bindgen::blob;
+use crate::generated_bindgen::node_fs_binding as schema;
 use crate::node::util::validators;
+use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, Request, Response};
 
 pub(crate) use jsc::MarkedArrayBuffer as Buffer;
 use jsc::PinnedArrayBuffer;
-
-// `jsc.ArgumentsSlice` — cursor over CallFrame args.
-pub(crate) use jsc::ArgumentsSlice;
 
 // LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
 // canonical `bun_sys_jsc::FdJsc` extension trait (full range/type
 // validation). Re-exported so existing
 // `crate::node::types::FdJsc` import paths keep resolving.
 pub(crate) use bun_sys_jsc::FdJsc;
-
-/// `bun_runtime`-tier required-argument helper layered on `FdJsc`. Collapses
-/// the `next_eat → from_js_validated → ok_or_else(throw_invalid_fd_error)`
-/// boilerplate repeated 12× across `node_fs.rs::args::*::from_js`.
-pub(crate) trait FdArgExt: FdJsc {
-    #[inline]
-    fn from_js_required(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-        let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
-        Self::from_js_validated(fd_value, ctx)?.ok_or_else(|| {
-            if fd_value.is_number() {
-                return ctx
-                    .err(
-                        jsc::ErrorCode::OUT_OF_RANGE,
-                        format_args!(
-                            "The value of \"fd\" is out of range. It must be an integer. Received {}",
-                            bun_fmt::double(fd_value.as_number())
-                        ),
-                    )
-                    .throw();
-            }
-            ctx.throw_invalid_argument_type_value(b"fd", b"number", fd_value)
-        })
-    }
-}
-impl FdArgExt for Fd {}
 
 // LAYERING: `bun_sys::SystemError → JSValue` bridge (reshapes the T1 data
 // struct into the `#[repr(C)]` FFI layout and forwards to C++). Re-exported so
@@ -76,15 +51,20 @@ pub(crate) enum Flavor {
     Async,
 }
 
-/// Whether a `String` wrapper object (`new String("..")`) counts as a string
-/// when parsing a string-or-buffer argument. Node's `fs.writeFile` family
-/// rejects wrapper objects; everything else unwraps them.
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum StringObjects {
-    Allow,
-    /// Only primitive strings match; a wrapper object parses as "not a string
-    /// or buffer", so the caller throws its own type error.
-    Reject,
+/// What parsing the arguments of one call carries from one argument to the next.
+pub(crate) struct Parsing {
+    pub flavor: Flavor,
+    /// An errno a converter met under `Flavor::Async`; the binding rejects its promise with it.
+    pub deferred_error: Option<Box<bun_sys::SystemError>>,
+}
+
+impl Parsing {
+    pub(crate) fn new(flavor: Flavor) -> Self {
+        Self {
+            flavor,
+            deferred_error: None,
+        }
+    }
 }
 
 /// What [`BlobOrStringOrBuffer`] parsing does with a file-backed `Blob`
@@ -157,6 +137,24 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file(global, value, FileBlobs::Reject)
     }
 
+    /// The body of a `Request` or a `Response`.
+    pub(crate) fn from_body_value(
+        global: &JSGlobalObject,
+        body_value: &mut BodyValue,
+    ) -> JsResult<BlobOrStringOrBuffer> {
+        body_value.to_blob_if_possible();
+
+        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
+            let blob = any_blob.to_blob(global);
+            any_blob.detach();
+            return Ok(Self::Blob(Box::new(blob)));
+        }
+
+        Err(global.throw_invalid_arguments(format_args!(
+            "Only buffered Request/Response bodies are supported for now.",
+        )))
+    }
+
     pub(crate) fn from_js_with_encoding_value_allow_request_response(
         global: &JSGlobalObject,
         value: JSValue,
@@ -173,33 +171,11 @@ impl BlobOrStringOrBuffer {
                 }
                 if allow_request_response {
                     if let Some(request) = value.as_class_ref::<Request>() {
-                        let body_value = request.get_body_value();
-                        body_value.to_blob_if_possible();
-
-                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
-                        }
-
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Only buffered Request/Response bodies are supported for now.",
-                        )));
+                        return Self::from_body_value(global, request.get_body_value()).map(Some);
                     }
 
                     if let Some(response) = value.as_class_ref::<Response>() {
-                        let body_value = response.get_body_value();
-                        body_value.to_blob_if_possible();
-
-                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
-                        }
-
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Only buffered Request/Response bodies are supported for now.",
-                        )));
+                        return Self::from_body_value(global, response.get_body_value()).map(Some);
                     }
                 }
             }
@@ -210,7 +186,6 @@ impl BlobOrStringOrBuffer {
             global,
             value,
             encoding_value,
-            StringObjects::Allow,
         )? {
             Some(s) => Ok(Some(Self::StringOrBuffer(s))),
             None => Ok(None),
@@ -324,35 +299,38 @@ impl StringOrBuffer<'static> {
         Ok(result)
     }
 
-    /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
+    /// `str` encoded as `encoding`.
+    pub(crate) fn from_bun_string(
+        global: &JSGlobalObject,
+        str: bun_core::String,
+        encoding: Encoding,
+        flavor: Flavor,
+    ) -> Self {
+        if encoding != Encoding::Utf8 && !str.is_empty() {
+            return Self::encoded(global, &str, encoding);
+        }
+        if flavor == Flavor::Sync {
+            return Self::String(str.into_utf8_with_string());
+        }
+        shared_or_utf8(
+            global,
+            str.into_utf8_with_string_thread_isolated(),
+            Self::ThreadIsolatedString,
+            Self::Utf8,
+        )
+    }
+
+    /// Out-param core of [`from_js`](Self::from_js). Writes the decoded payload
     /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
     #[inline]
-    fn from_js_maybe_async_into(
-        out: &mut Self,
-        global: &JSGlobalObject,
-        value: JSValue,
-        flavor: Flavor,
-        string_objects: StringObjects,
-    ) -> JsResult<bool> {
+    fn from_js_into(out: &mut Self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         use jsc::JSType;
         match value.js_type() {
-            str_type @ (JSType::String | JSType::StringObject | JSType::DerivedStringObject) => {
-                if string_objects == StringObjects::Reject && str_type != JSType::String {
-                    return Ok(false);
-                }
+            JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
                 let str = bun_core::String::from_js(value, global)?;
-                *out = if flavor == Flavor::Async {
-                    shared_or_utf8(
-                        global,
-                        str.into_utf8_with_string_thread_isolated(),
-                        Self::ThreadIsolatedString,
-                        Self::Utf8,
-                    )
-                } else {
-                    Self::String(str.into_utf8_with_string())
-                };
+                *out = Self::String(str.into_utf8_with_string());
                 Ok(true)
             }
 
@@ -370,7 +348,7 @@ impl StringOrBuffer<'static> {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                *out = Self::buffer_from_js(global, value, flavor)?;
+                *out = Self::buffer_from_js(global, value, Flavor::Sync)?;
                 Ok(true)
             }
             _ => Ok(false),
@@ -378,23 +356,13 @@ impl StringOrBuffer<'static> {
     }
 
     #[inline]
-    pub(crate) fn from_js_maybe_async(
-        global: &JSGlobalObject,
-        value: JSValue,
-        flavor: Flavor,
-        string_objects: StringObjects,
-    ) -> JsResult<Option<Self>> {
+    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         let mut out = Self::EMPTY;
-        if Self::from_js_maybe_async_into(&mut out, global, value, flavor, string_objects)? {
+        if Self::from_js_into(&mut out, global, value)? {
             Ok(Some(out))
         } else {
             Ok(None)
         }
-    }
-
-    #[inline]
-    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
-        Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
     /// Like [`from_js`](Self::from_js), but copies a buffer that
@@ -422,12 +390,7 @@ impl StringOrBuffer<'static> {
         global: &JSGlobalObject,
         str: bun_core::String,
     ) -> ThreadIsolated<Self> {
-        let isolated = shared_or_utf8(
-            global,
-            str.into_utf8_with_string_thread_isolated(),
-            Self::ThreadIsolatedString,
-            Self::Utf8,
-        );
+        let isolated = Self::from_bun_string(global, str, Encoding::Utf8, Flavor::Async);
         // SAFETY: `ThreadIsolatedString` or `Utf8`.
         unsafe { ThreadIsolated::new(isolated) }
     }
@@ -438,40 +401,37 @@ impl StringOrBuffer<'static> {
         value: JSValue,
         encoding: Encoding,
     ) -> JsResult<Option<Self>> {
-        Self::from_js_with_encoding_maybe_async(
-            global,
-            value,
-            encoding,
-            Flavor::Sync,
-            StringObjects::Allow,
-        )
+        let mut out = Self::EMPTY;
+        if Self::from_js_with_encoding_into(&mut out, global, value, encoding)? {
+            Ok(Some(out))
+        } else {
+            Ok(None)
+        }
     }
 
-    /// Out-param core of [`from_js_with_encoding_maybe_async`]. Writes into
+    /// Out-param core of [`from_js_with_encoding`](Self::from_js_with_encoding). Writes into
     /// `*out` and returns `Ok(true)` on success, `Ok(false)` for not-a-
-    /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.
+    /// string-or-buffer. See [`from_js_into`](Self::from_js_into) for rationale.
     #[inline]
-    fn from_js_with_encoding_maybe_async_into(
+    fn from_js_with_encoding_into(
         out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
-        flavor: Flavor,
-        string_objects: StringObjects,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            *out = Self::buffer_from_js(global, value, flavor)?;
+            *out = Self::buffer_from_js(global, value, Flavor::Sync)?;
             return Ok(true);
         }
 
         if encoding == Encoding::Utf8 {
-            return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
+            return Self::from_js_into(out, global, value);
         }
 
         if value.is_string() {
             let str = bun_core::String::from_js(value, global)?;
             if str.is_empty() {
-                return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
+                return Self::from_js_into(out, global, value);
             }
 
             *out = Self::encoded(global, &str, encoding);
@@ -481,7 +441,11 @@ impl StringOrBuffer<'static> {
         Ok(false)
     }
 
-    fn encoded(global: &JSGlobalObject, str: &bun_core::String, encoding: Encoding) -> Self {
+    pub(crate) fn encoded(
+        global: &JSGlobalObject,
+        str: &bun_core::String,
+        encoding: Encoding,
+    ) -> Self {
         use crate::webcore::encoding::BunStringEncode as _;
         let encoded = str.encode(encoding);
         global.vm().report_extra_memory(encoded.len());
@@ -499,33 +463,9 @@ impl StringOrBuffer<'static> {
             StringOrJsBytes::Bytes(bytes) => {
                 Self::Buffer(Buffer::from_array_buffer(global, bytes.to_js()))
             }
-            StringOrJsBytes::String(str) if encoding == Encoding::Utf8 || str.is_empty() => {
-                Self::String(str.into_utf8_with_string())
+            StringOrJsBytes::String(str) => {
+                Self::from_bun_string(global, str, encoding, Flavor::Sync)
             }
-            StringOrJsBytes::String(str) => Self::encoded(global, &str, encoding),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn from_js_with_encoding_maybe_async(
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding: Encoding,
-        flavor: Flavor,
-        string_objects: StringObjects,
-    ) -> JsResult<Option<Self>> {
-        let mut out = Self::EMPTY;
-        if Self::from_js_with_encoding_maybe_async_into(
-            &mut out,
-            global,
-            value,
-            encoding,
-            flavor,
-            string_objects,
-        )? {
-            Ok(Some(out))
-        } else {
-            Ok(None)
         }
     }
 
@@ -533,7 +473,6 @@ impl StringOrBuffer<'static> {
         global: &JSGlobalObject,
         value: JSValue,
         encoding_value: JSValue,
-        string_objects: StringObjects,
     ) -> JsResult<Option<Self>> {
         let encoding: Encoding = 'brk: {
             if !encoding_value.is_cell() {
@@ -541,13 +480,7 @@ impl StringOrBuffer<'static> {
             }
             break 'brk Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8);
         };
-        Self::from_js_with_encoding_maybe_async(
-            global,
-            value,
-            encoding,
-            Flavor::Sync,
-            string_objects,
-        )
+        Self::from_js_with_encoding(global, value, encoding)
     }
 }
 
@@ -631,11 +564,11 @@ impl From<bun_core::NodeEncoding> for Encoding {
     }
 }
 
-pub(crate) fn assert_encoding_valid<'a>(
-    cx: &mut JsScope<'a>,
-    encoding: JsLocal<'a>,
+pub(crate) fn assert_encoding_valid(
+    cx: &mut JsScope<'_>,
+    encoding: Option<schema::EncodingName>,
 ) -> JsResult<()> {
-    Encoding::assert(encoding.to_js(), cx.global(), Encoding::Utf8)?;
+    Encoding::assert(encoding, cx.global(), Encoding::Utf8)?;
     Ok(())
 }
 
@@ -663,47 +596,41 @@ impl Encoding {
     }
 
     pub(crate) fn assert(
-        value: JSValue,
+        value: Option<schema::EncodingName>,
         global_object: &JSGlobalObject,
         default: Encoding,
     ) -> JsResult<Encoding> {
-        if value.is_falsey() {
-            return Ok(default);
-        }
-
-        if !value.is_string() {
-            return Err(Self::throw_encoding_error(global_object, value));
-        }
-
-        match Self::from_js_with_default_on_empty(value, global_object, default)? {
-            Some(e) => Ok(e),
-            None => Err(Self::throw_encoding_error(global_object, value)),
+        match value {
+            None => Ok(default),
+            Some(schema::EncodingName::Name(name)) => {
+                Self::from_name_with_default_on_empty(&name, global_object, default)
+            }
+            Some(schema::EncodingName::Other(value)) => {
+                Err(Self::throw_encoding_error(global_object, &value))
+            }
         }
     }
 
-    pub(crate) fn from_js_with_default_on_empty(
-        value: JSValue,
+    pub(crate) fn from_name_with_default_on_empty(
+        name: &bun_core::String,
         global_object: &JSGlobalObject,
         default: Encoding,
-    ) -> JsResult<Option<Encoding>> {
-        let str = bun_core::String::from_js(value, global_object)?;
-        if str.is_empty() {
-            return Ok(Some(default));
+    ) -> JsResult<Encoding> {
+        if name.is_empty() {
+            return Ok(default);
         }
-        Ok(Self::from(str.to_utf8().slice()))
+        Self::from(name.to_utf8().slice())
+            .ok_or_else(|| Self::throw_encoding_error(global_object, name))
     }
 
-    pub(crate) fn throw_encoding_error(
+    fn throw_encoding_error(
         global_object: &JSGlobalObject,
-        value: JSValue,
+        value: &bun_core::String,
     ) -> jsc::JsError {
         global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
-                format_args!(
-                    "encoding '{}' is an invalid encoding",
-                    value.fmt_string(global_object)
-                ),
+                format_args!("encoding '{value}' is an invalid encoding"),
             )
             .throw()
     }
@@ -766,7 +693,7 @@ pub(crate) struct NameTooLong;
 /// `thread_isolated_copy` / `slice` / `estimated_size` are
 /// inherent on the lower-tier type (see `bun_jsc::node_path`); this trait
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
-/// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
+/// `bun_runtime` types (`Valid`, `Parsing`).
 pub(crate) trait PathLikeExt {
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
         &'a self,
@@ -790,37 +717,34 @@ pub(crate) trait PathLikeExt {
     ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
-    fn from_js(
+    /// `Err` is the value when it is not a path, for the caller's own error.
+    fn from_js<'a>(
         ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathLike<'static>>>
+        path: schema::PathLike<'a>,
+        parsing: &mut Parsing,
+    ) -> JsResult<Result<PathLike<'static>, JsLocal<'a>>>
     where
         Self: Sized;
 
     /// `from_js` + Node's `ERR_INVALID_ARG_VALUE` "<name> must be a string
-    /// or TypedArray" throw on `None`. Collapses the open-coded
-    /// `?.ok_or_else(|| ctx.throw_invalid_arguments(...))?` repeated 22× in
+    /// or TypedArray" throw on `Err`. Collapses the open-coded
+    /// `?.map_err(|_| ctx.throw_invalid_arguments(...))?` repeated 22× in
     /// `node_fs.rs::args::*::from_js`.
     #[inline]
     fn from_js_required(
         ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
+        path: schema::PathLike<'_>,
+        parsing: &mut Parsing,
         name: &str,
     ) -> JsResult<PathLike<'static>>
     where
         Self: Sized,
     {
-        Self::from_js(ctx, arguments)?.ok_or_else(|| {
+        Self::from_js(ctx, path, parsing)?.map_err(|_| {
             ctx.throw_invalid_arguments(format_args!("{name} must be a string or TypedArray"))
         })
     }
 
-    fn from_js_with_allocator(
-        ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathLike<'static>>>
-    where
-        Self: Sized;
     /// Throws ENAMETOOLONG too; [`Self::from_js`] defers it for async bindings instead.
     fn from_bun_string(
         global: &JSGlobalObject,
@@ -833,10 +757,12 @@ pub(crate) trait PathLikeExt {
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathOrFileDescriptor`.
 pub(crate) trait PathOrFdExt {
-    fn from_js(
+    /// As [`PathLikeExt::from_js`].
+    fn from_js<'a>(
         ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathOrFileDescriptor<'static>>>
+        path: schema::PathOrFileDescriptor<'a>,
+        parsing: &mut Parsing,
+    ) -> JsResult<Result<PathOrFileDescriptor<'static>, JsLocal<'a>>>
     where
         Self: Sized;
 }
@@ -1053,24 +979,22 @@ impl PathLikeExt for PathLike<'_> {
         }
     }
 
-    fn from_js(
+    fn from_js<'a>(
         ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathLike<'static>>> {
-        Self::from_js_with_allocator(ctx, arguments)
-    }
-
-    fn from_js_with_allocator(
-        ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathLike<'static>>> {
-        let Some(arg) = arguments.next() else {
-            return Ok(None);
-        };
+        path: schema::PathLike<'a>,
+        parsing: &mut Parsing,
+    ) -> JsResult<Result<PathLike<'static>, JsLocal<'a>>> {
         use jsc::JSType;
-        let path = match arg.js_type() {
-            JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
-                let mut buffer = if arguments.will_be_async {
+        let path = match path {
+            schema::PathLike::Buffer(buffer) => {
+                let arg = buffer.to_js();
+                if !matches!(
+                    arg.js_type(),
+                    JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer
+                ) {
+                    return Ok(Err(buffer.as_value()));
+                }
+                let mut buffer = if parsing.flavor == Flavor::Async {
                     PinnedArrayBuffer::root(ctx, arg)
                 } else {
                     PinnedArrayBuffer::pin(ctx, arg)
@@ -1083,62 +1007,55 @@ impl PathLikeExt for PathLike<'_> {
                 }
                 Valid::path_buffer(buffer.slice(), ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
-                arguments.eat();
                 PathLike::Buffer(buffer)
             }
 
-            JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
-                let str = arg.to_bun_string(ctx)?;
-                arguments.eat();
-                path_like_from_string(ctx, str, arguments.will_be_async)?
+            schema::PathLike::String(str) => {
+                path_like_from_string(ctx, str, parsing.flavor == Flavor::Async)?
             }
-            _ => {
-                if let Some(domurl) = jsc::DOMURL::cast(arg) {
-                    use jsc::dom_url::ToFileSystemPathError;
-                    let str = match domurl.file_system_path() {
-                        Ok(s) => s,
-                        Err(ToFileSystemPathError::NotFileUrl) => {
-                            return Err(ctx
-                                .err(
-                                    jsc::ErrorCode::INVALID_URL_SCHEME,
-                                    format_args!("URL must be a non-empty \"file:\" path"),
-                                )
-                                .throw());
-                        }
-                        Err(ToFileSystemPathError::InvalidPath) => {
-                            return Err(ctx
-                                .err(
-                                    jsc::ErrorCode::INVALID_FILE_URL_PATH,
-                                    format_args!("URL must be a non-empty \"file:\" path"),
-                                )
-                                .throw());
-                        }
-                        Err(ToFileSystemPathError::InvalidHost) => {
-                            return Err(ctx
-                                .err(
-                                    jsc::ErrorCode::INVALID_FILE_URL_HOST,
-                                    format_args!("URL must be a non-empty \"file:\" path"),
-                                )
-                                .throw());
-                        }
-                    };
-                    if str.is_empty() {
+            schema::PathLike::Url(domurl) => {
+                use jsc::dom_url::ToFileSystemPathError;
+                let str = match domurl.file_system_path() {
+                    Ok(s) => s,
+                    Err(ToFileSystemPathError::NotFileUrl) => {
                         return Err(ctx
                             .err(
-                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                jsc::ErrorCode::INVALID_URL_SCHEME,
                                 format_args!("URL must be a non-empty \"file:\" path"),
                             )
                             .throw());
                     }
-                    arguments.eat();
-                    path_like_from_string(ctx, str, arguments.will_be_async)?
-                } else {
-                    return Ok(None);
+                    Err(ToFileSystemPathError::InvalidPath) => {
+                        return Err(ctx
+                            .err(
+                                jsc::ErrorCode::INVALID_FILE_URL_PATH,
+                                format_args!("URL must be a non-empty \"file:\" path"),
+                            )
+                            .throw());
+                    }
+                    Err(ToFileSystemPathError::InvalidHost) => {
+                        return Err(ctx
+                            .err(
+                                jsc::ErrorCode::INVALID_FILE_URL_HOST,
+                                format_args!("URL must be a non-empty \"file:\" path"),
+                            )
+                            .throw());
+                    }
+                };
+                if str.is_empty() {
+                    return Err(ctx
+                        .err(
+                            jsc::ErrorCode::INVALID_ARG_VALUE,
+                            format_args!("URL must be a non-empty \"file:\" path"),
+                        )
+                        .throw());
                 }
+                path_like_from_string(ctx, str, parsing.flavor == Flavor::Async)?
             }
+            schema::PathLike::Other(value) => return Ok(Err(value)),
         };
 
-        Valid::path_length(path, ctx, arguments).map(Some)
+        Valid::path_length(path, ctx, parsing).map(Ok)
     }
 
     fn from_bun_string(
@@ -1213,21 +1130,21 @@ impl Valid {
         Some(system_error)
     }
 
-    /// Sync bindings throw; async ones get it as `arguments.deferred_error` and a placeholder path.
+    /// Sync bindings throw; async ones get it as `parsing.deferred_error` and a placeholder path.
     pub(crate) fn path_length(
         path: PathLike<'static>,
         ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
+        parsing: &mut Parsing,
     ) -> JsResult<PathLike<'static>> {
         let Some(err) = Self::path_too_long(path.slice()) else {
             return Ok(path);
         };
         drop(path);
-        if !arguments.will_be_async {
+        if parsing.flavor == Flavor::Sync {
             return Err(ctx.throw_value(err.to_error_instance(ctx)));
         }
-        if arguments.deferred_error.is_none() {
-            arguments.deferred_error = Some(Box::new(err));
+        if parsing.deferred_error.is_none() {
+            parsing.deferred_error = Some(Box::new(err));
         }
         Ok(PathLike::default())
     }
@@ -1359,10 +1276,11 @@ impl VectorArrayBuffer {
     /// [`write_back`](Self::write_back) after it.
     pub(crate) fn from_js(
         global_object: &JSGlobalObject,
-        val: JSValue,
+        val: JsLocal<'_, jsc::JSArray>,
         pin: bool,
         read: bool,
     ) -> JsResult<VectorArrayBuffer> {
+        let val = val.to_js();
         let mut out = VectorArrayBuffer {
             value: val,
             buffers: Vec::new(),
@@ -1444,57 +1362,50 @@ impl VectorArrayBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
-    let mode_int: u32 = if value.is_number() {
-        validators::validate_uint32(ctx, value, format_args!("mode"), false)?
-    } else {
-        if value.is_undefined_or_null() {
-            return Ok(None);
+pub(crate) fn mode_from_js(ctx: &JSGlobalObject, mode: schema::Mode<'_>) -> JsResult<Mode> {
+    let mode_int: u32 = match mode {
+        schema::Mode::Number(number) => number,
+        schema::Mode::String(string) => {
+            let value = string.to_js();
+
+            // An easier method of constructing the mode is to use a sequence of
+            // three octal digits (e.g. 765). The left-most digit (7 in the example),
+            // specifies the permissions for the file owner. The middle digit (6 in
+            // the example), specifies permissions for the group. The right-most
+            // digit (5 in the example), specifies the permissions for others.
+
+            let str_view = value.to_js_string_view(ctx)?;
+            let utf8 = str_view.to_utf8();
+            let slice = utf8.slice();
+
+            // Node validates mode strings against /^[0-7]+$/ before parsing.
+            if slice.is_empty() || !slice.iter().all(|b| (b'0'..=b'7').contains(b)) {
+                let actual = JSGlobalObject::inspect_for_error_message(ctx, value)?;
+                return Err(ctx
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
+                            actual
+                        ),
+                    )
+                    .throw());
+            }
+
+            // Node range-checks the parsed octal string with the same validateUint32
+            // as numeric modes (> u32::MAX is ERR_OUT_OF_RANGE). `slice` is already
+            // [0-7]+, so the only parse error is Overflow; u64::MAX stays out of range.
+            let parsed = strings::parse_int::<u64>(slice, 8).unwrap_or(u64::MAX);
+            validators::validate_uint32(
+                ctx,
+                JSValue::js_number_from_uint64(parsed),
+                format_args!("mode"),
+                false,
+            )?
         }
-
-        // Node gates on `typeof value === 'string'`, so a `new String(...)`
-        // wrapper falls through to the number-only validator.
-        if !value.is_string_literal() {
-            return Err(ctx.throw_invalid_argument_type_value(b"mode", b"number", value));
-        }
-
-        // An easier method of constructing the mode is to use a sequence of
-        // three octal digits (e.g. 765). The left-most digit (7 in the example),
-        // specifies the permissions for the file owner. The middle digit (6 in
-        // the example), specifies permissions for the group. The right-most
-        // digit (5 in the example), specifies the permissions for others.
-
-        let str_view = value.to_js_string_view(ctx)?;
-        let utf8 = str_view.to_utf8();
-        let slice = utf8.slice();
-
-        // Node validates mode strings against /^[0-7]+$/ before parsing.
-        if slice.is_empty() || !slice.iter().all(|b| (b'0'..=b'7').contains(b)) {
-            let actual = JSGlobalObject::inspect_for_error_message(ctx, value)?;
-            return Err(ctx
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
-                        actual
-                    ),
-                )
-                .throw());
-        }
-
-        // Node range-checks the parsed octal string with the same validateUint32
-        // as numeric modes (> u32::MAX is ERR_OUT_OF_RANGE). `slice` is already
-        // [0-7]+, so the only parse error is Overflow; u64::MAX stays out of range.
-        let parsed = strings::parse_int::<u64>(slice, 8).unwrap_or(u64::MAX);
-        validators::validate_uint32(
-            ctx,
-            JSValue::js_number_from_uint64(parsed),
-            format_args!("mode"),
-            false,
-        )?
     };
 
-    Ok(Some(mode_int as Mode))
+    Ok(mode_int as Mode)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1506,23 +1417,21 @@ pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Opt
 pub(crate) use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
 impl PathOrFdExt for PathOrFileDescriptor<'_> {
-    fn from_js(
+    fn from_js<'a>(
         ctx: &JSGlobalObject,
-        arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathOrFileDescriptor<'static>>> {
-        let Some(first) = arguments.next() else {
-            return Ok(None);
+        path: schema::PathOrFileDescriptor<'a>,
+        parsing: &mut Parsing,
+    ) -> JsResult<Result<PathOrFileDescriptor<'static>, JsLocal<'a>>> {
+        let path = match path {
+            schema::PathOrFileDescriptor::Fd(fd) => {
+                return Ok(Ok(PathOrFileDescriptor::Fd(Fd::from_uv(fd))));
+            }
+            schema::PathOrFileDescriptor::String(str) => schema::PathLike::String(str),
+            schema::PathOrFileDescriptor::Buffer(buffer) => schema::PathLike::Buffer(buffer),
+            schema::PathOrFileDescriptor::Url(url) => schema::PathLike::Url(url),
+            schema::PathOrFileDescriptor::Other(value) => schema::PathLike::Other(value),
         };
-
-        if let Some(fd) = Fd::from_js_validated(first, ctx)? {
-            arguments.eat();
-            return Ok(Some(PathOrFileDescriptor::Fd(fd)));
-        }
-
-        match PathLike::from_js_with_allocator(ctx, arguments)? {
-            Some(path) => Ok(Some(PathOrFileDescriptor::Path(path))),
-            None => Ok(None),
-        }
+        Ok(PathLike::from_js(ctx, path, parsing)?.map(PathOrFileDescriptor::Path))
     }
 }
 
@@ -1561,46 +1470,50 @@ impl FileSystemFlags {
 }
 
 impl FileSystemFlags {
-    pub(crate) fn from_js(ctx: &JSGlobalObject, val: JSValue) -> JsResult<Option<FileSystemFlags>> {
-        if val.is_number() {
+    pub(crate) fn from_js(
+        ctx: &JSGlobalObject,
+        flags: Option<schema::Flags<'_>>,
+    ) -> JsResult<Option<FileSystemFlags>> {
+        let val = match flags {
             // Match Node's stringToFlags, which runs validateInt32 on a numeric
             // `flags`: accept any integer-valued number in the int32 range,
             // regardless of whether JSC boxed it as an int32 or a double. Go's
             // `syscall/js` bridge reads arguments out of wasm memory with
             // getFloat64, so valid flags like 578 (O_RDWR|O_CREAT|O_TRUNC)
             // arrive double-boxed and must not be rejected.
-            let number = validators::validate_int32(ctx, val, "flags", None, None)?;
-            let flags = number.max(0);
-            // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
-            // use the platform's native MSVC/libuv values which differ from the
-            // internal bun.O representation. Convert them here so downstream
-            // code that operates on bun.O flags works correctly.
-            #[cfg(windows)]
-            {
-                return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
-            }
-            #[cfg(not(windows))]
-            {
-                return Ok(Some(FileSystemFlags(flags)));
-            }
-        }
-
-        if val.is_undefined_or_null() {
-            return Ok(None);
-        }
-
-        // Node switches on the value with strict equality, so only primitive
-        // strings can match; `new String("w")` and every other object throw.
-        if val.is_string_literal() {
-            let str = val.to_js_string_view(ctx)?;
-            // The longest valid flag string is 3 bytes ("as+" etc).
-            if str.length() >= 1 && str.length() <= 3 {
-                let key_slice = str.to_utf8();
-                if let Some(flags) = FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied() {
+            Some(schema::Flags::Number(number)) => {
+                let flags = number.max(0);
+                // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
+                // use the platform's native MSVC/libuv values which differ from the
+                // internal bun.O representation. Convert them here so downstream
+                // code that operates on bun.O flags works correctly.
+                #[cfg(windows)]
+                {
+                    return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
+                }
+                #[cfg(not(windows))]
+                {
                     return Ok(Some(FileSystemFlags(flags)));
                 }
             }
-        }
+
+            None => return Ok(None),
+
+            // Node switches on the value with strict equality, so only primitive
+            // strings can match; `new String("w")` and every other object throw.
+            Some(schema::Flags::String(string)) => {
+                let str = string.to_js().to_js_string_view(ctx)?;
+                // The longest valid flag string is 3 bytes ("as+" etc).
+                if str.length() >= 1 && str.length() <= 3 {
+                    let key_slice = str.to_utf8();
+                    if let Some(flags) = FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied() {
+                        return Ok(Some(FileSystemFlags(flags)));
+                    }
+                }
+                string.as_value()
+            }
+            Some(schema::Flags::Other(value)) => value,
+        };
 
         let actual = JSGlobalObject::inspect_for_error_message(ctx, val)?;
         Err(ctx
@@ -1614,49 +1527,26 @@ impl FileSystemFlags {
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
     pub(crate) fn from_js_number_only(
         global: &JSGlobalObject,
-        value: JSValue,
+        value: Option<f64>,
         kind: FileSystemFlagsKind,
     ) -> JsResult<FileSystemFlags> {
-        // Allow only int32 or null/undefined values.
-        if !value.is_number() {
-            if value.is_undefined_or_null() {
-                return Ok(FileSystemFlags(match kind {
-                    FileSystemFlagsKind::Access => 0,   // F_OK
-                    FileSystemFlagsKind::CopyFile => 0, // constexpr int kDefaultCopyMode = 0;
-                }));
-            }
+        let Some(float) = value else {
+            return Ok(FileSystemFlags(match kind {
+                FileSystemFlagsKind::Access => 0,   // F_OK
+                FileSystemFlagsKind::CopyFile => 0, // constexpr int kDefaultCopyMode = 0;
+            }));
+        };
+        const MIN: i32 = 0;
+        const MAX: i32 = 7;
+        if float.is_nan() || float.is_infinite() || float < MIN as f64 || float > MAX as f64 {
             return Err(global
                 .err(
-                    jsc::ErrorCode::INVALID_ARG_TYPE,
-                    format_args!("mode must be int32 or null/undefined"),
+                    jsc::ErrorCode::OUT_OF_RANGE,
+                    format_args!("mode is out of range: >= 0 and <= 7"),
                 )
                 .throw());
         }
-        const MIN: i32 = 0;
-        const MAX: i32 = 7;
-        if value.is_int32() {
-            let int: i32 = value.as_int32();
-            if int < MIN || int > MAX {
-                return Err(global
-                    .err(
-                        jsc::ErrorCode::OUT_OF_RANGE,
-                        format_args!("mode is out of range: >= 0 and <= 7"),
-                    )
-                    .throw());
-            }
-            Ok(FileSystemFlags(int))
-        } else {
-            let float = value.as_number();
-            if float.is_nan() || float.is_infinite() || float < MIN as f64 || float > MAX as f64 {
-                return Err(global
-                    .err(
-                        jsc::ErrorCode::OUT_OF_RANGE,
-                        format_args!("mode is out of range: >= 0 and <= 7"),
-                    )
-                    .throw());
-            }
-            Ok(FileSystemFlags(float as i32))
-        }
+        Ok(FileSystemFlags(float as i32))
     }
 }
 
@@ -1782,26 +1672,26 @@ pub(crate) enum PathOrBlob {
 impl PathOrBlob {
     pub(crate) fn from_js_no_copy(
         ctx: &JSGlobalObject,
-        args: &mut ArgumentsSlice,
+        destination: blob::PathOrBlob<'_>,
     ) -> JsResult<PathOrBlob> {
-        if let Some(path) = PathOrFileDescriptor::from_js(ctx, args)? {
-            return Ok(PathOrBlob::Path(path));
-        }
-
-        let Some(arg) = args.next_eat() else {
-            return Err(ctx.throw_invalid_argument_type_value(
-                b"destination",
-                b"path, file descriptor, or Blob",
-                JSValue::UNDEFINED,
-            ));
+        let path = match destination {
+            blob::PathOrBlob::Blob(blob) => {
+                return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
+            }
+            blob::PathOrBlob::Fd(fd) => schema::PathOrFileDescriptor::Fd(fd),
+            blob::PathOrBlob::String(str) => schema::PathOrFileDescriptor::String(str),
+            blob::PathOrBlob::Buffer(buffer) => schema::PathOrFileDescriptor::Buffer(buffer),
+            blob::PathOrBlob::Url(url) => schema::PathOrFileDescriptor::Url(url),
+            blob::PathOrBlob::Other(value) => schema::PathOrFileDescriptor::Other(value),
         };
-        if let Some(blob) = arg.as_class_ref::<Blob>() {
-            return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
-        }
-        Err(ctx.throw_invalid_argument_type_value(
-            b"destination",
-            b"path, file descriptor, or Blob",
-            arg,
-        ))
+        PathOrFileDescriptor::from_js(ctx, path, &mut Parsing::new(Flavor::Sync))?
+            .map(PathOrBlob::Path)
+            .map_err(|value| {
+                ctx.throw_invalid_argument_type_value(
+                    b"destination",
+                    b"path, file descriptor, or Blob",
+                    value,
+                )
+            })
     }
 }

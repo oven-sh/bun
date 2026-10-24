@@ -210,7 +210,7 @@ pub use self::thread_isolated::{ThreadIsolated, ThreadIsolatedArg};
 /// …). Callers only ever touch `globalThis` and `printAs`, so the trait
 /// exposes just those two and the `bun_jsc::Formatter` struct provides the
 /// canonical impl.
-pub trait ConsoleFormatter {
+pub trait ConsoleFormatter: bindgen::ValueWalker {
     fn global_this(&self) -> &JSGlobalObject;
     fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
@@ -287,6 +287,8 @@ impl<F: ConsoleFormatter + ?Sized> Drop for IndentScope<'_, F> {
         self.0.indent_dec();
     }
 }
+
+impl bindgen::ValueWalker for self::console_object::Formatter<'_> {}
 
 impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
     #[inline]
@@ -978,51 +980,11 @@ pub mod js_object;
 pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, JSObject};
 
 // ──────────────────────────────────────────────────────────────────────────
-// CallFrame / ArgumentsSlice (real module in CallFrame.rs).
+// CallFrame (real module in CallFrame.rs).
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "CallFrame.rs"]
 pub mod call_frame;
-pub use self::call_frame::{ArgumentsSlice, CallFrame};
-
-/// Lives here (not in `bun_sys_jsc`) because the orphan
-/// rule requires either the trait or the type to be local; `FromJsEnum` is.
-impl FromJsEnum for bun_sys::SignalCode {
-    fn from_js_value(
-        v: JSValue,
-        global: &JSGlobalObject,
-        property_name: &'static str,
-    ) -> JsResult<Self> {
-        if !v.is_string() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("{property_name} must be a string"))
-            );
-        }
-        let s = bun_core::String::from_js(v, global)?;
-        let hit = bun_core::SignalCode::from_name(s.to_utf8().slice());
-        match hit {
-            Some(code) => Ok(bun_sys::SignalCode::of(code)),
-            None => {
-                // Expected-names list
-                // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
-                // canonical signal X-macro so names are never re-spelled.
-                let names = bun_core::SignalCode::ALL;
-                let mut one_of = std::string::String::from("'");
-                for (i, entry) in names.iter().enumerate() {
-                    one_of.push_str(entry.name());
-                    one_of.push('\'');
-                    if i < names.len() - 2 {
-                        one_of.push_str(", '");
-                    } else if i == names.len() - 2 {
-                        one_of.push_str(" or '");
-                    }
-                }
-                Err(global.throw_invalid_arguments(format_args!(
-                    "{property_name} must be one of {one_of}"
-                )))
-            }
-        }
-    }
-}
+pub use self::call_frame::CallFrame;
 
 // `FromJsEnum` impls for the `bun_http_types` Fetch* enums. Orphan rule forces
 // these here (the trait crate) — `bun_http_types` is jsc-free and `bun_http_jsc`

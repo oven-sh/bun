@@ -57,7 +57,7 @@ use crate::webcore::streams::NetworkSink;
 use bun_collections::IntegerBitSet;
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::JsScope;
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
@@ -740,7 +740,7 @@ impl S3UploadStreamWrapper {
 
 pub(crate) fn on_resolve_upload_stream(
     _: &mut JsScope<'_>,
-    _: JsLocal<'_>,
+    _: JSValue,
     context: Option<NonNull<S3UploadStreamWrapper>>,
 ) {
     // The cell hands back the ref `upload_stream` gave it, which `handle_resolve_stream` balances.
@@ -752,13 +752,13 @@ pub(crate) fn on_resolve_upload_stream(
 
 pub(crate) fn on_reject_upload_stream(
     _: &mut JsScope<'_>,
-    err: JsLocal<'_>,
+    err: JSValue,
     context: Option<NonNull<S3UploadStreamWrapper>>,
 ) {
     // As `on_resolve_upload_stream`; `handle_reject_stream` balances the ref.
     if let Some(this) = context {
         // SAFETY: that ref keeps the wrapper alive.
-        unsafe { (*this.as_ptr()).handle_reject_stream(err.to_js()) };
+        unsafe { (*this.as_ptr()).handle_reject_stream(err) };
     }
 }
 

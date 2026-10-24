@@ -2,13 +2,15 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::crypto::password_object" });
 
+export const PasswordCost = b.union({ absent: b.null, number: b.f64, text: b.string, other: b.ignored });
+
 /** Which of the costs counts depends on `algorithm`, and the others can be anything. */
 export const PasswordHashOptions = b.dictionary(
   {
     algorithm: b.string.utf8.nullable,
-    cost: b.any,
-    timeCost: b.any,
-    memoryCost: b.any,
+    cost: PasswordCost,
+    timeCost: PasswordCost,
+    memoryCost: PasswordCost,
   },
   { allowArray: true },
 );
@@ -26,7 +28,7 @@ const copied = b.bytes({ from: ["string", "buffer"], otherwise: "toString", refu
 export const password = b.namespace({
   hash: {
     args: { password: copied, algorithm: PasswordHashAlgorithm },
-    returns: b.any,
+    returns: b.promise,
     capability: "js",
     throws: true,
   },
@@ -38,7 +40,7 @@ export const password = b.namespace({
   },
   verify: {
     args: { password: copied, hash: copied, algorithm: b.string.utf8.nullable },
-    returns: b.any,
+    returns: b.promise,
     capability: "js",
     throws: true,
   },

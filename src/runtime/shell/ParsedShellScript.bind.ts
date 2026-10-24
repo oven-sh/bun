@@ -9,14 +9,23 @@ export const ParsedShellScript = b.class({
   internalFields: ["jsobjs"],
   proto: {
     setCwd: { args: { cwd: b.string.loose }, capability: "js", throws: true },
-    setEnv: { args: { env: b.any }, capability: "js", throws: true },
+    setEnv: { args: { env: b.object }, expected: { env: "env must be an object" }, capability: "js", throws: true },
     setQuiet: { args: { quiet: b.bool.loose } },
   },
 });
 
-/** `strings` and `templateArgs` are array-likes that are read in turn, one element of each at a time. */
+/** Its `length` and the indices below that are read as they are needed. `other` has no elements. */
+export const ShellArrayLike = b.union({
+  text: b.jsString,
+  bigInt: b.bigInt,
+  symbol: b.symbol,
+  object: b.object,
+  other: b.ignored,
+});
+
+/** `strings` and `templateArgs` are read in turn, one element of each at a time. */
 export const createParsedShellScript = b.fn({
-  args: { strings: b.any, templateArgs: b.any },
+  args: { strings: ShellArrayLike, templateArgs: b.jsArray },
   returns: ParsedShellScript,
   capability: "js",
   throws: true,

@@ -1,6 +1,7 @@
 import * as b from "../codegen/bindgen-lib.ts";
 import { PostgresSQLConnection } from "./postgres/PostgresSQLConnection.bind.ts";
 import { PostgresSQLQuery } from "./postgres/PostgresSQLQuery.bind.ts";
+import { ConnectionTLS } from "./shared/ConnectionCtorArgs.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
 const text = b.string.loose.utf8;
@@ -26,7 +27,7 @@ export const binding = b.namespace({
     returns: PostgresSQLQuery,
     rustPath: "crate::postgres::PostgresSQLQuery::create_query",
   },
-  /** The arguments of `NativeCreateConnection` in `src/js/internal/sql/pool.ts`. The ones that are `b.any`, except `tls`, are for MySQL. */
+  /** The arguments of `NativeCreateConnection` in `src/js/internal/sql/pool.ts`. The ones that are `b.opaque` are for MySQL. */
   createConnection: {
     ...js,
     args: {
@@ -36,7 +37,7 @@ export const binding = b.namespace({
       password: text,
       database: text,
       sslMode: b.u8.validateInteger(0, 4),
-      tls: b.any,
+      tls: ConnectionTLS,
       query: text,
       path: text,
       onConnected: b.callable,
@@ -45,9 +46,9 @@ export const binding = b.namespace({
       connectionTimeout: milliseconds,
       maxLifetime: milliseconds,
       useUnnamedPreparedStatements: b.bool,
-      allowPublicKeyRetrieval: b.any,
+      allowPublicKeyRetrieval: b.opaque,
       onRetire: b.callable.optional,
-      foundRows: b.any,
+      foundRows: b.opaque,
       channelBinding: b.u8.validateInteger(0, 2),
       columnTransform: b.callable.optional,
       scramPassword: text,

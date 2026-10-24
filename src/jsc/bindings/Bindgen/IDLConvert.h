@@ -26,6 +26,9 @@ template<typename IDL>
 struct IDLHumanReadableName<Bindgen::IDLIfPassed<IDL>>
     : IDLHumanReadableName<IDL> {};
 
+template<> struct IDLHumanReadableName<Bindgen::IDLBigIntAsInt64> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("bigint");
+};
 template<> struct IDLHumanReadableName<Bindgen::IDLStrictDoubleOrDate> : BaseIDLHumanReadableName {
     static constexpr bool isDisjunction = true;
     static constexpr auto humanReadableName = std::to_array("number or Date");
@@ -42,6 +45,7 @@ struct IDLHumanReadableName<Bindgen::IDLArray<IDL>> : BaseIDLHumanReadableName {
 template<> struct IDLHumanReadableName<Bindgen::IDLRawAny> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("any value");
 };
+template<> struct IDLHumanReadableName<Bindgen::IDLIgnored> : IDLHumanReadableName<Bindgen::IDLRawAny> {};
 
 template<> struct IDLHumanReadableName<Bindgen::IDLArrayBufferRef> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer");
@@ -77,6 +81,16 @@ template<> struct IDLHumanReadableName<Bindgen::IDLStrictUndefined> : BaseIDLHum
 };
 
 template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWrappedInterface<JSClass, name>> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = name;
+};
+
+template<typename IDL> struct IDLHumanReadableName<Bindgen::IDLWithValue<IDL>> : IDLHumanReadableName<IDL> {};
+
+template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWrappedRef<JSClass, name>> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = name;
+};
+
+template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLRawCell<JSClass, name>> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = name;
 };
 
@@ -247,6 +261,17 @@ struct WebCore::Converter<Bun::Bindgen::IDLStringView<allowStringObject>> : Bun:
         RETURN_IF_EXCEPTION(scope, false);
         return true;
     }
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::GCOwnedDataScope<WTF::StringView>> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (!value.isString() && !(allowStringObject && value.inherits<JSC::StringObject>()))
+            return std::nullopt;
+        JSC::GCOwnedDataScope<WTF::StringView> result;
+        if (!convertInto(globalObject, value, ctx, result))
+            return std::nullopt;
+        return result;
+    }
 };
 
 template<bool allowShared>
@@ -320,6 +345,23 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawArray> : Bun::DefaultTr
     }
 };
 
+template<typename JSClass, auto name>
+struct WebCore::Converter<Bun::Bindgen::IDLRawCell<JSClass, name>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawCell<JSClass, name>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!value.inherits<JSClass>())
+            return std::nullopt;
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLRawCell<JSClass, name>>()));
+    }
+};
+
 template<typename JSClass>
 struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawInterface<JSClass>> {
     template<Bun::IDLConversionContext Ctx>
@@ -342,8 +384,14 @@ struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bu
     template<Bun::IDLConversionContext Ctx>
     static std::optional<void*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
     {
-        if (auto* object = dynamicDowncast<JSClass>(value))
-            return object->wrapped();
+        if (auto* object = dynamicDowncast<JSClass>(value)) {
+            if constexpr (requires { object->payload(); })
+                return object->payload();
+            else if constexpr (std::is_pointer_v<decltype(object->wrapped())>)
+                return object->wrapped();
+            else
+                return &object->wrapped();
+        }
         return std::nullopt;
     }
 
@@ -351,6 +399,42 @@ struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bu
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedInterface<JSClass, name>>()));
+    }
+};
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLWithValue<IDL>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLWithValue<IDL>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<typename Bun::Bindgen::IDLWithValue<IDL>::ImplementationType> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (auto converted = Converter<IDL>::tryConvert(globalObject, value, ctx))
+            return { { *converted, value } };
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        Converter<IDL>::throwConversionFailed(globalObject, scope, ctx);
+    }
+};
+
+template<typename JSClass, auto name>
+struct WebCore::Converter<Bun::Bindgen::IDLWrappedRef<JSClass, name>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLWrappedRef<JSClass, name>> {
+    static constexpr bool conversionHasSideEffects = false;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<typename Bun::Bindgen::IDLWrappedRef<JSClass, name>::ImplementationType> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (auto* object = dynamicDowncast<JSClass>(value))
+            return &object->wrapped();
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedRef<JSClass, name>>()));
     }
 };
 

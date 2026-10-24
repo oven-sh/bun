@@ -20,6 +20,7 @@ disallowed-methods = [
   { path = "std::env::var_os", reason = "use bun_core::env_var" },
   { path = "std::thread::spawn", reason = "use std::thread::Builder with a stack size, and name the thread (Output::Source::configure_named_thread), or use bun_threading::ThreadPool" },
   { path = "std::mem::zeroed", reason = "use MaybeUninit; zeroed is UB for most Bun types" },
+  { path = "bun_jsc::bindgen::to_extern", reason = "only generated code takes the JSValue out of a handle; give the value a type in the schema" },
   { path = "bun_core::output::pretty_fmt_rt", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
   { path = "bun_core::output::pretty_fmt_args", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
   { path = "bun_core::output::pretty_fmt_runtime", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },

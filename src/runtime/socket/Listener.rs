@@ -13,16 +13,15 @@ use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _};
+use bun_jsc::{self as jsc, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::listener::js_Listener as js;
-use crate::socket::{
-    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
-};
+use crate::generated_bindgen::socket_config::{SocketOptionsObject, SocketReloadOptions};
+use crate::socket::{Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]
@@ -123,8 +122,7 @@ impl Listener {
 
     pub(crate) fn set_data(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) {
         log!("setData()");
-        self.strong_data
-            .with_mut(|s| s.set(cx.global(), value.to_js()));
+        self.strong_data.with_mut(|s| s.set(cx.global(), value));
     }
 }
 
@@ -132,17 +130,14 @@ impl Listener {
 fn prebuilt_ssl_ctx(
     vm: &VirtualMachine,
     global: &JSGlobalObject,
-    opts: JSValue,
-    config: &mut SocketConfig,
+    opts: SocketOptionsObject<'_>,
+    config: &mut SocketConfig<'_>,
     is_server: bool,
 ) -> JsResult<Option<boring_sys::OwnedSslCtx>> {
-    let Some(tls_js) = opts.get_truthy(global, "tls")? else {
+    let Some(tls_js) = opts.tls(global)? else {
         return Ok(None);
     };
-    if !tls_js.is_object() {
-        return Ok(None);
-    }
-    let Some(sc_js) = tls_js.get_truthy(global, "secureContext")? else {
+    let Some(sc_js) = tls_js.secure_context(global)? else {
         return Ok(None);
     };
     let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
@@ -180,9 +175,12 @@ pub(crate) enum UnixOrHost {
 }
 
 impl Listener {
-    pub(crate) fn reload(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn reload(
+        &self,
+        cx: &mut JsScope<'_>,
+        options: Option<SocketReloadOptions<'_>>,
+    ) -> JsResult<()> {
         let global = cx.global();
-        let opts = options.to_js();
 
         if matches!(self.listener.get(), ListenerType::None)
             && self.handlers.active_connections.get() == 0
@@ -190,11 +188,11 @@ impl Listener {
             return Err(global.throw(format_args!("Listener is closed")));
         }
 
-        if !opts.is_object() {
+        let Some(opts) = options else {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
-        }
+        };
 
-        let socket_obj = match opts.get(global, "socket")? {
+        let socket_obj = match opts.socket(global)? {
             Some(v) => v,
             None => return Err(global.throw(format_args!("Expected \"socket\" object"))),
         };
@@ -209,20 +207,23 @@ impl Listener {
         Ok(())
     }
 
-    pub(crate) fn listen(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn listen(
+        cx: &mut JsScope<'_>,
+        options: Option<SocketOptionsObject<'_>>,
+    ) -> JsResult<JSValue> {
         log!("listen");
         let cx = &cx.js_thread();
-        let opts = options.to_js();
-        if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
+        let Some(opts) = options else {
             return Err(cx
                 .global()
                 .throw_invalid_arguments(format_args!("Expected object")));
-        }
+        };
 
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
 
-        let mut socket_config = SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Server)?;
+        let mut socket_config =
+            SocketConfig::from_js(vm, opts.object(), cx.global(), SocketMode::Server)?;
         // Teardown handled by Drop on SocketConfig; `handlers` is an `Rc` the
         // `Listener` clones out of it.
         //
@@ -363,7 +364,7 @@ impl Listener {
                     }
                 }
 
-                if !default_data.is_empty() {
+                if let Some(default_data) = default_data {
                     this_ref
                         .strong_data
                         .set(Strong::create(default_data, cx.global()));
@@ -584,7 +585,7 @@ impl Listener {
         // reads `connection`).
         unsafe { (*this).connection = connection };
         this_ref.listener.set(ListenerType::Uws(listen_socket));
-        if !default_data.is_empty() {
+        if let Some(default_data) = default_data {
             this_ref
                 .strong_data
                 .set(Strong::create(default_data, cx.global()));
@@ -743,7 +744,6 @@ impl Listener {
         tls: JsLocal<'a>,
     ) -> JsResult<()> {
         let global = cx.global();
-        let tls = tls.to_js();
         if !this.ssl {
             return Err(
                 global.throw_invalid_arguments(format_args!("addServerName requires SSL support"))
@@ -811,9 +811,9 @@ impl Listener {
         self.do_stop(true);
     }
 
-    pub(crate) fn stop(&self, _: &mut JsScope<'_>, close_active_connections: JsLocal<'_>) {
+    pub(crate) fn stop(&self, _: &mut JsScope<'_>, close_active_connections: Option<bool>) {
         log!("close");
-        self.do_stop(close_active_connections.to_js() == JSValue::TRUE);
+        self.do_stop(close_active_connections == Some(true));
     }
 
     fn do_stop(&self, force_close: bool) {
@@ -901,8 +901,8 @@ impl Listener {
         }
     }
 
-    pub(crate) fn get_fd<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
-        let fd = match self.listener.get() {
+    pub(crate) fn get_fd(&self) -> i64 {
+        match self.listener.get() {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
@@ -911,11 +911,10 @@ impl Listener {
                 // stdio. The sys_jsc helper branches on kind
                 // (system→u64, uv→i32, posix→i32).
                 use bun_sys_jsc::FdJsc as _;
-                socket.fd().to_js_without_making_lib_uv_owned()
+                socket.fd().to_number_without_making_lib_uv_owned()
             }
-            _ => JSValue::js_number(-1.0),
-        };
-        JsLocal::new(heap, fd)
+            _ => -1,
+        }
     }
 
     pub(crate) fn r#ref<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
@@ -934,8 +933,11 @@ impl Listener {
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
     }
 
-    pub(crate) fn connect(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
-        Self::connect_inner(&cx.js_thread(), None, None, options.to_js())
+    pub(crate) fn connect(
+        cx: &mut JsScope<'_>,
+        options: Option<SocketOptionsObject<'_>>,
+    ) -> JsResult<JSValue> {
+        Self::connect_inner(&cx.js_thread(), None, None, options)
     }
 
     /// `Bun.connect`, and node:net's dial (which hands in the socket it already made).
@@ -943,7 +945,7 @@ impl Listener {
         cx: &bun_jsc::JsThread<'_>,
         prev_maybe_tcp: Option<*mut TCPSocket>,
         prev_maybe_tls: Option<*mut TLSSocket>,
-        opts: JSValue,
+        options: Option<SocketOptionsObject<'_>>,
     ) -> JsResult<JSValue> {
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
         // Dialing would report: a port that refuses (a listener the same script just made is one,
@@ -952,16 +954,17 @@ impl Listener {
         if cx.context().is_stopped() {
             return Ok(jsc::JSPromise::create(cx.global()).to_js());
         }
-        if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
+        let Some(opts) = options else {
             return Err(cx
                 .global()
                 .throw_invalid_arguments(format_args!("Expected options object")));
-        }
+        };
         let vm = VirtualMachine::get().as_mut();
 
         // Client mode: these handlers have no owning listener, so
         // `mark_inactive` skips the listener-release branch.
-        let mut socket_config = SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Client)?;
+        let mut socket_config =
+            SocketConfig::from_js(vm, opts.object(), cx.global(), SocketMode::Client)?;
         // No JS wrapper holds the handlers cell until `connect_finish` creates
         // the socket's; the option getters below run user JS that can GC.
         let handlers = Rc::clone(&socket_config.handlers);
@@ -970,26 +973,21 @@ impl Listener {
         let port = socket_config.port;
         let mut owned_ssl_ctx = prebuilt_ssl_ctx(vm, cx.global(), opts, &mut socket_config, false)?;
         let ssl_enabled = socket_config.ssl.is_some();
-        let default_data = socket_config.default_data;
+        let default_data = socket_config.default_data.unwrap_or(JsLocal::UNDEFINED);
 
         vm.event_loop_ref().ensure_waker();
 
         let connection: UnixOrHost = 'blk: {
-            if let Some(fd_) = opts.get_truthy(cx.global(), "fd")? {
-                if fd_.is_number() {
-                    #[cfg(windows)]
-                    let fd = if opts
-                        .get_truthy(cx.global(), "fdIsRawSocket")?
-                        .is_some_and(|v| v.to_boolean())
-                    {
-                        Fd::from_system(fd_.to_int32() as u32 as usize as *mut c_void)
-                    } else {
-                        Fd::from_uv(fd_.to_int32())
-                    };
-                    #[cfg(not(windows))]
-                    let fd = Fd::from_uv(fd_.to_int32());
-                    break 'blk UnixOrHost::Fd(fd);
-                }
+            if let Some(fd_) = opts.fd(cx.global())? {
+                #[cfg(windows)]
+                let fd = if opts.fd_is_raw_socket(cx.global())? {
+                    Fd::from_system(fd_ as i32 as u32 as usize as *mut c_void)
+                } else {
+                    Fd::from_uv(fd_ as i32)
+                };
+                #[cfg(not(windows))]
+                let fd = Fd::from_uv(fd_ as i32);
+                break 'blk UnixOrHost::Fd(fd);
             }
             // Move the hostname bytes into `host`; `socket_config` drops the
             // emptied slice.
@@ -1008,20 +1006,17 @@ impl Listener {
         // connecting. node:net validates localAddress as a literal IP and
         // localPort as a number before they reach us.
         let local_binding: Option<(Box<[u8]>, u16)> = 'lb: {
-            let Some(local_addr_js) = opts.get_truthy(cx.global(), "localAddress")? else {
+            let Some(local_addr) = opts.local_address(cx.global())? else {
                 break 'lb None;
             };
-            if !local_addr_js.is_string() {
-                break 'lb None;
-            }
-            let local_addr_slice = local_addr_js.to_utf8(cx.global())?;
+            let local_addr_slice = local_addr.to_utf8();
             let local_addr_bytes = local_addr_slice.slice();
             if local_addr_bytes.is_empty() {
                 break 'lb None;
             }
-            let local_port: u16 = match opts.get_truthy(cx.global(), "localPort")? {
-                Some(p) if p.is_number() => p.to_int32().clamp(0, 65535) as u16,
-                _ => 0,
+            let local_port: u16 = match opts.local_port(cx.global())? {
+                Some(p) => (p as i32).clamp(0, 65535) as u16,
+                None => 0,
             };
             Some((local_addr_bytes.to_vec().into_boxed_slice(), local_port))
         };
@@ -1072,8 +1067,6 @@ impl Listener {
                 _ => false,
             };
             if is_named_pipe {
-                default_data.ensure_still_alive();
-
                 let mut ssl_taken = socket_config.ssl.take();
 
                 let promise = jsc::JSPromise::create(cx.global());
@@ -1292,8 +1285,6 @@ impl Listener {
                 }
             }
         }
-        default_data.ensure_still_alive();
-
         let allow_half_open = socket_config.allow_half_open;
         let pause_on_connect = socket_config.pause_on_connect;
         let mut ssl_taken = socket_config.ssl.take();
@@ -1337,16 +1328,19 @@ impl Listener {
         }
     }
 
-    pub(crate) fn getsockname(&self, cx: &mut JsScope<'_>, out: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn getsockname(
+        &self,
+        cx: &mut JsScope<'_>,
+        out: Option<JsLocal<'_, JSObject>>,
+    ) -> JsResult<()> {
         let global = cx.global();
         let ListenerType::Uws(socket) = self.listener.get() else {
             return Ok(());
         };
 
-        let out = out.to_js();
-        if !out.is_object() {
+        let Some(out) = out else {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
-        }
+        };
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
@@ -1443,7 +1437,7 @@ fn connect_finish<const IS_SSL: bool>(
     local_binding: Option<(Box<[u8]>, u16)>,
     mut ssl: Option<&mut SSLConfig>,
     owned_ssl_ctx: Option<boring_sys::OwnedSslCtx>,
-    default_data: JSValue,
+    default_data: JsLocal<'_>,
     allow_half_open: bool,
     pause_on_connect: bool,
     port: Option<u16>,

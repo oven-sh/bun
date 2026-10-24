@@ -2,7 +2,7 @@ use bun_collections::HashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_core::StackCheck;
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, ValueWalker};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf};
 use bun_parsers::toml::TOML;
 
@@ -43,16 +43,16 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
     value: JsLocal<'a>,
-    replacer: JsLocal<'a>,
-) -> JsResult<JSValue> {
+    replacer: Option<JsLocal<'a>>,
+) -> JsResult<Option<JSValue>> {
     let global = cx.global();
-    let (value, replacer) = (value.to_js(), replacer.to_js());
+    let value = Stringifier::value_of(value);
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(None);
     }
 
-    if !replacer.is_undefined_or_null() {
+    if replacer.is_some() {
         return Err(global.throw(format_args!(
             "TOML.stringify does not support the replacer argument"
         )));
@@ -83,7 +83,7 @@ pub(crate) fn stringify<'a>(
         };
     }
 
-    stringifier.builder.to_string(global)
+    stringifier.builder.to_string(global).map(Some)
 }
 
 #[derive(Debug)]
@@ -117,6 +117,8 @@ enum Layout {
     ArrayOfTables,
     Skip,
 }
+
+impl ValueWalker for Stringifier {}
 
 struct Stringifier {
     stack_check: StackCheck,

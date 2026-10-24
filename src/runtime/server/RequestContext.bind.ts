@@ -8,7 +8,7 @@ function reactions(debug: boolean, mux: boolean, ssl: boolean) {
   const reaction = (name: string, rustName: string, contextType: b.Type = b.nativePromiseContext(rustPath)) =>
     b.fn({
       export: `Bun__${context}__${name}`,
-      args: { value: b.any, context: contextType },
+      args: { value: b.promiseResult, context: contextType },
       capability: "js",
       rustPath: `${rustPath}::${rustName}`,
     });

@@ -968,9 +968,12 @@ impl ByteStream {
 /// `bun:internal-for-testing`: swap the stream's producer for
 /// [`streams::SourceHandle::TestingCancelOnDrain`], whose drain signal
 /// re-enters `on_cancel` and consumes the pending buffer action.
-pub(crate) fn cancel_on_drain(cx: &mut JsScope<'_>, stream: JsLocal<'_>) -> bun_jsc::JsResult<()> {
+pub(crate) fn cancel_on_drain(
+    cx: &mut JsScope<'_>,
+    stream: Option<JsLocal<'_, readable_stream::ReadableStream>>,
+) -> bun_jsc::JsResult<()> {
     let global = cx.global();
-    let stream = readable_stream::ReadableStream::from_js(stream.to_js(), global)?;
+    let stream = stream.map(readable_stream::ReadableStream::from_local);
     let Some(bytes) = stream.and_then(|s| s.ptr.bytes()) else {
         return Err(global.throw(format_args!("expected a ByteStream-backed ReadableStream")));
     };

@@ -2,7 +2,7 @@
 //! each chunk (out) or each time the socket has drained (in).
 
 use super::{MAX_PIPELINE_SIZE, PostgresSQLConnection, Socket};
-use crate::jsc::{AutoFlush as _, JSValue, JsResult, js_error_to_postgres};
+use crate::jsc::{AutoFlush as _, JSValue, js_error_to_postgres};
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::error_jsc::postgres_error_to_js;
 use crate::postgres::postgres_request as PostgresRequest;
@@ -10,7 +10,7 @@ use crate::postgres::postgres_sql_query::{CopyStream, js};
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_jsc::JSUint8Array;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{Callable, JsBytes, JsLocal, JsScope, JsWrapper};
 use bun_ptr::{ParentRef, RefPtr};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -280,42 +280,21 @@ impl PostgresSQLQuery {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        callback: JsLocal<'_>,
+        callback: Option<JsLocal<'_, Callable>>,
         writable: bool,
     ) {
-        let callback = callback.to_js();
-        let (copy, callback) = if !callback.is_callable() {
-            (CopyStream::None, JSValue::ZERO)
-        } else if writable {
-            (CopyStream::Writable, callback)
-        } else {
-            (CopyStream::Readable, callback)
+        let (copy, callback) = match callback {
+            None => (CopyStream::None, JSValue::ZERO),
+            Some(callback) if writable => (CopyStream::Writable, callback.to_js()),
+            Some(callback) => (CopyStream::Readable, callback.to_js()),
         };
         js::copy_set_cached(this_value.to_js(), cx.global(), callback);
         self.update_flags(|f| f.copy = copy);
     }
 
-    pub fn copy_write(&self, cx: &mut JsScope<'_>, chunk: JsLocal<'_>) -> JsResult<bool> {
-        let global = cx.global();
-        let chunk = chunk.to_js();
-        let text;
-        let buffer;
-        let bytes = if chunk.is_string() {
-            text = chunk.to_utf8(global)?;
-            text.slice()
-        } else if let Some(view) = chunk.as_array_buffer(global) {
-            buffer = view;
-            buffer.byte_slice()
-        } else {
-            return Err(global.throw_invalid_argument_type_value_one_of(
-                "chunk",
-                "string, TypedArray, DataView, or ArrayBuffer",
-                chunk,
-            ));
-        };
-        Ok(self
-            .copy_connection(CopyStream::WritableOpen)
-            .is_none_or(|connection| connection.write_copy_chunk(bytes)))
+    pub fn copy_write<'a>(&self, cx: &mut JsScope<'a>, chunk: JsBytes<'a>) -> bool {
+        self.copy_connection(CopyStream::WritableOpen)
+            .is_none_or(|connection| connection.write_copy_chunk(chunk.get(&cx.heap)))
     }
 
     pub fn copy_done(&self, _: &mut JsScope<'_>) {

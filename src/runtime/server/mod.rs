@@ -10,7 +10,8 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
+use bun_jsc::bindgen::JsLocal;
+use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
 use bun_ptr::AsCtxPtr;
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
@@ -3267,23 +3268,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Stores `handlers` (`{ message, ping, pong, drain, close }`) on the first call. Later calls
     /// are no-ops. The object is private to `ws.ts`, so user code can't modify it.
-    fn init_ws_package_handlers(&self, global: &JSGlobalObject, handlers: JSValue) -> JsResult<()> {
+    fn init_ws_package_handlers(
+        &self,
+        global: &JSGlobalObject,
+        handlers: Option<JsLocal<'_, JSObject>>,
+    ) -> JsResult<()> {
         if self.ws_package_handler.get().is_some() {
             return Ok(());
         }
         let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app.get()) else {
             return Ok(());
         };
-        if !handlers.is_object() {
+        let Some(handlers) = handlers else {
             return Err(global.throw_invalid_arguments(format_args!("handlers must be an object")));
-        }
-        let mut handler = WebSocketServerHandler::from_js(global, handlers)?;
+        };
+        let mut handler = WebSocketServerHandler::from_js(global, handlers.to_js())?;
         handler.app = Some(app.cast::<c_void>());
         handler.server = Some(AnyServer::from(std::ptr::from_ref::<Self>(self)));
         handler
             .flags
             .set(web_socket_server_context::HandlerFlags::SSL, SSL);
-        Self::js_gc_ws_package_handlers_set(server_js, global, handlers);
+        Self::js_gc_ws_package_handlers_set(server_js, global, handlers.to_js());
         self.ws_package_handler.set(Some(Box::new(handler)));
         Ok(())
     }
@@ -3909,7 +3914,7 @@ impl AnyServer {
     pub(crate) fn init_ws_package_handlers(
         &self,
         global: &jsc::JSGlobalObject,
-        handlers: JSValue,
+        handlers: Option<JsLocal<'_, JSObject>>,
     ) -> jsc::JsResult<()> {
         any_server_dispatch!(self, |s| s.init_ws_package_handlers(global, handlers))
     }

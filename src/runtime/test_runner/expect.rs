@@ -3,28 +3,28 @@ use core::cell::Cell;
 use core::fmt;
 
 use bun_core::Output;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::bun_string_jsc;
-use bun_jsc::{
-    JSGlobalObject, JSValue, JsError, JsResult,
-    ConsoleObject, JSFunction, JSPropertyIterator, JSString,
-};
-use bun_jsc::{JsClass as _, StringJsc as _};
+use bun_core::strings;
+use bun_jsc::bindgen::{self, AnyValue, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_core::strings;
+use bun_jsc::{
+    ConsoleObject, JSArray, JSFunction, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
+    JsError, JsResult, MarkedArgumentBuffer,
+};
+use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_ptr::RefPtr;
 
 use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
+use super::expect::{FormatterTestExt, JSValueTestExt, make_formatter};
 use super::jest::Jest;
-use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
-    Bun__Expect__applyCustomMatcher, js_ExpectAny, js_ExpectArrayContaining, js_ExpectCloseTo,
-    js_ExpectCustomAsymmetricMatcher, js_ExpectObjectContaining, js_ExpectStringContaining,
-    js_ExpectStringMatching,
+    Bun__Expect__applyCustomMatcher, ConstructorArgument, ExpectLabel, MatcherHintOptionsOrOther,
+    Precision, StringOrRegExp, StringValue, UnreachableMessage, js_ExpectAny,
+    js_ExpectArrayContaining, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher,
+    js_ExpectObjectContaining, js_ExpectStringContaining, js_ExpectStringMatching,
 };
 
 use bun_jsc::js_error_to_write_error;
@@ -689,15 +689,21 @@ impl Expect {
         Ok(buf)
     }
 
-    pub(crate) fn call(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn call(
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+        message: ExpectLabel<'_>,
+    ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let value = value.to_js();
-        let message = message.to_js();
 
-        let mut custom_label = bun_core::String::EMPTY;
-        if message.is_string() || message.implements_to_string(global_this)? {
-            custom_label = message.to_bun_string(global_this)?;
-        }
+        let custom_label = match message {
+            ExpectLabel::String(string) => string.to_js().to_bun_string(global_this)?,
+            ExpectLabel::StringObject(object) => object.to_js().to_bun_string(global_this)?,
+            ExpectLabel::Object(object) if object.to_js().implements_to_string(global_this)? => {
+                object.to_js().to_bun_string(global_this)?
+            }
+            ExpectLabel::Object(_) | ExpectLabel::Other => bun_core::String::EMPTY,
+        };
 
         let active_execution_entry_ref = if let Some(buntest_strong_) = bun_test::clone_active_strong() {
             let buntest_strong = buntest_strong_;
@@ -727,12 +733,12 @@ impl Expect {
     /// user data and is emitted verbatim. `signature` is the pre-processed
     /// header returned by `get_signature` (ANSI or stripped, per stderr
     /// colour state). Nothing here scans bytes for `<…>` markers.
-    pub(crate) fn throw_rendered(
+    pub(crate) fn throw_rendered<T>(
         &self,
         global_this: &JSGlobalObject,
         signature: &'static str,
         args: fmt::Arguments<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<T> {
         Err(if self.custom_label.is_empty() {
             global_this.throw(format_args!("{signature}{args}"))
         } else {
@@ -745,49 +751,43 @@ impl Expect {
         Err(heap.error(format_args!("expect() cannot be called with new")))
     }
 
-    pub(crate) fn pass(&self, cx: &mut JsScope<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn pass(
+        &self,
+        cx: &mut JsScope<'_>,
+        message: Option<bun_core::String>,
+    ) -> JsResult<()> {
         let global_this = cx.global();
         let this = self.post_match_guard(global_this);
 
-        let value = message.to_js();
-
-        let message: bun_core::String = if !value.is_undefined() {
-            if !value.is_string() {
-                return Err(global_this.throw_invalid_argument_type("pass", "message", "string"));
-            }
-
-            value.to_bun_string(global_this)?
-        } else {
-            bun_core::String::static_("passes by .pass() assertion")
-        };
+        let message =
+            message.unwrap_or_else(|| bun_core::String::static_("passes by .pass() assertion"));
 
         this.increment_expect_call_counter();
 
-        if !this.flags.get().not() { return Ok(JSValue::UNDEFINED); }
+        if !this.flags.get().not() {
+            return Ok(());
+        }
 
         let signature = Self::get_signature("pass", "", true);
         throw!(this, global_this, signature, "\n\n{}\n", message)
     }
 
-    pub(crate) fn fail(&self, cx: &mut JsScope<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn fail(
+        &self,
+        cx: &mut JsScope<'_>,
+        message: Option<bun_core::String>,
+    ) -> JsResult<()> {
         let global_this = cx.global();
         let this = self.post_match_guard(global_this);
 
-        let value = message.to_js();
-
-        let message: bun_core::String = if !value.is_undefined() {
-            if !value.is_string() {
-                return Err(global_this.throw_invalid_argument_type("fail", "message", "string"));
-            }
-
-            value.to_bun_string(global_this)?
-        } else {
-            bun_core::String::static_("fails by .fail() assertion")
-        };
+        let message =
+            message.unwrap_or_else(|| bun_core::String::static_("fails by .fail() assertion"));
 
         this.increment_expect_call_counter();
 
-        if this.flags.get().not() { return Ok(JSValue::UNDEFINED); }
+        if this.flags.get().not() {
+            return Ok(());
+        }
 
         let signature = Self::get_signature("fail", "", true);
         throw!(this, global_this, signature, "\n\n{}\n", message)
@@ -996,7 +996,7 @@ impl Expect {
         property_matchers: Option<JSValue>,
         result: Option<&[u8]>,
         fn_name: &'static str,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let this = self;
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else {
@@ -1026,7 +1026,7 @@ impl Expect {
 
             if strings::eql_long(&pretty_value, trim_res.trimmed, true) {
                 runner.snapshots.passed += 1;
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             } else if update {
                 runner.snapshots.passed += 1;
                 needs_write = true;
@@ -1092,7 +1092,7 @@ impl Expect {
             })?;
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn match_and_fmt_snapshot(
@@ -1105,8 +1105,14 @@ impl Expect {
     ) -> JsResult<()> {
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
-                let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(drop);
+                let signature =
+                    Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
+                return throw!(
+                    self,
+                    global_this,
+                    signature,
+                    "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n"
+                );
             }
 
             let prop_matchers = _prop_matchers;
@@ -1116,10 +1122,12 @@ impl Expect {
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
                 return throw!(
-                    self, global_this, signature,
+                    self,
+                    global_this,
+                    signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
                     value.to_fmt(&mut formatter),
-                ).map(drop);
+                );
             }
         }
 
@@ -1133,7 +1141,7 @@ impl Expect {
         property_matchers: Option<JSValue>,
         hint: &[u8],
         fn_name: &'static str,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let this = self;
         let mut pretty_value: Vec<u8> = Vec::new();
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
@@ -1197,7 +1205,7 @@ impl Expect {
             let saved_value: Vec<u8> = saved_value.to_vec();
             if strings::eql_long(&pretty_value, &saved_value, true) {
                 runner.snapshots.passed += 1;
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             runner.snapshots.failed += 1;
@@ -1206,7 +1214,7 @@ impl Expect {
             return throw!(self, global_this, signature, "\n\n{}\n", diff_format);
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn get_static_not<'a>(heap: &JsHeap<'a>) -> JsWrapper<'a, ExpectStatic> {
@@ -1227,39 +1235,63 @@ impl Expect {
         ExpectStatic { flags }.into_js(heap)
     }
 
-    pub(crate) fn any(cx: &mut JsScope<'_>, constructor: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectAny::create(cx.global(), Flags::default(), constructor.to_js())
+    pub(crate) fn any(
+        cx: &mut JsScope<'_>,
+        constructor: ConstructorArgument<'_>,
+    ) -> JsResult<JSValue> {
+        ExpectAny::create(cx.global(), Flags::default(), constructor)
     }
 
     pub(crate) fn anything(cx: &mut JsScope<'_>) -> JSValue {
         ExpectAnything::create(cx.global(), Flags::default())
     }
 
-    pub(crate) fn close_to(cx: &mut JsScope<'_>, number: JsLocal<'_>, precision: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectCloseTo::create(cx.global(), Flags::default(), number.to_js(), precision.to_js())
+    pub(crate) fn close_to(
+        cx: &mut JsScope<'_>,
+        number: (Option<f64>, JsLocal<'_>),
+        precision: (Precision, JsLocal<'_>),
+    ) -> JsResult<JSValue> {
+        ExpectCloseTo::create(cx.global(), Flags::default(), number, precision)
     }
 
-    pub(crate) fn object_containing(cx: &mut JsScope<'_>, object: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectObjectContaining::create(cx.global(), Flags::default(), object.to_js())
+    pub(crate) fn object_containing(
+        cx: &mut JsScope<'_>,
+        object: Option<JsLocal<'_, JSObject>>,
+    ) -> JsResult<JSValue> {
+        ExpectObjectContaining::create(cx.global(), Flags::default(), object)
     }
 
-    pub(crate) fn string_containing(cx: &mut JsScope<'_>, string: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectStringContaining::create(cx.global(), Flags::default(), string.to_js())
+    pub(crate) fn string_containing(
+        cx: &mut JsScope<'_>,
+        string: StringValue<'_>,
+    ) -> JsResult<JSValue> {
+        ExpectStringContaining::create(cx.global(), Flags::default(), string)
     }
 
-    pub(crate) fn string_matching(cx: &mut JsScope<'_>, test: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectStringMatching::create(cx.global(), Flags::default(), test.to_js())
+    pub(crate) fn string_matching(
+        cx: &mut JsScope<'_>,
+        test: StringOrRegExp<'_>,
+    ) -> JsResult<JSValue> {
+        ExpectStringMatching::create(cx.global(), Flags::default(), test)
     }
 
-    pub(crate) fn array_containing(cx: &mut JsScope<'_>, array: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectArrayContaining::create(cx.global(), Flags::default(), array.to_js())
+    pub(crate) fn array_containing(
+        cx: &mut JsScope<'_>,
+        array: Option<JsLocal<'_, JSArray>>,
+    ) -> JsResult<JSValue> {
+        ExpectArrayContaining::create(cx.global(), Flags::default(), array)
     }
 
     /// Implements `expect.extend({ ... })`
-    pub(crate) fn extend(cx: &mut JsScope<'_>, matchers: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn extend(
+        cx: &mut JsScope<'_>,
+        matchers: Option<JsLocal<'_, JSObject>>,
+    ) -> JsResult<()> {
         let global_this = cx.global();
 
-        let Some(matchers_to_register) = matchers.to_js().get_object() else {
+        let Some(matchers_to_register) =
+            matchers.and_then(|matchers| matchers.to_js().get_object())
+        else {
             return Err(crate::throw_pretty_static!(
                 global_this,
                 "<d>expect.<r>extend<d>(<r>matchers<d>)<r>\n\nExpected an object containing matchers\n",
@@ -1362,7 +1394,7 @@ impl Expect {
         global_this: &JSGlobalObject,
         matcher_name: &bun_core::String,
         matcher_fn: JSValue,
-        args: &[JSValue],
+        args: &MarkedArgumentBuffer,
         flags: Flags,
         silent: bool,
     ) -> JsResult<bool> {
@@ -1371,7 +1403,8 @@ impl Expect {
         matcher_context_jsvalue.ensure_still_alive();
 
         // call the custom matcher implementation
-        let mut result = matcher_fn.call(global_this, matcher_context_jsvalue, args)?;
+        let mut result =
+            matcher_fn.call_with_arguments(global_this, matcher_context_jsvalue, args)?;
         // support for async matcher results
         if let Some(promise) = result.as_any_promise() {
             let vm = global_this.vm();
@@ -1462,7 +1495,7 @@ impl Expect {
     pub(crate) fn apply_custom_matcher(
         cx: &mut JsScope<'_>,
         this_value: JsLocal<'_>,
-        callee: JsLocal<'_>,
+        callee: JsLocal<'_, JSObject>,
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
@@ -1481,8 +1514,6 @@ impl Expect {
         matcher_fn.ensure_still_alive();
 
         // try to retrieve the Expect instance
-        let this_value: JSValue = this_value.to_js();
-        let args = JsLocal::to_js_slice(args);
         let Some(expect) = this_value.as_class_ref::<Expect>() else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
             return ExpectCustomAsymmetricMatcher::create(
@@ -1492,6 +1523,8 @@ impl Expect {
                 matcher_fn,
             );
         };
+        // SAFETY: `expect` is the payload of `this_value`.
+        let this_value = unsafe { expect.wrapper_value() };
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
@@ -1524,15 +1557,21 @@ impl Expect {
         expect.increment_expect_call_counter();
 
         // prepare the args array
-        // MarkedArgumentBuffer::new is scoped (closure-borrow); collect into a Vec
-        // since execute_custom_matcher takes &[JSValue].
-        let mut matcher_args: Vec<JSValue> = Vec::with_capacity(args.len() + 1);
-        matcher_args.push(value);
-        for arg in args {
-            matcher_args.push(*arg);
-        }
+        MarkedArgumentBuffer::new(|matcher_args| {
+            matcher_args.append(value);
+            for arg in args {
+                matcher_args.append(*arg);
+            }
 
-        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
+            Self::execute_custom_matcher(
+                global_this,
+                &matcher_name,
+                matcher_fn,
+                matcher_args,
+                expect.flags.get(),
+                false,
+            )
+        })?;
 
         Ok(this_value)
     }
@@ -1561,22 +1600,21 @@ impl Expect {
         Ok(())
     }
 
-    pub(crate) fn assertions(cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn assertions(
+        cx: &mut JsScope<'_>,
+        (expected_assertions, expected): (Option<f64>, JsLocal<'_>),
+    ) -> JsResult<()> {
         let global_this = cx.global();
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
-        let expected = expected.to_js();
-
-        if !expected.is_number() {
+        let Some(expected_assertions) = expected_assertions else {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
             return Err(global_this.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
                 expected.to_fmt(&mut fmt),
             )));
-        }
-
-        let expected_assertions: f64 = expected.to_number(global_this)?;
+        };
         if expected_assertions.round() != expected_assertions
             || expected_assertions.is_infinite()
             || expected_assertions.is_nan()
@@ -1636,23 +1674,25 @@ impl Expect {
         Ok((this, value, not))
     }
 
-    pub(crate) fn unreachable(cx: &mut JsScope<'_>, message: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn unreachable(
+        cx: &mut JsScope<'_>,
+        message: UnreachableMessage<'_>,
+    ) -> JsResult<()> {
         let global_this = cx.global();
-        let arg = message.to_js();
 
-        if arg.is_undefined_or_null() {
-            let error_value = global_this.create_error_instance(format_args!("reached unreachable code"));
-            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
-            return Err(global_this.throw_value(error_value));
-        }
-
-        if arg.is_string() {
-            let error_value = arg.to_bun_string(global_this)?.to_error_instance(global_this);
-            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
-            return Err(global_this.throw_value(error_value));
-        }
-
-        Err(global_this.throw_value(arg))
+        let error_value = match message {
+            UnreachableMessage::Absent | UnreachableMessage::None => {
+                global_this.create_error_instance(format_args!("reached unreachable code"))
+            }
+            UnreachableMessage::String(message) => message.to_error_instance(global_this),
+            UnreachableMessage::Thrown(value) => return Err(global_this.throw_value(value)),
+        };
+        error_value.put(
+            global_this,
+            b"name",
+            bun_core::String::static_("UnreachableError").to_js(global_this)?,
+        );
+        Err(global_this.throw_value(error_value))
     }
 }
 
@@ -1775,28 +1815,53 @@ impl ExpectStatic {
         ExpectAnything::create(cx.global(), self.flags)
     }
 
-    pub(crate) fn any(&self, cx: &mut JsScope<'_>, constructor: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectAny::create(cx.global(), self.flags, constructor.to_js())
+    pub(crate) fn any(
+        &self,
+        cx: &mut JsScope<'_>,
+        constructor: ConstructorArgument<'_>,
+    ) -> JsResult<JSValue> {
+        ExpectAny::create(cx.global(), self.flags, constructor)
     }
 
-    pub(crate) fn array_containing(&self, cx: &mut JsScope<'_>, array: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectArrayContaining::create(cx.global(), self.flags, array.to_js())
+    pub(crate) fn array_containing(
+        &self,
+        cx: &mut JsScope<'_>,
+        array: Option<JsLocal<'_, JSArray>>,
+    ) -> JsResult<JSValue> {
+        ExpectArrayContaining::create(cx.global(), self.flags, array)
     }
 
-    pub(crate) fn close_to(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>, precision: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectCloseTo::create(cx.global(), self.flags, number.to_js(), precision.to_js())
+    pub(crate) fn close_to(
+        &self,
+        cx: &mut JsScope<'_>,
+        number: (Option<f64>, JsLocal<'_>),
+        precision: (Precision, JsLocal<'_>),
+    ) -> JsResult<JSValue> {
+        ExpectCloseTo::create(cx.global(), self.flags, number, precision)
     }
 
-    pub(crate) fn object_containing(&self, cx: &mut JsScope<'_>, object: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectObjectContaining::create(cx.global(), self.flags, object.to_js())
+    pub(crate) fn object_containing(
+        &self,
+        cx: &mut JsScope<'_>,
+        object: Option<JsLocal<'_, JSObject>>,
+    ) -> JsResult<JSValue> {
+        ExpectObjectContaining::create(cx.global(), self.flags, object)
     }
 
-    pub(crate) fn string_containing(&self, cx: &mut JsScope<'_>, string: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectStringContaining::create(cx.global(), self.flags, string.to_js())
+    pub(crate) fn string_containing(
+        &self,
+        cx: &mut JsScope<'_>,
+        string: StringValue<'_>,
+    ) -> JsResult<JSValue> {
+        ExpectStringContaining::create(cx.global(), self.flags, string)
     }
 
-    pub(crate) fn string_matching(&self, cx: &mut JsScope<'_>, test: JsLocal<'_>) -> JsResult<JSValue> {
-        ExpectStringMatching::create(cx.global(), self.flags, test.to_js())
+    pub(crate) fn string_matching(
+        &self,
+        cx: &mut JsScope<'_>,
+        test: StringOrRegExp<'_>,
+    ) -> JsResult<JSValue> {
+        ExpectStringMatching::create(cx.global(), self.flags, test)
     }
 }
 
@@ -1819,10 +1884,10 @@ impl Expect {
         this_value: JSValue,
         matcher_name: &'static str,
         pred: impl FnOnce(JSValue) -> bool,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let (this, value, not) = self.matcher_prelude(global, this_value, matcher_name, "")?;
         if pred(value) != not {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let mut formatter = make_formatter(global);
         let signature = Self::get_signature(matcher_name, "", not);
@@ -1852,18 +1917,22 @@ impl Expect {
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
-        expected: JSValue,
+        expected: StringValue<'_>,
         matcher_name: &'static str,
         verb: &'static str,
         pred: fn(&[u8], &[u8]) -> bool,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let this = self.post_match_guard(global);
 
-        if !expected.is_string() {
-            return Err(global.throw(format_args!(
-                "{matcher_name}() requires the first argument to be a string"
-            )));
-        }
+        let expected = match expected {
+            StringValue::String(string) => string.to_js(),
+            StringValue::StringObject(object) => object.to_js(),
+            StringValue::Other => {
+                return Err(global.throw(format_args!(
+                    "{matcher_name}() requires the first argument to be a string"
+                )));
+            }
+        };
 
         let value = this.get_value(global, this_value, matcher_name, "<green>expected<r>")?;
         this.increment_expect_call_counter();
@@ -1881,7 +1950,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let mut f1 = make_formatter(global);
@@ -1964,28 +2033,33 @@ impl Expect {
     /// and delegates only the per-matcher pass-loop to `body`.
     ///
     /// On pass, returns `this_value`, not `undefined`.
-    pub(crate) fn contain_matcher(
+    pub(crate) fn contain_matcher<'a, 'b, T>(
         &self,
         global: &JSGlobalObject,
-        this_value: JSValue,
-        expected: JSValue,
+        this_value: JsWrapper<'a, Self>,
+        expected: Option<JsLocal<'b, T>>,
         matcher_name: &'static str,
         expected_array: ExpectedArray,
         msgs: ContainMsgs,
-        body: impl FnOnce(&JSGlobalObject, JSValue, JSValue) -> JsResult<ContainOutcome>,
-    ) -> JsResult<JSValue> {
+        body: impl FnOnce(&JSGlobalObject, JSValue, JsLocal<'b, T>) -> JsResult<ContainOutcome>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
         let this = self.post_match_guard(global);
 
         this.increment_expect_call_counter();
 
-        if matches!(expected_array, ExpectedArray::BeforeValue) && !expected.js_type().is_array() {
+        if matches!(expected_array, ExpectedArray::BeforeValue) && expected.is_none() {
             return Err(global.throw_invalid_argument_type(matcher_name, "expected", "array"));
         }
 
-        let value = this.get_value(global, this_value, matcher_name, "<green>expected<r>")?;
-        if matches!(expected_array, ExpectedArray::AfterValue) && !expected.js_type().is_array() {
+        let value = this.get_value(
+            global,
+            this_value.to_js(),
+            matcher_name,
+            "<green>expected<r>",
+        )?;
+        let Some(expected) = expected else {
             return Err(global.throw_invalid_argument_type(matcher_name, "expected", "array"));
-        }
+        };
 
         let not = this.flags.get().not();
         let outcome = body(global, value, expected)?;
@@ -1997,6 +2071,7 @@ impl Expect {
             return Ok(this_value);
         }
 
+        let expected = expected.as_value();
         let received = outcome.received_override.unwrap_or(value);
         let mut f1 = make_formatter(global);
         let mut f2 = make_formatter(global);
@@ -2047,13 +2122,22 @@ pub(crate) struct ExpectStringMatching {
 }
 
 impl ExpectStringMatching {
-    fn create(global_this: &JSGlobalObject, flags: Flags, test_value: JSValue) -> JsResult<JSValue> {
-        if !test_value.is_string() && !test_value.is_reg_exp() {
-            return Err(crate::throw_pretty_static!(
-                global_this,
-                "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n",
-            ));
-        }
+    fn create(
+        global_this: &JSGlobalObject,
+        flags: Flags,
+        test_value: StringOrRegExp<'_>,
+    ) -> JsResult<JSValue> {
+        let test_value = match test_value {
+            StringOrRegExp::String(string) => string.to_js(),
+            StringOrRegExp::StringObject(object) => object.to_js(),
+            StringOrRegExp::RegExp(reg_exp) => reg_exp.to_js(),
+            StringOrRegExp::Other => {
+                return Err(crate::throw_pretty_static!(
+                    global_this,
+                    "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n",
+                ));
+            }
+        };
 
         let string_matching_js_value = ExpectStringMatching { flags }.to_js(global_this);
         js_ExpectStringMatching::test_value_set_cached(string_matching_js_value, global_this, test_value);
@@ -2071,20 +2155,17 @@ impl ExpectCloseTo {
     fn create(
         global_this: &JSGlobalObject,
         flags: Flags,
-        number_value: JSValue,
-        mut precision_value: JSValue,
+        (number, number_value): (Option<f64>, JsLocal<'_>),
+        (precision, precision_value): (Precision, JsLocal<'_>),
     ) -> JsResult<JSValue> {
-        if !number_value.is_number() {
+        if number.is_none() {
             return Err(crate::throw_pretty_static!(
                 global_this,
                 "<d>expect.<r>closeTo<d>(<r>number<d>, precision?)<r>\n\nExpected a number value",
             ));
         }
 
-        if precision_value.is_undefined() {
-            precision_value = JSValue::js_number_from_int32(2); // default value from jest
-        }
-        if !precision_value.is_number() {
+        if matches!(precision, Precision::Other) {
             return Err(crate::throw_pretty_static!(
                 global_this,
                 "<d>expect.<r>closeTo<d>(number, <r>precision?<d>)<r>\n\nPrecision must be a number or undefined",
@@ -2093,7 +2174,20 @@ impl ExpectCloseTo {
 
         let instance_jsvalue = ExpectCloseTo { flags }.to_js(global_this);
         js_ExpectCloseTo::number_value_set_cached(instance_jsvalue, global_this, number_value);
-        js_ExpectCloseTo::digits_value_set_cached(instance_jsvalue, global_this, precision_value);
+        if matches!(precision, Precision::Absent) {
+            // default value from jest
+            js_ExpectCloseTo::digits_value_set_cached(
+                instance_jsvalue,
+                global_this,
+                JSValue::js_number_from_int32(2),
+            );
+        } else {
+            js_ExpectCloseTo::digits_value_set_cached(
+                instance_jsvalue,
+                global_this,
+                precision_value,
+            );
+        }
 
         global_this.bun_vm().auto_garbage_collect();
         Ok(instance_jsvalue)
@@ -2105,13 +2199,17 @@ pub(crate) struct ExpectObjectContaining {
 }
 
 impl ExpectObjectContaining {
-    fn create(global_this: &JSGlobalObject, flags: Flags, object_value: JSValue) -> JsResult<JSValue> {
-        if !object_value.is_object() {
+    fn create(
+        global_this: &JSGlobalObject,
+        flags: Flags,
+        object_value: Option<JsLocal<'_, JSObject>>,
+    ) -> JsResult<JSValue> {
+        let Some(object_value) = object_value else {
             return Err(crate::throw_pretty_static!(
                 global_this,
                 "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n",
             ));
-        }
+        };
 
         let instance_jsvalue = ExpectObjectContaining { flags }.to_js(global_this);
         js_ExpectObjectContaining::object_value_set_cached(instance_jsvalue, global_this, object_value);
@@ -2126,13 +2224,21 @@ pub(crate) struct ExpectStringContaining {
 }
 
 impl ExpectStringContaining {
-    fn create(global_this: &JSGlobalObject, flags: Flags, string_value: JSValue) -> JsResult<JSValue> {
-        if !string_value.is_string() {
-            return Err(crate::throw_pretty_static!(
-                global_this,
-                "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n",
-            ));
-        }
+    fn create(
+        global_this: &JSGlobalObject,
+        flags: Flags,
+        string_value: StringValue<'_>,
+    ) -> JsResult<JSValue> {
+        let string_value = match string_value {
+            StringValue::String(string) => string.to_js(),
+            StringValue::StringObject(object) => object.to_js(),
+            StringValue::Other => {
+                return Err(crate::throw_pretty_static!(
+                    global_this,
+                    "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n",
+                ));
+            }
+        };
 
         let string_containing_js_value = ExpectStringContaining { flags }.to_js(global_this);
         js_ExpectStringContaining::string_value_set_cached(string_containing_js_value, global_this, string_value);
@@ -2147,20 +2253,28 @@ pub(crate) struct ExpectAny {
 }
 
 impl ExpectAny {
-    fn create(global_this: &JSGlobalObject, mut flags: Flags, constructor: JSValue) -> JsResult<JSValue> {
-        if constructor.is_undefined() {
-            return Err(global_this.throw2(
-                "any() expects to be passed a constructor function. Please pass one or use anything() to match any object.",
-                (),
-            ));
-        }
-
-        if !constructor.is_constructor() {
-            return Err(crate::throw_pretty_static!(
-                global_this,
-                "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n",
-            ));
-        }
+    fn create(
+        global_this: &JSGlobalObject,
+        mut flags: Flags,
+        constructor: ConstructorArgument<'_>,
+    ) -> JsResult<JSValue> {
+        let constructor = match constructor {
+            ConstructorArgument::Absent => {
+                return Err(global_this.throw2(
+                    "any() expects to be passed a constructor function. Please pass one or use anything() to match any object.",
+                    (),
+                ));
+            }
+            ConstructorArgument::Object(object) if object.to_js().is_constructor() => {
+                object.to_js()
+            }
+            ConstructorArgument::Object(_) | ConstructorArgument::Other => {
+                return Err(crate::throw_pretty_static!(
+                    global_this,
+                    "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n",
+                ));
+            }
+        };
 
         let asymmetric_matcher_constructor_type = AsymmetricMatcherConstructorType::from_js(global_this, constructor)?;
 
@@ -2182,13 +2296,17 @@ pub(crate) struct ExpectArrayContaining {
 }
 
 impl ExpectArrayContaining {
-    fn create(global_this: &JSGlobalObject, flags: Flags, array_value: JSValue) -> JsResult<JSValue> {
-        if !array_value.js_type().is_array() {
+    fn create(
+        global_this: &JSGlobalObject,
+        flags: Flags,
+        array_value: Option<JsLocal<'_, JSArray>>,
+    ) -> JsResult<JSValue> {
+        let Some(array_value) = array_value else {
             return Err(crate::throw_pretty_static!(
                 global_this,
                 "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n",
             ));
-        }
+        };
 
         let array_containing_js_value = ExpectArrayContaining { flags }.to_js(global_this);
         js_ExpectArrayContaining::array_value_set_cached(array_containing_js_value, global_this, array_value);
@@ -2219,8 +2337,8 @@ impl ExpectCustomAsymmetricMatcher {
     /// This will not run the matcher, but just capture the args etc.
     pub(crate) fn create(
         global_this: &JSGlobalObject,
-        this_value: JSValue,
-        args: &[JSValue],
+        this_value: JsLocal<'_>,
+        args: &[JsLocal<'_>],
         matcher_fn: JSValue,
     ) -> JsResult<JSValue> {
         // try to retrieve the ExpectStatic instance (to get the flags)
@@ -2251,7 +2369,7 @@ impl ExpectCustomAsymmetricMatcher {
         &self,
         this_value: JSValue,
         global_this: &JSGlobalObject,
-        received: JSValue,
+        received: impl AnyValue,
     ) -> JsResult<bool> {
         // retrieve the user-provided matcher implementation function (the function passed to expect.extend({ ... }))
         let Some(matcher_fn) = js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(this_value) else {
@@ -2283,13 +2401,21 @@ impl ExpectCustomAsymmetricMatcher {
 
         // prepare the args array as `[received, ...captured_args]`
         let args_count = captured_args.get_length(global_this)?;
-        let mut matcher_args: Vec<JSValue> = Vec::with_capacity((args_count as usize).saturating_add(1));
-        matcher_args.push(received);
-        for i in 0..args_count {
-            matcher_args.push(captured_args.get_index(global_this, i as u32)?);
-        }
+        MarkedArgumentBuffer::new(|matcher_args| {
+            matcher_args.append(received);
+            for i in 0..args_count {
+                matcher_args.append(captured_args.get_index(global_this, i as u32)?);
+            }
 
-        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, self.flags, true)
+            Expect::execute_custom_matcher(
+                global_this,
+                &matcher_name,
+                matcher_fn,
+                matcher_args,
+                self.flags,
+                true,
+            )
+        })
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2314,7 +2440,7 @@ impl ExpectCustomAsymmetricMatcher {
         cx: &mut JsScope<'_>,
         received: JsLocal<'_>,
     ) -> JsResult<bool> {
-        self.execute_impl(this_value.to_js(), cx.global(), received.to_js())
+        self.execute_impl(this_value.to_js(), cx.global(), received)
     }
 
     fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> crate::Result<bool> {
@@ -2405,8 +2531,13 @@ impl ExpectMatcherContext {
         false
     }
 
-    pub(crate) fn equals(&self, cx: &mut JsScope<'_>, a: JsLocal<'_>, b: JsLocal<'_>) -> JsResult<bool> {
-        a.to_js().jest_deep_equals(b.to_js(), cx.global())
+    pub(crate) fn equals(
+        &self,
+        cx: &mut JsScope<'_>,
+        a: JsLocal<'_>,
+        b: JsLocal<'_>,
+    ) -> JsResult<bool> {
+        a.jest_deep_equals(b, cx.global())
     }
 }
 
@@ -2421,9 +2552,9 @@ impl ExpectMatcherUtils {
 
     fn print_value(
         global_this: &JSGlobalObject,
-        value: JSValue,
+        value: JsLocal<'_>,
         color_or_null: Option<&'static str>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Vec<u8>> {
         let mut mutable_string = bun_core::MutableString::init_2048()?;
 
         if let Some(color) = color_or_null {
@@ -2441,75 +2572,81 @@ impl ExpectMatcherUtils {
             }
         }
 
-        bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
+        Ok(mutable_string.list)
     }
 
-    pub(crate) fn stringify(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
-        Self::print_value(cx.global(), value.to_js(), None)
+    pub(crate) fn stringify(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<Vec<u8>> {
+        Self::print_value(cx.global(), value, None)
     }
 
-    pub(crate) fn print_expected(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
-        Self::print_value(cx.global(), value.to_js(), Some("<green>"))
+    pub(crate) fn print_expected(
+        &self,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+    ) -> JsResult<Vec<u8>> {
+        Self::print_value(cx.global(), value, Some("<green>"))
     }
 
-    pub(crate) fn print_received(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
-        Self::print_value(cx.global(), value.to_js(), Some("<red>"))
+    pub(crate) fn print_received(
+        &self,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+    ) -> JsResult<Vec<u8>> {
+        Self::print_value(cx.global(), value, Some("<red>"))
     }
 
     pub(crate) fn matcher_hint(
         &self,
         cx: &mut JsScope<'_>,
-        matcher_name: JsLocal<'_>,
-        rest: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+        matcher_name: Option<bun_core::String>,
+        received: Option<JsLocal<'_>>,
+        expected: Option<JsLocal<'_>>,
+        options: Option<JsLocal<'_>>,
+    ) -> JsResult<String> {
         let global_this = cx.global();
-        let matcher_name = matcher_name.to_js();
-        let rest = JsLocal::to_js_slice(rest);
 
-        if !matcher_name.is_string() {
+        let Some(matcher_name) = matcher_name else {
             return Err(global_this.throw2(
                 "matcherHint: the first argument (matcher name) must be a string",
                 (),
             ));
-        }
-        let matcher_name = matcher_name.to_bun_string(global_this)?;
-
-        let received = if !rest.is_empty() { rest[0] } else { bun_core::String::static_("received").to_js(global_this)? };
-        let expected = if rest.len() > 1 { rest[1] } else { bun_core::String::static_("expected").to_js(global_this)? };
-        let options = if rest.len() > 2 { rest[2] } else { JSValue::UNDEFINED };
+        };
 
         let mut is_not = false;
-        let mut comment: Option<&JSString> = None; // TODO support
-        let mut promise: Option<&JSString> = None; // TODO support
-        let mut second_argument: Option<&JSString> = None; // TODO support
+        // TODO support `comment`, `promise` and `secondArgument`
         // TODO support "chalk" colors (they are actually functions like: (value: string) => string;)
         //var second_argument_color: ?string = null;
         //var expected_color: ?string = null;
         //var received_color: ?string = null;
 
-        if !options.is_undefined_or_null() {
-            if !options.is_object() {
-                return Err(global_this.throw2(
-                    "matcherHint: options must be an object (or undefined)",
-                    (),
-                ));
-            }
-            if let Some(val) = options.get(global_this, "isNot")? {
-                is_not = val.to_boolean();
-            }
-            if let Some(val) = options.get(global_this, "comment")? {
-                comment = Some(val.to_js_string(global_this)?);
-            }
-            if let Some(val) = options.get(global_this, "promise")? {
-                promise = Some(val.to_js_string(global_this)?);
-            }
-            if let Some(val) = options.get(global_this, "secondArgument")? {
-                second_argument = Some(val.to_js_string(global_this)?);
-            }
+        if let Some(options) = options {
+            let MatcherHintOptionsOrOther::Options(options) =
+                MatcherHintOptionsOrOther::from_js(global_this, options)?
+            else {
+                return Err(
+                    global_this.throw2("matcherHint: options must be an object (or undefined)", ())
+                );
+            };
+            is_not = options.is_not;
         }
-        let _ = (comment, promise, second_argument);
 
-        let diff_formatter = DiffFormatter::new(global_this, received, expected, is_not)?;
+        let diff_formatter = match (received, expected) {
+            (Some(received), Some(expected)) => {
+                DiffFormatter::new(global_this, received, expected, is_not)?
+            }
+            (Some(received), None) => DiffFormatter::new(
+                global_this,
+                received,
+                bun_core::String::static_("expected").to_js(global_this)?,
+                is_not,
+            )?,
+            (None, _) => DiffFormatter::new(
+                global_this,
+                bun_core::String::static_("received").to_js(global_this)?,
+                bun_core::String::static_("expected").to_js(global_this)?,
+                is_not,
+            )?,
+        };
 
         // Builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
         // and substitutes `(matcher_name, diff_formatter)` into the two `{f}`
@@ -2539,8 +2676,9 @@ impl ExpectMatcherUtils {
         } else {
             bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
         };
-        let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
-        bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+        Ok(format!(
+            "{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n"
+        ))
     }
 }
 
@@ -2649,19 +2787,19 @@ pub(crate) mod mock {
             };
             if !arr.js_type().is_array() {
                 let mut formatter = make_formatter(global);
-                return Err(match kind {
+                return match kind {
                     MockKind::CallsWithSig => throw!(
-                        this, global,
+                        this,
+                        global,
                         Self::get_signature(matcher_name, matcher_params, false),
                         "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {}",
                         value.to_fmt(&mut formatter),
-                    )
-                    .unwrap_err(),
-                    MockKind::Calls | MockKind::Returns => global.throw(format_args!(
+                    ),
+                    MockKind::Calls | MockKind::Returns => Err(global.throw(format_args!(
                         "Expected value must be a mock function: {}",
                         value.to_fmt(&mut formatter),
-                    )),
-                });
+                    ))),
+                };
             }
             Ok((this, arr, value))
         }

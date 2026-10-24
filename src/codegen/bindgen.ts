@@ -16,6 +16,7 @@ import {
   type SchemaFile,
 } from "./bindgen-emit.ts";
 import {
+  ConversionDefinition,
   FunctionDefinition,
   ModuleDefinition,
   NamedType,
@@ -32,7 +33,14 @@ async function load(source: string): Promise<SchemaFile> {
   const file = source.slice(crate.length + 1);
   const stem = path.basename(file, ".bind.ts");
   const origin: Origin = { stem, namespace: pascalCase(stem), rustModule: snakeCase(stem), crate };
-  const result: SchemaFile = { origin, moduleDefinition: null, types: [], functions: [], namespaces: [] };
+  const result: SchemaFile = {
+    origin,
+    moduleDefinition: null,
+    types: [],
+    functions: [],
+    namespaces: [],
+    conversions: [],
+  };
   const exports: Record<string, unknown> = await import(pathToFileURL(file).href).catch(error => {
     throw new Error(`${file}: ${error.message}`, { cause: error });
   });
@@ -44,6 +52,8 @@ async function load(source: string): Promise<SchemaFile> {
       value.name = name;
       value.origin = origin;
       result.functions.push(value);
+    } else if (value instanceof ConversionDefinition) {
+      result.conversions.push(value.exportedAs(name, origin));
     } else if (value instanceof NamespaceDefinition) {
       value.name = name;
       for (const fn of value.functions) {
@@ -60,7 +70,9 @@ async function load(source: string): Promise<SchemaFile> {
       value.origin = origin;
       result.types.push(value);
     } else {
-      throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function, a namespace or b.module()`);
+      throw new TypeError(
+        `${stem}.bind.ts: export ${name} is not a type, a function, a namespace, a conversion or b.module()`,
+      );
     }
   }
   const names = new Set<string>();

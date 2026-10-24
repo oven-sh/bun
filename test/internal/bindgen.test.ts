@@ -97,7 +97,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
   const refCounted = b.class({ rustPath: "T", refCounted: true });
   const inline = b.class({ rustPath: "T" });
-  for (const type of [inline, inline.nullable, b.union({ instance: inline, ignored: b.any }), refCounted]) {
+  for (const type of [inline, inline.nullable, b.union({ instance: inline, other: b.ignored }), refCounted]) {
     expect(() => b.dictionary({ type })).toThrow(
       "an instance that Rust takes as &T cannot be in an array or a dictionary",
     );
@@ -113,7 +113,9 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.namespace({ f: { [key]: true } })).toThrow(`f: a function of a namespace has no ${key}`);
   }
   expect(() => b.array(b.null)).toThrow("an array of nothing but null");
-  expect(() => b.array(b.i32.enforceRange(0, 100).nullable)).toThrow("the converter of a range takes no context");
+  expect(() => b.array(b.i32.enforceRange(0, 100).nullable)).toThrow(
+    "the converter of a range takes the name of the value, and an element has none",
+  );
   const stringOrBuffer = b.bytes({ from: ["string", "buffer"] });
   expect(() => b.array(stringOrBuffer)).toThrow("the bytes of a buffer are only for an argument");
   expect(() => b.dictionary({ bytes: stringOrBuffer })).toThrow("the bytes of a buffer are only for an argument");
@@ -124,6 +126,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     [b.string.owned, ".owned is only for an argument"],
     [b.promisePtr("T"), "the context of a promise reaction is an argument, alone or with .withValue"],
     [b.nativePromiseContext("T"), "the context of a promise reaction is an argument, alone or with .withValue"],
+    [b.promiseResult, "b.promiseResult is an argument of a promise reaction"],
   ] as const) {
     expect(() => b.array(type)).toThrow(reason);
     expect(() => b.dictionary({ member: type })).toThrow(`member: ${reason}`);
@@ -145,30 +148,34 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.withValue.optional).toThrow("put .withValue last");
   expect(() => b.i32.withValue.default(0)).toThrow("put .withValue last");
   expect(() => b.i32.ifPassed.withValue).toThrow(".ifPassed has no argument to give when it is absent");
-  expect(() => b.any.withValue).toThrow(".withValue: the type is the argument itself");
+  expect(() => b.opaque.withValue).toThrow(".withValue: the type is the argument itself");
   expect(() => b.bytes({ from: ["buffer"], held: "handle" }).withValue).toThrow(
     ".withValue: b.bytes already passes the argument",
   );
   expect(() => b.f64.loose.allowDate).toThrow(".allowDate follows b.f64");
   expect(() => b.f64.allowDate.loose).toThrow(".loose follows b.f64");
-  for (const type of [b.any, b.string.loose, b.bytes({ from: ["buffer"] }), b.u8.validateInteger(0, 4)]) {
+  for (const type of [b.opaque, b.string.loose, b.bytes({ from: ["buffer"] }), b.u8.enforceRange(0, 4)]) {
     expect(() => type.otherAsNull).toThrow(
       ".otherAsNull goes by the kind of a value, and this type does not: write it without .loose or nonObjectAsEmpty",
     );
   }
   for (const [type, remedy] of [
     [b.i32, "b.f64.otherAsNull takes every number"],
+    [b.u8.validateInteger(0, 4), "b.f64.otherAsNull takes every number"],
     [b.enumeration(["a"]), "b.string.allowStringObject.otherAsNull takes every string"],
     [b.dictionary({ x: b.f64 }), "give the dictionary allowArray"],
   ] as const) {
     expect(() => type.otherAsNull).toThrow(`this type throws for a value of a kind it takes: ${remedy}`);
   }
   expect(() => b.union({ number: b.f64, text: b.string }).otherAsNull).toThrow(
-    "a union takes the rest as its last alternative: ignored: b.any",
+    "a union takes the rest as its last alternative: other: b.ignored",
   );
-  expect(() => b.union({ number: b.f64.otherAsNull })).toThrow("number: add ignored: b.any as an alternative");
+  expect(() => b.union({ number: b.f64.otherAsNull })).toThrow("number: add b.ignored as an alternative");
   expect(() => b.fn({ args: { context: b.nativePromiseContext("T"), value: b.i32 }, export: "Bun__reaction" })).toThrow(
     "b.nativePromiseContext takes the pointer out of the cell",
+  );
+  expect(() => b.fn({ args: { value: b.promiseResult }, export: "Bun__reaction" })).toThrow(
+    "b.promiseResult is for a promise reaction, which also takes b.promisePtr or b.nativePromiseContext",
   );
   expect(() => b.overloads({ args: { a: b.i32.ifPassed } }, { args: { a: b.string } })).toThrow(
     ".ifPassed is not for overloads",
@@ -178,7 +185,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.fn({ args: { a: b.i32 }, requiredArguments })).toThrow(
       `requiredArguments: ${requiredArguments} is not a count of the arguments`,
     );
-  expect(() => b.fn({ args: { a: b.any.ifPassed }, requiredArguments: 1 })).toThrow(
+  expect(() => b.fn({ args: { a: b.opaque.ifPassed }, requiredArguments: 1 })).toThrow(
     "a: .ifPassed is never absent in one of the requiredArguments",
   );
   expect(b.fn({ args: { a: b.i32.optional, b: b.i32.optional }, requiredArguments: 1 }).length).toBe(1);
@@ -268,14 +275,14 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.fn({ args: { value: b.array(b.string.local) } })).toThrow("an array is a Vec");
   expect(() => b.fn({ args: { value: b.string.local } })).toThrow("value: .local is a result");
   expect(() => b.fn({ args: { value: b.record(b.bool) } })).toThrow("value: b.record is a result");
-  for (const value of [b.any, b.string.local, b.bufferSource]) {
+  for (const value of [b.opaque, b.string.local, b.bufferSource]) {
     expect(() => b.record(value)).toThrow("the pairs of a record can be a Vec, where the GC does not see JS values");
   }
   expect(() => b.class({ rustPath: "T", proto: { when: { getter: b.f64.asDate, setter: true } } })).toThrow(
     "when: .asDate is a result",
   );
   expect(() => b.namespace({ f: {} }, { call: "g" })).toThrow("call: g is not one of its functions");
-  for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any })]) {
+  for (const element of [b.opaque, b.bufferSource, b.dictionary({ value: b.opaque })]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");
   }
   const mutable = b.class({ rustPath: "T", proto: { f: { mutates: true } } });
@@ -316,7 +323,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { label, setLabel: {} } })).toThrow("are both set_label");
   expect(() => b.class({ rustPath: "T", proto: { label, getLabel: {} } })).toThrow("are both get_label");
   b.class({ rustPath: "T", proto: { label: { getter: b.string }, setLabel: {} } });
-  expect(() => b.class({ rustPath: "T", proto: { value: { getter: b.any } } })).toThrow('takes capability: "heap"');
+  expect(() => b.class({ rustPath: "T", proto: { value: { getter: b.opaque } } })).toThrow('takes capability: "heap"');
   expect(() => b.class({ rustPath: "T", internalFields: ["a", "a"] })).toThrow("two internal fields are both a");
   const constructible = { rustPath: "T", construct: {} };
   // @ts-expect-error
@@ -394,10 +401,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "x: a calledFromCpp function has no overloads",
   );
   expect(() =>
-    b.class({ rustPath: "T", proto: { x: { args: { rest: b.any.variadic }, calledFromCpp: true } } }),
-  ).toThrow("x: a calledFromCpp function has no .variadic");
+    b.class({ rustPath: "T", proto: { x: { args: { rest: b.rest(b.opaque) }, calledFromCpp: true } } }),
+  ).toThrow("x: a calledFromCpp function has no b.rest");
   expect(() =>
-    b.class({ rustPath: "T", proto: { x: { returns: b.any, rejects: true, capability: "js", calledFromCpp: true } } }),
+    b.class({
+      rustPath: "T",
+      proto: { x: { returns: b.opaque, rejects: true, capability: "js", calledFromCpp: true } },
+    }),
   ).toThrow("x: a calledFromCpp function throws, so it has no rejects");
   expect(() => b.class({ rustPath: "T", calledFromRust: { delete: {} } })).toThrow("delete is a C++ keyword");
   expect(() => b.class({ rustPath: "T", proto: { x: { calledFromCpp: true } }, calledFromRust: { x: {} } })).toThrow(
@@ -407,33 +417,33 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "on_close: a C++ member function is named in camelCase",
   );
   expect(() => b.class({ rustPath: "T", calledFromRust: { x: { args: { text: b.string } } } })).toThrow(
-    "x: text is b.any, b.bool or a number",
+    "x: text is b.opaque, b.bool or a number",
   );
   expect(() => b.class({ rustPath: "T", calledFromRust: { x: { returns: b.i32 } } })).toThrow(
-    "x: returns b.any or nothing",
+    "x: returns b.opaque or nothing",
   );
   for (const bytes of [b.byteSpan, b.array(b.byteSpan)])
     expect(() => b.class({ rustPath: "T", proto: { x: { args: { bytes }, calledFromCpp: true } } })).toThrow(
       "bytes: b.byteSpan is not a JS value",
     );
   expect(() => b.class({ rustPath: "T", calledFromCpp: { x: { args: { bytes: b.byteSpan.optional } } } })).toThrow(
-    "x: bytes is b.any, b.bool, a number or b.byteSpan",
+    "x: bytes is b.opaque, b.bool, a number or b.byteSpan",
   );
   expect(() => b.class({ rustPath: "T", calledFromCpp: { x: { returns: b.string } } })).toThrow(
-    "x: returns b.any, b.bool, a number or nothing",
+    "x: returns b.opaque, b.bool, a number or nothing",
   );
   expect(() => b.class({ rustPath: "T", calledFromCpp: { x: { returns: b.i32, throws: true } } })).toThrow(
-    "x: a function that throws returns b.any or nothing",
+    "x: a function that throws returns b.opaque or nothing",
   );
   expect(() => b.class({ rustPath: "T", proto: { _x: { calledFromCpp: true } } })).toThrow(
     "_x: a C++ member function is named in camelCase",
   );
-  expect(() => b.class({ rustPath: "T", calledFromRust: { x: { args: { default: b.any } } } })).toThrow(
+  expect(() => b.class({ rustPath: "T", calledFromRust: { x: { args: { default: b.opaque } } } })).toThrow(
     "x: default is a C++ keyword",
   );
   expect(() => b.cell("JSPromise", "JavaScriptCore/JSPromise.h")).toThrow("b.cell: JSPromise needs its namespace");
   expect(() => b.class({ rustPath: "T", internalFields: { x: b.string as any } })).toThrow(
-    "x: an internal field is b.any or b.cell",
+    "x: an internal field is b.opaque or b.cell",
   );
   expect(() =>
     b.class({
@@ -469,7 +479,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   const { dispatch } = textOrBytes;
   expect("byKind" in dispatch && dispatch.byKind.get("undefined")).toBe(textOrBytes.signatures[1]);
   // What takes undefined can come before what does not.
-  b.fn({ args: { encoding: b.string.nullable, callback: b.any, length: b.f64 } });
+  b.fn({ args: { encoding: b.string.nullable, callback: b.opaque, length: b.f64 } });
 });
 
 it("custom enforceRange boundaries", () => {
@@ -813,7 +823,7 @@ describe("imported classes as arguments", () => {
   });
 });
 
-describe("b.any.variadic", () => {
+describe("b.rest", () => {
   it("collects the remaining arguments", () => {
     const object = {};
     expect(bindgen.afterFirst(1, 2, object, undefined)).toEqual([2, object, undefined]);
@@ -837,18 +847,508 @@ describe("b.any.variadic", () => {
   });
 
   it("is only the last argument", () => {
-    expect(() => b.fn({ args: { rest: b.any.variadic, last: b.any } })).toThrow(
-      "rest: .variadic is only for the last argument",
+    const rest = b.rest(b.opaque);
+    expect(() => b.fn({ args: { rest, last: b.opaque } })).toThrow("rest: b.rest is only for the last argument");
+    expect(() => b.dictionary({ rest })).toThrow("rest: b.rest is only for the last argument");
+    expect(() => b.union({ rest, other: b.null })).toThrow("rest: b.rest is only for the last argument");
+    expect(() => b.array(rest)).toThrow("b.rest is only for the last argument");
+    expect(() => rest.optional).toThrow("b.rest is only for the last argument");
+    expect(() => b.fn({ returns: rest, capability: "heap" })).toThrow("b.rest is only for the last argument");
+  });
+
+  it("the body converts each element, and stops where it chooses", () => {
+    expect(bindgen.sumUntilNull()).toBe(0);
+    expect(bindgen.sumUntilNull(1, 2, 3)).toBe(6);
+    expect(bindgen.sumUntilNull(1, null, "not converted")).toBe(1);
+    expect(bindgen.sumUntilNull(1, undefined, 1.5)).toBe(1);
+    expect(() => bindgen.sumUntilNull(1, "2")).toThrow(new TypeError("numbers must be a number"));
+    expect(bindgen.sumUntilNull.length).toBe(0);
+  });
+
+  itAlways("converting takes a body that can run JavaScript", () => {
+    expect(() => b.fn({ args: { rest: b.rest(b.i32) }, capability: "heap" })).toThrow(
+      'rest: the body converts it, which takes capability: "js"',
     );
-    expect(() => b.dictionary({ rest: b.any.variadic })).toThrow("rest: .variadic is only for the last argument");
-    expect(() => b.union({ rest: b.any.variadic, other: b.null })).toThrow(
-      "rest: .variadic is only for the last argument",
+    b.fn({ args: { rest: b.rest(b.opaque) } });
+  });
+});
+
+describe(".deferred", () => {
+  const recorded = (log: string[], name: string) => ({
+    toString() {
+      log.push(name);
+      return name;
+    },
+  });
+
+  it("is converted when the body says so", () => {
+    const log: string[] = [];
+    expect(bindgen.joinSecondFirst(false, recorded(log, "a"), recorded(log, "b"))).toBe("ba");
+    expect(log).toEqual(["b", "a"]);
+  });
+
+  it("is not converted if the body does not", () => {
+    const log: string[] = [];
+    expect(bindgen.joinSecondFirst(true, recorded(log, "a"), Symbol())).toBe("");
+    expect(log).toEqual([]);
+  });
+
+  it("throws what the conversion of an argument throws", () => {
+    const log: string[] = [];
+    expect(() => bindgen.joinSecondFirst(false, recorded(log, "a"), Symbol())).toThrow(TypeError);
+    expect(log).toEqual([]);
+  });
+
+  it("an argument before it is converted first", () => {
+    expect(() => bindgen.joinSecondFirst("no", Symbol(), Symbol())).toThrow("skip must be a boolean");
+  });
+
+  itAlways("is written last, on an argument, of a body that can run JavaScript", () => {
+    expect(() => b.string.deferred.optional).toThrow("put .deferred last");
+    expect(() => b.dictionary({ text: b.string.deferred })).toThrow("text: .deferred is only for an argument");
+    expect(() => b.union({ text: b.string.deferred, other: b.null })).toThrow(
+      "text: .deferred is only for an argument",
     );
-    expect(() => b.array(b.any.variadic)).toThrow("an array is a Vec, where the GC does not see JS values");
-    expect(() => b.any.variadic.optional).toThrow("any[] already takes undefined");
+    expect(() => b.fn({ returns: b.string.deferred })).toThrow(".deferred is only for an argument");
+    expect(() => b.fn({ args: { text: b.string.deferred } })).toThrow(
+      'text: the body converts it, which takes capability: "js"',
+    );
+  });
+
+  itAlways("cannot borrow what is gone once the conversion returns", () => {
+    expect(() => b.fn({ args: { text: b.string.utf8.deferred }, capability: "js" })).toThrow(
+      "text: it is converted in",
+    );
+    b.fn({ args: { text: b.string.utf8.owned.deferred }, capability: "js" });
+  });
+});
+
+describe(".ifPassed on a member with own: true", () => {
+  it("tells an own undefined from a property the object does not have", () => {
+    const inherits = Object.create({ recursive: true });
+    expect(bindgen.describeOwnIfPassed({}, {})).toBe("None None");
+    expect(bindgen.describeOwnIfPassed(inherits, inherits)).toBe("None None");
+    expect(bindgen.describeOwnIfPassed({ recursive: true }, { recursive: false })).toBe("Some(true) Some(false)");
+    expect(() => bindgen.describeOwnIfPassed({ recursive: undefined }, {})).toThrow(TypeError);
+    expect(() => bindgen.describeOwnIfPassed({}, { recursive: undefined })).toThrow(TypeError);
+  });
+
+  it("passes on what a getter throws", () => {
+    const throws = {
+      get recursive() {
+        throw new RangeError("from the getter");
+      },
+    };
+    expect(() => bindgen.describeOwnIfPassed(throws, {})).toThrow(RangeError);
+    expect(() => bindgen.describeOwnIfPassed({}, throws)).toThrow(RangeError);
+  });
+
+  itAlways("needs own: true", () => {
+    expect(() => b.dictionary({ recursive: b.bool.ifPassed })).toThrow(
+      "recursive: .ifPassed is only for an argument or a member with own: true and one name",
+    );
+  });
+});
+
+describe("privateSymbol", () => {
+  it("is not read under the public name", () => {
+    const read: string[] = [];
+    const options = () =>
+      new Proxy({ sharedFd: true }, { get: (target, key) => (read.push(String(key)), Reflect.get(target, key)) });
+    expect(bindgen.readsPrivateMember({ sharedFd: true }, { sharedFd: true })).toBe(false);
+    expect(bindgen.readsPrivateMember(options(), options())).toBe(false);
+    expect(read).toEqual(["name"]);
+  });
+
+  itAlways("is the only name", () => {
+    const type = b.bool.default(false);
+    expect(() => b.dictionary({ a: b.i32, fd: { type, privateSymbol: "sharedFd", altNames: ["x"] } })).toThrow(
+      "fd: a privateSymbol is the only name, and is not inherited",
+    );
+    expect(() => b.dictionary({ fd: { type, privateSymbol: "sharedFd" } })).toThrow(
+      "a dictionary needs at least one member",
+    );
+  });
+});
+
+describe(".emptyStringAsNull on a union that takes every value", () => {
+  it("claims the absent values first", () => {
+    for (const absent of [undefined, null, ""]) expect(bindgen.describeFlagOrRest(absent)).toBe("absent");
+    expect(bindgen.describeFlagOrRest(true)).toBe("on");
+    expect(bindgen.describeFlagOrRest(false)).toBe("off");
+    expect(bindgen.describeFlagOrRest({})).toBe("options");
+    for (const other of [0, 5, "x", Symbol(), 1n]) expect(bindgen.describeFlagOrRest(other)).toBe("other");
+  });
+});
+
+describe("a string view", () => {
+  it("is absent for another kind with .otherAsNull", () => {
+    expect(bindgen.viewLengthOrNone("abc")).toBe(3);
+    expect(bindgen.viewLengthOrNone(new String("ab"))).toBe(2);
+    expect(bindgen.viewLengthOrNone(5)).toBe(-1);
+    expect(bindgen.viewLengthOrNone(undefined)).toBe(-1);
+  });
+});
+
+describe(".validateInteger of b.i64", () => {
+  it("takes what does not fit 32 bits", () => {
+    expect(bindgen.viewLengthOrNone("", 2 ** 32 - 1)).toBe(2 ** 32 - 1);
+    expect(bindgen.viewLengthOrNone("", -1)).toBe(-1);
+    expect(() => bindgen.viewLengthOrNone("", 2 ** 32)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+    expect(() => bindgen.viewLengthOrNone("", 1.5)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+  });
+});
+
+describe("a deferred dictionary", () => {
+  it("reads and converts each member when the body asks for it", () => {
+    const read: string[] = [];
+    const options = (values: Record<string, unknown>) =>
+      new Proxy(values, { get: (target, key) => (read.push(String(key)), Reflect.get(target, key)) });
+    expect(bindgen.describeInSteps(options({ name: "a", lvl: 3, nested: { x: 2 } }))).toBe("a 3 false false Some(2)");
+    expect(read).toEqual(["name", "level", "lvl", "callback", "nested"]);
+
+    read.length = 0;
+    expect(() => bindgen.describeInSteps(options({ name: "", level: "bad" }))).toThrow("name is empty");
+    expect(read).toEqual(["name"]);
+
+    read.length = 0;
+    expect(() => bindgen.describeInSteps(options({ name: "a", level: 10, callback: 1 }))).toThrow(
+      'The value of "options.level" is out of range. It must be >= 0 and <= 9. Received 10',
+    );
+    expect(read).toEqual(["name", "level"]);
+  });
+
+  it("names the member, takes every object and gives the object itself", () => {
+    expect(() => bindgen.describeInSteps({})).toThrow("options.name");
+    expect(() => bindgen.describeInSteps({ name: "a", callback: 1 })).toThrow("options.callback");
+    expect(() => bindgen.describeInSteps(1)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(bindgen.describeInSteps(Object.assign([], { name: "a" }))).toBe("a 1 false false None");
+    expect(
+      bindgen.describeInSteps({
+        name: "a",
+        callback() {
+          return this;
+        },
+      }),
+    ).toBe("a 1 true false None");
+    expect(bindgen.describeInSteps(Object.create({ name: "a", mine: true }))).toBe("a 1 false false None");
+    expect(bindgen.describeInSteps({ name: "a", mine: true })).toBe("a 1 false true None");
+  });
+
+  it("is a member, an alternative, and absent as any other type is", () => {
+    const steps = (name: string) => ({ name });
+    expect(bindgen.namesOfSteps(1, {})).toBe("- - - -");
+    expect(bindgen.namesOfSteps(steps("a"), { steps: steps("b"), either: steps("c") }, { inner: steps("d") })).toBe(
+      "a b c d",
+    );
+    expect(bindgen.namesOfSteps(null, { either: "text" }, { inner: null })).toBe("- - text -");
+    expect(() => bindgen.namesOfSteps(1, { steps: 1 })).toThrow("TestStepHolder.steps");
+    expect(() => bindgen.namesOfSteps(1, {}, { inner: 1 })).toThrow("TestOuterSteps.inner");
+  });
+
+  itAlways("holds nothing that borrows, and is not returned", () => {
+    expect(() => b.dictionary({ text: b.string.utf8 }, { deferred: true })).toThrow(
+      "text: it is converted in another frame than the one it would borrow: write .owned",
+    );
+    expect(() => b.dictionary({}, { deferred: true })).toThrow("a dictionary needs at least one member");
+  });
+});
+
+describe(".deferred on two arguments of one name", () => {
+  it("gives each the type its schema says", () => {
+    expect(bindgen.deferredKeyLength("é")).toBe(1);
+    expect(bindgen.deferredKeyByteLength("é")).toBe(2);
+  });
+});
+
+describe(".deferred of undefined", () => {
+  it("converts to what it does when it is not deferred", () => {
+    for (const args of [
+      [],
+      [undefined, undefined, undefined, undefined],
+      [1, true, { level: 2 }, "a"],
+      [2, false, 5, { x: 1 }],
+    ])
+      expect(bindgen.describeAbsentDeferred(...args)).toBe(bindgen.describeAbsent(...args));
+    expect(bindgen.describeAbsentDeferred()).toBe("7 None true 4 other");
+  });
+});
+
+describe("b.opaque", () => {
+  it("is handed back as it is", () => {
+    const object = {};
+    for (const value of [object, 0, "", false, Symbol.iterator, 1n]) expect(bindgen.opaqueOr(value, 1)).toBe(value);
+  });
+
+  it(".nullable is the test for null and undefined", () => {
+    const fallback = {};
+    expect(bindgen.opaqueOr(null, fallback)).toBe(fallback);
+    expect(bindgen.opaqueOr(undefined, fallback)).toBe(fallback);
+    expect(bindgen.opaqueOr()).toBe(undefined);
+  });
+
+  it("a union with fromJS tells its kinds apart", () => {
+    expect(bindgen.kindOf("a")).toBe("text");
+    expect(bindgen.kindOf(1.5)).toBe("number");
+    expect(bindgen.kindOf([])).toBe("list");
+    expect(bindgen.kindOf(() => {})).toBe("callback");
+    for (const value of [undefined, null, {}, 1n, Symbol(), true]) expect(bindgen.kindOf(value)).toBe("other");
+  });
+
+  it("an enumeration with fromJS reports the value as it says", () => {
+    expect(bindgen.levelFromJS("low")).toBe(0);
+    expect(bindgen.levelFromJS("high")).toBe(1);
+    expect(() => bindgen.levelFromJS("middle")).toThrow('level must be "low" or "high"');
+  });
+});
+
+describe("own: true", () => {
+  it("reads an own property, a getter too, and not an inherited one", () => {
+    expect(bindgen.ownAndInherited({ own: 1, any: 2 })).toEqual([1, 2]);
+    expect(bindgen.ownAndInherited({ __proto__: { own: 1, any: 2 } })).toEqual([null, 2]);
+    expect(
+      bindgen.ownAndInherited({
+        get own() {
+          return 3;
+        },
+      }),
+    ).toEqual([3, null]);
+    class Options {
+      get own() {
+        return 4;
+      }
+      get any() {
+        return 5;
+      }
+    }
+    expect(bindgen.ownAndInherited(new Options())).toEqual([null, 5]);
+    expect(bindgen.ownAndInherited(new Proxy({ own: 6 }, {}))).toEqual([6, null]);
     expect(() =>
-      b.fn({ returns: b.any.variadic, capability: "heap" }).signatures[0].returns.rustToJS("x", {} as any),
-    ).toThrow("any[] cannot be returned to JavaScript");
+      bindgen.ownAndInherited({
+        get own() {
+          throw new Error("thrown");
+        },
+      }),
+    ).toThrow("thrown");
+  });
+});
+
+describe("b.conversion", () => {
+  it("converts a value when the body says so", () => {
+    const log: string[] = [];
+    const part = { toString: () => (log.push("read"), "b") };
+    expect(() => bindgen.joinParts(part)).toThrow(new TypeError("two parts are required"));
+    expect(log).toEqual([]);
+    expect(bindgen.joinParts("a", part, 1)).toBe("ab1");
+    expect(log).toEqual(["read"]);
+    expect(() => bindgen.joinParts("a", Symbol())).toThrow(TypeError);
+  });
+
+  itAlways("takes what a dictionary member can be", () => {
+    expect(() => b.conversion(b.string.ifPassed)).toThrow(".ifPassed is only for an argument");
+    expect(() => b.conversion(b.string.deferred)).toThrow(".deferred is only for an argument");
+    expect(() => b.conversion(b.f64.withValue)).toThrow("b.bytes and .withValue are only for an argument");
+  });
+});
+
+describe("b.ignored", () => {
+  it("takes what the alternatives before it do not", () => {
+    expect(bindgen.textOrNull("a")).toBe("a");
+    for (const value of [undefined, null, 1, {}, new String("a")]) expect(bindgen.textOrNull(value)).toBe(null);
+  });
+
+  itAlways("is the last alternative", () => {
+    expect(() => b.union({ other: b.ignored, text: b.string })).toThrow("text is never chosen");
+  });
+});
+
+describe("b.cell", () => {
+  it("takes an instance of the class, as itself", () => {
+    const promise = Promise.resolve();
+    expect(bindgen.takePromise(promise)).toBe(promise);
+    class Derived extends Promise<void> {}
+    const derived = Derived.resolve();
+    expect(bindgen.takePromise(derived)).toBe(derived);
+    for (const value of [undefined, {}, { then() {} }, Promise])
+      expect(() => bindgen.takePromise(value)).toThrow(new TypeError("promise must be an instance of Promise"));
+  });
+
+  it("goes by the kind of a value", () => {
+    expect(bindgen.isPromise(Promise.resolve())).toBe(true);
+    for (const value of [undefined, null, {}, { then() {} }]) expect(bindgen.isPromise(value)).toBe(false);
+  });
+
+  it("of the class of a kind takes that kind", () => {
+    expect(bindgen.describeViewOrBuffer(new DataView(new ArrayBuffer(1)))).toBe("DataView");
+    for (const value of [new ArrayBuffer(1), new Uint8Array(1), new Float64Array(1), Buffer.alloc(1)])
+      expect(bindgen.describeViewOrBuffer(value)).toBe("another buffer");
+    for (const value of [undefined, {}, []]) expect(bindgen.describeViewOrBuffer(value)).toBe("other");
+  });
+
+  itAlways("of the class of a kind is never chosen after a type that takes the kind", () => {
+    const dataView = b.cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", { rustPath: "bun_jsc::JSObject" });
+    expect(() => b.union({ buffer: b.bufferSource.allowShared, dataView })).toThrow("dataView is never chosen");
+  });
+
+  itAlways("without a rustPath is only an internal field of C++", () => {
+    const cell = b.cell("JSC::JSMap", "JavaScriptCore/JSMap.h");
+    expect(() => cell.rustType()).toThrow("JSC::JSMap needs a rustPath");
+    expect(() => b.cell("JSMap", "JavaScriptCore/JSMap.h")).toThrow("JSMap needs its namespace");
+  });
+});
+
+describe("b.wrapped", () => {
+  it("gives what an instance of the C++ class wraps", () => {
+    expect(bindgen.fileSystemPath(new URL("file:///tmp/a"))).toBe("/tmp/a");
+    expect(bindgen.fileSystemPath(new URL("https://example.com/"))).toBe(null);
+    for (const value of [undefined, "file:///tmp/a", {}, URL])
+      expect(() => bindgen.fileSystemPath(value)).toThrow(new TypeError("url must be an instance of URL"));
+  });
+
+  it("is an alternative of a union", () => {
+    expect(bindgen.pathOf("/tmp/a")).toBe("/tmp/a");
+    expect(bindgen.pathOf(new URL("file:///tmp/b"))).toBe("/tmp/b");
+    expect(() => bindgen.pathOf(5)).toThrow(TypeError);
+  });
+
+  it(".shared is a reference on it, which a dictionary can hold", () => {
+    const controller = new AbortController();
+    expect(bindgen.isAborted({})).toBe(null);
+    expect(bindgen.isAborted({ signal: controller.signal })).toBe(false);
+    controller.abort();
+    expect(bindgen.isAborted({ signal: controller.signal })).toBe(true);
+    expect(() => bindgen.isAborted({ signal: {} })).toThrow(
+      new TypeError("TestSignalOptions.signal must be an instance of AbortSignal"),
+    );
+  });
+
+  itAlways("borrowed, it is only for an argument", () => {
+    const url = b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" });
+    expect(() => b.dictionary({ url })).toThrow("only an argument's slot in the frame keeps it alive");
+    b.dictionary({ url: url.shared });
+  });
+});
+
+describe(".validateIntegerRange", () => {
+  it("takes an integer in the range", () => {
+    for (const count of [0, 10, 5.0, -0]) expect(bindgen.countInRange(count)).toBe(count | 0);
+    expect(bindgen.timeoutOf({ timeout: 2 ** 40 })).toBe(2 ** 40);
+    expect(bindgen.timeoutOf({ timeout: Number.MAX_SAFE_INTEGER })).toBe(Number.MAX_SAFE_INTEGER);
+    expect(bindgen.timeoutOf({})).toBe(null);
+  });
+
+  it("what is not a number, and a fraction, is ERR_INVALID_ARG_TYPE", () => {
+    for (const [count, type, received] of [
+      ["5", "number", "string"],
+      [null, "number", "object"],
+      [5n, "number", "bigint"],
+      [1.5, "integer", "number"],
+    ] as const) {
+      expect(() => bindgen.countInRange(count)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "count" property must be of type ${type}. Received ${received}`,
+        }),
+      );
+    }
+    expect(() => bindgen.timeoutOf({ timeout: NaN })).toThrow(
+      'The "TestRangeOptions.timeout" property must be of type integer. Received number',
+    );
+  });
+
+  it("an integer outside the range is ERR_OUT_OF_RANGE", () => {
+    for (const [count, received] of [
+      [-1, "-1"],
+      [11, "11"],
+      [-(2 ** 40), "-1099511627776"],
+      [1e21, "1e+21"],
+      [Infinity, "Infinity"],
+    ] as const) {
+      expect(() => bindgen.countInRange(count)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "count" is out of range. It must be >= 0 and <= 10. Received ${received}`,
+        }),
+      );
+    }
+  });
+});
+
+describe("a range in a union", () => {
+  it("one that validates takes the numbers, under its own name or that of the argument", () => {
+    expect(bindgen.describePathOrFd(3)).toBe("fd 3");
+    expect(bindgen.describePathOrFd("a")).toBe("path a");
+    expect(bindgen.describePathOrFd(true)).toBe("mode 1");
+    expect(() => bindgen.describePathOrFd(-1)).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received -1',
+      }),
+    );
+    expect(() => bindgen.describePathOrFd(null)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => bindgen.countOrText(11)).toThrow('The value of "value" is out of range.');
+    expect(bindgen.countOrText(10)).toBe(10);
+    expect(bindgen.countOrText("a")).toBe(-1);
+  });
+
+  itAlways("is not an element of an array, which has no name", () => {
+    const count = b.union({ count: b.i32.validateInteger(0, 1), text: b.string });
+    expect(() => b.array(count)).toThrow("the converter of a range takes the name of the value");
+    expect(() => b.i32.enforceRange(0, 1).reportedAs("x")).toThrow(".enforceRange() does not name the value");
+    expect(() => b.union({ count: b.i32.enforceRange(0, 1), text: b.string })).toThrow("text is never chosen");
+  });
+});
+
+describe(".asIntN", () => {
+  it("is BigInt.asIntN(64, value)", () => {
+    for (const value of [0n, -1n, 2n ** 63n - 1n, 2n ** 63n, 2n ** 64n, -(2n ** 64n) - 5n])
+      expect(bindgen.lengthOf(value)).toBe(Number(BigInt.asIntN(64, value)));
+    expect(bindgen.lengthOf(1.5)).toBe(1.5);
+    expect(bindgen.lengthOf("1")).toBeNull();
+  });
+
+  itAlways("follows b.i64", () => {
+    expect(() => b.u64.asIntN).toThrow(".asIntN follows b.i64");
+    expect(() => b.i64.allowBigInt.asIntN).toThrow(".asIntN follows b.i64");
+  });
+});
+
+describe("b.null", () => {
+  it("is a result", () => {
+    expect(bindgen.returnsNull()).toBeNull();
+  });
+});
+
+describe("b.alternativesOf", () => {
+  itAlways("gives the alternatives of a union, in order, for another to take", () => {
+    const text = b.union({ text: b.string, flag: b.bool });
+    const more = b.union({ count: b.i32, ...b.alternativesOf(text) });
+    expect(more.alternatives.map(({ name }) => name)).toEqual(["count", "text", "flag"]);
+  });
+});
+
+describe(".nanAs", () => {
+  it("is what NaN converts to, and undefined is absent as ever", () => {
+    expect(bindgen.countInRange(NaN)).toBe(-1);
+    expect(bindgen.countInRange(undefined)).toBe(3);
+    expect(bindgen.countInRange()).toBe(3);
+  });
+
+  itAlways("follows .validateIntegerRange()", () => {
+    expect(() => b.i32.validateInteger(0, 1).nanAs(0)).toThrow(".nanAs() follows .validateIntegerRange()");
+    expect(() => b.u8.validateIntegerRange().nanAs(256)).toThrow("256 does not fit u8");
+  });
+});
+
+describe("b.i64", () => {
+  it("takes every safe integer", () => {
+    expect(bindgen.negateWide(5)).toBe(-5);
+    expect(bindgen.negateWide(Number.MAX_SAFE_INTEGER)).toBe(-Number.MAX_SAFE_INTEGER);
+    expect(bindgen.negateWide(-(2 ** 40))).toBe(2 ** 40);
+    for (const value of [1.5, 2 ** 53])
+      expect(() => bindgen.negateWide(value)).toThrow(new RangeError(`value must be an integer (received ${value})`));
   });
 });
 
@@ -882,6 +1382,12 @@ describe("functions", () => {
     const cell = bindgen.makeNativePromiseContext();
     expect(bindgen.readNativePromiseContext(cell)).toBe(42);
     expect(bindgen.readNativePromiseContext(cell)).toBeNull();
+  });
+
+  it("promiseResult is a value the reaction tests itself", () => {
+    expect(bindgen.addToPromisePtr(8, bindgen.promisePtrContext)).toBe(50);
+    for (const other of [undefined, "8", {}])
+      expect(bindgen.addToPromisePtr(other, bindgen.promisePtrContext)).toBe(42);
   });
 
   it("$bindgen gives what a b.value returns", () => {
@@ -955,6 +1461,15 @@ describe("functions", () => {
     expect(bindgen.counterWithValue(counter)).toBe(counter);
     expect(counter.count).toBe(2);
     expect(() => bindgen.counterWithValue({})).toThrow(TypeError);
+  });
+
+  it(".withValue of an instance is also a member", () => {
+    const counter = new bindgen.TestCounter(1);
+    expect(bindgen.counterOfMember({ counter })).toBe(counter);
+    expect(counter.count).toBe(2);
+    // Only the member holds this one.
+    expect(bindgen.counterOfMember({ get counter() { return new bindgen.TestCounter(4); } }).count).toBe(5); // prettier-ignore
+    expect(() => bindgen.counterOfMember({ counter: {} })).toThrow(TypeError);
   });
 
   it("b.string.owned takes what b.string takes", () => {
@@ -1501,7 +2016,7 @@ describe("unions", () => {
     expect(bindgen.describeValue(Array.prototype)).toBe("list []");
   });
 
-  it("an enumeration takes strings, and b.any what nothing before it took", () => {
+  it("an enumeration takes strings, and b.opaque what nothing before it took", () => {
     const rest = (value: unknown) => bindgen.describeDefaults({ rest: value }).match(/rest: (.*)$/)![1];
     expect(rest("blue")).toBe("Blue");
     expect(() => rest("purple")).toThrow('TestOuter.rest must be "red", "green", or "blue"');
@@ -1510,7 +2025,7 @@ describe("unions", () => {
   });
 
   itAlways("an alternative that cannot be chosen is an error in the schema", () => {
-    expect(() => b.union({ anything: b.any, text: b.string })).toThrow("text is never chosen");
+    expect(() => b.union({ anything: b.opaque, text: b.string })).toThrow("text is never chosen");
     expect(() => b.union({ text: b.string.loose, flag: b.bool })).toThrow("flag is never chosen");
     expect(() => b.union({ text: b.string.utf8, other: b.string })).toThrow("other is never chosen");
     expect(() => b.union({ integer: b.i32, number: b.f64 })).toThrow("number is never chosen");
@@ -1521,7 +2036,7 @@ describe("unions", () => {
     expect(() => b.union({ text: b.string, mode })).toThrow("mode is never chosen");
     b.union({ mode, options: b.dictionary({ flag: b.bool }) });
     // What one refuses, the next can take, unless it refuses the same.
-    b.union({ bytes: b.bufferSource, rest: b.any });
+    b.union({ bytes: b.bufferSource, rest: b.opaque });
     expect(() => b.union({ bytes: b.bufferSource, reference: b.bufferSource.arrayBuffer })).toThrow(
       "reference is never chosen",
     );
@@ -1587,7 +2102,7 @@ describe("overloads", () => {
     b.overloads({ args: { a: b.string } }, { args: { a: b.string, b: b.bool } });
     b.overloads({ args: { a: b.string, b: b.bool } }, { args: { a: b.string } });
     b.overloads({ args: { a: b.string, b: b.f64 } }, { args: { a: b.string, b: b.bool } });
-    b.overloads({ args: { a: b.bool } }, { args: { a: b.any } });
+    b.overloads({ args: { a: b.bool } }, { args: { a: b.opaque } });
   });
 });
 

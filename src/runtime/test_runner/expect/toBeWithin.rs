@@ -1,4 +1,4 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 
 use super::{throw, Expect};
@@ -8,9 +8,9 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        start: JsLocal<'_>,
-        end: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        start: Option<f64>,
+        end: Option<f64>,
+    ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) = self.matcher_prelude(
             global,
@@ -19,26 +19,22 @@ impl Expect {
             "<green>start<r><d>, <r><green>end<r>",
         )?;
 
-        let start = start.to_js();
-
-        if !start.is_number() {
+        let Some(start) = start else {
             return Err(global.throw(format_args!(
                 "toBeWithin() requires the first argument to be a number"
             )));
-        }
+        };
 
-        let end = end.to_js();
-
-        if !end.is_number() {
+        let Some(end) = end else {
             return Err(global.throw(format_args!(
                 "toBeWithin() requires the second argument to be a number"
             )));
-        }
+        };
 
         let mut pass = value.is_number();
         if pass {
             let num = value.as_number();
-            pass = num >= start.as_number() && num < end.as_number();
+            pass = num >= start && num < end;
         }
 
         if not {
@@ -46,7 +42,7 @@ impl Expect {
         }
 
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // `to_fmt` takes `&mut Formatter` and the adapter holds the borrow, so three
@@ -54,8 +50,8 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);
-        let start_fmt = start.to_fmt(&mut formatter);
-        let end_fmt = end.to_fmt(&mut formatter2);
+        let start_fmt = JSValue::js_double_number(start).to_fmt(&mut formatter);
+        let end_fmt = JSValue::js_double_number(end).to_fmt(&mut formatter2);
         let received_fmt = value.to_fmt(&mut formatter3);
 
         if not {

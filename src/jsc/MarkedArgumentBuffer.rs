@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 
+use crate::bindgen::{AnyValue, js_value_of};
 use crate::{JSGlobalObject, JSValue, JsResult};
 
 bun_opaque::opaque_ffi! {
@@ -54,7 +55,8 @@ impl MarkedArgumentBuffer {
         ctx.r.unwrap()
     }
 
-    pub fn append(&mut self, value: JSValue) {
+    pub fn append(&mut self, value: impl AnyValue) {
+        let value = js_value_of(value);
         MarkedArgumentBuffer__append(self, value)
     }
 

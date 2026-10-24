@@ -616,6 +616,9 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
       needsUnsafe = true;
       wrapParams.push(`${ident}: ${generateRustType(p.type, null)}`);
       callArgs.push(ident);
+    } else if (generateRustType(p.type, null) === "crate::JSValue") {
+      wrapParams.push(`${ident}: impl crate::bindgen::AnyValue`);
+      callArgs.push(`crate::bindgen::js_value_of(${ident})`);
     } else {
       wrapParams.push(`${ident}: ${generateRustType(p.type, null)}`);
       callArgs.push(ident);

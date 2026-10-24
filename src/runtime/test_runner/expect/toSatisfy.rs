@@ -1,4 +1,4 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 
 use super::Expect;
@@ -10,8 +10,8 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        predicate: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        predicate: Option<JsLocal<'_, Callable>>,
+    ) -> JsResult<()> {
         let global = cx.global();
         // Not `matcher_prelude`: toSatisfy bypasses `get_value` (no .resolves/.rejects handling).
         let this = self.post_match_guard(global);
@@ -20,11 +20,10 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let predicate = predicate.to_js();
-
-        if !predicate.is_callable() {
+        let Some(predicate) = predicate else {
             return Err(global.throw(format_args!("toSatisfy() argument must be a function")));
-        }
+        };
+        let predicate = predicate.to_js();
 
         let Some(value) = super::js::captured_value_get_cached(this_value) else {
             return Err(global.throw(format_args!(
@@ -39,7 +38,7 @@ impl Expect {
         let pass = (result.is_boolean() && result.to_boolean()) != not;
 
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // Formatter impls Drop.

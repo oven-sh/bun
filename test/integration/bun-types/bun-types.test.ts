@@ -318,6 +318,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "BunTest.bind.ts": null,
   "ByteStream.bind.ts": null,
   "BytecodeOrderRecorder.bind.ts": null,
+  "ConnectionCtorArgs.bind.ts": null,
   "Counters.bind.ts": null,
   "Crypto.bind.ts":
     'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',

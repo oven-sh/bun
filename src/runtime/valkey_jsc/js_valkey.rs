@@ -1,11 +1,13 @@
 use core::ffi::c_void;
 
+use crate::generated_bindgen::socket_config::SocketOptionsTLS;
+use crate::generated_bindgen::valkey::RedisOptions;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
-use bun_core::{String as BunString, strings};
+use bun_core::strings;
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{Deferred, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell, JsRef,
@@ -462,11 +464,10 @@ impl JSValkeyClient {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        url: JsLocal<'a>,
-        options: JsLocal<'a>,
+        url: Option<&[u8]>,
+        options: Deferred<'a, Option<RedisOptions>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let new_client =
-            Self::create_no_js_no_pubsub(&cx.js_thread(), url.to_js(), options.to_js())?;
+        let new_client = Self::create_no_js_no_pubsub(&cx.js_thread(), url, Some(options))?;
         let this = new_client.this_ptr();
         let this_value = structure.create(&cx.heap, new_client);
 
@@ -484,21 +485,18 @@ impl JSValkeyClient {
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
         cx: &bun_jsc::JsThread<'_>,
-        url: JSValue,
-        options: JSValue,
+        url: Option<&[u8]>,
+        options: Option<Deferred<'_, Option<RedisOptions>>>,
     ) -> JsResult<RefPtr<JSValkeyClient>> {
         let vm: &'static VirtualMachine = cx.global().bun_vm();
         let vm_ref = vm;
 
-        let url_str = if !url.is_undefined_or_null() {
-            url.to_bun_string(cx.global())?
-        } else {
+        let url_byte_slice = url.unwrap_or_else(|| {
             let env = vm_ref.env_loader();
-            match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
-                Some(url) => BunString::borrow_utf8(url),
-                None => BunString::static_("valkey://localhost:6379"),
-            }
-        };
+            env.get(b"REDIS_URL")
+                .or_else(|| env.get(b"VALKEY_URL"))
+                .unwrap_or(b"valkey://localhost:6379")
+        });
         let mut fallback_url_buf = [0u8; 2048];
 
         // Parse and validate the URL using `Parsed::from_utf8`, which returns null for invalid URLs
@@ -508,9 +506,6 @@ impl JSValkeyClient {
         // understand why this is happening, but since I need to uncork valkey, I'm adding this as
         // a stop-gap.
         let parsed_url = 'get_url: {
-            let url_slice = url_str.to_utf8();
-            let url_byte_slice = url_slice.slice();
-
             if url_byte_slice.is_empty() {
                 return Err(cx
                     .global()
@@ -629,10 +624,12 @@ impl JSValkeyClient {
             }
         };
 
-        let options = if options.is_object() {
-            Options::from_js(cx.global(), options)?
-        } else {
-            valkey::Options::default()
+        let options = match options
+            .map(|options| options.convert(cx.global()))
+            .transpose()?
+        {
+            Some(Some(options)) => Options::from_js(cx.global(), options)?,
+            _ => valkey::Options::default(),
         };
 
         // Copy strings into a persistent buffer since the URL object will be deinitialized
@@ -1015,7 +1012,7 @@ impl JSValkeyClient {
         js::onconnect_set_cached(
             this_value.to_js(),
             global,
-            value.to_js().with_graph_context_if_needed(global),
+            value.with_graph_context_if_needed(global),
         );
     }
     pub(crate) fn get_onclose(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
@@ -1032,7 +1029,7 @@ impl JSValkeyClient {
         js::onclose_set_cached(
             this_value.to_js(),
             global,
-            value.to_js().with_graph_context_if_needed(global),
+            value.with_graph_context_if_needed(global),
         );
     }
 
@@ -1938,7 +1935,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options;
 
 impl Options {
-    fn from_js(global_object: &JSGlobalObject, options_obj: JSValue) -> JsResult<valkey::Options> {
+    fn from_js(global_object: &JSGlobalObject, options: RedisOptions) -> JsResult<valkey::Options> {
         let mut this = valkey::Options {
             enable_auto_pipelining:
                 !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
@@ -1947,64 +1944,48 @@ impl Options {
             ..Default::default()
         };
 
-        if let Some(idle_timeout) =
-            options_obj.get_optional_int::<u32>(global_object, "idleTimeout")?
-        {
+        if let Some(idle_timeout) = options.idle_timeout {
             this.idle_timeout_ms = idle_timeout;
         }
 
-        if let Some(connection_timeout) =
-            options_obj.get_optional_int::<u32>(global_object, "connectionTimeout")?
-        {
+        if let Some(connection_timeout) = options.connection_timeout {
             this.connection_timeout_ms = connection_timeout;
         }
 
-        if let Some(auto_reconnect) =
-            options_obj.get_if_property_exists(global_object, "autoReconnect")?
-        {
-            this.enable_auto_reconnect = auto_reconnect.to_boolean();
+        if let Some(auto_reconnect) = options.auto_reconnect {
+            this.enable_auto_reconnect = auto_reconnect;
         }
 
-        if let Some(max_retries) =
-            options_obj.get_optional_int::<u32>(global_object, "maxRetries")?
-        {
+        if let Some(max_retries) = options.max_retries {
             this.max_retries = max_retries;
         }
 
-        if let Some(enable_offline_queue) =
-            options_obj.get_if_property_exists(global_object, "enableOfflineQueue")?
-        {
-            this.enable_offline_queue = enable_offline_queue.to_boolean();
+        if let Some(enable_offline_queue) = options.enable_offline_queue {
+            this.enable_offline_queue = enable_offline_queue;
         }
 
-        if let Some(enable_auto_pipelining) =
-            options_obj.get_if_property_exists(global_object, "enableAutoPipelining")?
-        {
-            this.enable_auto_pipelining = enable_auto_pipelining.to_boolean();
+        if let Some(enable_auto_pipelining) = options.enable_auto_pipelining {
+            this.enable_auto_pipelining = enable_auto_pipelining;
         }
 
-        if let Some(tls) = options_obj.get_if_property_exists(global_object, "tls")? {
-            if tls.is_boolean() || tls.is_undefined_or_null() {
-                this.tls = if tls.to_boolean() {
+        match options.tls {
+            SocketOptionsTLS::None => {}
+            SocketOptionsTLS::Boolean(enabled) => {
+                this.tls = if enabled {
                     valkey::TLS::Enabled
                 } else {
                     valkey::TLS::None
                 };
-            } else if tls.is_object() {
+            }
+            SocketOptionsTLS::Object(tls) => {
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer.
                 if let Some(ssl_config) =
-                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls, false)?
+                    SSLConfig::from_generated(global_object.bun_vm(), global_object, &tls, false)?
                 {
                     this.tls = valkey::TLS::Custom(Box::new(ssl_config));
                 } else {
                     return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
                 }
-            } else {
-                return Err(global_object.throw_invalid_argument_type(
-                    "tls",
-                    "tls",
-                    "boolean or object",
-                ));
             }
         }
 

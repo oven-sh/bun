@@ -4,12 +4,13 @@ use bun_paths::strings;
 
 use bun_alloc::{AllocError, Arena};
 use bun_collections::BoundedArray;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{Deferred, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
 use bun_paths as paths;
 
 use super::*;
+use crate::generated_bindgen::filesystem_router::{FrameworkRouterOptions, FrameworkRouterStyle};
 use crate::generated_bindgen::framework_router::{RoutePattern, RoutePatternKind};
 
 /// This binding is currently only intended for testing FrameworkRouter, and not
@@ -28,24 +29,18 @@ pub(crate) struct StoredParseError {
 }
 
 impl JSFrameworkRouter {
-    pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
+    pub(crate) fn constructor(
+        cx: &mut JsScope<'_>,
+        options: FrameworkRouterOptions<'_>,
+    ) -> JsResult<Self> {
         let global = cx.global();
-        let options = options.to_js();
-        if !options.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "FrameworkRouter needs an object as it's first argument",
-            )));
-        }
 
-        let root: bun_core::Utf8Bytes = match options.get(global, "root")? {
-            Some(v) if !v.is_undefined_or_null() => v.to_utf8(global)?,
+        let root: bun_core::Utf8Bytes = match options.root(global)? {
+            Some(v) => v,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
-        let style = Style::from_js(
-            options.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
-            global,
-        )?;
+        let style = Style::from_js(options.style(global)?, global)?;
 
         let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
             paths::platform::Auto,
@@ -115,7 +110,7 @@ impl JSFrameworkRouter {
         Ok(jsfr)
     }
 
-    pub(crate) fn r#match(&self, cx: &mut JsScope<'_>, path: &[u8]) -> JsResult<JSValue> {
+    pub(crate) fn r#match(&self, cx: &mut JsScope<'_>, path: &[u8]) -> JsResult<Option<JSValue>> {
         let global = cx.global();
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),
@@ -143,10 +138,10 @@ impl JSFrameworkRouter {
                 },
             );
             obj.put(global, b"route", self.route_to_json_inverse(global, index)?);
-            return Ok(obj);
+            return Ok(Some(obj));
         }
 
-        Ok(JSValue::NULL)
+        Ok(None)
     }
 
     pub(crate) fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -221,13 +216,13 @@ impl JSFrameworkRouter {
 
     pub(crate) fn parse_route_pattern<'a>(
         cx: &mut JsScope<'a>,
-        style: JsLocal<'a>,
+        style: Deferred<'a, FrameworkRouterStyle<'a>>,
         filepath: &[u8],
     ) -> JsResult<Option<RoutePattern>> {
         let global = cx.global();
         let arena = Arena::new();
 
-        let style = Style::from_js(style.to_js(), global)?;
+        let style = Style::from_js(style.convert(global)?, global)?;
 
         let mut log = TinyLog::empty();
         let parsed = match style.parse(filepath, paths::extension(filepath), &mut log, true, &arena)

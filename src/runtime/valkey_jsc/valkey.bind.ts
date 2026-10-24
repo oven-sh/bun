@@ -1,6 +1,22 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { SocketOptionsTLS } from "../socket/SocketConfig.bind.ts";
+import { Blob } from "../webcore/Blob.bind.ts";
 
-/** `...name` is variadic. `rustName` only where the struct already has the snake_case name. */
+/**
+ * What goes on the wire as one bulk string. Each command refuses `other` in its own words, and refuses, skips or stops at `none`.
+ * It only tells kinds apart: `toString` of a `String` object runs when the command gets to that argument.
+ */
+export const RedisArgument = b.union({
+  none: b.null,
+  number: b.f64,
+  buffer: b.bufferSource.allowShared,
+  text: b.string,
+  object: b.stringObject,
+  blob: Blob,
+  other: b.ignored,
+});
+
+/** `...name` is the rest. `rustName` only where the struct already has the snake_case name. */
 const commands: Record<string, readonly [args: readonly string[], length: number, rustName?: string]> = {
   append: [["key", "value"], 0],
   bitcount: [["key"], 0],
@@ -30,7 +46,6 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   eval: [["...args"], 2],
   evalsha: [["...args"], 2],
   exists: [["key"], 1],
-  expire: [["key", "seconds"], 2],
   expireat: [["key", "timestamp"], 2],
   expiretime: [["key"], 0],
   fcall: [["...args"], 2],
@@ -59,12 +74,8 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   hgetall: [["key"], 0],
   hgetdel: [["...args"], 2],
   hgetex: [["...args"], 2],
-  hincrby: [["key", "field", "increment"], 3],
-  hincrbyfloat: [["key", "field", "increment"], 3],
   hkeys: [["key"], 0],
   hlen: [["key"], 0],
-  hmget: [["key", "...fields"], 2],
-  hmset: [["key", "...fields"], 2],
   hpersist: [["...args"], 2],
   hpexpire: [["...args"], 3],
   hpexpireat: [["...args"], 3],
@@ -72,7 +83,6 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   hpttl: [["...args"], 2],
   hrandfield: [["...args"], 1],
   hscan: [["...args"], 2],
-  hset: [["key", "...fields"], 2],
   hsetex: [["...args"], 3],
   hsetnx: [["key", "field", "value"], 3],
   hstrlen: [["key", "field"], 0],
@@ -109,11 +119,9 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   pfadd: [["key", "element"], 0],
   pfcount: [["...args"], 1],
   pfmerge: [["...args"], 1],
-  ping: [["message"], 0],
   psetex: [["key", "milliseconds", "value"], 3],
   psubscribe: [["...args"], 0],
   pttl: [["key"], 0],
-  publish: [["channel", "message"], 0],
   pubsub: [["...args"], 0],
   punsubscribe: [["...args"], 0],
   randomkey: [[], 0],
@@ -130,7 +138,6 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   sdiff: [["...args"], 1],
   sdiffstore: [["...args"], 2],
   select: [["...args"], 0],
-  send: [["command", "args"], 2, "js_send"],
   set: [["key", "value", "...options"], 2],
   setbit: [["key", "offset", "value"], 3],
   setex: [["key", "seconds", "value"], 3],
@@ -150,7 +157,6 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   srem: [["key", "...members"], 2],
   sscan: [["...args"], 2],
   strlen: [["key"], 0],
-  subscribe: [["channel", "listener"], 0],
   substr: [["key", "start", "end"], 0],
   sunion: [["...args"], 1],
   sunionstore: [["...args"], 2],
@@ -159,7 +165,6 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   ttl: [["key"], 1],
   type: [["key"], 1],
   unlink: [["...args"], 0],
-  unsubscribe: [["...args"], 0],
   wait: [["numreplicas", "timeout"], 2],
   xack: [["...args"], 3],
   xadd: [["...args"], 3],
@@ -210,10 +215,38 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   zunionstore: [["...args"], 3],
 };
 
-const args = (names: readonly string[]): Record<string, b.Type> =>
-  Object.fromEntries(names.map(name => (name.startsWith("...") ? [name.slice(3), b.any.variadic] : [name, b.any])));
+const argument = (name: string): [string, b.Type] =>
+  name.startsWith("...") ? [name.slice(3), b.rest(RedisArgument)] : [name, RedisArgument];
 
-const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
+const command = { returns: b.promise, capability: "js", throws: true, passThis: true } as const;
+const key = RedisArgument;
+/** `ToString` comes after the command has looked at the state of the client. */
+const text = b.string.loose.deferred;
+
+/** As itself: it is the key of the listeners too, and `toString` of a `String` object runs once the client has dialed. */
+export const RedisChannel = b.union({ many: b.jsArray, text: b.jsString, object: b.stringObject, other: b.ignored });
+
+const integerOption = b.u32.validateIntegerRange().nanAs(0).optional;
+export const RedisOptions = b.dictionary(
+  {
+    idleTimeout: integerOption,
+    connectionTimeout: integerOption,
+    autoReconnect: b.bool.loose.optional,
+    maxRetries: integerOption,
+    enableOfflineQueue: b.bool.loose.optional,
+    enableAutoPipelining: b.bool.loose.optional,
+    tls: { type: SocketOptionsTLS, expected: "Expected tls to be a boolean or object for 'tls'." },
+  },
+  { allowArray: true, reportedAs: "" },
+);
+
+/** What follows the key of `hset` and `hmset`: the pairs in an array, in an object, or the first of those that come one after the other. */
+export const HashFields = b.union({ array: b.jsArray, object: b.object, other: b.opaque });
+/** One of the pairs that come one after the other, once their number has been checked. */
+export const hashText = b.conversion(b.string.loose.utf8.owned);
+const hashSet = { ...command, args: { key: text, fields: HashFields, more: b.rest(b.opaque) }, length: 2 } as const;
+
+const eventHandler = { getter: b.opaque, setter: { capability: "js" }, passThis: true } as const;
 
 export const RedisClient = b.class({
   rustPath: "crate::valkey_jsc::JSValkeyClient",
@@ -222,7 +255,8 @@ export const RedisClient = b.class({
   memoryCost: true,
   construct: {
     passStructure: true,
-    args: { url: b.any, options: b.any },
+    /** What is wrong with `url` is reported first. */
+    args: { url: b.string.loose.utf8.nullable, options: RedisOptions.otherAsNull.deferred },
     capability: "js",
     throws: true,
     length: 0,
@@ -233,17 +267,68 @@ export const RedisClient = b.class({
     [
       ...Object.entries(commands).map(
         ([name, [names, length, rustName]]) =>
-          [
-            name,
-            { args: args(names), returns: b.any, capability: "js", throws: true, passThis: true, length, rustName },
-          ] as const,
+          [name, { ...command, args: Object.fromEntries(names.map(argument)), length, rustName }] as const,
       ),
       ["bufferedAmount", { getter: b.usize }] as const,
       ["close", { capability: "js", throws: true }] as const,
       ["connected", { getter: b.bool }] as const,
-      ["duplicate", { returns: b.any, capability: "js", throws: true }] as const,
+      ["duplicate", { returns: b.promise, capability: "js", throws: true }] as const,
+      [
+        "expire",
+        { ...command, args: { key, seconds: b.i32.validateIntegerRange(0, 2147483647).deferred }, length: 2 },
+      ] as const,
+      ["hincrby", { ...command, args: { key: text, field: text, increment: text }, length: 3 }] as const,
+      ["hincrbyfloat", { ...command, args: { key: text, field: text, increment: text }, length: 3 }] as const,
+      [
+        "hmget",
+        [
+          { ...command, args: { key, fields: b.jsArray }, length: 2, rustName: "hmget_array" },
+          { ...command, args: { key, fields: b.rest(RedisArgument) } },
+        ],
+      ] as const,
+      ["hmset", hashSet] as const,
+      ["hset", hashSet] as const,
       ["onclose", eventHandler] as const,
       ["onconnect", eventHandler] as const,
+      ["ping", { ...command, args: { message: RedisArgument }, length: 0 }] as const,
+      [
+        "publish",
+        {
+          ...command,
+          args: { channel: b.string.utf8.owned.deferred, message: b.string.utf8.owned.deferred },
+          expected: {
+            channel: "Expected channel to be a string for 'publish'.",
+            message: "Expected message to be a string for 'publish'.",
+          },
+          length: 0,
+        },
+      ] as const,
+      [
+        "send",
+        {
+          ...command,
+          args: { command: b.string.loose.utf8, args: b.jsArray.otherAsNull },
+          length: 2,
+          rustName: "js_send",
+        },
+      ] as const,
+      [
+        "subscribe",
+        {
+          ...command,
+          args: { channel: RedisChannel, listener: b.callable },
+          expected: { listener: "Expected listener to be a function for 'subscribe'." },
+          length: 0,
+        },
+      ] as const,
+      [
+        "unsubscribe",
+        {
+          ...command,
+          args: { channel: RedisChannel.ifPassed, listener: b.rest(b.callable.otherAsNull) },
+          length: 0,
+        },
+      ] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });

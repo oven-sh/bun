@@ -4,11 +4,12 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
-use super::{get_signature, throw, Expect};
+use super::{Expect, get_signature, throw};
+use crate::generated_bindgen::expect::StringValue;
 
-struct ExpectedEntry<'a> {
+struct ExpectedEntry<'a, 'call> {
     global_this: &'a JSGlobalObject,
-    expected: JSValue,
+    expected: JsLocal<'call>,
     pass: &'a mut bool,
 }
 
@@ -19,7 +20,7 @@ extern "C" fn deep_equals_iterator(
     item: JSValue,
 ) {
     // SAFETY: `entry_` is `&mut ExpectedEntry` passed through `for_each` below; non-null by contract.
-    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
+    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_, '_>>(entry_) };
     let Ok(eq) = item.jest_deep_equals(entry.expected, entry.global_this) else {
         return;
     };
@@ -30,22 +31,28 @@ extern "C" fn deep_equals_iterator(
 }
 
 impl Expect {
-    pub(crate) fn to_contain_equal(
+    pub(crate) fn to_contain_equal<'a>(
         &self,
-        this_value: JsWrapper<'_, Self>,
+        this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'_>,
-        expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        (expected_string, expected): (StringValue<'_>, JsLocal<'_>),
+    ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let this_value = this_value.to_js();
-        let (this, value, not) =
-            self.matcher_prelude(global, this_value, "toContainEqual", "<green>expected<r>")?;
+        let (this, value, not) = self.matcher_prelude(
+            global,
+            this_value.to_js(),
+            "toContainEqual",
+            "<green>expected<r>",
+        )?;
 
-        let expected = expected.to_js();
         let mut pass = false;
 
         let value_type = value.js_type();
-        let expected_type = expected.js_type();
+        let expected_string = match expected_string {
+            StringValue::String(string) => Some((string.to_js(), false)),
+            StringValue::StringObject(object) => Some((object.to_js(), true)),
+            StringValue::Other => None,
+        };
 
         if value_type.is_array_like() {
             let mut itr = value.array_iterator(global)?;
@@ -55,12 +62,14 @@ impl Expect {
                     break;
                 }
             }
-        } else if value_type.is_string_like() && expected_type.is_string_like() {
-            if expected_type.is_string_object_like() && value_type.is_string() {
+        } else if let (true, Some((expected_string, is_string_object))) =
+            (value_type.is_string_like(), expected_string)
+        {
+            if is_string_object && value_type.is_string() {
                 pass = false;
             } else {
                 let value_string = value.to_utf8(global)?;
-                let expected_string = expected.to_utf8(global)?;
+                let expected_string = expected_string.to_utf8(global)?;
 
                 // jest does not have a `typeof === "string"` check here: it spreads the value into an array.
 

@@ -7,13 +7,15 @@ use core::ptr::{null, null_mut};
 
 use bun_collections::smallvec::SmallVec;
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{BufferSource, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
-    self as jsc, ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
+    self as jsc, ArrayBuffer, JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsRef, JsResult,
+    StringJsc,
 };
 use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
+use crate::generated_bindgen::quic::{EndpointOptions, SessionOptions, TlsOptions, Uint64Option};
 use crate::jsc_hooks::timer_all_mut as timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
@@ -900,18 +902,11 @@ fn alpn_list_is_uniform(alpn: &[u8]) -> bool {
     true
 }
 
-pub(super) fn read_u64_option(
-    global: &JSGlobalObject,
-    obj: JSValue,
-    name: &str,
-) -> JsResult<Option<u64>> {
-    match obj
-        .get(global, name)?
-        .filter(|v| v.is_number() || v.is_big_int())
-    {
-        Some(v) if v.is_number() => Ok(Some(v.as_number().max(0.0) as u64)),
-        Some(v) => Ok(Some(v.to_uint64_no_truncate())),
-        None => Ok(None),
+pub(super) fn read_u64_option(value: Uint64Option) -> Option<u64> {
+    match value {
+        Uint64Option::Number(v) => Some(v.max(0.0) as u64),
+        Uint64Option::BigInt(v) => Some(v as u64),
+        Uint64Option::None | Uint64Option::Other => None,
     }
 }
 
@@ -929,53 +924,31 @@ fn snapshot_datagram_frame_size(s: &lsquic::Settings) -> u64 {
 fn apply_transport_params(
     global: &JSGlobalObject,
     s: &mut lsquic::Settings,
-    options: JSValue,
+    options: SessionOptions<'_>,
     local_tp: &mut lsquic::NqTransportParams,
 ) -> JsResult<()> {
     // Node's default max_idle_timeout is 10 seconds
     // (node/src/quic/transportparams.h DEFAULT_MAX_IDLE_TIMEOUT); lsquic's is 30.
     s.idle_timeout(10);
-    if !options.is_object() {
-        local_tp.max_idle_timeout = match s.get_idle_timeout_ms() {
-            0 => s.get_idle_timeout().saturating_mul(1000),
-            ms => ms,
-        };
-        local_tp.initial_max_data = s.get_init_max_data();
-        local_tp.initial_max_stream_data_bidi_local = s.get_init_max_stream_data_bidi_local();
-        local_tp.initial_max_stream_data_bidi_remote = s.get_init_max_stream_data_bidi_remote();
-        local_tp.initial_max_stream_data_uni = s.get_init_max_stream_data_uni();
-        local_tp.initial_max_streams_bidi = s.get_init_max_streams_bidi();
-        local_tp.initial_max_streams_uni = s.get_init_max_streams_uni();
-        local_tp.max_udp_payload_size = s.get_max_udp_payload_size_rx();
-        local_tp.ack_delay_exponent = 3;
-        local_tp.max_ack_delay = 25;
-        local_tp.active_connection_id_limit = 8;
-        local_tp.max_datagram_frame_size = snapshot_datagram_frame_size(s);
-        local_tp.disable_active_migration = (s.get_allow_migration() == 0) as c_int;
-        return Ok(());
-    }
-    if let Some(ms) = read_u64_option(global, options, "handshakeTimeout")? {
+    if let Some(ms) = read_u64_option(options.handshake_timeout(global)?) {
         s.handshake_to((ms.saturating_mul(1000)).min(c_uint::MAX as u64) as _);
     }
-    if let Some(ms) = read_u64_option(global, options, "keepAlive")? {
+    if let Some(ms) = read_u64_option(options.keep_alive(global)?) {
         // Node's keepAlive is exact (millisecond-granular).
         s.ping_period(1);
         s.ping_period_us(ms.saturating_mul(1000));
     }
-    if let Some(tp) = options
-        .get(global, "transportParams")?
-        .filter(|v| v.is_object())
-    {
+    if let Some(tp) = options.transport_params(global)? {
         // Layout mirrors lsquic's `tp_preferred_address` prefix
         // (lsquic_trans_params.h): 4-byte IPv4 + u16 port + 16-byte IPv6 +
         // u16 port. IPs are wire order; ports are HOST order.
         let mut pref = [0u8; 24];
         let mut have_pref = false;
-        for (key, is_v4) in [
-            ("preferredAddressIpv4", true),
-            ("preferredAddressIpv6", false),
+        for (addr_js, is_v4) in [
+            (tp.preferred_address_ipv4(global)?, true),
+            (tp.preferred_address_ipv6(global)?, false),
         ] {
-            let Some(addr_js) = tp.get(global, key)?.filter(|v| v.is_object()) else {
+            let Some(addr_js) = addr_js else {
                 continue;
             };
             let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() else {
@@ -998,25 +971,25 @@ fn apply_transport_params(
         if have_pref {
             s.preferred_address(&pref);
         }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamDataBidiLocal")? {
+        if let Some(v) = read_u64_option(tp.initial_max_stream_data_bidi_local(global)?) {
             s.init_max_stream_data_bidi_local(v.min(c_uint::MAX as u64) as _);
         }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamDataBidiRemote")? {
+        if let Some(v) = read_u64_option(tp.initial_max_stream_data_bidi_remote(global)?) {
             s.init_max_stream_data_bidi_remote(v.min(c_uint::MAX as u64) as _);
         }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamDataUni")? {
+        if let Some(v) = read_u64_option(tp.initial_max_stream_data_uni(global)?) {
             s.init_max_stream_data_uni(v.min(c_uint::MAX as u64) as _);
         }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxData")? {
+        if let Some(v) = read_u64_option(tp.initial_max_data(global)?) {
             s.init_max_data(v.min(c_uint::MAX as u64) as _);
         }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamsBidi")? {
+        if let Some(v) = read_u64_option(tp.initial_max_streams_bidi(global)?) {
             s.init_max_streams_bidi(v.min(c_uint::MAX as u64) as _);
         }
-        if let Some(v) = read_u64_option(global, tp, "initialMaxStreamsUni")? {
+        if let Some(v) = read_u64_option(tp.initial_max_streams_uni(global)?) {
             s.init_max_streams_uni(v.min(c_uint::MAX as u64) as _);
         }
-        if let Some(secs) = read_u64_option(global, tp, "maxIdleTimeout")? {
+        if let Some(secs) = read_u64_option(tp.max_idle_timeout(global)?) {
             // Node's maxIdleTimeout is SECONDS: transportparams.cc:197 stores
             // `max_idle_timeout * NGTCP2_SECONDS`; the getter at :473 divides
             // it back out.
@@ -1028,13 +1001,13 @@ fn apply_transport_params(
             }
             s.idle_timeout_ms(secs.saturating_mul(MS_PER_SEC).min(c_uint::MAX as u64) as _);
         }
-        if let Some(v) = read_u64_option(global, tp, "maxUdpPayloadSize")? {
+        if let Some(v) = read_u64_option(tp.max_udp_payload_size(global)?) {
             s.max_udp_payload_size_rx(v.min(u16::MAX as u64) as _);
         }
-        if let Some(v) = tp.get(global, "disableActiveMigration")? {
-            s.allow_migration(!v.to_boolean() as _);
+        if let Some(v) = tp.disable_active_migration(global)? {
+            s.allow_migration(!v as _);
         }
-        if let Some(v) = read_u64_option(global, tp, "maxDatagramFrameSize")? {
+        if let Some(v) = read_u64_option(tp.max_datagram_frame_size(global)?) {
             if v == 0 {
                 s.datagrams(0);
             } else {
@@ -1063,8 +1036,8 @@ fn apply_transport_params(
         disable_active_migration: (s.get_allow_migration() == 0) as c_int,
         ..lsquic::NqTransportParams::default()
     };
-    if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
-        let name = bun_core::String::from_js(cc, global)?.to_owned_slice();
+    if let Some(cc) = options.cc(global)? {
+        let name = cc.to_owned_slice();
         // lsquic.h es_cc_algo: 0=default(→3 Adaptive), 1=Cubic, 2=BBRv1,
         // 3=Adaptive. lsquic ships no Reno (NGTCP2_CC_ALGO_RENO in node's
         // backend), so map 'reno' to Cubic, the closest loss-based option,
@@ -1098,7 +1071,7 @@ impl QuicEndpoint {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        options: JsLocal<'a>,
+        options: &EndpointOptions<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
@@ -1205,85 +1178,66 @@ impl QuicEndpoint {
             (*raw).vtable.set(Some(vt));
         }
 
-        let options = options.to_js();
-        if options.is_object() {
-            if let Some(addr_js) = options
-                .get(global, "address")?
-                .filter(|v| !v.is_empty_or_undefined_or_null())
-            {
-                if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
-                    let stored = StoredAddr::from_socket_address(addr);
-                    if let Some((_, port, ip)) = stored.decode() {
-                        use core::fmt::Write;
-                        let mut host = String::new();
-                        match ip.len() {
-                            4 => {
-                                let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
-                            }
-                            16 => {
-                                let segs: [u16; 8] = core::array::from_fn(|i| {
-                                    u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
-                                });
-                                let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
-                            }
-                            _ => {}
+        if let Some(addr_js) = options.address {
+            if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
+                let stored = StoredAddr::from_socket_address(addr);
+                if let Some((_, port, ip)) = stored.decode() {
+                    use core::fmt::Write;
+                    let mut host = String::new();
+                    match ip.len() {
+                        4 => {
+                            let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
                         }
-                        let mut host_nul = host.into_bytes();
-                        host_nul.push(0);
-                        // SAFETY: `raw` is uniquely owned here.
-                        unsafe {
-                            (*raw).bind_config.set(BindConfig {
-                                host: host_nul,
-                                port,
-                            })
-                        };
+                        16 => {
+                            let segs: [u16; 8] = core::array::from_fn(|i| {
+                                u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
+                            });
+                            let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
+                        }
+                        _ => {}
                     }
-                }
-            }
-            if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
-                if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
-                {
-                    // SAFETY: `raw` is uniquely owned here; the Strong keeps
-                    // the BlockList wrapper (and thus the native object)
-                    // alive for the endpoint's lifetime.
+                    let mut host_nul = host.into_bytes();
+                    host_nul.push(0);
+                    // SAFETY: `raw` is uniquely owned here.
                     unsafe {
-                        (*raw).block_list.set(Some(bl.as_ptr()));
-                        (*raw)
-                            .block_list_js
-                            .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js, global)));
-                    }
+                        (*raw).bind_config.set(BindConfig {
+                            host: host_nul,
+                            port,
+                        })
+                    };
                 }
             }
-            if let Some(policy) = options
-                .get(global, "blockListPolicy")?
-                .filter(|v| v.is_string())
-            {
-                let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
-                // SAFETY: as above.
-                unsafe { (*raw).block_list_allow.set(policy == b"allow") };
+        }
+        if let Some(bl_js) = options.block_list.map(JsLocal::to_js) {
+            if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js) {
+                // SAFETY: `raw` is uniquely owned here; the Strong keeps
+                // the BlockList wrapper (and thus the native object)
+                // alive for the endpoint's lifetime.
+                unsafe {
+                    (*raw).block_list.set(Some(bl.as_ptr()));
+                    (*raw)
+                        .block_list_js
+                        .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js, global)));
+                }
             }
-            if let Some(v) = options
-                .get(global, "disableStatelessReset")?
-                .filter(|v| v.is_boolean())
-            {
-                // SAFETY: as above.
-                unsafe { (*raw).disable_stateless_reset.set(v.to_boolean()) };
-            }
-            if let Some(v) = options
-                .get(global, "statelessResetBurst")?
-                .filter(|v| v.is_number())
-            {
-                let burst = v.as_number().max(0.0).min(u32::MAX as f64) as u32;
-                // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_burst.set(burst) };
-            }
-            if let Some(v) = options
-                .get(global, "statelessResetRate")?
-                .filter(|v| v.is_number())
-            {
-                // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
-            }
+        }
+        if let Some(policy) = &options.block_list_policy {
+            let policy = policy.to_owned_slice();
+            // SAFETY: as above.
+            unsafe { (*raw).block_list_allow.set(policy == b"allow") };
+        }
+        if let Some(v) = options.disable_stateless_reset {
+            // SAFETY: as above.
+            unsafe { (*raw).disable_stateless_reset.set(v) };
+        }
+        if let Some(v) = options.stateless_reset_burst {
+            let burst = v.max(0.0).min(u32::MAX as f64) as u32;
+            // SAFETY: as above.
+            unsafe { (*raw).stateless_reset_burst.set(burst) };
+        }
+        if let Some(v) = options.stateless_reset_rate {
+            // SAFETY: as above.
+            unsafe { (*raw).stateless_reset_rate.set(v.max(0.0)) };
         }
 
         let state_ptr = alloc_exposed_array_buffer(
@@ -1986,7 +1940,7 @@ impl QuicEndpoint {
         &self,
         is_server: bool,
         config: &TlsConfig,
-        options: JSValue,
+        options: SessionOptions<'_>,
         global: &JSGlobalObject,
     ) -> JsResult<*mut lsquic::lsquic_engine> {
         let tls = TlsContext::new(config).map_err(|e| global.throw(format_args!("tls: {}", e)))?;
@@ -2035,28 +1989,19 @@ impl QuicEndpoint {
         }
         let mut local_tp = lsquic::NqTransportParams::default();
         apply_transport_params(global, &mut settings, options, &mut local_tp)?;
-        if let Some(app) = options
-            .get(global, "application")?
-            .filter(|v| v.is_object())
-        {
-            if let Some(v) = app
-                .get(global, "enableConnectProtocol")?
-                .filter(|v| v.is_boolean())
-            {
-                settings.h3_connect_protocol(v.to_boolean() as c_int);
+        if let Some(app) = options.application(global)? {
+            if let Some(v) = app.enable_connect_protocol(global)? {
+                settings.h3_connect_protocol(v as c_int);
             }
-            if let Some(v) = app
-                .get(global, "enableDatagrams")?
-                .filter(|v| v.is_boolean())
-            {
+            if let Some(v) = app.enable_datagrams(global)? {
                 // RFC 9297: HTTP/3 datagram support is advertised separately
                 // from the transport-level max_datagram_frame_size.
-                settings.h3_datagram(v.to_boolean() as c_int);
+                settings.h3_datagram(v as c_int);
             }
-            if let Some(v) = read_u64_option(global, app, "maxHeaderPairs")? {
+            if let Some(v) = read_u64_option(app.max_header_pairs(global)?) {
                 settings.max_h3_header_pairs(v.min(u16::MAX as u64) as u16);
             }
-            if let Some(v) = read_u64_option(global, app, "maxHeaderLength")? {
+            if let Some(v) = read_u64_option(app.max_header_length(global)?) {
                 settings.max_h3_header_bytes(v.min(u32::MAX as u64) as u32);
             }
         }
@@ -2155,9 +2100,10 @@ impl QuicEndpoint {
             .get()
             .as_ref()
             .map(bun_jsc::Strong::get)
+            && let Some(options) = JsLocal::<JSObject>::from_js(global, options)
         {
             // SAFETY: `session` was just created and is live.
-            unsafe { (*session).apply_options(global, options) }?;
+            unsafe { (*session).apply_options(global, SessionOptions::new(options)) }?;
         }
         Ok(())
     }
@@ -2207,12 +2153,14 @@ impl QuicEndpoint {
         self.vtable.set(None);
     }
 
-    pub(crate) fn listen(
+    pub(crate) fn listen<'a>(
         &self,
-        this_value: JsWrapper<'_, Self>,
-        cx: &mut JsScope<'_>,
-        options: JsLocal<'_>,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        options: Option<SessionOptions<'a>>,
     ) -> JsResult<()> {
+        // What is not an object has no option.
+        let options = options.unwrap_or_else(|| SessionOptions::new(cx.heap.create_empty_object()));
         let global = cx.global();
         if self.closed.get() || self.closing.get() {
             return Err(global
@@ -2226,17 +2174,14 @@ impl QuicEndpoint {
             return Ok(());
         }
         if self.server_engine.get().is_null() {
-            let options = options.to_js();
-            if options.is_object() {
-                self.server_session_options
-                    .set(Some(bun_jsc::Strong::create(options, global)));
-            }
-            let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
+            self.server_session_options
+                .set(Some(bun_jsc::Strong::create(options.object(), global)));
+            let tls = options.tls(global)?;
             // Authoritative origins for the HTTP/3 ORIGIN frame (RFC 9412
             // sec 2): each Origin-Entry is a 16-bit length prefix followed
             // by the ASCII origin.
-            if tls.is_object() {
-                if let Some(origins) = tls.get(global, "origins")?.filter(|v| v.is_array()) {
+            if let Some(tls) = tls {
+                if let Some(origins) = tls.origins(global)?.map(JsLocal::to_js) {
                     let len = origins.get_length(global)? as u32;
                     let mut blob = Vec::new();
                     for i in 0..len {
@@ -2260,8 +2205,8 @@ impl QuicEndpoint {
                 config.alpn = b"\x02h3".to_vec();
             }
             self.server_alpn_wire.set(config.alpn.clone());
-            if tls.is_object() {
-                if let Some(sni) = tls.get(global, "sni")?.filter(|v| v.is_object()) {
+            if let Some(tls) = tls {
+                if let Some(sni) = tls.sni(global)?.map(JsLocal::to_js) {
                     let built = Self::build_sni_contexts(global, sni, &config.alpn)?;
                     self.sni_contexts.with_mut(|m| *m = built);
                 }
@@ -2275,14 +2220,16 @@ impl QuicEndpoint {
         Ok(())
     }
 
-    pub(crate) fn connect(
+    pub(crate) fn connect<'a>(
         &self,
-        this_value: JsWrapper<'_, Self>,
-        cx: &mut JsScope<'_>,
-        address: JsLocal<'_>,
-        options: JsLocal<'_>,
-        session_ticket: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        address: Option<&crate::socket::SocketAddress>,
+        options: Option<SessionOptions<'a>>,
+        session_ticket: Option<JsLocal<'a, BufferSource>>,
+    ) -> JsResult<Option<JSValue>> {
+        // What is not an object has no option.
+        let options = options.unwrap_or_else(|| SessionOptions::new(cx.heap.create_empty_object()));
         let global = cx.global();
         if self.closed.get() || self.closing.get() {
             return Err(global
@@ -2293,12 +2240,9 @@ impl QuicEndpoint {
                 .throw());
         }
         if !self.ensure_bound(global, this_value.to_js())? {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         }
-        let address = address.to_js();
-        let options = options.to_js();
-        let session_ticket = session_ticket.to_js();
-        let Some(addr) = address.as_class_ref::<crate::socket::SocketAddress>() else {
+        let Some(addr) = address else {
             return Err(global
                 .err(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -2307,21 +2251,17 @@ impl QuicEndpoint {
                 .throw());
         };
         let remote = StoredAddr::from_socket_address(addr);
-        if let Some(version) = read_u64_option(global, options, "version")?
+        if let Some(version) = read_u64_option(options.version(global)?)
             .map(|v| v as u32)
             .filter(|v| *v != QUIC_VERSION_1 && *v != QUIC_VERSION_2)
         {
-            let min_version = read_u64_option(global, options, "minVersion")?
-                .map_or(QUIC_VERSION_1, |v| v as u32);
-            return self.connect_verneg_probe(
-                global,
-                this_value.to_js(),
-                remote,
-                version,
-                min_version,
-            );
+            let min_version =
+                read_u64_option(options.min_version(global)?).map_or(QUIC_VERSION_1, |v| v as u32);
+            return self
+                .connect_verneg_probe(global, this_value.to_js(), remote, version, min_version)
+                .map(Some);
         }
-        let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
+        let tls = options.tls(global)?;
         let config = TlsConfig::from_js(global, tls, false)?;
         if self.client_engine.get().is_null() {
             let engine = self.build_engine(false, &config, options, global)?;
@@ -2352,11 +2292,10 @@ impl QuicEndpoint {
         }
         // Node's DEFAULT_MAX_IDLE_TIMEOUT is 10 seconds when unspecified.
         let idle_ms = options
-            .get(global, "transportParams")?
-            .filter(|v| v.is_object())
-            .map(|tp| read_u64_option(global, tp, "maxIdleTimeout"))
+            .transport_params(global)?
+            .map(|tp| tp.max_idle_timeout(global))
             .transpose()?
-            .flatten()
+            .and_then(read_u64_option)
             .map(|secs| secs.saturating_mul(MS_PER_SEC))
             .unwrap_or(DEFAULT_MAX_IDLE_TIMEOUT_SECS * MS_PER_SEC);
         // SAFETY: the client engine exists after the branch above.
@@ -2375,8 +2314,8 @@ impl QuicEndpoint {
         // the conn that follows holds it as its ctx, so a throw after either
         // point has to unwind state that a plain `?` here avoids creating.
         let keepalive_us =
-            read_u64_option(global, options, "keepAlive")?.map_or(0, |ms| ms.saturating_mul(1000));
-        let use_preferred = read_u64_option(global, options, "preferredAddressPolicy")?
+            read_u64_option(options.keep_alive(global)?).map_or(0, |ms| ms.saturating_mul(1000));
+        let use_preferred = read_u64_option(options.preferred_address_policy(global)?)
             == Some(PREFERRED_ADDRESS_USE);
         let (session, handle) = QuicSession::create(
             global,
@@ -2392,7 +2331,7 @@ impl QuicEndpoint {
         let local = self.local_addr.get();
         let resume_blob: Option<Vec<u8>> = if config.enable_early_data {
             session_ticket
-                .as_array_buffer(global)
+                .map(|ticket| ticket.as_array_buffer(global))
                 .map(|buf| buf.byte_slice().to_vec())
         } else {
             None
@@ -2430,7 +2369,7 @@ impl QuicEndpoint {
         if conn.is_null() {
             // SAFETY: `session` was just created and nothing else owns it.
             unsafe { (*session).teardown(global) };
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         }
         // SAFETY: `conn` is live; out-params are stack slots.
         unsafe {
@@ -2458,7 +2397,7 @@ impl QuicEndpoint {
         self.sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         self.schedule_process();
-        Ok(handle)
+        Ok(Some(handle))
     }
 
     fn connect_verneg_probe(
@@ -2614,7 +2553,8 @@ impl QuicEndpoint {
             if !value.is_object() {
                 continue;
             }
-            let mut config = TlsConfig::from_js(global, value, true)?;
+            let tls = JsLocal::<JSObject>::from_js(global, value).map(TlsOptions::new);
+            let mut config = TlsConfig::from_js(global, tls, true)?;
             if config.alpn.is_empty() {
                 config.alpn = alpn.to_vec();
             }
@@ -2633,8 +2573,8 @@ impl QuicEndpoint {
     pub(crate) fn set_sni_contexts(
         &self,
         cx: &mut JsScope<'_>,
-        entries: JsLocal<'_>,
-        replace: JsLocal<'_>,
+        entries: Option<JsLocal<'_, JSObject>>,
+        replace: bool,
     ) -> JsResult<()> {
         let global = cx.global();
         if self.closed.get() {
@@ -2645,23 +2585,21 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        let entries = entries.to_js();
-        let replace = replace.to_js();
-        if !entries.is_object() {
+        let Some(entries) = entries.map(JsLocal::to_js) else {
             return Err(global
                 .err(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
                     format_args!("The \"entries\" argument must be of type object"),
                 )
                 .throw());
-        }
+        };
         let mut alpn = self.server_alpn_wire.get().clone();
         if alpn.is_empty() {
             alpn = b"\x02h3".to_vec();
         }
         let built = Self::build_sni_contexts(global, entries, &alpn)?;
         self.sni_contexts.with_mut(|map| {
-            if replace.to_boolean() {
+            if replace {
                 map.clear();
             }
             for (host, ctx) in built {

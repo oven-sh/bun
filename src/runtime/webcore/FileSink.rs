@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{AnyValue, JsLocal, JsScope};
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
@@ -599,7 +599,7 @@ impl FileSink {
     }
 
     /// `record_stream_error` for a JS value: it is held by the pipe's controller cell, not rooted here.
-    fn record_js_stream_error(&self, error: JSValue) {
+    fn record_js_stream_error(&self, error: impl AnyValue) {
         if self.has_stream_error() {
             return;
         }
@@ -1468,7 +1468,7 @@ impl crate::webcore::sink::ControlledSink for FileSink {
     unsafe fn close_with_error(
         this: *mut Self,
         _global: &JSGlobalObject,
-        reason: JSValue,
+        reason: JsLocal<'_>,
     ) -> sys::Result<()> {
         // `end` can re-enter `on_close`, which releases the keep-alive ref; hold one
         // across the call like `on_write`/`on_attached_process_exit` do.
@@ -1719,7 +1719,7 @@ impl FileSink {
     }
 }
 
-pub(crate) fn on_resolve_stream(cx: &mut JsScope<'_>, _: JsLocal<'_>, context: *mut FileSink) {
+pub(crate) fn on_resolve_stream(cx: &mut JsScope<'_>, _: JSValue, context: *mut FileSink) {
     bun_core::scoped_log!(FileSink, "onResolveStream");
     // SAFETY: `context` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
     let _guard = unsafe { RefPtr::from_raw(context) };
@@ -1732,7 +1732,7 @@ pub(crate) fn on_resolve_stream(cx: &mut JsScope<'_>, _: JsLocal<'_>, context: *
 
 pub(crate) fn on_reject_stream(
     cx: &mut JsScope<'_>,
-    err: JsLocal<'_>,
+    err: JSValue,
     context: *mut FileSink,
 ) -> JsResult<()> {
     bun_core::scoped_log!(FileSink, "onRejectStream");
@@ -1741,7 +1741,7 @@ pub(crate) fn on_reject_stream(
     // SAFETY: `context` is the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe {
         (*context).pump_promise_ref.set(false);
-        (*context).handle_reject_stream(cx.global(), err.to_js())
+        (*context).handle_reject_stream(cx.global(), err)
     }
 }
 

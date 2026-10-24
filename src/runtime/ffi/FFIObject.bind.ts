@@ -2,16 +2,19 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::ffi::ffi_object_draft" });
 
+/** An address, an offset or a length. Which kinds each takes, and its range, is for the function to say. */
+export const FFINumber = b.union({ absent: b.null, number: b.f64, bigint: b.bigInt, other: b.ignored });
+
 /** With four arguments the last is the deallocator. */
 const view = {
   args: {
-    ptr: b.any,
-    byteOffset: b.any.ifPassed,
-    byteLength: b.any.ifPassed,
-    deallocatorContext: b.any.ifPassed,
-    deallocator: b.any.ifPassed,
+    ptr: FFINumber,
+    byteOffset: FFINumber,
+    byteLength: FFINumber,
+    deallocatorContext: FFINumber,
+    deallocator: FFINumber.ifPassed,
   },
-  returns: b.any,
+  returns: b.bufferSource,
   capability: "js",
   throws: true,
 } as const;

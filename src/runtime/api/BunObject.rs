@@ -90,7 +90,8 @@ use crate::generated_bindgen::bun_object::{
     InspectOptionsOrDepth, MMapOptions, WhichOptions, ZlibCompressionOptions,
     ZlibDecompressionOptions, ZstdCompressionOptions,
 };
-use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
+use crate::generated_bindgen::server::ServeOptions;
+use bun_jsc::bindgen::{self, BufferSource, Callable, JsHeap, JsLocal, JsScope, PinnedBytes};
 
 /// How to add a new property to the Bun global (a function goes in `BunObject.bind.ts`)
 ///
@@ -432,14 +433,13 @@ fn print_table(
 pub(crate) fn inspect<'a>(
     cx: &mut JsScope<'a>,
     arg: Option<JsLocal<'a>>,
-    options: InspectOptionsOrDepth<'a>,
+    options: InspectOptionsOrDepth,
     colors: Option<bool>,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
     let Some(value) = arg else {
         return Ok(Vec::new());
     };
-    let value = value.to_js();
 
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,
@@ -458,7 +458,7 @@ pub(crate) fn inspect<'a>(
             format_options.set_depth(global_this, depth)?;
             format_options.enable_colors = colors.unwrap_or(false);
         }
-        InspectOptionsOrDepth::Ignored(_) => format_options.enable_colors = colors.unwrap_or(false),
+        InspectOptionsOrDepth::Ignored => format_options.enable_colors = colors.unwrap_or(false),
     }
 
     // very stable memory address
@@ -540,7 +540,7 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 pub(crate) fn register_macro<'a>(
     heap: &JsHeap<'a>,
     id: f64,
-    callback: JsLocal<'a>,
+    callback: Option<JsLocal<'a, Callable>>,
 ) -> bindgen::Result<'a, ()> {
     let id = id as i32;
     if id == -1 || id == 0 {
@@ -550,9 +550,9 @@ pub(crate) fn register_macro<'a>(
         ));
     }
 
-    if callback.as_callable().is_none() {
+    let Some(callback) = callback else {
         return Err(heap.error(format_args!("Macro must be a function")));
-    }
+    };
     let callback = callback.to_js();
 
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
@@ -1072,13 +1072,13 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
     }
 }
 
-pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+pub(crate) fn serve(cx: &mut JsScope<'_>, options: Option<ServeOptions<'_>>) -> JsResult<JSValue> {
     let global_object = cx.global();
     // The server is the calling script's.
     let context = global_object.bun_vm().context_of_caller();
     let mut config = crate::server::ServerConfig::from_js(
         global_object,
-        options.to_js(),
+        options,
         crate::server::server_config::FromJSOptions {
             allow_bake_config: bun_core::FeatureFlags::bake(),
             is_fetch_required: true,
@@ -1424,8 +1424,8 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     let vm = global_this.bun_vm();
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(
         &global_this.js_thread(vm.root_context()),
-        JSValue::UNDEFINED,
-        JSValue::UNDEFINED,
+        None,
+        None,
     ) {
         Ok(p) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,

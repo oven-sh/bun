@@ -6,6 +6,7 @@ use bun_jsc::console_object::Formatter;
 use super::DiffFormatter;
 use super::Expect;
 use super::throw;
+use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     pub(crate) fn to_have_last_returned_with(
@@ -13,10 +14,10 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global_this = cx.global();
         bun_jsc::mark_binding!();
-        let expected = expected.to_js();
+
         let (this, returns, _) = self.mock_prologue(
             global_this,
             this_value.to_js(),
@@ -56,7 +57,7 @@ impl Expect {
         }
 
         if pass != this.flags.get().not() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // Handle failure
@@ -98,7 +99,11 @@ impl Expect {
         }
 
         // Diff if possible
-        if expected.is_string() && last_return_value.is_string() {
+        if last_return_value.is_string()
+            && StringValue::from_js(global_this, expected, |expected| {
+                Ok(!matches!(expected, StringValue::Other))
+            })?
+        {
             let diff_format = DiffFormatter::new(global_this, last_return_value, expected, false)?;
             return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
         }

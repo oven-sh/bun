@@ -3,20 +3,20 @@ use core::ptr::NonNull;
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
-use bun_collections::LinearFifo;
-use bun_core::{Output, Timespec};
-use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_ptr::RefPtr;
-use super::jest::{Jest, FileId, FileColumns as _};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
+use super::execution::TimespecExt as _;
+use super::jest::{FileColumns as _, FileId, Jest};
 use crate::cli::test_command::CommandLineReporter;
 use crate::generated_bindgen::bun_test::{
     Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
-use super::execution::TimespecExt as _;
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use bun_collections::LinearFifo;
+use bun_core::{Output, Timespec};
+use bun_jsc::bindgen::{AnyValue, JsLocal, JsScope};
+use bun_jsc::js_promise::Status as PromiseStatus;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_ptr::RefPtr;
 
 bun_core::declare_scope!(bun_test_group, hidden);
 // Callers use `group_log!` / `group_begin!` / `group_end!` below.
@@ -742,7 +742,7 @@ impl BunTest {
 
     fn bun_test_then_or_catch(
         global_this: &JSGlobalObject,
-        result: JSValue,
+        result: JsLocal<'_>,
         raw_ref: *mut RefData,
         is_catch: bool,
     ) -> JsResult<()> {
@@ -786,7 +786,7 @@ impl BunTest {
         value: JsLocal<'_>,
         context: *mut RefData,
     ) -> JsResult<()> {
-        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, false)
+        Self::bun_test_then_or_catch(cx.global(), value, context, false)
     }
 
     pub(crate) fn bun_test_catch(
@@ -794,32 +794,33 @@ impl BunTest {
         value: JsLocal<'_>,
         context: *mut RefData,
     ) -> JsResult<()> {
-        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
+        Self::bun_test_then_or_catch(cx.global(), value, context, true)
     }
 
     pub(crate) fn bun_test_done_callback(
         cx: &mut JsScope<'_>,
         this_value: JsLocal<'_>,
-        error: JsLocal<'_>,
+        error: Option<JsLocal<'_>>,
     ) -> JsResult<()> {
         let _g = group_begin!();
 
         let global_this = cx.global();
-        let Some(this) = this_value.to_js().as_class_ref::<DoneCallback>() else {
+        let Some(this) = this_value.as_class_ref::<DoneCallback>() else {
             return Err(global_this.throw(format_args!("Expected callee to be DoneCallback")));
         };
 
-        let value = error.to_js();
-
-        let was_error = !value.is_empty_or_undefined_or_null();
+        let was_error = error.is_some();
         if this.called.get() {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
         } else {
             // error is only reported for the first done() call
-            if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+            if let Some(error) = error {
+                let _ = global_this
+                    .bun_vm()
+                    .as_mut()
+                    .uncaught_exception(global_this, error, false);
             }
         }
         this.called.set(true);
@@ -1262,7 +1263,7 @@ impl BunTest {
     pub(crate) fn on_uncaught_exception(
         &mut self,
         global_this: &JSGlobalObject,
-        exception: Option<JSValue>,
+        exception: Option<impl AnyValue>,
         is_rejection: bool,
         user_data: &RefDataValue,
     ) {
@@ -1348,7 +1349,7 @@ impl BunTest {
 pub(crate) fn print_error(
     vm: &mut VirtualMachine,
     global_this: &JSGlobalObject,
-    error: JSValue,
+    error: impl AnyValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
 ) {
     vm.run_error_handler(error, exception_list);
@@ -1974,8 +1975,7 @@ impl TestScheduleEntry {
 
 // Module aliases so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.
-pub(crate) use super::execution as Execution;
 pub(crate) use super::debug;
-pub(crate) use super::scope_functions as ScopeFunctions;
+pub(crate) use super::execution as Execution;
 pub(crate) use super::order as Order;
-
+pub(crate) use super::scope_functions as ScopeFunctions;

@@ -1,11 +1,11 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use crate::generated_bindgen::markdown_object::{
-    AnsiTheme, Autolinks, ComponentOverrides, Headings, MarkdownOptions, ReactOptions,
-    RenderCallbacks,
+    AnsiTheme, Autolinks, ComponentOverride, ComponentOverrides, Headings, MarkdownInput,
+    MarkdownOptions, ReactOptions, RenderCallbacks,
 };
 use bun_core::StackCheck;
-use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
+use bun_jsc::bindgen::{AnyValue, JsBytes, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer, RangeErrorOptions,
@@ -132,6 +132,21 @@ macro_rules! parser_options {
     }};
 }
 
+fn input_from_js(
+    global: &JSGlobalObject,
+    input: MarkdownInput<'_>,
+) -> JsResult<StringOrBuffer<'static>> {
+    let buffer = match input {
+        MarkdownInput::Text(str) => Some(StringOrBuffer::String(str.into_utf8_with_string())),
+        MarkdownInput::Boxed(boxed) => StringOrBuffer::from_js_stable(global, boxed.to_js())?,
+        MarkdownInput::Buffer(buffer) => StringOrBuffer::from_js_stable(global, buffer.to_js())?,
+        MarkdownInput::Other => None,
+    };
+    buffer.ok_or_else(|| {
+        global.throw_invalid_arguments(format_args!("Expected a string or buffer to render"))
+    })
+}
+
 /// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
 fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
     let StringOrBuffer::Buffer(buffer) = input else {
@@ -200,22 +215,13 @@ pub(crate) fn html<'a>(
 /// of all callback outputs.
 pub(crate) fn render<'a>(
     cx: &mut JsScope<'a>,
-    input: JsLocal<'a>,
+    input: MarkdownInput<'a>,
     callbacks: Option<&RenderCallbacks<'a>>,
     options: Option<&MarkdownOptions>,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
-    let input_value = input.to_js();
 
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    }
-
-    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
+    let buffer = input_from_js(global_this, input)?;
 
     let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
@@ -249,7 +255,7 @@ pub(crate) fn render<'a>(
 // accumulates stays GC-visible for the duration of the call.
 pub(crate) fn react<'a>(
     cx: &mut JsScope<'a>,
-    input: JsLocal<'a>,
+    input: MarkdownInput<'a>,
     components: Option<&ComponentOverrides<'a>>,
     options: Option<&ReactOptions>,
 ) -> JsResult<JSValue> {
@@ -263,7 +269,7 @@ pub(crate) fn react<'a>(
     MarkedArgumentBuffer::new(|marked_args| {
         let children = render_ast(
             global_this,
-            input.to_js(),
+            input,
             components,
             parser_options!(options),
             marked_args,
@@ -283,23 +289,15 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-fn render_ast(
+fn render_ast<'a>(
     global_this: &JSGlobalObject,
-    input_value: JSValue,
-    components: Option<&ComponentOverrides<'_>>,
+    input: MarkdownInput<'a>,
+    components: Option<&ComponentOverrides<'a>>,
     options: md::Options,
     marked_args: &mut MarkedArgumentBuffer,
     react_version: Option<u8>,
 ) -> JsResult<JSValue> {
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    }
-
-    let Some(buffer) = StringOrBuffer::from_js_stable(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
+    let buffer = input_from_js(global_this, input)?;
 
     let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
@@ -340,7 +338,7 @@ fn render_ast(
 ///
 /// Uses HTML tag names (h1-h6, p, blockquote, a, em, strong, etc.).
 /// Text content is plain JS strings in children arrays.
-struct ParseRenderer<'a> {
+struct ParseRenderer<'a, 'call> {
     global_object: &'a JSGlobalObject,
     marked_args: &'a mut MarkedArgumentBuffer,
     // Note: JSValue in Vec is safe here — every entry.children is also appended to self.marked_args (GC root).
@@ -348,54 +346,44 @@ struct ParseRenderer<'a> {
     stack_check: StackCheck,
     src_text: &'a [u8],
     heading_tracker: md::helpers::HeadingIdTracker,
-    components: Components,
+    components: Components<'call>,
     react_version: Option<u8>,
-}
-
-unsafe extern "C" {
-    safe fn JSReactElement__create(
-        global_object: &JSGlobalObject,
-        react_version: u8,
-        element_type: JSValue,
-        props: JSValue,
-    ) -> JSValue;
 }
 
 /// Component overrides keyed by HTML tag name.
 /// When set, the value replaces the string tag name in the `type` field.
 #[derive(Default)]
-struct Components {
-    h1: JSValue,
-    h2: JSValue,
-    h3: JSValue,
-    h4: JSValue,
-    h5: JSValue,
-    h6: JSValue,
-    p: JSValue,
-    blockquote: JSValue,
-    ul: JSValue,
-    ol: JSValue,
-    li: JSValue,
-    pre: JSValue,
-    hr: JSValue,
-    html: JSValue,
-    table: JSValue,
-    thead: JSValue,
-    tbody: JSValue,
-    tr: JSValue,
-    th: JSValue,
-    td: JSValue,
-    em: JSValue,
-    strong: JSValue,
-    a: JSValue,
-    img: JSValue,
-    code: JSValue,
-    del: JSValue,
-    math: JSValue,
-    u: JSValue,
-    br: JSValue,
+struct Components<'a> {
+    h1: Option<JsLocal<'a>>,
+    h2: Option<JsLocal<'a>>,
+    h3: Option<JsLocal<'a>>,
+    h4: Option<JsLocal<'a>>,
+    h5: Option<JsLocal<'a>>,
+    h6: Option<JsLocal<'a>>,
+    p: Option<JsLocal<'a>>,
+    blockquote: Option<JsLocal<'a>>,
+    ul: Option<JsLocal<'a>>,
+    ol: Option<JsLocal<'a>>,
+    li: Option<JsLocal<'a>>,
+    pre: Option<JsLocal<'a>>,
+    hr: Option<JsLocal<'a>>,
+    html: Option<JsLocal<'a>>,
+    table: Option<JsLocal<'a>>,
+    thead: Option<JsLocal<'a>>,
+    tbody: Option<JsLocal<'a>>,
+    tr: Option<JsLocal<'a>>,
+    th: Option<JsLocal<'a>>,
+    td: Option<JsLocal<'a>>,
+    em: Option<JsLocal<'a>>,
+    strong: Option<JsLocal<'a>>,
+    a: Option<JsLocal<'a>>,
+    img: Option<JsLocal<'a>>,
+    code: Option<JsLocal<'a>>,
+    del: Option<JsLocal<'a>>,
+    math: Option<JsLocal<'a>>,
+    u: Option<JsLocal<'a>>,
+    br: Option<JsLocal<'a>>,
 }
-// Note: `Default` for JSValue must be `JSValue::ZERO` (encoded 0).
 
 struct ParseStackEntry {
     children: JSValue,
@@ -422,7 +410,7 @@ impl Default for ParseStackEntry {
 // Note: the `bun_md` `Renderer` is `&mut dyn RendererImpl`, so the trait
 // already gives us `&mut self` — the `*_impl` bodies below are plain methods,
 // no pointer round-trip needed.
-impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
+impl<'a, 'call> md::types::RendererImpl for ParseRenderer<'a, 'call> {
     fn enter_block(
         &mut self,
         block_type: md::BlockType,
@@ -452,14 +440,14 @@ impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
     }
 }
 
-impl<'a> ParseRenderer<'a> {
+impl<'a, 'call> ParseRenderer<'a, 'call> {
     fn init(
         global_object: &'a JSGlobalObject,
         src_text: &'a [u8],
         marked_args: &'a mut MarkedArgumentBuffer,
         heading_ids: bool,
         react_version: Option<u8>,
-    ) -> Result<ParseRenderer<'a>, bun_alloc::AllocError> {
+    ) -> Result<ParseRenderer<'a, 'call>, bun_alloc::AllocError> {
         let mut self_ = ParseRenderer {
             global_object,
             marked_args,
@@ -485,14 +473,19 @@ impl<'a> ParseRenderer<'a> {
 
     /// Any non-boolean value (function, class, string, etc.) keyed by an HTML tag name is stored
     /// and used as the `type` field instead of the default string tag name.
-    fn extract_components(&mut self, components: &ComponentOverrides<'_>) {
+    fn extract_components(&mut self, components: &ComponentOverrides<'call>) {
         macro_rules! extract {
             ($($name:ident),* $(,)?) => {$(
-                if let Some(val) = components.$name.map(JsLocal::to_js) {
-                    if !val.is_boolean() {
-                        self.components.$name = val;
-                        self.marked_args.append(val);
+                let val = match components.$name {
+                    ComponentOverride::Absent | ComponentOverride::Ignored(_) => None,
+                    ComponentOverride::Text(val) => {
+                        val.to_js().to_boolean().then_some(val.as_value())
                     }
+                    ComponentOverride::Other(val) => Some(val),
+                };
+                if let Some(val) = val {
+                    self.components.$name = Some(val);
+                    self.marked_args.append(val);
                 }
             )*};
         }
@@ -502,7 +495,7 @@ impl<'a> ParseRenderer<'a> {
         );
     }
 
-    fn get_block_component(&self, block_type: md::BlockType, data: u32) -> JSValue {
+    fn get_block_component(&self, block_type: md::BlockType, data: u32) -> Option<JsLocal<'call>> {
         match block_type {
             md::BlockType::H => match data {
                 1 => self.components.h1,
@@ -526,11 +519,11 @@ impl<'a> ParseRenderer<'a> {
             md::BlockType::Tr => self.components.tr,
             md::BlockType::Th => self.components.th,
             md::BlockType::Td => self.components.td,
-            md::BlockType::Doc => JSValue::ZERO,
+            md::BlockType::Doc => None,
         }
     }
 
-    fn get_span_component(&self, span_type: md::SpanType) -> JSValue {
+    fn get_span_component(&self, span_type: md::SpanType) -> Option<JsLocal<'call>> {
         match span_type {
             md::SpanType::Em => self.components.em,
             md::SpanType::Strong => self.components.strong,
@@ -558,9 +551,10 @@ impl<'a> ParseRenderer<'a> {
     /// Creates an element node. In React mode, uses the C++ fast path with
     /// a cached Structure and putDirectOffset. In plain mode, creates a
     /// simple `{ type, props }` object.
-    fn create_element(&mut self, type_val: JSValue, props: JSValue) -> JSValue {
+    fn create_element(&mut self, type_val: impl AnyValue, props: JSValue) -> JSValue {
         if let Some(version) = self.react_version {
-            let obj = JSReactElement__create(self.global_object, version, type_val, props);
+            let obj =
+                bun_jsc::cpp::JSReactElement__create(self.global_object, version, type_val, props);
             self.marked_args.append(obj);
             obj
         } else {
@@ -668,11 +662,6 @@ impl<'a> ParseRenderer<'a> {
 
         // Build React element — use component override as type if set
         let component = self.get_block_component(block_type, entry.data);
-        let type_val: JSValue = if !component.is_empty() {
-            component
-        } else {
-            get_cached_tag_string(g, tag_index)
-        };
 
         let props = JSValue::create_empty_object(g, props_count);
         self.marked_args.append(props);
@@ -719,7 +708,10 @@ impl<'a> ParseRenderer<'a> {
             props.put(g, b"children", entry.children);
         }
 
-        let obj = self.create_element(type_val, props);
+        let obj = match component {
+            Some(component) => self.create_element(component, props),
+            None => self.create_element(get_cached_tag_string(g, tag_index), props),
+        };
 
         // Push to parent's children array
         if let Some(parent) = self.stack.last() {
@@ -787,11 +779,6 @@ impl<'a> ParseRenderer<'a> {
 
         // Build React element: { $$typeof, type, key, ref, props }
         let component = self.get_span_component(span_type);
-        let type_val: JSValue = if !component.is_empty() {
-            component
-        } else {
-            get_cached_tag_string(g, tag_index)
-        };
 
         let props = JSValue::create_empty_object(g, props_count);
         self.marked_args.append(props);
@@ -865,7 +852,10 @@ impl<'a> ParseRenderer<'a> {
             props.put(g, b"children", entry.children);
         }
 
-        let obj = self.create_element(type_val, props);
+        let obj = match component {
+            Some(component) => self.create_element(component, props),
+            None => self.create_element(get_cached_tag_string(g, tag_index), props),
+        };
 
         // Push to parent's children array
         if let Some(parent) = self.stack.last() {
@@ -896,15 +886,14 @@ impl<'a> ParseRenderer<'a> {
 
         match text_type {
             md::TextType::Br => {
-                let br_component = self.components.br;
-                let br_type: JSValue = if !br_component.is_empty() {
-                    br_component
-                } else {
-                    get_cached_tag_string(g, TagIndex::Br)
-                };
                 let empty_props = JSValue::create_empty_object(g, 0);
                 self.marked_args.append(empty_props);
-                let obj = self.create_element(br_type, empty_props);
+                let obj = match self.components.br {
+                    Some(br_component) => self.create_element(br_component, empty_props),
+                    None => {
+                        self.create_element(get_cached_tag_string(g, TagIndex::Br), empty_props)
+                    }
+                };
                 js_array_push(parent_children, g, obj)?;
             }
             md::TextType::Softbr => {

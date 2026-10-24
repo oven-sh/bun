@@ -1,8 +1,10 @@
+use crate::generated_bindgen::valkey::{HashFields, RedisArgument, RedisChannel, hash_text};
 use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer};
 use bun_collections::VecExt as _;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{Callable, Deferred, JsLocal, JsScope, JsWrapper, Rest};
 use bun_jsc::{
-    self as jsc, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsRef, JsResult,
+    self as jsc, ErrorCode, JSArray, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsRef,
+    JsResult,
 };
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx, js};
@@ -48,6 +50,17 @@ fn require_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()
     Ok(())
 }
 
+impl RedisChannel<'_> {
+    /// One channel, primitive or boxed.
+    fn string(self) -> Option<JSValue> {
+        match self {
+            Self::Text(text) => Some(text.to_js()),
+            Self::Object(object) => Some(object.to_js()),
+            Self::Many(_) | Self::Other => None,
+        }
+    }
+}
+
 fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgument>> {
     if value.is_undefined_or_null() {
         return Ok(None);
@@ -70,6 +83,24 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     }
 
     JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
+}
+
+fn from_argument(
+    global: &JSGlobalObject,
+    value: RedisArgument<'_>,
+) -> JsResult<Option<JSArgument>> {
+    Ok(Some(match value {
+        RedisArgument::None | RedisArgument::Other => return Ok(None),
+        RedisArgument::Number(number) => JSArgument::StringOrBuffer(StringOrBuffer::owned(
+            bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number).to_vec(),
+        )),
+        RedisArgument::Buffer(buffer) => return from_js(global, buffer.to_js()),
+        RedisArgument::Text(text) => {
+            JSArgument::StringOrBuffer(StringOrBuffer::String(text.into_utf8_with_string()))
+        }
+        RedisArgument::Object(object) => return from_js(global, object.to_js()),
+        RedisArgument::Blob(blob) => JSArgument::Blob(Box::new(blob.dupe())),
+    }))
 }
 
 /// Shim around `protocol::valkey_error_to_js` that:
@@ -168,7 +199,7 @@ macro_rules! cmd {
             &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            $($arg: JsLocal<'_>,)*
+            $($arg: RedisArgument<'_>,)*
         ) -> JsResult<JSValue> {
             let global = cx.global();
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
@@ -176,7 +207,7 @@ macro_rules! cmd {
             )?;
 
             $(
-                let Some($arg) = from_js(global, $arg.to_js())? else {
+                let Some($arg) = from_argument(global, $arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         $name,
                         $arg_name,
@@ -203,29 +234,29 @@ macro_rules! cmd_key_varargs {
             &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            args: &[JsLocal<'_>],
+            arguments: Rest<'_, RedisArgument<'_>>,
         ) -> JsResult<JSValue> {
             let global = cx.global();
-            let arguments = JsLocal::to_js_slice(args);
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
                 self, $name,
             )?;
 
-            if arguments
-                .first()
-                .is_none_or(|key| key.is_undefined_or_null())
-            {
+            if arguments.is_empty() {
                 return Err(global.throw_missing_arguments_value(&[$arg0_name]));
             }
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
 
-            for arg in arguments {
-                if arg.is_undefined_or_null() {
+            for (index, arg) in arguments.iter().enumerate() {
+                let arg = arg.convert(global)?;
+                if matches!(arg, RedisArgument::None) {
+                    if index == 0 {
+                        return Err(global.throw_missing_arguments_value(&[$arg0_name]));
+                    }
                     continue;
                 }
 
-                let Some(another) = from_js(global, *arg)? else {
+                let Some(another) = from_argument(global, arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         $name,
                         "additional arguments",
@@ -256,18 +287,17 @@ macro_rules! cmd_strings_varargs {
             &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            args: &[JsLocal<'_>],
+            arguments: Rest<'_, RedisArgument<'_>>,
         ) -> JsResult<JSValue> {
             let global = cx.global();
-            let arguments = JsLocal::to_js_slice(args);
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
                 self, $name,
             )?;
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
 
-            for arg in arguments {
-                let Some(another) = from_js(global, *arg)? else {
+            for arg in arguments.iter() {
+                let Some(another) = from_argument(global, arg.convert(global)?)? else {
                     return Err(global.throw_invalid_argument_type(
                         $name,
                         "additional arguments",
@@ -295,22 +325,22 @@ macro_rules! cmd_key_value_varargs {
             &self,
             this_value: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
-            args: &[JsLocal<'_>],
+            arguments: Rest<'_, RedisArgument<'_>>,
         ) -> JsResult<JSValue> {
             let global = cx.global();
-            let arguments = JsLocal::to_js_slice(args);
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
                 self, $name,
             )?;
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
 
-            for arg in arguments {
-                if arg.is_undefined_or_null() {
+            for arg in arguments.iter() {
+                let arg = arg.convert(global)?;
+                if matches!(arg, RedisArgument::None) {
                     continue;
                 }
 
-                let Some(another) = from_js(global, *arg)? else {
+                let Some(another) = from_argument(global, arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         $name,
                         "additional arguments",
@@ -341,17 +371,14 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        command: JsLocal<'_>,
-        args: JsLocal<'_>,
+        command: &[u8],
+        args: Option<JsLocal<'_, JSArray>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let command = command.to_js().to_bun_string(global)?;
-
-        let args_array = args.to_js();
-        if !args_array.is_object() || !args_array.is_array() {
+        let Some(args_array) = args else {
             return Err(global.throw(format_args!("Arguments must be an array")));
-        }
-        let mut iter = args_array.array_iterator(global)?;
+        };
+        let mut iter = args_array.to_js().array_iterator(global)?;
         let mut args: Vec<JSArgument> = Vec::with_capacity(iter.len as usize);
 
         while let Some(arg_js) = iter.next()? {
@@ -365,9 +392,8 @@ impl JSValkeyClient {
             args.push(v);
         }
 
-        let cmd_str = command.to_utf8();
         let mut cmd = Command {
-            command: cmd_str.slice(),
+            command,
             args: CommandArgs::Args(&args),
             meta: CommandMeta::default(),
         };
@@ -388,12 +414,12 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
+        key: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "get")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("get", "key", "string or buffer"));
         };
         send_cmd(
@@ -411,12 +437,12 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
+        key: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "getBuffer")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
         };
         send_cmd(
@@ -434,21 +460,21 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        value: JsLocal<'_>,
-        options: &[JsLocal<'_>],
+        key: RedisArgument<'_>,
+        value: RedisArgument<'_>,
+        options: Rest<'_, RedisArgument<'_>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "set")?;
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(2 + options.len());
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("set", "key", "string or buffer"));
         };
         args.push(key);
 
-        let Some(value) = from_js(global, value.to_js())? else {
+        let Some(value) = from_argument(global, value)? else {
             return Err(global.throw_invalid_argument_type(
                 "set",
                 "value",
@@ -457,11 +483,12 @@ impl JSValkeyClient {
         };
         args.push(value);
 
-        for arg in JsLocal::to_js_slice(options) {
-            if arg.is_undefined_or_null() {
+        for arg in options.iter() {
+            let arg = arg.convert(global)?;
+            if matches!(arg, RedisArgument::None) {
                 break;
             }
-            let Some(v) = from_js(global, *arg)? else {
+            let Some(v) = from_argument(global, arg)? else {
                 return Err(global.throw_invalid_argument_type(
                     "set",
                     "arguments",
@@ -486,12 +513,12 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
+        key: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "incr")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("incr", "key", "string or buffer"));
         };
         send_cmd(
@@ -509,12 +536,12 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
+        key: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "decr")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("decr", "key", "string or buffer"));
         };
         send_cmd(
@@ -532,12 +559,12 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
+        key: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "exists")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("exists", "key", "string or buffer"));
         };
         // Send EXISTS command with special Exists type for boolean conversion
@@ -556,42 +583,17 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        seconds: JsLocal<'_>,
+        key: RedisArgument<'_>,
+        seconds: Deferred<'_, i32>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "expire")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
         };
 
-        let seconds_value = seconds.to_js();
-        if seconds_value.is_undefined() {
-            return Err(global.throw_invalid_property_type_value(
-                b"seconds",
-                b"number",
-                seconds_value,
-            ));
-        }
-        if seconds_value.is_number() && seconds_value.as_number().is_nan() {
-            return Err(global.throw_invalid_property_type_value(
-                b"seconds",
-                b"integer",
-                seconds_value,
-            ));
-        }
-
-        let seconds = global.validate_integer_range::<i32>(
-            seconds_value,
-            0,
-            jsc::IntegerRange {
-                min: 0,
-                max: 2147483647,
-                field_name: b"seconds",
-                ..Default::default()
-            },
-        )?;
+        let seconds = seconds.convert(global)?;
 
         // Convert seconds to a string
         let mut int_buf = bun_core::fmt::ItoaBuf::new();
@@ -611,12 +613,12 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
+        key: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "ttl")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("ttl", "key", "string or buffer"));
         };
         send_cmd(
@@ -635,8 +637,8 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        members: &[JsLocal<'_>],
+        key: RedisArgument<'_>,
+        members: Rest<'_, RedisArgument<'_>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "srem")?;
@@ -647,16 +649,17 @@ impl JSValkeyClient {
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(1 + members.len());
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("srem", "key", "string or buffer"));
         };
         args.push(key);
 
-        for arg in JsLocal::to_js_slice(members) {
-            if arg.is_undefined_or_null() {
+        for arg in members.iter() {
+            let arg = arg.convert(global)?;
+            if matches!(arg, RedisArgument::None) {
                 break;
             }
-            let Some(value) = from_js(global, *arg)? else {
+            let Some(value) = from_argument(global, arg)? else {
                 return Err(global.throw_invalid_argument_type(
                     "srem",
                     "member",
@@ -681,15 +684,15 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        count: JsLocal<'_>,
+        key: RedisArgument<'_>,
+        count: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "srandmember")?;
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(2);
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type(
                 "srandmember",
                 "key",
@@ -699,8 +702,8 @@ impl JSValkeyClient {
         args.push(key);
 
         // Optional count argument
-        if !count.to_js().is_undefined_or_null() {
-            let Some(count_arg) = from_js(global, count.to_js())? else {
+        if !matches!(count, RedisArgument::None) {
+            let Some(count_arg) = from_argument(global, count)? else {
                 return Err(global.throw_invalid_argument_type(
                     "srandmember",
                     "count",
@@ -725,12 +728,12 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
+        key: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "smembers")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("smembers", "key", "string or buffer"));
         };
         send_cmd(
@@ -749,22 +752,22 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        count: JsLocal<'_>,
+        key: RedisArgument<'_>,
+        count: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "spop")?;
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(2);
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("spop", "key", "string or buffer"));
         };
         args.push(key);
 
         // Optional count argument
-        if !count.to_js().is_undefined_or_null() {
-            let Some(count_arg) = from_js(global, count.to_js())? else {
+        if !matches!(count, RedisArgument::None) {
+            let Some(count_arg) = from_argument(global, count)? else {
                 return Err(global.throw_invalid_argument_type(
                     "spop",
                     "count",
@@ -789,8 +792,8 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        members: &[JsLocal<'_>],
+        key: RedisArgument<'_>,
+        members: Rest<'_, RedisArgument<'_>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "sadd")?;
@@ -801,16 +804,17 @@ impl JSValkeyClient {
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(1 + members.len());
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("sadd", "key", "string or buffer"));
         };
         args.push(key);
 
-        for arg in JsLocal::to_js_slice(members) {
-            if arg.is_undefined_or_null() {
+        for arg in members.iter() {
+            let arg = arg.convert(global)?;
+            if matches!(arg, RedisArgument::None) {
                 break;
             }
-            let Some(value) = from_js(global, *arg)? else {
+            let Some(value) = from_argument(global, arg)? else {
                 return Err(global.throw_invalid_argument_type(
                     "sadd",
                     "member",
@@ -835,16 +839,16 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        member: JsLocal<'_>,
+        key: RedisArgument<'_>,
+        member: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "sismember")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("sismember", "key", "string or buffer"));
         };
-        let Some(member) = from_js(global, member.to_js())? else {
+        let Some(member) = from_argument(global, member)? else {
             return Err(global.throw_invalid_argument_type(
                 "sismember",
                 "value",
@@ -867,55 +871,83 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        fields: &[JsLocal<'_>],
+        key: RedisArgument<'_>,
+        fields: Rest<'_, RedisArgument<'_>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "hmget")?;
 
-        let fields = JsLocal::to_js_slice(fields);
-        let Some(&second_arg) = fields.first() else {
+        if fields.is_empty() {
             return Err(global.throw(format_args!("HMGET requires at least a key and one field")));
-        };
+        }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(1 + fields.len());
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("hmget", "key", "string or buffer"));
         };
         args.push(key);
 
-        if second_arg.is_array() {
-            let array_len = second_arg.get_length(global)?;
-            if array_len == 0 {
-                return Err(global.throw(format_args!("HMGET requires at least one field")));
+        for arg in fields.iter() {
+            let arg = arg.convert(global)?;
+            if matches!(arg, RedisArgument::None) {
+                break;
             }
+            let Some(field) = from_argument(global, arg)? else {
+                return Err(global.throw_invalid_argument_type(
+                    "hmget",
+                    "field",
+                    "string or buffer",
+                ));
+            };
+            args.push(field);
+        }
 
-            let mut array_iter = second_arg.array_iterator(global)?;
-            while let Some(element) = array_iter.next()? {
-                let Some(field) = from_js(global, element)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        "hmget",
-                        "field",
-                        "string or buffer",
-                    ));
-                };
-                args.push(field);
-            }
-        } else {
-            for arg in fields {
-                if arg.is_undefined_or_null() {
-                    break;
-                }
-                let Some(field) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        "hmget",
-                        "field",
-                        "string or buffer",
-                    ));
-                };
-                args.push(field);
-            }
+        send_cmd(
+            self,
+            global,
+            this_value.to_js(),
+            b"HMGET",
+            CommandArgs::Args(&args),
+            CommandMeta::default(),
+            "Failed to send HMGET command",
+        )
+    }
+
+    pub(crate) fn hmget_array(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        key: RedisArgument<'_>,
+        fields: JsLocal<'_, JSArray>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        require_not_subscriber(self, "hmget")?;
+
+        let second_arg = fields.to_js();
+
+        let mut args: Vec<JSArgument> = Vec::with_capacity(2);
+
+        let Some(key) = from_argument(global, key)? else {
+            return Err(global.throw_invalid_argument_type("hmget", "key", "string or buffer"));
+        };
+        args.push(key);
+
+        let array_len = second_arg.get_length(global)?;
+        if array_len == 0 {
+            return Err(global.throw(format_args!("HMGET requires at least one field")));
+        }
+
+        let mut array_iter = second_arg.array_iterator(global)?;
+        while let Some(element) = array_iter.next()? {
+            let Some(field) = from_js(global, element)? else {
+                return Err(global.throw_invalid_argument_type(
+                    "hmget",
+                    "field",
+                    "string or buffer",
+                ));
+            };
+            args.push(field);
         }
 
         send_cmd(
@@ -934,16 +966,16 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        field: JsLocal<'_>,
-        increment: JsLocal<'_>,
+        key: Deferred<'_, bun_core::String>,
+        field: Deferred<'_, bun_core::String>,
+        increment: Deferred<'_, bun_core::String>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "hincrby")?;
 
-        let key = key.to_js().to_bun_string(global)?;
-        let field = field.to_js().to_bun_string(global)?;
-        let increment = increment.to_js().to_bun_string(global)?;
+        let key = key.convert(global)?;
+        let field = field.convert(global)?;
+        let increment = increment.convert(global)?;
 
         let key_slice = key.to_utf8();
         let field_slice = field.to_utf8();
@@ -965,16 +997,16 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        field: JsLocal<'_>,
-        increment: JsLocal<'_>,
+        key: Deferred<'_, bun_core::String>,
+        field: Deferred<'_, bun_core::String>,
+        increment: Deferred<'_, bun_core::String>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "hincrbyfloat")?;
 
-        let key = key.to_js().to_bun_string(global)?;
-        let field = field.to_js().to_bun_string(global)?;
-        let increment = increment.to_js().to_bun_string(global)?;
+        let key = key.convert(global)?;
+        let field = field.convert(global)?;
+        let increment = increment.convert(global)?;
 
         let key_slice = key.to_utf8();
         let field_slice = field.to_utf8();
@@ -995,84 +1027,83 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        fields: &[JsLocal<'_>],
+        key: Deferred<'_, bun_core::String>,
+        fields: HashFields<'_>,
+        more: &[JsLocal<'_>],
         command: &'static str,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, command)?;
 
-        let key = key.to_js().to_bun_string(global)?;
-
-        let fields = JsLocal::to_js_slice(fields);
-        let second_arg = fields.first().copied().unwrap_or(JSValue::UNDEFINED);
+        let key = key.convert(global)?;
 
         let object_iter;
         let mut args: Vec<bun_core::Utf8Bytes<'_>> = Vec::new();
 
         args.push(key.to_utf8());
 
-        if second_arg.is_object() && !second_arg.is_array() {
-            // Pattern 1: Object/Record - hset(key, {field: value, ...})
-            let Some(obj) = second_arg.get_object() else {
-                return Err(global.throw_invalid_argument_type(command, "fields", "object"));
-            };
+        match fields {
+            HashFields::Object(obj) => {
+                // Pattern 1: Object/Record - hset(key, {field: value, ...})
+                object_iter = JSPropertyIterator::init(
+                    global,
+                    obj,
+                    jsc::PropertyIteratorOptions {
+                        skip_empty_name: false,
+                        include_value: true,
+                    },
+                )?;
 
-            object_iter = JSPropertyIterator::init(
-                global,
-                obj,
-                jsc::PropertyIteratorOptions {
-                    skip_empty_name: false,
-                    include_value: true,
-                },
-            )?;
+                args.ensure_total_capacity(1 + object_iter.len * 2);
 
-            args.ensure_total_capacity(1 + object_iter.len * 2);
+                while let Some((field_name, value)) = object_iter.next()? {
+                    args.push(field_name.to_utf8());
 
-            while let Some((field_name, value)) = object_iter.next()? {
-                args.push(field_name.to_utf8());
-
-                args.push(value.to_utf8(global)?);
+                    args.push(value.to_utf8(global)?);
+                }
             }
-        } else if second_arg.is_array() {
-            // Pattern 3: Array - hmset(key, [field, value, ...])
-            let mut iter = second_arg.array_iterator(global)?;
-            if iter.len % 2 != 0 {
-                return Err(global.throw(format_args!(
-                    "Array must have an even number of elements (field-value pairs)"
-                )));
-            }
-
-            args.ensure_total_capacity(1 + iter.len as usize);
-
-            while let Some(field_js) = iter.next()? {
-                args.push(field_js.to_utf8(global)?);
-
-                let Some(value_js) = iter.next()? else {
+            HashFields::Array(second_arg) => {
+                // Pattern 3: Array - hmset(key, [field, value, ...])
+                let mut iter = second_arg.to_js().array_iterator(global)?;
+                if iter.len % 2 != 0 {
                     return Err(global.throw(format_args!(
                         "Array must have an even number of elements (field-value pairs)"
                     )));
-                };
-                args.push(value_js.to_utf8(global)?);
-            }
-        } else {
-            // Pattern 2: Variadic - hset(key, field, value, ...)
-            if fields.len() < 2 {
-                return Err(global.throw(format_args!(
-                    "HSET requires at least key, field, and value arguments"
-                )));
-            }
+                }
 
-            if !fields.len().is_multiple_of(2) {
-                return Err(global.throw(format_args!(
-                    "HSET requires field-value pairs (even number of arguments after key)"
-                )));
+                args.ensure_total_capacity(1 + iter.len as usize);
+
+                while let Some(field_js) = iter.next()? {
+                    args.push(field_js.to_utf8(global)?);
+
+                    let Some(value_js) = iter.next()? else {
+                        return Err(global.throw(format_args!(
+                            "Array must have an even number of elements (field-value pairs)"
+                        )));
+                    };
+                    args.push(value_js.to_utf8(global)?);
+                }
             }
+            HashFields::Other(first) => {
+                // Pattern 2: Variadic - hset(key, field, value, ...)
+                if more.is_empty() {
+                    return Err(global.throw(format_args!(
+                        "HSET requires at least key, field, and value arguments"
+                    )));
+                }
 
-            args.ensure_total_capacity(1 + fields.len());
+                if more.len().is_multiple_of(2) {
+                    return Err(global.throw(format_args!(
+                        "HSET requires field-value pairs (even number of arguments after key)"
+                    )));
+                }
 
-            for field_or_value in fields {
-                args.push(field_or_value.to_utf8(global)?);
+                args.ensure_total_capacity(2 + more.len());
+
+                args.push(hash_text(global, first)?);
+                for field_or_value in more {
+                    args.push(hash_text(global, *field_or_value)?);
+                }
             }
         }
 
@@ -1100,20 +1131,22 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        fields: &[JsLocal<'_>],
+        key: Deferred<'_, bun_core::String>,
+        fields: HashFields<'_>,
+        more: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        self.hset_impl(this_value, cx, key, fields, "HSET")
+        self.hset_impl(this_value, cx, key, fields, more, "HSET")
     }
 
     pub(crate) fn hmset(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        fields: &[JsLocal<'_>],
+        key: Deferred<'_, bun_core::String>,
+        fields: HashFields<'_>,
+        more: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        self.hset_impl(this_value, cx, key, fields, "HMSET")
+        self.hset_impl(this_value, cx, key, fields, more, "HMSET")
     }
 
     cmd_key_varargs!(hdel, "hdel", "HDEL", "key", NotSubscriber);
@@ -1136,20 +1169,20 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        field: JsLocal<'_>,
-        value: JsLocal<'_>,
+        key: RedisArgument<'_>,
+        field: RedisArgument<'_>,
+        value: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "hsetnx")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("hsetnx", "key", "string or buffer"));
         };
-        let Some(field) = from_js(global, field.to_js())? else {
+        let Some(field) = from_argument(global, field)? else {
             return Err(global.throw_invalid_argument_type("hsetnx", "field", "string or buffer"));
         };
-        let Some(value) = from_js(global, value.to_js())? else {
+        let Some(value) = from_argument(global, value)? else {
             return Err(global.throw_invalid_argument_type("hsetnx", "value", "string or buffer"));
         };
         send_cmd(
@@ -1167,17 +1200,17 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key: JsLocal<'_>,
-        field: JsLocal<'_>,
+        key: RedisArgument<'_>,
+        field: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "hexists")?;
 
-        let Some(key) = from_js(global, key.to_js())? else {
+        let Some(key) = from_argument(global, key)? else {
             return Err(global.throw_invalid_argument_type("hexists", "key", "string or buffer"));
         };
 
-        let Some(field) = from_js(global, field.to_js())? else {
+        let Some(field) = from_argument(global, field)? else {
             return Err(global.throw_invalid_argument_type("hexists", "field", "string or buffer"));
         };
         send_cmd(
@@ -1196,12 +1229,12 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        message: JsLocal<'_>,
+        message: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let message: Option<JSArgument> = if !message.to_js().is_undefined_or_null() {
+        let message: Option<JSArgument> = if !matches!(message, RedisArgument::None) {
             // Only use the first argument if provided, ignore any additional arguments
-            let Some(m) = from_js(global, message.to_js())? else {
+            let Some(m) = from_argument(global, message)? else {
                 return Err(global.throw_invalid_argument_type(
                     "ping",
                     "message",
@@ -1382,24 +1415,24 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        source: JsLocal<'_>,
-        destination: JsLocal<'_>,
-        member: JsLocal<'_>,
+        source: RedisArgument<'_>,
+        destination: RedisArgument<'_>,
+        member: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "smove")?;
 
-        let Some(source) = from_js(global, source.to_js())? else {
+        let Some(source) = from_argument(global, source)? else {
             return Err(global.throw_invalid_argument_type("smove", "source", "string or buffer"));
         };
-        let Some(destination) = from_js(global, destination.to_js())? else {
+        let Some(destination) = from_argument(global, destination)? else {
             return Err(global.throw_invalid_argument_type(
                 "smove",
                 "destination",
                 "string or buffer",
             ));
         };
-        let Some(member) = from_js(global, member.to_js())? else {
+        let Some(member) = from_argument(global, member)? else {
             return Err(global.throw_invalid_argument_type("smove", "member", "string or buffer"));
         };
         send_cmd(
@@ -1520,34 +1553,20 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        channel: JsLocal<'_>,
-        message: JsLocal<'_>,
+        channel: Deferred<'_, bun_core::Utf8Bytes<'static>>,
+        message: Deferred<'_, bun_core::Utf8Bytes<'static>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         require_not_subscriber(self, "publish")?;
 
-        let mut args: Vec<JSArgument> = Vec::with_capacity(2);
-
-        let arg0 = channel.to_js();
-        if !arg0.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "channel", "string"));
-        }
-        let channel = from_js(global, arg0)?.expect("unreachable");
-
-        args.push(channel);
-
-        let arg1 = message.to_js();
-        if !arg1.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "message", "string"));
-        }
-        let message = from_js(global, arg1)?.expect("unreachable");
-        args.push(message);
+        let channel = channel.convert(global)?;
+        let message = message.convert(global)?;
         send_cmd(
             self,
             global,
             this_value.to_js(),
             b"PUBLISH",
-            CommandArgs::Args(&args),
+            CommandArgs::Slices(&[channel, message]),
             CommandMeta::default(),
             "Failed to send PUBLISH command",
         )
@@ -1557,8 +1576,8 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        channel: JsLocal<'_>,
-        listener: JsLocal<'_>,
+        channel: RedisChannel<'_>,
+        listener: JsLocal<'_, Callable>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
@@ -1566,13 +1585,10 @@ impl JSValkeyClient {
         // stays live across those calls.
         let _guard = self.ref_guard();
 
-        let (channel_or_many, handler_callback) = (channel.to_js(), listener.to_js());
+        let handler_callback = listener.to_js();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
-        if !handler_callback.is_callable() {
-            return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
-        }
-        if !channel_or_many.is_string() && !channel_or_many.is_array() {
+        if matches!(channel, RedisChannel::Other) {
             return Err(global.throw_invalid_argument_type(
                 "subscribe",
                 "channel",
@@ -1595,7 +1611,8 @@ impl JSValkeyClient {
         }
 
         // The first argument given is the channel or may be an array of channels.
-        if channel_or_many.is_array() {
+        if let RedisChannel::Many(many) = channel {
+            let channel_or_many = many.to_js();
             if channel_or_many.get_length(global)? == 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "subscribe requires at least one channel"
@@ -1622,7 +1639,7 @@ impl JSValkeyClient {
                 // handler.
                 self.upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
-        } else {
+        } else if let Some(channel_or_many) = channel.string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
@@ -1673,7 +1690,8 @@ impl JSValkeyClient {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
+        channel: Option<RedisChannel<'_>>,
+        listener: Rest<'_, Option<JsLocal<'_, Callable>>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         // Hold a ref so `*self` stays live across the handler-map updates and
@@ -1683,12 +1701,10 @@ impl JSValkeyClient {
         // Check if we're in subscription mode
         require_subscriber(self, "unsubscribe")?;
 
-        let args_view = JsLocal::to_js_slice(args);
-
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         // The first argument can be a channel or an array of channels
-        let Some(&channel_or_many) = args_view.first() else {
+        let Some(channel_or_many) = channel else {
             // If no arguments, unsubscribe from all channels
             self.clear_all_receive_handlers(global)?;
             return Self::send_unsubscribe_request_and_cleanup(
@@ -1708,22 +1724,20 @@ impl JSValkeyClient {
         }
 
         // Two arguments means .unsubscribe(channel, listener) is invoked.
-        if let &[_, listener_cb] = args_view {
+        if let (Some(listener_cb), 1) = (listener.iter().next(), listener.len()) {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
-            if !channel_or_many.is_string() {
+            let Some(channel) = channel_or_many.string() else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
-            }
+            };
 
-            let channel = channel_or_many;
-
-            if !listener_cb.is_callable() {
+            let Some(listener_cb) = listener_cb.convert(global)? else {
                 return Err(global.throw_invalid_argument_type(
                     "unsubscribe",
                     "listener",
                     "function",
                 ));
-            }
+            };
 
             // Populate the redis_channels list with the single channel to
             // unsubscribe from. This s important since this list is used to send
@@ -1735,7 +1749,7 @@ impl JSValkeyClient {
             redis_channels.push(ch);
 
             let remaining_listeners =
-                match self.remove_receive_handler(global, channel, listener_cb) {
+                match self.remove_receive_handler(global, channel, listener_cb.to_js()) {
                     Ok(Some(n)) => n,
                     Ok(None) => {
                         // Listeners weren't present in the first place, so we can return a
@@ -1766,7 +1780,8 @@ impl JSValkeyClient {
             ));
         }
 
-        if channel_or_many.is_array() {
+        if let RedisChannel::Many(many) = channel_or_many {
+            let channel_or_many = many.to_js();
             if channel_or_many.get_length(global)? == 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "unsubscribe requires at least one channel"
@@ -1790,7 +1805,7 @@ impl JSValkeyClient {
                 // Clear the handlers for this channel
                 self.clear_receive_handlers(global, channel_arg)?;
             }
-        } else if channel_or_many.is_string() {
+        } else if let Some(channel_or_many) = channel_or_many.string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));

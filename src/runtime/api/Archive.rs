@@ -2,13 +2,18 @@
 
 use std::ffi::CString;
 
+use crate::generated_bindgen::archive::{
+    ArchiveData, ArchiveExtractOptions, ArchiveGlob, ArchiveOptions,
+};
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
 use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
+use bun_jsc::{
+    self as jsc, JSGlobalObject, JSMap, JSObject, JSPromise, JSPromiseStrong, JSValue, JsResult,
+};
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
 use bun_ptr::RefPtr;
@@ -142,17 +147,18 @@ impl Archive {
     /// When no options are provided, no compression is applied
     pub(crate) fn constructor(
         cx: &mut JsScope<'_>,
-        data: JsLocal<'_>,
-        options: JsLocal<'_>,
+        data: ArchiveData<'_>,
+        options: Option<ArchiveOptions<'_>>,
     ) -> JsResult<Self> {
         let global = cx.global();
-        let data = data.to_js();
 
         // Parse compression options
-        let compress = parse_compression_options(global, options.to_js())?;
+        let compress = parse_compression_options(global, options)?;
 
         // For Blob/Archive, ref the existing store (zero-copy)
-        if let Some(blob) = blob_from_js(data) {
+        if let ArchiveData::Object(data) = data
+            && let Some(blob) = data.as_class_ref::<Blob>()
+        {
             if let Some(store) = blob.store.get().as_ref() {
                 return Ok(Self {
                     store: store.clone(),
@@ -162,13 +168,15 @@ impl Archive {
         }
 
         // For ArrayBuffer/TypedArray, copy the data
-        if let Some(array_buffer) = data.as_array_buffer(global) {
+        if let ArchiveData::Buffer(data) = data
+            && let Some(array_buffer) = data.to_js().as_array_buffer(global)
+        {
             let data: Vec<u8> = array_buffer.slice().to_vec();
             return Ok(create_archive(data, compress));
         }
 
         // For plain objects, build a tarball
-        if data.is_object() {
+        if let ArchiveData::Object(data) = data {
             let data = build_tarball_from_object(global, data)?;
             return Ok(create_archive(data, compress));
         }
@@ -183,29 +191,17 @@ impl Archive {
 /// Returns .none if no compression specified, caller must handle defaults
 fn parse_compression_options(
     global: &JSGlobalObject,
-    options_arg: JSValue,
+    options_arg: Option<ArchiveOptions<'_>>,
 ) -> JsResult<Compression> {
     // No options provided means no compression (caller handles defaults)
-    if options_arg.is_undefined_or_null() {
+    let Some(options_arg) = options_arg else {
         return Ok(Compression::None);
-    }
-
-    if !options_arg.is_object() {
-        return Err(
-            global.throw_invalid_arguments(format_args!("Archive: options must be an object"))
-        );
-    }
+    };
 
     // Check for compress option
-    if let Some(compress_val) = options_arg.get_truthy(global, "compress")? {
+    if let Some(compress_val) = options_arg.compress(global)? {
         // compress must be "gzip"
-        if !compress_val.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Archive: compress option must be a string"
-            )));
-        }
-
-        let compress_str = compress_val.to_utf8(global)?;
+        let compress_str = compress_val.to_utf8();
 
         if compress_str.slice() != b"gzip" {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -215,13 +211,8 @@ fn parse_compression_options(
 
         // Parse level option (1-12, default 6)
         let mut level: u8 = 6;
-        if let Some(level_val) = options_arg.get_truthy(global, "level")? {
-            if !level_val.is_number() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("Archive: level must be a number"))
-                );
-            }
-            let level_num = level_val.to_int64();
+        if let Some(level_val) = options_arg.level(global)? {
+            let level_num = level_val as i64;
             if level_num < 1 || level_num > 12 {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Archive: level must be between 1 and 12"
@@ -249,12 +240,11 @@ fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
 }
 
 /// Shared helper that builds tarball bytes from a JS object
-fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
+fn build_tarball_from_object(
+    global: &JSGlobalObject,
+    js_obj: JsLocal<'_, JSObject>,
+) -> JsResult<Vec<u8>> {
     use libarchive::lib;
-
-    let Some(js_obj) = obj.get_object() else {
-        return Err(global.throw_invalid_arguments(format_args!("Expected an object")));
-    };
 
     // Set up archive first
     let mut growing_buffer = lib::GrowingBuffer::init();
@@ -386,28 +376,22 @@ impl Archive {
     /// `Archive.write(path, data, options?)`. `options.gzip` overrides the compression of an `Archive` given as `data`.
     pub(crate) fn write(
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        data: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: &bun_core::String,
+        data_arg: ArchiveData<'_>,
+        options: Option<ArchiveOptions<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let (path_arg, data_arg) = (path.to_js(), data.to_js());
 
-        // Get the path
-        if !path_arg.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Archive.write: first argument must be a string path"
-            )));
-        }
-
-        let path_slice = path_arg.to_utf8(global)?;
+        let path_slice = path.to_utf8();
 
         // Parse options for compression override
-        let options_compress = parse_compression_options(global, options.to_js())?;
+        let options_compress = parse_compression_options(global, options)?;
 
         // For Archive instances, use options override or archive's compression settings
-        if let Some(archive) = data_arg.as_class_ref::<Archive>() {
+        if let ArchiveData::Object(data_arg) = data_arg
+            && let Some(archive) = data_arg.as_class_ref::<Archive>()
+        {
             let compress = if !matches!(options_compress, Compression::None) {
                 options_compress
             } else {
@@ -422,7 +406,9 @@ impl Archive {
         }
 
         // For Blobs, use store reference with options compression
-        if let Some(blob) = blob_from_js(data_arg) {
+        if let ArchiveData::Object(data_arg) = data_arg
+            && let Some(blob) = data_arg.as_class_ref::<Blob>()
+        {
             if let Some(store) = blob.store.get().as_ref() {
                 return start_write_task(
                     &cx,
@@ -434,7 +420,9 @@ impl Archive {
         }
 
         // For ArrayBuffer/TypedArray, copy the data with options compression
-        if let Some(array_buffer) = data_arg.as_array_buffer(global) {
+        if let ArchiveData::Buffer(data_arg) = data_arg
+            && let Some(array_buffer) = data_arg.to_js().as_array_buffer(global)
+        {
             let data = array_buffer.slice().to_vec();
             return start_write_task(
                 &cx,
@@ -445,7 +433,7 @@ impl Archive {
         }
 
         // For plain objects, build a tarball with options compression
-        if data_arg.is_object() {
+        if let ArchiveData::Object(data_arg) = data_arg {
             let data = build_tarball_from_object(global, data_arg)?;
             return start_write_task(
                 &cx,
@@ -468,34 +456,20 @@ impl Archive {
     pub(crate) fn extract(
         &self,
         cx: &mut JsScope<'_>,
-        path: JsLocal<'_>,
-        options: JsLocal<'_>,
+        path: &bun_core::String,
+        options: Option<&ArchiveExtractOptions<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let (path_arg, options_arg) = (path.to_js(), options.to_js());
-        if !path_arg.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Archive.extract requires a path argument"
-            )));
-        }
 
-        let path_slice = path_arg.to_utf8(global)?;
+        let path_slice = path.to_utf8();
 
         // Parse options
         let mut glob_patterns: Option<Vec<GlobPattern>> = None;
 
-        if !options_arg.is_undefined_or_null() {
-            if !options_arg.is_object() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Archive.extract: second argument must be an options object"
-                )));
-            }
-
-            // Parse glob option
-            if let Some(glob_val) = options_arg.get_truthy(global, "glob")? {
-                glob_patterns = parse_pattern_arg(global, glob_val, b"Archive.extract", b"glob")?;
-            }
+        // Parse glob option
+        if let Some(glob_val) = options.and_then(|options| options.glob.as_ref()) {
+            glob_patterns = parse_pattern_arg(global, glob_val, b"Archive.extract", b"glob")?;
         }
 
         start_extract_task(&cx, &self.store, path_slice.slice(), glob_patterns)
@@ -506,20 +480,22 @@ impl Archive {
 /// Returns null for empty strings or empty arrays (treated as "no filter").
 fn parse_pattern_arg(
     global: &JSGlobalObject,
-    arg: JSValue,
+    arg: &ArchiveGlob<'_>,
     api_name: &[u8],
     name: &[u8],
 ) -> JsResult<Option<Vec<GlobPattern>>> {
-    // Single string
-    if arg.is_string() {
-        let str_slice = arg.to_utf8(global)?;
-        // Empty string = no filter
-        if str_slice.slice().is_empty() {
-            return Ok(None);
+    let arg = match arg {
+        // Single string
+        ArchiveGlob::Pattern(str_slice) => {
+            // Empty string = no filter
+            if str_slice.slice().is_empty() {
+                return Ok(None);
+            }
+            let patterns = vec![GlobPattern::new(str_slice.slice())];
+            return Ok(Some(patterns));
         }
-        let patterns = vec![GlobPattern::new(str_slice.slice())];
-        return Ok(Some(patterns));
-    }
+        ArchiveGlob::List(list) => list.to_js(),
+    };
 
     // Array of strings
     if arg.js_type() == jsc::JSType::Array {
@@ -585,16 +561,19 @@ impl Archive {
 
     /// Instance method: archive.files(glob?)
     /// Returns Promise<Map<string, File>> with archive file contents
-    pub(crate) fn files(&self, cx: &mut JsScope<'_>, glob: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn files(
+        &self,
+        cx: &mut JsScope<'_>,
+        glob: Option<ArchiveGlob<'_>>,
+    ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let glob = glob.to_js();
 
         let mut glob_patterns: Option<Vec<GlobPattern>> = None;
         // errdefer freePatterns — handled by Drop
 
-        if !glob.is_undefined_or_null() {
-            glob_patterns = parse_pattern_arg(global, glob, b"Archive.files", b"glob")?;
+        if let Some(glob) = glob {
+            glob_patterns = parse_pattern_arg(global, &glob, b"Archive.files", b"glob")?;
         }
 
         start_files_task(&cx, &self.store, glob_patterns)

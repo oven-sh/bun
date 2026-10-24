@@ -3,7 +3,7 @@ import * as b from "../../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::test_runner::timers::fake_timers" });
 
 /** Returns `this`, which is `jest` or `vi`. */
-const chainable = { passThis: true, returns: b.any, capability: "js", throws: true } as const;
+const chainable = { passThis: true, returns: b.opaque, capability: "js", throws: true } as const;
 
 export const FakeTimersOptions = b.dictionary(
   { now: b.f64.allowDate.optional },

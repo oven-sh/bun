@@ -285,7 +285,6 @@ name = "bun_bundler_jsc"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_ast",
  "bun_bundler",
  "bun_jsc",
  "bun_opaque",

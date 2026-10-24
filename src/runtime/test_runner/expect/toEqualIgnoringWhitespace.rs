@@ -1,7 +1,8 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 use super::throw;
+use crate::generated_bindgen::expect::StringValue;
+use bun_jsc::JsResult;
+use bun_jsc::bindgen::{JsScope, JsWrapper};
 
 // Matches ' ' and '\t'..'\r' (0x09–0x0D) — includes VT (0x0B), which Rust's
 // u8::is_ascii_whitespace does not.
@@ -15,21 +16,23 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        expected: StringValue<'_>,
+    ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) =
             self.matcher_prelude(global, this_value.to_js(), "toEqualIgnoringWhitespace", "<green>expected<r>")?;
 
-        let expected = expected.to_js();
+        let expected = match expected {
+            StringValue::String(string) => string.to_js(),
+            StringValue::StringObject(object) => object.to_js(),
+            StringValue::Other => {
+                return Err(global.throw(format_args!(
+                    "toEqualIgnoringWhitespace() requires argument to be a string"
+                )));
+            }
+        };
 
-        if !expected.is_string() {
-            return Err(global.throw(format_args!(
-                "toEqualIgnoringWhitespace() requires argument to be a string"
-            )));
-        }
-
-        let mut pass = value.is_string() && expected.is_string();
+        let mut pass = value.is_string();
 
         if pass {
             let value_slice = value.to_utf8(global)?;
@@ -79,7 +82,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let mut formatter = super::make_formatter(global);

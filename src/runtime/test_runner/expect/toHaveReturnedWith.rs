@@ -2,9 +2,10 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
 
 use super::DiffFormatter;
+use super::Expect;
 use super::mock;
 use super::throw;
-use super::Expect;
+use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     pub(crate) fn to_have_returned_with(
@@ -12,9 +13,15 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         MarkedArgumentBuffer::new(|return_roots| {
-            to_have_returned_with_impl(self, cx.global(), this_value.to_js(), expected.to_js(), return_roots)
+            to_have_returned_with_impl(
+                self,
+                cx.global(),
+                this_value.to_js(),
+                expected,
+                return_roots,
+            )
         })
     }
 }
@@ -23,9 +30,9 @@ fn to_have_returned_with_impl(
     this: &Expect,
     global: &JSGlobalObject,
     this_value: JSValue,
-    expected: JSValue,
+    expected: JsLocal<'_>,
     return_roots: &mut MarkedArgumentBuffer,
-) -> JsResult<JSValue> {
+) -> JsResult<()> {
     let (this, returns, _) = this.mock_prologue(
         global,
         this_value,
@@ -71,7 +78,7 @@ fn to_have_returned_with_impl(
     }
 
     if pass != this.flags.get().not() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(());
     }
 
     // Handle failure
@@ -96,7 +103,11 @@ fn to_have_returned_with_impl(
     // Case: Only one successful return, no errors
     if calls_count == 1 && successful_returns_count == 1 {
         let received = successful_returns[0];
-        if expected.is_string() && received.is_string() {
+        if received.is_string()
+            && StringValue::from_js(global, expected, |expected| {
+                Ok(!matches!(expected, StringValue::Other))
+            })?
+        {
             let diff_format = DiffFormatter::new(global, received, expected, false)?;
             return throw!(this, global, signature, "\n\n{}\n", diff_format);
         }

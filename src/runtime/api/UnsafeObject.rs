@@ -1,6 +1,6 @@
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{BufferSource, JsLocal, JsScope};
 use bun_jsc::virtual_machine::{GCLevel, VirtualMachine};
 use bun_jsc::{self as jsc, JSType, JSValue, JsResult};
 
@@ -18,11 +18,11 @@ pub(crate) fn gc_aggression_level(level: Option<f64>) -> i32 {
 
 pub(crate) fn array_buffer_to_string<'a>(
     cx: &mut JsScope<'a>,
-    buffer: JsLocal<'a>,
+    buffer: JsLocal<'a, BufferSource>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let buffer = buffer.to_js();
-    if !buffer.is_cell() || !buffer.js_type().is_typed_array_or_array_buffer() {
+    if buffer.js_type() == JSType::DataView {
         return Err(global.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
     }
 

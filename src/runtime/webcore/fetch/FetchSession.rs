@@ -7,11 +7,11 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use bun_core::Tag as BunStringTag;
 use bun_http::{self as http, Headers};
 use bun_http_jsc::headers_jsc::from_fetch_headers;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{AnyValue, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _, JsError, JsRef,
-    JsResult, URLJsc as _,
+    self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsError, JsRef, JsResult,
+    URLJsc as _,
 };
 use bun_ptr::RefPtr;
 
@@ -20,6 +20,10 @@ use crate::webcore::FetchHeaders;
 use crate::webcore::response::HeadersRef;
 
 pub(crate) use crate::generated_bindgen::fetch_session::js_FetchSession as js;
+use crate::generated_bindgen::fetch_session::{
+    CheckServerIdentity, FetchSessionInitArgument, FetchTls, FetchTlsMember, FlagOrNumber,
+    KeepAlive, PositiveNumber, ProxyHeaders, ProxyInit, UnixPath,
+};
 
 /// `proxy` as given to `fetch()` or to a session. Absent means "inherit".
 #[derive(Clone)]
@@ -44,24 +48,20 @@ pub(crate) struct TlsOption {
 pub(crate) fn parse_tls(
     vm: &VirtualMachine,
     global: &JSGlobalObject,
-    tls: JSValue,
+    tls: FetchTls<'_>,
 ) -> JsResult<TlsOption> {
     let mut parsed = TlsOption {
         ssl_config: None,
         reject_unauthorized: None,
         check_server_identity: None,
     };
-    if let Some(reject) = tls.get(global, "rejectUnauthorized")? {
-        if reject.is_boolean() {
-            parsed.reject_unauthorized = Some(reject.as_boolean());
-        } else if reject.is_number() {
-            parsed.reject_unauthorized = Some(reject.to_int32() != 0);
+    parsed.reject_unauthorized = tls.reject_unauthorized(global)?.to_bool();
+    match tls.check_server_identity(global)? {
+        CheckServerIdentity::Missing => {}
+        CheckServerIdentity::Callback(callback) => {
+            parsed.check_server_identity = Some(callback.to_js());
         }
-    }
-    if let Some(callback) = tls.get(global, "checkServerIdentity")? {
-        if callback.is_cell() && callback.is_callable() {
-            parsed.check_server_identity = Some(callback);
-        } else if !callback.is_null() {
+        CheckServerIdentity::Other(callback) => {
             return Err(global.throw_invalid_property_type_value(
                 b"tls.checkServerIdentity",
                 b"function",
@@ -69,13 +69,23 @@ pub(crate) fn parse_tls(
             ));
         }
     }
-    if let Some(config) = SSLConfig::from_js(vm, global, tls, false)? {
+    if let Some(config) = SSLConfig::from_js(vm, global, tls.object(), false)? {
         parsed.ssl_config = Some(http::ssl_config::global_registry::intern(config));
     }
     Ok(parsed)
 }
 
-fn proxy_href(global: &JSGlobalObject, value: JSValue) -> JsResult<Box<[u8]>> {
+impl FlagOrNumber {
+    pub(crate) fn to_bool(self) -> Option<bool> {
+        match self {
+            FlagOrNumber::Flag(flag) => Some(flag),
+            FlagOrNumber::Number(number) => Some(JSValue::js_number(number).to_int32() != 0),
+            FlagOrNumber::Other => None,
+        }
+    }
+}
+
+fn proxy_href(global: &JSGlobalObject, value: impl AnyValue) -> JsResult<Box<[u8]>> {
     let href = jsc::URL::href_from_js(value, global)?;
     if href.tag() == BunStringTag::Dead {
         return Err(global
@@ -88,7 +98,7 @@ fn proxy_href(global: &JSGlobalObject, value: JSValue) -> JsResult<Box<[u8]>> {
     Ok(href.to_owned_slice().into_boxed_slice())
 }
 
-fn invalid_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsError {
+fn invalid_proxy(global: &JSGlobalObject, proxy_arg: impl AnyValue) -> JsError {
     global.throw_invalid_argument_type_value2(
         "proxy",
         "a string, a URL, an object with a \"url\", or false",
@@ -97,60 +107,66 @@ fn invalid_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsError {
 }
 
 /// What a `proxy` value says.
-pub(crate) enum ProxyArg {
+pub(crate) enum ProxyArg<'a> {
     /// `undefined`, `null` or `""`: the caller's default applies.
     Absent,
     /// Names no proxy, such as a number or an object without `url`.
-    Unusable,
+    Unusable(JsLocal<'a>),
     Policy(ProxyOption),
 }
 
-pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResult<ProxyArg> {
-    if proxy_arg.is_boolean() {
-        // `true` names no proxy; treating it as "inherit" would go direct
-        // wherever the environment has none.
-        if proxy_arg.as_boolean() {
-            return Err(invalid_proxy(global, proxy_arg));
-        }
-        return Ok(ProxyArg::Policy(ProxyOption::Direct));
-    }
-    // A URL instance has no `.url` own property; treat it as its href.
-    let is_url_instance = bun_jsc::DOMURL::cast_(proxy_arg, global.vm()).is_some();
-    if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(global)? > 0) {
-        return Ok(ProxyArg::Policy(ProxyOption::Explicit {
+pub(crate) fn parse_proxy<'a>(
+    global: &JSGlobalObject,
+    proxy_arg: ProxyInit<'a>,
+) -> JsResult<ProxyArg<'a>> {
+    let explicit = |proxy_arg: JSValue| -> JsResult<ProxyArg<'a>> {
+        Ok(ProxyArg::Policy(ProxyOption::Explicit {
             href: proxy_href(global, proxy_arg)?,
             headers: None,
             respect_no_proxy: true,
-        }));
-    }
-    if proxy_arg.is_undefined_or_null() || proxy_arg.is_string() {
-        return Ok(ProxyArg::Absent);
-    }
-    if !proxy_arg.is_object() {
-        return Ok(ProxyArg::Unusable);
-    }
-    let Some(url_arg) = proxy_arg.get(global, "url")? else {
-        return Ok(ProxyArg::Unusable);
+        }))
     };
-    if url_arg.is_undefined_or_null() {
-        return Ok(ProxyArg::Unusable);
-    }
+    let string = |proxy_arg: JSValue| {
+        if proxy_arg.get_length(global)? > 0 {
+            explicit(proxy_arg)
+        } else {
+            Ok(ProxyArg::Absent)
+        }
+    };
+    let proxy_arg = match proxy_arg {
+        // `true` names no proxy; treating it as "inherit" would go direct
+        // wherever the environment has none.
+        ProxyInit::Flag(true) => return Err(invalid_proxy(global, JSValue::TRUE)),
+        ProxyInit::Flag(false) => return Ok(ProxyArg::Policy(ProxyOption::Direct)),
+        // A URL instance has no `.url` own property; treat it as its href.
+        ProxyInit::Url(url) => return explicit(url.to_js()),
+        ProxyInit::Text(text) => return string(text.to_js()),
+        ProxyInit::StringObject(text) => return string(text.to_js()),
+        ProxyInit::Missing => return Ok(ProxyArg::Absent),
+        ProxyInit::Other(proxy_arg) => return Ok(ProxyArg::Unusable(proxy_arg)),
+        ProxyInit::Options(proxy_arg) => proxy_arg,
+    };
+    let Some(url_arg) = proxy_arg.url(global)? else {
+        return Ok(ProxyArg::Unusable(proxy_arg.object().as_value()));
+    };
     // `href_from_js` accepts a string or a `URL` and is the sole validator.
     let href = proxy_href(global, url_arg)?;
     let mut headers = None;
-    if let Some(headers_value) = proxy_arg.get(global, "headers")? {
-        if !headers_value.is_undefined_or_null() {
-            if let Some(fetch_headers) = FetchHeaders::cast(headers_value) {
+    match proxy_arg.headers(global)? {
+        ProxyHeaders::Missing => {}
+        ProxyHeaders::Headers(headers_value) => {
+            if let Some(fetch_headers) = FetchHeaders::cast(headers_value.to_js()) {
                 let fetch_headers = bun_ptr::BackRef::from(fetch_headers);
                 headers = Some(from_fetch_headers(global, Some(&*fetch_headers), None)?);
-            } else if let Some(fetch_headers) = HeadersRef::create_from_js(global, headers_value)? {
+            }
+        }
+        ProxyHeaders::Init(headers_value) => {
+            if let Some(fetch_headers) = HeadersRef::create_from_js(global, headers_value)? {
                 headers = Some(from_fetch_headers(global, Some(&fetch_headers), None)?);
             }
         }
     }
-    let respect_no_proxy = proxy_arg
-        .get_boolean_strict(global, "respectNoProxy")?
-        .unwrap_or(true);
+    let respect_no_proxy = proxy_arg.respect_no_proxy(global)?.unwrap_or(true);
     Ok(ProxyArg::Policy(ProxyOption::Explicit {
         href,
         headers,
@@ -191,14 +207,13 @@ bun_jsc::impl_abort_handle_owner!(FetchSession, abort_handle, |this, _cause| {
 pub(crate) struct SessionHold(RefPtr<FetchSession>);
 
 impl SessionHold {
-    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<SessionHold> {
-        let Some(session) = FetchSession::from_js(value) else {
+    pub(crate) fn from_js(global: &JSGlobalObject, value: JsLocal<'_>) -> JsResult<SessionHold> {
+        let Some(session) = value.as_class_this_ptr::<FetchSession>() else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "fetch: 'session' must be a Bun.FetchSession"
             )));
         };
-        // SAFETY: `value` holds a ref on it.
-        let session = unsafe { RefPtr::init_ref(session) };
+        let session = RefPtr::from_this(session);
         session.used.set(true);
         if session.is_only_hold() {
             session.this_value.with_mut(|r| r.upgrade(global));
@@ -251,7 +266,7 @@ impl FetchSession {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        init: JsLocal<'a>,
+        init: FetchSessionInitArgument<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let mut this = Box::new(FetchSession {
             pool: http::PoolOptions {
@@ -274,7 +289,7 @@ impl FetchSession {
         unsafe {
             bun_jsc::AbortHandle::arm_owner(&raw mut *this, cx.js_thread().context());
         }
-        let check_server_identity = Self::parse_options(&mut this, cx.global(), init.to_js())?;
+        let check_server_identity = Self::parse_options(&mut this, cx.global(), init)?;
 
         // SAFETY: the allocation's one ref, which the wrapper adopts.
         let session = unsafe { RefPtr::from_raw(bun_core::heap::into_raw(this)) };
@@ -291,43 +306,46 @@ impl FetchSession {
     fn parse_options(
         this: &mut Self,
         global: &JSGlobalObject,
-        options: JSValue,
+        options: FetchSessionInitArgument<'_>,
     ) -> JsResult<Option<JSValue>> {
         let vm = global.bun_vm();
         let mut check_server_identity = None;
-        if options.is_undefined_or_null() {
-            return Ok(None);
-        }
-        if !options.is_object() {
-            return Err(global
-                .throw_invalid_arguments(format_args!("FetchSession: options must be an object")));
-        }
+        let options = match options {
+            FetchSessionInitArgument::Missing => return Ok(None),
+            FetchSessionInitArgument::Options(options) => options,
+            FetchSessionInitArgument::Other => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "FetchSession: options must be an object"
+                )));
+            }
+        };
 
-        if let Some(tls) = options.get(global, "tls")? {
-            if tls.is_object() {
+        match options.tls(global)? {
+            FetchTlsMember::Missing => {}
+            FetchTlsMember::Options(tls) => {
                 let parsed = parse_tls(vm, global, tls)?;
                 this.ssl_config = parsed.ssl_config;
                 this.reject_unauthorized = parsed.reject_unauthorized;
                 check_server_identity = parsed.check_server_identity;
-            } else if !tls.is_undefined_or_null() {
+            }
+            FetchTlsMember::Other => {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "FetchSession: 'tls' must be an object"
                 )));
             }
         }
 
-        if let Some(proxy) = options.get(global, "proxy")? {
-            match parse_proxy(global, proxy)? {
-                ProxyArg::Policy(policy) => this.proxy = Some(policy),
-                ProxyArg::Absent => {}
-                ProxyArg::Unusable => return Err(invalid_proxy(global, proxy)),
-            }
+        match parse_proxy(global, options.proxy(global)?)? {
+            ProxyArg::Policy(policy) => this.proxy = Some(policy),
+            ProxyArg::Absent => {}
+            ProxyArg::Unusable(proxy) => return Err(invalid_proxy(global, proxy)),
         }
 
-        if let Some(unix) = options.get(global, "unix")? {
-            if let Some(path) = super::parse_unix(vm, global, unix)? {
+        let unix = options.unix(global)?;
+        if !matches!(unix, UnixPath::Missing) {
+            if let Some(path) = super::parse_unix(vm, unix) {
                 this.unix = path;
-            } else if !unix.is_undefined_or_null() {
+            } else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "FetchSession: 'unix' must be a non-empty string"
                 )));
@@ -339,40 +357,33 @@ impl FetchSession {
             )));
         }
 
-        if let Some(keep_alive) = options.get(global, "keepAlive")? {
-            if keep_alive.is_boolean() {
-                this.keep_alive = keep_alive.as_boolean();
-            } else if keep_alive.is_object() {
-                if let Some(seconds) = positive_number(global, keep_alive, "idleTimeout")? {
+        match options.keep_alive(global)? {
+            KeepAlive::Missing => {}
+            KeepAlive::Flag(keep_alive) => this.keep_alive = keep_alive,
+            KeepAlive::Options(keep_alive) => {
+                if let Some(seconds) =
+                    positive_number(global, keep_alive.idle_timeout(global)?, "idleTimeout")?
+                {
                     // The pool timer has the same wheel limits as the request idle timeout.
                     this.pool.idle_timeout_seconds =
                         http::normalize_idle_timeout_seconds(seconds.ceil() as u64);
                 }
-                if let Some(count) = keep_alive.get(global, "maxIdleSockets")? {
-                    const FIELD_NAME: &[u8] = b"keepAlive.maxIdleSockets";
-                    // `validate_integer_range` takes NaN for the default.
-                    if count.is_number() && count.as_number().is_nan() {
+                if let Some(count) = keep_alive.max_idle_sockets(global)? {
+                    if count == 0 {
                         return Err(global.throw_range_error(
                             f64::NAN,
                             jsc::RangeErrorOptions {
-                                field_name: FIELD_NAME,
+                                field_name: b"keepAlive.maxIdleSockets",
                                 min: 1,
                                 max: i64::from(u16::MAX),
                                 ..Default::default()
                             },
                         ));
                     }
-                    this.pool.max_idle_sockets = global.validate_integer_range::<u16>(
-                        count,
-                        this.pool.max_idle_sockets,
-                        bun_jsc::IntegerRange {
-                            min: 1,
-                            max: i128::from(u16::MAX),
-                            field_name: FIELD_NAME,
-                        },
-                    )?;
+                    this.pool.max_idle_sockets = count;
                 }
-            } else if !keep_alive.is_undefined_or_null() {
+            }
+            KeepAlive::Other => {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "FetchSession: 'keepAlive' must be a boolean or an object"
                 )));
@@ -423,19 +434,13 @@ impl FetchSession {
 /// `keepAlive[name]` as a finite number above zero; `undefined` is absent.
 fn positive_number(
     global: &JSGlobalObject,
-    keep_alive: JSValue,
+    value: PositiveNumber,
     name: &'static str,
 ) -> JsResult<Option<f64>> {
-    let Some(value) = keep_alive.get(global, name)? else {
-        return Ok(None);
-    };
-    if value.is_undefined() {
-        return Ok(None);
-    }
-    let number = if value.is_number() {
-        value.as_number()
-    } else {
-        f64::NAN
+    let number = match value {
+        PositiveNumber::Missing => return Ok(None),
+        PositiveNumber::Number(number) => number,
+        PositiveNumber::Other => f64::NAN,
     };
     if !(number.is_finite() && number > 0.0) {
         return Err(global.throw_invalid_arguments(format_args!(

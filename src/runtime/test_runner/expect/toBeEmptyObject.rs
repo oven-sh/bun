@@ -1,17 +1,17 @@
-use bun_jsc::bindgen::{JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 use super::throw;
+use bun_jsc::JsResult;
+use bun_jsc::bindgen::{JsScope, JsWrapper};
 
 impl Expect {
-    pub(crate) fn to_be_empty_object(
+    pub(crate) fn to_be_empty_object<'a>(
         &self,
-        this_value: JsWrapper<'_, Self>,
+        this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let this_value = this_value.to_js();
-        let (this, value, not) = self.matcher_prelude(global, this_value, "toBeEmptyObject", "")?;
+        let (this, value, not) =
+            self.matcher_prelude(global, this_value.to_js(), "toBeEmptyObject", "")?;
         let mut pass = value.is_object_empty(global)?;
 
         if not {

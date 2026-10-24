@@ -860,6 +860,19 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("a string naming is read once", async () => {
+    let reads = 0;
+    const x = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+      get naming() {
+        reads++;
+        return "hello";
+      },
+    });
+    expect(x.outputs[0].path).toBe("./hello");
+    expect(reads).toBe(1);
+  });
+
   test("BuildArtifact properties sourcemap", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties-sourcemap", {

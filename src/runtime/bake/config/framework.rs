@@ -2,9 +2,14 @@
 
 use super::SplitBundlerOptions;
 use crate::bake::{BuiltInModule, router};
+use crate::generated_bindgen::server::{
+    BuiltInModuleOptions, ClientPagesValue, FileSystemRouterTypeOptions, FrameworkOptions,
+    FrameworkValue, ReactFastRefreshValue, RouterExtensions, ServerComponentsValue, framework_name,
+};
 use bun_collections::StringArrayHashMap;
 use bun_core::Utf8Bytes;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::JsLocal;
+use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
 use std::borrow::Cow;
 
 /// `bake.Framework.ServerComponents`.
@@ -261,13 +266,21 @@ pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Vec<u8>> {
 
 impl Framework {
     pub(crate) fn from_js(
-        opts: JSValue,
+        opts: FrameworkValue<'_>,
         global: &JSGlobalObject,
         bundler_options: &mut SplitBundlerOptions,
     ) -> JsResult<Framework> {
-        if opts.is_string() {
-            let str = opts.to_bun_string(global)?;
+        let (name, opts) = match opts {
+            FrameworkValue::Name(name) => (Some(name), None),
+            FrameworkValue::StringObject(object) => (
+                Some(framework_name(global, object)?),
+                Some(FrameworkOptions::new(object)),
+            ),
+            FrameworkValue::Options(opts) => (None, Some(opts)),
+            FrameworkValue::Other => (None, None),
+        };
 
+        if let Some(str) = name {
             // Deprecated
             if str.eq_ascii(b"react-server-components") {
                 bun_core::warn!(
@@ -281,108 +294,70 @@ impl Framework {
             }
         }
 
-        if !opts.is_object() {
+        let Some(opts) = opts else {
             return Err(global.throw_invalid_arguments(format_args!("Framework must be an object")));
-        }
+        };
 
-        if opts.get(global, "serverEntryPoint")?.is_some() {
+        if opts.server_entry_point(global)?.is_some() {
             bun_core::warn!(
                 "deprecation notice: 'framework.serverEntryPoint' has been replaced with 'fileSystemRouterTypes[n].serverEntryPoint'"
             );
         }
-        if opts.get(global, "clientEntryPoint")?.is_some() {
+        if opts.client_entry_point(global)?.is_some() {
             bun_core::warn!(
                 "deprecation notice: 'framework.clientEntryPoint' has been replaced with 'fileSystemRouterTypes[n].clientEntryPoint'"
             );
         }
 
-        let react_fast_refresh: Option<ReactFastRefresh> = 'brk: {
-            let Some(rfr) = opts.get(global, "reactFastRefresh")? else {
-                break 'brk None;
-            };
-
-            if rfr == JSValue::TRUE {
-                break 'brk Some(ReactFastRefresh::default());
-            }
-            if rfr == JSValue::FALSE || rfr.is_undefined_or_null() {
-                break 'brk None;
-            }
-
-            if !rfr.is_object() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'framework.reactFastRefresh' must be an object or 'true'"
-                )));
-            }
-
-            let prop = match rfr.get(global, "importSource")? {
-                Some(p) => p,
-                None => {
+        let react_fast_refresh: Option<ReactFastRefresh> = match opts.react_fast_refresh(global)? {
+            ReactFastRefreshValue::Enabled(true) => Some(ReactFastRefresh::default()),
+            ReactFastRefreshValue::Enabled(false) | ReactFastRefreshValue::Missing => None,
+            ReactFastRefreshValue::Options(rfr) => {
+                let Some(import_source) = rfr.import_source else {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "'framework.reactFastRefresh' is missing 'importSource'"
+                    )));
+                };
+
+                Some(ReactFastRefresh { import_source })
+            }
+        };
+        let server_components: Option<ServerComponents> = 'sc: {
+            let sc = match opts.server_components(global)? {
+                ServerComponentsValue::Flag(false) | ServerComponentsValue::Missing => {
+                    break 'sc None;
+                }
+                ServerComponentsValue::Options(sc) => sc,
+                ServerComponentsValue::Flag(true) | ServerComponentsValue::Other => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'framework.serverComponents' must be an object or 'undefined'"
                     )));
                 }
             };
 
-            let str = prop.to_bun_string(global)?;
-
-            Some(ReactFastRefresh {
-                import_source: str.into_utf8(),
-            })
-        };
-        let server_components: Option<ServerComponents> = 'sc: {
-            let Some(sc) = opts.get(global, "serverComponents")? else {
-                break 'sc None;
-            };
-            if sc == JSValue::FALSE || sc.is_undefined_or_null() {
-                break 'sc None;
-            }
-
-            if !sc.is_object() {
+            // Intentionally not using a truthiness check
+            let Some(separate_ssr_graph) = sc.separate_ssr_graph(global)? else {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "'framework.serverComponents' must be an object or 'undefined'"
-                )));
-            }
-
-            let separate_ssr_graph = 'brk: {
-                // Intentionally not using a truthiness check
-                let prop = match sc.get_optional::<JSValue>(global, "separateSSRGraph")? {
-                    Some(p) => p,
-                    None => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Missing 'framework.serverComponents.separateSSRGraph'"
-                        )));
-                    }
-                };
-                if prop == JSValue::TRUE {
-                    break 'brk true;
-                }
-                if prop == JSValue::FALSE {
-                    break 'brk false;
-                }
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'framework.serverComponents.separateSSRGraph' must be a boolean"
+                    "Missing 'framework.serverComponents.separateSSRGraph'"
                 )));
             };
-            let Some(server_runtime_import) =
-                sc.get_optional_slice(global, b"serverRuntimeImportSource")?
-            else {
+            let Some(server_runtime_import) = sc.server_runtime_import_source(global)? else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Missing 'framework.serverComponents.serverRuntimeImportSource'"
                 )));
             };
             let mut server_components =
                 ServerComponents::new(separate_ssr_graph, server_runtime_import);
-            if let Some(name) =
-                sc.get_optional_slice(global, b"serverRegisterClientReferenceExport")?
-            {
+            if let Some(name) = sc.server_register_client_reference_export(global)? {
                 server_components.server_register_client_reference = name;
             }
             Some(server_components)
         };
         let built_in_modules: StringArrayHashMap<BuiltInModule> = 'built_in_modules: {
-            let Some(array) = opts.get_array(global, "builtInModules")? else {
+            let Some(array) = opts.built_in_modules(global)? else {
                 break 'built_in_modules StringArrayHashMap::new();
             };
+            let array = array.to_js();
 
             let len = array.get_length(global)?;
             let mut files: StringArrayHashMap<BuiltInModule> = StringArrayHashMap::new();
@@ -391,14 +366,15 @@ impl Framework {
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
             while let Some(file) = it.next()? {
-                if !file.is_object() {
+                let Some(file) = JsLocal::<JSObject>::from_js(global, file) else {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "'builtInModules[{}]' is not an object",
                         i
                     )));
-                }
+                };
+                let file = BuiltInModuleOptions::new(file);
 
-                let path = match file.get_optional_slice(global, b"import")? {
+                let path = match file.import(global)? {
                     Some(p) => p,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -408,17 +384,16 @@ impl Framework {
                     }
                 };
 
-                let value: BuiltInModule =
-                    if let Some(str) = file.get_optional_slice(global, b"path")? {
-                        BuiltInModule::Import(Cow::Owned(str.into_vec()))
-                    } else if let Some(str) = file.get_optional_slice(global, b"code")? {
-                        BuiltInModule::Code(Cow::Owned(str.into_vec()))
-                    } else {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "'builtInModules[{}]' needs either 'path' or 'code'",
-                            i
-                        )));
-                    };
+                let value: BuiltInModule = if let Some(str) = file.path(global)? {
+                    BuiltInModule::Import(Cow::Owned(str.into_vec()))
+                } else if let Some(str) = file.code(global)? {
+                    BuiltInModule::Code(Cow::Owned(str.into_vec()))
+                } else {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'builtInModules[{}]' needs either 'path' or 'code'",
+                        i
+                    )));
+                };
 
                 files.put_assume_capacity(path.slice(), value);
                 i += 1;
@@ -427,9 +402,10 @@ impl Framework {
             files
         };
         let file_system_router_types: Vec<FileSystemRouterType> = 'brk: {
-            let array: JSValue = match opts.get_array(global, "fileSystemRouterTypes")? {
-                Some(a) => a,
-                None => {
+            let array: JSValue = match opts.file_system_router_types(global)? {
+                // An empty array is as good as none.
+                Some(a) if a.to_js().get_length(global)? != 0 => a.to_js(),
+                _ => {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Missing 'framework.fileSystemRouterTypes'"
                     )));
@@ -446,53 +422,51 @@ impl Framework {
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
             while let Some(fsr_opts) = it.next()? {
-                let root = match fsr_opts.get_optional_slice(global, b"root")? {
-                    Some(r) => r,
+                let missing_root = || {
+                    global.throw_invalid_arguments(format_args!(
+                        "'fileSystemRouterTypes[{}]' is missing 'root'",
+                        i
+                    ))
+                };
+                let Some(fsr_opts) = JsLocal::<JSObject>::from_js(global, fsr_opts) else {
+                    return Err(missing_root());
+                };
+                let fsr_opts = FileSystemRouterTypeOptions::new(fsr_opts);
+
+                let Some(root) = fsr_opts.root(global)? else {
+                    return Err(missing_root());
+                };
+                let server_entry_point = match fsr_opts.server_entry_point(global)? {
+                    Some(s) => s,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "'fileSystemRouterTypes[{}]' is missing 'root'",
+                            "'fileSystemRouterTypes[{}]' is missing 'serverEntryPoint'",
                             i
                         )));
                     }
                 };
-                let server_entry_point =
-                    match fsr_opts.get_optional_slice(global, b"serverEntryPoint")? {
-                        Some(s) => s,
-                        None => {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "'fileSystemRouterTypes[{}]' is missing 'serverEntryPoint'",
-                                i
-                            )));
-                        }
-                    };
-                let client_entry_point =
-                    fsr_opts.get_optional_slice(global, b"clientEntryPoint")?;
+                let client_entry_point = fsr_opts.client_entry_point(global)?;
                 let prefix = fsr_opts
-                    .get_optional_slice(global, b"prefix")?
+                    .prefix(global)?
                     .unwrap_or(Utf8Bytes::Borrowed(b"/"));
-                let ignore_underscores = fsr_opts
-                    .get_boolean_strict(global, "ignoreUnderscores")?
-                    .unwrap_or(false);
-                let layouts = fsr_opts
-                    .get_boolean_strict(global, "layouts")?
-                    .unwrap_or(false);
+                let ignore_underscores = fsr_opts.ignore_underscores(global)?;
+                let layouts = fsr_opts.layouts(global)?;
                 // `clientPages: true`, or `clientPages: { serverExports: [...] }`.
-                let (client_pages, server_exports) = match fsr_opts.get(global, "clientPages")? {
-                    None => (false, Vec::new()),
-                    Some(v) if v.is_boolean() => (v.as_boolean(), Vec::new()),
-                    Some(v) if v.is_object() => {
+                let (client_pages, server_exports) = match fsr_opts.client_pages(global)? {
+                    ClientPagesValue::Missing => (false, Vec::new()),
+                    ClientPagesValue::Enabled(v) => (v, Vec::new()),
+                    ClientPagesValue::Options(v) => {
                         let not_a_list = || {
                             global.throw_invalid_arguments(format_args!(
                                 "'fileSystemRouterTypes[{}].clientPages.serverExports' must be an array of export names",
                                 i
                             ))
                         };
-                        let list = match v.get(global, "serverExports")? {
-                            Some(list) if list.is_array() => list,
-                            _ => return Err(not_a_list()),
+                        let Some(list) = v.server_exports else {
+                            return Err(not_a_list());
                         };
                         let mut names = Vec::new();
-                        let mut it_2 = list.array_iterator(global)?;
+                        let mut it_2 = list.to_js().array_iterator(global)?;
                         while let Some(item) = it_2.next()? {
                             if !item.is_string() {
                                 return Err(not_a_list());
@@ -501,7 +475,7 @@ impl Framework {
                         }
                         (true, names)
                     }
-                    Some(_) => {
+                    ClientPagesValue::Other => {
                         return Err(global.throw_invalid_arguments(format_args!(
                             "'fileSystemRouterTypes[{}].clientPages' must be a boolean or an object",
                             i
@@ -516,8 +490,8 @@ impl Framework {
                     )));
                 }
 
-                let style = style_from_js(
-                    match fsr_opts.get(global, "style")? {
+                let style = router::Style::from_js(
+                    match fsr_opts.style(global)? {
                         Some(s) => s,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -530,14 +504,14 @@ impl Framework {
                 )?;
                 // errdefer style.deinit() — handled by Style's Drop
 
-                let extensions = if let Some(exts_js) = fsr_opts.get(global, "extensions")? {
+                let extensions = if let Some(exts_js) = fsr_opts.extensions(global)? {
                     'exts: {
-                        if exts_js.is_string() {
-                            let str = exts_js.to_utf8(global)?;
+                        if let RouterExtensions::Text(str) = &exts_js {
                             if str.slice() == b"*" {
                                 break 'exts Vec::new();
                             }
-                        } else if exts_js.is_array() {
+                        } else if let RouterExtensions::List(exts_js) = exts_js {
+                            let exts_js = exts_js.to_js();
                             let mut it_2 = exts_js.array_iterator(global)?;
                             let mut extensions =
                                 Vec::with_capacity(exts_js.get_length(global)? as usize);
@@ -574,21 +548,14 @@ impl Framework {
                     ])
                 };
 
-                let ignore_dirs = if let Some(dirs_js) = fsr_opts.get(global, "ignoreDirs")? {
-                    'exts: {
-                        if dirs_js.is_array() {
-                            let mut it_2 = dirs_js.array_iterator(global)?;
-                            let mut dirs = Vec::with_capacity(dirs_js.get_length(global)? as usize);
-                            while let Some(array_item) = it_2.next()? {
-                                dirs.push(array_item.to_utf8(global)?);
-                            }
-                            break 'exts dirs;
-                        }
-
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "'ignoreDirs' must be an array of strings"
-                        )));
+                let ignore_dirs = if let Some(dirs_js) = fsr_opts.ignore_dirs(global)? {
+                    let dirs_js = dirs_js.to_js();
+                    let mut it_2 = dirs_js.array_iterator(global)?;
+                    let mut dirs = Vec::with_capacity(dirs_js.get_length(global)? as usize);
+                    while let Some(array_item) = it_2.next()? {
+                        dirs.push(array_item.to_utf8(global)?);
                     }
+                    dirs
                 } else {
                     literals(&[b".git", b"node_modules"])
                 };
@@ -631,7 +598,7 @@ impl Framework {
             built_in_modules,
         };
 
-        if let Some(plugin_array) = opts.get_optional::<JSValue>(global, "plugins")? {
+        if let Some(plugin_array) = opts.plugins(global)? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
@@ -641,11 +608,4 @@ impl Framework {
 
 pub(super) fn literals(list: &[&'static [u8]]) -> Vec<Utf8Bytes<'static>> {
     list.iter().copied().map(Utf8Bytes::Borrowed).collect()
-}
-
-/// Thin forwarding shim — the real impl lives on
-/// `router::Style::from_js`.
-#[inline]
-fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<router::Style> {
-    router::Style::from_js(value, global)
 }

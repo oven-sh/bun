@@ -2,8 +2,9 @@
 //! `createConnection(hostname, port, username, password, database, sslMode,
 //! tls, ...)` host functions, through the per-VM `SSL_CTX*` cache lookup.
 
+pub(crate) use crate::generated_bindgen::connection_ctor_args::ConnectionTLS;
 use crate::jsc::{
-    JSGlobalObject, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
+    JSGlobalObject, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
     api::server_config::SSLConfig,
 };
 use bun_boringssl_sys::OwnedSslCtx;
@@ -41,7 +42,7 @@ impl ConnectionCtorArgs {
         vm: &mut VirtualMachine,
         hostname: &[u8],
         ssl_mode: u8,
-        tls_object: JSValue,
+        tls_object: ConnectionTLS<'_>,
         idle_timeout: f64,
         connection_timeout: f64,
         max_lifetime: f64,
@@ -56,10 +57,10 @@ impl ConnectionCtorArgs {
         let mut tls_config = SSLConfig::default();
         let mut secure: Option<OwnedSslCtx> = None;
         if ssl_mode != SSLMode::Disable {
-            tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
+            tls_config = if matches!(tls_object, ConnectionTLS::Boolean(true)) {
                 SSLConfig::default()
-            } else if tls_object.is_object() {
-                match SSLConfig::from_js(global_object, tls_object) {
+            } else if let ConnectionTLS::Object(tls_object) = tls_object {
+                match SSLConfig::from_js(global_object, tls_object.object().to_js()) {
                     Ok(opt) => opt.unwrap_or_default(),
                     Err(_) => return Ok(None),
                 }

@@ -10,6 +10,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
+use crate::bindgen::{AnyValue, js_value_of};
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
@@ -529,9 +530,9 @@ impl JSValue {
     #[track_caller]
     pub fn create_array_from_slice(
         global: &JSGlobalObject,
-        items: &[JSValue],
+        items: &[impl AnyValue],
     ) -> JsResult<JSValue> {
-        Self::create_array_from_iter(global, items.iter().copied(), Ok)
+        Self::create_array_from_iter(global, items.iter().copied().map(js_value_of), Ok)
     }
     /// `JSValue.createBufferFromLength` — allocates a Node.js
     /// `Buffer` (the `JSBufferSubclassStructure` Uint8Array subclass) of `len`
@@ -1316,7 +1317,12 @@ impl JSValue {
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
     /// can throw, so this is routed through `from_js_host_call_generic`.
     #[track_caller]
-    pub fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
+    pub fn has_own_property_value(
+        self,
+        global: &JSGlobalObject,
+        key: impl AnyValue,
+    ) -> JsResult<bool> {
+        let key = js_value_of(key);
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__hasOwnPropertyValue(self, global, key)
         })
@@ -1372,7 +1378,8 @@ impl JSValue {
     }
     /// Set a property. Key dispatch goes through the [`PutKey`] trait so
     /// callers may pass `&[u8]`, `EncodedSlice`, `String`, or `&String`.
-    pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
+    pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: impl AnyValue) {
+        let value = js_value_of(value);
         key.put(self, global, value)
     }
     /// [`put`] with `PropertyAttribute::DontEnum`.
@@ -1452,7 +1459,8 @@ impl JSValue {
         })
     }
     #[track_caller]
-    pub fn put_index(self, global: &JSGlobalObject, i: u32, out: JSValue) -> JsResult<()> {
+    pub fn put_index(self, global: &JSGlobalObject, i: u32, out: impl AnyValue) -> JsResult<()> {
+        let out = js_value_of(out);
         crate::call_check_slow(global, || JSC__JSValue__putIndex(self, global, i, out))
     }
     /// `JSValue.putBunStringOneOrArray` — put `key`/`value` into
@@ -1471,7 +1479,8 @@ impl JSValue {
 
     /// `JSValue.push` — append to an array-typed JS value.
     #[track_caller]
-    pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
+    pub fn push(self, global: &JSGlobalObject, out: impl AnyValue) -> JsResult<()> {
+        let out = js_value_of(out);
         crate::call_check_slow(global, || JSC__JSValue__push(self, global, out))
     }
 
@@ -1653,6 +1662,22 @@ impl JSValue {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.
             unsafe { Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr()) }
+        })
+    }
+
+    /// [`call`](Self::call) with arguments that are already in a list.
+    #[track_caller]
+    pub fn call_with_arguments(
+        self,
+        global: &JSGlobalObject,
+        this_value: impl AnyValue,
+        args: &crate::MarkedArgumentBuffer,
+    ) -> JsResult<JSValue> {
+        if self.has_nobody_to_call(global) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        host_fn::from_js_host_call(global, || {
+            Bun__JSValue__callWithArguments(global, self, js_value_of(this_value), args)
         })
     }
 
@@ -2087,6 +2112,12 @@ unsafe extern "C" {
         args_len: usize,
         args_ptr: *const JSValue,
     ) -> JSValue;
+    safe fn Bun__JSValue__callWithArguments(
+        global: &JSGlobalObject,
+        function: JSValue,
+        this_value: JSValue,
+        args: &crate::MarkedArgumentBuffer,
+    ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);
     safe fn Bun__JSValue__isFromRetiredTestIsolationRealm(this: JSValue) -> bool;
@@ -2198,7 +2229,8 @@ impl JSValue {
     ///
     /// Differs from IsStrictlyEqual by treating all NaN values as equivalent
     /// and by differentiating +0 from -0. Can throw (rope-string resolution).
-    pub fn is_same_value(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+    pub fn is_same_value(self, other: impl AnyValue, global: &JSGlobalObject) -> JsResult<bool> {
+        let other = js_value_of(other);
         // Identity fast-path: same encoded bits ⇒ same value.
         if self == other {
             return Ok(true);
@@ -2211,7 +2243,8 @@ impl JSValue {
     ///
     /// Differs from SameValue: `NaN !== NaN` and `-0 === +0`.
     /// Can throw (rope-string resolution).
-    pub fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+    pub fn is_strict_equal(self, other: impl AnyValue, global: &JSGlobalObject) -> JsResult<bool> {
+        let other = js_value_of(other);
         // No encoded-bits fast path: two NaNs share an encoding but NaN !== NaN.
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__isStrictEqual(self, other, global)
@@ -2703,7 +2736,8 @@ impl JSValue {
     // ── Jest deep-equality. ───────────────────────
     /// `JSValue.jestDeepEquals` — Jest's recursive `expect(a).toEqual(b)`
     /// semantics (asymmetric matchers, undefined-equals-missing, etc.).
-    pub fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+    pub fn jest_deep_equals(self, other: impl AnyValue, global: &JSGlobalObject) -> JsResult<bool> {
+        let other = js_value_of(other);
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jestDeepEquals(self, other, global)
         })
@@ -2711,9 +2745,10 @@ impl JSValue {
     /// `JSValue.jestStrictDeepEquals` — `expect(a).toStrictEqual(b)`.
     pub fn jest_strict_deep_equals(
         self,
-        other: JSValue,
+        other: impl AnyValue,
         global: &JSGlobalObject,
     ) -> JsResult<bool> {
+        let other = js_value_of(other);
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jestStrictDeepEquals(self, other, global)
         })
@@ -2807,8 +2842,9 @@ impl JSValue {
     pub fn get_if_property_exists_from_path(
         self,
         global: &JSGlobalObject,
-        path: JSValue,
+        path: impl AnyValue,
     ) -> JsResult<JSValue> {
+        let path = js_value_of(path);
         crate::top_scope!(scope, global);
         let result = JSC__JSValue__getIfPropertyExistsFromPath(self, global, path);
         scope.return_if_exception()?;

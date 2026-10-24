@@ -9,7 +9,9 @@ use enumset::EnumSet;
 
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
-use crate::generated_bindgen::response::js_Request as js;
+use crate::generated_bindgen::response::{
+    BodyInit, OptionName, RequestInit, RequestInput, ResponseInit, SignalInit, js_Request as js,
+};
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
@@ -28,7 +30,7 @@ use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{JsScope, JsStructure, JsWrapper};
 use bun_ptr::RefPtr;
 use bun_ptr::weak_ptr::WeakPtrData;
 use core::mem::ManuallyDrop;
@@ -956,16 +958,35 @@ enum Fields {
     Url,
 }
 
+/// What `JSValue::get_optional_enum` makes of a member.
+pub(crate) fn optional_enum<E: bun_jsc::FromJsEnum>(
+    global: &JSGlobalObject,
+    name: OptionName<'_>,
+    property_name: &'static str,
+) -> JsResult<Option<E>> {
+    let name = match name {
+        OptionName::Missing => return Ok(None),
+        OptionName::Text(name) => name.to_js(),
+        OptionName::StringObject(name) => name.to_js(),
+        OptionName::Other => {
+            return Err(
+                global.throw_invalid_arguments(format_args!("{} must be a string", property_name))
+            );
+        }
+    };
+    Ok(Some(name.to_enum::<E>(global, property_name)?))
+}
+
 impl Request {
     #[inline]
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    fn construct_into(
+    fn construct_into<'a>(
         cx: &bun_jsc::JsThread<'_>,
-        url_or_object: JSValue,
-        init: JSValue,
+        url_or_object: RequestInput<'a>,
+        init: Option<RequestInit<'a>>,
     ) -> JsResult<Request> {
         let mut success = false;
         // SAFETY: bun_vm() yields the live per-thread VM singleton.
@@ -1014,23 +1035,26 @@ impl Request {
             }};
         }
 
-        if !url_or_object.is_cell() {
-            bail!(Err(cx.global().throw(format_args!(
-                "Failed to construct 'Request': expected non-empty string or object, got undefined"
-            ))));
-        }
-
-        let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
 
-        let is_first_argument_a_url =
-            // fastest path:
-            url_or_object_type.is_string_like() ||
-            // slower path:
-            bun_jsc::DOMURL::cast_(url_or_object, cx.global().vm()).is_some();
+        let (url, object) = match url_or_object {
+            RequestInput::String(url) => (Some(url.to_js()), None),
+            RequestInput::StringObject(url) | RequestInput::Url(url) => (Some(url.to_js()), None),
+            RequestInput::Object(object) => (None, Some(object)),
+            RequestInput::Symbol(_) | RequestInput::BigInt(_) => {
+                bail!(Err(cx.global().throw(format_args!(
+                    "Failed to construct 'Request': expected non-empty string or object"
+                ))));
+            }
+            RequestInput::Other => {
+                bail!(Err(cx.global().throw(format_args!(
+                    "Failed to construct 'Request': expected non-empty string or object, got undefined"
+                ))));
+            }
+        };
 
-        if is_first_argument_a_url {
-            let str = match BunString::from_js(url_or_object, cx.global()) {
+        if let Some(url) = url {
+            let str = match BunString::from_js(url, cx.global()) {
                 Ok(s) => s,
                 Err(e) => bail!(Err(e)),
             };
@@ -1039,34 +1063,20 @@ impl Request {
             if !req.url.get().is_empty() {
                 fields.insert(Fields::Url);
             }
-        } else if !url_or_object_type.is_object() {
-            bail!(Err(cx.global().throw(format_args!(
-                "Failed to construct 'Request': expected non-empty string or object"
-            ))));
         }
 
-        let values_to_try_: [JSValue; 2] = [
-            if init.is_object() {
-                init
-            } else if is_first_argument_a_url {
-                JSValue::UNDEFINED
-            } else {
-                url_or_object
-            },
-            if is_first_argument_a_url {
-                JSValue::UNDEFINED
-            } else {
-                url_or_object
-            },
-        ];
+        let object_value = object.map(|object| object.object().to_js());
+        let values_to_try_ = [init.or(object), object];
         let values_to_try =
-            &values_to_try_[0..((!is_first_argument_a_url) as usize + init.is_object() as usize)];
+            &values_to_try_[0..(object.is_some() as usize + init.is_some() as usize)];
 
-        for &value in values_to_try {
+        for options in values_to_try.iter().flatten() {
+            let value = options.object().to_js();
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
                 && value_type == bun_jsc::JSType::FinalObject
-                && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
+                && object_value
+                    .is_some_and(|object| object.js_type() == bun_jsc::JSType::DOMWrapper);
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
                     // SAFETY: as_direct returns the wrapper's live *mut Request
@@ -1183,14 +1193,15 @@ impl Request {
             }
 
             if !fields.contains(Fields::Body) {
-                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Body) {
-                    Ok(Some(body_)) => {
+                match options.body(cx.global()) {
+                    Ok(BodyInit::Undefined) => {}
+                    Ok(body_) => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
-                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
-                            match value.get(cx.global(), "keepalive") {
-                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
+                        if matches!(body_, BodyInit::ReadableStream(_)) {
+                            match options.keepalive(cx.global()) {
+                                Ok(true) => {
                                     bail!(Err(cx
                                         .global()
                                         .throw_type_error(format_args!("keepalive"))));
@@ -1206,7 +1217,6 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                     }
-                    Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
 
@@ -1217,12 +1227,9 @@ impl Request {
             }
 
             if !fields.contains(Fields::Url) {
-                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Url) {
+                match options.url(cx.global()) {
                     Ok(Some(url)) => {
-                        match BunString::from_js(url, cx.global()) {
-                            Ok(s) => req.url.set(s),
-                            Err(e) => bail!(Err(e)),
-                        }
+                        req.url.set(url);
                         if !req.url.get().is_empty() {
                             fields.insert(Fields::Url);
                         }
@@ -1234,9 +1241,7 @@ impl Request {
                         // `implementsToString` (which performs JS property
                         // lookup with observable side effects) when the first
                         // two guards already hold.
-                        if value == values_to_try[values_to_try.len() - 1]
-                            && !is_first_argument_a_url
-                        {
+                        if object_value == Some(value) {
                             let implements = match value.implements_to_string(cx.global()) {
                                 Ok(b) => b,
                                 Err(e) => bail!(Err(e)),
@@ -1259,36 +1264,35 @@ impl Request {
 
             if !fields.contains(Fields::Signal) {
                 // WebIDL `AbortSignal?`: present iff the member is not undefined.
-                // `fast_get` maps absent/undefined → None; `null` is Some(null) and
-                // means "present, detach" (no fallback to the input Request's signal).
-                match value.fast_get(cx.global(), bun_jsc::BuiltinName::signal) {
-                    Ok(Some(signal_)) => {
+                // `null` means "present, detach" (no fallback to the input Request's signal).
+                match options.signal(cx.global()) {
+                    Ok(SignalInit::Missing) => {}
+                    Ok(SignalInit::Null) => {
+                        // explicit detach; leave `req.signal` as None
                         fields.insert(Fields::Signal);
-                        if signal_.is_null() {
-                            // explicit detach; leave `req.signal` as None
-                        } else if let Some(signal) = AbortSignal::ref_from_js(signal_) {
-                            // Keep it alive
-                            signal_.ensure_still_alive();
-                            // `ref_from_js` already ref'd.
-                            req.signal.set(Some(signal));
-                        } else {
-                            bail!(Err(cx.global().throw_type_error(format_args!(
-                                "Failed to construct 'Request': signal is not of type AbortSignal."
-                            ))));
-                        }
                     }
-                    Ok(None) => {}
+                    Ok(SignalInit::Signal(signal)) => {
+                        fields.insert(Fields::Signal);
+                        req.signal.set(Some(signal));
+                    }
+                    Ok(SignalInit::Other) => {
+                        bail!(Err(cx.global().throw_type_error(format_args!(
+                            "Failed to construct 'Request': signal is not of type AbortSignal."
+                        ))));
+                    }
                     Err(e) => bail!(Err(e)),
                 }
             }
 
             if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(cx.global(), value) {
-                    Ok(Some(response_init)) => {
+                match crate::webcore::response::Init::init(
+                    cx.global(),
+                    ResponseInit::new(options.object()),
+                ) {
+                    Ok(response_init) => {
                         let header_check = !explicit_check
                             || (explicit_check
-                                && match value.fast_get(cx.global(), bun_jsc::BuiltinName::Headers)
-                                {
+                                && match options.headers(cx.global()) {
                                     Ok(v) => v.is_some(),
                                     Err(e) => bail!(Err(e)),
                                 });
@@ -1305,7 +1309,7 @@ impl Request {
 
                         let method_check = !explicit_check
                             || (explicit_check
-                                && match value.fast_get(cx.global(), bun_jsc::BuiltinName::Method) {
+                                && match options.method(cx.global()) {
                                     Ok(v) => v.is_some(),
                                     Err(e) => bail!(Err(e)),
                                 });
@@ -1316,14 +1320,16 @@ impl Request {
                             }
                         }
                     }
-                    Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
             }
 
             // Extract redirect option
             if !fields.contains(Fields::Redirect) {
-                match value.get_optional_enum::<FetchRedirect>(cx.global(), "redirect") {
+                match options
+                    .redirect(cx.global())
+                    .and_then(|name| optional_enum::<FetchRedirect>(cx.global(), name, "redirect"))
+                {
                     Ok(Some(redirect_value)) => {
                         req.flags.redirect = redirect_value;
                         fields.insert(Fields::Redirect);
@@ -1335,7 +1341,10 @@ impl Request {
 
             // Extract cache option
             if !fields.contains(Fields::Cache) {
-                match value.get_optional_enum::<FetchCacheMode>(cx.global(), "cache") {
+                match options
+                    .cache(cx.global())
+                    .and_then(|name| optional_enum::<FetchCacheMode>(cx.global(), name, "cache"))
+                {
                     Ok(Some(cache_value)) => {
                         req.flags.cache = cache_value;
                         fields.insert(Fields::Cache);
@@ -1347,7 +1356,10 @@ impl Request {
 
             // Extract mode option
             if !fields.contains(Fields::Mode) {
-                match value.get_optional_enum::<FetchRequestMode>(cx.global(), "mode") {
+                match options
+                    .mode(cx.global())
+                    .and_then(|name| optional_enum::<FetchRequestMode>(cx.global(), name, "mode"))
+                {
                     Ok(Some(mode_value)) => {
                         req.flags.mode = mode_value;
                         fields.insert(Fields::Mode);
@@ -1418,10 +1430,10 @@ impl Request {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        input: JsLocal<'a>,
-        init: JsLocal<'a>,
+        input: RequestInput<'a>,
+        init: Option<RequestInit<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let request = Self::construct_into(&cx.js_thread(), input.to_js(), init.to_js())?;
+        let request = Self::construct_into(&cx.js_thread(), input, init)?;
         let request = RefPtr::new(request);
         let this = request.this_ptr();
         let this_value = structure.create(&cx.heap, request);

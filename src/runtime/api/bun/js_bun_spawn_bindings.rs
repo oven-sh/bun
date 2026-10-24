@@ -15,7 +15,7 @@ use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
 };
-use bun_jsc::{JsCell, SysErrorJsc as _};
+use bun_jsc::{JsCell, StringJsc as _, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
@@ -30,29 +30,17 @@ use crate::api::bun_process::{self as spawn, CStrPtr, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{
-    self as Subprocess, Readable, Subprocess as SubprocessT, Writable,
+    self as Subprocess, Readable, Subprocess as SubprocessT, Writable, signal_code,
 };
 use crate::api::bun_terminal_body::{
     self as terminal_body, InitError as TerminalInitError, Options as TerminalOptions, Terminal,
 };
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use crate::generated_bindgen::js_bun_spawn_bindings::SpawnCgroupTarget;
+use crate::generated_bindgen::js_bun_spawn_bindings::{
+    SpawnCommand, SpawnCommandList, SpawnOptionsObject, SpawnStdioList, StdioValue,
+};
 use crate::webcore as WebCore;
-
-// ── local extension shims (real-body wrappers, not stubs) ───────────────────
-trait JSValueSpawnExt {
-    fn is_finite(self) -> bool;
-}
-impl JSValueSpawnExt for JSValue {
-    #[inline]
-    fn is_finite(self) -> bool {
-        self.is_number() && self.as_number().is_finite()
-    }
-}
-
-/// `SignalCode.fromJS` (bun_sys_jsc bridge).
-#[inline]
-fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
-    bun_sys_jsc::signal_code_jsc::from_js(val, global)
-}
 
 #[inline]
 fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner> {
@@ -264,35 +252,23 @@ fn get_argv(
 }
 
 /// Bun.spawn() calls this.
-pub(crate) fn spawn(
-    cx: &mut JsScope<'_>,
-    cmd_or_options: JsLocal<'_>,
-    options: JsLocal<'_>,
+pub(crate) fn spawn<'a>(
+    cx: &mut JsScope<'a>,
+    cmd_or_options: SpawnCommand<'a>,
+    options: Option<SpawnOptionsObject<'a>>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync(
-        false,
-        &cx.js_thread(),
-        cmd_or_options.to_js(),
-        options.to_js(),
-        &mut None,
-    )
+    spawn_maybe_sync(false, &cx.js_thread(), cmd_or_options, options, &mut None)
 }
 
 /// Bun.spawnSync() calls this.
-pub(crate) fn spawn_sync(
-    cx: &mut JsScope<'_>,
-    cmd_or_options: JsLocal<'_>,
-    options: JsLocal<'_>,
+pub(crate) fn spawn_sync<'a>(
+    cx: &mut JsScope<'a>,
+    cmd_or_options: SpawnCommand<'a>,
+    options: Option<SpawnOptionsObject<'a>>,
 ) -> JsResult<JSValue> {
     let cx = &cx.js_thread();
     let mut bun_test_deadline: Option<Timespec> = None;
-    let result = spawn_maybe_sync(
-        true,
-        cx,
-        cmd_or_options.to_js(),
-        options.to_js(),
-        &mut bun_test_deadline,
-    );
+    let result = spawn_maybe_sync(true, cx, cmd_or_options, options, &mut bun_test_deadline);
     // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
     if let Some(deadline) = bun_test_deadline
         && result.is_ok()
@@ -347,11 +323,11 @@ impl Drop for ReportUnwatchedExit {
     }
 }
 
-fn spawn_maybe_sync(
+fn spawn_maybe_sync<'a>(
     is_sync: bool,
     cx: &bun_jsc::JsThread<'_>,
-    args_: JSValue,
-    secondary_args_value: JSValue,
+    cmd_or_options: SpawnCommand<'a>,
+    options: Option<SpawnOptionsObject<'a>>,
     bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
     if is_sync {
@@ -395,7 +371,7 @@ fn spawn_maybe_sync(
     let mut argv: Vec<CStrPtr> = Vec::new();
     let cmd_value: JSValue;
     let mut detached = false;
-    let mut args = args_;
+    let args: Option<SpawnOptionsObject<'a>>;
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
@@ -424,31 +400,34 @@ fn spawn_maybe_sync(
     // `spawn_process` returns.
     let cwd_owned: ZBox;
     {
-        if args.is_empty_or_undefined_or_null() {
-            return Err(cx
-                .global()
-                .throw_invalid_arguments(format_args!("cmd must be an array")));
+        match cmd_or_options {
+            SpawnCommand::List(list) => {
+                cmd_value = list.to_js();
+                args = options;
+            }
+            SpawnCommand::Options(options) => {
+                cmd_value = match options.cmd(cx.global())? {
+                    SpawnCommandList::List(list) => list.to_js(),
+                    SpawnCommandList::Text(text) if !text.is_empty() => text.to_js(cx.global())?,
+                    // Refused by `get_argv`, once `env` is read.
+                    SpawnCommandList::Other => JSValue::UNDEFINED,
+                    SpawnCommandList::Missing | SpawnCommandList::Text(_) => {
+                        return Err(cx
+                            .global()
+                            .throw_invalid_arguments(format_args!("cmd must be an array")));
+                    }
+                };
+                args = Some(options);
+            }
+            SpawnCommand::Other => {
+                return Err(cx
+                    .global()
+                    .throw_invalid_arguments(format_args!("cmd must be an array")));
+            }
         }
 
-        let args_type = args.js_type();
-        if args_type.is_array() {
-            cmd_value = args;
-            args = secondary_args_value;
-        } else if !args.is_object() {
-            return Err(cx
-                .global()
-                .throw_invalid_arguments(format_args!("cmd must be an array")));
-        } else if let Some(cmd_value_) = args.get_truthy(cx.global(), "cmd")? {
-            cmd_value = cmd_value_;
-        } else {
-            return Err(cx
-                .global()
-                .throw_invalid_arguments(format_args!("cmd must be an array")));
-        }
-
-        if args.is_object() {
-            if let Some(argv0_) = args.get_truthy(cx.global(), "argv0")? {
-                let argv0_str = argv0_.to_bun_string(cx.global())?;
+        if let Some(args) = args {
+            if let Some(argv0_str) = args.argv0(cx.global())? {
                 if !argv0_str.is_empty() {
                     let owned = argv0_str.to_owned_slice_z();
                     // Check for null bytes in argv0 (security: prevent null byte injection)
@@ -469,8 +448,7 @@ fn spawn_maybe_sync(
             }
 
             // need to update `cwd` before searching for executable with `Which.which`
-            if let Some(cwd_) = args.get_truthy(cx.global(), "cwd")? {
-                let cwd_str = cwd_.to_bun_string(cx.global())?;
+            if let Some(cwd_str) = args.cwd(cx.global())? {
                 if !cwd_str.is_empty() {
                     cwd_owned = cwd_str.to_owned_slice_z();
                     // Check for null bytes in cwd (security: prevent null byte injection)
@@ -493,10 +471,10 @@ fn spawn_maybe_sync(
             }
         }
 
-        if !args.is_empty() && args.is_object() {
+        if let Some(args) = args {
             // Reject terminal option on spawnSync
             if is_sync {
-                if args.get_truthy(cx.global(), "terminal")?.is_some() {
+                if args.terminal(cx.global())?.is_some() {
                     return Err(cx.global().throw_invalid_arguments(format_args!(
                         "terminal option is only supported for Bun.spawn, not Bun.spawnSync",
                     )));
@@ -505,99 +483,54 @@ fn spawn_maybe_sync(
 
             // This must run before the stdio parsing happens
             if !is_sync {
-                if let Some(val) = args.get_truthy(cx.global(), "ipc")? {
-                    if val.is_cell() && val.is_callable() {
-                        maybe_ipc_mode = Some('ipc_mode: {
-                            if let Some(mode_val) = args.get_truthy(cx.global(), "serialization")? {
-                                if mode_val.is_string() {
-                                    break 'ipc_mode match IPC::Mode::from_js(cx.global(), mode_val)?
-                                    {
-                                        Some(m) => m,
-                                        None => {
-                                            return Err(cx.global().throw_invalid_arguments(format_args!(
-                                                "serialization must be \"json\" or \"advanced\"",
-                                            )));
-                                        }
-                                    };
-                                } else {
-                                    return Err(cx.global().throw_invalid_argument_type(
-                                        "spawn",
-                                        "serialization",
-                                        "string",
-                                    ));
-                                }
-                            }
-                            break 'ipc_mode IPC::Mode::Advanced;
-                        });
+                if let Some(val) = args.ipc(cx.global())? {
+                    maybe_ipc_mode = Some(match args.serialization(cx.global())? {
+                        None => IPC::Mode::Advanced,
+                        Some(mode) if mode.eq_ascii(b"advanced") => IPC::Mode::Advanced,
+                        Some(mode) if mode.eq_ascii(b"json") => IPC::Mode::Json,
+                        Some(_) => {
+                            return Err(cx.global().throw_invalid_arguments(format_args!(
+                                "serialization must be \"json\" or \"advanced\"",
+                            )));
+                        }
+                    });
 
-                        ipc_callback = val.with_async_context_if_needed(cx.global());
-                    }
+                    ipc_callback = val.to_js().with_async_context_if_needed(cx.global());
                 }
             }
 
-            if let Some(signal_val) = args.get_truthy(cx.global(), "signal")? {
-                if let Some(signal) = WebCore::AbortSignal::from_js(signal_val) {
-                    // `from_js` returns a live FFI handle owned by JS.
-                    // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
-                    // is the centralised non-null deref proof.
-                    let sig = WebCore::AbortSignal::opaque_ref(signal);
-                    if let Some(abort_error) = sig.node_abort_error_if_aborted(cx.global()) {
-                        return Err(cx.global().throw_value(abort_error));
-                    }
-                    abort_signal = Some(sig.ref_());
-                } else {
-                    return Err(cx.global().throw_invalid_argument_type_value(
-                        b"signal",
-                        b"AbortSignal",
-                        signal_val,
-                    ));
+            if let Some(sig) = args.signal(cx.global())? {
+                if let Some(abort_error) = sig.node_abort_error_if_aborted(cx.global()) {
+                    return Err(cx.global().throw_value(abort_error));
                 }
+                abort_signal = Some(sig);
             }
 
-            if let Some(on_disconnect_) = args.get_truthy(cx.global(), "onDisconnect")? {
-                if !on_disconnect_.is_cell() || !on_disconnect_.is_callable() {
-                    return Err(cx.global().throw_invalid_arguments(format_args!(
-                        "onDisconnect must be a function or undefined",
-                    )));
-                }
-
+            if let Some(on_disconnect_) = args.on_disconnect(cx.global())? {
                 on_disconnect_callback = if is_sync {
+                    on_disconnect_.to_js()
+                } else {
                     on_disconnect_
-                } else {
-                    on_disconnect_.with_async_context_if_needed(cx.global())
+                        .to_js()
+                        .with_async_context_if_needed(cx.global())
                 };
             }
 
-            if let Some(on_exit_) = args.get_truthy(cx.global(), "onExit")? {
-                if !on_exit_.is_cell() || !on_exit_.is_callable() {
-                    return Err(cx.global().throw_invalid_arguments(format_args!(
-                        "onExit must be a function or undefined",
-                    )));
-                }
-
+            if let Some(on_exit_) = args.on_exit(cx.global())? {
                 on_exit_callback = if is_sync {
-                    on_exit_
+                    on_exit_.to_js()
                 } else {
-                    on_exit_.with_async_context_if_needed(cx.global())
+                    on_exit_.to_js().with_async_context_if_needed(cx.global())
                 };
             }
 
-            if let Some(env_arg) = args.get_truthy(cx.global(), "env")? {
-                env_arg.ensure_still_alive();
-                let Some(object) = env_arg.get_object() else {
-                    return Err(cx
-                        .global()
-                        .throw_invalid_arguments(format_args!("env must be an object")));
-                };
-
+            if let Some(object) = args.env(cx.global())? {
                 override_env = true;
                 // If the env object does not include a $PATH, it must disable path lookup for argv[0]
                 let mut new_path: &[u8] = b"";
-                // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-                // centralised non-null-ZST deref proof.
                 append_envp_from_js(
                     cx.global(),
-                    JSObject::opaque_ref(object),
+                    object,
                     &mut env_array,
                     &mut new_path,
                     &mut cstr_storage,
@@ -615,191 +548,157 @@ fn spawn_maybe_sync(
                 &mut cstr_storage,
             )?;
 
-            if let Some(stdio_val) = args.get(cx.global(), "stdio")? {
-                if !stdio_val.is_empty_or_undefined_or_null() {
-                    if stdio_val.js_type().is_array() {
-                        let mut stdio_iter = stdio_val.array_iterator(cx.global())?;
-                        let mut i: i32 = 0;
-                        while let Some(value) = stdio_iter.next()? {
-                            Stdio::extract(&mut stdio[i as usize], cx, i, value, is_sync)?;
-                            if i == 2 {
-                                break;
-                            }
-                            i += 1;
+            match args.stdio(cx.global())? {
+                SpawnStdioList::List(stdio_val) => {
+                    let mut stdio_iter = stdio_val.to_js().array_iterator(cx.global())?;
+                    let mut i: i32 = 0;
+                    while let Some(value) = stdio_iter.next()? {
+                        StdioValue::from_js(cx.global(), value, |value| {
+                            Stdio::extract(&mut stdio[i as usize], cx, i, value, is_sync)
+                        })?;
+                        if i == 2 {
+                            break;
                         }
                         i += 1;
+                    }
+                    i += 1;
 
-                        while let Some(value) = stdio_iter.next()? {
-                            // extract() leaves `out_stdio` untouched when `value` is undefined, so this
-                            // must be initialized to a sane default instead of `undefined`.
-                            let mut new_item: Stdio = Stdio::Ignore;
-                            Stdio::extract(&mut new_item, cx, i, value, is_sync)?;
+                    while let Some(value) = stdio_iter.next()? {
+                        // extract() leaves `out_stdio` untouched when `value` is undefined, so this
+                        // must be initialized to a sane default instead of `undefined`.
+                        let mut new_item: Stdio = Stdio::Ignore;
+                        StdioValue::from_js(cx.global(), value, |value| {
+                            Stdio::extract(&mut new_item, cx, i, value, is_sync)
+                        })?;
 
-                            let opt = match new_item.as_spawn_option(i) {
-                                stdio::ResultT::Result(opt) => opt,
-                                stdio::ResultT::Err(e) => {
-                                    return Err(e.throw_js(cx.global()));
-                                }
-                            };
-                            #[cfg(not(windows))]
-                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc);
-                            #[cfg(windows)]
-                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc(_));
-                            if is_ipc {
-                                ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
+                        let opt = match new_item.as_spawn_option(i) {
+                            stdio::ResultT::Result(opt) => opt,
+                            stdio::ResultT::Err(e) => {
+                                return Err(e.throw_js(cx.global()));
                             }
-                            extra_fds.push(opt);
-                            i += 1;
+                        };
+                        #[cfg(not(windows))]
+                        let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc);
+                        #[cfg(windows)]
+                        let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc(_));
+                        if is_ipc {
+                            ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
                         }
-                    } else {
-                        return Err(cx
-                            .global()
-                            .throw_invalid_arguments(format_args!("stdio must be an array")));
+                        extra_fds.push(opt);
+                        i += 1;
                     }
                 }
-            } else {
-                if let Some(value) = args.get(cx.global(), "stdin")? {
-                    Stdio::extract(&mut stdio[0], cx, 0, value, is_sync)?;
+                SpawnStdioList::None => {}
+                SpawnStdioList::Other => {
+                    return Err(cx
+                        .global()
+                        .throw_invalid_arguments(format_args!("stdio must be an array")));
                 }
+                SpawnStdioList::Missing => {
+                    if let Some(value) = args.stdin(cx.global())? {
+                        let value = StdioValue::from_local(cx.global(), value)?;
+                        Stdio::extract(&mut stdio[0], cx, 0, value, is_sync)?;
+                    }
 
-                if let Some(value) = args.get(cx.global(), "stderr")? {
-                    Stdio::extract(&mut stdio[2], cx, 2, value, is_sync)?;
-                }
+                    if let Some(value) = args.stderr(cx.global())? {
+                        let value = StdioValue::from_local(cx.global(), value)?;
+                        Stdio::extract(&mut stdio[2], cx, 2, value, is_sync)?;
+                    }
 
-                if let Some(value) = args.get(cx.global(), "stdout")? {
-                    Stdio::extract(&mut stdio[1], cx, 1, value, is_sync)?;
+                    if let Some(value) = args.stdout(cx.global())? {
+                        let value = StdioValue::from_local(cx.global(), value)?;
+                        Stdio::extract(&mut stdio[1], cx, 1, value, is_sync)?;
+                    }
                 }
             }
 
             if !is_sync {
-                if let Some(lazy_val) = args.get(cx.global(), "lazy")? {
-                    if lazy_val.is_boolean() {
-                        lazy = lazy_val.to_boolean();
-                    }
+                if let Some(lazy_val) = args.lazy(cx.global())? {
+                    lazy = lazy_val;
                 }
             }
 
-            if let Some(detached_val) = args.get(cx.global(), "detached")? {
-                if detached_val.is_boolean() {
-                    detached = detached_val.to_boolean();
-                }
+            if let Some(detached_val) = args.detached(cx.global())? {
+                detached = detached_val;
             }
 
             // Node semantics: uid/gid are int32s passed through to the OS
             // (negative values are cast to uid_t/gid_t, matching libuv).
-            if let Some(uid_value) = args.get(cx.global(), "uid")? {
-                if uid_value != JSValue::NULL {
-                    let uid_int = cx.global().validate_integer_range::<i32>(
-                        uid_value,
-                        0,
-                        bun_sql_jsc::jsc::IntegerRange {
-                            min: i128::from(i32::MIN),
-                            max: i128::from(i32::MAX),
-                            field_name: b"uid",
-                            ..Default::default()
-                        },
-                    )?;
-                    uid = Some(uid_int as u32);
-                }
+            if let Some(uid_int) = args.uid(cx.global())? {
+                uid = Some(uid_int as u32);
             }
 
-            if let Some(gid_value) = args.get(cx.global(), "gid")? {
-                if gid_value != JSValue::NULL {
-                    let gid_int = cx.global().validate_integer_range::<i32>(
-                        gid_value,
-                        0,
-                        bun_sql_jsc::jsc::IntegerRange {
-                            min: i128::from(i32::MIN),
-                            max: i128::from(i32::MAX),
-                            field_name: b"gid",
-                            ..Default::default()
-                        },
-                    )?;
-                    gid = Some(gid_int as u32);
-                }
+            if let Some(gid_int) = args.gid(cx.global())? {
+                gid = Some(gid_int as u32);
             }
 
             // Ignored where cgroups don't exist, like `windowsHide` on POSIX.
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            if let Some(value) = args.get(cx.global(), "cgroup")? {
-                if !value.is_undefined_or_null() {
-                    cgroup = Some(CgroupTarget::from_js(cx.global(), value)?);
-                }
+            if let Some(value) = args.cgroup(cx.global())? {
+                cgroup = Some(CgroupTarget::from_js(cx.global(), value)?);
             }
 
             #[cfg(windows)]
             {
-                if let Some(val) = args.get(cx.global(), "windowsHide")? {
-                    if val.is_boolean() {
-                        windows_hide = val.as_boolean();
-                    }
+                if let Some(val) = args.windows_hide(cx.global())? {
+                    windows_hide = val;
                 }
 
-                if let Some(val) = args.get(cx.global(), "windowsVerbatimArguments")? {
-                    if val.is_boolean() {
-                        windows_verbatim_arguments = val.as_boolean();
-                    }
+                if let Some(val) = args.windows_verbatim_arguments(cx.global())? {
+                    windows_verbatim_arguments = val;
                 }
             }
 
-            if let Some(timeout_value) = args.get(cx.global(), "timeout")? {
+            if let Some(n) = args.timeout(cx.global())? {
                 'brk: {
-                    if timeout_value != JSValue::NULL {
-                        if timeout_value.is_number() {
-                            let n = timeout_value.as_number();
-                            // +Infinity is accepted as "no timeout"; NaN is always a
-                            // caller-side bug (validate_integer_range would map it to 0).
-                            if n.is_nan() {
-                                return Err(cx.global().throw_range_error(
-                                    n,
-                                    bun_fmt::OutOfRangeOptions {
-                                        field_name: b"timeout",
-                                        msg: b"a non-negative integer",
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                            if n.is_infinite() && n > 0.0 {
-                                break 'brk;
-                            }
-                        }
-
-                        let timeout_int = cx.global().validate_integer_range::<u64>(
-                            timeout_value,
-                            0,
-                            bun_sql_jsc::jsc::IntegerRange {
-                                min: 0,
+                    // +Infinity is accepted as "no timeout"; NaN is always a
+                    // caller-side bug (validate_integer_range would map it to 0).
+                    if n.is_nan() {
+                        return Err(cx.global().throw_range_error(
+                            n,
+                            bun_fmt::OutOfRangeOptions {
                                 field_name: b"timeout",
+                                msg: b"a non-negative integer",
                                 ..Default::default()
                             },
-                        )?;
-                        if timeout_int > 0 {
-                            timeout = Some(
-                                i32::try_from((timeout_int as u32) & 0x7FFF_FFFF)
-                                    .expect("int cast"),
-                            );
-                        }
+                        ));
+                    }
+                    if n.is_infinite() && n > 0.0 {
+                        break 'brk;
+                    }
+
+                    let timeout_int = cx.global().validate_integer_range::<u64>(
+                        JSValue::js_number(n),
+                        0,
+                        bun_sql_jsc::jsc::IntegerRange {
+                            min: 0,
+                            field_name: b"timeout",
+                            ..Default::default()
+                        },
+                    )?;
+                    if timeout_int > 0 {
+                        timeout = Some(
+                            i32::try_from((timeout_int as u32) & 0x7FFF_FFFF).expect("int cast"),
+                        );
                     }
                 }
             }
 
-            if let Some(val) = args.get(cx.global(), "killSignal")? {
-                kill_signal = signal_code_from_js(val, cx.global())?;
-                if kill_signal.0 == 0 {
-                    return Err(cx
-                        .global()
-                        .err(
-                            jsc::ErrorCode::ERR_UNKNOWN_SIGNAL,
-                            format_args!("Unknown signal: 0"),
-                        )
-                        .throw());
-                }
+            kill_signal = signal_code(cx.global(), args.kill_signal(cx.global())?)?;
+            if kill_signal.0 == 0 {
+                return Err(cx
+                    .global()
+                    .err(
+                        jsc::ErrorCode::ERR_UNKNOWN_SIGNAL,
+                        format_args!("Unknown signal: 0"),
+                    )
+                    .throw());
             }
 
-            if let Some(val) = args.get(cx.global(), "maxBuffer")? {
-                if val.is_number() && val.is_finite() {
+            if let Some(val) = args.max_buffer(cx.global())? {
+                if val.is_finite() {
                     // 'Infinity' does not set maxBuffer
-                    let value = val.coerce_to_int64(cx.global())?;
+                    let value = JSValue::js_number(val).coerce_to_int64(cx.global())?;
                     if value > 0
                         && (stdio[0].is_piped() || stdio[1].is_piped() || stdio[2].is_piped())
                     {
@@ -809,9 +708,11 @@ fn spawn_maybe_sync(
             }
 
             if !is_sync {
-                if let Some(terminal_val) = args.get_truthy(cx.global(), "terminal")? {
+                if let Some(terminal_val) = args.terminal(cx.global())? {
                     // Check if it's an existing Terminal object
-                    if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
+                    if let Some(terminal) =
+                        terminal_body::js::from_js(terminal_val.object().to_js())
+                    {
                         // `from_js` returns the live `Terminal` pointer borrowed
                         // from the JS wrapper; it stays valid for as long as
                         // `terminal_val` is reachable (kept alive below via
@@ -843,8 +744,8 @@ fn spawn_maybe_sync(
                             )));
                         }
                         existing_terminal = Some(term);
-                        terminal_js_value = terminal_val;
-                    } else if terminal_val.is_object() {
+                        terminal_js_value = terminal_val.object().to_js();
+                    } else {
                         // Create a new terminal from options
                         let term_options =
                             TerminalOptions::parse_from_js(cx.global(), terminal_val)?;
@@ -870,10 +771,6 @@ fn spawn_maybe_sync(
                                 });
                             }
                         }
-                    } else {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "terminal must be a Terminal object or options object",
-                        )));
                     }
 
                     #[cfg(unix)]
@@ -1960,7 +1857,9 @@ fn spawn_maybe_sync(
             let stderr = subprocess
                 .stderr
                 .with_mut(|s| s.to_buffered_value(cx.global()))?;
-            let resource_usage = subprocess.create_resource_usage_object(cx.global())?;
+            let resource_usage = subprocess
+                .create_resource_usage_object(cx.global())
+                .unwrap_or(JSValue::UNDEFINED);
             Ok((stdout, stderr, resource_usage))
         });
     let exited_due_to_timeout = did_timeout;
@@ -2071,7 +1970,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
 /// `Vec<ZBox>` is dropped after `spawn_process` returns.
 fn append_envp_from_js(
     global_this: &JSGlobalObject,
-    object: &JSObject,
+    object: JsLocal<'_, JSObject>,
     envp: &mut Vec<CStrPtr>,
     path: &mut &[u8],
     storage: &mut Vec<ZBox>,
@@ -2183,35 +2082,25 @@ impl CgroupTarget {
         }
     }
 
-    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-        if value.is_number() {
-            // `validate_integer_range` maps NaN to the default; there is no default fd.
-            let fd = global.validate_integer_range::<i32>(
-                value,
-                -1,
-                bun_sql_jsc::jsc::IntegerRange {
-                    min: 0,
-                    max: i128::from(i32::MAX),
-                    field_name: b"cgroup",
-                    ..Default::default()
-                },
-            )?;
-            if fd < 0 {
-                return Err(global.throw_range_error(
-                    value.as_number(),
-                    bun_fmt::OutOfRangeOptions {
-                        field_name: b"cgroup",
-                        msg: b"an integer",
-                        ..Default::default()
-                    },
-                ));
+    fn from_js(global: &JSGlobalObject, value: SpawnCgroupTarget) -> JsResult<Self> {
+        match value {
+            SpawnCgroupTarget::Fd(fd) => {
+                // NaN: there is no default fd.
+                if fd < 0 {
+                    return Err(global.throw_range_error(
+                        f64::NAN,
+                        bun_fmt::OutOfRangeOptions {
+                            field_name: b"cgroup",
+                            msg: b"an integer",
+                            ..Default::default()
+                        },
+                    ));
+                }
+                Ok(Self::DirFd(Fd::from_native(fd)))
             }
-            return Ok(Self::DirFd(Fd::from_native(fd)));
-        }
-        if value.is_string() {
-            let path = value.to_utf8(global)?;
-            if strings::contains_char(path.slice(), 0) {
-                return Err(global
+            SpawnCgroupTarget::Path(path) => {
+                if strings::contains_char(path.slice(), 0) {
+                    return Err(global
                     .err(
                         jsc::ErrorCode::INVALID_ARG_VALUE,
                         format_args!(
@@ -2220,10 +2109,10 @@ impl CgroupTarget {
                         ),
                     )
                     .throw());
+                }
+                Ok(Self::Path(ZBox::from_bytes(path.slice())))
             }
-            return Ok(Self::Path(ZBox::from_bytes(path.slice())));
         }
-        Err(global.throw_invalid_argument_type_value(b"cgroup", b"string or number", value))
     }
 
     /// Resolve to a directory fd in the parent so a bad path fails the spawn

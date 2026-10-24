@@ -25,7 +25,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult, SystemError,
+    self as jsc, JSArray, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult, SystemError,
 };
 use bun_ptr::RefPtr;
 #[cfg(windows)]
@@ -2820,13 +2820,14 @@ pub(crate) mod internal {
     /// The `addresses: string[]` argument of the testing hooks below, as sockaddrs.
     fn addresses_for_testing(
         global: &JSGlobalObject,
-        addresses: JSValue,
+        addresses: Option<JsLocal<'_, JSArray>>,
     ) -> JsResult<Vec<SockaddrStorage>> {
-        if !addresses.is_array() {
+        let Some(addresses) = addresses else {
             return Err(
                 global.throw_invalid_arguments(format_args!("expected addresses: string[]"))
             );
-        }
+        };
+        let addresses = addresses.to_js();
         let len = addresses.get_length(global)? as usize;
         if len > MAX_ADDRESSES_FOR_TESTING {
             return Err(global
@@ -2853,9 +2854,9 @@ pub(crate) mod internal {
     /// `bun:internal-for-testing`: [`is_all_loopback_of_one_family`] over `addresses` laid out as a getaddrinfo() answer.
     pub(crate) fn is_all_loopback_of_one_family_for_testing<'a>(
         cx: &mut JsScope<'a>,
-        addresses: JsLocal<'a>,
+        addresses: Option<JsLocal<'a, JSArray>>,
     ) -> JsResult<bool> {
-        let mut addrs = addresses_for_testing(cx.global(), addresses.to_js())?;
+        let mut addrs = addresses_for_testing(cx.global(), addresses)?;
         let chain = addrinfo_chain(&mut addrs);
         let head = chain.first().map_or(ptr::null(), ptr::from_ref);
         Ok(is_all_loopback_of_one_family(head))
@@ -2867,11 +2868,11 @@ pub(crate) mod internal {
     pub(crate) fn seed_cache_for_testing<'a>(
         cx: &mut JsScope<'a>,
         hostname: &[u8],
-        addresses: JsLocal<'a>,
+        addresses: Option<JsLocal<'a, JSArray>>,
     ) -> JsResult<core::iter::Take<core::array::IntoIter<i32, MAX_ADDRESSES_FOR_TESTING>>> {
         let global = cx.global();
         let hostname_z = bun::ZBox::from_bytes(hostname);
-        let mut addrs = addresses_for_testing(global, addresses.to_js())?;
+        let mut addrs = addresses_for_testing(global, addresses)?;
         if addrs.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
         }
@@ -2917,7 +2918,7 @@ pub(crate) mod internal {
         cx: &mut JsScope<'_>,
         code: &[u8],
         hostname: &[u8],
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         let global = cx.global();
         let Some(rc) = c_ares::Error::eai_raw_by_name(code) else {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -2931,8 +2932,9 @@ pub(crate) mod internal {
                 global,
                 b"getaddrinfo",
                 hostname,
-            ),
-            None => Ok(JSValue::UNDEFINED),
+            )
+            .map(Some),
+            None => Ok(None),
         }
     }
 
@@ -5599,7 +5601,7 @@ impl Resolver {
     fn set_channel_servers(
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
-        argument: JSValue,
+        argument: Option<JsLocal<'_, JSArray>>,
     ) -> JsResult<()> {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
         if channel != Self::get_channel_from_vm(global_this)?
@@ -5614,11 +5616,11 @@ impl Resolver {
                 .throw());
         }
 
-        if !argument.is_array() {
+        let Some(argument) = argument else {
             return Err(global_this.throw_invalid_argument_type("setServers", "servers", "array"));
-        }
+        };
 
-        let mut triples_iterator = argument.array_iterator(global_this)?;
+        let mut triples_iterator = argument.to_js().array_iterator(global_this)?;
 
         if triples_iterator.len == 0 {
             // SAFETY: FFI; channel is a live initialized ares_channel; null clears the server list.
@@ -5719,21 +5721,28 @@ impl Resolver {
         Ok(())
     }
 
-    pub(crate) fn set_global_servers(cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn set_global_servers(
+        cx: &mut JsScope<'_>,
+        servers: Option<JsLocal<'_, JSArray>>,
+    ) -> JsResult<()> {
         let global_this = cx.global();
         Self::set_channel_servers(
             Self::get_channel_from_vm(global_this)?,
             global_this,
-            servers.to_js(),
+            servers,
         )
     }
 
-    pub(crate) fn set_servers(&self, cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn set_servers(
+        &self,
+        cx: &mut JsScope<'_>,
+        servers: Option<JsLocal<'_, JSArray>>,
+    ) -> JsResult<()> {
         let global_this = cx.global();
         Self::set_channel_servers(
             self.get_channel_or_error(global_this)?,
             global_this,
-            servers.to_js(),
+            servers,
         )
     }
 

@@ -18,7 +18,7 @@ pub(crate) fn port_after_callback<'a>(
     address: &'a SocketAddress,
     callback: JsLocal<'a, Callable>,
 ) -> bindgen::Result<'a, u16> {
-    callback.call(cx, JsLocal::UNDEFINED, &[])?;
+    callback.call(cx.global(), JsLocal::UNDEFINED, &[])?;
     Ok(address.port())
 }
 

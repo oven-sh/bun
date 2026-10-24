@@ -5,7 +5,7 @@ use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
-use crate::generated_bindgen::jest::js_ScopeFunctions as js;
+use crate::generated_bindgen::jest::{EachTable, js_ScopeFunctions as js};
 use crate::generated_bindgen::scope_functions::{
     Bun__ScopeFunctions__callAsFunction, CallbackOrOptions, DescriptionOrCallback,
 };
@@ -105,15 +105,20 @@ impl ScopeFunctions {
     pub(crate) fn serial_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
         self.generic_if(cx.global(), condition, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, "serialIf")
     }
-    pub(crate) fn each(&self, cx: &mut JsScope<'_>, table: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn each(&self, cx: &mut JsScope<'_>, table: EachTable<'_>) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
         let global = cx.global();
-        let array = table.to_js();
-        if array.is_undefined_or_null() || !array.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
-            return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
-        }
+        let array = match table {
+            EachTable::Array(array) => array.to_js(),
+            EachTable::Other(other) => {
+                let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+                return Err(global.throw(format_args!(
+                    "Expected array, got {}",
+                    other.to_fmt(&mut formatter)
+                )));
+            }
+        };
 
         if !self.each.is_empty() {
             return Err(global.throw(format_args!("Cannot {} on {}", "each", self)));
@@ -132,7 +137,7 @@ pub(crate) fn call_as_function<'a>(
     let _g = group_log::begin();
 
     let global = cx.global();
-    let Some(this) = this_value.to_js().as_class_ref::<ScopeFunctions>() else {
+    let Some(this) = this_value.as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
     let line_no = jest::capture_test_line_number(global);

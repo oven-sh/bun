@@ -9,11 +9,11 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        nth: JsLocal<'_>,
+        nth: Option<f64>,
         expected: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
-        let expected = JsLocal::to_js_slice(expected);
+
         let (this, calls, _) = self.mock_prologue(
             global,
             this_value.to_js(),
@@ -22,12 +22,14 @@ impl Expect {
             super::mock::MockKind::CallsWithSig,
         )?;
 
-        let nth = nth.to_js();
-        if !nth.is_any_int() {
+        let Some(nth) = nth
+            .map(JSValue::js_double_number)
+            .filter(|nth| nth.is_any_int())
+        else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toHaveBeenNthCalledWith() requires a positive integer as the first argument"
             )));
-        }
+        };
         let nth_call_num_i32 = nth.to_int32();
 
         if nth_call_num_i32 <= 0 {
@@ -64,7 +66,7 @@ impl Expect {
         }
 
         if pass != this.flags.get().not() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // handle failure

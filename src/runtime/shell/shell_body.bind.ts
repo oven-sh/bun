@@ -1,10 +1,11 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { ShellArrayLike } from "./ParsedShellScript.bind.ts";
 
 export default b.module({ rustPath: "crate::shell::shell_body::testing_apis" });
 
-/** `strings` and `templateArgs` are array-likes that are read in turn, one element of each at a time. */
+/** `strings` and `templateArgs` are read in turn, one element of each at a time. */
 const template = {
-  args: { strings: b.any, templateArgs: b.any },
+  args: { strings: ShellArrayLike, templateArgs: b.jsArray },
   returns: b.string.utf8,
   capability: "js",
   throws: true,

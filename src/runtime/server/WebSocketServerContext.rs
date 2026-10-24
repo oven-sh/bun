@@ -1,7 +1,12 @@
 use core::ffi::c_void;
 
+use crate::generated_bindgen::node_http_binding::WebSocketHandlers;
+use crate::generated_bindgen::server::{
+    DeflateOption, OptionBool, OptionNumber, PerMessageDeflate, WebSocketOptions,
+};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_core::comptime_string_map::ComptimeStringMap;
+use bun_jsc::bindgen::{Callable, JsLocal};
 use bun_uws as uws;
 
 pub(crate) struct WebSocketServerContext {
@@ -117,48 +122,28 @@ impl Handler {
     }
 
     pub(crate) fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {
-        let mut handler = Handler {
-            on_open: JSValue::ZERO,
-            on_message: JSValue::ZERO,
-            on_close: JSValue::ZERO,
-            on_drain: JSValue::ZERO,
-            on_error: JSValue::ZERO,
-            on_ping: JSValue::ZERO,
-            on_pong: JSValue::ZERO,
-            app: None,
-            server: None,
-            vm: bun_ptr::BackRef::new(VirtualMachine::get()),
-            global_object: bun_ptr::BackRef::new(global_object),
-            context: global_object.bun_vm().context_of_caller().id(),
-            flags: HandlerFlags::empty(),
-        };
-
-        // NOTE: iterate over (key, &mut field) pairs — disjoint field borrows are allowed.
-        let pairs: [(&'static str, &mut JSValue); 7] = [
-            ("error", &mut handler.on_error),
-            ("message", &mut handler.on_message),
-            ("open", &mut handler.on_open),
-            ("close", &mut handler.on_close),
-            ("drain", &mut handler.on_drain),
-            ("ping", &mut handler.on_ping),
-            ("pong", &mut handler.on_pong),
-        ];
-        for (key, field) in pairs {
-            if let Some(value) = object.get_truthy(global_object, key)? {
-                if !value.is_cell() || !value.is_callable() {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "websocket expects a function for the '{}' option",
-                        key
-                    )));
-                }
-                // Raw value — async-context wrapping is deferred to
-                // `NewServer::write_ws_handler_slots` so the wrapped fn is
-                // rooted by the wrapper's WriteBarrier slot immediately.
-                *field = value;
-            }
-        }
-
-        Ok(handler)
+        // Raw value — async-context wrapping is deferred to
+        // `NewServer::write_ws_handler_slots` so the wrapped fn is
+        // rooted by the wrapper's WriteBarrier slot immediately.
+        let raw =
+            |handler: Option<JsLocal<'_, Callable>>| handler.map_or(JSValue::ZERO, JsLocal::to_js);
+        WebSocketHandlers::from_js(global_object, object, |handlers| {
+            Ok(Handler {
+                on_open: raw(handlers.open),
+                on_message: raw(handlers.message),
+                on_close: raw(handlers.close),
+                on_drain: raw(handlers.drain),
+                on_error: raw(handlers.error),
+                on_ping: raw(handlers.ping),
+                on_pong: raw(handlers.pong),
+                app: None,
+                server: None,
+                vm: bun_ptr::BackRef::new(VirtualMachine::get()),
+                global_object: bun_ptr::BackRef::new(global_object),
+                context: global_object.bun_vm().context_of_caller().id(),
+                flags: HandlerFlags::empty(),
+            })
+        })
     }
 }
 
@@ -214,22 +199,21 @@ bun_core::comptime_string_map! {
 /// Returns `None` if `key` isn't set, and `Some(0)` for `false` or `"disable"`.
 fn deflate_option(
     global_object: &JSGlobalObject,
-    per_message_deflate: JSValue,
+    value: DeflateOption,
     key: &'static str,
     table: &impl ComptimeStringMap<Value = i32>,
     shared: i32,
 ) -> JsResult<Option<i32>> {
-    let Some(value) = per_message_deflate.get_truthy(global_object, key)? else {
-        return Ok(None);
-    };
-    if value.is_boolean() {
-        return Ok(Some(if value.to_boolean() { shared } else { 0 }));
-    }
-    if value.is_string() {
-        let name = value.to_js_string_view(global_object)?;
-        if let Some(&bits) = table.lookup(name.to_utf8().slice()) {
-            return Ok(Some(bits));
+    match value {
+        DeflateOption::Missing => return Ok(None),
+        DeflateOption::Flag(value) => return Ok(Some(if value { shared } else { 0 })),
+        DeflateOption::Text(name) if name.is_empty() => return Ok(None),
+        DeflateOption::Text(name) | DeflateOption::StringObject(name) => {
+            if let Some(&bits) = table.lookup(name.to_utf8().slice()) {
+                return Ok(Some(bits));
+            }
         }
+        DeflateOption::Other => {}
     }
     Err(global_object.throw_invalid_arguments(format_args!(
         "websocket expects a valid {key} option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
@@ -238,10 +222,10 @@ fn deflate_option(
 
 pub(crate) fn on_create(
     global_object: &JSGlobalObject,
-    object: JSValue,
+    object: WebSocketOptions<'_>,
 ) -> JsResult<WebSocketServerContext> {
     // Construct the struct with the handler and explicit defaults up front.
-    let handler = Handler::from_js(global_object, object)?;
+    let handler = Handler::from_js(global_object, object.object().to_js())?;
     let mut server = WebSocketServerContext {
         handler,
         max_payload_length: 1024 * 1024 * 16, // 16MB
@@ -254,37 +238,30 @@ pub(crate) fn on_create(
         close_on_backpressure_limit: false,
     };
 
-    if let Some(per_message_deflate) = object.get(global_object, "perMessageDeflate")? {
-        'getter: {
-            if per_message_deflate.is_undefined() {
-                break 'getter;
-            }
-
-            if per_message_deflate.is_boolean() || per_message_deflate.is_null() {
-                if per_message_deflate.to_boolean() {
-                    server.compression = uws::SHARED_COMPRESSOR | uws::SHARED_DECOMPRESSOR;
-                } else {
-                    server.compression = 0;
-                }
-                break 'getter;
-            }
-
-            if !per_message_deflate.is_object() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "websocket expects perMessageDeflate to be a boolean or an object"
-                )));
-            }
-
+    match object.per_message_deflate(global_object)? {
+        PerMessageDeflate::Missing => {}
+        PerMessageDeflate::Flag(true) => {
+            server.compression = uws::SHARED_COMPRESSOR | uws::SHARED_DECOMPRESSOR;
+        }
+        PerMessageDeflate::Flag(false) | PerMessageDeflate::Null => {
+            server.compression = 0;
+        }
+        PerMessageDeflate::Other => {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "websocket expects perMessageDeflate to be a boolean or an object"
+            )));
+        }
+        PerMessageDeflate::Options(per_message_deflate) => {
             let compress = deflate_option(
                 global_object,
-                per_message_deflate,
+                per_message_deflate.compress(global_object)?,
                 "compress",
                 &COMPRESS_TABLE,
                 uws::SHARED_COMPRESSOR,
             )?;
             let decompress = deflate_option(
                 global_object,
-                per_message_deflate,
+                per_message_deflate.decompress(global_object)?,
                 "decompress",
                 &DECOMPRESS_TABLE,
                 uws::SHARED_DECOMPRESSOR,
@@ -299,26 +276,22 @@ pub(crate) fn on_create(
         }
     }
 
-    if let Some(value) = object.get(global_object, "maxPayloadLength")? {
-        if !value.is_undefined_or_null() {
-            if !value.is_any_int() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "websocket expects maxPayloadLength to be an integer"
-                )));
-            }
-            server.max_payload_length = value.to_u32();
+    match object.max_payload_length(global_object)? {
+        OptionNumber::Missing => {}
+        OptionNumber::Number(value) if JSValue::js_number(value).is_any_int() => {
+            server.max_payload_length = JSValue::js_number(value).to_u32();
+        }
+        _ => {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "websocket expects maxPayloadLength to be an integer"
+            )));
         }
     }
 
-    if let Some(value) = object.get(global_object, "idleTimeout")? {
-        if !value.is_undefined_or_null() {
-            if !value.is_any_int() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "websocket expects idleTimeout to be an integer"
-                )));
-            }
-
-            let idle_timeout = value.to_int64().max(0);
+    match object.idle_timeout(global_object)? {
+        OptionNumber::Missing => {}
+        OptionNumber::Number(value) if JSValue::js_number(value).is_any_int() => {
+            let idle_timeout = (value as i64).max(0);
             if idle_timeout > 960 {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects idleTimeout to be 960 or less"
@@ -333,55 +306,60 @@ pub(crate) fn on_create(
 
             server.idle_timeout = idle_timeout;
         }
+        _ => {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "websocket expects idleTimeout to be an integer"
+            )));
+        }
     }
-    if let Some(value) = object.get(global_object, "backpressureLimit")? {
-        if !value.is_undefined_or_null() {
-            if !value.is_any_int() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "websocket expects backpressureLimit to be an integer"
-                )));
-            }
-
-            server.backpressure_limit = value.to_u32();
+    match object.backpressure_limit(global_object)? {
+        OptionNumber::Missing => {}
+        OptionNumber::Number(value) if JSValue::js_number(value).is_any_int() => {
+            server.backpressure_limit = JSValue::js_number(value).to_u32();
+        }
+        _ => {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "websocket expects backpressureLimit to be an integer"
+            )));
         }
     }
 
-    if let Some(value) = object.get(global_object, "closeOnBackpressureLimit")? {
-        if !value.is_undefined_or_null() {
-            if !value.is_boolean() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "websocket expects closeOnBackpressureLimit to be a boolean"
-                )));
-            }
-
-            server.close_on_backpressure_limit = value.to_boolean();
+    match object.close_on_backpressure_limit(global_object)? {
+        OptionBool::Missing => {}
+        OptionBool::Value(value) => {
+            server.close_on_backpressure_limit = value;
+        }
+        OptionBool::Other => {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "websocket expects closeOnBackpressureLimit to be a boolean"
+            )));
         }
     }
 
-    if let Some(value) = object.get(global_object, "sendPings")? {
-        if !value.is_undefined_or_null() {
-            if !value.is_boolean() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "websocket expects sendPings to be a boolean"
-                )));
-            }
-
-            server.send_pings_automatically = value.to_boolean();
+    match object.send_pings(global_object)? {
+        OptionBool::Missing => {}
+        OptionBool::Value(value) => {
+            server.send_pings_automatically = value;
+        }
+        OptionBool::Other => {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "websocket expects sendPings to be a boolean"
+            )));
         }
     }
 
-    if let Some(value) = object.get(global_object, "publishToSelf")? {
-        if !value.is_undefined_or_null() {
-            if !value.is_boolean() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "websocket expects publishToSelf to be a boolean"
-                )));
-            }
-
+    match object.publish_to_self(global_object)? {
+        OptionBool::Missing => {}
+        OptionBool::Value(value) => {
             server
                 .handler
                 .flags
-                .set(HandlerFlags::PUBLISH_TO_SELF, value.to_boolean());
+                .set(HandlerFlags::PUBLISH_TO_SELF, value);
+        }
+        OptionBool::Other => {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "websocket expects publishToSelf to be a boolean"
+            )));
         }
     }
 

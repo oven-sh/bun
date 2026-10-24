@@ -8,8 +8,9 @@ export const unsafe = b.namespace({
     returns: b.i32,
   },
   arrayBufferToString: {
-    args: { buffer: b.any },
-    returns: b.any,
+    args: { buffer: b.bufferSource.allowShared },
+    expected: { buffer: "Expected an ArrayBuffer" },
+    returns: b.string.local,
     capability: "js",
     throws: true,
   },

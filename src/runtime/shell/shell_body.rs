@@ -18,6 +18,8 @@ use bun_jsc::{
 use bun_simdutf_sys::simdutf;
 use bun_sys::{self as sys, SystemError};
 
+use crate::generated_bindgen::parsed_shell_script::ShellArrayLike;
+
 // ───────────────────────────── re-exports ─────────────────────────────
 
 pub(crate) use super::interpreter as interpret;
@@ -261,7 +263,7 @@ pub(crate) mod test {
 
 pub(crate) fn shell_cmd_from_js(
     global: &JSGlobalObject,
-    string_args: JSValue,
+    string_args: ShellArrayLike<'_>,
     template_args: &mut JSArrayIterator,
     jsstrings: &mut Vec<BunString>,
     out_script: &mut Vec<u8>,
@@ -270,7 +272,13 @@ pub(crate) fn shell_cmd_from_js(
     let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
     let mut jsobjref_buf = [0u8; 128];
 
-    let mut string_iter = string_args.array_iterator(global)?;
+    let mut string_iter = match string_args {
+        ShellArrayLike::Text(text) => text.to_js().array_iterator(global)?,
+        ShellArrayLike::BigInt(value) => value.to_js().array_iterator(global)?,
+        ShellArrayLike::Symbol(value) => value.to_js().array_iterator(global)?,
+        ShellArrayLike::Object(object) => object.to_js().array_iterator(global)?,
+        ShellArrayLike::Other => return Ok(()),
+    };
     let mut i: u32 = 0;
     let last = string_iter.len.saturating_sub(1);
     while let Some(js_value) = string_iter.next()? {
@@ -655,6 +663,7 @@ impl<'a> ShellSrcBuilder<'a> {
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub(crate) mod testing_apis {
     use super::*;
+    use bun_jsc::JSArray;
     use bun_jsc::bindgen::{JsLocal, JsScope};
 
     pub(crate) fn disabled_on_this_platform(builtin: &[u8]) -> bool {
@@ -675,18 +684,16 @@ pub(crate) mod testing_apis {
 
     pub(crate) fn shell_lex<'a>(
         cx: &mut JsScope<'a>,
-        strings: JsLocal<'a>,
-        template_args: JsLocal<'a>,
+        strings: ShellArrayLike<'a>,
+        template_args: JsLocal<'a, JSArray>,
     ) -> JsResult<String> {
         let global = cx.global();
-        MarkedArgumentBuffer::new(|buf| {
-            shell_lex_impl(global, strings.to_js(), template_args.to_js(), buf)
-        })
+        MarkedArgumentBuffer::new(|buf| shell_lex_impl(global, strings, template_args.to_js(), buf))
     }
 
     fn shell_lex_impl(
         global: &JSGlobalObject,
-        string_args: JSValue,
+        string_args: ShellArrayLike<'_>,
         template_args_js: JSValue,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<String> {
@@ -740,18 +747,18 @@ pub(crate) mod testing_apis {
     /// in a `MarkedArgumentBuffer` for GC safety while parsing.
     pub(crate) fn shell_parse<'a>(
         cx: &mut JsScope<'a>,
-        strings: JsLocal<'a>,
-        template_args: JsLocal<'a>,
+        strings: ShellArrayLike<'a>,
+        template_args: JsLocal<'a, JSArray>,
     ) -> JsResult<String> {
         let global = cx.global();
         MarkedArgumentBuffer::new(|buf| {
-            shell_parse_impl(global, strings.to_js(), template_args.to_js(), buf)
+            shell_parse_impl(global, strings, template_args.to_js(), buf)
         })
     }
 
     fn shell_parse_impl(
         global: &JSGlobalObject,
-        string_args: JSValue,
+        string_args: ShellArrayLike<'_>,
         template_args_js: JSValue,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<String> {

@@ -8,12 +8,13 @@ use crate::webcore::jsc::{
     JSPromise, JSPromiseStrong, JSType, JSValue, JsResult, SysErrorJsc, VirtualMachine,
 };
 use bun_collections::{ByteVecExt, VecExt};
+use bun_jsc::bindgen::{AnyValue, JsLocal};
 use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
 use crate::generated_bindgen::sink::{
-    ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController as js,
+    ArrayBufferSinkStartOptions, SinkPath, SinkStartFd, js_ReadableSinkController as js,
 };
 use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
@@ -116,11 +117,7 @@ impl Start {
     }
 
     /// `start({ path, fd })` of a `FileSink`.
-    pub(crate) fn file_sink(
-        path: &SinkPath<'_>,
-        fd: Option<bun_jsc::bindgen::JsLocal<'_>>,
-    ) -> Start {
-        use bun_sys_jsc::FdJsc as _;
+    pub(crate) fn file_sink(path: &SinkPath, fd: &SinkStartFd) -> Start {
         let error = |errno: sys::SystemErrno| {
             Start::Err(SysError {
                 errno: errno as _,
@@ -132,12 +129,19 @@ impl Start {
             (SinkPath::Path(path), _) => {
                 crate::webcore::PathOrFileDescriptor::Path(path.clone().into_utf8())
             }
-            (SinkPath::Other(_), _) => return error(sys::SystemErrno::EINVAL),
-            (SinkPath::Missing, None) => crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-            (SinkPath::Missing, Some(fd)) => match Fd::from_js(fd.to_js()) {
-                Some(fd) => crate::webcore::PathOrFileDescriptor::Fd(fd),
-                None => return error(sys::SystemErrno::EBADF),
-            },
+            (SinkPath::Other, _) => return error(sys::SystemErrno::EINVAL),
+            (SinkPath::Missing, SinkStartFd::Missing) => {
+                crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID)
+            }
+            (SinkPath::Missing, SinkStartFd::Text(text)) if text.is_empty() => {
+                crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID)
+            }
+            (SinkPath::Missing, &SinkStartFd::Number(fd))
+                if !fd.is_sign_negative() && fd <= f64::from(i32::MAX) && fd.fract() == 0.0 =>
+            {
+                crate::webcore::PathOrFileDescriptor::Fd(Fd::from_uv(fd as i32))
+            }
+            (SinkPath::Missing, _) => return error(sys::SystemErrno::EBADF),
         };
         Start::FileSink(FileSinkOptions {
             input_path,
@@ -739,7 +743,7 @@ impl PipeCell {
         js::take_pipe_done(self.0.get()?).as_promise()
     }
 
-    pub(crate) fn set_error(&self, error: JSValue) {
+    pub(crate) fn set_error(&self, error: impl AnyValue) {
         if let Some(cell) = self.0.get() {
             js::set_fail_reason(cell, error);
         }
@@ -2028,7 +2032,7 @@ impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritabl
     unsafe fn close_with_error(
         this: *mut Self,
         _global: &JSGlobalObject,
-        _reason: JSValue,
+        _reason: JsLocal<'_>,
     ) -> bun_sys::Result<()> {
         // SAFETY: caller contract; `fail` does not free the sink.
         unsafe { (*this).fail() };
@@ -2342,7 +2346,7 @@ impl NetworkSink {
     ///
     /// Raw `*mut Self`: `task.fail()` synchronously fires
     /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
-    pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JSValue) {
+    pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JsLocal<'_>) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; the
         // borrow ends before `fail` re-enters.
         let task_ref = unsafe {
@@ -2353,7 +2357,7 @@ impl NetworkSink {
             (*this).done = true;
             (*this).pending.result = Writable::Done;
             (*this).pending.run();
-            if !reason.is_empty_or_undefined_or_null() {
+            if let Some(reason) = reason.nullable() {
                 (*this).upstream_error.set(global, reason);
             }
             // Our own ref: `fail` re-enters and may clear `(*this).task`.
@@ -2490,7 +2494,7 @@ impl crate::webcore::sink::ControlledSink for NetworkSink {
     unsafe fn close_with_error(
         this: *mut Self,
         global: &JSGlobalObject,
-        reason: JSValue,
+        reason: JsLocal<'_>,
     ) -> bun_sys::Result<()> {
         Self::fail_from_js_pump(this, global, reason);
         bun_sys::Result::Ok(())

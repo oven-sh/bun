@@ -14,7 +14,7 @@ export const DigestOutput = b.union({
 
 const method = { capability: "heap", throws: true } as const;
 const update = { ...method, returns: b.self, passThis: true, mutates: true } as const;
-const digest = { ...method, args: { output: DigestOutput.nullable }, returns: b.any, mutates: true } as const;
+const digest = { ...method, args: { output: DigestOutput.nullable }, returns: b.opaque, mutates: true } as const;
 
 export const CryptoHasher = b.class({
   rustPath: "crate::crypto::crypto_hasher::CryptoHasher",
@@ -40,11 +40,11 @@ export const CryptoHasher = b.class({
   },
   static: {
     algorithms: { getter: b.array(b.string.utf8) },
-    hash: { ...method, args: { algorithm: b.string, input, output: DigestOutput.optional }, returns: b.any },
+    hash: { ...method, args: { algorithm: b.string, input, output: DigestOutput.optional }, returns: b.opaque },
   },
 });
 
-const hash = { ...method, args: { input, output: DigestOutput.optional }, returns: b.any } as const;
+const hash = { ...method, args: { input, output: DigestOutput.optional }, returns: b.opaque } as const;
 
 const staticHasher = (name: string) =>
   b.class({

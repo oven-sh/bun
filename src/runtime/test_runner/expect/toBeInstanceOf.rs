@@ -4,14 +4,15 @@ use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 use super::throw;
+use crate::generated_bindgen::expect::ObjectOrOther;
 
 impl Expect {
     pub(crate) fn to_be_instance_of(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        (constructor, expected): (ObjectOrOther<'_>, JsLocal<'_>),
+    ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
         let this_value = this_value.to_js();
@@ -20,24 +21,26 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` → handled by Drop.
 
-        let expected = expected.to_js();
-        if !expected.is_constructor() {
-            return Err(global.throw(format_args!(
-                "Expected value must be a function: {}",
-                expected.to_fmt(&mut formatter),
-            )));
-        }
+        let constructor = match constructor {
+            ObjectOrOther::Object(object) if object.to_js().is_constructor() => object.to_js(),
+            _ => {
+                return Err(global.throw(format_args!(
+                    "Expected value must be a function: {}",
+                    expected.to_fmt(&mut formatter),
+                )));
+            }
+        };
 
         let value: JSValue =
             this.get_value(global, this_value, "toBeInstanceOf", "<green>expected<r>")?;
 
         let not = this.flags.get().not();
-        let mut pass = value.is_instance_of(global, expected)?;
+        let mut pass = value.is_instance_of(global, constructor)?;
         if not {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let mut formatter2 = super::make_formatter(global);

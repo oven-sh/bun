@@ -8,10 +8,13 @@ mod _impl {
     use super::*;
     use core::cell::Cell;
 
-    use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+    use bun_jsc::bindgen::{JsScope, JsWrapper};
     use bun_jsc::{JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
 
+    use crate::generated_bindgen::node_zlib_binding::{
+        Dictionary, ProcessCallback, Uint32ArrayArgument,
+    };
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive};
     use crate::node::util::validators;
 
@@ -85,9 +88,9 @@ mod _impl {
             level: i32,
             mem_level: i32,
             strategy: i32,
-            write_state: JsLocal<'_>,
-            process_callback: JsLocal<'_>,
-            dictionary: JsLocal<'_>,
+            write_state: Uint32ArrayArgument<'_>,
+            process_callback: ProcessCallback<'_>,
+            dictionary: Dictionary<'_>,
         ) -> JsResult<()> {
             let global = cx.global();
             let this_value = this_value.to_js();
@@ -97,23 +100,20 @@ mod _impl {
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = write_state.to_js();
-            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
-                return Err(global.throw_invalid_argument_type_value(
-                    "writeResult",
-                    "Uint32Array",
-                    write_result_value,
-                ));
+            let write_result_value = match write_state {
+                Uint32ArrayArgument::Array(array) => array.to_js(),
+                Uint32ArrayArgument::Other(value) => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "writeResult",
+                        "Uint32Array",
+                        value,
+                    ));
+                }
             };
-            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
-                return Err(global.throw_invalid_argument_type_value(
-                    "writeResult",
-                    "Uint32Array",
-                    write_result_value,
-                ));
-            }
-            let write_result_slice = write_result_buf.as_u32();
-            if write_result_slice.len() < 2 {
+            if write_result_value
+                .as_array_buffer(global)
+                .is_none_or(|buf| buf.byte_len < 2 * size_of::<u32>())
+            {
                 return Err(global
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -121,39 +121,44 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_callback =
-                validators::validate_function(global, "writeCallback", process_callback.to_js())?;
-            // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
-            // the call to `stream.init` below (E0716 otherwise).
-            let dictionary_buf;
-            let dictionary = if dictionary.is_undefined() {
-                None
-            } else {
-                let dictionary_value = dictionary.to_js();
-                dictionary_buf = match dictionary_value.as_array_buffer(global) {
-                    Some(buf) => buf,
-                    None => {
-                        return Err(global.throw_invalid_argument_type_value(
-                            "dictionary",
-                            "Buffer, TypedArray, or DataView",
-                            dictionary_value,
-                        ));
-                    }
-                };
-                // `deflateSetDictionary`/`inflateSetDictionary` take a `uInt`
-                // length; reject anything larger before `Context::init` copies it.
-                if dictionary_buf.byte_len > u32::MAX as usize {
-                    return Err(global.throw_range_error(
-                        dictionary_buf.byte_len as i64,
-                        bun_jsc::RangeErrorOptions {
-                            field_name: b"dictionary.byteLength",
-                            max: i64::from(u32::MAX),
-                            ..Default::default()
-                        },
+            let write_callback = match process_callback {
+                ProcessCallback::Callable(callback) => {
+                    validators::validate_function(global, "writeCallback", callback.to_js())?
+                }
+                ProcessCallback::Other(value) => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "writeCallback",
+                        "function",
+                        value,
                     ));
                 }
-                Some(dictionary_buf.byte_slice())
             };
+            // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
+            // the call to `stream.init` below (E0716 otherwise).
+            let dictionary_buf = match dictionary {
+                Dictionary::None => None,
+                Dictionary::Buffer(buffer) => Some(buffer.as_array_buffer(global)),
+                Dictionary::Other(value) => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "dictionary",
+                        "Buffer, TypedArray, or DataView",
+                        value,
+                    ));
+                }
+            };
+            let dictionary = dictionary_buf.as_ref().map(|buf| buf.byte_slice());
+            // `deflateSetDictionary`/`inflateSetDictionary` take a `uInt`
+            // length; reject anything larger before `Context::init` copies it.
+            if let Some(dictionary) = dictionary.filter(|bytes| bytes.len() > u32::MAX as usize) {
+                return Err(global.throw_range_error(
+                    dictionary.len() as i64,
+                    bun_jsc::RangeErrorOptions {
+                        field_name: b"dictionary.byteLength",
+                        max: i64::from(u32::MAX),
+                        ..Default::default()
+                    },
+                ));
+            }
 
             js::write_result_set_cached(this_value, global, write_result_value);
             js::write_callback_set_cached(

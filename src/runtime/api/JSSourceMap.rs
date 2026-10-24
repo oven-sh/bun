@@ -6,11 +6,13 @@ use std::sync::Arc;
 use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
-use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{Deferred, JsPayload as _, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
-use crate::generated_bindgen::sourcemap::js_SourceMap as js;
+use crate::generated_bindgen::sourcemap::{
+    SourceMapMappings, SourceMapOptions, SourceMapPayload, SourcePosition, js_SourceMap as js,
+};
 
 pub(crate) struct JSSourceMap {
     sourcemap: Arc<ParsedSourceMap>,
@@ -24,7 +26,7 @@ static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn find_source_map<'a>(
     cx: &mut JsScope<'a>,
-    path: JsLocal<'a>,
+    path: Deferred<'a, Option<bun_core::String>>,
 ) -> JsResult<Option<JsWrapper<'a, JSSourceMap>>> {
     // Node.js doesn't enable source maps by default.
     // In Bun, we do use them for almost all files since we transpile almost all files
@@ -36,12 +38,10 @@ pub(crate) fn find_source_map<'a>(
     }
 
     let global = cx.global();
-    let source_url_value = path.to_js();
-    if !source_url_value.is_string() {
+    let Some(mut source_url_string) = path.convert(global)? else {
         return Ok(None);
-    }
+    };
 
-    let mut source_url_string = bun_core::String::from_js(source_url_value, global)?;
     let mut source_url_slice = source_url_string.to_utf8();
 
     {
@@ -96,32 +96,34 @@ impl JSSourceMap {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        payload: JsLocal<'a>,
-        options: JsLocal<'a>,
+        payload: SourceMapPayload<'a>,
+        options: Option<SourceMapOptions<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let payload = payload.to_js();
-        let options = options.to_js();
 
-        global.validate_object("payload", payload, Default::default())?;
+        global.validate_object("payload", payload.object(), Default::default())?;
 
-        let mut line_lengths = JSValue::ZERO;
-        if options.is_object() {
+        let mut line_lengths = None;
+        if let Some(options) = options {
             // Node doesn't check it further than this.
-            if let Some(lengths) = options.get_if_property_exists(global, b"lineLengths")? {
-                if lengths.js_type().is_array() {
-                    line_lengths = lengths;
-                }
-            }
+            line_lengths = options.line_lengths(global)?;
         }
 
         // Parse the payload to create a proper sourcemap
 
         // Extract mappings string from payload
-        let Some(mappings_value) = payload.get_stringish_allow_empty(global, b"mappings")? else {
-            return Err(
-                global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
-            );
+        let mappings_value = match payload.mappings(global)? {
+            SourceMapMappings::Text(mappings_value) => mappings_value,
+            SourceMapMappings::Flag(true) => bstring::String::static_("true"),
+            SourceMapMappings::Symbol(_) => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "The \"mappings\" property must be of type string. Received a symbol"
+                )));
+            }
+            SourceMapMappings::Absent | SourceMapMappings::Flag(false) => {
+                return Err(global
+                    .throw_invalid_arguments(format_args!("payload 'mappings' must be a string")));
+            }
         };
 
         let mappings_str = mappings_value.to_utf8();
@@ -129,16 +131,16 @@ impl JSSourceMap {
         let mut names: Vec<bstring::String> = Vec::new();
         let mut sources: Vec<bstring::String> = Vec::new();
 
-        if let Some(sources_value) = payload.get_array(global, b"sources")? {
-            let mut iter = sources_value.array_iterator(global)?;
+        if let Some(sources_value) = payload.sources(global)? {
+            let mut iter = sources_value.to_js().array_iterator(global)?;
             while let Some(source) = iter.next()? {
                 let source_str = source.to_bun_string(global)?;
                 sources.push(source_str);
             }
         }
 
-        if let Some(names_value) = payload.get_array(global, b"names")? {
-            let mut iter = names_value.array_iterator(global)?;
+        if let Some(names_value) = payload.names(global)? {
+            let mut iter = names_value.to_js().array_iterator(global)?;
             while let Some(name) = iter.next()? {
                 let name_str = name.to_bun_string(global)?;
                 names.push(name_str);
@@ -180,8 +182,8 @@ impl JSSourceMap {
         );
 
         let global = cx.global();
-        js::payload_set_cached(this_value.to_js(), global, payload);
-        if !line_lengths.is_empty() {
+        js::payload_set_cached(this_value.to_js(), global, payload.object());
+        if let Some(line_lengths) = line_lengths {
             js::line_lengths_set_cached(this_value.to_js(), global, line_lengths);
         }
 
@@ -219,8 +221,8 @@ impl JSSourceMap {
     pub(crate) fn find_origin(
         &self,
         cx: &mut JsScope<'_>,
-        line_number: JsLocal<'_>,
-        column_number: JsLocal<'_>,
+        line_number: SourcePosition<'_>,
+        column_number: SourcePosition<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let [line_number, column_number] = get_line_column(global, line_number, column_number)?;
@@ -253,8 +255,8 @@ impl JSSourceMap {
     pub(crate) fn find_entry(
         &self,
         cx: &mut JsScope<'_>,
-        line_offset: JsLocal<'_>,
-        column_offset: JsLocal<'_>,
+        line_offset: SourcePosition<'_>,
+        column_offset: SourcePosition<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let [line_offset, column_offset] = get_line_column(global, line_offset, column_offset)?;
@@ -290,13 +292,19 @@ impl JSSourceMap {
 
 fn get_line_column(
     global: &JSGlobalObject,
-    line_number: JsLocal<'_>,
-    column_number: JsLocal<'_>,
+    line_number: SourcePosition<'_>,
+    column_number: SourcePosition<'_>,
 ) -> JsResult<[i32; 2]> {
+    // Node.js does no validations.
+    fn to_i32(global: &JSGlobalObject, position: SourcePosition<'_>) -> JsResult<i32> {
+        match position {
+            SourcePosition::Bigint(bigint) => bigint.to_js().coerce_to_i32(global),
+            SourcePosition::Number(number) => Ok(number),
+        }
+    }
     Ok([
-        // Node.js does no validations.
-        line_number.to_js().coerce_to_i32(global)?,
-        column_number.to_js().coerce_to_i32(global)?,
+        to_i32(global, line_number)?,
+        to_i32(global, column_number)?,
     ])
 }
 

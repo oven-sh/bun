@@ -1772,7 +1772,7 @@ impl CronJob {
         let js_value = Self::to_js_nonnull(job.as_non_null(), global);
         let job = job.into_this_ptr();
         job.this_value.with_mut(|v| v.set_strong(js_value, global));
-        js::cron_set_cached(js_value, global, schedule_value.to_js());
+        js::cron_set_cached(js_value, global, schedule_value);
         js::callback_set_cached(
             js_value,
             global,
@@ -1825,7 +1825,6 @@ pub(crate) fn on_promise_reject(
     let this = unsafe { ThisPtr::new(job.as_ptr()) };
     let _guard = scopeguard::guard(this, CronJob::tick_settled);
     let vm = this.global.bun_vm().as_mut();
-    let err = reason.to_js();
     let mut promise_value = JSValue::UNDEFINED;
     if let Some(js_this) = this.this_value.get().try_get() {
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
@@ -1834,7 +1833,7 @@ pub(crate) fn on_promise_reject(
     // `vm.global()` returns `&'static`, so the borrow is already decoupled
     // from `vm` and `unhandled_rejection(&mut self, ...)` can reborrow.
     let global_ref = vm.global();
-    vm.unhandled_rejection(global_ref, err, promise_value);
+    vm.unhandled_rejection(global_ref, reason, promise_value);
     CronJob::schedule_next(this, vm);
 }
 

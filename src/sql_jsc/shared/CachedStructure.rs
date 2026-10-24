@@ -163,8 +163,8 @@ impl<T> Undescribed<T> {
         JSValue::js_number_from_uint64(self.0.len() as u64 - 1)
     }
 
-    pub(crate) fn take(&mut self, number: JSValue) -> Option<T> {
-        let index = usize::try_from(number.to_int32()).ok()?;
+    pub(crate) fn take(&mut self, number: f64) -> Option<T> {
+        let index = usize::try_from(number as i32).ok()?;
         self.0.get_mut(index)?.take()
     }
 }

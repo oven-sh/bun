@@ -4,19 +4,19 @@ use bun_jsc::{JSValue, JsResult};
 use super::DiffFormatter;
 use super::throw;
 use super::{Expect, get_signature};
+use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     pub(crate) fn to_have_nth_returned_with(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        nth: JsLocal<'_>,
+        nth: Option<f64>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global = cx.global();
         bun_jsc::mark_binding!();
-        let nth = nth.to_js();
-        let expected = expected.to_js();
+
         let (this, returns, _) = self.mock_prologue(
             global,
             this_value.to_js(),
@@ -26,11 +26,14 @@ impl Expect {
         )?;
 
         // Validate n is a number
-        if !nth.is_any_int() {
+        let Some(nth) = nth
+            .map(JSValue::js_double_number)
+            .filter(|nth| nth.is_any_int())
+        else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toHaveNthReturnedWith() first argument must be an integer"
             )));
-        }
+        };
         let n = nth.to_int32();
         if n <= 0 {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -68,7 +71,7 @@ impl Expect {
         }
 
         if pass != this.flags.get().not() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // Handle failure
@@ -112,7 +115,11 @@ impl Expect {
         }
 
         // Diff if possible
-        if expected.is_string() && nth_return_value.is_string() {
+        if nth_return_value.is_string()
+            && StringValue::from_js(global, expected, |expected| {
+                Ok(!matches!(expected, StringValue::Other))
+            })?
+        {
             let diff_format = DiffFormatter::new(global, nth_return_value, expected, false)?;
             return throw!(
                 this,

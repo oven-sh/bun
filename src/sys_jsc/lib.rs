@@ -1,5 +1,5 @@
 //! JSC bridge crate for `bun_sys`. Adds `to_js`/`from_js` extension surfaces
-//! onto `bun_sys::{Fd, Error, SignalCode}` without pulling JSC types into the
+//! onto `bun_sys::{Fd, Error}` without pulling JSC types into the
 //! syscall layer.
 //!
 //! Layering: `bun_sys` (T1, no JSC) ← `bun_jsc` (T6) ← `bun_sys_jsc` (this
@@ -10,7 +10,6 @@
 pub mod error_jsc;
 pub mod fd_jsc;
 pub(crate) mod generated_bindgen;
-pub mod signal_code_jsc;
 
 pub use error_jsc::ErrorJsc;
 pub use fd_jsc::FdJsc;

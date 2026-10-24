@@ -44,6 +44,7 @@ template<> struct ExternTraits<uint8_t> : TrivialExtern<uint8_t> {};
 template<> struct ExternTraits<uint16_t> : TrivialExtern<uint16_t> {};
 template<> struct ExternTraits<int32_t> : TrivialExtern<int32_t> {};
 template<> struct ExternTraits<uint32_t> : TrivialExtern<uint32_t> {};
+template<> struct ExternTraits<int64_t> : TrivialExtern<int64_t> {};
 template<> struct ExternTraits<uint64_t> : TrivialExtern<uint64_t> {};
 template<> struct ExternTraits<double> : TrivialExtern<double> {};
 template<> struct ExternTraits<void*> : TrivialExtern<void*> {};
@@ -192,6 +193,22 @@ template<typename T>
 struct ExternWithValue {
     T converted;
     JSC::EncodedJSValue value;
+};
+
+// What IDLWithValue converts to.
+template<typename T>
+struct WithValue {
+    T converted {};
+    JSC::JSValue value {};
+};
+
+template<typename T> struct ExternTraits<WithValue<T>> {
+    using ExternType = ExternWithValue<typename ExternTraits<T>::ExternType>;
+
+    static ExternType convertToExtern(WithValue<T>&& cppValue)
+    {
+        return { ExternTraits<T>::convertToExtern(WTF::move(cppValue.converted)), JSC::JSValue::encode(cppValue.value) };
+    }
 };
 
 template<typename T, typename P, typename R> struct ExternTraits<WTF::RefPtr<T, P, R>> {

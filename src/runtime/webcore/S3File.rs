@@ -1,8 +1,11 @@
+use crate::generated_bindgen::blob::{self as schema, S3Options};
+use crate::generated_bindgen::s3_client::S3PresignOptions;
 use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
+use crate::webcore::s3::credentials_jsc::count_from_js;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
@@ -111,12 +114,10 @@ where
 /// path or Blob and require Blob arguments to be S3-backed.
 pub(crate) fn parse_s3_path_or_blob(
     global: &JSGlobalObject,
-    path: JSValue,
+    path: schema::PathOrBlob<'_>,
     error_message: &str,
 ) -> JsResult<PathOrBlob> {
-    let mut args =
-        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), core::slice::from_ref(&path));
-    let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
+    let path_or_blob = PathOrBlob::from_js_no_copy(global, path)?;
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.get().is_none()
             || !matches!(
@@ -133,7 +134,7 @@ pub(crate) fn parse_s3_path_or_blob(
 /// Rejects file-descriptor paths, and constructs the env-credentialed store for path arguments.
 pub(crate) fn resolve_s3_blob(
     global: &JSGlobalObject,
-    options: Option<JSValue>,
+    options: Option<S3Options<'_>>,
     path_or_blob: PathOrBlob,
     error_message: &str,
 ) -> JsResult<Box<Blob>> {
@@ -152,8 +153,8 @@ pub(crate) fn resolve_s3_blob(
 
 pub(crate) fn s3_blob_from_js(
     global: &JSGlobalObject,
-    path: JSValue,
-    options: Option<JSValue>,
+    path: schema::PathOrBlob<'_>,
+    options: Option<S3Options<'_>>,
     error_message: &str,
 ) -> JsResult<Box<Blob>> {
     let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
@@ -163,7 +164,7 @@ pub(crate) fn s3_blob_from_js(
 fn construct_s3_file_internal_store(
     global: &JSGlobalObject,
     path: PathLike<'static>,
-    options: Option<JSValue>,
+    options: Option<S3Options<'_>>,
 ) -> JsResult<Blob> {
     // get credentials from env — `Transpiler::env_mut` is the safe accessor
     // for the process-singleton dotenv loader (set during init).
@@ -182,7 +183,7 @@ fn construct_s3_file_internal_store(
 pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     global: &JSGlobalObject,
     path: PathLike<'static>,
-    options: Option<JSValue>,
+    options: Option<S3Options<'_>>,
     default_credentials: &s3::S3Credentials,
     default_options: s3::MultiPartUploadOptions,
     default_acl: Option<s3::ACL>,
@@ -211,7 +212,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
 pub(crate) fn construct_s3_file_with_s3_credentials(
     global: &JSGlobalObject,
     path: PathLike<'static>,
-    options: Option<JSValue>,
+    options: Option<S3Options<'_>>,
     existing_credentials: &s3::S3Credentials,
 ) -> JsResult<Blob> {
     let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
@@ -235,7 +236,7 @@ fn finish_s3_blob(
     global: &JSGlobalObject,
     store: RefPtr<Store>,
     aws_options: &s3::S3CredentialsWithOptions,
-    options: Option<JSValue>,
+    options: Option<S3Options<'_>>,
 ) -> JsResult<Blob> {
     let s3 = Store::data_mut(&store).as_s3_mut();
     s3.options = aws_options.options;
@@ -245,20 +246,16 @@ fn finish_s3_blob(
 
     let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
-        if opts.is_object() {
-            if let Some(file_type) = opts.get_truthy(global, "type")? {
-                if file_type.is_string() {
-                    let str = file_type.to_utf8(global)?;
-                    let slice = str.slice();
-                    if blob::is_valid_blob_type(slice) {
-                        blob.content_type_was_set.set(true);
-                        blob.content_type
-                            .set(match global.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => blob::BlobContentType::from(mime),
-                                None => blob::BlobContentType::from_lowercased(slice),
-                            });
-                    }
-                }
+        if let Ok(Some(file_type)) = blob::truthy_string(opts.r#type(global)?) {
+            let str = file_type.to_utf8();
+            let slice = str.slice();
+            if blob::is_valid_blob_type(slice) {
+                blob.content_type_was_set.set(true);
+                blob.content_type
+                    .set(match global.bun_vm().as_mut().mime_type(slice) {
+                        Some(mime) => blob::BlobContentType::from(mime),
+                        None => blob::BlobContentType::from_lowercased(slice),
+                    });
             }
         }
     }
@@ -268,7 +265,7 @@ fn finish_s3_blob(
 fn construct_s3_file_internal(
     global: &JSGlobalObject,
     path: PathLike<'static>,
-    options: Option<JSValue>,
+    options: Option<S3Options<'_>>,
 ) -> JsResult<*mut Blob> {
     Ok(Blob::new(construct_s3_file_internal_store(
         global, path, options,
@@ -447,17 +444,18 @@ fn s3_store(blob: &Blob, global: &JSGlobalObject, verb: &str) -> JsResult<RefPtr
     }
 }
 
-// `Method.fromJS` lives in `bun_http_jsc` so `bun_http_types` stays
-// JSC-free. Thin local alias for the `getPresignUrlFrom` body.
-#[inline]
-fn method_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Method>> {
-    bun_http_jsc::method_jsc::from_js(global, value)
+pub(crate) fn presign_options(options: S3PresignOptions<'_>) -> Option<S3Options<'_>> {
+    match options {
+        S3PresignOptions::Options(options) => Some(options),
+        S3PresignOptions::Other => None,
+    }
 }
 
+/// `presign(undefined)` signs with the `acl` and `storageClass` of the store, `presign()` without.
 pub(crate) fn get_presign_url_from(
     this: &Blob,
     global: &JSGlobalObject,
-    extra_options: Option<JSValue>,
+    extra_options: Option<Option<S3Options<'_>>>,
 ) -> JsResult<JSValue> {
     let mut method: Method = Method::GET;
     let mut expires: usize = 86400; // 1 day default
@@ -474,9 +472,9 @@ pub(crate) fn get_presign_url_from(
     };
 
     if let Some(options) = extra_options {
-        if options.is_object() {
-            if let Some(method_) = options.get_truthy(global, "method")? {
-                method = match method_from_js(global, method_)? {
+        if let Some(options) = options {
+            if let Some(method_) = options.method(global)? {
+                method = match Method::which(method_.to_utf8().slice()) {
                     Some(m) => m,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -485,7 +483,7 @@ pub(crate) fn get_presign_url_from(
                     }
                 };
             }
-            if let Some(expires_) = options.get_optional::<i32>(global, "expiresIn")? {
+            if let Some(expires_) = count_from_js(options.expires_in(global)?) {
                 if expires_ <= 0 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "expiresIn must be greather than 0"
@@ -494,7 +492,7 @@ pub(crate) fn get_presign_url_from(
                 expires = expires_ as usize;
             }
         }
-        credentials_with_options = s3.get_credentials_with_options(Some(options), global)?;
+        credentials_with_options = s3.get_credentials_with_options(options, global)?;
     }
     let path = s3.path();
 
@@ -559,7 +557,7 @@ fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
 pub(crate) fn construct_internal_js(
     global: &JSGlobalObject,
     path: PathLike<'static>,
-    options: Option<JSValue>,
+    options: Option<S3Options<'_>>,
 ) -> JsResult<JSValue> {
     let blob = construct_s3_file_internal(global, path, options)?;
     // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`; the wrapper adopts it.
@@ -600,7 +598,12 @@ pub(crate) mod exports {
         // SAFETY: JSC method shim passes the wrapper's live Blob and global.
         let (this, global) = unsafe { (&*this, &*global) };
         bun_jsc::to_js_host_call(global, || {
-            super::get_presign_url_from(this, global, (!options.is_empty()).then_some(options))
+            if options.is_empty() {
+                return super::get_presign_url_from(this, global, None);
+            }
+            S3PresignOptions::from_js(global, options, |options| {
+                super::get_presign_url_from(this, global, Some(super::presign_options(options)))
+            })
         })
     }
 

@@ -10,12 +10,18 @@ use core::mem;
 
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, AnyValue, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CommonString, JSGlobalObject, JSString, JSValue, JsClass, JsError, JsResult, StringJsc,
+    CommonString, JSGlobalObject, JSObject, JSString, JSValue, JsClass, JsError, JsResult,
+    StringJsc,
 };
 use bun_ptr::JsCell;
+
+use crate::generated_bindgen::socket_address::{
+    SocketAddressFamily, SocketAddressJSON, SocketAddressNumber, SocketAddressOptions,
+};
+use crate::generated_bindgen::socket_body::loose_string;
 
 pub(crate) struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
@@ -56,68 +62,67 @@ impl Default for Options {
 
 impl Options {
     /// NOTE: assumes options object has been normalized and validated by JS code.
-    pub(crate) fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
-        if !obj.is_object() {
-            return Err(global.throw_invalid_argument_type_value(b"options", b"object", obj));
-        }
+    pub(crate) fn from_js(
+        global: &JSGlobalObject,
+        obj: SocketAddressOptions<'_>,
+    ) -> JsResult<Options> {
+        let address_str: Option<BunString> = obj.address(global)?;
 
-        let address_str: Option<BunString> = if let Some(a) = obj.get(global, "address")? {
-            if !a.is_string() {
-                return Err(global.throw_invalid_argument_type_value(
-                    b"options.address",
-                    b"string",
-                    a,
+        let _family: AF = match obj.family(global)? {
+            SocketAddressFamily::None => AF::INET,
+            // "ipv4" or "ipv6", ignoring case
+            SocketAddressFamily::Name(name) => AF::from_name(global, &name)?,
+            SocketAddressFamily::Number(number) => AF::from_number(global, number)?,
+            SocketAddressFamily::Other(fam) => {
+                return Err(global.throw_invalid_argument_property_value(
+                    b"options.family",
+                    Some("a string or number"),
+                    fam,
                 ));
             }
-            Some(BunString::from_js(a, global)?)
-        } else {
-            None
-        };
-
-        let _family: AF = if let Some(fam) = obj.get(global, "family")? {
-            // "ipv4" or "ipv6", ignoring case
-            AF::from_js(global, fam)?
-        } else {
-            AF::INET
         };
 
         // required. Validated by `validatePort`.
-        let _port: u16 = if let Some(p) = obj.get(global, "port")? {
-            // Note: shim until `JSValue::is_finite` lands in bun_jsc.
-            if !(p.is_number() && p.as_number().is_finite()) {
-                return Err(Self::throw_bad_port(global, p));
+        let _port: u16 = match obj.port(global)? {
+            SocketAddressNumber::None => 0,
+            SocketAddressNumber::Number(number) => {
+                let p = JSValue::js_double_number(number);
+                if !number.is_finite() {
+                    return Err(Self::throw_bad_port(global, p));
+                }
+                let port32 = number as i32;
+                if port32 < 0 || port32 > i32::from(u16::MAX) {
+                    return Err(Self::throw_bad_port(global, p));
+                }
+                u16::try_from(port32).expect("int cast")
             }
-            let port32 = p.to_int32();
-            if port32 < 0 || port32 > i32::from(u16::MAX) {
-                return Err(Self::throw_bad_port(global, p));
-            }
-            u16::try_from(port32).expect("int cast")
-        } else {
-            0
+            SocketAddressNumber::Other(p) => return Err(Self::throw_bad_port(global, p)),
         };
 
-        let _flowlabel = if let Some(fl) = obj.get(global, "flowlabel")? {
-            if !fl.is_number() {
+        let _flowlabel = match obj.flowlabel(global)? {
+            SocketAddressNumber::None => None,
+            SocketAddressNumber::Number(number) => {
+                let fl = JSValue::js_double_number(number);
+                if !fl.is_uint32_as_any_int() {
+                    return Err(global.throw_range_error(
+                        number,
+                        bun_jsc::RangeErrorOptions {
+                            field_name: b"options.flowlabel",
+                            min: 0,
+                            max: i64::from(u32::MAX),
+                            msg: b"",
+                        },
+                    ));
+                }
+                Some(fl.to_u32())
+            }
+            SocketAddressNumber::Other(fl) => {
                 return Err(global.throw_invalid_argument_type_value(
                     b"options.flowlabel",
                     b"number",
                     fl,
                 ));
             }
-            if !fl.is_uint32_as_any_int() {
-                return Err(global.throw_range_error(
-                    fl.as_number(),
-                    bun_jsc::RangeErrorOptions {
-                        field_name: b"options.flowlabel",
-                        min: 0,
-                        max: i64::from(u32::MAX),
-                        msg: b"",
-                    },
-                ));
-            }
-            Some(fl.to_u32())
-        } else {
-            None
         };
 
         Ok(Options {
@@ -128,7 +133,7 @@ impl Options {
         })
     }
 
-    fn throw_bad_port(global: &JSGlobalObject, port_: JSValue) -> JsError {
+    fn throw_bad_port(global: &JSGlobalObject, port_: impl AnyValue) -> JsError {
         let Ok(ty) = JSGlobalObject::determine_specific_type(global, port_) else {
             return global
                 .err(
@@ -243,9 +248,8 @@ impl SocketAddress {
     /// ### `SocketAddress.isSocketAddress(value: unknown): value is SocketAddress`
     /// Returns `true` if `value` is a `SocketAddress`. Subclasses and similarly-shaped
     /// objects are not considered `SocketAddress`s.
-    pub(crate) fn is_socket_address(value: JsLocal<'_>) -> bool {
-        let value = value.to_js();
-        value.is_cell() && SocketAddress::from_js_direct(value).is_some()
+    pub(crate) fn is_socket_address(value: Option<JsLocal<'_, JSObject>>) -> bool {
+        value.is_some_and(|value| SocketAddress::from_js_direct(value.to_js()).is_some())
     }
 }
 
@@ -262,17 +266,20 @@ impl SocketAddress {
     ///
     /// ## References
     /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)
-    pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
+    pub(crate) fn constructor(
+        cx: &mut JsScope<'_>,
+        options: Option<SocketAddressOptions<'_>>,
+    ) -> JsResult<Self> {
         let global = cx.global();
-        if options.is_undefined() {
+        let Some(options) = options else {
             return Ok(SocketAddress {
                 _addr: sockaddr::LOOPBACK_V4,
                 _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::loopback_v4(),
             });
-        }
+        };
 
-        let options = Options::from_js(global, options.to_js())?;
+        let options = Options::from_js(global, options)?;
 
         // fast path for { family: 'ipv6' }
         if options.family == AF::INET6
@@ -290,20 +297,17 @@ impl SocketAddress {
         SocketAddress::init_js(global, options)
     }
 
+    /// `address_js` and `family_js` are strings or `String` objects. No family is IPv4.
     pub(crate) fn init_from_addr_family(
         global: &JSGlobalObject,
-        address_js: JSValue,
-        family_js: JSValue,
+        address_js: JsLocal<'_>,
+        family_js: Option<JsLocal<'_>>,
     ) -> JsResult<SocketAddress> {
-        if !address_js.is_string() {
-            return Err(global.throw_invalid_argument_type_value(
-                b"options.address",
-                b"string",
-                address_js,
-            ));
-        }
-        let address_: BunString = BunString::from_js(address_js, global)?;
-        let family_: AF = AF::from_js(global, family_js)?;
+        let address_: BunString = loose_string(global, address_js)?;
+        let family_: AF = match family_js {
+            Some(family_js) => AF::from_name(global, &loose_string(global, family_js)?)?,
+            None => AF::INET,
+        };
         Self::init_js(
             global,
             Options {
@@ -504,17 +508,19 @@ unsafe extern "C" {
 // =============================================================================
 
 impl SocketAddress {
-    pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
+    pub(crate) fn get_address<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
         // toJS increments ref count
         let addr_ = self.address();
         Ok(match addr_.tag() {
             bun_core::Tag::Dead => unreachable!(),
-            bun_core::Tag::Empty => match self.family() {
-                AF::INET => global.common_strings().in4_loopback(),
-                AF::INET6 => global.common_strings().in6_any(),
-            },
-            _ => addr_.to_js(global)?,
+            bun_core::Tag::Empty => heap.common_string(match self.family() {
+                AF::INET => CommonString::IN4Loopback,
+                AF::INET6 => CommonString::IN6Any,
+            }),
+            _ => heap.create_string(addr_)?,
         })
     }
 
@@ -607,39 +613,16 @@ impl SocketAddress {
         }
     }
 
-    pub(crate) fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        // `jsc.JSObject.create` requires a `PojoFields` impl, so use a local
-        // struct.
-        struct ToJson {
-            address: JSValue,
-            family: JSValue,
-            port: JSValue,
-            flowlabel: JSValue,
-        }
-        impl bun_jsc::js_object::PojoFields for ToJson {
-            const FIELD_COUNT: usize = 4;
-            fn put_fields(
-                &self,
-                _global: &JSGlobalObject,
-                mut put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
-            ) -> JsResult<()> {
-                put(b"address", self.address)?;
-                put(b"family", self.family)?;
-                put(b"port", self.port)?;
-                put(b"flowlabel", self.flowlabel)?;
-                Ok(())
-            }
-        }
-        let family = self.get_family(&cx.heap).to_js();
-        let address = self.get_address(cx)?;
-        let global = cx.global();
-        let pojo = ToJson {
-            address,
-            family,
-            port: JSValue::js_number(f64::from(self.port())),
-            flowlabel: JSValue::js_number(f64::from(self.get_flowlabel())),
-        };
-        Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
+    pub(crate) fn to_json<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, SocketAddressJSON<'a>> {
+        Ok(SocketAddressJSON {
+            address: self.get_address(heap)?,
+            family: self.get_family(heap),
+            port: self.port(),
+            flowlabel: self.get_flowlabel(),
+        })
     }
 }
 
@@ -700,17 +683,8 @@ impl AF {
         self as inet::sa_family_t
     }
 
-    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AF> {
-        if value.is_string() {
-            let fam_str = BunString::from_js(value, global)?;
-            if fam_str.length() != 4 {
-                return Err(global.throw_invalid_argument_property_value(
-                    b"options.family",
-                    Some("'ipv4' or 'ipv6'"),
-                    value,
-                ));
-            }
-
+    fn from_name(global: &JSGlobalObject, fam_str: &BunString) -> JsResult<AF> {
+        if fam_str.length() == 4 {
             if fam_str.is_8bit() {
                 let slice = fam_str.latin1();
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(slice, b"ipv4") {
@@ -719,11 +693,6 @@ impl AF {
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(slice, b"ipv6") {
                     return Ok(AF::INET6);
                 }
-                Err(global.throw_invalid_argument_property_value(
-                    b"options.family",
-                    Some("'ipv4' or 'ipv6'"),
-                    value,
-                ))
             } else {
                 // not full ignore-case since that would require converting
                 // utf16 -> latin1 and the allocation isn't worth it.
@@ -733,28 +702,32 @@ impl AF {
                 if fam_str.eq_ascii(b"ipv6") || fam_str.eq_ascii(b"IPv6") {
                     return Ok(AF::INET6);
                 }
-                Err(global.throw_invalid_argument_property_value(
-                    b"options.family",
-                    Some("'ipv4' or 'ipv6'"),
-                    value,
-                ))
             }
-        } else if value.is_uint32_as_any_int() {
-            match value.to_u32() {
-                v if v == AF::INET.int() as u32 => Ok(AF::INET),
-                v if v == AF::INET6.int() as u32 => Ok(AF::INET6),
-                _ => Err(global.throw_invalid_argument_property_value(
-                    b"options.family",
-                    Some("AF_INET or AF_INET6"),
-                    value,
-                )),
-            }
-        } else {
-            Err(global.throw_invalid_argument_property_value(
+        }
+        Err(global.throw_invalid_argument_property_value(
+            b"options.family",
+            Some("'ipv4' or 'ipv6'"),
+            fam_str.to_js(global)?,
+        ))
+    }
+
+    fn from_number(global: &JSGlobalObject, number: f64) -> JsResult<AF> {
+        let value = JSValue::js_double_number(number);
+        if !value.is_uint32_as_any_int() {
+            return Err(global.throw_invalid_argument_property_value(
                 b"options.family",
                 Some("a string or number"),
                 value,
-            ))
+            ));
+        }
+        match value.to_u32() {
+            v if v == AF::INET.int() as u32 => Ok(AF::INET),
+            v if v == AF::INET6.int() as u32 => Ok(AF::INET6),
+            _ => Err(global.throw_invalid_argument_property_value(
+                b"options.family",
+                Some("AF_INET or AF_INET6"),
+                value,
+            )),
         }
     }
 

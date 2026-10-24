@@ -38,7 +38,7 @@ use crate::postgres::postgres_sql_statement::{
 };
 use crate::postgres::sasl::{self, ChannelBinding, Gs2Flag, Refusal, SASL, SASLStatus};
 use crate::shared::CachedStructure as PostgresCachedStructure;
-use crate::shared::connection_ctor_args::ConnectionCtorArgs;
+use crate::shared::connection_ctor_args::{ConnectionCtorArgs, ConnectionTLS};
 use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection};
 use crate::shared::server_identity;
 use crate::shared::start_tls::{start_tls, verifies_certificate};
@@ -850,7 +850,7 @@ pub(crate) fn create_connection<'a>(
     password: &[u8],
     database: &[u8],
     ssl_mode: u8,
-    tls: JsLocal<'a>,
+    tls: ConnectionTLS<'a>,
     query: &[u8],
     path: &[u8],
     on_connected: JsLocal<'a, Callable>,
@@ -876,7 +876,7 @@ pub(crate) fn create_connection<'a>(
         &mut *vm,
         hostname,
         ssl_mode,
-        tls.to_js(),
+        tls,
         idle_timeout,
         connection_timeout,
         max_lifetime,
@@ -886,7 +886,7 @@ pub(crate) fn create_connection<'a>(
     };
     let (secure, tls_config) = (args.secure, args.tls_config);
     // Next to `rejectUnauthorized: false` it is not asked, as in Node.
-    let check_server_identity = server_identity::callback_of(global_object, tls.to_js())?
+    let check_server_identity = server_identity::callback_of(global_object, tls)?
         .filter(|_| verifies_certificate(&tls_config, args.ssl_mode));
 
     // Reject null bytes in connection parameters to prevent Postgres startup

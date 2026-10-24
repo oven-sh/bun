@@ -1289,7 +1289,24 @@ impl FormatOptions {
 // format2
 // ───────────────────────────────────────────────────────────────────────────
 
+#[inline]
 pub fn format2(
+    level: MessageLevel,
+    global: &JSGlobalObject,
+    vals: &[impl crate::bindgen::AnyValue],
+    writer: &mut dyn bun_io::Write,
+    options: FormatOptions,
+) -> JsResult<()> {
+    format2_impl(
+        level,
+        global,
+        crate::bindgen::js_values_of(vals),
+        writer,
+        options,
+    )
+}
+
+fn format2_impl(
     level: MessageLevel,
     global: &JSGlobalObject,
     vals: &[JSValue],
@@ -5628,9 +5645,10 @@ pub mod formatter {
         /// sink itself did not fail.
         pub fn format_value<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
-            value: JSValue,
+            value: impl crate::bindgen::AnyValue,
             writer: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
+            let value = crate::bindgen::js_value_of(value);
             let one = [value];
             self.remaining_values = bun_ptr::RawSlice::new(&one);
             let global = self.global_this;

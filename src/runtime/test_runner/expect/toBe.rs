@@ -1,9 +1,10 @@
+use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
 
-use super::throw;
 use super::DiffFormatter;
 use super::Expect;
+use super::throw;
+use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     /// Object.is()
@@ -12,19 +13,19 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let global_this = cx.global();
         let (this, left, not) =
             self.matcher_prelude(global_this, this_value.to_js(), "toBe", "<green>expected<r>")?;
 
-        let right = expected.to_js();
+        let right = expected;
         let mut pass = right.is_same_value(left, global_this)?;
 
         if not {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // handle failure
@@ -74,7 +75,11 @@ impl Expect {
             }
         }
 
-        if right.is_string() && left.is_string() {
+        if left.is_string()
+            && StringValue::from_js(global_this, right, |right| {
+                Ok(!matches!(right, StringValue::Other))
+            })?
+        {
             let diff_format = DiffFormatter::new(global_this, left, right, not)?;
             return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
         }

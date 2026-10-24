@@ -2,7 +2,8 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::AnyValue;
+use bun_jsc::{JSGlobalObject, JsResult};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
@@ -19,8 +20,8 @@ pub(crate) struct DiffFormatter<'a> {
 impl<'a> DiffFormatter<'a> {
     pub(crate) fn new(
         global_this: &JSGlobalObject,
-        received: JSValue,
-        expected: JSValue,
+        received: impl AnyValue,
+        expected: impl AnyValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
         let fmt_options = FormatOptions {
@@ -33,8 +34,7 @@ impl<'a> DiffFormatter<'a> {
         JestPrettyFormat::format(
             MessageLevel::Debug,
             global_this,
-            core::slice::from_ref(&received),
-            1,
+            received,
             &mut received_buf,
             fmt_options,
         )?;
@@ -42,8 +42,7 @@ impl<'a> DiffFormatter<'a> {
         JestPrettyFormat::format(
             MessageLevel::Debug,
             global_this,
-            core::slice::from_ref(&expected),
-            1,
+            expected,
             &mut expected_buf,
             fmt_options,
         )?;

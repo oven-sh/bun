@@ -3,9 +3,11 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+use crate::api::js_bundler::BuildArtifact;
+use crate::generated_bindgen::response::BodyInit;
 use crate::webcore::jsc::{
-    self as jsc, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData, JSGlobalObject,
-    JSPromise, JSValue, JsResult, SystemError, URLSearchParams, VirtualMachine,
+    self as jsc, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSPromise, JSValue,
+    JsResult, SystemError, VirtualMachine,
 };
 use crate::webcore::{
     self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, Lifetime,
@@ -43,24 +45,6 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
     blob.content_type_was_set.set(true);
     blob.content_type
         .set(blob::BlobContentType::from(mime_type));
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
-// These adapt call sites in this file without editing `bun_jsc` (orphan rule).
-// ────────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
-    // `DOMFormData` is an opaque C++ type that does not implement `JsClass`;
-    // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
-    // `value.as_::<DOMFormData>()`.
-    DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)
-}
-#[inline]
-fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
-    // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
-    URLSearchParams::from_js(value).map(|p| p.as_ptr())
 }
 
 bun_core::declare_scope!(BodyValue, visible);
@@ -929,29 +913,28 @@ impl Value {
         Ok(stream_value)
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
-        value.ensure_still_alive();
-
-        if value.is_empty_or_undefined_or_null() {
-            return Ok(Value::Null);
+    fn from_string(str: BunString) -> Value {
+        if str.length() == 0 {
+            return Value::Empty;
         }
 
-        let js_type = value.js_type();
+        debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
 
-        if js_type.is_string_like() {
-            let str = value.to_bun_string(global_this)?;
-            if str.length() == 0 {
-                return Ok(Value::Empty);
+        // `leak_wtf_impl()` transfers the +1 ref out of the bun_core::String wrapper.
+        Value::WTFStringImpl(str.leak_wtf_impl())
+    }
+
+    pub(crate) fn from_js(global_this: &JSGlobalObject, value: BodyInit<'_>) -> JsResult<Value> {
+        let value = match value {
+            BodyInit::Undefined | BodyInit::Null => return Ok(Value::Null),
+
+            BodyInit::String(str) => return Ok(Self::from_string(str)),
+            BodyInit::StringObject(value) => {
+                return Ok(Self::from_string(value.to_js().to_bun_string(global_this)?));
             }
 
-            debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
-
-            // `leak_wtf_impl()` transfers the +1 ref out of the bun_core::String wrapper.
-            return Ok(Value::WTFStringImpl(str.leak_wtf_impl()));
-        }
-
-        if js_type.is_typed_array_or_array_buffer() {
-            if let Some(buffer) = value.as_array_buffer(global_this) {
+            BodyInit::Buffer(value) => {
+                let buffer = value.as_array_buffer(global_this);
                 let bytes = buffer.byte_slice();
 
                 if bytes.is_empty() {
@@ -965,39 +948,34 @@ impl Value {
                     was_string: false,
                 }));
             }
-        }
 
-        if let Some(form_data) = as_dom_form_data(value) {
-            // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
-                &mut *form_data
-            })));
-        }
+            BodyInit::FormData((form_data, _)) => {
+                return Ok(Value::Blob(Blob::from_dom_form_data(
+                    global_this,
+                    form_data,
+                )));
+            }
 
-        if let Some(search_params) = as_url_search_params(value) {
-            // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_url_search_params(
-                global_this,
-                unsafe { &mut *search_params },
-            )));
-        }
+            BodyInit::UrlSearchParams((search_params, _)) => {
+                return Ok(Value::Blob(Blob::from_url_search_params(
+                    global_this,
+                    search_params,
+                )));
+            }
 
-        if js_type == jsc::JSType::DOMWrapper {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); `dupe_with_content_type` / `encode_for_body`
-            // both take `&self`.
-            if let Some(blob) = value.as_class_ref::<Blob>() {
+            BodyInit::Blob((blob, _))
+            | BodyInit::BuildArtifact((BuildArtifact { blob, .. }, _)) => {
                 return Ok(Value::Blob(
                     // We must preserve "type" so that DOMFormData and the "type" field are preserved.
                     blob.dupe_with_content_type(true),
                 ));
             }
 
-            if let Some(image) = value.as_class_ref::<crate::image::Image>() {
+            BodyInit::Image((image, value)) => {
                 // Body init is synchronous, so encode now and wrap as a Blob
                 // with the right MIME type. The off-thread path is still
                 // available via `await image.blob()`.
-                let (encoded, mime) = image.encode_for_body(global_this, value)?;
+                let (encoded, mime) = image.encode_for_body(global_this, value.to_js())?;
                 // Blob.Store frees via an Allocator, so dupe out of the
                 // codec's allocator here. The hot path (`.bytes()`) hands the
                 // codec buffer to JS without this copy.
@@ -1010,7 +988,14 @@ impl Value {
                 blob.content_type_was_set.set(true);
                 return Ok(Value::Blob(blob));
             }
-        }
+
+            BodyInit::ReadableStream(value) => value.to_js(),
+            BodyInit::DataView(value) | BodyInit::Object(value) => value.to_js(),
+
+            BodyInit::Other(value) => {
+                return Ok(Value::Blob(Blob::get::<true, false>(global_this, value)?));
+            }
+        };
 
         value.ensure_still_alive();
 
@@ -1591,7 +1576,7 @@ impl Value {
 // ────────────────────────────────────────────────────────────────────────────
 
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
-pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
+pub(crate) fn extract(global_this: &JSGlobalObject, value: BodyInit<'_>) -> JsResult<Body> {
     let body_value = Value::from_js(global_this, value)?;
     if let Value::Blob(b) = &body_value {
         debug_assert!(!b.is_heap_allocated()); // owned by Body

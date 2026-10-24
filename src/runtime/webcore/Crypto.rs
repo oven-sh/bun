@@ -1,5 +1,5 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, StringOrJsBytes};
+use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSType, JSValue, JsClass as _};
@@ -13,13 +13,13 @@ impl Crypto {
     pub(crate) fn get_random_values<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        array: JsLocal<'a>,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
+        array: Option<JsLocal<'a, BufferSource>>,
+    ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
         let global = cx.global();
         // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
         // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
         // all pass `as_array_buffer` but must still raise TypeMismatchError.
-        let array_buffer = array.to_js().as_array_buffer(global).filter(|_| {
+        let array = array.filter(|array| {
             matches!(
                 array.to_js().js_type(),
                 JSType::Int8Array
@@ -33,7 +33,9 @@ impl Crypto {
                     | JSType::BigUint64Array
             )
         });
-        let Some(mut array_buffer) = array_buffer else {
+        let Some((array, mut array_buffer)) =
+            array.and_then(|array| Some((array, array.to_js().as_array_buffer(global)?)))
+        else {
             return Err(global
                 .throw_dom_exception(
                     bun_jsc::DOMExceptionCode::TypeMismatchError,
@@ -125,7 +127,7 @@ pub(crate) fn random_uuid_v7<'a>(
         ),
         UUIDEncodingOrTimestamp::Clock => (Encoding::Hex, Some(UUIDTimestamp::Clock)),
         UUIDEncodingOrTimestamp::Time(time) => (Encoding::Hex, Some(UUIDTimestamp::Time(time))),
-        UUIDEncodingOrTimestamp::Ignored(_) => (Encoding::Hex, None),
+        UUIDEncodingOrTimestamp::Ignored => (Encoding::Hex, None),
     };
     let Some(timestamp) = timestamp.or(alone) else {
         return Err(heap.invalid_arguments(format_args!("timestamp must be a number or Date")));

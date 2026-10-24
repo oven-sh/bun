@@ -4,6 +4,8 @@ use core::ptr::null_mut;
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
 
+use crate::generated_bindgen::quic::{PemSource, PemValue, TlsOptions};
+
 pub(super) struct TlsConfig {
     pub is_server: bool,
     pub alpn: Vec<u8>,
@@ -37,17 +39,21 @@ fn value_to_bytes(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Ve
     Ok(None)
 }
 
-fn collect_pem(global: &JSGlobalObject, value: JSValue) -> JsResult<Vec<Vec<u8>>> {
+fn collect_pem(global: &JSGlobalObject, value: PemSource<'_>) -> JsResult<Vec<Vec<u8>>> {
     let mut out = Vec::new();
-    if value.is_array() {
-        let len = value.get_length(global)? as u32;
-        for i in 0..len {
-            if let Some(bytes) = value_to_bytes(global, value.get_index(global, i)?)? {
-                out.push(bytes);
+    match value {
+        PemSource::List(value) => {
+            let value = value.to_js();
+            let len = value.get_length(global)? as u32;
+            for i in 0..len {
+                if let Some(bytes) = value_to_bytes(global, value.get_index(global, i)?)? {
+                    out.push(bytes);
+                }
             }
         }
-    } else if let Some(bytes) = value_to_bytes(global, value)? {
-        out.push(bytes);
+        PemSource::Text(text) => out.push(text.to_owned_slice()),
+        PemSource::Buffer(buffer) => out.extend(value_to_bytes(global, buffer.to_js())?),
+        PemSource::Other => {}
     }
     Ok(out)
 }
@@ -86,7 +92,7 @@ fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
 impl TlsConfig {
     pub(super) fn from_js(
         global: &JSGlobalObject,
-        tls: JSValue,
+        tls: Option<TlsOptions<'_>>,
         is_server: bool,
     ) -> JsResult<Self> {
         let mut config = TlsConfig {
@@ -105,16 +111,20 @@ impl TlsConfig {
             ciphers: None,
             groups: None,
         };
-        if !tls.is_object() {
+        let Some(tls) = tls else {
             return Ok(config);
-        }
-        if let Some(v) = tls.get(global, "alpn")? {
-            if let Some(bytes) = value_to_bytes(global, v)? {
-                config.alpn = bytes;
+        };
+        match tls.alpn(global)? {
+            PemValue::Text(text) => config.alpn = text.to_owned_slice(),
+            PemValue::Buffer(buffer) => {
+                if let Some(bytes) = value_to_bytes(global, buffer.to_js())? {
+                    config.alpn = bytes;
+                }
             }
+            PemValue::Other => {}
         }
-        if let Some(v) = tls.get(global, "servername")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
+        if let Some(v) = tls.servername(global)? {
+            let mut bytes = v.to_owned_slice();
             if bun_core::strings::contains_char(&bytes, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "servername must not contain null bytes"
@@ -123,38 +133,30 @@ impl TlsConfig {
             bytes.push(0);
             config.servername = Some(bytes);
         }
-        if let Some(v) = tls.get(global, "certs")? {
-            config.certs_pem = collect_pem(global, v)?;
+        config.certs_pem = collect_pem(global, tls.certs(global)?)?;
+        config.keys_pem = collect_pem(global, tls.keys(global)?)?;
+        config.ca_pem = collect_pem(global, tls.ca(global)?)?;
+        config.crl_pem = collect_pem(global, tls.crl(global)?)?;
+        if let Some(v) = tls.verify_peer_strict(global)? {
+            config.verify_peer_strict = v;
         }
-        if let Some(v) = tls.get(global, "keys")? {
-            config.keys_pem = collect_pem(global, v)?;
+        if let Some(v) = tls.verify_hostname(global)? {
+            config.verify_hostname = v;
         }
-        if let Some(v) = tls.get(global, "ca")? {
-            config.ca_pem = collect_pem(global, v)?;
+        if let Some(v) = tls.verify_client(global)? {
+            config.verify_client = v;
         }
-        if let Some(v) = tls.get(global, "crl")? {
-            config.crl_pem = collect_pem(global, v)?;
+        if let Some(v) = tls.keylog(global)? {
+            config.keylog = v;
         }
-        if let Some(v) = tls.get(global, "verifyPeerStrict")? {
-            config.verify_peer_strict = v.to_boolean();
+        if let Some(v) = tls.enable_early_data(global)? {
+            config.enable_early_data = v;
         }
-        if let Some(v) = tls.get(global, "verifyHostname")? {
-            config.verify_hostname = v.to_boolean();
+        if let Some(v) = tls.ciphers(global)? {
+            config.ciphers = Some(v.to_owned_slice());
         }
-        if let Some(v) = tls.get(global, "verifyClient")? {
-            config.verify_client = v.to_boolean();
-        }
-        if let Some(v) = tls.get(global, "keylog")? {
-            config.keylog = v.to_boolean();
-        }
-        if let Some(v) = tls.get(global, "enableEarlyData")? {
-            config.enable_early_data = v.to_boolean();
-        }
-        if let Some(v) = tls.get(global, "ciphers")?.filter(|v| v.is_string()) {
-            config.ciphers = Some(bun_core::String::from_js(v, global)?.to_owned_slice());
-        }
-        if let Some(v) = tls.get(global, "groups")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
+        if let Some(v) = tls.groups(global)? {
+            let mut bytes = v.to_owned_slice();
             bytes.push(0);
             config.groups = Some(bytes);
         }

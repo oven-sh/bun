@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use std::io::Write as _;
 
-use crate::bindgen::{JsLocal, JsScope};
+use crate::bindgen::JsScope;
 use crate::bun_string_jsc;
 use crate::{JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
@@ -70,19 +70,17 @@ impl BuildMessage {
         self.to_string_fn(cx.global())
     }
 
-    pub fn to_primitive(&self, cx: &mut JsScope<'_>, hint: JsLocal<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        let hint = hint.to_js();
-        if !hint.is_string() {
-            return Ok(JSValue::NULL);
+    pub fn to_primitive(
+        &self,
+        cx: &mut JsScope<'_>,
+        hint: Option<bun_core::String>,
+    ) -> JsResult<Option<JSValue>> {
+        match hint {
+            Some(hint) if hint.eq_ascii(b"default") || hint.eq_ascii(b"string") => {
+                self.to_string_fn(cx.global()).map(Some)
+            }
+            _ => Ok(None),
         }
-
-        let str = hint.to_bun_string(global)?;
-        if str.eq_ascii(b"default") || str.eq_ascii(b"string") {
-            return self.to_string_fn(global);
-        }
-
-        Ok(JSValue::NULL)
     }
 
     pub fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -96,7 +94,7 @@ impl BuildMessage {
         object.put(
             global,
             b"position",
-            Self::generate_position_object(&self.msg, global)?,
+            Self::generate_position_object(&self.msg, global)?.unwrap_or(JSValue::NULL),
         );
         object.put(
             global,
@@ -110,9 +108,9 @@ impl BuildMessage {
     pub(crate) fn generate_position_object(
         msg: &bun_ast::Msg,
         global: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         let Some(location) = &msg.data.location else {
-            return Ok(JSValue::NULL);
+            return Ok(None);
         };
         let object = JSValue::create_empty_object(global, 7);
 
@@ -139,7 +137,7 @@ impl BuildMessage {
         object.put(global, b"length", JSValue::from(location.length));
         object.put(global, b"offset", JSValue::from(location.offset));
 
-        Ok(object)
+        Ok(Some(object))
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
@@ -157,7 +155,7 @@ impl BuildMessage {
         }
     }
 
-    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn get_position(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
         BuildMessage::generate_position_object(&self.msg, cx.global())
     }
 

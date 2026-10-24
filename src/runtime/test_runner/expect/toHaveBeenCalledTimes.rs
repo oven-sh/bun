@@ -1,16 +1,16 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 use super::throw;
+use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 impl Expect {
     pub(crate) fn to_have_been_called_times(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        expected: Option<f64>,
+    ) -> JsResult<()> {
         let global = cx.global();
         let (this, calls, _) = self.mock_prologue(
             global,
@@ -20,12 +20,14 @@ impl Expect {
             super::mock::MockKind::Calls,
         )?;
 
-        let times = expected.to_js();
-        if !times.is_uint32_as_any_int() {
+        let Some(times) = expected
+            .map(JSValue::js_double_number)
+            .filter(|times| times.is_uint32_as_any_int())
+        else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toHaveBeenCalledTimes() requires 1 non-negative integer argument"
             )));
-        }
+        };
 
         let times = times.to_int64();
 
@@ -36,7 +38,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         // handle failure

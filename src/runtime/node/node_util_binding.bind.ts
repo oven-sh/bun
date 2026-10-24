@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { EncodingName } from "./node_fs_binding.bind.ts";
 
 export default b.module({ rustPath: "crate::node::node_util_binding" });
 
@@ -19,12 +20,12 @@ export const extractedSplitNewLinesFastPathStringsOnly = b.fn({
 
 export const normalizeEncoding = b.fn({
   args: { encoding: b.string.loose },
-  returns: b.any,
+  returns: b.string.local.optional,
   capability: "heap",
 });
 
 export const assertEncodingValid = b.fn({
-  args: { encoding: b.any },
+  args: { encoding: EncodingName.falsyAsNull },
   capability: "js",
   throws: true,
   rustPath: "crate::node::types::assert_encoding_valid",
@@ -33,7 +34,7 @@ export const assertEncodingValid = b.fn({
 export const parseEnv = b.fn({
   args: { content: b.string.utf8 },
   expected: { content: ["string"] },
-  returns: b.any,
+  returns: b.object,
   capability: "heap",
   throws: true,
 });

@@ -5,7 +5,7 @@ use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSArray, JsCell};
+use bun_jsc::{JSArray, JSObject, JsCell};
 use bun_ptr::{AsCtxPtr, RefPtr};
 
 use super::PostgresSQLConnection;
@@ -359,14 +359,11 @@ impl PostgresSQLQuery {
     }
 
     /// `result.statement` of the result for which `on_result` gave this number instead.
-    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
-        match self
-            .undescribed
-            .with_mut(|results| results.take(number.to_js()))
-        {
-            Some((parameters, fields)) => describe(cx.global(), &self.query, &parameters, &fields),
-            None => Ok(JSValue::NULL),
-        }
+    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: f64) -> JsResult<Option<JSValue>> {
+        self.undescribed
+            .with_mut(|results| results.take(number))
+            .map(|(parameters, fields)| describe(cx.global(), &self.query, &parameters, &fields))
+            .transpose()
     }
 
     // The generator counts the struct itself.
@@ -414,18 +411,16 @@ impl PostgresSQLQuery {
         cx: &mut JsScope<'_>,
         value: JsLocal<'_>,
     ) {
-        js::pending_value_set_cached(this_value.to_js(), cx.global(), value.to_js());
+        js::pending_value_set_cached(this_value.to_js(), cx.global(), value);
     }
 
-    pub fn set_mode(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
+    pub fn set_mode(
+        &self,
+        cx: &mut JsScope<'_>,
+        (mode, js_mode): (f64, JsLocal<'_>),
+    ) -> JsResult<()> {
         let global_object = cx.global();
-        let js_mode = mode.to_js();
-        if !js_mode.is_number() {
-            return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
-        }
-
-        let mode = js_mode.coerce::<i32>(global_object)?;
-        let result_mode = match mode {
+        let result_mode = match mode as i32 {
             0 => PostgresSQLQueryResultMode::Objects,
             1 => PostgresSQLQueryResultMode::Values,
             2 => PostgresSQLQueryResultMode::Raw,
@@ -444,15 +439,9 @@ impl PostgresSQLQuery {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         connection: &PostgresSQLConnection,
-        query: JsLocal<'_>,
+        query: JsLocal<'_, JSObject>,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let query = query.to_js();
-
-        if !query.is_object() {
-            return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
-        }
-
         let this_value = this_value.to_js();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let unnamed = connection

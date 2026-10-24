@@ -16,6 +16,7 @@ use bun_threading::{Guarded, Mutex};
 /// cannot smuggle an arbitrary address through tag 251.
 static SERIALIZED_REFS: Guarded<Vec<(u64, usize)>> = Guarded::new(Vec::new());
 
+use crate::generated_bindgen::block_list::{BlockListAddress, BlockListFamily, BlockListPrefix};
 use crate::node::util::validators;
 use crate::socket::socket_address::{SocketAddress, sockaddr};
 
@@ -29,19 +30,35 @@ fn z(s: &ZStr) -> &str {
     unsafe { core::str::from_utf8_unchecked(s.as_bytes()) }
 }
 
-/// The address of a `SocketAddress`, or of an address string in `family`.
+/// The address of a `SocketAddress`, or of an address string in `family`. The outer error is an argument
+/// of the wrong type. The inner one is a string that does not parse, for which `check` returns `false`.
 fn sockaddr_from_js(
     global: &JSGlobalObject,
-    value: JSValue,
+    value: BlockListAddress<'_>,
     name: &str,
-    family: JSValue,
-) -> JsResult<sockaddr> {
-    if let Some(sa) = value.as_class_ref::<SocketAddress>() {
-        return Ok(sa._addr);
-    }
-    validators::validate_string(global, value, name)?;
-    validators::validate_string(global, family, "family")?;
-    Ok(SocketAddress::init_from_addr_family(global, value, family)?._addr)
+    family: BlockListFamily<'_>,
+) -> JsResult<JsResult<sockaddr>> {
+    let value = match value {
+        BlockListAddress::Address(sa) => return Ok(Ok(sa._addr)),
+        BlockListAddress::Text(text) => text.as_value(),
+        BlockListAddress::StringObject(object) => object.as_value(),
+        BlockListAddress::Other(value) => {
+            return Err(validators::throw_err_invalid_arg_type_opaque(
+                global, name, "string", value,
+            ));
+        }
+    };
+    let family = match family {
+        BlockListFamily::Ipv4 => None,
+        BlockListFamily::Text(text) => Some(text.as_value()),
+        BlockListFamily::StringObject(object) => Some(object.as_value()),
+        BlockListFamily::Other(family) => {
+            return Err(validators::throw_err_invalid_arg_type_opaque(
+                global, "family", "string", family,
+            ));
+        }
+    };
+    Ok(SocketAddress::init_from_addr_family(global, value, family).map(|sa| sa._addr))
 }
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
@@ -105,21 +122,16 @@ impl BlockList {
     }
 
     pub(crate) fn is_block_list(value: JsLocal<'_>) -> bool {
-        value.to_js().as_::<Self>().is_some()
+        value.as_class_ref::<Self>().is_some()
     }
 
     pub(crate) fn add_address(
         &self,
         cx: &mut JsScope<'_>,
-        address: JsLocal<'_>,
-        family: JsLocal<'_>,
+        address: BlockListAddress<'_>,
+        family: BlockListFamily<'_>,
     ) -> JsResult<()> {
-        let global = cx.global();
-        let (address_js, mut family_js) = (address.to_js(), family.to_js());
-        if family_js.is_undefined() {
-            family_js = global.common_strings().ipv4_lower();
-        }
-        let address = sockaddr_from_js(global, address_js, "address", family_js)?;
+        let address = sockaddr_from_js(cx.global(), address, "address", family)??;
 
         self.add_rule(Rule::Addr(address));
         Ok(())
@@ -128,17 +140,13 @@ impl BlockList {
     pub(crate) fn add_range(
         &self,
         cx: &mut JsScope<'_>,
-        start: JsLocal<'_>,
-        end: JsLocal<'_>,
-        family: JsLocal<'_>,
+        (start, start_js): (BlockListAddress<'_>, JsLocal<'_>),
+        end: BlockListAddress<'_>,
+        family: BlockListFamily<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
-        let (start_js, end_js, mut family_js) = (start.to_js(), end.to_js(), family.to_js());
-        if family_js.is_undefined() {
-            family_js = global.common_strings().ipv4_lower();
-        }
-        let start = sockaddr_from_js(global, start_js, "start", family_js)?;
-        let end = sockaddr_from_js(global, end_js, "end", family_js)?;
+        let start = sockaddr_from_js(global, start, "start", family)??;
+        let end = sockaddr_from_js(global, end, "end", family)??;
         if let Some(ord) = compare(&start, &end) {
             if ord == Ordering::Greater {
                 return Err(global.throw_invalid_argument_value_custom(
@@ -155,17 +163,20 @@ impl BlockList {
     pub(crate) fn add_subnet(
         &self,
         cx: &mut JsScope<'_>,
-        network: JsLocal<'_>,
-        prefix: JsLocal<'_>,
-        family: JsLocal<'_>,
+        network: BlockListAddress<'_>,
+        prefix: BlockListPrefix<'_>,
+        family: BlockListFamily<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
-        let (network_js, prefix_js, mut family_js) =
-            (network.to_js(), prefix.to_js(), family.to_js());
-        if family_js.is_undefined() {
-            family_js = global.common_strings().ipv4_lower();
-        }
-        let network = sockaddr_from_js(global, network_js, "network", family_js)?;
+        let network = sockaddr_from_js(global, network, "network", family)??;
+        let prefix_js = match prefix {
+            BlockListPrefix::Number(prefix) => JSValue::js_number(prefix),
+            BlockListPrefix::Other(prefix) => {
+                return Err(validators::throw_err_invalid_arg_type_opaque(
+                    global, "prefix", "number", prefix,
+                ));
+            }
+        };
         let mut prefix: u8 = 0;
         let fam = network.family_raw();
         if fam == AF_INET as inet::sa_family_t {
@@ -203,33 +214,18 @@ impl BlockList {
     pub(crate) fn check(
         &self,
         cx: &mut JsScope<'_>,
-        address: JsLocal<'_>,
-        family: JsLocal<'_>,
+        address: BlockListAddress<'_>,
+        family: BlockListFamily<'_>,
     ) -> JsResult<bool> {
         let global = cx.global();
-        let (address_js, mut family_js) = (address.to_js(), family.to_js());
-        if family_js.is_undefined() {
-            family_js = global.common_strings().ipv4_lower();
-        }
-        let address_val;
-        let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
-            &sa._addr
-        } else {
-            validators::validate_string(global, address_js, format_args!("address"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            match SocketAddress::init_from_addr_family(global, address_js, family_js) {
-                Ok(sa) => {
-                    address_val = sa._addr;
-                    &address_val
-                }
-                Err(err) => {
-                    debug_assert!(err == bun_jsc::JsError::Thrown);
-                    global.clear_exception();
-                    return Ok(false);
-                }
+        match sockaddr_from_js(global, address, "address", family)? {
+            Ok(address) => Ok(self.check_sockaddr(&address)),
+            Err(err) => {
+                debug_assert!(err == bun_jsc::JsError::Thrown);
+                global.clear_exception();
+                Ok(false)
             }
-        };
-        Ok(self.check_sockaddr(address))
+        }
     }
 
     pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {

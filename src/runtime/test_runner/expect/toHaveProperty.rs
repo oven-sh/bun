@@ -1,27 +1,25 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 
-use super::throw;
 use super::DiffFormatter;
 use super::Expect;
+use super::throw;
+use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     pub(crate) fn to_have_property(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        key_path: JsLocal<'_>,
-        value: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+        (key_path_string, expected_property_path): (StringValue<'_>, JsLocal<'_>),
+        expected_property: Option<JsLocal<'_>>,
+    ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
 
         this.increment_expect_call_counter();
-
-        let expected_property_path = key_path.to_js();
-        let expected_property: Option<JSValue> = value.first().map(|value| value.to_js());
 
         let value: JSValue = this.get_value(
             global,
@@ -30,7 +28,9 @@ impl Expect {
             "<green>path<r><d>, <r><green>value<r>",
         )?;
 
-        if !expected_property_path.is_string() && !expected_property_path.is_iterable(global)? {
+        if matches!(key_path_string, StringValue::Other)
+            && !expected_property_path.is_iterable(global)?
+        {
             return Err(global.throw(format_args!("Expected path must be a string or an array")));
         }
 
@@ -54,7 +54,7 @@ impl Expect {
             pass = !pass;
         }
         if pass {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let mut formatter = super::make_formatter(global);

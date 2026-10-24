@@ -800,7 +800,7 @@ class CopySink {
 
   write(chunk: unknown) {
     try {
-      if (this.handle!.copyWrite(chunk)) {
+      if (this.handle!.copyWrite(chunk as Parameters<CopyHandle["copyWrite"]>[0])) {
         return;
       }
     } catch (err) {

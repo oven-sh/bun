@@ -1,17 +1,26 @@
+use super::{ContainMsgs, ContainOutcome, Expect, ExpectedArray};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
-use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
+use bun_jsc::{JSArray, JsResult};
 
 impl Expect {
-    pub(crate) fn to_contain_all_keys(
+    pub(crate) fn to_contain_all_keys<'a>(
         &self,
-        this_value: JsWrapper<'_, Self>,
+        this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'_>,
-        expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
-        self.contain_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toContainAllKeys", ExpectedArray::AfterValue,
-            ContainMsgs { verb: "contain all keys", not_verb: "contain all keys" },
+        expected: Option<JsLocal<'_, JSArray>>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        self.contain_matcher(
+            cx.global(),
+            this_value,
+            expected,
+            "toContainAllKeys",
+            ExpectedArray::AfterValue,
+            ContainMsgs {
+                verb: "contain all keys",
+                not_verb: "contain all keys",
+            },
             |g, value, expected| {
+                let expected = expected.to_js();
                 let count = expected.get_length(g)?;
                 let keys = value.keys(g)?;
                 let mut pass = false;

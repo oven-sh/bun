@@ -368,10 +368,7 @@ pub(crate) fn use_fake_timers(
     // SAFETY: `timer::All` is per-thread, and `activate` doesn't re-enter it.
     unsafe { (*timer_all()).fake_timers.activate(js_now, global) };
 
-    Ok(bun_jsc::cpp::JSMock__toThisStrict(
-        global,
-        this_value.to_js(),
-    ))
+    Ok(bun_jsc::cpp::JSMock__toThisStrict(global, this_value))
 }
 
 pub(crate) fn use_real_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
@@ -383,10 +380,7 @@ pub(crate) fn use_real_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> 
     // Remove the setTimeout.clock marker when switching back to real timers.
     set_fake_timer_marker(global, false)?;
 
-    Ok(bun_jsc::cpp::JSMock__toThisStrict(
-        global,
-        this_value.to_js(),
-    ))
+    Ok(bun_jsc::cpp::JSMock__toThisStrict(global, this_value))
 }
 
 pub(crate) fn advance_timers_to_next_timer(
@@ -398,10 +392,7 @@ pub(crate) fn advance_timers_to_next_timer(
 
     FakeTimers::execute_next(global)?;
 
-    Ok(bun_jsc::cpp::JSMock__toThisStrict(
-        global,
-        this_value.to_js(),
-    ))
+    Ok(bun_jsc::cpp::JSMock__toThisStrict(global, this_value))
 }
 
 pub(crate) fn advance_timers_by_time(
@@ -440,10 +431,7 @@ pub(crate) fn advance_timers_by_time(
     }
     advanced?;
 
-    Ok(bun_jsc::cpp::JSMock__toThisStrict(
-        global,
-        this_value.to_js(),
-    ))
+    Ok(bun_jsc::cpp::JSMock__toThisStrict(global, this_value))
 }
 
 pub(crate) fn run_only_pending_timers(
@@ -455,10 +443,7 @@ pub(crate) fn run_only_pending_timers(
 
     FakeTimers::execute_only_pending_timers(global)?;
 
-    Ok(bun_jsc::cpp::JSMock__toThisStrict(
-        global,
-        this_value.to_js(),
-    ))
+    Ok(bun_jsc::cpp::JSMock__toThisStrict(global, this_value))
 }
 
 pub(crate) fn run_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
@@ -467,10 +452,7 @@ pub(crate) fn run_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> J
 
     FakeTimers::execute_all_timers(global)?;
 
-    Ok(bun_jsc::cpp::JSMock__toThisStrict(
-        global,
-        this_value.to_js(),
-    ))
+    Ok(bun_jsc::cpp::JSMock__toThisStrict(global, this_value))
 }
 
 pub(crate) fn get_timer_count(heap: &JsHeap<'_>) -> JsResult<usize> {
@@ -489,10 +471,7 @@ pub(crate) fn clear_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) ->
     let cleared = unsafe { (*timer_all()).fake_timers.clear() };
     cleared.release(global.bun_vm_ptr());
 
-    Ok(bun_jsc::cpp::JSMock__toThisStrict(
-        global,
-        this_value.to_js(),
-    ))
+    Ok(bun_jsc::cpp::JSMock__toThisStrict(global, this_value))
 }
 
 pub(crate) fn is_fake_timers() -> bool {

@@ -1,16 +1,18 @@
+use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
 
-use super::throw;
 use super::Expect;
+use super::throw;
+use crate::generated_bindgen::expect::SnapshotArgument;
 
 impl Expect {
     pub(crate) fn to_throw_error_matching_inline_snapshot(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+        snapshot: Option<SnapshotArgument<'_>>,
+        extra: Option<JsLocal<'_>>,
+    ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 
@@ -30,12 +32,15 @@ impl Expect {
         }
 
         let mut expected_string = None;
-        match *args {
-            [] => {}
-            [expected] if expected.to_js().is_string() => {
-                expected_string = Some(expected.to_js().to_js_string_view(global)?);
+        match (snapshot, extra) {
+            (None, _) => {}
+            (Some(SnapshotArgument::String(string)), None) => {
+                expected_string = Some(string.to_js().to_js_string_view(global)?);
             }
-            [_] => {
+            (Some(SnapshotArgument::StringObject(object)), None) => {
+                expected_string = Some(object.to_js().to_js_string_view(global)?);
+            }
+            (Some(_), None) => {
                 return throw!(
                     this,
                     global,
@@ -43,7 +48,7 @@ impl Expect {
                     "\n\nMatcher error: Expected first argument to be a string\n",
                 );
             }
-            _ => {
+            (Some(_), Some(_)) => {
                 return throw!(
                     this,
                     global,

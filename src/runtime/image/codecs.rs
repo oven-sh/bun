@@ -63,16 +63,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-impl bun_jsc::FromJsEnum for Backend {
-    fn from_js_value(
-        v: bun_jsc::JSValue,
-        global: &bun_jsc::JSGlobalObject,
-        property_name: &'static str,
-    ) -> bun_jsc::JsResult<Self> {
-        v.to_enum_from_map(global, property_name, &BACKEND_MAP, "'system' or 'bun'")
-    }
-}
-
 // Read from WorkPool threads + written from JS; a torn read of a 1-byte enum
 // is harmless, so a relaxed atomic is sufficient.
 pub(crate) static BACKEND: core::sync::atomic::AtomicU8 =

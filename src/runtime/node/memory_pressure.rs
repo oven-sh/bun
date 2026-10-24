@@ -25,8 +25,9 @@
 //! `onDidChangeListeners` in `BunProcess.cpp`, matching how signal handlers
 //! are wired. The watcher does not keep the event loop alive.
 
+use bun_core::Utf8Bytes;
 use bun_event_loop::ConcurrentTask::{Task, task_tag};
-use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, Rest};
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
@@ -540,24 +541,25 @@ pub(crate) fn psi_trigger<'a>(
 pub(crate) fn psi_filter<'a>(
     cx: &mut JsScope<'a>,
     armed: &[u8],
-    polls: &'a [JsLocal<'a>],
-) -> JsResult<JSValue> {
+    polls: Rest<'a, Utf8Bytes<'static>>,
+) -> JsResult<Option<JSValue>> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let global = cx.global();
         let mut last_total = posix::parse_psi_some_total(armed).unwrap_or(0);
         JSValue::create_array_from_iter(global, polls.iter(), |contents| {
-            let contents = contents.to_js().to_utf8(global)?;
+            let contents = contents.convert(global)?;
             Ok(JSValue::js_boolean(posix::psi_growth_reached_threshold(
                 &mut last_total,
                 &contents,
             )))
         })
+        .map(Some)
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = (cx, armed, polls);
-        Ok(JSValue::NULL)
+        Ok(None)
     }
 }
 

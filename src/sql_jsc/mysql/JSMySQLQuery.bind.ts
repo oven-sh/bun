@@ -11,9 +11,19 @@ export const MySQLQuery = b.class({
   internalFields: ["pendingValue", "target", "binding"],
   proto: {
     cancel: { capability: "js" },
-    describeResult: { ...js, args: { number: b.any }, returns: b.any },
-    run: { ...js, args: { connection: MySQLConnection, query: b.any }, passThis: true, rustName: "do_run" },
-    setMode: { ...js, args: { mode: b.any } },
-    setPendingValue: { args: { value: b.any }, rustName: "set_pending_value_from_js" },
+    describeResult: { ...js, args: { number: b.f64 }, returns: b.object.nullable },
+    run: {
+      ...js,
+      args: { connection: MySQLConnection, query: b.object },
+      expected: { query: "Expected query to be a Query for 'run'." },
+      passThis: true,
+      rustName: "do_run",
+    },
+    setMode: {
+      ...js,
+      args: { mode: b.f64.withValue },
+      expected: { mode: "Expected mode to be a Number for 'setMode'." },
+    },
+    setPendingValue: { args: { value: b.opaque }, rustName: "set_pending_value_from_js" },
   },
 });

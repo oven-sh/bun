@@ -1,5 +1,6 @@
 use core::marker::PhantomData;
 
+use crate::bindgen::{AnyValue, js_value_of};
 use crate::{JSGlobalObject, JSValue, Strong};
 
 /// Holds a reference to a JSValue with lifecycle management.
@@ -108,12 +109,14 @@ pub enum JsRef {
 const _: PhantomData<*const ()> = PhantomData;
 
 impl JsRef {
-    pub fn init_weak(value: JSValue) -> Self {
+    pub fn init_weak(value: impl AnyValue) -> Self {
+        let value = js_value_of(value);
         debug_assert!(!value.is_empty_or_undefined_or_null());
         JsRef::Weak(value)
     }
 
-    pub fn init_strong(value: JSValue, global: &JSGlobalObject) -> Self {
+    pub fn init_strong(value: impl AnyValue, global: &JSGlobalObject) -> Self {
+        let value = js_value_of(value);
         debug_assert!(!value.is_empty_or_undefined_or_null());
         JsRef::Strong(Strong::create(value, global))
     }
@@ -144,7 +147,8 @@ impl JsRef {
         self.try_get().unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub fn set_weak(&mut self, value: JSValue) {
+    pub fn set_weak(&mut self, value: impl AnyValue) {
+        let value = js_value_of(value);
         debug_assert!(!value.is_empty_or_undefined_or_null());
         match self {
             JsRef::Weak(_) => {}
@@ -159,7 +163,8 @@ impl JsRef {
         *self = JsRef::Weak(value);
     }
 
-    pub fn set_strong(&mut self, value: JSValue, global: &JSGlobalObject) {
+    pub fn set_strong(&mut self, value: impl AnyValue, global: &JSGlobalObject) {
+        let value = js_value_of(value);
         debug_assert!(!value.is_empty_or_undefined_or_null());
         if let JsRef::Strong(strong) = self {
             strong.set(global, value);
@@ -232,7 +237,8 @@ impl JsRef {
         *self = JsRef::Finalized;
     }
 
-    pub fn update(&mut self, global: &JSGlobalObject, value: JSValue) {
+    pub fn update(&mut self, global: &JSGlobalObject, value: impl AnyValue) {
+        let value = js_value_of(value);
         match self {
             JsRef::Weak(weak) => {
                 debug_assert!(!value.is_empty_or_undefined_or_null());

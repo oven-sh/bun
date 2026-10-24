@@ -110,8 +110,9 @@ impl FetchHeaders {
     /// If empty, returns null.
     pub fn create_from_js(
         global: &JSGlobalObject,
-        value: JSValue,
+        value: impl crate::bindgen::AnyValue,
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
+        let value = crate::bindgen::js_value_of(value);
         host_fn::from_js_host_call_generic(global, || {
             NonNull::new(WebCore__FetchHeaders__createFromJS(global, value))
         })

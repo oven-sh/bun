@@ -8,8 +8,8 @@ use crate::jsc::{
 };
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSArray, JsCell};
+use bun_jsc::bindgen::{AnyValue, JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSArray, JSObject, JsCell};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
@@ -88,16 +88,12 @@ impl JSMySQLQuery {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         connection: &MySQLConnection,
-        query: JsLocal<'_>,
+        query: JsLocal<'_, JSObject>,
     ) -> JsResult<()> {
         debug!("doRun");
         let _guard = self.ref_guard();
 
         let global_object = cx.global();
-        let query = query.to_js();
-        if !query.is_object() {
-            return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
-        }
         // A connection that failed or closed answers nothing: a query queued on it would hold the
         // event loop for ever. The pool hears of a close through `onclose` and stops handing the
         // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
@@ -127,15 +123,13 @@ impl JSMySQLQuery {
         );
     }
 
-    pub fn set_mode(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
+    pub fn set_mode(
+        &self,
+        cx: &mut JsScope<'_>,
+        (mode, js_mode): (f64, JsLocal<'_>),
+    ) -> JsResult<()> {
         let global_object = cx.global();
-        let js_mode = mode.to_js();
-        if !js_mode.is_number() {
-            return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
-        }
-
-        let mode_value = js_mode.coerce::<i32>(global_object)?;
-        let mode = match mode_value {
+        let mode = match mode as i32 {
             0 => SQLQueryResultMode::Objects,
             1 => SQLQueryResultMode::Values,
             2 => SQLQueryResultMode::Raw,
@@ -150,7 +144,7 @@ impl JSMySQLQuery {
     }
 
     pub fn set_pending_value_from_js(&self, value: JsLocal<'_>) {
-        self.set_pending_value(value.to_js());
+        self.set_pending_value(value);
     }
 
     fn last_insert_id_to_js(&self, value: u64) -> JsResult<JSValue> {
@@ -182,14 +176,11 @@ impl JSMySQLQuery {
         }
     }
 
-    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
-        match self
-            .undescribed
-            .with_mut(|results| results.take(number.to_js()))
-        {
-            Some(columns) => describe(cx.global(), self.query.get().text(), &[], &columns),
-            None => Ok(JSValue::NULL),
-        }
+    pub fn describe_result(&self, cx: &mut JsScope<'_>, number: f64) -> JsResult<Option<JSValue>> {
+        self.undescribed
+            .with_mut(|results| results.take(number))
+            .map(|columns| describe(cx.global(), self.query.get().text(), &[], &columns))
+            .transpose()
     }
 
     pub(crate) fn resolve(&self, result: &MySQLQueryResult) {
@@ -385,7 +376,7 @@ impl JSMySQLQuery {
     }
 
     #[inline]
-    pub(crate) fn set_pending_value(&self, result: JSValue) {
+    pub(crate) fn set_pending_value(&self, result: impl AnyValue) {
         if let Some(value) = self.this_value.get().try_get() {
             js::pending_value_set_cached(value, self.global_object(), result);
         }

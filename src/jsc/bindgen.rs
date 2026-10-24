@@ -9,7 +9,8 @@ use bun_core::EncodedSlice;
 
 use crate::{
     ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSArray, JSGlobalObject, JSObject,
-    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    JSString, JSValue, JsError, JsResult, JsThread, PinnedArrayBuffer, ThreadIsolated,
+    ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -97,6 +98,12 @@ impl<'a> JsHeap<'a> {
             array.put_index(global, index as u32, value?)?;
         }
         Ok(JsLocal::from_raw(array))
+    }
+
+    /// A string that shares the characters of `string`.
+    #[inline]
+    pub fn create_string(&self, string: &bun_core::String) -> Result<'a, JsLocal<'a, JSString>> {
+        JsLocal::from_js_result(crate::StringJsc::to_js(string, self.global_object()))
     }
 
     #[inline]
@@ -359,6 +366,8 @@ impl<'a> IntoError<'a> for core::convert::Infallible {
 // ───────────────────────────── values ─────────────────────────────
 
 /// A [`JSValue`] held by a host call, known to be a `T`. Lists of them go in a [`crate::MarkedArgumentBuffer`].
+///
+/// Without a `T` nothing is known of it, `b.opaque`: it is held, stored and handed on as an [`AnyValue`], and never looked into.
 #[repr(transparent)]
 pub struct JsLocal<'a, T = JSValue>(JSValue, InvariantLifetime<'a>, PhantomData<*const T>);
 impl<T> Clone for JsLocal<'_, T> {
@@ -397,19 +406,168 @@ impl<'a, T> JsLocal<'a, T> {
     }
 
     #[inline(always)]
-    pub fn to_js(self) -> JSValue {
-        self.0
-    }
-
-    #[inline(always)]
     pub fn as_value(self) -> JsLocal<'a> {
         JsLocal::from_raw(self.0)
     }
+
+    /// The instance of a class that a schema declares.
+    #[inline]
+    pub fn as_class_ref<C: crate::JsClass + 'static>(self) -> Option<&'a C> {
+        self.0.as_class_ref::<C>()
+    }
+
+    /// [`as_class_ref`](Self::as_class_ref) for a class that is refcounted, to take a ref on.
+    #[inline]
+    pub fn as_class_this_ptr<C: crate::JsClass>(self) -> Option<bun_ptr::ThisPtr<C>> {
+        self.0.as_class_this_ptr::<C>()
+    }
+
+    #[inline]
+    pub fn to_fmt<'f, 'b>(
+        self,
+        formatter: &'f mut crate::console_object::Formatter<'b>,
+    ) -> crate::console_object::formatter::ZigFormatter<'f, 'b> {
+        self.0.to_fmt(formatter)
+    }
+
+    #[inline]
+    pub fn fmt_string(self, global: &JSGlobalObject) -> crate::js_value::StringFormatter<'_> {
+        self.0.fmt_string(global)
+    }
+
+    #[inline]
+    pub fn type_name<'g>(self, global: &'g JSGlobalObject) -> bun_core::StringView<'g> {
+        self.0.type_name(global)
+    }
+
+    #[inline]
+    pub fn json_stringify_fast(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
+        self.0.json_stringify_fast(global)
+    }
+
+    #[inline]
+    pub fn is_same_value(self, other: impl AnyValue, global: &JSGlobalObject) -> JsResult<bool> {
+        self.0.is_same_value(other, global)
+    }
+
+    #[inline]
+    pub fn jest_deep_equals(self, other: impl AnyValue, global: &JSGlobalObject) -> JsResult<bool> {
+        self.0.jest_deep_equals(other, global)
+    }
+
+    #[inline]
+    pub fn is_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
+        self.0.is_iterable(global)
+    }
+
+    #[inline]
+    pub fn for_each(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: crate::ForEachCallback,
+    ) -> JsResult<()> {
+        self.0.for_each(global, ctx, callback)
+    }
+
+    /// [`JSValue::with_async_context_if_needed`].
+    #[inline]
+    pub fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JsLocal<'a> {
+        JsLocal::from_raw(self.0.with_async_context_if_needed(global))
+    }
+
+    /// [`JSValue::with_graph_context_if_needed`].
+    #[inline]
+    pub fn with_graph_context_if_needed(self, global: &JSGlobalObject) -> JsLocal<'a> {
+        JsLocal::from_raw(self.0.with_graph_context_if_needed(global))
+    }
+}
+
+/// What a [`JsLocal`] can be known to be.
+pub trait Kind {}
+impl Kind for JSObject {}
+impl Kind for JSArray {}
+impl Kind for crate::JSBigInt {}
+impl Kind for JSString {}
+impl Kind for crate::JSPromise {}
+impl Kind for Symbol {}
+impl Kind for Callable {}
+impl Kind for BufferSource {}
+
+impl<T: Kind> JsLocal<'_, T> {
+    #[inline(always)]
+    pub fn to_js(self) -> JSValue {
+        self.0
+    }
+}
+
+/// Only this crate makes one, so only it reads what an [`AnyValue`] holds.
+pub struct Sealed(());
+
+/// What goes where any JS value goes: a [`JSValue`], a [`JsLocal`] or a [`JsWrapper`].
+pub trait AnyValue: Copy {
+    #[doc(hidden)]
+    fn into_js_value(self, _: Sealed) -> JSValue;
+}
+impl AnyValue for JSValue {
+    #[inline(always)]
+    fn into_js_value(self, _: Sealed) -> JSValue {
+        self
+    }
+}
+impl<T> AnyValue for JsLocal<'_, T> {
+    #[inline(always)]
+    fn into_js_value(self, _: Sealed) -> JSValue {
+        self.0
+    }
+}
+impl<T> AnyValue for JsWrapper<'_, T> {
+    #[inline(always)]
+    fn into_js_value(self, _: Sealed) -> JSValue {
+        self.to_js()
+    }
+}
+
+#[inline(always)]
+pub(crate) fn js_value_of(value: impl AnyValue) -> JSValue {
+    value.into_js_value(Sealed(()))
+}
+
+/// For what takes any value and goes through all of it: a formatter, a stringifier, the parts of a `Blob`. Nothing else
+/// reads what an untyped [`JsLocal`] holds.
+pub trait ValueWalker {
+    #[inline(always)]
+    fn value_of(value: impl AnyValue) -> JSValue {
+        js_value_of(value)
+    }
+}
+
+#[inline(always)]
+pub(crate) fn js_values_of(values: &[impl AnyValue]) -> &[JSValue] {
+    // SAFETY: each of the three types is `repr(transparent)` over the bits of its `JSValue`.
+    unsafe { &*(core::ptr::from_ref(values) as *const [JSValue]) }
+}
+
+/// # Safety
+/// Only generated code calls this, to pass the value to C++.
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn to_extern(value: impl AnyValue) -> JSValue {
+    js_value_of(value)
 }
 
 impl<'a> JsLocal<'a> {
     pub const UNDEFINED: Self = JsLocal(JSValue::UNDEFINED, PhantomData, PhantomData);
     pub const NULL: Self = JsLocal(JSValue::NULL, PhantomData, PhantomData);
+    /// A member of a returned dictionary that is absent.
+    #[doc(hidden)]
+    pub const EMPTY: Self = JsLocal(JSValue::ZERO, PhantomData, PhantomData);
+
+    /// As `.nullable` in a schema, for a value that is handed on whichever it is.
+    #[inline(always)]
+    pub fn nullable(self) -> Option<Self> {
+        (!self.0.is_undefined_or_null()).then_some(self)
+    }
 
     /// Where a [`JSValue`] of the older API comes in: one this call was given or made, not one kept from an earlier call.
     #[inline(always)]
@@ -417,38 +575,171 @@ impl<'a> JsLocal<'a> {
         debug_assert!(!value.is_empty());
         Self::from_raw(value)
     }
+}
 
-    /// A `b.any.variadic` argument as plain `JSValue`s, for the older API.
+/// Runs a generated conversion, which returns false if it threw.
+#[doc(hidden)]
+#[inline(always)]
+pub fn call_conversion<'a>(
+    cx: &mut JsScope<'a>,
+    convert: impl FnOnce(*mut JSGlobalObject) -> bool,
+) -> Result<'a, ()> {
+    let global = cx.heap.global_ptr();
+    crate::call_false_is_throw(cx.heap.global_object(), || convert(global)).map_err(Error::pending)
+}
+
+type ConvertFn<'a, T> = fn(&mut JsScope<'a>, JSValue) -> Result<'a, T>;
+
+/// The scope that `global` was borrowed from.
+///
+/// # Safety
+/// `'a` is a call that is still running.
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn with_scope_of<'a, R>(
+    global: &JSGlobalObject,
+    f: impl FnOnce(&mut JsScope<'a>) -> R,
+) -> R {
+    // SAFETY: `JsScope` is zero-sized, at the address of the global object.
+    f(unsafe { &mut *global.as_mut_ptr().cast::<JsScope<'a>>() })
+}
+
+/// Runs a generated conversion of `value`, or of a member of it.
+#[doc(hidden)]
+#[inline]
+pub fn convert_with<'a, V, T>(
+    global: &JSGlobalObject,
+    value: JsLocal<'a, V>,
+    convert: ConvertFn<'a, T>,
+) -> JsResult<T> {
+    Deferred {
+        value: value.0,
+        convert,
+    }
+    .convert(global)
+}
+
+/// An argument the schema declares `.deferred`: the body says when it is converted.
+pub struct Deferred<'a, T> {
+    value: JSValue,
+    convert: ConvertFn<'a, T>,
+}
+impl<T> Clone for Deferred<'_, T> {
     #[inline(always)]
-    pub fn to_js_slice(values: &[Self]) -> &[JSValue] {
-        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
-        unsafe { &*(core::ptr::from_ref(values) as *const [JSValue]) }
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for Deferred<'_, T> {}
+
+impl<'a, T> Deferred<'a, T> {
+    /// # Safety
+    /// Something holds `value` for the call `heap` belongs to, and `convert` takes it: it is empty only for `.ifPassed`.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn from_extern(value: JSValue, _: &JsHeap<'a>, convert: ConvertFn<'a, T>) -> Self {
+        Deferred { value, convert }
+    }
+
+    /// Throws what the conversion of an argument throws. Runs JavaScript if the type coerces.
+    #[inline]
+    pub fn convert(self, global: &JSGlobalObject) -> JsResult<T> {
+        // SAFETY: the call `'a` holds `self.value`.
+        unsafe { with_scope_of(global, |cx| (self.convert)(cx, self.value)) }
+            .map_err(|error| error.into_js_error(global))
+    }
+}
+
+/// A `b.rest(T)` argument: the body converts each element.
+pub struct Rest<'a, T> {
+    values: &'a [JsLocal<'a>],
+    convert: ConvertFn<'a, T>,
+}
+impl<T> Clone for Rest<'_, T> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for Rest<'_, T> {}
+
+impl<'a, T> Rest<'a, T> {
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn from_extern(values: &'a [JsLocal<'a>], convert: ConvertFn<'a, T>) -> Self {
+        Rest { values, convert }
     }
 
     #[inline(always)]
-    pub fn is_undefined(self) -> bool {
-        self.0.is_undefined()
+    pub fn len(self) -> usize {
+        self.values.len()
+    }
+
+    #[inline(always)]
+    pub fn is_empty(self) -> bool {
+        self.values.is_empty()
     }
 
     #[inline]
-    pub fn as_callable(self) -> Option<JsLocal<'a, Callable>> {
-        self.0.is_callable().then(|| JsLocal::from_raw(self.0))
+    pub fn iter(self) -> impl ExactSizeIterator<Item = Deferred<'a, T>> {
+        let convert = self.convert;
+        self.values.iter().map(move |value| Deferred {
+            value: value.0,
+            convert,
+        })
     }
 }
+
+impl<'a> JsLocal<'a, JSObject> {
+    /// For a [`JSValue`] read from where it was stored, like a [`crate::Strong`].
+    #[inline]
+    pub fn from_js(_: &'a JSGlobalObject, value: JSValue) -> Option<Self> {
+        value.is_object().then(|| JsLocal::from_raw(value))
+    }
+}
+
+impl<'a> JsLocal<'a, crate::JSBigInt> {
+    /// For a [`JSValue`] that hand-written C++ passed.
+    #[inline]
+    pub fn from_js(_: &'a JSGlobalObject, value: JSValue) -> Option<Self> {
+        value.is_big_int().then(|| JsLocal::from_raw(value))
+    }
+
+    #[inline]
+    pub fn as_big_int(self) -> &'a crate::JSBigInt {
+        crate::JSBigInt::from_js(self.0).unwrap()
+    }
+}
+
+/// Marks a [`JsLocal`] that is a symbol.
+pub enum Symbol {}
 
 /// Marks a [`JsLocal`] that can be called: a function, or a proxy of one.
 pub enum Callable {}
 
 impl<'a> JsLocal<'a, Callable> {
+    /// For a [`JSValue`] read from where it was stored, like an internal field.
+    #[inline]
+    pub fn from_js(_: &'a JSGlobalObject, value: JSValue) -> Option<Self> {
+        value.is_callable().then(|| JsLocal::from_raw(value))
+    }
+
+    #[inline(always)]
+    pub fn as_object(self) -> JsLocal<'a, JSObject> {
+        JsLocal::from_raw(self.0)
+    }
+
     /// Runs JavaScript.
-    pub fn call<T>(
+    pub fn call(
         self,
-        cx: &mut JsScope<'a>,
-        this: JsLocal<'a, T>,
+        global: &JSGlobalObject,
+        this: impl AnyValue,
         args: &[JsLocal<'a>],
-    ) -> Result<'a, JsLocal<'a>> {
-        let args = JsLocal::to_js_slice(args);
-        JsLocal::from_js_result(self.0.call(cx.heap.global_object(), this.0, args))
+    ) -> JsResult<JsLocal<'a>> {
+        let args = js_values_of(args);
+        self.0
+            .call(global, js_value_of(this), args)
+            .map(JsLocal::from_raw)
     }
 }
 
@@ -456,6 +747,25 @@ impl<'a> JsLocal<'a, Callable> {
 pub enum BufferSource {}
 
 impl<'a> JsLocal<'a, BufferSource> {
+    /// As [`JSValue::create_buffer_with_ctx`].
+    ///
+    /// # Safety
+    /// As [`JSValue::create_buffer_with_ctx`].
+    pub unsafe fn create_buffer_with_ctx(
+        global: &'a JSGlobalObject,
+        bytes: NonNull<[u8]>,
+        ctx: *mut c_void,
+        free: unsafe extern "C" fn(*mut c_void, *mut c_void),
+    ) -> JsResult<Self> {
+        // SAFETY: forwarded.
+        unsafe { JSValue::create_buffer_with_ctx(global, bytes, ctx, free) }.map(JsLocal::from_raw)
+    }
+
+    #[inline]
+    pub fn as_array_buffer(self, global: &JSGlobalObject) -> ArrayBuffer {
+        self.0.as_array_buffer(global).unwrap()
+    }
+
     /// The bytes as they are now. A detached or out-of-bounds view is empty.
     #[inline]
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
@@ -485,10 +795,7 @@ impl<'a> JsLocal<'a, BufferSource> {
 /// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
-    wrapped: *mut c_void,
-    _: &JsHeap<'a>,
-) -> &'a T {
+pub unsafe fn class_ref_from_extern<'a, T>(wrapped: *mut c_void, _: &JsHeap<'a>) -> &'a T {
     // SAFETY: forwarded.
     unsafe { &*wrapped.cast::<T>() }
 }
@@ -533,7 +840,7 @@ impl<'a> JsBytes<'a> {
 
     #[inline]
     pub fn to_js(self) -> JSValue {
-        self.value.to_js()
+        self.value.0
     }
 
     /// `shared: "copied"` for `string: "asIs"`. Like [`get`](Self::get), but copies the bytes of a shared buffer into `copy` and returns those.
@@ -786,7 +1093,7 @@ pub unsafe fn set_internal_field_at(
     this_value: JSValue,
     global: &JSGlobalObject,
     offset: usize,
-    value: JSValue,
+    value: impl AnyValue,
 ) {
     // SAFETY: as above; C++ stores through the `WriteBarrier`.
     unsafe {
@@ -794,7 +1101,7 @@ pub unsafe fn set_internal_field_at(
             global.as_mut_ptr(),
             this_value.encoded() as *mut c_void,
             offset as u32,
-            value,
+            js_value_of(value),
         )
     }
 }
@@ -912,6 +1219,10 @@ pub mod to_js {
         u16: u16 => |n| JSValue::js_number_from_int32(i32::from(n));
         i32: i32 => JSValue::js_number_from_int32;
         u32: u32 => |n| JSValue::js_number_from_uint64(u64::from(n));
+        i64: i64 => |n| match i32::try_from(n) {
+            Ok(n) => JSValue::js_number_from_int32(n),
+            Err(_) => JSValue::js_double_number(n as f64),
+        };
         u64: u64 => JSValue::js_number_from_uint64;
         usize: usize => |n| JSValue::js_number_from_uint64(n as u64);
         f64: f64 => |n| JSValue::js_number(JSValue::purify_nan(n));
@@ -936,34 +1247,18 @@ pub mod to_js {
         Ok(JsLocal::UNDEFINED)
     }
 
-    /// A body may also return a plain [`JSValue`]: it goes straight back to JSC.
-    pub trait Any<'a> {
-        fn into_value(self, heap: &JsHeap<'a>) -> JsLocal<'a>;
-    }
-    impl<'a, T> Any<'a> for JsLocal<'a, T> {
-        #[inline(always)]
-        fn into_value(self, _: &JsHeap<'a>) -> JsLocal<'a> {
-            self.as_value()
-        }
-    }
-    impl<'a, T> Any<'a> for JsWrapper<'a, T> {
-        #[inline(always)]
-        fn into_value(self, _: &JsHeap<'a>) -> JsLocal<'a> {
-            self.as_value().as_value()
-        }
-    }
-    impl<'a> Any<'a> for JSValue {
-        #[inline(always)]
-        fn into_value(self, heap: &JsHeap<'a>) -> JsLocal<'a> {
-            // A function of the older API returns the empty value after it threw.
-            debug_assert!(!self.is_empty() || heap.exception_presence_matches(true));
-            JsLocal::from_raw(self)
-        }
+    #[inline(always)]
+    pub fn null<'a>(_: &JsHeap<'a>, (): ()) -> Result<'a, JsLocal<'a>> {
+        Ok(JsLocal::NULL)
     }
 
+    /// A body may also return a plain [`JSValue`]: it goes straight back to JSC.
     #[inline(always)]
-    pub fn any<'a>(heap: &JsHeap<'a>, value: impl Any<'a>) -> Result<'a, JsLocal<'a>> {
-        Ok(value.into_value(heap))
+    pub fn any<'a>(heap: &JsHeap<'a>, value: impl AnyValue) -> Result<'a, JsLocal<'a>> {
+        let value = js_value_of(value);
+        // A function of the older API returns the empty value after it threw.
+        debug_assert!(!value.is_empty() || heap.exception_presence_matches(true));
+        Ok(JsLocal::from_raw(value))
     }
 
     #[inline(always)]
@@ -1034,14 +1329,14 @@ pub mod to_js {
     pub unsafe fn object<'a>(
         heap: &JsHeap<'a>,
         first_member_name_index: u32,
-        values: &[JSValue],
+        values: &[JsLocal<'a>],
     ) -> Result<'a, JsLocal<'a>> {
         // SAFETY: forwarded; this cannot throw.
         Ok(JsLocal::from_raw(unsafe {
             extern_types::Bun__Bindgen__createObject(
                 heap.global_ptr(),
                 first_member_name_index,
-                values.as_ptr(),
+                js_values_of(values).as_ptr(),
                 values.len(),
             )
         }))
@@ -1053,14 +1348,14 @@ pub mod to_js {
     pub unsafe fn null_prototype_object<'a>(
         heap: &JsHeap<'a>,
         first_member_name_index: u32,
-        values: &[JSValue],
+        values: &[JsLocal<'a>],
     ) -> Result<'a, JsLocal<'a>> {
         // SAFETY: forwarded; this cannot throw.
         Ok(JsLocal::from_raw(unsafe {
             extern_types::Bun__Bindgen__createNullPrototypeObject(
                 heap.global_ptr(),
                 first_member_name_index,
-                values.as_ptr(),
+                js_values_of(values).as_ptr(),
                 values.len(),
             )
         }))

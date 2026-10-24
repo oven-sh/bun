@@ -70,9 +70,16 @@ export const RenderCallbacks = b.dictionary(
   { allowArray: true },
 );
 
+/** An empty `text` is no override. */
+export const ComponentOverride = b.union({
+  absent: b.null,
+  ignored: b.bool,
+  text: b.jsString,
+  other: b.opaque,
+});
 /** The `type` of the elements of each tag. A boolean is ignored. */
 export const ComponentOverrides = b.dictionary(
-  members(b.any.emptyStringAsNull, [
+  members(ComponentOverride, [
     "h1",
     "h2",
     "h3",
@@ -108,20 +115,36 @@ export const ComponentOverrides = b.dictionary(
 
 const js = { capability: "js", throws: true } as const;
 
+/** A `String` object is converted once the getters of the other arguments have run. */
+export const MarkdownInput = b.union({
+  text: b.string,
+  boxed: b.stringObject,
+  buffer: b.bufferSource.allowShared,
+  other: b.ignored,
+});
+
 export const markdown = b.namespace({
   html: { args: { input, options: MarkdownOptions.otherAsNull }, returns: b.string.utf8, expected, ...js },
   ansi: { args: { input, theme: AnsiTheme.default({}) }, returns: b.string.utf8, expected, length: 2, ...js },
   /** The callbacks run while `input` is read. */
   render: {
-    args: { input: b.any, callbacks: RenderCallbacks.otherAsNull, options: MarkdownOptions.otherAsNull },
+    args: {
+      input: MarkdownInput,
+      callbacks: RenderCallbacks.otherAsNull,
+      options: MarkdownOptions.otherAsNull,
+    },
     returns: b.string.utf8,
     length: 3,
     ...js,
   },
   /** As `render`. */
   react: {
-    args: { input: b.any, components: ComponentOverrides.otherAsNull, options: ReactOptions.otherAsNull },
-    returns: b.any,
+    args: {
+      input: MarkdownInput,
+      components: ComponentOverrides.otherAsNull,
+      options: ReactOptions.otherAsNull,
+    },
+    returns: b.object,
     length: 3,
     ...js,
   },

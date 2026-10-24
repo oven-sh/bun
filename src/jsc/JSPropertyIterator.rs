@@ -98,6 +98,12 @@ impl IntoIterObject for &mut JSObject {
         std::ptr::from_mut::<JSObject>(self)
     }
 }
+impl IntoIterObject for crate::bindgen::JsLocal<'_, JSObject> {
+    #[inline]
+    fn into_iter_object(self) -> *mut JSObject {
+        self.to_js().encoded() as *mut JSObject
+    }
+}
 
 pub struct JSPropertyIterator<'a> {
     pub len: usize,

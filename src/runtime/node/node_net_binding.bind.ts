@@ -1,5 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { SocketHandle } from "../socket/socket_body.bind.ts";
+import { SocketOptionsObject } from "../socket/SocketConfig.bind.ts";
 
 export default b.module({ rustPath: "crate::node::node_net_binding" });
 
@@ -17,10 +18,11 @@ export const setDefaultAutoSelectFamilyAttemptTimeout = b.fn({
   returns: b.u32,
 });
 
-export const newDetachedSocket = b.fn({ args: { isSSL: b.bool }, returns: b.any, capability: "js" });
+/** Returns a `TCPSocket` or a `TLSSocket`. */
+export const newDetachedSocket = b.fn({ args: { isSSL: b.bool }, returns: b.object, capability: "js" });
 export const doConnect = b.fn({
-  args: { socket: SocketHandle, options: b.any },
-  returns: b.any,
+  args: { socket: SocketHandle, options: SocketOptionsObject.otherAsNull },
+  returns: b.promise,
   capability: "js",
   throws: true,
 });

@@ -11,6 +11,7 @@ use bun_bundler::Transpiler;
 use bun_io as Async;
 use bun_uws as uws;
 
+use crate::bindgen::{AnyValue, js_value_of};
 use crate::bun_string_jsc;
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
@@ -2002,7 +2003,16 @@ impl VirtualMachine {
     }
 
     #[cold]
+    #[inline]
     pub fn run_error_handler(
+        &mut self,
+        result: impl AnyValue,
+        exception_list: Option<&mut ExceptionList>,
+    ) {
+        self.run_error_handler_impl(js_value_of(result), exception_list);
+    }
+
+    fn run_error_handler_impl(
         &mut self,
         result: JSValue,
         exception_list: Option<&mut ExceptionList>,
@@ -2134,7 +2144,17 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
+    #[inline]
     pub fn uncaught_exception(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: impl AnyValue,
+        is_rejection: bool,
+    ) -> bool {
+        self.uncaught_exception_impl(global_object, js_value_of(err), is_rejection)
+    }
+
+    fn uncaught_exception_impl(
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
@@ -4462,12 +4482,12 @@ impl VirtualMachine {
     pub fn unhandled_rejection(
         &mut self,
         global_object: &JSGlobalObject,
-        reason: JSValue,
+        reason: impl AnyValue,
         promise: JSValue,
     ) {
         // Reported as it happens: it belongs to the context that is current.
         let owner = Bun__ModuleGraph__rejecting(global_object);
-        self.unhandled_rejection_owned(global_object, reason, promise, owner);
+        self.unhandled_rejection_owned(global_object, js_value_of(reason), promise, owner);
     }
 
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`

@@ -3,12 +3,12 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::test_runner::jest" });
 
 export const fileGeneration = b.fn({ returns: b.u32 });
-export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.any } });
+export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.callable.otherAsNull }, length: 2 });
 
 const js = { capability: "js", throws: true } as const;
 
 /** `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. Outside of `bun test`, and in a preload, it takes anything. */
-export const jest = b.fn({ args: { path: b.string.utf8.otherAsNull }, returns: b.any, ...js });
+export const jest = b.fn({ args: { path: b.string.utf8.otherAsNull }, returns: b.object, ...js });
 /** Also `jest.setTimeout`. */
 export const setDefaultTimeout = b.fn({
   export: "Bun__Jest__setDefaultTimeout",
@@ -19,8 +19,10 @@ export const setDefaultTimeout = b.fn({
 /** The bound `this` of the `done` a test callback takes. */
 export const DoneCallback = b.class({ rustPath: "crate::test_runner::DoneCallback" });
 
-const modifier = { getter: b.any, cache: true, ...js } as const;
-const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.any, ...js } as const;
+const modifier = { getter: b.callable, cache: true, ...js } as const;
+const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.callable, ...js } as const;
+
+export const EachTable = b.union({ array: b.jsArray, other: b.opaque });
 
 /** The bound `this` of `test`, `describe` and what their modifiers give, such as `test.skip`. */
 export const ScopeFunctions = b.class({
@@ -30,7 +32,7 @@ export const ScopeFunctions = b.class({
   proto: {
     concurrent: modifier,
     concurrentIf: conditionalModifier,
-    each: { args: { table: b.any }, returns: b.any, ...js },
+    each: { args: { table: EachTable }, returns: b.callable, ...js },
     failing: modifier,
     failingIf: conditionalModifier,
     if: conditionalModifier,

@@ -2,11 +2,14 @@
 
 use bun_alloc::ArenaVecExt as _;
 use bun_options_types::TargetExt as _;
+use std::borrow::Borrow;
 use std::io::Write as _;
 
 use crate::Error;
 use crate::generated_bindgen::transpiler::{
-    TranspilerExternal, TranspilerMinify, TranspilerOptions, TranspilerSourcemap,
+    LoaderOrContext, MacroContext, StringObjectOrContext, TranspilerExternal, TranspilerList,
+    TranspilerLoader, TranspilerMacros, TranspilerMinify, TranspilerOptions, TranspilerRecord,
+    TranspilerSourcemap, TranspilerStringObject, TranspilerTSConfig,
 };
 use crate::node::types::Buffer;
 use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
@@ -22,7 +25,7 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringOrJsBytes};
+use bun_jsc::bindgen::{JsScope, JsWrapper, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -110,8 +113,59 @@ impl Default for Config {
     }
 }
 
-use bun_bundler_jsc::options_jsc::loader_from_js;
 use bun_collections::index_sort;
+
+fn loader_from_js<'a>(
+    global: &JSGlobalObject,
+    loader: impl Borrow<TranspilerLoader<'a>>,
+) -> JsResult<Option<Loader>> {
+    match loader.borrow() {
+        TranspilerLoader::Missing => Ok(None),
+        TranspilerLoader::Name(name) => loader_from_name(global, name),
+        TranspilerLoader::Other(other) => match TranspilerStringObject::from_js(global, *other)? {
+            TranspilerStringObject::Text(name) => loader_from_name(global, &name),
+            TranspilerStringObject::Other => {
+                Err(global.throw_invalid_arguments(format_args!("loader must be a string")))
+            }
+        },
+    }
+}
+
+fn loader_from_name(
+    global: &JSGlobalObject,
+    loader_str: &bun_core::String,
+) -> JsResult<Option<Loader>> {
+    if loader_str.is_empty() {
+        return Ok(None);
+    }
+
+    let slice = loader_str.to_utf8();
+
+    let Some(v) = Loader::from_string(slice.slice()) else {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "invalid loader - must be js, jsx, tsx, ts, css, json, jsonc, json5, toml, yaml, xml, text, wasm, or md"
+        )));
+    };
+    // These are valid `Loader` variants for the bundler but have no source-text
+    // transform; letting them through hits `parse_unsupported_loader` and aborts.
+    if matches!(
+        v,
+        Loader::File
+            | Loader::Napi
+            | Loader::Base64
+            | Loader::Dataurl
+            | Loader::Bunsh
+            | Loader::Sqlite
+            | Loader::SqliteEmbedded
+            | Loader::Html
+    ) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "loader \"{}\" is not supported in Bun.Transpiler",
+            bstr::BStr::new(slice.slice()),
+        )));
+    }
+    Ok(Some(v))
+}
 
 /// Reads the `code` argument. Copies a buffer because the loader's `toString()` and macros run JS that can
 /// write to, shrink or detach it. Skips the copy when the parser will reject the buffer for its length anyway.
@@ -169,56 +223,48 @@ impl Config {
             return Ok(());
         };
 
-        if let Some(define) = object.define.map(JsLocal::to_js) {
-            'define: {
-                if define.is_undefined_or_null() {
-                    break 'define;
+        if let Some(define) = &object.define {
+            let TranspilerRecord::Record(define_obj) = define else {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("define must be an object"))
+                );
+            };
+
+            let define_iter = JSPropertyIterator::init(global, *define_obj, PROP_ITER_OPTS)?;
+            // `defer define_iter.deinit()` → Drop
+
+            // `define_iter.i` is the property position, not a dense index of yielded
+            // entries. With `skip_empty_name = true` (or a skipped property getter),
+            // writing at `define_iter.i` would leave earlier slots uninitialized.
+            // Use Vecs so the stored slice is always exactly what was appended.
+            let mut names: Vec<Box<[u8]>> = Vec::new();
+            let mut values: Vec<Box<[u8]>> = Vec::new();
+            names.reserve_exact(define_iter.len);
+            values.reserve_exact(define_iter.len);
+
+            while let Some((prop, property_value)) = define_iter.next()? {
+                let value_type = property_value.js_type();
+
+                if !value_type.is_string_like() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "define \"{}\" must be a JSON string",
+                        prop
+                    )));
                 }
 
-                let Some(define_obj) = define.get_object() else {
-                    return Err(
-                        global.throw_invalid_arguments(format_args!("define must be an object"))
-                    );
-                };
-
-                // SAFETY: `define_obj` is a non-null *mut JSObject (just returned by get_object()).
-                let define_obj_ref = unsafe { &*define_obj };
-                let define_iter = JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
-                // `defer define_iter.deinit()` → Drop
-
-                // `define_iter.i` is the property position, not a dense index of yielded
-                // entries. With `skip_empty_name = true` (or a skipped property getter),
-                // writing at `define_iter.i` would leave earlier slots uninitialized.
-                // Use Vecs so the stored slice is always exactly what was appended.
-                let mut names: Vec<Box<[u8]>> = Vec::new();
-                let mut values: Vec<Box<[u8]>> = Vec::new();
-                names.reserve_exact(define_iter.len);
-                values.reserve_exact(define_iter.len);
-
-                while let Some((prop, property_value)) = define_iter.next()? {
-                    let value_type = property_value.js_type();
-
-                    if !value_type.is_string_like() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "define \"{}\" must be a JSON string",
-                            prop
-                        )));
-                    }
-
-                    names.push(prop.to_owned_slice().into());
-                    let val = property_value.to_js_string_view(global)?;
-                    values.push(if val.is_empty() {
-                        Box::from(&b"\"\""[..])
-                    } else {
-                        val.to_owned_slice().into_boxed_slice()
-                    });
-                }
-
-                self.transform.define = Some(api::StringMap {
-                    keys: names,
-                    values,
+                names.push(prop.to_owned_slice().into());
+                let val = property_value.to_js_string_view(global)?;
+                values.push(if val.is_empty() {
+                    Box::from(&b"\"\""[..])
+                } else {
+                    val.to_owned_slice().into_boxed_slice()
                 });
             }
+
+            self.transform.define = Some(api::StringMap {
+                keys: names,
+                values,
+            });
         }
 
         if let Some(external) = &object.external {
@@ -242,7 +288,7 @@ impl Config {
             }
         }
 
-        if let Some(resolved) = loader_from_js(global, object.loader.to_js())? {
+        if let Some(resolved) = loader_from_js(global, &object.loader)? {
             if !resolved.is_java_script_like() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "only JavaScript-like loaders supported for now",
@@ -258,22 +304,26 @@ impl Config {
             }
         }
 
-        let tsconfig = object.tsconfig.to_js();
-        if !tsconfig.is_undefined_or_null() {
+        if let Some(tsconfig) = &object.tsconfig {
             'tsconfig: {
-                let kind = tsconfig.js_type();
-
-                if kind.is_array() {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "tsconfig must be a string or object",
-                    )));
-                }
-
-                let out = if !kind.is_string_like() {
-                    // Use jsonStringifyFast for SIMD-optimized serialization
-                    tsconfig.json_stringify_fast(global)?
-                } else {
-                    tsconfig.to_bun_string(global)?
+                let stringified;
+                let out = match tsconfig {
+                    TranspilerTSConfig::List(_) => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "tsconfig must be a string or object",
+                        )));
+                    }
+                    TranspilerTSConfig::Text(text) => text,
+                    TranspilerTSConfig::Other(tsconfig) => {
+                        stringified = match TranspilerStringObject::from_js(global, *tsconfig)? {
+                            TranspilerStringObject::Text(text) => text,
+                            // Use jsonStringifyFast for SIMD-optimized serialization
+                            TranspilerStringObject::Other => {
+                                tsconfig.json_stringify_fast(global)?
+                            }
+                        };
+                        &stringified
+                    }
                 };
 
                 if out.is_empty() {
@@ -296,29 +346,26 @@ impl Config {
 
         self.runtime.allow_runtime = false;
 
-        if let Some(macros) = object.r#macro.map(JsLocal::to_js) {
+        if let Some(macros) = &object.r#macro {
             'macros: {
-                if macros.is_undefined_or_null() {
-                    break 'macros;
-                }
-                if macros.is_boolean() {
-                    self.no_macros = !macros.as_boolean();
-                    break 'macros;
-                }
-                let kind = macros.js_type();
-                let is_object = kind.is_object();
-                if !(kind.is_string_like() || is_object) {
-                    return Err(
-                        global.throw_invalid_arguments(format_args!("macro must be an object"))
-                    );
-                }
-
                 // TODO: write a converter between JSC types and Bun AST types
-                let out = if is_object {
-                    // Use jsonStringifyFast for SIMD-optimized serialization
-                    macros.json_stringify_fast(global)?
-                } else {
-                    macros.to_bun_string(global)?
+                let stringified;
+                let out = match macros {
+                    TranspilerMacros::Enabled(enabled) => {
+                        self.no_macros = !enabled;
+                        break 'macros;
+                    }
+                    TranspilerMacros::Text(text) => text,
+                    TranspilerMacros::Json(macros) => {
+                        // Use jsonStringifyFast for SIMD-optimized serialization
+                        stringified = macros.to_js().json_stringify_fast(global)?;
+                        &stringified
+                    }
+                    TranspilerMacros::Other => {
+                        return Err(
+                            global.throw_invalid_arguments(format_args!("macro must be an object"))
+                        );
+                    }
                 };
 
                 if out.is_empty() {
@@ -422,12 +469,13 @@ impl Config {
             let mut replacements = bun_ast::runtime::ReplaceableExportMap::default();
             // errdefer replacements.clearAndFree(allocator) → Drop on error path
 
-            if let Some(eliminate) = exports.eliminate.map(JsLocal::to_js) {
-                if !eliminate.js_type().is_array() {
+            if let Some(eliminate) = &exports.eliminate {
+                let TranspilerList::List(eliminate) = eliminate else {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "exports.eliminate must be an array",
                     )));
-                }
+                };
+                let eliminate = eliminate.to_js();
 
                 let mut total_name_buf_len: u32 = 0;
                 let mut string_count: u32 = 0;
@@ -485,16 +533,14 @@ impl Config {
                 }
             }
 
-            if let Some(replace) = exports.replace.map(JsLocal::to_js) {
-                let Some(replace_obj) = replace.get_object() else {
+            if let Some(replace) = &exports.replace {
+                let TranspilerRecord::Record(replace_obj) = replace else {
                     return Err(
                         global.throw_invalid_arguments(format_args!("replace must be an object"))
                     );
                 };
 
-                // SAFETY: `replace_obj` is non-null (just returned by get_object()).
-                let replace_obj_ref = unsafe { &*replace_obj };
-                let iter = JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
+                let iter = JSPropertyIterator::init(global, *replace_obj, PROP_ITER_OPTS)?;
 
                 if iter.len > 0 {
                     bun_core::handle_oom(replacements.ensure_unused_capacity(iter.len));
@@ -1227,14 +1273,14 @@ impl JSTranspiler {
         &self,
         cx: &mut JsScope<'_>,
         code_arg: StringOrJsBytes<'_>,
-        loader_arg: JsLocal<'_>,
+        loader_arg: TranspilerLoader<'_>,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
         let global = cx.global();
         let code_holder = code_from_js(global, code_arg)?;
         let code = code_holder.slice();
 
-        let loader: Option<Loader> = loader_from_js(global, loader_arg.to_js())?;
+        let loader: Option<Loader> = loader_from_js(global, loader_arg)?;
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1296,7 +1342,7 @@ impl JSTranspiler {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         code_arg: StringOrJsBytes<'_>,
-        loader_arg: JsLocal<'_>,
+        loader_arg: TranspilerLoader<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let js_thread = global.js_thread_of_caller();
@@ -1312,7 +1358,7 @@ impl JSTranspiler {
             StringOrJsBytes::String(text) => StringOrBuffer::thread_isolated_string(global, text),
         };
 
-        let loader: Option<Loader> = loader_from_js(global, loader_arg.to_js())?;
+        let loader: Option<Loader> = loader_from_js(global, loader_arg)?;
 
         let default_loader = self.config.get().default_loader;
         Ok(TransformTask::schedule(
@@ -1328,8 +1374,8 @@ impl JSTranspiler {
         &self,
         cx: &mut JsScope<'a>,
         code_arg: StringOrJsBytes<'a>,
-        loader_or_context: JsLocal<'a>,
-        context: JsLocal<'a>,
+        loader_or_context: LoaderOrContext<'a>,
+        context: MacroContext<'a>,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
@@ -1339,23 +1385,28 @@ impl JSTranspiler {
         let code = code_holder.slice();
 
         let mut js_ctx_value: JSValue = JSValue::ZERO;
-        let loader: Option<Loader> = 'brk: {
-            let arg = loader_or_context.to_js();
-            if arg.is_number() || arg.is_string() {
-                break 'brk loader_from_js(global, arg)?;
+        let loader: Option<Loader> = match loader_or_context {
+            LoaderOrContext::Missing => None,
+            LoaderOrContext::Name(name) => loader_from_name(global, &name)?,
+            LoaderOrContext::Number(_) => {
+                return Err(global.throw_invalid_arguments(format_args!("loader must be a string")));
             }
-
-            if arg.is_object() {
-                js_ctx_value = arg;
+            LoaderOrContext::Other(arg) => {
+                StringObjectOrContext::from_js(global, arg, |arg| match arg {
+                    StringObjectOrContext::Name(name) => loader_from_name(global, &name),
+                    StringObjectOrContext::Context(context) => {
+                        js_ctx_value = context.to_js();
+                        Ok(None)
+                    }
+                    StringObjectOrContext::Other => Ok(None),
+                })?
             }
-            break 'brk None;
         };
 
-        let context = context.to_js();
-        if !context.is_undefined() {
-            if context.is_object() {
-                js_ctx_value = context;
-            } else {
+        match context {
+            MacroContext::Missing => {}
+            MacroContext::Context(context) => js_ctx_value = context.to_js(),
+            MacroContext::Other => {
                 return Err(global.throw_invalid_argument_type(
                     "transformSync",
                     "context",
@@ -1513,14 +1564,14 @@ impl JSTranspiler {
         &self,
         cx: &mut JsScope<'_>,
         code_arg: StringOrJsBytes<'_>,
-        loader_arg: JsLocal<'_>,
+        loader_arg: TranspilerLoader<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let code_holder = code_from_js(global, code_arg)?;
         let code = code_holder.slice();
 
         let mut loader: Loader = self.config.get().default_loader;
-        if let Some(l) = loader_from_js(global, loader_arg.to_js())? {
+        if let Some(l) = loader_from_js(global, loader_arg)? {
             loader = l;
         }
 

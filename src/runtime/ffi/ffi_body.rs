@@ -13,7 +13,7 @@ use crate::napi;
 use bun_collections::StringArrayHashMap;
 use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
-use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{Callable, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, EncodedSliceJsc, ErrorCode, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
@@ -23,7 +23,10 @@ use bun_jsc::{
 use bun_paths as path;
 use bun_resolver::fs as Fs;
 
-use crate::generated_bindgen::ffi::js_FFI as js;
+use crate::generated_bindgen::ffi::{
+    CCOptions, CCStrings, CCSymbols, FFIArgs, FFIFunction, FFIReturnType, js_FFI as js,
+};
+use crate::generated_bindgen::ffi_object::FFINumber;
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
@@ -929,45 +932,39 @@ impl StringArray {
         Ok(StringArray { items })
     }
 
-    pub(crate) fn from_js_string(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
-        value: JSValue,
+        value: CCStrings<'_>,
         property: &'static str,
     ) -> JsResult<StringArray> {
-        if value.is_undefined() {
-            return Ok(StringArray::default());
-        }
-        if !value.is_string() {
-            return Err(global_this.throw_invalid_argument_type_value(
-                property.as_bytes(),
-                b"array of strings",
-                value,
-            ));
-        }
-        let str = value.to_bun_string(global_this)?;
+        let str = match value {
+            CCStrings::List(value) => {
+                return Self::from_js_array(global_this, value.to_js(), property);
+            }
+            CCStrings::Text(str) => str,
+            CCStrings::Other(value) => {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    property.as_bytes(),
+                    b"array of strings",
+                    value,
+                ));
+            }
+        };
         if str.is_empty() {
             return Ok(StringArray::default());
         }
         let items: Vec<ZBox> = vec![str.to_owned_slice_z()];
         Ok(StringArray { items })
     }
-
-    pub(crate) fn from_js(
-        global_this: &JSGlobalObject,
-        value: JSValue,
-        property: &'static str,
-    ) -> JsResult<StringArray> {
-        if value.is_array() {
-            return Self::from_js_array(global_this, value, property);
-        }
-        Self::from_js_string(global_this, value, property)
-    }
 }
 
 // ─── FFI host functions ─────────────────────────────────────────────────────
 
 impl FFI {
-    pub(crate) fn cc<'a>(cx: &mut JsScope<'a>, options: JsLocal<'a>) -> JsResult<JSValue> {
+    pub(crate) fn cc<'a>(
+        cx: &mut JsScope<'a>,
+        options: Option<CCOptions<'a>>,
+    ) -> JsResult<JSValue> {
         let global_this = cx.global();
         if !global_this.bun_vm().allow_ffi_cc() {
             return Err(global_this
@@ -984,30 +981,28 @@ impl FFI {
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"
             )));
         }
-        let object = options.to_js();
-        if !object.is_object() {
+        let Some(object) = options else {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
-        }
+        };
 
         // Step 1. compile the user's code
 
         let mut compile_c = CompileC::default();
 
-        let symbols_object: JSValue = object
-            .get_own(global_this, &bun_core::String::borrow_utf8(b"symbols"))?
-            .unwrap_or(JSValue::UNDEFINED);
-        if symbols_object.is_empty() || !symbols_object.is_object() {
-            return Err(global_this.throw_invalid_argument_type_value(
-                b"symbols",
-                b"object",
-                symbols_object,
-            ));
-        }
+        let symbols_object = match object.symbols(global_this)? {
+            CCSymbols::Record(symbols_object) => symbols_object,
+            CCSymbols::Other(symbols_object) => {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    b"symbols",
+                    b"object",
+                    symbols_object,
+                ));
+            }
+        };
 
-        // SAFETY: already checked that symbols_object is an object
-        if let Some(val) = generate_symbols(global_this, &mut compile_c.symbols.map, unsafe {
-            &*symbols_object.get_object().unwrap()
-        })? {
+        if let Some(val) =
+            generate_symbols(global_this, &mut compile_c.symbols.map, symbols_object)?
+        {
             return Err(global_this.throw_value(val));
         }
 
@@ -1021,15 +1016,14 @@ impl FFI {
             return Err(global_this.throw(format_args!("Expected at least one exported symbol")));
         }
 
-        if let Some(library_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"library"))?
-        {
+        if let Some(library_value) = object.library(global_this)? {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
         }
 
-        if let Some(flags_value) = object.get_truthy(global_this, "flags")? {
-            if flags_value.is_array() {
-                let mut iter = flags_value.array_iterator(global_this)?;
+        match object.flags(global_this)? {
+            None => {}
+            Some(CCStrings::List(flags_value)) => {
+                let mut iter = flags_value.to_js().array_iterator(global_this)?;
 
                 let mut flags: Vec<u8> = Vec::new();
                 flags.extend_from_slice(CompileC::DEFAULT_TCC_OPTIONS.as_bytes());
@@ -1051,59 +1045,55 @@ impl FFI {
                 }
                 flags.push(0);
                 compile_c.flags = ZBox::from_vec_with_nul(flags);
-            } else {
-                if !flags_value.is_string() {
-                    return Err(global_this.throw_invalid_argument_type_value(
-                        b"flags",
-                        b"string",
-                        flags_value,
-                    ));
-                }
-
-                let str = flags_value.to_bun_string(global_this)?;
+            }
+            Some(CCStrings::Text(str)) => {
                 if !str.is_empty() {
                     compile_c.flags = str.to_owned_slice_z();
                 }
             }
-        }
-
-        if let Some(define_value) = object.get_truthy(global_this, "define")? {
-            if let Some(define_obj) = define_value.get_object() {
-                let iter = JSPropertyIterator::init(
-                    global_this,
-                    define_obj,
-                    jsc::PropertyIteratorOptions {
-                        include_value: true,
-                        skip_empty_name: true,
-                    },
-                )?;
-                while let Some((entry, prop_value)) = iter.next()? {
-                    let key = entry.to_owned_slice_z();
-                    let mut owned_value: ZBox = ZBox::from_bytes(b"");
-                    if !prop_value.is_undefined_or_null() {
-                        if prop_value.is_string() {
-                            let value = prop_value.to_bun_string(global_this)?;
-                            if !value.is_empty() {
-                                owned_value = value.to_owned_slice_z();
-                            }
-                        }
-                    }
-
-                    compile_c.define.push([key, owned_value]);
-                }
+            Some(CCStrings::Other(flags_value)) => {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    b"flags",
+                    b"string",
+                    flags_value,
+                ));
             }
         }
 
-        if let Some(include_value) = object.get_truthy(global_this, "include")? {
+        if let Some(define_obj) = object.define(global_this)? {
+            let iter = JSPropertyIterator::init(
+                global_this,
+                define_obj,
+                jsc::PropertyIteratorOptions {
+                    include_value: true,
+                    skip_empty_name: true,
+                },
+            )?;
+            while let Some((entry, prop_value)) = iter.next()? {
+                let key = entry.to_owned_slice_z();
+                let mut owned_value: ZBox = ZBox::from_bytes(b"");
+                if !prop_value.is_undefined_or_null() {
+                    if prop_value.is_string() {
+                        let value = prop_value.to_bun_string(global_this)?;
+                        if !value.is_empty() {
+                            owned_value = value.to_owned_slice_z();
+                        }
+                    }
+                }
+
+                compile_c.define.push([key, owned_value]);
+            }
+        }
+
+        if let Some(include_value) = object.include(global_this)? {
             compile_c.include_dirs = StringArray::from_js(global_this, include_value, "include")?;
         }
 
-        if let Some(source_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"source"))?
-        {
-            if source_value.is_array() {
+        match object.source(global_this)? {
+            None => {}
+            Some(CCStrings::List(source_value)) => {
                 let mut files = Vec::new();
-                let mut iter = source_value.array_iterator(global_this)?;
+                let mut iter = source_value.to_js().array_iterator(global_this)?;
                 while let Some(value) = iter.next()? {
                     if !value.is_string() {
                         return Err(global_this.throw_invalid_argument_type_value(
@@ -1122,15 +1112,16 @@ impl FFI {
                     ));
                 }
                 compile_c.source = Source::Files(files);
-            } else if !source_value.is_string() {
+            }
+            Some(CCStrings::Other(source_value)) => {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"source",
                     b"string",
                     source_value,
                 ));
-            } else {
-                let source_path = source_value.to_bun_string(global_this)?.to_owned_slice_z();
-                compile_c.source = Source::File(source_path);
+            }
+            Some(CCStrings::Text(source_value)) => {
+                compile_c.source = Source::File(source_value.to_owned_slice_z());
             }
         }
 
@@ -1232,28 +1223,26 @@ impl FFI {
 
     pub(crate) fn close_callback(callback: JsLocal<'_>) {
         unsafe extern "C" {
-            fn Bun__JSCFFICallbackClose(callback: JSValue);
+            fn Bun__JSCFFICallbackClose(callback: JsLocal<'_>);
         }
         // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
-        unsafe { Bun__JSCFFICallbackClose(callback.to_js()) };
+        unsafe { Bun__JSCFFICallbackClose(callback) };
     }
 
     pub(crate) fn callback<'a>(
         cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
-        callback: JsLocal<'a>,
+        options: Option<FFIFunction<'a>>,
+        callback: Option<JsLocal<'a, Callable>>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let interface = options.to_js();
-        let js_callback = callback.to_js();
         jsc::mark_binding();
-        if !interface.is_object() {
+        let Some(interface) = options else {
             return Ok(global_this.to_invalid_arguments(format_args!("Expected object")));
-        }
+        };
 
-        if js_callback.is_empty_or_undefined_or_null() || !js_callback.is_callable() {
+        let Some(js_callback) = callback.map(JsLocal::to_js) else {
             return Ok(global_this.to_invalid_arguments(format_args!("Expected callback function")));
-        }
+        };
 
         let mut function = Function::default();
         let func = &mut function;
@@ -1340,15 +1329,20 @@ impl FFI {
         self.functions.set(StringArrayHashMap::default());
     }
 
-    pub(crate) fn print_callback(global: &JSGlobalObject, object: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn print_callback(
+        global: &JSGlobalObject,
+        object: Option<JsLocal<'_, JSObject>>,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
-        if object.is_empty_or_undefined_or_null() || !object.is_object() {
+        let Some(object) = object else {
             return Ok(global.to_invalid_arguments(format_args!("Expected an object")));
-        }
+        };
 
         let mut function = Function::default();
-        if let Some(val) = generate_symbol_for_function(global, object, &mut function)? {
+        if let Some(val) =
+            generate_symbol_for_function(global, FFIFunction::new(object), &mut function)?
+        {
             return Ok(val);
         }
 
@@ -1359,25 +1353,19 @@ impl FFI {
 
     pub(crate) fn view_source<'a>(
         cx: &mut JsScope<'a>,
-        symbols: JsLocal<'a>,
+        symbols: Option<JsLocal<'a, JSObject>>,
         is_callback: bool,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let object = symbols.to_js();
         if is_callback {
-            return Self::print_callback(global, object);
+            return Self::print_callback(global, symbols);
         }
 
-        if object.is_empty_or_undefined_or_null() {
-            return Ok(invalid_options_arg(global));
-        }
-        let Some(obj) = object.get_object() else {
+        let Some(obj) = symbols else {
             return Ok(invalid_options_arg(global));
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
-        let obj = unsafe { &*obj };
         if let Some(val) = generate_symbols(global, &mut symbols, obj)? {
             // an error while validating symbols
             // keys/arg_types freed by Drop
@@ -1413,20 +1401,16 @@ impl FFI {
     pub(crate) fn dlopen<'a>(
         cx: &mut JsScope<'a>,
         name: Option<&[u8]>,
-        symbols: JsLocal<'a>,
+        symbols: Option<JsLocal<'a, JSObject>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let Some(name_slice) = name else {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         };
-        let object_value = symbols.to_js();
         jsc::mark_binding();
         let vm = jsc::VirtualMachineRef::get();
 
-        if object_value.is_empty_or_undefined_or_null() {
-            return Ok(invalid_options_arg(global));
-        }
-        let Some(object) = object_value.get_object() else {
+        let Some(object) = symbols else {
             return Ok(invalid_options_arg(global));
         };
 
@@ -1471,8 +1455,7 @@ impl FFI {
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
+        if let Some(val) = generate_symbols(global, &mut symbols, object)? {
             // an error while validating symbols
             return Ok(val);
         }
@@ -1589,22 +1572,17 @@ impl FFI {
 
     pub(crate) fn link_symbols<'a>(
         cx: &mut JsScope<'a>,
-        symbols: JsLocal<'a>,
+        symbols: Option<JsLocal<'a, JSObject>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let object_value = symbols.to_js();
         jsc::mark_binding();
 
-        if object_value.is_empty_or_undefined_or_null() {
-            return Ok(invalid_options_arg(global));
-        }
-        let Some(object) = object_value.get_object() else {
+        let Some(object) = symbols else {
             return Ok(invalid_options_arg(global));
         };
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
-        if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
+        if let Some(val) = generate_symbols(global, &mut symbols, object)? {
             // an error while validating symbols
             return Ok(val);
         }
@@ -1670,17 +1648,16 @@ impl FFI {
 
     pub(crate) fn cfunction<'a>(
         cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
+        options: Option<FFIFunction<'a>>,
         name: Option<bun_core::String>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let options = options.to_js();
         jsc::mark_binding();
 
-        if options.is_empty_or_undefined_or_null() || !options.is_object() {
+        let Some(options) = options else {
             return Ok(global
                 .to_invalid_arguments(format_args!("Expected an options object with a \"ptr\"")));
-        }
+        };
 
         let mut function = Function::default();
         if let Some(err) = generate_symbol_for_function(global, options, &mut function)? {
@@ -1712,21 +1689,21 @@ impl FFI {
 
 pub(super) fn generate_symbol_for_function(
     global: &JSGlobalObject,
-    value: JSValue,
+    value: FFIFunction<'_>,
     function: &mut Function,
 ) -> JsResult<Option<JSValue>> {
     jsc::mark_binding();
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
-        if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
+    if let Some(args) = value.args(global)? {
+        let FFIArgs::Array(args) = args else {
             return Ok(Some(global.create_error_instance(format_args!(
                 "Expected an object with \"args\" as an array"
             ))));
-        }
+        };
 
-        let mut array = args.array_iterator(global)?;
+        let mut array = args.to_js().array_iterator(global)?;
 
         abi_types.reserve_exact(array.len as usize);
         while let Some(val) = array.next()? {
@@ -1767,16 +1744,14 @@ pub(super) fn generate_symbol_for_function(
     // var function
     let mut return_type = ABIType::Void;
 
-    let mut threadsafe = false;
-
-    if let Some(threadsafe_value) = value.get_truthy(global, "threadsafe")? {
-        threadsafe = threadsafe_value.to_boolean();
-    }
+    let threadsafe = value.threadsafe(global)?;
 
     'brk: {
-        if let Some(ret_value) = value.get_truthy(global, "returns")? {
-            if ret_value.is_any_int() {
-                let int = ret_value.to_int32();
+        if let Some(ret_value) = value.returns(global)? {
+            if let &FFIReturnType::Number(ret_value) = &ret_value
+                && JSValue::js_number(ret_value).is_any_int()
+            {
+                let int = JSValue::js_number(ret_value).to_int32();
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     return_type = t;
                     break 'brk;
@@ -1787,7 +1762,12 @@ pub(super) fn generate_symbol_for_function(
                 }
             }
 
-            let ret_slice = ret_value.to_utf8(global)?;
+            let ret_slice = match ret_value {
+                FFIReturnType::Number(ret_value) => {
+                    JSValue::js_number(ret_value).to_utf8(global)?
+                }
+                FFIReturnType::Name(ret_value) => ret_value.into_utf8(),
+            };
             return_type = match ABIType::LABEL.get(ret_slice.slice()).copied() {
                 Some(t) => t,
                 None => {
@@ -1823,13 +1803,15 @@ pub(super) fn generate_symbol_for_function(
     function.return_type = return_type;
     function.threadsafe = threadsafe;
 
-    if let Some(ptr) = value.get(global, "ptr")? {
-        if ptr.is_number() {
-            let num = ptr.as_ptr_address();
+    match value.ptr(global)? {
+        FFINumber::Number(ptr) => {
+            let num = ptr as usize;
             if num > 0 {
                 function.symbol_from_dynamic_library = Some(num as *mut c_void);
             }
-        } else if ptr.is_heap_big_int() {
+        }
+        FFINumber::Bigint(ptr) => {
+            let ptr = ptr.to_js();
             if !ptr.is_big_int_in_uint64_range(1, usize::MAX as u64) {
                 return Ok(Some(
                     global.to_invalid_arguments(format_args!("ptr is out of range.")),
@@ -1838,6 +1820,7 @@ pub(super) fn generate_symbol_for_function(
             function.symbol_from_dynamic_library =
                 Some(ptr.to_uint64_no_truncate() as usize as *mut c_void);
         }
+        FFINumber::Absent | FFINumber::Other => {}
     }
 
     Ok(None)
@@ -1846,7 +1829,7 @@ pub(super) fn generate_symbol_for_function(
 pub(super) fn generate_symbols(
     global: &JSGlobalObject,
     symbols: &mut StringArrayHashMap<Function>,
-    object: &JSObject,
+    object: impl jsc::IntoIterObject,
 ) -> JsResult<Option<JSValue>> {
     jsc::mark_binding();
 
@@ -1862,15 +1845,17 @@ pub(super) fn generate_symbols(
     symbols.reserve(symbols_iter.len);
 
     while let Some((prop, value)) = symbols_iter.next()? {
-        if value.is_empty_or_undefined_or_null() || !value.is_object() {
+        let Some(value) = JsLocal::<JSObject>::from_js(global, value) else {
             return Ok(Some(global.to_type_error(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
                 format_args!("Expected an object for key \"{}\"", prop),
             )));
-        }
+        };
 
         let mut function = Function::default();
-        if let Some(val) = generate_symbol_for_function(global, value, &mut function)? {
+        if let Some(val) =
+            generate_symbol_for_function(global, FFIFunction::new(value), &mut function)?
+        {
             return Ok(Some(val));
         }
         let base_name = prop.to_owned_slice_z();

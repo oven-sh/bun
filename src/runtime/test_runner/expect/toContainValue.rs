@@ -1,15 +1,21 @@
+use super::{ContainMsgs, ContainOutcome, Expect, ExpectedArray};
+use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
-use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
-    pub(crate) fn to_contain_value(
+    pub(crate) fn to_contain_value<'a>(
         &self,
-        this_value: JsWrapper<'_, Self>,
+        this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'_>,
         expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
-        self.contain_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toContainValue", ExpectedArray::None, ContainMsgs::CONTAIN,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        self.contain_matcher(
+            cx.global(),
+            this_value,
+            Some(expected),
+            "toContainValue",
+            ExpectedArray::None,
+            ContainMsgs::CONTAIN,
             |g, value, expected| {
                 if value.is_undefined_or_null() { return Ok(ContainOutcome::pass(false)); }
                 let mut itr = value.values(g)?.array_iterator(g)?;

@@ -280,7 +280,6 @@ mod sql_hooks {
 
 pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
     let global = cx.global();
-    let result = result.to_js();
     // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
     // `message_with_type_and_level` (it always resolves the per-VM console via
     // `vm_console(global)`), so null is fine.
@@ -290,7 +289,7 @@ pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLoca
             bun_jsc::ConsoleObject::MessageType::Log,
             bun_jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &raw const result,
+            (&raw const result).cast(),
             1,
         );
     }
@@ -300,7 +299,6 @@ pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLoca
 
 pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
     let global = cx.global();
-    let result = result.to_js();
     // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
     // `message_with_type_and_level` (it always resolves the per-VM console via
     // `vm_console(global)`), so null is fine.
@@ -310,7 +308,7 @@ pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal
             bun_jsc::ConsoleObject::MessageType::Log,
             bun_jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &raw const result,
+            (&raw const result).cast(),
             1,
         );
     }

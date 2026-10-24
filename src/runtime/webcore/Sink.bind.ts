@@ -1,23 +1,26 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
 const js = { capability: "js", throws: true } as const;
-const method = { returns: b.any, ...js } as const;
+const method = { returns: b.opaque, ...js } as const;
 
-/** `write` looks at whether the sink is closed before it throws for any `other` chunk. */
+/** `write` looks at whether the sink is closed before it throws for a `nullish` or `other` chunk. */
 export const SinkChunk = b.union({
   text: b.string.allowStringObject.view,
   bytes: b.bufferSource.allowShared,
-  other: b.any,
+  nullish: b.null,
+  other: b.ignored,
 });
 
 /** `start` fails with `EINVAL` if `path` is not a string. */
-export const SinkPath = b.union({ missing: b.undefined, path: b.string.allowStringObject, other: b.any });
+export const SinkPath = b.union({ missing: b.undefined, path: b.string.allowStringObject, other: b.ignored });
+
+/** An empty `text` is `missing`. `start` fails with `EBADF` for what is not an integer from 0 that fits an `i32`. */
+export const SinkStartFd = b.union({ missing: b.null, number: b.f64, text: b.string, other: b.ignored });
 
 const highWaterMark = b.f64.otherAsNull;
 const fileMembers = {
   path: SinkPath,
-  /** Parsed by `Fd::from_js`. */
-  fd: b.any.emptyStringAsNull,
+  fd: SinkStartFd,
 };
 const ignoresNonObjects = { allowArray: true, nonObjectAsEmpty: true } as const;
 
@@ -85,14 +88,14 @@ export const ReadableSinkController = b.class({
     /** Direct streams only: settles when the controller closes. */
     closePromise: JSPromise,
     /** The `error` of the first `close(error)`. */
-    failReason: b.any,
+    failReason: b.opaque,
     readableStream: JSReadableStream,
     /** While a native sink pipes a stream in, it roots only this cell, which holds these two for it (`PipeCell` in `streams.rs`). */
     pipeStream: JSReadableStream,
     pipeDone: JSPromise,
   },
   proto: {
-    close: { ...js, args: { error: b.any.falsyAsNull }, length: 0, calledFromCpp: true },
+    close: { ...js, args: { error: b.opaque.falsyAsNull }, length: 0, calledFromCpp: true },
     flush,
     end: { ...method, calledFromCpp: true },
     start: start(ReadableSinkControllerStartOptions),
@@ -102,21 +105,21 @@ export const ReadableSinkController = b.class({
   calledFromCpp: {
     isDetached: { returns: b.bool },
     /** `close(error)` for an `error` that can be falsy. */
-    closeWithError: { ...js, args: { error: b.any } },
+    closeWithError: { ...js, args: { error: b.opaque } },
     startWithHighWaterMark: { ...js, args: { highWaterMark: b.f64 } },
     writeBytes: { ...method, args: { bytes: b.byteSpan } },
   },
   calledFromRust: {
     /** `undefined`, a promise for the end of the stream, or the `Exception` of a failure. */
-    assignToStream: { capability: "js", args: { stream: b.any }, returns: b.any },
-    onClose: { args: { reason: b.any, sinkClosed: b.bool }, throws: true },
+    assignToStream: { capability: "js", args: { stream: b.opaque }, returns: b.opaque },
+    onClose: { args: { reason: b.opaque, sinkClosed: b.bool }, throws: true },
     onReady: { throws: true },
-    setPipe: { args: { stream: b.any, done: b.any } },
-    pipeStream: { returns: b.any },
+    setPipe: { args: { stream: b.opaque, done: b.opaque } },
+    pipeStream: { returns: b.opaque },
     clearPipeStream: {},
-    setPipeDone: { args: { done: b.any } },
-    pipeDone: { returns: b.any },
-    takePipeDone: { returns: b.any },
-    setFailReason: { args: { reason: b.any } },
+    setPipeDone: { args: { done: b.opaque } },
+    pipeDone: { returns: b.opaque },
+    takePipeDone: { returns: b.opaque },
+    setFailReason: { args: { reason: b.opaque } },
   },
 });

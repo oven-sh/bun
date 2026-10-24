@@ -27,7 +27,7 @@ export const UUIDEncodingOrTimestamp = b.union({
   label: b.string.utf8,
   clock: b.undefined,
   time: b.f64.allowDate,
-  ignored: b.any,
+  ignored: b.ignored,
 });
 
 /** `randomUUIDv7(timestamp)` takes the timestamp. `randomUUIDv7(timestamp, undefined)` takes the clock's. */
@@ -59,7 +59,12 @@ export const Crypto = b.class({
   construct: "illegal",
   proto: {
     /** What is not an integer typed array throws WebCrypto's `TypeMismatchError`, which no type here throws. */
-    getRandomValues: { args: { array: b.any }, returns: b.any, capability: "js", throws: true },
+    getRandomValues: {
+      args: { array: b.bufferSource.allowShared.otherAsNull },
+      returns: b.bufferSource,
+      capability: "js",
+      throws: true,
+    },
     randomUUID: { returns: b.string },
     timingSafeEqual: equal,
   },

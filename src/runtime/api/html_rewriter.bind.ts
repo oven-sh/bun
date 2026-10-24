@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { Response } from "../webcore/response.bind.ts";
 
 const text = b.bytes({ from: ["string"], otherwise: "toString", refuse: ["undefined", "null"] });
 
@@ -18,8 +19,10 @@ const contentOp = (returns: b.Type) =>
     throws: true,
   }) as const;
 
-/** `b.any`: an accessor has one type, and the getter gives a string or nothing where the setter takes `ToString` of any value. */
-const assignable = { getter: b.any, setter: true, capability: "js", throws: true } as const;
+/** After the handler returns, the setter returns before `ToString`. */
+const assignable = (getter: b.Type) =>
+  ({ getter, setter: { type: b.opaque, capability: "js" }, throws: true }) as const;
+export const assignedText = b.conversion(b.string.loose.utf8.owned);
 
 export const TextChunk = b.class({
   rustPath: "crate::api::html_rewriter::TextChunk",
@@ -35,8 +38,8 @@ export const TextChunk = b.class({
   },
 });
 
-/** `b.any`: a string, `null` if the doctype has none, `undefined` after the handler returns. */
-const doctypeField = { getter: b.any, cache: true, capability: "js", throws: true } as const;
+/** A string, `null` if the doctype has none, `undefined` after the handler returns. */
+const doctypeField = { getter: b.opaque, cache: true, capability: "js", throws: true } as const;
 
 export const DocType = b.class({
   rustPath: "crate::api::html_rewriter::DocType",
@@ -67,7 +70,7 @@ export const Comment = b.class({
     remove: chainable(b.self.nullable),
     removed: { getter: b.bool.optional },
     replace: contentOp(b.self.nullable),
-    text: assignable,
+    text: assignable(b.string.utf8.nullable),
   },
 });
 
@@ -77,13 +80,13 @@ export const EndTag = b.class({
   proto: {
     after: contentOp(b.self.nullable),
     before: contentOp(b.self.nullable),
-    name: assignable,
+    name: assignable(b.string.utf8.optional),
     remove: chainable(b.self.optional),
   },
 });
 
-/** `value` is `[name, value]`. It is `b.any` for the end, where it is an own `undefined`: an `.optional` member is left out. */
-export const AttributeIteratorResult = b.dictionary({ value: b.any, done: b.bool });
+/** `value` is `[name, value]`. At the end it is an own `undefined`: an `.optional` member is left out. */
+export const AttributeIteratorResult = b.dictionary({ value: b.opaque, done: b.bool });
 
 export const AttributeIterator = b.class({
   rustPath: "crate::api::html_rewriter::AttributeIterator",
@@ -111,10 +114,11 @@ export const Element = b.class({
     namespaceURI: { getter: b.string.utf8.optional, cache: true },
     onEndTag: {
       ...chainable(b.self.nullable),
-      /** `b.any`: a detached element returns `null` without checking it. */
-      args: { handler: b.any },
+      /** A detached element returns `null` without checking it. */
+      args: { handler: b.callable.otherAsNull },
       capability: "js",
       throws: true,
+      length: 1,
     },
     prepend: contentOp(b.self.optional),
     remove: chainable(b.self.optional),
@@ -131,8 +135,35 @@ export const Element = b.class({
       throws: true,
     },
     setInnerContent: contentOp(b.self.optional),
-    tagName: assignable,
+    tagName: assignable(b.string.utf8.optional),
   },
+});
+
+export const DocumentHandlers = b.dictionary(
+  {
+    doctype: b.callable.optional,
+    comments: b.callable.optional,
+    text: b.callable.optional,
+    end: b.callable.optional,
+  },
+  { allowArray: true, reportedAs: "" },
+);
+
+export const ElementHandlers = b.dictionary(
+  {
+    element: b.callable.optional,
+    comments: b.callable.optional,
+    text: b.callable.optional,
+  },
+  { deferred: true, reportedAs: "" },
+);
+
+export const RewriterInput = b.union({
+  response: Response,
+  text: b.string.allowStringObject,
+  dataView: b.cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", { rustPath: "bun_jsc::JSObject" }),
+  bytes: b.bufferSource.allowShared,
+  other: b.ignored,
 });
 
 export const HTMLRewriter = b.class({
@@ -141,9 +172,23 @@ export const HTMLRewriter = b.class({
   /** The `on()` / `onDocument()` callbacks: `HandlerList` in html_rewriter.rs. */
   internalFields: ["handlers"],
   proto: {
-    on: { ...chainable(b.self), args: { selector: b.any, handlers: b.any }, capability: "js", throws: true },
-    onDocument: { ...chainable(b.self), args: { handlers: b.any }, capability: "js", throws: true },
-    transform: { args: { input: b.any }, returns: b.any, capability: "js", throws: true, passThis: true },
+    /** The handlers are read once the selector has parsed. */
+    on: {
+      ...chainable(b.self),
+      args: { selector: b.string.loose.utf8.owned.nullable, handlers: ElementHandlers.otherAsNull },
+      capability: "js",
+      throws: true,
+      length: 2,
+    },
+    onDocument: {
+      ...chainable(b.self),
+      args: { handlers: DocumentHandlers.withValue },
+      expected: { handlers: "Expected object" },
+      capability: "js",
+      throws: true,
+    },
+    /** Returns what it was given: a `Response`, a string or an `ArrayBuffer`. */
+    transform: { args: { input: RewriterInput }, returns: b.opaque, capability: "js", throws: true, passThis: true },
   },
 });
 

@@ -3,7 +3,8 @@ use bun_glob::walk;
 use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SysErrorJsc as _,
+    JSArray, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread,
+    SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
@@ -273,12 +274,15 @@ impl AnyGlobWalker {
         }
     }
 
-    fn matched_paths_to_js<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    fn matched_paths_to_js<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, JsLocal<'a, JSArray>> {
         fn to_js<'a, A: walk::Accessor>(
             walker: &walk::GlobWalker<A, false>,
             heap: &JsHeap<'a>,
-        ) -> bindgen::Result<'a, JsLocal<'a>> {
-            bindgen::to_js::array(heap, walker.matched_paths.keys(), bindgen::to_js::utf8)
+        ) -> bindgen::Result<'a, JsLocal<'a, JSArray>> {
+            heap.create_array(walker.matched_paths.keys(), bindgen::to_js::utf8)
         }
         match self {
             AnyGlobWalker::Fs(walker) => to_js(walker, heap),
@@ -461,7 +465,7 @@ impl Glob {
         &self,
         heap: &JsHeap<'a>,
         options: Option<GlobScanArgument<'a>>,
-    ) -> Result<JsLocal<'a>, ScanError<'a>> {
+    ) -> Result<JsLocal<'a, JSArray>, ScanError<'a>> {
         let mut walker = self.make_glob_walker(options, "scanSync")?;
         walker
             .walk()

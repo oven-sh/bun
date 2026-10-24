@@ -1,5 +1,6 @@
 use core::fmt;
 
+use bun_jsc::bindgen::JsLocal;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
 #[cold]
@@ -42,79 +43,27 @@ pub(crate) fn throw_err_invalid_arg_type(
     )
 }
 
+/// [`throw_err_invalid_arg_type`] for a value that no type of the schema took.
 #[cold]
-fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
-    global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
-}
-
-#[inline]
-fn throw_range_error_msg(
+pub(crate) fn throw_err_invalid_arg_type_opaque(
     global_this: &JSGlobalObject,
-    value: f64,
-    name: &str,
-    msg: &[u8],
+    name: impl fmt::Display,
+    expected_type: &str,
+    value: JsLocal<'_>,
 ) -> JsError {
-    global_this.throw_range_error(
-        value,
-        jsc::RangeErrorOptions {
-            field_name: name.as_bytes(),
-            msg,
-            ..Default::default()
-        },
+    let actual_type = value.type_name(global_this);
+    throw_err_invalid_arg_type_with_message(
+        global_this,
+        format_args!(
+            "The \"{}\" property must be of type {}, got {}",
+            name, expected_type, actual_type
+        ),
     )
 }
 
-// `Option<i64>` is not a valid const-generic type on stable, so the bounds
-// are runtime params + debug_assert.
-pub(crate) fn validate_integer(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    name: &str,
-    min_value: Option<i64>,
-    max_value: Option<i64>,
-) -> JsResult<i64> {
-    if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
-    }
-
-    if !value.is_integer() {
-        return Err(throw_range_error_msg(
-            global_this,
-            value.as_number(),
-            name,
-            b"an integer",
-        ));
-    }
-
-    if let Some(min) = min_value {
-        debug_assert!(
-            min >= jsc::MIN_SAFE_INTEGER,
-            "min_value must be greater than or equal to jsc::MIN_SAFE_INTEGER"
-        );
-    }
-    if let Some(max) = max_value {
-        debug_assert!(
-            max <= jsc::MAX_SAFE_INTEGER,
-            "max_value must be less than or equal to jsc::MAX_SAFE_INTEGER"
-        );
-    }
-
-    let min: f64 = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER) as f64;
-    let max: f64 = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER) as f64;
-
-    let num = value.as_number();
-
-    if num < min || num > max {
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name, min, max, num
-            ),
-        ));
-    }
-
-    Ok(num as i64)
+#[cold]
+fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
+    global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
 }
 
 pub(crate) fn validate_int32(

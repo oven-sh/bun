@@ -3236,9 +3236,8 @@ extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)
     return dynamicDowncast<AsyncContextFrame>(JSValue::decode(value)) != nullptr;
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue object,
-    JSC::EncodedJSValue thisObject, size_t argumentCount,
-    const JSC::EncodedJSValue* arguments)
+ALWAYS_INLINE static JSC::EncodedJSValue callFromRust(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue object,
+    JSC::EncodedJSValue thisObject, const JSC::ArgList& argList)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3273,20 +3272,12 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     if (!jsThisObject)
         jsThisObject = globalObject->globalThis();
 
-    JSC::MarkedArgumentBuffer argList;
-    argList.ensureCapacity(argumentCount);
-    for (size_t i = 0; i < argumentCount; i++) {
-
 #if ASSERT_ENABLED
-        ASSERT_WITH_MESSAGE(!JSValue::decode(arguments[i]).isEmpty(), "arguments[%lu] is JSValue.zero. This will cause a crash.", i);
-        if (JSC::JSValue::decode(arguments[i]).isCell()) {
-            JSC::Integrity::auditCellFully(vm, JSC::JSValue::decode(arguments[i]).asCell());
-        }
-#endif
-        argList.append(JSC::JSValue::decode(arguments[i]));
+    for (size_t i = 0; i < argList.size(); i++) {
+        ASSERT_WITH_MESSAGE(!argList.at(i).isEmpty(), "arguments[%lu] is JSValue.zero. This will cause a crash.", i);
+        if (argList.at(i).isCell())
+            JSC::Integrity::auditCellFully(vm, argList.at(i).asCell());
     }
-
-#if ASSERT_ENABLED
     if (jsObject.isCell())
         JSC::Integrity::auditCellFully(vm, jsObject.asCell());
 #endif
@@ -3308,6 +3299,23 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
 
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);
+}
+
+extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue object,
+    JSC::EncodedJSValue thisObject, size_t argumentCount,
+    const JSC::EncodedJSValue* arguments)
+{
+    JSC::MarkedArgumentBuffer argList;
+    argList.ensureCapacity(argumentCount);
+    for (size_t i = 0; i < argumentCount; i++)
+        argList.append(JSC::JSValue::decode(arguments[i]));
+    return callFromRust(globalObject, object, thisObject, argList);
+}
+
+extern "C" JSC::EncodedJSValue Bun__JSValue__callWithArguments(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue object,
+    JSC::EncodedJSValue thisObject, const JSC::MarkedArgumentBuffer* arguments)
+{
+    return callFromRust(globalObject, object, thisObject, *arguments);
 }
 
 // CPP_DECL size_t JSC__PropertyNameArray__length(JSC__PropertyNameArray* arg0);

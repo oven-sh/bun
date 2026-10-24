@@ -1,23 +1,29 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const method = { returns: b.any, capability: "js", throws: true } as const;
+const method = { returns: b.opaque, capability: "js", throws: true } as const;
+const promise = { ...method, returns: b.promise } as const;
 
 const members = {
   cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
-  drain: { ...method, length: 1 },
+  drain: { ...method, returns: b.bufferSource.optional, length: 1 },
   isClosed: { getter: b.bool },
-  pull: { ...method, args: { view: b.any, flags: b.any }, passThis: true, length: 1 },
+  pull: {
+    ...method,
+    args: { view: b.bufferSource.allowShared.otherAsNull, flags: b.jsArray.otherAsNull },
+    passThis: true,
+    length: 1,
+  },
   start: { ...method, length: 1 },
   updateRef: { args: { enable: b.bool.loose } },
 } as const;
 
 /** Reads the whole stream. */
 const buffered = {
-  arrayBuffer: method,
-  blob: method,
-  bytes: method,
-  json: method,
-  text: method,
+  arrayBuffer: promise,
+  blob: promise,
+  bytes: promise,
+  json: promise,
+  text: promise,
 } as const;
 
 const bufferedSource = {
@@ -57,8 +63,9 @@ export const FileInternalReadableStreamSource = b.class({
     drain: members.drain,
     isClosed: members.isClosed,
     pull: members.pull,
-    setFlowing: { args: { flag: b.any }, capability: "js" },
-    setRawMode: { args: { flag: b.any }, returns: b.any, capability: "js" },
+    setFlowing: { args: { flag: b.bool.otherAsNull }, capability: "js" },
+    /** Returns the error of a failure. */
+    setRawMode: { args: { flag: b.bool.otherAsNull }, returns: b.object.optional, capability: "js" },
     start: members.start,
     updateRef: members.updateRef,
   },

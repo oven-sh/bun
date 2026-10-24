@@ -8,7 +8,7 @@ use bun_core::strings;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
 use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
 use bun_io::KeepAlive;
-use bun_jsc::call_frame::ArgumentsSlice;
+use bun_jsc::bindgen::{Callable, Deferred, JsLocal};
 use bun_jsc::node::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -20,9 +20,10 @@ use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
 
+use crate::generated_bindgen::node_fs_binding as schema;
 use crate::generated_bindgen::node_fs_stat_watcher::js_StatWatcher as js;
 use crate::node::stat::{StatsBig, StatsSmall};
-use crate::node::types::PathLikeExt;
+use crate::node::types::{Flavor, Parsing, PathLikeExt};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(StatWatcher, visible);
@@ -888,61 +889,31 @@ pub(crate) struct Arguments {
 impl Arguments {
     pub(crate) fn from_js(
         cx: &bun_jsc::JsThread<'_>,
-        arguments: &mut ArgumentsSlice,
+        filename: schema::PathLike<'_>,
+        options: Deferred<'_, schema::WatchFileOptions>,
+        listener: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<Arguments> {
-        let Some(path) = PathLike::from_js_with_allocator(cx.global(), arguments)? else {
+        let Ok(path) = PathLike::from_js(cx.global(), filename, &mut Parsing::new(Flavor::Sync))?
+        else {
             return Err(cx
                 .global()
                 .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
         };
 
-        let mut listener: JSValue = JSValue::ZERO;
-        let mut persistent: bool = true;
-        let mut bigint: bool = false;
-        let mut interval: i32 = 5007;
+        let options = options.convert(cx.global())?;
 
-        if let Some(options_or_callable) = arguments.next_eat() {
-            // options
-            if options_or_callable.is_object() {
-                // default true
-                persistent = options_or_callable
-                    .get_boolean_strict(cx.global(), "persistent")?
-                    .unwrap_or(true);
-
-                // default false
-                bigint = options_or_callable
-                    .get_boolean_strict(cx.global(), "bigint")?
-                    .unwrap_or(false);
-
-                if let Some(interval_) = options_or_callable.get(cx.global(), "interval")? {
-                    if !interval_.is_number() && !interval_.is_any_int() {
-                        return Err(cx
-                            .global()
-                            .throw_invalid_arguments(format_args!("interval must be a number")));
-                    }
-                    interval = interval_.coerce::<i32>(cx.global())?;
-                }
-            }
-        }
-
-        if let Some(listener_) = arguments.next_eat() {
-            if listener_.is_callable() {
-                listener = listener_.with_async_context_if_needed(cx.global());
-            }
-        }
-
-        if listener.is_empty() {
+        let Some(listener) = listener else {
             return Err(cx
                 .global()
                 .throw_invalid_arguments(format_args!("Expected \"listener\" callback")));
-        }
+        };
 
         Ok(Arguments {
             path,
-            listener,
-            persistent,
-            bigint,
-            interval,
+            listener: listener.to_js().with_async_context_if_needed(cx.global()),
+            persistent: options.persistent,
+            bigint: options.bigint,
+            interval: options.interval as i32,
             global_this: BackRef::new(cx.global()),
             context: cx.context().id(),
         })

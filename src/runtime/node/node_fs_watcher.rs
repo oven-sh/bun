@@ -9,13 +9,12 @@ use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
-    self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
-    VirtualMachineRef as VirtualMachine,
+    self as jsc, AbortSignalRef, CommonAbortReason, CommonAbortReasonExt as _, GlobalRef,
+    JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc, VirtualMachineRef as VirtualMachine,
 };
 use bun_jsc::{JsCell, JsCellRefExt as _};
 use bun_paths::resolve_path::{self as Path, platform};
@@ -23,8 +22,9 @@ use bun_ptr::{ParentRef, RefPtr, ThreadSafeRefCount};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
+use crate::generated_bindgen::node_fs_binding as schema;
 use crate::generated_bindgen::node_fs_watcher::js_FSWatcher as js;
-use crate::node::types::{Encoding, PathLikeExt};
+use crate::node::types::{Encoding, Flavor, Parsing, PathLikeExt};
 use crate::webcore::encoding as Encoder;
 
 bun_output::declare_scope!(fs_watch, hidden);
@@ -625,7 +625,7 @@ pub(crate) struct Arguments<'a> {
     pub global_this: &'a JSGlobalObject,
     /// The context of the script that called `fs.watch`: the watcher is that script's.
     pub(crate) context: &'a bun_jsc::ScriptExecutionContext,
-    pub(crate) signal: Option<&'a AbortSignal>,
+    pub(crate) signal: Option<AbortSignalRef>,
     pub(crate) persistent: bool,
     pub(crate) recursive: bool,
     pub(crate) encoding: Encoding,
@@ -635,9 +635,12 @@ pub(crate) struct Arguments<'a> {
 impl<'a> Arguments<'a> {
     pub(crate) fn from_js(
         cx: &bun_jsc::JsThread<'a>,
-        arguments: &mut ArgumentsSlice,
+        filename: schema::PathLike<'_>,
+        options: Option<schema::WatchOptions<'_>>,
+        listener: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<Arguments<'a>> {
-        let Some(path) = PathLike::from_js(cx.global(), arguments)? else {
+        let Ok(path) = PathLike::from_js(cx.global(), filename, &mut Parsing::new(Flavor::Sync))?
+        else {
             return Err(cx
                 .global()
                 .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
@@ -645,97 +648,30 @@ impl<'a> Arguments<'a> {
         // `PathLike: Drop` releases the path: `?` on the error paths below
         // drops `path` automatically.
 
-        let mut listener: JSValue = JSValue::ZERO;
-        let mut signal: Option<&AbortSignal> = None;
-        let mut persistent: bool = true;
-        let mut recursive: bool = false;
-        let mut encoding: Encoding = Encoding::Utf8;
-        let mut verbose = false;
-        if let Some(options_or_callable) = arguments.next_eat() {
-            // options
-            if options_or_callable.is_object() {
-                if let Some(persistent_) =
-                    options_or_callable.get_truthy(cx.global(), "persistent")?
-                {
-                    if !persistent_.is_boolean() {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "persistent must be a boolean"
-                        )));
-                    }
-                    persistent = persistent_.to_boolean();
-                }
+        // options
+        let Some(options) = options else {
+            return Err(cx.global().throw_invalid_arguments(format_args!(
+                "Expected \"listener\" callback to be a function"
+            )));
+        };
+        let persistent = options.persistent(cx.global())?.unwrap_or(true);
+        let verbose = options.verbose(cx.global())?.unwrap_or(false);
+        let encoding =
+            Encoding::assert(options.encoding(cx.global())?, cx.global(), Encoding::Utf8)?;
+        let recursive = options.recursive(cx.global())?.unwrap_or(false);
+        // abort signal
+        let signal = options.signal(cx.global())?;
 
-                if let Some(verbose_) = options_or_callable.get_truthy(cx.global(), "verbose")? {
-                    if !verbose_.is_boolean() {
-                        return Err(cx
-                            .global()
-                            .throw_invalid_arguments(format_args!("verbose must be a boolean")));
-                    }
-                    verbose = verbose_.to_boolean();
-                }
-
-                if let Some(encoding_) =
-                    options_or_callable.fast_get(cx.global(), jsc::BuiltinName::encoding)?
-                {
-                    encoding = Encoding::assert(encoding_, cx.global(), encoding)?;
-                }
-
-                if let Some(recursive_) =
-                    options_or_callable.get_truthy(cx.global(), "recursive")?
-                {
-                    if !recursive_.is_boolean() {
-                        return Err(cx
-                            .global()
-                            .throw_invalid_arguments(format_args!("recursive must be a boolean")));
-                    }
-                    recursive = recursive_.to_boolean();
-                }
-
-                // abort signal
-                if let Some(signal_) = options_or_callable.get_truthy(cx.global(), "signal")? {
-                    if let Some(signal_obj) = AbortSignal::from_js(signal_) {
-                        // Keep it alive
-                        signal_.ensure_still_alive();
-                        // `signal_obj` is the live C++ AbortSignal owned by
-                        // `signal_` (kept reachable for the duration of the call
-                        // by `ensure_still_alive`). `AbortSignal` is an
-                        // `opaque_ffi!` ZST handle; `opaque_ref` is the
-                        // centralised deref proof.
-                        signal = Some(AbortSignal::opaque_ref(signal_obj));
-                    } else {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "signal is not of type AbortSignal"
-                        )));
-                    }
-                }
-
-                // listener
-                if let Some(callable) = arguments.next_eat() {
-                    if !callable.is_cell() || !callable.is_callable() {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "Expected \"listener\" callback to be a function"
-                        )));
-                    }
-                    listener = callable;
-                }
-            } else {
-                if !options_or_callable.is_cell() || !options_or_callable.is_callable() {
-                    return Err(cx.global().throw_invalid_arguments(format_args!(
-                        "Expected \"listener\" callback to be a function"
-                    )));
-                }
-                listener = options_or_callable;
-            }
-        }
-        if listener.is_empty() {
-            return Err(cx
-                .global()
-                .throw_invalid_arguments(format_args!("Expected \"listener\" callback")));
-        }
+        // listener
+        let Some(listener) = listener else {
+            return Err(cx.global().throw_invalid_arguments(format_args!(
+                "Expected \"listener\" callback to be a function"
+            )));
+        };
 
         Ok(Arguments {
             path,
-            listener,
+            listener: listener.to_js(),
             global_this: cx.global(),
             context: cx.context(),
             signal,
@@ -746,7 +682,7 @@ impl<'a> Arguments<'a> {
         })
     }
 
-    pub(crate) fn create_fs_watcher(&self) -> bun_sys::Result<*mut FSWatcher> {
+    pub(crate) fn create_fs_watcher(self) -> bun_sys::Result<*mut FSWatcher> {
         FSWatcher::init(self)
     }
 }
@@ -1075,7 +1011,7 @@ impl FSWatcher {
         self.close();
     }
 
-    pub(crate) fn init(args: &Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {
+    pub(crate) fn init(args: Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {
         let mut joined_buf = bun_paths::path_buffer_pool::get();
         let slice = {
             let mut s = args.path.slice();
@@ -1120,7 +1056,7 @@ impl FSWatcher {
                 ..Default::default()
             }),
             mutex: Mutex::default(),
-            signal: JsCell::new(args.signal.map(|s| s.ref_())),
+            signal: JsCell::new(args.signal),
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),
             global_this: GlobalRef::from(args.global_this),
@@ -1139,9 +1075,8 @@ impl FSWatcher {
         let parent = unsafe { ParentRef::from_raw_mut(ctx) };
         ctx_ref.current_task.with_mut(|t| t.ctx = Some(parent));
 
-        ctx_ref
-            .path_watcher
-            .set(if args.signal.is_none_or(|s| !s.aborted()) {
+        ctx_ref.path_watcher.set(
+            if ctx_ref.signal.get().as_ref().is_none_or(|s| !s.aborted()) {
                 // The two backends take different arities (the Windows
                 // backend dropped the callback parameters — only one valid
                 // value each), so the call is cfg-split.
@@ -1172,7 +1107,8 @@ impl FSWatcher {
                 }
             } else {
                 None
-            });
+            },
+        );
         // SAFETY: `ctx` is the unique heap pointer; `init_js` hands ownership to
         // the GC wrapper via `to_js_ptr`.
         unsafe {

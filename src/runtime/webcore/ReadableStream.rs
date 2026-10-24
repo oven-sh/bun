@@ -3,9 +3,9 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::webcore::jsc::SysErrorJsc as _;
-use crate::webcore::jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use crate::webcore::jsc::bindgen::{BufferSource, JsLocal, JsScope, JsWrapper, Kind};
 use crate::webcore::jsc::{
-    self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
+    self as jsc, JSArray, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
 };
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
@@ -20,6 +20,8 @@ pub struct ReadableStream {
     pub value: JSValue,
     pub ptr: Source,
 }
+
+impl Kind for ReadableStream {}
 
 /// Outcome of [`ReadableStream::wire_native_sink`].
 pub enum NativeWireResult {
@@ -132,7 +134,6 @@ unsafe extern "C" {
         possible_readable_stream: &mut JSValue,
         ptr: &mut *mut c_void,
     ) -> Tag;
-    safe fn ReadableStream__is(value: JSValue) -> bool;
     safe fn ReadableStream__isDisturbed(
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
@@ -432,17 +433,16 @@ impl ReadableStream {
         self.is_disturbed(global_object) || self.is_locked(global_object)
     }
 
-    /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
-    pub fn is_readable_stream(value: JSValue) -> bool {
-        ReadableStream__is(value)
-    }
-
     /// As [`from_js`](Self::from_js), but only matches a value that already is a `ReadableStream`
     /// (no async-iterable conversion): pure — no script, no exception, no trap poll.
     pub fn from_js_direct(value: JSValue) -> Option<ReadableStream> {
         let mut ptr: *mut c_void = core::ptr::null_mut();
         let tag = ReadableStreamTag__taggedStream(value, &mut ptr);
         Self::from_tag(tag, value, ptr)
+    }
+
+    pub fn from_local(stream: JsLocal<'_, ReadableStream>) -> ReadableStream {
+        Self::from_js_direct(stream.to_js()).unwrap()
     }
 
     fn from_tag(tag: Tag, value: JSValue, ptr: *mut c_void) -> Option<ReadableStream> {
@@ -1253,8 +1253,8 @@ impl<C: SourceContext> NewSource<C> {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        view: JsLocal<'_>,
-        flags: JsLocal<'_>,
+        view: Option<JsLocal<'_, BufferSource>>,
+        flags: Option<JsLocal<'_, JSArray>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_this = cx.global();
@@ -1263,12 +1263,15 @@ impl<C: SourceContext> NewSource<C> {
         if self.abort_handle.context_stopped() {
             return Ok(jsc::JSPromise::create(global_this).to_js());
         }
+        let Some(view) = view else {
+            return Ok(JSValue::UNDEFINED);
+        };
         let view = view.to_js();
         let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
         let result = self.context.on_pull(buffer.slice_mut(), view);
-        Self::process_result(this_value.to_js(), &cx, flags.to_js(), result)
+        Self::process_result(this_value.to_js(), &cx, flags, result)
     }
 
     pub fn start(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1293,7 +1296,7 @@ impl<C: SourceContext> NewSource<C> {
     fn process_result(
         this_jsvalue: JSValue,
         cx: &bun_jsc::JsThread<'_>,
-        flags: JSValue,
+        flags: Option<JsLocal<'_, JSArray>>,
         mut result: streams::Result,
     ) -> JsResult<JSValue> {
         match &result {
@@ -1311,8 +1314,8 @@ impl<C: SourceContext> NewSource<C> {
             | streams::Result::OwnedAndDone(_)
             | streams::Result::IntoArrayAndDone(_) => {
                 // `flags` is a `pull()` argument. Bun's callers pass an array, but other code can pass anything.
-                if flags.is_array() {
-                    flags.put_index(cx.global(), 0, JSValue::TRUE)?;
+                if let Some(flags) = flags {
+                    flags.to_js().put_index(cx.global(), 0, JSValue::TRUE)?;
                 }
                 result.to_js(cx)
             }
@@ -1332,7 +1335,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn drain(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn drain(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
         let mut list = self.context.drain_internal_buffer();
         if list.len() > 0 {
             // Ownership of the buffer transfers to JSC: `to_js` installs
@@ -1341,9 +1344,9 @@ impl<C: SourceContext> NewSource<C> {
             // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
             let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
             let _ = core::mem::ManuallyDrop::new(list);
-            return ab.to_js(cx.global());
+            return ab.to_js(cx.global()).map(Some);
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(None)
     }
 
     // text/arrayBuffer/blob/bytes/json all share the same body modulo

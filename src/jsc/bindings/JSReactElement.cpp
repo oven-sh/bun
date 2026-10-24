@@ -77,8 +77,8 @@ static JSC::Symbol* createTypeofSymbol(VM& vm, uint8_t reactVersion)
     return JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
 }
 
-extern "C" JSC::EncodedJSValue JSReactElement__create(
-    JSGlobalObject* globalObject,
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSReactElement__create(
+    JSC::JSGlobalObject* globalObject,
     uint8_t reactVersion,
     EncodedJSValue type,
     EncodedJSValue props)

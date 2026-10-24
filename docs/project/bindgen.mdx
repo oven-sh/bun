@@ -163,7 +163,7 @@ type that implements `bindgen::IntoError` (`bun_sys::Error`,
 
 `cx.global()` is the `&JSGlobalObject`, for code that takes one. It borrows all of
 `cx`. Such a function can return `JsResult<T>`, and a plain `JSValue` under
-`returns: b.any`.
+`returns: b.opaque`.
 
 ### Promises: `rejects`
 
@@ -220,37 +220,47 @@ that is an integer in range, and nothing else. A failed strict or
 `.validateInteger` conversion, or a `.loose` one of an integer, throws
 `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE` naming the argument or the dictionary
 member; `.wrap`, `.enforceRange` and the other `.loose` conversions throw what WebIDL does. An argument that was not passed is `undefined` and is converted like
-any other: nothing looks at how many there are, except `.ifPassed`, `requiredArguments` and a body that takes `b.any.variadic`.
+any other: nothing looks at how many there are, except `.ifPassed`, `requiredArguments` and a body that takes `b.rest`.
 
-| Schema                                           | Rust, as an argument             | Takes                                                         |
-| ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
-| `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
-| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
-| `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
-| `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
-| `b.string.owned`                                 | `bun_core::String`               | as `b.string`                                                 |
-| `b.string.view`                                  | `bun_core::StringView<'a>`       | as `b.string`                                                 |
-| `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
-| `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
-| `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
-| `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
-| `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
-| `b.byteSpan`                                     | `&'a [u8]`                       | not a JS value: [bytes from C++](#calls-between-c-and-rust)   |
-| `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
-| `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
-| `b.object`                                       | `JsLocal<'a, JSObject>`          | an object                                                     |
-| `b.jsArray`                                      | `JsLocal<'a, JSArray>`           | an array, as itself                                           |
-| `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
-| `b.any.variadic`                                 | `&'a [JsLocal<'a>]`              | this argument and every one after it; only the last argument  |
-| `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
-| `b.undefined`                                    | `()`                             | `undefined`; only in a union                                  |
-| `b.promisePtr("crate::T")`                       | `*mut T`                         | the context of a promise reaction; see below                  |
-| `b.nativePromiseContext("crate::T")`             | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
-| `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
-| `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
-| `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
-| `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
-| `b.class(options)`                               | `&'a T`                          | an instance                                                   |
+| Schema                                   | Rust, as an argument             | Takes                                                         |
+| ---------------------------------------- | -------------------------------- | ------------------------------------------------------------- |
+| `b.bool`                                 | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
+| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` | the same                         | a number that is an integer in range; see below               |
+| `b.i32` `b.i64`                          | the same                         | the same                                                      |
+| `b.f64`                                  | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
+| `b.string`                               | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
+| `b.string.owned`                         | `bun_core::String`               | as `b.string`                                                 |
+| `b.string.view`                          | `bun_core::StringView<'a>`       | as `b.string`                                                 |
+| `b.string.utf8`                          | `&'a [u8]`                       | the same, and a `String` object                               |
+| `b.string.utf8.owned`                    | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
+| `b.bufferSource`                         | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
+| `b.bufferSource.arrayBuffer`             | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
+| `b.bytes(options)`                       | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
+| `b.byteSpan`                             | `&'a [u8]`                       | not a JS value: [bytes from C++](#calls-between-c-and-rust)   |
+| `b.blob`                                 | `ExternalShared<Blob>`           | a `Blob`                                                      |
+| `b.callable`                             | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
+| `b.object`                               | `JsLocal<'a, JSObject>`          | an object                                                     |
+| `b.jsArray`                              | `JsLocal<'a, JSArray>`           | an array, as itself                                           |
+| `b.promise`                              | `JsLocal<'a, JSPromise>`         | a promise, as itself                                          |
+| `b.jsString`                             | `JsLocal<'a, JSString>`          | a primitive string, as itself; `b.string` is its text         |
+| `b.stringObject`                         | `JsLocal<'a, JSObject>`          | a `String` object, not converted: that runs its `toString`    |
+| `b.bigInt`                               | `JsLocal<'a, JSBigInt>`          | a BigInt, as itself                                           |
+| `b.symbol`                               | `JsLocal<'a, Symbol>`            | a symbol, as itself                                           |
+| `b.cell(class, header, options)`         | `JsLocal<'a, T>`                 | an instance of that `JSCell` class, as itself                 |
+| `b.wrapped(class, header, options)`      | `&'a T`                          | what an instance of a hand-written C++ wrapper wraps          |
+| `b.opaque`                               | `JsLocal<'a>`                    | anything; see [Opaque values](#opaque-values)                 |
+| `b.rest(T)`                              | `bindgen::Rest<'a, T>`           | this argument and every one after it; only the last argument  |
+| `b.null`                                 | `()`                             | `null` or `undefined`, in a union; as a result, `null`        |
+| `b.undefined`                            | `()`                             | `undefined`; only in a union                                  |
+| `b.ignored`                              | `()`                             | anything; only the last alternative of a union                |
+| `b.promisePtr("crate::T")`               | `*mut T`                         | the context of a promise reaction; see below                  |
+| `b.nativePromiseContext("crate::T")`     | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
+| `b.promiseResult`                        | `JSValue`                        | what the promise of a reaction settled with; see below        |
+| `b.array(T)`                             | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
+| `b.enumeration(values)`                  | a generated `enum`               | one of the strings                                            |
+| `b.dictionary(members)`                  | `&` a generated `struct`         | an object that is not an array                                |
+| `b.union(alternatives)`                  | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
+| `b.class(options)`                       | `&'a T`                          | an instance                                                   |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported. It is used by
@@ -264,20 +274,34 @@ Only the promise calls a reaction, with the context it was given, so nothing tes
 `b.promisePtr` is the `*mut T` that `JSValue::then` was given. `b.nativePromiseContext` is what `take` of the cell
 returns: `None` if the pointer was taken back before the promise settled. No argument after it has a conversion that
 throws: nothing would release the pointer. A generic `T` is written as its instantiation.
+What the promise settled with is not an argument that a caller chose the type of, so `b.promiseResult` is a `JSValue`
+the body tests itself. Only a function that also takes one of the two contexts takes it; a reaction that only hands the
+value on takes `b.opaque`.
 
-These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.falsyAsNull`, `.emptyStringAsNull` and `.ifPassed` apply to it):
+`b.cell("JSC::RegExpObject", "JavaScriptCore/RegExpObject.h", { rustPath: "bun_jsc::RegExp" })` names the C++ class, its
+header and the Rust type that marks the handle. `reportedAs` is what an error calls it, if not the class without its `JS`.
+`b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" })` gives what `wrapped()`
+of the instance returns. The argument keeps it alive, so it is an argument or an alternative of one; `.shared` is a
+reference on it, `ExternalShared<T>`, which a dictionary can hold and a body can store. It also names a generated class
+whose schema imports this one.
+
+These come last, in this order:
 
 - `.optional`: `undefined` means absent; `Option<T>`.
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
 - `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
-- `.otherAsNull`: a value of a [kind](#unions-and-kinds) the type does not take, or that it refuses (what is not an object, a shared buffer), means absent and nothing is thrown, as if the type were in a union with `ignored: b.any` after it; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. What is inside a value is still reported: the members of a dictionary, the elements of an array. It is not for a type that throws for a value of a kind it takes: an integer for `1.5` (`b.f64.otherAsNull` takes every number), an enumeration for an unknown string (`b.string.allowStringObject.otherAsNull` takes every string), a dictionary without `allowArray` for an array. Nor is it for a type that takes every kind, like a `.loose` one or a `nonObjectAsEmpty` dictionary. A union writes `ignored: b.any` as its last alternative.
-- `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. Where `f()` is an error, see [`requiredArguments`](#too-few-arguments-requiredarguments). It also goes on a type that takes `undefined`, like `b.any`. It is only for an argument, and not for one of an overload.
+- `.otherAsNull`: a value of a [kind](#unions-and-kinds) the type does not take, or that it refuses (what is not an object, a shared buffer), means absent and nothing is thrown, as if the type were in a union with `b.ignored` after it; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. What is inside a value is still reported: the members of a dictionary, the elements of an array. It is not for a type that throws for a value of a kind it takes: an integer for `1.5` (`b.f64.otherAsNull` takes every number), an enumeration for an unknown string (`b.string.allowStringObject.otherAsNull` takes every string), a dictionary without `allowArray` for an array. Nor is it for a type that takes every kind, like a `.loose` one or a `nonObjectAsEmpty` dictionary. A union writes `ignored: b.opaque` as its last alternative.
+- `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. Where `f()` is an error, see [`requiredArguments`](#too-few-arguments-requiredarguments). It also goes on a type that takes `undefined`, like `b.opaque`. It is only for an argument, and not for one of an overload.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 
 `.withValue` on an argument also gives the body the argument itself, `(T, JsLocal<'a>)`: for a body that reads the
 internal fields of an instance, or returns the argument when there is nothing to change. It comes after all of these,
-and not with `.ifPassed`.
+and not with `.ifPassed`. The value is as typed as the argument says: `JsLocal<'a, JSObject>` beside an instance of a
+class, `JSValue` beside the context of a reaction.
+
+Beside an instance, of a class or of `b.wrapped`, the value is the object that keeps the instance alive. So
+`Blob.withValue` is also a member of a dictionary, or an alternative of a union that is one: `(&'a Blob, JsLocal<'a, JSObject>)`.
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>`, `b.array(T)` anything that
 is `IntoIterator`, and `b.array(b.string)` anything that is `AsRef<[bun_core::String]>`: one call makes the array. `b.bufferSource` as a result is what
@@ -295,9 +319,82 @@ These are results only:
 | `b.string.local` | `JsLocal<'a, JSString>`                       | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)` or `heap.common_string(CommonString::..)` |
 | `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8 and one that comes again takes the new value, `T` holds no JS value, and it is not a member or an alternative           |
 
-A body that returns `b.any` makes the value with what the generated code calls:
+A body that returns `b.opaque` makes the value with what the generated code calls:
 `bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module. An empty
 object is `heap.create_empty_object()`.
+
+### Opaque values
+
+Rust looks inside a JS value only through a type that a schema declares. `b.opaque` is a value whose type the function
+does not depend on: `JsLocal<'a>` has no `to_js()` and no test. A body can return it, store it (`Strong::create`, an
+internal field, a `JsRef`), pass it to a call, resolve or reject a promise with it, throw it, put it in an object or an
+array, compare it with another as a whole, or print it. What takes one is written `impl bindgen::AnyValue`, which a
+`JSValue` and every handle are.
+
+The modifiers are the tests there are: `b.opaque.optional` is `None` for `undefined`, `.nullable` for `null` too.
+`value.nullable()` is the second in Rust, for a value that is handed on either way.
+
+What takes any value and walks all of it (the two formatters, the YAML, JSON5, TOML and XML stringifiers, and the parts of a `Blob`) implements
+`bindgen::ValueWalker`, whose `value_of` is the one way from a handle to a `JSValue`. Nothing else implements it.
+
+A value that was not an argument is a `JSValue`, and the body tests it as before: an element of an array, a property
+read while walking, an internal field. `JsLocal::<JSObject>::from_js(global, value)` and
+`JsLocal::<Callable>::from_js(global, value)` make a handle of one, for what takes a handle.
+
+A body that tells kinds of value apart says which in a union, and matches on it:
+
+```ts
+export const Expected = b.union(
+  { pattern: RegExp, text: b.string, constructor: b.callable, other: b.opaque },
+  { fromJS: true },
+);
+```
+
+With `fromJS: true` a dictionary, a union or an enumeration also converts a value that was not an argument, such as an
+element of an array the body walks: `Expected::from_local(global, value)?`, or `Level::from_js(global, value)?` for a
+type that holds no JS value. `reportedAs` is what an error calls the value. For a type without a name,
+`export const fieldText = b.conversion(b.string.loose)` makes `field_text(global, value)?` in the schema's module.
+
+### Conversion in the body: `.deferred` and `b.rest`
+
+Arguments are converted in order, before the body runs. Where something that JavaScript can see comes first (a check of
+the object's state that throws, an early return, another order), `.deferred` leaves the conversion to the body. The
+schema still says the type and the generated code still converts and reports; the body says when:
+
+```ts
+send: { args: { command: b.string.deferred }, returns: b.promise, capability: "js", throws: true },
+```
+
+```rust
+pub fn send<'a>(&self, cx: &mut JsScope<'a>, command: Deferred<'a, bun_core::String>) -> bindgen::Result<'a, ..> {
+    if self.is_closed() {
+        return Err(cx.heap.error_with_code(ErrorCode::REDIS_CONNECTION_CLOSED, ..));
+    }
+    let command = command.convert(cx.global())?;
+```
+
+A conversion can run JavaScript, so like everything else that can it takes the `&JSGlobalObject` and returns a
+`JsResult`. `undefined` for a type with a default, or one that is `.optional`, is answered without a call into C++.
+
+Only what JavaScript can see is worth deferring. A union that tells kinds apart and ends in `b.ignored` or `b.opaque`
+runs nothing and refuses nothing, so it is converted with the other arguments and the body throws where it always did.
+
+`.deferred` is written last, on an argument, and takes `capability: "js"`. The conversion returns before the body goes on, so
+the type cannot borrow from it: a UTF-8 string is `.owned`, bytes are `held: "handle"`. An argument that needs no
+such order is not deferred: that is one call into C++ fewer.
+
+`b.rest(T)` is the arguments from there on, converted the same way:
+
+```rust
+let mut keys = Vec::with_capacity(rest.len());
+for key in rest.iter() {
+    keys.push(key.convert(global)?);
+}
+```
+
+`b.rest(b.opaque)` has nothing to convert: it is `&'a [JsLocal<'a>]`, the arguments where they are in the frame.
+
+The members of a dictionary are deferred together: [`deferred: true`](#dictionaries).
 
 ### Numbers
 
@@ -310,6 +407,11 @@ double nearest to it. `b.f64.allowDate` also takes a `Date`, as its time value, 
 - `.wrap`: the WebIDL conversion, `ToNumber` then wrap modulo the width.
 - `.enforceRange(min, max)`: WebIDL `[EnforceRange]`.
 - `.validateInteger(min, max)`: Node's `validateInteger`, with its exact errors. Use it when implementing Node.js APIs.
+- `.validateIntegerRange(min, max)`: as strict over that range, except that a fraction is `ERR_INVALID_ARG_TYPE`, as what is not a number is. It is what options of Bun's own APIs throw. NaN is a fraction to it, unless `.nanAs(value)` says what it converts to.
+
+- `b.i64.asIntN`: a BigInt and nothing else, wrapped to 64 bits as `BigInt.asIntN(64, value)` does. It is an alternative of a union whose other alternatives take the numbers.
+
+The two that validate name the value in their errors: the argument or the member, or what `.reportedAs("fd")` says.
 
 ### Strings
 
@@ -374,6 +476,36 @@ The second argument of `b.dictionary` takes:
 | `fromJS`           | also generates `Name::from_js(global, value)`, for a body that has a `JSValue`; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                                      |
 | `reportedAs`       | what an error calls the dictionary, which defaults to the name of the type: `"options"` makes a member `options.level`, and `""` makes it `level`, for a Node function that validates under the bare name (`validateUint32(N, "N")`) |
 | `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                                               |
+| `deferred`         | the body reads each member when it chooses, see below; the only other key it goes with is `reportedAs`                                                                                                                               |
+
+A member written `{ type: T, own: true }` is read only if it is an own property of the object: one that it inherits is
+absent. With `{ type: T.ifPassed, own: true }` an own `undefined` is not absent either: `T` converts it, and Rust gets `None`
+only for an object that has no such property. One written `{ type: T, privateSymbol: "sharedFd" }` is read under that private name of `BunBuiltinNames.h`,
+which only Bun's own JavaScript can set, and not under the public one.
+
+Where JavaScript can see something between two members (a check that throws, a callback, a member that is only read
+under a condition), `deferred: true` leaves the reading to the body, as `.deferred` does for an argument. The schema
+lists every member once. Rust gets the object, with a method for each member that reads it, converts it and reports it
+under its name:
+
+```ts
+export const ListenOptions = b.dictionary(
+  { hostname: b.string.optional, port: b.u16.enforceRange().optional, unix: b.string.optional },
+  { deferred: true, reportedAs: "options" },
+);
+```
+
+```rust
+pub fn listen(global: &JSGlobalObject, options: ListenOptions<'_>) -> JsResult<..> {
+    if let Some(unix) = options.unix(global)? {
+        return listen_on_path(global, unix);
+    }
+    let port = options.port(global)?;
+```
+
+It takes every object, as `b.object` does, and `options.object()` is that object. `ListenOptions::new(object)` reads
+the same members from an object the body got elsewhere. A member cannot borrow, as with `.deferred`. Each method is a
+call into C++, so a dictionary that needs no such order is not deferred.
 
 ### Enumerations
 
@@ -394,16 +526,17 @@ Where there is a choice, between the alternatives of a union or between overload
 it is made on the _kind_ of the value, with the cheapest test that tells the kinds
 in play apart:
 
-| Looking at                         | Kinds                                                                            |
-| ---------------------------------- | -------------------------------------------------------------------------------- |
-| the bits of the value              | `undefined`, `null`, boolean, number                                             |
-| the type byte in the cell's header | string, BigInt, array, `ArrayBuffer`, typed array or `DataView`, `String` object |
-| `JSCell::isCallable`               | a function, or a proxy of one                                                    |
-| the cell's `ClassInfo`             | an instance of a class, a `Date`                                                 |
+| Looking at                         | Kinds                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------ |
+| the bits of the value              | `undefined`, `null`, boolean, number                                           |
+| the type byte in the cell's header | string, BigInt, array, `ArrayBuffer`, typed array, `DataView`, `String` object |
+| `JSCell::isCallable`               | a function, or a proxy of one                                                  |
+| the cell's `ClassInfo`             | an instance of a class, a `Date`                                               |
 
-A strict type takes the kinds its row under [Types](#types) says. A type that coerces or
+A strict type takes the kinds its row under [Types](#types) says. A `b.cell` of the JSC class of a kind takes that kind:
+`b.cell("JSC::JSDataView", ..)` before `b.bufferSource` gets the `DataView`s. A type that coerces or
 reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
-`.validateInteger`, `b.any`, `b.bytes`, `b.object`, a dictionary. So does an argument written `.falsyAsNull`,
+`b.opaque`, `b.ignored`, `b.bytes`, `b.object`, a dictionary. So does an argument written `.falsyAsNull`,
 `.emptyStringAsNull` or `.otherAsNull`.
 
 **A value goes to the first alternative, in written order, that takes its kind.** That
@@ -422,6 +555,9 @@ place they end up in.
 A union is returned as what the alternative it holds is. One that is only returned owns its
 strings: `b.string.utf8` in it is a `Vec<u8>`.
 
+A union that takes what another takes, and more, spreads its alternatives:
+`b.union({ fd: Fd, ...b.alternativesOf(PathLike) })`.
+
 ### Buffers
 
 `b.bufferSource` is the buffer itself. JavaScript can detach, resize or transfer it, so the
@@ -429,11 +565,11 @@ body looks the bytes up when it needs them:
 
 ```rust
 let before = buffer.with_bytes(&cx.heap, sum);
-callback.call(cx, JsLocal::UNDEFINED, &[])?;
+callback.call(cx.global(), JsLocal::UNDEFINED, &[])?;
 let after = buffer.with_bytes(&cx.heap, sum);
 ```
 
-Calling `callback.call(cx, ..)` inside the closure does not compile. A detached or
+Calling `callback.call(cx.global(), ..)` inside the closure does not compile. A detached or
 out-of-bounds view is empty. A shared buffer is refused, unless the type is
 `b.bufferSource.allowShared`, as with WebIDL's `[AllowShared]`. A resizable one is taken either
 way. To only read one, there is [`b.bytes`](#bytes).
@@ -658,7 +794,7 @@ function, two members of `proto` and `static` that share a name, and a property 
 a native function of the struct (`close` is `do_close` beside a native `close`). Two keys can
 also have the same `rustName`. The getter of `x` is `get_x` and its setter is `set_x`, and a leading
 `_` of the property is dropped: `_idleStart` is `get_idle_start`.
-`setter: true` gives the setter the getter's `capability`, and `setter: { capability: "js" }` its own. An
+`setter: true` gives the setter the getter's `capability` and type, and `setter: { capability: "js", type: b.f64 }` its own. An
 accessor of `static` ignores its receiver, so a subclass inherits it. `configurable` and `enumerable` on a getter
 or a constant override the class's.
 
@@ -709,12 +845,12 @@ is not an argument type, has no `estimatedSize`, and does not implement `JsClass
 
 Every field starts empty. A heap snapshot shows what it holds as a property of its name.
 
-In C++ the field is `m_callback`, a `JSC::WriteBarrier<JSC::Unknown>`. In a record each field names its type: `b.any`
+In C++ the field is `m_callback`, a `JSC::WriteBarrier<JSC::Unknown>`. In a record each field names its type: `b.opaque`
 is what a list declares, and `b.cell(class, header)` is a `JSC::WriteBarrier` of that `JSCell` subclass, which only
 hand-written C++ uses.
 
 ```ts
-internalFields: { failReason: b.any, pipeDone: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
+internalFields: { failReason: b.opaque, pipeDone: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
 ```
 
 ```cpp
@@ -740,16 +876,16 @@ side declares an `extern "C"` function for them.
 ```ts
 export const ReadableSinkController = b.class({
   proto: {
-    end: { returns: b.any, capability: "js", throws: true, calledFromCpp: true },
-    write: { args: { data: SinkChunk }, returns: b.any, capability: "js", throws: true, calledFromCpp: true },
+    end: { returns: b.opaque, capability: "js", throws: true, calledFromCpp: true },
+    write: { args: { data: SinkChunk }, returns: b.opaque, capability: "js", throws: true, calledFromCpp: true },
   },
   calledFromCpp: {
     isDetached: { returns: b.bool },
-    writeBytes: { args: { bytes: b.byteSpan }, returns: b.any, capability: "js", throws: true },
+    writeBytes: { args: { bytes: b.byteSpan }, returns: b.opaque, capability: "js", throws: true },
   },
   calledFromRust: {
-    onClose: { args: { reason: b.any, sinkClosed: b.bool }, throws: true },
-    setPipeDone: { args: { done: b.any } },
+    onClose: { args: { reason: b.opaque, sinkClosed: b.bool }, throws: true },
+    setPipeDone: { args: { done: b.opaque } },
   },
 });
 ```
@@ -772,16 +908,16 @@ In both directions `globalObject` is the first parameter if the function has a `
 
 `calledFromCpp: true` on a function of `proto` also makes it a member function. It takes a `JSC::JSValue` for each
 argument and converts it as a call from JS does, so `sinkController->write(globalObject, chunk)` is
-`controller.write(chunk)` without the property lookup. It has no overloads, `.variadic` or `rejects`.
+`controller.write(chunk)` without the property lookup. It has no overloads, `b.rest` or `rejects`.
 
 The class's `calledFromCpp` holds functions that only C++ calls and that are not properties. Nothing is converted: an
-argument is `b.any`, `b.bool`, a number or `b.byteSpan`, and the result is `b.any`, `b.bool`, a number or nothing.
-A function that throws returns `b.any` or nothing.
+argument is `b.opaque`, `b.bool`, a number or `b.byteSpan`, and the result is `b.opaque`, `b.bool`, a number or nothing.
+A function that throws returns `b.opaque` or nothing.
 
 `b.byteSpan` is bytes that are not in a JS object: a `std::span<const uint8_t>` that Rust gets as `&'a [u8]`.
 
-`calledFromRust` declares member functions that hand-written C++ defines. An argument is `b.any`, `b.bool` or a number, and
-the result is `b.any` or nothing. Rust calls them
+`calledFromRust` declares member functions that hand-written C++ defines. An argument is `b.opaque`, `b.bool` or a number, and
+the result is `b.opaque` or nothing. Rust calls them
 in the module `js_ReadableSinkController`, with the object first, and with `throws: true` gets a `JsResult`.
 
 ```rust

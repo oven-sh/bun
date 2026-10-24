@@ -4,44 +4,34 @@
 
 use core::sync::atomic::Ordering;
 
-use bun_core::{String as BunString, Tag as BunStringTag, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
+use bun_core::comptime_string_map::ComptimeStringMap;
+use bun_core::{Tag as BunStringTag, strings};
+use bun_jsc::{JSGlobalObject, JsResult, RangeErrorOptions, bun_string_jsc};
 
 use bun_s3_signing::{
     ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,
 };
 use bun_url::URL;
 
+use crate::generated_bindgen::blob::{OptionText, S3Count, S3Name, S3Options, S3Size};
+
 /// `opts.{key}` → owned UTF-8 slice when the property is present, truthy, a
-/// JS string, and non-empty. Shared ladder for the S3 option parsers
-/// (`get_credentials_with_options`, `get_list_objects_options_from_js`):
-///
-///   get_truthy → is_string → BunString::from_js → tag ∉ {Empty,Dead} → into_utf8
+/// JS string, and non-empty. A non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
 ///
 /// `into_utf8()` moves the string's ref into the returned `Utf8Bytes` (or
 /// transcodes into an owned buffer).
-///
-/// * `strict = true`  — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
-/// * `strict = false` — non-string is silently ignored.
-pub(crate) fn get_truthy_string_utf8(
-    opts: JSValue,
+fn truthy_string_utf8(
     global: &JSGlobalObject,
     key: &[u8],
-    strict: bool,
+    value: OptionText<'_>,
 ) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
-    let Some(js_value) = opts.get_truthy(global, key)? else {
-        return Ok(None);
-    };
-    if js_value.is_empty_or_undefined_or_null() {
-        return Ok(None);
-    }
-    if !js_value.is_string() {
-        if strict {
+    let str = match value {
+        OptionText::Missing => return Ok(None),
+        OptionText::Text(str) | OptionText::StringObject(str) => str,
+        OptionText::Other(js_value) => {
             return Err(global.throw_invalid_argument_type_value(key, b"string", js_value));
         }
-        return Ok(None);
-    }
-    let str = BunString::from_js(js_value, global)?;
+    };
     if str.tag() == BunStringTag::Empty || str.tag() == BunStringTag::Dead {
         return Ok(None);
     }
@@ -57,7 +47,7 @@ const STORAGE_CLASS_ONE_OF: &str = "\"STANDARD\", \"STANDARD_IA\", \"INTELLIGENT
 pub(crate) fn get_credentials_with_options(
     this: &S3Credentials,
     default_options: MultiPartUploadOptions,
-    options: Option<JSValue>,
+    options: Option<S3Options<'_>>,
     default_acl: Option<ACL>,
     default_storage_class: Option<StorageClass>,
     default_request_payer: bool,
@@ -78,189 +68,234 @@ pub(crate) fn get_credentials_with_options(
     };
 
     if let Some(opts) = options {
-        if opts.is_object() {
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"accessKeyId", true)? {
-                new_credentials.credentials.access_key_id = utf8.into_vec().into_boxed_slice();
+        if let Some(utf8) = truthy_string_utf8(
+            global_object,
+            b"accessKeyId",
+            opts.access_key_id(global_object)?,
+        )? {
+            new_credentials.credentials.access_key_id = utf8.into_vec().into_boxed_slice();
+            new_credentials.changed_credentials = true;
+        }
+        if let Some(utf8) = truthy_string_utf8(
+            global_object,
+            b"secretAccessKey",
+            opts.secret_access_key(global_object)?,
+        )? {
+            new_credentials.credentials.secret_access_key = utf8.into_vec().into_boxed_slice();
+            new_credentials.changed_credentials = true;
+        }
+        if let Some(utf8) =
+            truthy_string_utf8(global_object, b"region", opts.region(global_object)?)?
+        {
+            new_credentials.credentials.region = utf8.into_vec().into_boxed_slice();
+            new_credentials.changed_credentials = true;
+        }
+        if let Some(utf8) =
+            truthy_string_utf8(global_object, b"endpoint", opts.endpoint(global_object)?)?
+        {
+            let endpoint = utf8.slice();
+            if let Some(parsed) = URL::parse_s3_endpoint(endpoint) {
+                new_credentials.credentials.endpoint = parsed.host_with_path;
+
+                // Default to https://
+                // Only use http:// if the endpoint specifically starts with 'http://'
+                new_credentials.credentials.insecure_http = parsed.is_http;
+
                 new_credentials.changed_credentials = true;
+            } else if !endpoint.is_empty() {
+                // endpoint is not a valid URL
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"endpoint",
+                    b"string",
+                    bun_string_jsc::create_utf8_for_js(global_object, endpoint)?,
+                ));
             }
-            if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"secretAccessKey", true)?
+        }
+        if let Some(utf8) =
+            truthy_string_utf8(global_object, b"bucket", opts.bucket(global_object)?)?
+        {
+            new_credentials.credentials.bucket = utf8.into_vec().into_boxed_slice();
+            new_credentials.changed_credentials = true;
+        }
+
+        if let Some(virtual_hosted_style) = opts.virtual_hosted_style(global_object)? {
+            new_credentials.credentials.virtual_hosted_style = virtual_hosted_style;
+            new_credentials.changed_credentials = true;
+        }
+
+        if let Some(utf8) = truthy_string_utf8(
+            global_object,
+            b"sessionToken",
+            opts.session_token(global_object)?,
+        )? {
+            new_credentials.credentials.session_token = utf8.into_vec().into_boxed_slice();
+            new_credentials.changed_credentials = true;
+        }
+
+        if let Some(page_size) = size_from_js(opts.page_size(global_object)?) {
+            if page_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
+                || page_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
             {
-                new_credentials.credentials.secret_access_key = utf8.into_vec().into_boxed_slice();
-                new_credentials.changed_credentials = true;
+                return Err(global_object.throw_range_error(
+                    page_size,
+                    RangeErrorOptions {
+                        min: MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64,
+                        max: MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64,
+                        field_name: b"pageSize",
+                        ..Default::default()
+                    },
+                ));
+            } else {
+                new_credentials.options.part_size = page_size as u64;
             }
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"region", true)? {
-                new_credentials.credentials.region = utf8.into_vec().into_boxed_slice();
-                new_credentials.changed_credentials = true;
-            }
-            if let Some(js_value) = opts.get_truthy(global_object, "endpoint")? {
-                if !js_value.is_empty_or_undefined_or_null() {
-                    if js_value.is_string() {
-                        let str = BunString::from_js(js_value, global_object)?;
-                        if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
-                            let utf8 = str.into_utf8();
-                            let endpoint = utf8.slice();
-                            if let Some(parsed) = URL::parse_s3_endpoint(endpoint) {
-                                new_credentials.credentials.endpoint = parsed.host_with_path;
-
-                                // Default to https://
-                                // Only use http:// if the endpoint specifically starts with 'http://'
-                                new_credentials.credentials.insecure_http = parsed.is_http;
-
-                                new_credentials.changed_credentials = true;
-                            } else if !endpoint.is_empty() {
-                                // endpoint is not a valid URL
-                                return Err(global_object.throw_invalid_argument_type_value(
-                                    b"endpoint",
-                                    b"string",
-                                    js_value,
-                                ));
-                            }
-                        }
-                    } else {
-                        return Err(global_object.throw_invalid_argument_type_value(
-                            b"endpoint",
-                            b"string",
-                            js_value,
-                        ));
-                    }
-                }
-            }
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"bucket", true)? {
-                new_credentials.credentials.bucket = utf8.into_vec().into_boxed_slice();
-                new_credentials.changed_credentials = true;
-            }
-
-            if let Some(virtual_hosted_style) =
-                opts.get_boolean_strict(global_object, "virtualHostedStyle")?
+        }
+        if let Some(part_size) = size_from_js(opts.part_size(global_object)?) {
+            if part_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
+                || part_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
             {
-                new_credentials.credentials.virtual_hosted_style = virtual_hosted_style;
-                new_credentials.changed_credentials = true;
+                return Err(global_object.throw_range_error(
+                    part_size,
+                    RangeErrorOptions {
+                        min: MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64,
+                        max: MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64,
+                        field_name: b"partSize",
+                        ..Default::default()
+                    },
+                ));
+            } else {
+                new_credentials.options.part_size = part_size as u64;
             }
+        }
 
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"sessionToken", true)?
-            {
-                new_credentials.credentials.session_token = utf8.into_vec().into_boxed_slice();
-                new_credentials.changed_credentials = true;
+        if let Some(queue_size) = count_from_js(opts.queue_size(global_object)?) {
+            if queue_size < 1 {
+                return Err(global_object.throw_range_error(
+                    queue_size as i64,
+                    RangeErrorOptions {
+                        min: 1,
+                        field_name: b"queueSize",
+                        ..Default::default()
+                    },
+                ));
+            } else {
+                new_credentials.options.queue_size = queue_size.min(i32::from(u8::MAX)) as u8;
             }
+        }
 
-            if let Some(page_size) = opts.get_optional::<i64>(global_object, "pageSize")? {
-                if page_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
-                    || page_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
-                {
-                    return Err(global_object.throw_range_error(
-                        page_size,
-                        RangeErrorOptions {
-                            min: MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64,
-                            max: MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64,
-                            field_name: b"pageSize",
-                            ..Default::default()
-                        },
-                    ));
-                } else {
-                    new_credentials.options.part_size = page_size as u64;
-                }
+        if let Some(retry) = count_from_js(opts.retry(global_object)?) {
+            if !(0..=255).contains(&retry) {
+                return Err(global_object.throw_range_error(
+                    retry as i64,
+                    RangeErrorOptions {
+                        min: 0,
+                        max: 255,
+                        field_name: b"retry",
+                        ..Default::default()
+                    },
+                ));
+            } else {
+                new_credentials.options.retry = retry as u8;
             }
-            if let Some(part_size) = opts.get_optional::<i64>(global_object, "partSize")? {
-                if part_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
-                    || part_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
-                {
-                    return Err(global_object.throw_range_error(
-                        part_size,
-                        RangeErrorOptions {
-                            min: MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64,
-                            max: MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64,
-                            field_name: b"partSize",
-                            ..Default::default()
-                        },
-                    ));
-                } else {
-                    new_credentials.options.part_size = part_size as u64;
-                }
-            }
+        }
+        if let Some(acl) = enum_from_map(
+            global_object,
+            opts.acl(global_object)?,
+            "acl",
+            &ACL::MAP,
+            ACL_ONE_OF,
+        )? {
+            new_credentials.acl = Some(acl);
+        }
 
-            if let Some(queue_size) = opts.get_optional::<i32>(global_object, "queueSize")? {
-                if queue_size < 1 {
-                    return Err(global_object.throw_range_error(
-                        queue_size as i64,
-                        RangeErrorOptions {
-                            min: 1,
-                            field_name: b"queueSize",
-                            ..Default::default()
-                        },
-                    ));
-                } else {
-                    new_credentials.options.queue_size = queue_size.min(i32::from(u8::MAX)) as u8;
-                }
-            }
+        if let Some(storage_class) = enum_from_map(
+            global_object,
+            opts.storage_class(global_object)?,
+            "storageClass",
+            &StorageClass::MAP,
+            STORAGE_CLASS_ONE_OF,
+        )? {
+            new_credentials.storage_class = Some(storage_class);
+        }
 
-            if let Some(retry) = opts.get_optional::<i32>(global_object, "retry")? {
-                if !(0..=255).contains(&retry) {
-                    return Err(global_object.throw_range_error(
-                        retry as i64,
-                        RangeErrorOptions {
-                            min: 0,
-                            max: 255,
-                            field_name: b"retry",
-                            ..Default::default()
-                        },
-                    ));
-                } else {
-                    new_credentials.options.retry = retry as u8;
-                }
+        if let Some(utf8) = truthy_string_utf8(
+            global_object,
+            b"contentDisposition",
+            opts.content_disposition(global_object)?,
+        )? {
+            if contains_newline_or_cr(utf8.slice()) {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "contentDisposition must not contain newline characters (CR/LF)"
+                )));
             }
-            if let Some(acl) =
-                opts.get_optional_enum_from_map(global_object, "acl", &ACL::MAP, ACL_ONE_OF)?
-            {
-                new_credentials.acl = Some(acl);
-            }
+            new_credentials.content_disposition = Some(utf8);
+        }
 
-            if let Some(storage_class) = opts.get_optional_enum_from_map(
-                global_object,
-                "storageClass",
-                &StorageClass::MAP,
-                STORAGE_CLASS_ONE_OF,
-            )? {
-                new_credentials.storage_class = Some(storage_class);
+        if let Some(utf8) = truthy_string_utf8(global_object, b"type", opts.r#type(global_object)?)?
+        {
+            if contains_newline_or_cr(utf8.slice()) {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "type must not contain newline characters (CR/LF)"
+                )));
             }
+            new_credentials.content_type = Some(utf8);
+        }
 
-            if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"contentDisposition", true)?
-            {
-                if contains_newline_or_cr(utf8.slice()) {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "contentDisposition must not contain newline characters (CR/LF)"
-                    )));
-                }
-                new_credentials.content_disposition = Some(utf8);
+        if let Some(utf8) = truthy_string_utf8(
+            global_object,
+            b"contentEncoding",
+            opts.content_encoding(global_object)?,
+        )? {
+            if contains_newline_or_cr(utf8.slice()) {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "contentEncoding must not contain newline characters (CR/LF)"
+                )));
             }
+            new_credentials.content_encoding = Some(utf8);
+        }
 
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"type", true)? {
-                if contains_newline_or_cr(utf8.slice()) {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "type must not contain newline characters (CR/LF)"
-                    )));
-                }
-                new_credentials.content_type = Some(utf8);
-            }
-
-            if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"contentEncoding", true)?
-            {
-                if contains_newline_or_cr(utf8.slice()) {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "contentEncoding must not contain newline characters (CR/LF)"
-                    )));
-                }
-                new_credentials.content_encoding = Some(utf8);
-            }
-
-            if let Some(request_payer) = opts.get_boolean_strict(global_object, "requestPayer")? {
-                new_credentials.request_payer = request_payer;
-            }
+        if let Some(request_payer) = opts.request_payer(global_object)? {
+            new_credentials.request_payer = request_payer;
         }
     }
     Ok(new_credentials)
+}
+
+fn size_from_js(size: S3Size) -> Option<i64> {
+    match size {
+        S3Size::Missing => None,
+        S3Size::BigInt(size) => Some(size),
+        S3Size::Number(size) | S3Size::Other(size) => Some(size as i64),
+    }
+}
+
+pub(crate) fn count_from_js(count: S3Count) -> Option<i32> {
+    match count {
+        S3Count::Missing => None,
+        S3Count::BigInt(count) => Some(count as i32),
+        S3Count::Number(count) => Some(count as i32),
+        S3Count::Other(count) => Some(count),
+    }
+}
+
+fn enum_from_map<E: Copy + 'static, M: ComptimeStringMap<Value = E>>(
+    global_object: &JSGlobalObject,
+    name: S3Name,
+    property_name: &str,
+    map: &'static M,
+    one_of: &str,
+) -> JsResult<Option<E>> {
+    match name {
+        S3Name::Missing => Ok(None),
+        S3Name::Name(name) => match map.lookup(name.slice()) {
+            Some(value) => Ok(Some(*value)),
+            None => Err(global_object
+                .throw_invalid_arguments(format_args!("{property_name} must be one of {one_of}"))),
+        },
+        S3Name::Other => {
+            Err(global_object
+                .throw_invalid_arguments(format_args!("{property_name} must be a string")))
+        }
+    }
 }
 
 fn contains_newline_or_cr(value: &[u8]) -> bool {

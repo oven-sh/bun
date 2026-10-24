@@ -13,6 +13,7 @@
 
 use core::ffi::c_char;
 
+use bun_jsc::bindgen::AnyValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
 
@@ -126,7 +127,7 @@ pub(crate) trait SSLConfigFromJs: Sized {
     fn from_js(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
-        value: JSValue,
+        value: impl AnyValue,
         is_server: bool,
     ) -> JsResult<Option<Self>>;
 
@@ -142,7 +143,7 @@ impl SSLConfigFromJs for SSLConfig {
     fn from_js(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
-        value: JSValue,
+        value: impl AnyValue,
         is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
         let generated = generated::TLSOptions::from_js(global, value)?;

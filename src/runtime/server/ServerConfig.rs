@@ -15,6 +15,10 @@ pub(crate) use http_method::{Method, Optional as MethodOptional};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
+use crate::generated_bindgen::server::{
+    Development, FrameworkValue, OptionCallback, OptionNumber, Routes, ServeOptions, ServerId,
+    ServerTls, Stringish, WebSocketOptions, WebSocketOptionsMember,
+};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
@@ -562,23 +566,63 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
-    for key in ["routes", "static"] {
-        if let Some(routes) = arg.get(global, key)? {
+fn get_routes_object<'a>(
+    global: &JSGlobalObject,
+    arg: ServeOptions<'a>,
+) -> JsResult<Option<Routes<'a>>> {
+    for routes in [ServeOptions::routes, ServeOptions::static_routes] {
+        match routes(arg, global)? {
+            Routes::Missing => {}
             // https://github.com/oven-sh/bun/issues/17568
-            if routes.is_array() {
-                return Ok(None);
-            }
-            return Ok(Some(routes));
+            Routes::Array(_) => return Ok(None),
+            routes => return Ok(Some(routes)),
         }
     }
     Ok(None)
 }
 
+/// What `JSValue::get_stringish` makes of a member.
+fn stringish(
+    global: &JSGlobalObject,
+    property: &str,
+    value: Stringish<'_>,
+) -> JsResult<Option<bun_core::String>> {
+    match value {
+        Stringish::Missing | Stringish::Flag(false) => Ok(None),
+        Stringish::Flag(true) => Ok(Some(bun_core::String::static_("true"))),
+        Stringish::Symbol(_) => Err(global.throw_invalid_arguments(format_args!(
+            "The \"{property}\" property must be of type string. Received a symbol",
+        ))),
+        Stringish::Text(text) => Ok(Some(text).filter(|text| !text.is_empty())),
+    }
+}
+
+/// `Err` is neither missing nor a function.
+fn callback(value: OptionCallback<'_>) -> Result<Option<JSValue>, ()> {
+    match value {
+        OptionCallback::Missing => Ok(None),
+        OptionCallback::Callback(callback) => Ok(Some(callback.to_js())),
+        OptionCallback::Text(text) if text.is_empty() => Ok(None),
+        OptionCallback::Text(_) | OptionCallback::Other => Err(()),
+    }
+}
+
+/// `Err` is neither missing nor an object.
+fn websocket_options(
+    value: WebSocketOptionsMember<'_>,
+) -> Result<Option<WebSocketOptions<'_>>, ()> {
+    match value {
+        WebSocketOptionsMember::Missing => Ok(None),
+        WebSocketOptionsMember::Options(options) => Ok(Some(options)),
+        WebSocketOptionsMember::Text(text) if text.is_empty() => Ok(None),
+        WebSocketOptionsMember::Text(_) | WebSocketOptionsMember::Other => Err(()),
+    }
+}
+
 impl ServerConfig {
     pub(crate) fn from_js(
         global: &JSGlobalObject,
-        arg: JSValue,
+        arg: Option<ServeOptions<'_>>,
         opts: FromJSOptions,
     ) -> JsResult<ServerConfig> {
         let vm = global.bun_vm();
@@ -639,14 +683,15 @@ impl ServerConfig {
 
         // NOTE: SSLConfig drops automatically when `args` drops on error path.
 
-        if !arg.is_object() {
+        let Some(arg) = arg else {
             return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
-        }
+        };
 
         // "development" impacts other settings like bake.
-        if let Some(dev) = arg.get(global, "development")? {
-            if dev.is_object() {
-                if let Some(hmr) = dev.get_boolean_strict(global, "hmr")? {
+        let dev = arg.development(global)?;
+        if !matches!(dev, Development::Missing) {
+            if let Development::Options(dev) = &dev {
+                if let Some(hmr) = dev.hmr {
                     args.development = if !hmr {
                         DevelopmentOption::DevelopmentWithoutHmr
                     } else {
@@ -656,17 +701,15 @@ impl ServerConfig {
                     args.development = DevelopmentOption::Development;
                 }
 
-                if let Some(console) = dev.get_boolean_strict(global, "console")? {
+                if let Some(console) = dev.console {
                     args.broadcast_console_log_from_browser_to_server_for_bake = console;
                 }
 
-                if let Some(v) =
-                    dev.get_boolean_strict(global, "chromeDevToolsAutomaticWorkspaceFolders")?
-                {
+                if let Some(v) = dev.chrome_dev_tools_automatic_workspace_folders {
                     args.enable_chrome_devtools_automatic_workspace_folders = v;
                 }
             } else {
-                args.development = if dev.to_boolean() {
+                args.development = if matches!(dev, Development::Flag(true)) {
                     DevelopmentOption::Development
                 } else {
                     DevelopmentOption::Production
@@ -676,7 +719,7 @@ impl ServerConfig {
         }
 
         if let Some(static_) = get_routes_object(global, arg)? {
-            let Some(static_obj) = static_.get_object() else {
+            let Routes::Routes(static_obj) = static_ else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Bun.serve() expects 'routes' to be an object shaped like:\n\n\
                      \x20 {{\n\
@@ -692,8 +735,6 @@ impl ServerConfig {
             };
             args.had_routes_object = true;
 
-            // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
-            let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
             let iter = JSPropertyIterator::init(
                 global,
                 static_obj,
@@ -901,11 +942,13 @@ impl ServerConfig {
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
                     let framework = match bake_framework {
                         Some(object) if bake_pages => {
-                            match crate::bake::Framework::from_js(
-                                object,
-                                global,
-                                &mut bundler_options,
-                            ) {
+                            match FrameworkValue::from_js(global, object, |framework| {
+                                crate::bake::Framework::from_js(
+                                    framework,
+                                    global,
+                                    &mut bundler_options,
+                                )
+                            }) {
                                 Ok(framework) => framework,
                                 Err(err) => {
                                     bundler_options.destroy_plugin();
@@ -966,16 +1009,12 @@ impl ServerConfig {
             }
         }
 
-        if let Some(value) = arg.get(global, "idleTimeout")? {
-            if !value.is_undefined_or_null() {
-                if !value.is_any_int() {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Bun.serve expects idleTimeout to be an integer",
-                    )));
-                }
+        match arg.idle_timeout(global)? {
+            OptionNumber::Missing => {}
+            OptionNumber::Number(value) if JSValue::js_number(value).is_any_int() => {
                 args.has_idle_timeout = true;
 
-                let idle_timeout: u64 = u64::try_from(value.to_int64().max(0)).expect("int cast");
+                let idle_timeout: u64 = u64::try_from((value as i64).max(0)).expect("int cast");
                 if idle_timeout > 255 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Bun.serve expects idleTimeout to be 255 or less",
@@ -984,20 +1023,24 @@ impl ServerConfig {
 
                 args.idle_timeout = idle_timeout as u8;
             }
+            _ => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Bun.serve expects idleTimeout to be an integer",
+                )));
+            }
         }
 
-        let websocket_object = if let Some(v) = arg.get_truthy(global, "webSocket")? {
-            Some(v)
-        } else {
-            arg.get_truthy(global, "websocket")?
+        let websocket_object = match websocket_options(arg.web_socket(global)?) {
+            Ok(None) => websocket_options(arg.websocket(global)?),
+            v => v,
+        };
+        let Ok(websocket_object) = websocket_object else {
+            // ssl_config drops with args
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected websocket to be an object"))
+            );
         };
         if let Some(websocket_object) = websocket_object {
-            if !websocket_object.is_object() {
-                // ssl_config drops with args
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected websocket to be an object")));
-            }
-
             // `ssl_config` drops with args on error.
             args.websocket = Some(super::web_socket_server_context::on_create(
                 global,
@@ -1005,8 +1048,7 @@ impl ServerConfig {
             )?);
         }
 
-        if let Some(port_) = arg.get_truthy(global, "port")? {
-            let number = port_.to_number(global)?;
+        if let Some(number) = arg.port(global)? {
             if !number.is_finite() || number.fract() != 0.0 {
                 return Err(global.throw_range_error(
                     number,
@@ -1031,18 +1073,16 @@ impl ServerConfig {
             port = number as u16;
         }
 
-        if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
-            let utf8 = base_uri.to_utf8(global)?;
-
+        if let Some(utf8) = arg.base_uri(global)? {
             if !utf8.slice().is_empty() {
                 args.base_uri = Box::<[u8]>::from(utf8.slice());
             }
         }
 
-        let host = if let Some(h) = arg.get_stringish(global, "hostname")? {
+        let host = if let Some(h) = stringish(global, "hostname", arg.hostname(global)?)? {
             Some(h)
         } else {
-            arg.get_stringish(global, "host")?
+            stringish(global, "host", arg.host(global)?)?
         };
         if let Some(host) = host {
             let host_str = host.to_utf8();
@@ -1054,7 +1094,7 @@ impl ServerConfig {
             }
         }
 
-        if let Some(unix_value) = arg.get_stringish(global, "unix")? {
+        if let Some(unix_value) = stringish(global, "unix", arg.unix(global)?)? {
             let unix_str = unix_value.to_utf8();
             if !unix_str.slice().is_empty() {
                 if hostname.is_some() {
@@ -1067,11 +1107,10 @@ impl ServerConfig {
             }
         }
 
-        if let Some(id) = arg.get(global, "id")? {
-            if id.is_undefined_or_null() {
-                args.allow_hot = false;
-            } else {
-                let id_str = id.to_utf8(global)?;
+        match arg.id(global)? {
+            ServerId::Missing => {}
+            ServerId::Null => args.allow_hot = false,
+            ServerId::Id(id_str) => {
                 if !id_str.slice().is_empty() {
                     args.id = Box::<[u8]>::from(id_str.slice());
                 } else {
@@ -1082,7 +1121,7 @@ impl ServerConfig {
 
         if opts.allow_bake_config {
             'brk: {
-                if let Some(bake_args_js) = arg.get_truthy(global, "app")? {
+                if let Some(bake_args_js) = arg.app(global)? {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
                     }
@@ -1104,60 +1143,59 @@ impl ServerConfig {
             }
         }
 
-        if let Some(dev) = arg.get(global, "reusePort")? {
-            args.reuse_port = dev.to_boolean();
+        if let Some(dev) = arg.reuse_port(global)? {
+            args.reuse_port = dev;
         }
 
-        if let Some(dev) = arg.get(global, "ipv6Only")? {
-            args.ipv6_only = dev.to_boolean();
+        if let Some(dev) = arg.ipv6_only(global)? {
+            args.ipv6_only = dev;
         }
 
-        if let Some(v) = arg.get(global, "http3")? {
-            args.http3 = v.to_boolean();
+        if let Some(v) = arg.http3(global)? {
+            args.http3 = v;
         }
 
-        if let Some(v) = arg.get(global, "http2")? {
-            args.http2 = v.to_boolean();
+        if let Some(v) = arg.http2(global)? {
+            args.http2 = v;
         }
 
-        if let Some(v) = arg.get(global, "http1")? {
-            args.http1 = v.to_boolean();
+        if let Some(v) = arg.http1(global)? {
+            args.http1 = v;
         }
 
-        if let Some(max_request_body_size) = arg.get_truthy(global, "maxRequestBodySize")? {
-            if max_request_body_size.is_number() {
-                args.max_request_body_size = u64::try_from(max_request_body_size.to_int64().max(0))
-                    .expect("int cast") as usize;
-            }
+        if let Some(max_request_body_size) = arg.max_request_body_size(global)? {
+            args.max_request_body_size =
+                u64::try_from((max_request_body_size as i64).max(0)).expect("int cast") as usize;
         }
 
-        if let Some(on_error) = arg.get_truthy(global, "error")? {
-            if !on_error.is_callable() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("Expected error to be a function"))
-                );
-            }
+        let Ok(on_error) = callback(arg.error(global)?) else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected error to be a function"))
+            );
+        };
+        if let Some(on_error) = on_error {
             // Raw value — async-context wrapping is deferred to the slot-write
             // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
             // rooted by the wrapper's WriteBarrier slot the moment it exists.
             args.on_error = on_error;
         }
 
-        if let Some(on_request_) = arg.get_truthy(global, "onNodeHTTPRequest")? {
-            if !on_request_.is_callable() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Expected onNodeHTTPRequest to be a function",
-                )));
-            }
+        let Ok(on_request_) = callback(arg.on_node_http_request(global)?) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Expected onNodeHTTPRequest to be a function",
+            )));
+        };
+        if let Some(on_request_) = on_request_ {
             args.on_node_http_request = on_request_;
             args.is_node_http_server = true;
         }
 
-        if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
-            if !on_request_.is_callable() {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected fetch() to be a function")));
-            }
+        let Ok(on_request_) = callback(arg.fetch(global)?) else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected fetch() to be a function"))
+            );
+        };
+        if let Some(on_request_) = on_request_ {
             args.on_request = on_request_;
         } else if args.bake.is_none()
             && !args.is_node_http_server
@@ -1182,11 +1220,13 @@ impl ServerConfig {
             )));
         }
 
-        if let Some(tls) = arg.get_truthy(global, "tls")? {
-            if tls.is_falsey() {
+        match arg.tls(global)? {
+            ServerTls::Missing => {}
+            ServerTls::Other(false) => {
                 args.ssl_config = None;
-            } else if tls.js_type().is_array() {
-                let mut value_iter = tls.array_iterator(global)?;
+            }
+            ServerTls::List(tls) => {
+                let mut value_iter = tls.to_js().array_iterator(global)?;
                 if value_iter.len == 0 {
                     // Empty TLS array means no TLS - this is valid
                 } else {
@@ -1213,17 +1253,22 @@ impl ServerConfig {
                         }
                     }
                 }
-            } else {
+            }
+            ServerTls::Config(tls) => {
                 if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
                     args.ssl_config = Some(ssl_config);
                 }
+            }
+            // `TLSOptions` refuses what is not an object.
+            ServerTls::Other(true) => {
+                SSLConfig::from_js(vm, global, JSValue::TRUE, true)?;
             }
         }
 
         // @compatibility Bun v0.x - v0.2.1
         // this used to be top-level, now it's "tls" object
         if args.ssl_config.is_none() {
-            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg, true)? {
+            if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg.object(), true)? {
                 args.ssl_config = Some(ssl_config);
             }
         }

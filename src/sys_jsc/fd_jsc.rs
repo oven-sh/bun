@@ -14,7 +14,7 @@ pub trait FdJsc: Sized {
     fn from_js(value: JSValue) -> Option<Self>;
     fn from_js_validated(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Self>>;
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
-    fn to_js_without_making_lib_uv_owned(self) -> JSValue;
+    fn to_number_without_making_lib_uv_owned(self) -> i64;
 }
 
 impl FdJsc for Fd {
@@ -96,25 +96,25 @@ impl FdJsc for Fd {
         JSValue::js_number_from_int32(uv_owned_fd.uv())
     }
 
-    /// Convert an FD to a JavaScript number without transferring ownership to libuv.
+    /// The number JavaScript sees for an FD, without transferring ownership to libuv.
     /// Unlike to_js(), this does not call make_lib_uv_owned() on Windows, so the caller
     /// retains ownership and must close the FD themselves.
     /// Returns -1 for invalid file descriptors.
-    /// On Windows: returns Uint64 for system handles, Int32 for uv file descriptors.
-    fn to_js_without_making_lib_uv_owned(self) -> JSValue {
+    /// On Windows: the handle for system handles, the uv file descriptor otherwise.
+    fn to_number_without_making_lib_uv_owned(self) -> i64 {
         if !self.is_valid() {
-            return JSValue::js_number_from_int32(-1);
+            return -1;
         }
         #[cfg(windows)]
         {
             return match self.kind() {
-                FdKind::System => JSValue::js_number_from_uint64(self.native() as u64),
-                FdKind::Uv => JSValue::js_number_from_int32(self.uv()),
+                FdKind::System => self.native() as i64,
+                FdKind::Uv => i64::from(self.uv()),
             };
         }
         #[cfg(not(windows))]
         {
-            JSValue::js_number_from_int32(self.native())
+            i64::from(self.native())
         }
     }
 }

@@ -7,6 +7,7 @@ use bun_sys::FdExt as _;
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd};
 
+use crate::generated_bindgen::js_bun_spawn_bindings::StdioValue;
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
 use crate::webcore;
@@ -394,167 +395,174 @@ impl Stdio {
         out_stdio: &mut Stdio,
         cx: &bun_jsc::JsThread<'_>,
         i: i32,
-        value: JSValue,
+        value: StdioValue<'_>,
         is_sync: bool,
     ) -> JsResult<()> {
-        if value.is_empty() {
-            return Ok(());
-        }
-        if value.is_undefined() {
-            return Ok(());
-        }
-        if value.is_null() {
-            *out_stdio = Stdio::Ignore;
-            return Ok(());
-        }
-
-        if value.is_string() {
-            let str = value.to_js_string_view(cx.global())?;
-            if str.eq_ascii(b"inherit") {
-                *out_stdio = Stdio::Inherit;
-            } else if str.eq_ascii(b"ignore") {
-                *out_stdio = Stdio::Ignore;
-            } else if str.eq_ascii(b"pipe") || str.eq_ascii(b"overlapped") {
-                *out_stdio = Stdio::Pipe;
-            } else if str.eq_ascii(b"socket-fd") {
-                if i < 3 {
-                    return Err(cx.global().throw_invalid_arguments(format_args!(
-                        "stdio: 'socket-fd' is only supported at indices >= 3"
-                    )));
-                }
-                if is_sync {
-                    // Bun.spawnSync's result has no .stdio, so the caller
-                    // could never receive the fd it's supposed to own.
-                    return Err(cx.global().throw_invalid_arguments(format_args!(
-                        "stdio: 'socket-fd' cannot be used with spawnSync"
-                    )));
-                }
-                *out_stdio = Stdio::SocketFd;
-            } else if str.eq_ascii(b"ipc") {
-                *out_stdio = Stdio::Ipc;
-            } else {
-                return Err(cx.global().throw_invalid_arguments(format_args!(
-                    "stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null"
-                )));
-            }
-            return Ok(());
-        } else if value.is_number() {
-            // `bun.FD.fromUV(this.toInt32())` inlined here since the
-            // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
-            let fd = Fd::from_uv(value.to_int32());
-            let file_fd = fd.uv();
-            if file_fd < 0 {
-                return Err(cx.global().throw_invalid_arguments(format_args!(
-                    "file descriptor must be a positive integer"
-                )));
-            }
-
-            if file_fd >= i32::MAX as _ {
-                let mut formatter = jsc::console_object::Formatter::new(cx.global());
-                // `defer formatter.deinit()` — handled by Drop.
-                return Err(cx.global().throw_invalid_arguments(format_args!(
-                    "file descriptor must be a valid integer, received: {}",
-                    value.to_fmt(&mut formatter),
-                )));
-            }
-
-            if let Some(tag) = fd.stdio_tag() {
-                match tag {
-                    FdStdio::StdIn => {
-                        if i == 1 || i == 2 {
-                            return Err(cx.global().throw_invalid_arguments(format_args!(
-                                "stdin cannot be used for stdout or stderr"
-                            )));
-                        }
-
-                        *out_stdio = Stdio::Inherit;
-                        return Ok(());
-                    }
-                    FdStdio::StdOut | FdStdio::StdErr => {
-                        if i == 0 {
-                            return Err(cx.global().throw_invalid_arguments(format_args!(
-                                "stdout and stderr cannot be used for stdin"
-                            )));
-                        }
-                        if (i == 1 && tag == FdStdio::StdOut) || (i == 2 && tag == FdStdio::StdErr)
-                        {
-                            *out_stdio = Stdio::Inherit;
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-
-            *out_stdio = Stdio::Fd(fd);
-            return Ok(());
-        } else if let Some(blob) = value.as_class_ref::<webcore::Blob>() {
-            // `as_class_ref` is the safe shared-borrow downcast (centralised
-            // deref proof in `JSValue`); the JS wrapper roots the payload while
-            // `value` is on the stack. `dupe()` only bumps the store refcount.
-            return out_stdio.extract_blob(cx.global(), webcore::blob::Any::Blob(blob.dupe()), i);
-        } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
-            return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);
-        } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
-            return Self::extract_body_value(out_stdio, cx, i, res.get_body_value(), is_sync);
-        }
-
-        if let Some(stream_) = webcore::ReadableStream::from_js(value, cx.global())? {
-            let mut stream = stream_;
-            if let Some(blob) = stream.to_any_blob(cx.global()) {
-                return out_stdio.extract_blob(cx.global(), blob, i);
-            }
-
-            let name: &'static [u8] = match i {
-                0 => b"stdin",
-                1 => b"stdout",
-                2 => b"stderr",
-                _ => {
-                    return Err(cx.global().throw_invalid_arguments(format_args!(
-                        "ReadableStream cannot be used for stdio[{i}] yet"
-                    )));
-                }
-            };
-
-            if is_sync {
-                return Err(cx.global().throw_invalid_arguments(format_args!(
-                    "'{}' ReadableStream cannot be used in sync mode",
-                    bstr::BStr::new(name),
-                )));
-            }
-
-            if stream.is_disturbed(cx.global()) {
-                return Err(cx
-                    .global()
-                    .err(
-                        jsc::ErrorCode::INVALID_STATE,
-                        format_args!(
-                            "'{}' ReadableStream has already been used",
-                            bstr::BStr::new(name),
-                        ),
-                    )
-                    .throw());
-            }
-            *out_stdio = Stdio::ReadableStream(stream);
-            return Ok(());
-        }
-
-        if let Some(array_buffer) = value.as_array_buffer(cx.global()) {
-            // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
-            if array_buffer.byte_slice().is_empty() {
+        match value {
+            StdioValue::Missing => return Ok(()),
+            StdioValue::Ignore => {
                 *out_stdio = Stdio::Ignore;
                 return Ok(());
             }
-
-            if i == 1 || i == 2 {
-                return Err(cx.global().throw_invalid_arguments(format_args!(
-                    "ArrayBufferView cannot be used for stdout/stderr yet"
+            StdioValue::Name(str) => {
+                if str.eq_ascii(b"inherit") {
+                    *out_stdio = Stdio::Inherit;
+                } else if str.eq_ascii(b"ignore") {
+                    *out_stdio = Stdio::Ignore;
+                } else if str.eq_ascii(b"pipe") || str.eq_ascii(b"overlapped") {
+                    *out_stdio = Stdio::Pipe;
+                } else if str.eq_ascii(b"socket-fd") {
+                    if i < 3 {
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
+                            "stdio: 'socket-fd' is only supported at indices >= 3"
+                        )));
+                    }
+                    if is_sync {
+                        // Bun.spawnSync's result has no .stdio, so the caller
+                        // could never receive the fd it's supposed to own.
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
+                            "stdio: 'socket-fd' cannot be used with spawnSync"
+                        )));
+                    }
+                    *out_stdio = Stdio::SocketFd;
+                } else if str.eq_ascii(b"ipc") {
+                    *out_stdio = Stdio::Ipc;
+                } else {
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
+                    "stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null"
                 )));
+                }
+                return Ok(());
             }
+            StdioValue::Fd(value) => {
+                let value = JSValue::js_number(value);
+                // `bun.FD.fromUV(this.toInt32())` inlined here since the
+                // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
+                let fd = Fd::from_uv(value.to_int32());
+                let file_fd = fd.uv();
+                if file_fd < 0 {
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
+                        "file descriptor must be a positive integer"
+                    )));
+                }
 
-            *out_stdio = Stdio::Blob(webcore::blob::Any::from_owned_slice(
-                array_buffer.byte_slice().to_vec(),
-            ));
-            return Ok(());
+                if file_fd >= i32::MAX as _ {
+                    let mut formatter = jsc::console_object::Formatter::new(cx.global());
+                    // `defer formatter.deinit()` — handled by Drop.
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
+                        "file descriptor must be a valid integer, received: {}",
+                        value.to_fmt(&mut formatter),
+                    )));
+                }
+
+                if let Some(tag) = fd.stdio_tag() {
+                    match tag {
+                        FdStdio::StdIn => {
+                            if i == 1 || i == 2 {
+                                return Err(cx.global().throw_invalid_arguments(format_args!(
+                                    "stdin cannot be used for stdout or stderr"
+                                )));
+                            }
+
+                            *out_stdio = Stdio::Inherit;
+                            return Ok(());
+                        }
+                        FdStdio::StdOut | FdStdio::StdErr => {
+                            if i == 0 {
+                                return Err(cx.global().throw_invalid_arguments(format_args!(
+                                    "stdout and stderr cannot be used for stdin"
+                                )));
+                            }
+                            if (i == 1 && tag == FdStdio::StdOut)
+                                || (i == 2 && tag == FdStdio::StdErr)
+                            {
+                                *out_stdio = Stdio::Inherit;
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+
+                *out_stdio = Stdio::Fd(fd);
+                return Ok(());
+            }
+            StdioValue::Blob(blob) => {
+                // `dupe()` only bumps the store refcount.
+                return out_stdio.extract_blob(
+                    cx.global(),
+                    webcore::blob::Any::Blob(blob.dupe()),
+                    i,
+                );
+            }
+            StdioValue::Request(req) => {
+                return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);
+            }
+            StdioValue::Response(res) => {
+                return Self::extract_body_value(out_stdio, cx, i, res.get_body_value(), is_sync);
+            }
+            StdioValue::Stream(value) => {
+                if let Some(stream_) = webcore::ReadableStream::from_js(value.to_js(), cx.global())?
+                {
+                    let mut stream = stream_;
+                    if let Some(blob) = stream.to_any_blob(cx.global()) {
+                        return out_stdio.extract_blob(cx.global(), blob, i);
+                    }
+
+                    let name: &'static [u8] = match i {
+                        0 => b"stdin",
+                        1 => b"stdout",
+                        2 => b"stderr",
+                        _ => {
+                            return Err(cx.global().throw_invalid_arguments(format_args!(
+                                "ReadableStream cannot be used for stdio[{i}] yet"
+                            )));
+                        }
+                    };
+
+                    if is_sync {
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
+                            "'{}' ReadableStream cannot be used in sync mode",
+                            bstr::BStr::new(name),
+                        )));
+                    }
+
+                    if stream.is_disturbed(cx.global()) {
+                        return Err(cx
+                            .global()
+                            .err(
+                                jsc::ErrorCode::INVALID_STATE,
+                                format_args!(
+                                    "'{}' ReadableStream has already been used",
+                                    bstr::BStr::new(name),
+                                ),
+                            )
+                            .throw());
+                    }
+                    *out_stdio = Stdio::ReadableStream(stream);
+                    return Ok(());
+                }
+            }
+            StdioValue::Bytes(value) => {
+                if let Some(array_buffer) = value.to_js().as_array_buffer(cx.global()) {
+                    // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
+                    if array_buffer.byte_slice().is_empty() {
+                        *out_stdio = Stdio::Ignore;
+                        return Ok(());
+                    }
+
+                    if i == 1 || i == 2 {
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
+                            "ArrayBufferView cannot be used for stdout/stderr yet"
+                        )));
+                    }
+
+                    *out_stdio = Stdio::Blob(webcore::blob::Any::from_owned_slice(
+                        array_buffer.byte_slice().to_vec(),
+                    ));
+                    return Ok(());
+                }
+            }
+            StdioValue::Other => {}
         }
 
         Err(cx.global().throw_invalid_arguments(format_args!(

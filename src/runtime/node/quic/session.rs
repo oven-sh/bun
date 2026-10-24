@@ -5,13 +5,15 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 use std::collections::VecDeque;
 
-use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, JSGlobalObject, JSValue, JsCell, JsClass as _, JsRef, JsResult, StringJsc, Strong,
 };
 
 use bun_lsquic_sys as lsquic;
+
+use crate::generated_bindgen::quic::{CloseOptions, EphemeralKey, SessionOptions};
 
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
@@ -615,30 +617,25 @@ impl QuicSession {
     pub(super) fn handle(&self) -> JSValue {
         self.this_value.get().get()
     }
-    pub(super) fn apply_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
-        if !options.is_object() {
-            return Ok(());
-        }
-        if let Some(v) = options
-            .get(global, "datagramDropPolicy")?
-            .filter(|v| v.is_string())
-        {
+    pub(super) fn apply_options(
+        &self,
+        global: &JSGlobalObject,
+        options: SessionOptions<'_>,
+    ) -> JsResult<()> {
+        if let Some(v) = options.datagram_drop_policy(global)? {
             self.datagram_drop_newest
-                .set(bun_core::String::from_js(v, global)?.to_owned_slice() == b"drop-newest");
+                .set(v.to_owned_slice() == b"drop-newest");
         }
-        if let Some(v) = options.get(global, "qlog")? {
-            self.qlog_enabled.set(v.to_boolean());
+        if let Some(v) = options.qlog(global)? {
+            self.qlog_enabled.set(v);
         }
-        if let Some(v) = options.get(global, "verifyPeer")?.filter(|v| v.is_string()) {
+        if let Some(v) = options.verify_peer(global)? {
             self.reject_unverified_peer
-                .set(bun_core::String::from_js(v, global)?.to_owned_slice() != b"manual");
+                .set(v.to_owned_slice() != b"manual");
         }
-        if let Some(app) = options
-            .get(global, "application")?
-            .filter(|v| v.is_object())
-        {
+        if let Some(app) = options.application(global)? {
             self.application_options_js
-                .set(Some(Strong::create(app, global)));
+                .set(Some(Strong::create(app.object(), global)));
         }
         Ok(())
     }
@@ -1868,26 +1865,19 @@ impl QuicSession {
     fn parse_close_options(
         &self,
         global: &JSGlobalObject,
-        options: JSValue,
+        options: Option<CloseOptions<'_>>,
     ) -> JsResult<(bool, u64, Vec<u8>)> {
         let mut app = false;
         let mut code = 0u64;
         let mut reason = Vec::new();
-        if options.is_object() {
+        if let Some(options) = options {
             app = options
-                .get(global, "type")?
-                .map(|v| {
-                    bun_core::String::from_js(v, global)
-                        .map(|s| s.to_owned_slice() == b"application")
-                })
-                .transpose()?
-                .unwrap_or(false);
-            code = super::endpoint::read_u64_option(global, options, "code")?.unwrap_or(0);
+                .r#type(global)?
+                .is_some_and(|s| s.to_owned_slice() == b"application");
+            code = super::endpoint::read_u64_option(options.code(global)?).unwrap_or(0);
             reason = options
-                .get(global, "reason")?
-                .filter(|v| v.is_string())
-                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
-                .transpose()?
+                .reason(global)?
+                .map(|s| s.to_owned_slice())
                 .unwrap_or_default();
             self.self_close.with_mut(|s| {
                 *s = Some((app, code, reason.clone()));
@@ -1945,8 +1935,12 @@ impl QuicSession {
         }
     }
 
-    fn close_with_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
-        let (app, code, reason) = self.parse_close_options(global, options)?;
+    fn close_with_options(
+        &self,
+        global: &JSGlobalObject,
+        options: CloseOptions<'_>,
+    ) -> JsResult<()> {
+        let (app, code, reason) = self.parse_close_options(global, Some(options))?;
         self.apply_close(app, code, &reason);
         Ok(())
     }
@@ -1986,14 +1980,14 @@ impl QuicSession {
     pub(crate) fn graceful_close(
         &self,
         cx: &mut JsScope<'_>,
-        options: JsLocal<'_>,
+        options: Option<CloseOptions<'_>>,
     ) -> JsResult<()> {
         let global = cx.global();
         if !self.destroyed.get() {
             // Parse before the latch: a throw here must leave the session
             // untouched, not marked gracefully-closing with no close sent.
             // All three branches below want the same values.
-            let (app, code, reason) = self.parse_close_options(global, options.to_js())?;
+            let (app, code, reason) = self.parse_close_options(global, options)?;
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
                 if self.is_server.get() && !self.close_reported.get() {
@@ -2016,15 +2010,18 @@ impl QuicSession {
         }
         Ok(())
     }
-    pub(crate) fn destroy(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn destroy(
+        &self,
+        cx: &mut JsScope<'_>,
+        options: Option<CloseOptions<'_>>,
+    ) -> JsResult<()> {
         let global = cx.global();
         if self.destroyed.get() {
             return Ok(());
         }
         let mut parse_error = None;
         if !self.close_reported.get() && !self.conn.get().is_null() {
-            let options = options.to_js();
-            if options.is_object() {
+            if let Some(options) = options {
                 // Node's Destroy with close options. JS has already latched
                 // `inner.destroying` and finished its half before reaching
                 // here, so teardown() MUST run; a parse failure is taken off
@@ -2062,16 +2059,14 @@ impl QuicSession {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        direction: JsLocal<'_>,
-        body: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        direction: Option<f64>,
+        body: Option<JsLocal<'_, BufferSource>>,
+    ) -> JsResult<Option<JSValue>> {
         let global = cx.global();
         if self.destroyed.get() || self.conn.get().is_null() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         }
-        let direction = direction.to_js();
-        let body = body.to_js();
-        let unidirectional = direction.is_number() && direction.as_number() == 1.0;
+        let unidirectional = direction == Some(1.0);
         let (key, qs, handle) = self.create_stream(global, this_value.to_js(), null_mut())?;
         if unidirectional {
             self.pending_local_uni.with_mut(|q| q.push_back(key));
@@ -2079,7 +2074,7 @@ impl QuicSession {
             self.pending_local_bidi.with_mut(|q| q.push_back(key));
         }
         self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
-        if let Some(buf) = body.as_array_buffer(global) {
+        if let Some(buf) = body.map(|body| body.as_array_buffer(global)) {
             // SAFETY: `qs` was just created.
             unsafe {
                 (*qs).outbound.with_mut(|o| {
@@ -2102,20 +2097,19 @@ impl QuicSession {
             }
         }
         self.schedule_process();
-        Ok(handle)
+        Ok(Some(handle))
     }
     pub(crate) fn send_datagram(
         &self,
         cx: &mut JsScope<'_>,
-        data: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        data: Option<JsLocal<'_, BufferSource>>,
+    ) -> JsResult<u64> {
         let global = cx.global();
         if self.destroyed.get() || self.conn.get().is_null() {
-            return JSValue::from_uint64_no_truncate(global, 0);
+            return Ok(0);
         }
-        let data = data.to_js();
-        let Some(buf) = data.as_array_buffer(global) else {
-            return JSValue::from_uint64_no_truncate(global, 0);
+        let Some(buf) = data.map(|data| data.as_array_buffer(global)) else {
+            return Ok(0);
         };
         // HTTP/3: the peer must have advertised SETTINGS_H3_DATAGRAM
         // (RFC 9297 §2.1.1); otherwise not sent (0n).
@@ -2123,13 +2117,13 @@ impl QuicSession {
             .endpoint_ref()
             .is_some_and(|ep| ep.is_http(self.is_server.get()));
         if is_http && self.conn().and_then(|c| c.peer_h3_datagram()) == Some(false) {
-            return JSValue::from_uint64_no_truncate(global, 0);
+            return Ok(0);
         }
         // Oversized for the negotiated budget: not sent (Node returns 0n).
         // SAFETY: state buffer is live.
         let max_size = self.with_state(|s| s.max_datagram_size);
         if max_size == 0 || buf.byte_slice().len() > max_size as usize {
-            return JSValue::from_uint64_no_truncate(global, 0);
+            return Ok(0);
         }
         // Copy before anything below can run user JS: the drop-oldest branch
         // invokes `ondatagramstatus`, which may detach or transfer
@@ -2147,14 +2141,14 @@ impl QuicSession {
                 self.report_datagram_abandoned(global, id)?;
                 // SAFETY: as above.
                 unsafe { (&raw mut (*self.state_mut()).last_datagram_id).write_unaligned(id) };
-                return JSValue::from_uint64_no_truncate(global, id);
+                return Ok(id);
             }
             if let Some((dropped_id, _)) = self.datagram_queue.with_mut(VecDeque::pop_front) {
                 // Runs the user's `ondatagramstatus`, which can destroy this
                 // session or close the conn before we get back here.
                 self.report_datagram_abandoned(global, dropped_id)?;
                 if self.destroyed.get() || self.conn.get().is_null() {
-                    return JSValue::from_uint64_no_truncate(global, 0);
+                    return Ok(0);
                 }
             }
         }
@@ -2166,7 +2160,7 @@ impl QuicSession {
             c.want_datagram_write(true);
         }
         self.schedule_process();
-        JSValue::from_uint64_no_truncate(global, id)
+        Ok(id)
     }
     /// Runs inside `sendDatagram`: what building the status left pending is
     /// thrown from there.
@@ -2193,10 +2187,12 @@ impl QuicSession {
     pub(crate) fn update_key(&self) -> bool {
         false
     }
-    pub(crate) fn get_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
+    pub(crate) fn get_certificate<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, Option<JsLocal<'a, BufferSource>>> {
         if let Some(der) = self.conn_ssl().and_then(tls::local_certificate_der) {
-            return ArrayBuffer::create_buffer(global, der.as_slice());
+            return heap.create_buffer(der.as_slice()).map(Some);
         }
         if let Some(der) = self
             .hsk_snapshot
@@ -2204,21 +2200,23 @@ impl QuicSession {
             .as_ref()
             .and_then(|s| s.local_cert_der.clone())
         {
-            return ArrayBuffer::create_buffer(global, &der);
+            return heap.create_buffer(&der).map(Some);
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(None)
     }
-    pub(crate) fn get_peer_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
+    pub(crate) fn get_peer_certificate<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, Option<JsLocal<'a, BufferSource>>> {
         if let Some(conn) = self.conn() {
             // lsquic returns a STACK_OF(X509)* the callee frees
             // (sk_X509_pop_free inside leaf_certificate_der).
             if let Some(der) = tls::leaf_certificate_der(conn.server_cert_chain()) {
-                return ArrayBuffer::create_buffer(global, &der);
+                return heap.create_buffer(&der).map(Some);
             }
             if let Some(ssl) = self.conn_ssl() {
                 if let Some(der) = tls::peer_certificate_der(ssl) {
-                    return ArrayBuffer::create_buffer(global, &der);
+                    return heap.create_buffer(&der).map(Some);
                 }
             }
         }
@@ -2228,34 +2226,20 @@ impl QuicSession {
             .as_ref()
             .and_then(|s| s.peer_cert_der.clone())
         {
-            return ArrayBuffer::create_buffer(global, &der);
+            return heap.create_buffer(&der).map(Some);
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(None)
     }
-    pub(crate) fn get_ephemeral_key(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        let Some((kind, name, bits)) = self
+    pub(crate) fn get_ephemeral_key(&self) -> Option<EphemeralKey> {
+        let (kind, name, bits) = self
             .conn_ssl()
             .and_then(tls::ephemeral_key_info)
-            .or_else(|| self.hsk_snapshot.get().as_ref().and_then(|s| s.ephemeral))
-        else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        let obj = JSValue::create_empty_object(global, 3);
-        obj.put(
-            global,
-            b"type",
-            bun_core::String::static_(kind.as_bytes()).to_js(global)?,
-        );
-        if let Some(name) = name {
-            obj.put(
-                global,
-                b"name",
-                bun_core::String::static_(name.as_bytes()).to_js(global)?,
-            );
-        }
-        obj.put(global, b"size", JSValue::js_number(f64::from(bits)));
-        Ok(obj)
+            .or_else(|| self.hsk_snapshot.get().as_ref().and_then(|s| s.ephemeral))?;
+        Some(EphemeralKey {
+            r#type: bun_core::String::static_(kind.as_bytes()),
+            name: name.map(|name| bun_core::String::static_(name.as_bytes())),
+            size: bits,
+        })
     }
     /// The lsquic conn while it is attached. Non-null between binding
     /// (create/connect) and `on_conn_closed` clearing it, so it is live for
@@ -2366,22 +2350,25 @@ fn make_application_error(global: &JSGlobalObject, code: u64) -> JsResult<JSValu
 }
 
 impl QuicSession {
-    pub(crate) fn local_transport_params(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn local_transport_params(&self, cx: &mut JsScope<'_>) -> JsResult<Option<JSValue>> {
         let global = cx.global();
         let Some(ep) = self.endpoint_ref() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         };
         let tp = if self.is_server.get() {
             ep.server_local_tp.get()
         } else {
             ep.client_local_tp.get()
         };
-        Self::transport_params_to_js(global, tp)
+        Self::transport_params_to_js(global, tp).map(Some)
     }
-    pub(crate) fn remote_transport_params(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn remote_transport_params(
+        &self,
+        cx: &mut JsScope<'_>,
+    ) -> JsResult<Option<JSValue>> {
         let global = cx.global();
         if let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) {
-            return Self::transport_params_to_js(global, &tp);
+            return Self::transport_params_to_js(global, &tp).map(Some);
         }
         match self
             .hsk_snapshot
@@ -2389,8 +2376,8 @@ impl QuicSession {
             .as_ref()
             .and_then(|s| s.peer_transport_params.as_ref())
         {
-            Some(tp) => Self::transport_params_to_js(global, tp),
-            None => Ok(JSValue::UNDEFINED),
+            Some(tp) => Self::transport_params_to_js(global, tp).map(Some),
+            None => Ok(None),
         }
     }
 

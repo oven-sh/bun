@@ -1,8 +1,6 @@
-use alloc::borrow::Cow;
 use core::ffi::c_uint;
 
-use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JSValue};
+use crate::JSGlobalObject;
 #[cfg(debug_assertions)]
 use bun_core::ZStr;
 
@@ -46,56 +44,6 @@ impl JSGlobalObject {
         let mut column: c_uint = 0;
         JSC__JSGlobalObject__getCallerSrcLoc(self, &mut str, &mut line, &mut column);
         CallerSrcLoc { str, line, column }
-    }
-}
-
-/// This is an advanced iterator struct which is used by various APIs. In
-/// Node.fs, `will_be_async` is set to true which allows string/path APIs to
-/// know if they have to do threadsafe clones.
-pub struct ArgumentsSlice<'a> {
-    /// Backing storage for `remaining()`; `Cow` so an owning caller can pass `Owned`.
-    remaining_buf: Cow<'a, [JSValue]>,
-    /// Cursor into `remaining_buf`; advances on `eat()`.
-    remaining_start: usize,
-    pub vm: &'a VirtualMachine,
-    pub will_be_async: bool,
-    /// An errno a converter met under `will_be_async`; the binding rejects its promise with it.
-    pub deferred_error: Option<Box<bun_sys::SystemError>>,
-}
-
-impl<'a> ArgumentsSlice<'a> {
-    /// View of arguments not yet consumed by `eat()`.
-    #[inline]
-    pub(crate) fn remaining(&self) -> &[JSValue] {
-        &self.remaining_buf[self.remaining_start..]
-    }
-
-    pub fn init(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
-        ArgumentsSlice {
-            remaining_buf: Cow::Borrowed(slice),
-            remaining_start: 0,
-            vm,
-            will_be_async: false,
-            deferred_error: None,
-        }
-    }
-
-    pub fn eat(&mut self) {
-        if self.remaining().is_empty() {
-            return;
-        }
-        self.remaining_start += 1;
-    }
-
-    /// Peek the next argument without eating it
-    pub fn next(&mut self) -> Option<JSValue> {
-        self.remaining().first().copied()
-    }
-
-    pub fn next_eat(&mut self) -> Option<JSValue> {
-        let v = self.remaining().first().copied()?;
-        self.eat();
-        Some(v)
     }
 }
 

@@ -4,8 +4,8 @@ use core::sync::atomic::Ordering;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
-    JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsClass as _,
-    JsResult, MarkedArgumentBuffer,
+    JSArray, JSGlobalObject, JSObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
+    JsClass as _, JsResult, MarkedArgumentBuffer,
 };
 
 use super::env_map::EnvMap;
@@ -13,7 +13,9 @@ use super::interpreter::ShellArgs;
 use super::shell_body::shell_cmd_from_js;
 use super::{EnvStr, Interpreter};
 
-pub(crate) use crate::generated_bindgen::parsed_shell_script::js_ParsedShellScript as js;
+pub(crate) use crate::generated_bindgen::parsed_shell_script::{
+    ShellArrayLike, js_ParsedShellScript as js,
+};
 
 pub(crate) struct ParsedShellScript {
     pub args: JsCell<Option<Box<ShellArgs>>>,
@@ -74,15 +76,11 @@ impl ParsedShellScript {
         self.quiet.set(quiet);
     }
 
-    pub(crate) fn set_env(&self, cx: &mut JsScope<'_>, env: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn set_env(&self, cx: &mut JsScope<'_>, env: JsLocal<'_, JSObject>) -> JsResult<()> {
         let global = cx.global();
-        let Some(value1) = env.to_js().get_object() else {
-            return Err(global.throw_invalid_arguments(format_args!("env must be an object")));
-        };
-
         let object_iter = JSPropertyIterator::init(
             global,
-            value1,
+            env,
             JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,
@@ -152,18 +150,18 @@ fn env_bytes(global: &JSGlobalObject, name: &str, str: &BunString) -> JsResult<B
 
 pub(crate) fn create_parsed_shell_script<'a>(
     cx: &mut JsScope<'a>,
-    strings: JsLocal<'a>,
-    template_args: JsLocal<'a>,
+    strings: ShellArrayLike<'a>,
+    template_args: JsLocal<'a, JSArray>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     MarkedArgumentBuffer::new(|buf| {
-        create_parsed_shell_script_impl(global, strings.to_js(), template_args.to_js(), buf)
+        create_parsed_shell_script_impl(global, strings, template_args.to_js(), buf)
     })
 }
 
 fn create_parsed_shell_script_impl(
     global: &JSGlobalObject,
-    string_args: JSValue,
+    string_args: ShellArrayLike<'_>,
     template_args_js: JSValue,
     marked_argument_buffer: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {

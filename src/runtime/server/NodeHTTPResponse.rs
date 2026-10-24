@@ -14,10 +14,10 @@ use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
-use crate::generated_bindgen::node_http_response::js_NodeHTTPResponse as js;
+use crate::generated_bindgen::node_http_response::{ChunkEncoding, js_NodeHTTPResponse as js};
 use crate::node::{Encoding, StringOrBuffer};
 use crate::server::jsc::{
-    self, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
+    self, ErrorCode, JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
 use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
@@ -560,8 +560,8 @@ impl NodeHTTPResponse {
     pub(crate) fn upgrade_for_ws_package(
         &self,
         global: &JSGlobalObject,
-        websocket: JSValue,
-        handlers: JSValue,
+        websocket: JsLocal<'_>,
+        handlers: Option<JsLocal<'_, JSObject>>,
         handshake: &[u8],
         max_payload_length: u32,
         auto_pong: bool,
@@ -875,16 +875,12 @@ impl NodeHTTPResponse {
         cx: &mut JsScope<'_>,
         status_code: i32,
         status_message: Option<&[u8]>,
-        headers: JsLocal<'_>,
+        headers: Option<JsLocal<'_, JSObject>>,
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let headers_object_value: JSValue = if headers.to_js() != JSValue::NULL {
-            headers.to_js()
-        } else {
-            JSValue::UNDEFINED
-        };
+        let headers_object_value: JSValue = headers.map_or(JSValue::UNDEFINED, JsLocal::to_js);
         let status_message_bytes: &[u8] = status_message.unwrap_or_default();
 
         if self.is_requested_completed_or_ended() {
@@ -1003,9 +999,9 @@ impl NodeHTTPResponse {
         cx: &mut JsScope<'_>,
         status_code: i32,
         status_message: Option<&[u8]>,
-        headers: JsLocal<'_>,
+        headers: Option<JsLocal<'_, JSObject>>,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: JsLocal<'_>,
+        encoding: Option<JsLocal<'_>>,
         strict_content_length: Option<f64>,
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
@@ -1047,7 +1043,7 @@ impl NodeHTTPResponse {
                     this_value.to_js(),
                     cx.global(),
                     chunk,
-                    encoding.to_js(),
+                    encoding,
                     JSValue::UNDEFINED,
                     strict_content_length,
                 )
@@ -1126,18 +1122,15 @@ impl NodeHTTPResponse {
         &self,
         cx: &mut JsScope<'_>,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: JsLocal<'_>,
+        encoding: Option<bun_core::String>,
     ) -> JsResult<()> {
         let global_object = cx.global();
         let Some(chunk) = chunk else {
             return Ok(());
         };
-        let encoding_value = encoding.to_js();
-        let encoding = if encoding_value.is_string() {
-            Encoding::from_js(encoding_value, global_object)?.unwrap_or(Encoding::Utf8)
-        } else {
-            Encoding::Utf8
-        };
+        let encoding = encoding
+            .and_then(|encoding| Encoding::from_bun_string(&encoding))
+            .unwrap_or(Encoding::Utf8);
 
         let string_or_buffer =
             StringOrBuffer::from_string_or_js_bytes(global_object, chunk, encoding);
@@ -1402,7 +1395,7 @@ impl NodeHTTPResponse {
 pub(crate) fn on_resolve(
     cx: &mut JsScope<'_>,
     _: JsLocal<'_>,
-    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_, JSObject>),
 ) {
     scoped_log!(NodeHTTPResponse, "onResolve");
     let global_object = cx.global();
@@ -1443,7 +1436,7 @@ pub(crate) fn on_resolve(
 pub(crate) fn on_reject(
     cx: &mut JsScope<'_>,
     err: JsLocal<'_>,
-    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_, JSObject>),
 ) {
     let global_object = cx.global();
     // `promise` non-empty is the ownership token for the server-handler ref;
@@ -1480,7 +1473,7 @@ pub(crate) fn on_reject(
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.to_js(), true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
     if had_promise {
         this.deref();
     }
@@ -1775,16 +1768,17 @@ impl NodeHTTPResponse {
         this_value: JSValue,
         global_object: &JSGlobalObject,
         chunk: Option<StringOrJsBytes<'_>>,
-        mut encoding_value: JSValue,
+        encoding: Option<JsLocal<'_>>,
         callback: JSValue,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
-        let callback_value: JSValue =
-            if !encoding_value.is_undefined_or_null() && encoding_value.is_callable() {
-                core::mem::replace(&mut encoding_value, JSValue::UNDEFINED)
-            } else {
-                callback
-            };
+        let encoding_value = encoding
+            .map(|encoding| ChunkEncoding::from_local(global_object, encoding))
+            .transpose()?;
+        let callback_value: JSValue = match encoding_value {
+            Some(ChunkEncoding::Callback(callback)) => callback.to_js(),
+            _ => callback,
+        };
 
         let strict_content_length: Option<u64> =
             strict_content_length.map(|length| (length as i64).max(0) as u64);
@@ -1796,31 +1790,26 @@ impl NodeHTTPResponse {
         let mut string_or_buffer = if let Some(chunk) = chunk {
             let mut encoding = Encoding::Utf8;
             // Like Writable.prototype.write: a falsy encoding means the default.
-            if !encoding_value.is_falsey() {
-                let known = if encoding_value.is_string() {
-                    Encoding::from_js(encoding_value, global_object)?
-                } else {
-                    None
-                };
-                encoding = match known {
-                    Some(e) => e,
-                    None => {
-                        let name = if encoding_value.is_string() {
-                            encoding_value.to_bun_string(global_object)?
-                        } else {
-                            JSGlobalObject::inspect_for_error_message(
-                                global_object,
-                                encoding_value,
-                            )?
-                        };
-                        return Err(global_object
-                            .err(
-                                ErrorCode::UNKNOWN_ENCODING,
-                                format_args!("Unknown encoding: {}", name),
-                            )
-                            .throw());
+            let unknown = match encoding_value {
+                None | Some(ChunkEncoding::Callback(_)) => None,
+                Some(ChunkEncoding::Name(name)) => match Encoding::from_bun_string(&name) {
+                    Some(known) => {
+                        encoding = known;
+                        None
                     }
-                };
+                    None => Some(name),
+                },
+                Some(ChunkEncoding::Other(value)) => Some(
+                    JSGlobalObject::inspect_for_error_message(global_object, value)?,
+                ),
+            };
+            if let Some(name) = unknown {
+                return Err(global_object
+                    .err(
+                        ErrorCode::UNKNOWN_ENCODING,
+                        format_args!("Unknown encoding: {}", name),
+                    )
+                    .throw());
             }
 
             StringOrBuffer::from_string_or_js_bytes(global_object, chunk, encoding)
@@ -2046,16 +2035,14 @@ impl NodeHTTPResponse {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        value: JsLocal<'_>,
+        value: Option<JsLocal<'_>>,
     ) {
-        let (this_value, global_object, value) = (this_value.to_js(), cx.global(), value.to_js());
+        let (this_value, global_object) = (this_value.to_js(), cx.global());
         // Settable until the response has finished, including while end()'s bytes drain.
         let flags = self.flags.get();
-        if flags.intersects(Flags::REQUEST_HAS_COMPLETED | Flags::SOCKET_CLOSED)
-            || value.is_undefined_or_null()
+        if let Some(value) = value
+            && !flags.intersects(Flags::REQUEST_HAS_COMPLETED | Flags::SOCKET_CLOSED)
         {
-            js::on_writable_set_cached(this_value, global_object, JSValue::ZERO);
-        } else {
             js::on_writable_set_cached(
                 this_value,
                 global_object,
@@ -2067,6 +2054,8 @@ impl NodeHTTPResponse {
                     raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
                 }
             }
+        } else {
+            js::on_writable_set_cached(this_value, global_object, JSValue::ZERO);
         }
     }
 
@@ -2092,22 +2081,24 @@ impl NodeHTTPResponse {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        value: JsLocal<'_>,
+        value: Option<JsLocal<'_>>,
     ) {
-        let (this_value, global_object, value) = (this_value.to_js(), cx.global(), value.to_js());
+        let (this_value, global_object) = (this_value.to_js(), cx.global());
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return;
         }
 
-        if self.is_requested_completed_or_ended() || value.is_undefined_or_null() {
-            js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
-        } else {
+        if let Some(value) = value
+            && !self.is_requested_completed_or_ended()
+        {
             js::on_aborted_set_cached(
                 this_value,
                 global_object,
                 value.with_async_context_if_needed(global_object),
             );
+        } else {
+            js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         }
     }
 
@@ -2144,25 +2135,25 @@ impl NodeHTTPResponse {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        value: JsLocal<'_>,
+        value: Option<JsLocal<'_>>,
     ) {
-        let (this_value, global_object, value) = (this_value.to_js(), cx.global(), value.to_js());
+        let (this_value, global_object) = (this_value.to_js(), cx.global());
         // Only `.pending` accepts a callback. `.done` means either uSockets delivered last=true or JS
         // previously cleared `ondata` (which already called clearOnData()); either way, there is no
         // more body to read, so don't re-register with uSockets or churn refs.
         let flags = self.flags.get();
-        if value.is_undefined_or_null()
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || self.body_read_state.get() != BodyReadState::Pending
-            || flags.contains(Flags::UPGRADED)
-        {
+        let Some(value) = value.filter(|_| {
+            !flags.contains(Flags::SOCKET_CLOSED)
+                && self.body_read_state.get() == BodyReadState::Pending
+                && !flags.contains(Flags::UPGRADED)
+        }) else {
             js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             self.armed_this_value.set(JSValue::ZERO);
             if self.leave_pending(BodyReadState::Detached) {
                 self.mark_request_as_done_if_necessary();
             }
             return;
-        }
+        };
 
         js::on_data_set_cached(
             this_value,
@@ -2182,7 +2173,7 @@ impl NodeHTTPResponse {
         &self,
         cx: &mut JsScope<'_>,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: JsLocal<'_>,
+        encoding: Option<JsLocal<'_>>,
         callback: Option<JsLocal<'_, Callable>>,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
@@ -2190,7 +2181,7 @@ impl NodeHTTPResponse {
             JSValue::ZERO,
             cx.global(),
             chunk,
-            encoding.to_js(),
+            encoding,
             callback.map_or(JSValue::UNDEFINED, JsLocal::to_js),
             strict_content_length,
         )
@@ -2260,7 +2251,7 @@ impl NodeHTTPResponse {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: JsLocal<'_>,
+        encoding: Option<JsLocal<'_>>,
         callback: Option<JsLocal<'_, Callable>>,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
@@ -2270,7 +2261,7 @@ impl NodeHTTPResponse {
             this_value.to_js(),
             cx.global(),
             chunk,
-            encoding.to_js(),
+            encoding,
             callback.map_or(JSValue::UNDEFINED, JsLocal::to_js),
             strict_content_length,
         )
@@ -2284,32 +2275,38 @@ impl NodeHTTPResponse {
     pub(crate) fn take_raw_headers(
         &self,
         cx: &mut JsScope<'_>,
-        headers: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        headers: Option<JsLocal<'_, JSObject>>,
+    ) -> JsResult<Option<JSValue>> {
         let global_object = cx.global();
         let section = self.raw_request_headers.replace(Vec::new());
         if section.is_empty() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         }
         bun_jsc::call_zero_is_throw(global_object, || {
             Bun__NodeHTTP__buildRawHeadersArray(
                 global_object,
                 section.as_ptr(),
                 section.len(),
-                headers.to_js(),
+                headers.map_or(JSValue::UNDEFINED, JsLocal::to_js),
             )
         })
+        .map(Some)
     }
 
     /// `handle.headersObject()` — `req.headers` from this request's captured
     /// header section, which it leaves to takeRawHeaders, or undefined.
-    pub(crate) fn headers_object(&self, cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn headers_object(&self, cx: &mut JsScope<'_>) -> Option<JSValue> {
         let global_object = cx.global();
         let section = self.raw_request_headers.get();
         if section.is_empty() {
-            return JSValue::UNDEFINED;
+            return None;
         }
-        Bun__NodeHTTP__buildHeadersObject(global_object, section.as_ptr(), section.len())
+        Some(Bun__NodeHTTP__buildHeadersObject(
+            global_object,
+            section.as_ptr(),
+            section.len(),
+        ))
+        .filter(|headers| !headers.is_undefined())
     }
 
     /// `handle.takeRequestTrailers()` — this request's captured trailer section
@@ -2318,11 +2315,11 @@ impl NodeHTTPResponse {
         &self,
         cx: &mut JsScope<'_>,
         use_insecure_http_parser: bool,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         let global_object = cx.global();
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         }
         // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
         // the wire; parse them with the same leniency so they surface on req.trailers.
@@ -2334,6 +2331,7 @@ impl NodeHTTPResponse {
                 use_insecure_http_parser,
             )
         })
+        .map(|trailers| Some(trailers).filter(|trailers| !trailers.is_undefined()))
     }
 
     pub(crate) fn get_bytes_written(&self) -> usize {

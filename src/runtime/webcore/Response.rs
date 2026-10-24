@@ -2,13 +2,12 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{AnyValue, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
-    BuiltinName, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef, JsResult,
-    StringJsc as _,
+    HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef, JsResult, StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
@@ -17,7 +16,7 @@ use bun_http_types::Method::Method;
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
 use super::{FetchHeaders, ReadableStream, Request};
 
-use super::blob::Blob;
+use crate::api::js_bundler::BuildArtifact;
 use bun_ptr::weak_ptr::WeakPtrData;
 
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
@@ -66,7 +65,7 @@ impl HeadersRef {
     #[inline]
     pub(crate) fn create_from_js(
         global: &JSGlobalObject,
-        value: JSValue,
+        value: impl AnyValue,
     ) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
@@ -159,7 +158,10 @@ impl BodyAbortListener {
     }
 }
 
-use crate::generated_bindgen::response::js_Response as js;
+use crate::generated_bindgen::response::{
+    BodyInit, HeadersInit, JsonValue, ResponseInit, ResponseInitArgument, ResponseInitOrStatus,
+    ResponseStatus, js_Response as js,
+};
 
 #[inline]
 pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
@@ -829,10 +831,13 @@ impl Response {
         self.js_ref.with_mut(|r| r.finalize());
     }
 
-    pub(crate) fn construct_json(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    pub(crate) fn construct_json(
+        cx: &mut JsScope<'_>,
+        data: Option<JsonValue<'_>>,
+        init: ResponseInitOrStatus<'_>,
+    ) -> JsResult<JSValue> {
         let global_this = cx.global();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        let args = JsLocal::to_js_slice(args);
 
         // `Init`'s field drop glue releases its refs on `?`. `Body` has NO `Drop` and its
         // `WTFStringImpl` arm is a raw `*mut` (no drop glue), so wrap the
@@ -850,24 +855,23 @@ impl Response {
             |r| r.body.get().reset(),
         );
 
-        if let Some(&json_value) = args.first() {
-            // Validate top-level values that are not JSON serializable (Node.js compatibility)
-            if json_value.is_undefined()
-                || json_value.is_symbol()
-                || json_value.js_type() == bun_jsc::JSType::JSFunction
-            {
-                let err = global_this
-                    .create_type_error_instance(format_args!("Value is not JSON serializable"));
-                return Err(global_this.throw_value(err));
-            }
-
-            // BigInt has a different error message to match Node.js exactly
-            if json_value.is_big_int() {
-                let err = global_this.create_type_error_instance(format_args!(
-                    "Do not know how to serialize a BigInt"
-                ));
-                return Err(global_this.throw_value(err));
-            }
+        if let Some(data) = data {
+            let json_value = match data {
+                // Validate top-level values that are not JSON serializable (Node.js compatibility)
+                JsonValue::Undefined | JsonValue::Symbol(_) | JsonValue::Function(_) => {
+                    let err = global_this
+                        .create_type_error_instance(format_args!("Value is not JSON serializable"));
+                    return Err(global_this.throw_value(err));
+                }
+                // BigInt has a different error message to match Node.js exactly
+                JsonValue::BigInt(_) => {
+                    let err = global_this.create_type_error_instance(format_args!(
+                        "Do not know how to serialize a BigInt"
+                    ));
+                    return Err(global_this.throw_value(err));
+                }
+                JsonValue::Value(value) => value,
+            };
 
             // Use jsonStringifyFast which passes undefined for the space parameter,
             // triggering JSC's FastStringifier optimization. This is significantly faster
@@ -882,18 +886,16 @@ impl Response {
             }
         }
 
-        if let Some(&arg_init) = args.get(1) {
-            if arg_init.is_undefined_or_null() {
-                // no-op
-            } else if arg_init.is_number() {
+        match init {
+            ResponseInitOrStatus::Missing | ResponseInitOrStatus::Other => {}
+            ResponseInitOrStatus::Status(status) => {
                 response.init.with_mut(|i| {
                     i.status_code =
-                        u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
+                        u16::try_from(0.max(status as i32).min(i32::from(u16::MAX))).unwrap();
                 });
-            } else {
-                if let Some(init) = Init::init(global_this, arg_init)? {
-                    response.init.set(init);
-                }
+            }
+            ResponseInitOrStatus::Init(init) => {
+                response.init.set(Init::init(global_this, init)?);
             }
         }
 
@@ -926,15 +928,15 @@ impl Response {
         }
     }
 
-    pub(crate) fn redirect(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    pub(crate) fn redirect(
+        cx: &mut JsScope<'_>,
+        url: Option<BunString>,
+        init: ResponseInitOrStatus<'_>,
+    ) -> JsResult<JSValue> {
         let global_this = cx.global();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        let args = JsLocal::to_js_slice(args);
 
-        let url_string = match args.first() {
-            Some(url) => url.to_bun_string(global_this)?,
-            None => BunString::EMPTY,
-        };
+        let url_string = url.unwrap_or(BunString::EMPTY);
         let response = Response {
             init: JsCell::new(Init {
                 status_code: 302,
@@ -944,15 +946,15 @@ impl Response {
             ..Default::default()
         };
 
-        if let Some(&arg_init) = args.get(1) {
-            if arg_init.is_undefined_or_null() {
-                // no-op
-            } else if arg_init.is_number() {
-                let status = Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
+        match init {
+            ResponseInitOrStatus::Missing | ResponseInitOrStatus::Other => {}
+            ResponseInitOrStatus::Status(status) => {
+                let status = Self::validate_redirect_status_code(global_this, status as i32)?;
                 response.init.with_mut(|i| i.status_code = status);
-            } else if let Some(init) = Init::init(global_this, arg_init)? {
+            }
+            ResponseInitOrStatus::Init(init) => {
                 // cleanup is handled by Init's drop glue on `?` below
-                response.init.set(init);
+                response.init.set(Init::init(global_this, init)?);
 
                 let status = response.init.get().status_code;
                 if status != 200 {
@@ -995,10 +997,10 @@ impl Response {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        body: JsLocal<'a>,
-        init: JsLocal<'a>,
+        body: BodyInit<'a>,
+        init: ResponseInitArgument<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
+        let response = Self::construct_into(cx.global(), body, init)?;
         let this = response.this_ptr();
         let this_value = structure.create(&cx.heap, response);
         this.js_ref.set(JsRef::init_weak(this_value.to_js()));
@@ -1008,86 +1010,81 @@ impl Response {
 
     fn construct_into(
         global_this: &JSGlobalObject,
-        body: JSValue,
-        init: JSValue,
+        body: BodyInit<'_>,
+        init: ResponseInitArgument<'_>,
     ) -> JsResult<RefPtr<Response>> {
-        if body.is_object() {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); only `&self` accessors (`is_s3`, `store`)
-            // are touched on this path.
-            if let Some(blob) = body.as_class_ref::<Blob>() {
-                if blob.is_s3() {
-                    if !init.is_undefined_or_null() {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "new Response(s3File) do not support ResponseInit options",
-                        )));
-                    }
-                    let response = RefPtr::new(Response {
-                        init: JsCell::new(Init {
-                            status_code: 302,
-                            ..Default::default()
-                        }),
-                        body: JsCell::new(Body::new(BodyValue::Null)),
-                        ..Default::default()
-                    });
-
-                    let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
-                    let credentials = s3.get_credentials();
-
-                    let result = match credentials.sign_request::<false>(
-                        &bun_s3_signing::SignOptions {
-                            path: s3.path(),
-                            method: Method::GET,
-                            content_hash: None,
-                            content_md5: None,
-                            search_params: None,
-                            content_disposition: None,
-                            content_type: None,
-                            content_encoding: None,
-                            acl: None,
-                            storage_class: None,
-                            request_payer: false,
-                        },
-                        Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
-                    ) {
-                        Ok(r) => r,
-                        Err(sign_err) => {
-                            return Err(crate::webcore::s3::client::throw_sign_error(
-                                sign_err.into(),
-                                global_this,
-                            ));
-                        }
-                    };
-                    // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
-                    response.redirected.set(true);
-                    let headers = response.get_or_create_headers(global_this)?;
-                    headers.put(
-                        HTTPHeaderName::Location,
-                        &BunString::ascii(&result.url),
-                        global_this,
-                    )?;
-                    return Ok(response);
+        if let BodyInit::Blob((blob, _))
+        | BodyInit::BuildArtifact((BuildArtifact { blob, .. }, _)) = body
+        {
+            if blob.is_s3() {
+                if !matches!(init, ResponseInitArgument::Missing) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "new Response(s3File) do not support ResponseInit options",
+                    )));
                 }
+                let response = RefPtr::new(Response {
+                    init: JsCell::new(Init {
+                        status_code: 302,
+                        ..Default::default()
+                    }),
+                    body: JsCell::new(Body::new(BodyValue::Null)),
+                    ..Default::default()
+                });
+
+                let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
+                let credentials = s3.get_credentials();
+
+                let result = match credentials.sign_request::<false>(
+                    &bun_s3_signing::SignOptions {
+                        path: s3.path(),
+                        method: Method::GET,
+                        content_hash: None,
+                        content_md5: None,
+                        search_params: None,
+                        content_disposition: None,
+                        content_type: None,
+                        content_encoding: None,
+                        acl: None,
+                        storage_class: None,
+                        request_payer: false,
+                    },
+                    Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
+                ) {
+                    Ok(r) => r,
+                    Err(sign_err) => {
+                        return Err(crate::webcore::s3::client::throw_sign_error(
+                            sign_err.into(),
+                            global_this,
+                        ));
+                    }
+                };
+                // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
+                response.redirected.set(true);
+                let headers = response.get_or_create_headers(global_this)?;
+                headers.put(
+                    HTTPHeaderName::Location,
+                    &BunString::ascii(&result.url),
+                    global_this,
+                )?;
+                return Ok(response);
             }
         }
-        let mut init: Init = 'brk: {
-            if init.is_undefined_or_null() {
-                break 'brk Init {
-                    status_code: 200,
-                    headers: None,
-                    ..Default::default()
-                };
+        let mut init: Init = match init {
+            ResponseInitArgument::Missing => Init {
+                status_code: 200,
+                headers: None,
+                ..Default::default()
+            },
+            ResponseInitArgument::Init(init) => Init::init(global_this, init)?,
+            ResponseInitArgument::Other => {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
+                )));
             }
-            if init.is_object() {
-                break 'brk Init::init(global_this, init)?.expect("unreachable");
-            }
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
-            )));
         };
 
         let body: Body = 'brk: {
-            if body.is_undefined_or_null() {
+            if matches!(body, BodyInit::Undefined | BodyInit::Null) {
                 break 'brk Body::new(BodyValue::Null);
             }
             // `Body::extract` is a free fn re-exported as `body::extract`.
@@ -1171,27 +1168,19 @@ impl Init {
 
     pub(crate) fn init(
         global_this: &JSGlobalObject,
-        response_init: JSValue,
-    ) -> JsResult<Option<Init>> {
+        response_init: ResponseInit<'_>,
+    ) -> JsResult<Init> {
         let mut result = Init {
             status_code: 200,
             ..Default::default()
         };
 
-        if !response_init.is_cell() {
-            return Ok(None);
-        }
+        let object = response_init.object().to_js();
 
-        let js_type = response_init.js_type();
-
-        if !js_type.is_object() {
-            return Ok(None);
-        }
-
-        if js_type == JSType::DOMWrapper {
+        if object.js_type() == JSType::DOMWrapper {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
-            if let Some(req) = response_init.as_direct::<Request>() {
+            if let Some(req) = object.as_direct::<Request>() {
                 // SAFETY: `as_direct` returned a live `*mut Request` owned by the
                 // JS wrapper cell; the wrapper is rooted by `response_init` for
                 // the duration of this call, so no GC can finalize it here.
@@ -1202,39 +1191,48 @@ impl Init {
                 }
 
                 result.method = req.method;
-                return Ok(Some(result));
+                return Ok(result);
             }
 
-            if let Some(resp) = response_init.as_direct::<Response>() {
+            if let Some(resp) = object.as_direct::<Response>() {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                return resp.init.get().clone(global_this);
             }
         }
 
-        if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
-            // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
-            // FetchHeaders is a hand-bound opaque, so use its dedicated
-            // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
-            if let Some(orig) = FetchHeaders::cast(headers) {
-                // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
-                if !orig.is_empty() {
-                    result.headers = orig.clone_this(global_this)?.map(|p| {
-                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
-                        // ownership of that ref is transferred into the `HeadersRef`.
-                        unsafe { HeadersRef::adopt(p) }
-                    });
+        match response_init.headers(global_this)? {
+            HeadersInit::Missing => {}
+            HeadersInit::Headers(headers) => {
+                // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
+                // FetchHeaders is a hand-bound opaque, so use its dedicated
+                // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
+                if let Some(orig) = FetchHeaders::cast(headers.to_js()) {
+                    // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS;
+                    // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+                    let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
+                    if !orig.is_empty() {
+                        result.headers = orig.clone_this(global_this)?.map(|p| {
+                            // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
+                            // ownership of that ref is transferred into the `HeadersRef`.
+                            unsafe { HeadersRef::adopt(p) }
+                        });
+                    }
                 }
-            } else {
+            }
+            HeadersInit::Init(headers) => {
                 result.headers = HeadersRef::create_from_js(global_this, headers)?;
             }
         }
 
-        if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
-            let number = status_value.coerce_to_int64(global_this)?;
+        let status = match response_init.status(global_this)? {
+            ResponseStatus::Missing => None,
+            ResponseStatus::BigInt(status) => Some(status),
+            ResponseStatus::Number(status) => Some(status as i64),
+            ResponseStatus::Other(status) => Some(i64::from(status)),
+        };
+        if let Some(number) = status {
             if (200 <= number && number < 600) || number == 101 {
                 result.status_code = (u32::try_from(number).expect("int cast")) as u16;
             } else {
@@ -1246,21 +1244,17 @@ impl Init {
             }
         }
 
-        if let Some(status_text) =
-            response_init.fast_get_truthy(global_this, BuiltinName::statusText)?
-        {
-            result.status_text = status_text.to_bun_string(global_this)?;
+        if let Some(status_text) = response_init.status_text(global_this)? {
+            result.status_text = status_text;
         }
 
-        if let Some(method_value) =
-            response_init.fast_get_truthy(global_this, BuiltinName::method)?
-        {
-            if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
+        if let Some(method_value) = response_init.method(global_this)? {
+            if let Some(method) = Method::which(method_value.to_utf8().slice()) {
                 result.method = method;
             }
         }
 
-        Ok(Some(result))
+        Ok(result)
     }
 }
 

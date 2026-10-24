@@ -7,13 +7,15 @@ use bun_ptr::{ParentRef, RefPtr};
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{BufferSource, Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
 };
 use bun_threading::work_pool::WorkPool;
+
+use crate::generated_bindgen::node_zlib_binding::{WriteInput, WriteNumber};
 
 bun_output::declare_scope!(zlib, hidden);
 
@@ -62,13 +64,13 @@ impl Error {
     }
 }
 
-// ─── local shims (upstream-crate gaps) ────────────────────────────────────
-
-/// Local `JSValue::toU32` shim — `bun_jsc::JSValue` doesn't expose `to_u32()`
-/// in this crate's view yet.
 #[inline]
-fn jsv_to_u32(v: JSValue) -> u32 {
-    v.as_number() as u32
+fn jsv_to_u32(v: WriteNumber) -> u32 {
+    match v {
+        WriteNumber::Number(number) => number as u32,
+        WriteNumber::Flag(flag) => u32::from(flag),
+        WriteNumber::Missing | WriteNumber::Other => 0,
+    }
 }
 
 impl CountedKeepAlive {
@@ -185,9 +187,11 @@ pub(crate) trait CompressionStreamImpl:
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        value: JsLocal<'_>,
+        value: Option<JsLocal<'_, Callable>>,
     ) {
+        let Some(value) = value else { return };
         let (global, value) = (cx.global(), value.to_js());
+        // Not a callable proxy.
         if value.is_function() {
             Self::error_callback_set_cached(
                 this_value.to_js(),
@@ -233,18 +237,17 @@ pub(crate) trait CompressionStreamImpl:
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        flush: JsLocal<'_>,
-        in_: JsLocal<'_>,
-        in_off: JsLocal<'_>,
-        in_len: JsLocal<'_>,
-        out: JsLocal<'_>,
-        out_off: JsLocal<'_>,
-        out_len: JsLocal<'_>,
+        flush: WriteNumber,
+        in_: WriteInput<'_>,
+        in_off: WriteNumber,
+        in_len: WriteNumber,
+        out: Option<JsLocal<'_, BufferSource>>,
+        out_off: WriteNumber,
+        out_len: WriteNumber,
     ) -> JsResult<()> {
         let (global_this, this_value) = (cx.global(), this_value.to_js());
-        let (flush, in_js, out_js) = (flush.to_js(), in_.to_js(), out.to_js());
 
-        if flush.is_undefined() {
+        if matches!(flush, WriteNumber::Missing) {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -262,11 +265,15 @@ pub(crate) trait CompressionStreamImpl:
                 .throw());
         }
 
-        let (in_off, in_len): (u32, u32) = if in_js.is_null() {
+        let in_js = match in_ {
+            WriteInput::Buffer(buffer) => Some(buffer.to_js()),
+            _ => None,
+        };
+        let (in_off, in_len): (u32, u32) = if matches!(in_, WriteInput::FlushOnly) {
             // just a flush
             (0, 0)
         } else {
-            let in_buf = match in_js.as_array_buffer(global_this) {
+            let in_buf = match in_js.and_then(|in_js| in_js.as_array_buffer(global_this)) {
                 Some(b) => b,
                 None => {
                     return Err(global_this
@@ -289,7 +296,7 @@ pub(crate) trait CompressionStreamImpl:
                     )
                     .throw());
             }
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
+            let (in_off, in_len) = (jsv_to_u32(in_off), jsv_to_u32(in_len));
             if in_buf.byte_len < in_off as usize + in_len as usize {
                 return Err(global_this
                     .err(
@@ -305,7 +312,7 @@ pub(crate) trait CompressionStreamImpl:
             (in_off, in_len)
         };
 
-        let Some(out_buf) = out_js.as_array_buffer(global_this) else {
+        let Some(out_buf) = out.map(|out| out.as_array_buffer(global_this)) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -313,8 +320,8 @@ pub(crate) trait CompressionStreamImpl:
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
+        let out_off: u32 = jsv_to_u32(out_off);
+        let out_len: u32 = jsv_to_u32(out_len);
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -343,14 +350,16 @@ pub(crate) trait CompressionStreamImpl:
         // Pin both buffers before mutating any state: materializing a
         // FastTypedArray's backing store can fail on OOM, and failing here
         // leaves nothing to unwind.
-        let in_buf: Option<jsc::ArrayBuffer> = if in_js.is_null() {
-            None
-        } else {
-            let Some(buf) = in_js.as_pinned_arraybuffer(global_this) else {
-                return Err(global_this.throw_out_of_memory());
-            };
-            Some(buf)
+        let in_buf: Option<jsc::ArrayBuffer> = match in_js {
+            None => None,
+            Some(in_js) => {
+                let Some(buf) = in_js.as_pinned_arraybuffer(global_this) else {
+                    return Err(global_this.throw_out_of_memory());
+                };
+                Some(buf)
+            }
         };
+        let out_js = out_buf.value;
         let Some(mut out_buf) = out_js.as_pinned_arraybuffer(global_this) else {
             if let Some(buf) = &in_buf {
                 buf.unpin();
@@ -385,7 +394,7 @@ pub(crate) trait CompressionStreamImpl:
         self.write_in_progress().set(true);
         self.ref_();
 
-        Self::pending_input_set_cached(this_value, global_this, in_js);
+        Self::pending_input_set_cached(this_value, global_this, in_js.unwrap_or(JSValue::NULL));
         Self::pending_output_set_cached(this_value, global_this, out_js);
 
         self.stream().with_mut(|s| {
@@ -464,18 +473,17 @@ pub(crate) trait CompressionStreamImpl:
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        flush: JsLocal<'_>,
-        in_: JsLocal<'_>,
-        in_off: JsLocal<'_>,
-        in_len: JsLocal<'_>,
-        out: JsLocal<'_>,
-        out_off: JsLocal<'_>,
-        out_len: JsLocal<'_>,
+        flush: WriteNumber,
+        in_: WriteInput<'_>,
+        in_off: WriteNumber,
+        in_len: WriteNumber,
+        out: Option<JsLocal<'_, BufferSource>>,
+        out_off: WriteNumber,
+        out_len: WriteNumber,
     ) -> JsResult<()> {
         let (global_this, this_value) = (cx.global(), this_value.to_js());
-        let (flush, in_js, out_js) = (flush.to_js(), in_.to_js(), out.to_js());
 
-        if flush.is_undefined() {
+        if matches!(flush, WriteNumber::Missing) {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -495,11 +503,15 @@ pub(crate) trait CompressionStreamImpl:
 
         // Hoisted so `in_` can borrow it past the `else` arm (mirrors `out_buf`).
         let in_buf: jsc::ArrayBuffer;
-        let in_: Option<&[u8]> = if in_js.is_null() {
+        let in_: Option<&[u8]> = if matches!(in_, WriteInput::FlushOnly) {
             // just a flush
             None
         } else {
-            in_buf = match in_js.as_array_buffer(global_this) {
+            let in_js = match in_ {
+                WriteInput::Buffer(buffer) => Some(buffer.to_js()),
+                _ => None,
+            };
+            in_buf = match in_js.and_then(|in_js| in_js.as_array_buffer(global_this)) {
                 Some(b) => b,
                 None => {
                     return Err(global_this
@@ -510,7 +522,7 @@ pub(crate) trait CompressionStreamImpl:
                         .throw());
                 }
             };
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
+            let (in_off, in_len) = (jsv_to_u32(in_off), jsv_to_u32(in_len));
             if in_buf.byte_len < in_off as usize + in_len as usize {
                 return Err(global_this
                     .err(
@@ -528,7 +540,7 @@ pub(crate) trait CompressionStreamImpl:
             Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
         };
 
-        let Some(mut out_buf) = out_js.as_array_buffer(global_this) else {
+        let Some(mut out_buf) = out.map(|out| out.as_array_buffer(global_this)) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -536,8 +548,8 @@ pub(crate) trait CompressionStreamImpl:
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
+        let out_off: u32 = jsv_to_u32(out_off);
+        let out_len: u32 = jsv_to_u32(out_len);
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -551,7 +563,7 @@ pub(crate) trait CompressionStreamImpl:
                 .throw());
         }
         // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
-        // ArrayBuffer's backing store (rooted via `out_js` on the call stack).
+        // ArrayBuffer's backing store (rooted via `out` on the call stack).
         let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );

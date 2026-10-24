@@ -20,7 +20,7 @@ use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
 use bun_core::{EncodedSlice, ZStr, strings};
-use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{AnyValue, Deferred, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue, JsCell,
@@ -48,7 +48,12 @@ fn format_name(f: codecs::Format) -> &'static str {
     }
 }
 
-use crate::generated_bindgen::image::js_Image as js;
+use crate::generated_bindgen::blob::PathOrBlob;
+use crate::generated_bindgen::blob_arguments::BunWriteData;
+use crate::generated_bindgen::image::{
+    ImageEncodeOptions, ImageInput, ImageModulateOptions, ImageOptions, ImageResizeOptions,
+    destination_path, js_Image as js,
+};
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
@@ -147,21 +152,6 @@ bun_core::comptime_string_map! {
         b"inside" => Fit::Inside,
     };
 }
-impl jsc::FromJsEnum for Fit {
-    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
-        v.to_enum_from_map(global, prop, &FIT_MAP, "'fill' or 'inside'")
-    }
-}
-impl jsc::FromJsEnum for codecs::Filter {
-    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
-        v.to_enum_from_map(
-            global,
-            prop,
-            &codecs::FILTER_MAP,
-            "'box', 'bilinear', 'linear', 'lanczos3', 'mitchell', 'nearest', 'cubic', 'lanczos2', 'mks2013' or 'mks2021'",
-        )
-    }
-}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Resize {
@@ -252,23 +242,22 @@ impl Image {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        input: JsLocal<'a>,
-        options: JsLocal<'a>,
+        (input, input_value): (ImageInput<'a>, JsLocal<'a>),
+        options: Deferred<'a, ImageOptions>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let input = input.to_js();
-        if input.is_undefined_or_null() {
+        if matches!(input, ImageInput::Missing) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Image() expects a path, ArrayBuffer, TypedArray, Blob or data: URL",
             )));
         }
         let mut img = Image::default();
-        img.source.set(source_from_js(global, input)?);
-        apply_options(&mut img, global, options.to_js())?;
+        img.source.set(source_from_js(global, input, input_value)?);
+        apply_options(&mut img, &options.convert(global)?);
         let borrows_input = matches!(img.source.get(), Source::JsBuffer);
         let this_value = structure.create(&cx.heap, img);
         if borrows_input {
-            js::source_js_set_cached(this_value.to_js(), cx.global(), input);
+            js::source_js_set_cached(this_value.to_js(), cx.global(), input_value);
         }
         Ok(this_value)
     }
@@ -277,15 +266,17 @@ impl Image {
     /// allocation as `new Bun.Image(blob, opts)`.
     pub(crate) fn from_blob_js(
         global: &JSGlobalObject,
+        blob: &Blob,
         blob_value: JSValue,
-        options: JSValue,
+        options: &ImageOptions,
     ) -> JsResult<JSValue> {
         let mut img = Image::default();
-        apply_options(&mut img, global, options)?;
+        apply_options(&mut img, options);
         // For Blob receivers `source_from_js` either dupes (in-memory blob) or
         // creates a Strong (file/S3); the cached `sourceJS` slot is only used
         // for the `.js_buffer` path, which a Blob never produces.
-        img.source.set(source_from_js(global, blob_value)?);
+        img.source
+            .set(source_from_js(global, ImageInput::Blob(blob), blob_value)?);
         debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
         Ok(img.to_js(global))
     }
@@ -302,89 +293,91 @@ impl Image {
     }
 }
 
-fn apply_options(img: &mut Image, global: &JSGlobalObject, opt: JSValue) -> JsResult<()> {
-    if !opt.is_object() {
-        return Ok(());
+fn apply_options(img: &mut Image, options: &ImageOptions) {
+    if let Some(max_pixels) = options.max_pixels {
+        img.max_pixels = coerce_int!(u64, max_pixels, 0.0, 1e15);
     }
-    if let Some(v) = opt.get(global, "maxPixels")? {
-        if v.is_number() {
-            img.max_pixels = coerce_int!(u64, v.as_number(), 0.0, 1e15);
-        }
+    if let Some(auto_orient) = options.auto_orient {
+        img.auto_orient = auto_orient;
     }
-    if let Some(v) = opt.get(global, "autoOrient")? {
-        img.auto_orient = v.to_boolean();
-    }
-    Ok(())
 }
 
 /// The caller of a `Source::JsBuffer` result puts `value` in the `sourceJS` slot.
-fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
+fn source_from_js(
+    global: &JSGlobalObject,
+    input: ImageInput<'_>,
+    value: impl AnyValue,
+) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
-    if value.is_string() {
-        let str = value.to_bun_string(global)?;
-        let utf8 = str.to_utf8();
-        let s = utf8.slice();
-        // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
-        // anyway) and decode base64 here. Non-base64 data URLs aren't useful
-        // for image bytes.
-        if s.starts_with(b"data:") {
-            let Some(comma) = strings::index_of_char(s, b',') else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Image(): malformed data: URL (no comma)"
-                )));
-            };
-            let meta = &s[5..comma as usize];
-            let payload = &s[comma as usize + 1..];
-            if strings::index_of(meta, b";base64").is_none() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Image(): only base64 data: URLs are supported",
-                )));
+    match input {
+        ImageInput::Path(str) => {
+            let utf8 = str.to_utf8();
+            let s = utf8.slice();
+            // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
+            // anyway) and decode base64 here. Non-base64 data URLs aren't useful
+            // for image bytes.
+            if s.starts_with(b"data:") {
+                let Some(comma) = strings::index_of_char(s, b',') else {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Image(): malformed data: URL (no comma)"
+                    )));
+                };
+                let meta = &s[5..comma as usize];
+                let payload = &s[comma as usize + 1..];
+                if strings::index_of(meta, b";base64").is_none() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Image(): only base64 data: URLs are supported",
+                    )));
+                }
+                let mut out = vec![0u8; bun_base64::decode_len(payload)];
+                let r = base64::decode(&mut out, payload);
+                if r.fail {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Image(): invalid base64 in data: URL"
+                    )));
+                }
+                out.truncate(r.written);
+                return Ok(Source::Owned(out));
             }
-            let mut out = vec![0u8; bun_base64::decode_len(payload)];
-            let r = base64::decode(&mut out, payload);
-            if r.fail {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Image(): invalid base64 in data: URL"
-                )));
-            }
-            out.truncate(r.written);
-            return Ok(Source::Owned(out));
+            crate::node::types::Valid::path_null_bytes(s, global)?;
+            return Ok(Source::Path(ZBox::from_bytes(s)));
         }
-        crate::node::types::Valid::path_null_bytes(s, global)?;
-        return Ok(Source::Path(ZBox::from_bytes(s)));
-    }
-    if let Some(ab) = value.as_array_buffer(global) {
-        // A resizable/growable buffer can shrink or reallocate underneath any
-        // slice we'd take; a SharedArrayBuffer can be mutated by another
-        // thread while the worker decodes (the codec layer parses the same
-        // bytes twice — header then body — so a TOCTOU swap can resize the
-        // implied output behind a guard that's already passed). The worker
-        // *borrows* the slice (see `pin_for_task`), so this rejection is
-        // load-bearing — `buf.slice()` is the obvious workaround.
-        if ab.resizable || ab.shared {
-            return Err(global.throw_invalid_arguments(format_args!(
+        ImageInput::Buffer(buffer) => {
+            if let Some(ab) = buffer.to_js().as_array_buffer(global) {
+                // A resizable/growable buffer can shrink or reallocate underneath any
+                // slice we'd take; a SharedArrayBuffer can be mutated by another
+                // thread while the worker decodes (the codec layer parses the same
+                // bytes twice — header then body — so a TOCTOU swap can resize the
+                // implied output behind a guard that's already passed). The worker
+                // *borrows* the slice (see `pin_for_task`), so this rejection is
+                // load-bearing — `buf.slice()` is the obvious workaround.
+                if ab.resizable || ab.shared {
+                    return Err(global.throw_invalid_arguments(format_args!(
                 "Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())",
             )));
+                }
+                // Just remember the JS object — see Source::JsBuffer for why we don't
+                // cache the pointer or pin here.
+                return Ok(Source::JsBuffer);
+            }
         }
-        // Just remember the JS object — see Source::JsBuffer for why we don't
-        // cache the pointer or pin here.
-        return Ok(Source::JsBuffer);
-    }
-    if let Some(blob) = value.as_class_ref::<Blob>() {
-        // In-memory blob: dupe its bytes (the store may be sliced/replaced
-        // independently).
-        let view = blob.shared_view();
-        if !view.is_empty() {
-            return Ok(Source::Owned(view.to_vec()));
+        ImageInput::Blob(blob) => {
+            // In-memory blob: dupe its bytes (the store may be sliced/replaced
+            // independently).
+            let view = blob.shared_view();
+            if !view.is_empty() {
+                return Ok(Source::Owned(view.to_vec()));
+            }
+            // Anything with a backing store but no in-memory view yet
+            // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
+            // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
+            // that store type does (file → ReadFile, S3 → fetch, etc.) without
+            // knowing about it here.
+            if blob.store.get().is_some() {
+                return Ok(Source::Blob(Strong::create(value, global)));
+            }
         }
-        // Anything with a backing store but no in-memory view yet
-        // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
-        // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
-        // that store type does (file → ReadFile, S3 → fetch, etc.) without
-        // knowing about it here.
-        if blob.store.get().is_some() {
-            return Ok(Source::Blob(Strong::create(value, global)));
-        }
+        ImageInput::Missing | ImageInput::Other => {}
     }
     Err(global.throw_invalid_arguments(format_args!(
         "Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or Blob",
@@ -407,39 +400,37 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        width: JsLocal<'a>,
-        height: JsLocal<'a>,
-        options: JsLocal<'a>,
+        width: f64,
+        height: Option<f64>,
+        options: Option<ImageResizeOptions<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let (width, height, opt) = (width.to_js(), height.to_js(), options.to_js());
-        if !width.is_number() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("resize(width, height?, options?)"))
-            );
-        }
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.
         let mut r = Resize {
-            w: coerce_int!(u32, width.as_number(), 1.0, 0x3FFFF as f64),
+            w: coerce_int!(u32, width, 1.0, 0x3FFFF as f64),
             // 0 height = preserve aspect ratio (resolved at execute time once the
             // source dimensions are known).
-            h: if height.is_number() {
-                coerce_int!(u32, height.as_number(), 0.0, 0x3FFFF as f64)
-            } else {
-                0
-            },
+            h: height.map_or(0, |height| coerce_int!(u32, height, 0.0, 0x3FFFF as f64)),
             ..Default::default()
         };
-        if opt.is_object() {
-            if let Some(v) = opt.get_optional_enum::<codecs::Filter>(global, "filter")? {
-                r.filter = v;
+        if let Some(options) = options {
+            if let Some(filter) = options.filter(global)? {
+                r.filter = codecs::FILTER_MAP.get(filter.to_utf8().slice()).copied().ok_or_else(|| {
+                    global.throw_invalid_arguments(format_args!(
+                        "filter must be one of 'box', 'bilinear', 'linear', 'lanczos3', 'mitchell', 'nearest', 'cubic', 'lanczos2', 'mks2013' or 'mks2021'",
+                    ))
+                })?;
             }
-            if let Some(v) = opt.get_optional_enum::<Fit>(global, "fit")? {
-                r.fit = v;
+            if let Some(fit) = options.fit(global)? {
+                r.fit = FIT_MAP.get(fit.to_utf8().slice()).copied().ok_or_else(|| {
+                    global.throw_invalid_arguments(format_args!(
+                        "fit must be one of 'fill' or 'inside'"
+                    ))
+                })?;
             }
-            if let Some(v) = opt.get(global, "withoutEnlargement")? {
-                r.without_enlargement = v.to_boolean();
+            if let Some(v) = options.without_enlargement(global)? {
+                r.without_enlargement = v;
             }
         }
         self.update_pipeline(|p| p.resize = Some(r));
@@ -450,17 +441,12 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        degrees: JsLocal<'a>,
+        degrees: f64,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let degrees = degrees.to_js();
-        if !degrees.is_number() {
-            return Err(global
-                .throw_invalid_arguments(format_args!("rotate(degrees) expects 90, 180 or 270")));
-        }
         // coerce_int for the same NaN/Inf/huge-finite reasons as everywhere else;
         // ±1e15 is plenty of headroom for "any multiple of 90 a user might pass".
-        let raw: i64 = coerce_int!(i64, degrees.as_number(), -1e15, 1e15);
+        let raw: i64 = coerce_int!(i64, degrees, -1e15, 1e15);
         let deg: u32 = u32::try_from(raw.rem_euclid(360)).unwrap();
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -485,34 +471,25 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
+        options: Deferred<'a, ImageModulateOptions>,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let global = cx.global();
-        let options = options.to_js();
         let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_default();
-        if options.is_object() {
-            // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
-            // f32 +Inf (0×Inf = NaN → static_cast<u8>(NaN) is UB).
-            if let Some(v) = options.get(global, "brightness")? {
-                if v.is_number() {
-                    let x = v.as_number();
-                    m.brightness = if x.is_finite() {
-                        x.clamp(0.0, 1e4) as f32
-                    } else {
-                        1.0
-                    };
-                }
-            }
-            if let Some(v) = options.get(global, "saturation")? {
-                if v.is_number() {
-                    let x = v.as_number();
-                    m.saturation = if x.is_finite() {
-                        x.clamp(0.0, 1e4) as f32
-                    } else {
-                        1.0
-                    };
-                }
-            }
+        let options = options.convert(cx.global())?;
+        // Clamp finite + bounded so Infinity doesn't reach ModulateImpl as
+        // f32 +Inf (0×Inf = NaN → static_cast<u8>(NaN) is UB).
+        if let Some(x) = options.brightness {
+            m.brightness = if x.is_finite() {
+                x.clamp(0.0, 1e4) as f32
+            } else {
+                1.0
+            };
+        }
+        if let Some(x) = options.saturation {
+            m.saturation = if x.is_finite() {
+                x.clamp(0.0, 1e4) as f32
+            } else {
+                1.0
+            };
         }
         self.update_pipeline(|p| p.modulate = Some(m));
         Ok(this_value)
@@ -522,11 +499,9 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
+        options: Deferred<'a, ImageEncodeOptions>,
         fmt: codecs::Format,
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let global = cx.global();
-        let options = options.to_js();
         let mut enc: codecs::EncodeOptions =
             self.pipeline
                 .get()
@@ -536,34 +511,27 @@ impl Image {
                     ..Default::default()
                 });
         enc.format = fmt;
-        if options.is_object() {
-            if let Some(q) = options.get(global, "quality")? {
-                if q.is_number() {
-                    enc.quality = coerce_int!(u8, q.as_number(), 1.0, 100.0);
-                }
-            }
-            if let Some(l) = options.get(global, "lossless")? {
-                enc.lossless = l.to_boolean();
-            }
-            if let Some(c) = options.get(global, "compressionLevel")? {
-                if c.is_number() {
-                    enc.compression_level = coerce_int!(i8, c.as_number(), 0.0, 9.0);
-                }
-            }
-            if let Some(p) = options.get(global, "palette")? {
-                enc.palette = p.to_boolean();
-            }
-            if let Some(c) = options.get(global, "colors")? {
-                if c.is_number() {
-                    enc.colors = coerce_int!(u16, c.as_number(), 2.0, 256.0);
-                }
-            }
-            if let Some(d) = options.get(global, "dither")? {
-                enc.dither = d.to_boolean();
-            }
-            if let Some(p) = options.get(global, "progressive")? {
-                enc.progressive = p.to_boolean();
-            }
+        let options = options.convert(cx.global())?;
+        if let Some(q) = options.quality {
+            enc.quality = coerce_int!(u8, q, 1.0, 100.0);
+        }
+        if let Some(l) = options.lossless {
+            enc.lossless = l;
+        }
+        if let Some(c) = options.compression_level {
+            enc.compression_level = coerce_int!(i8, c, 0.0, 9.0);
+        }
+        if let Some(p) = options.palette {
+            enc.palette = p;
+        }
+        if let Some(c) = options.colors {
+            enc.colors = coerce_int!(u16, c, 2.0, 256.0);
+        }
+        if let Some(d) = options.dither {
+            enc.dither = d;
+        }
+        if let Some(p) = options.progressive {
+            enc.progressive = p;
         }
         self.update_pipeline(|p| p.output = Some(enc));
         Ok(this_value)
@@ -573,7 +541,7 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
+        options: Deferred<'a, ImageEncodeOptions>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         self.set_format(this_value, cx, options, codecs::Format::Jpeg)
     }
@@ -581,7 +549,7 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
+        options: Deferred<'a, ImageEncodeOptions>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         self.set_format(this_value, cx, options, codecs::Format::Png)
     }
@@ -589,7 +557,7 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
+        options: Deferred<'a, ImageEncodeOptions>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         self.set_format(this_value, cx, options, codecs::Format::Webp)
     }
@@ -597,7 +565,7 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
+        options: Deferred<'a, ImageEncodeOptions>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         self.set_format(this_value, cx, options, codecs::Format::Heic)
     }
@@ -605,7 +573,7 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
+        options: Deferred<'a, ImageEncodeOptions>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         self.set_format(this_value, cx, options, codecs::Format::Avif)
     }
@@ -800,10 +768,21 @@ impl Image {
         bun_core::String::static_(<&'static str>::from(&b)).to_js(cx.global())
     }
 
-    pub(crate) fn set_backend(cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<()> {
-        let b = value
-            .to_js()
-            .to_enum::<codecs::Backend>(cx.global(), "Bun.Image.backend")?;
+    pub(crate) fn set_backend(
+        cx: &mut JsScope<'_>,
+        value: Option<bun_core::String>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let Some(value) = value else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Bun.Image.backend must be a string"))
+            );
+        };
+        let Some(&b) = codecs::BACKEND_MAP.get(value.to_utf8().slice()) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Bun.Image.backend must be one of 'system' or 'bun'"
+            )));
+        };
         codecs::BACKEND.store(b as u8, core::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
@@ -1009,21 +988,17 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        format: JsLocal<'a>,
+        format: Option<bun_core::String>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let format = format.to_js();
         // Single positional `"dataurl"` for now — leaves room for `"hash"` /
         // `"color"` without growing methods. Anything else throws so the
         // option space isn't accidentally squatted.
-        if !format.is_undefined_or_null() {
-            let s = format.to_bun_string(global)?;
-            if !s.eq_ascii(b"dataurl") {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Image.placeholder(): only \"dataurl\" is supported",
-                )));
-            }
+        if format.is_some_and(|format| !format.eq_ascii(b"dataurl")) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Image.placeholder(): only \"dataurl\" is supported",
+            )));
         }
         self.schedule(&cx, this_value.to_js(), Kind::Placeholder, Deliver::DataUrl)
     }
@@ -1038,23 +1013,23 @@ impl Image {
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        dest: JsLocal<'a>,
+        dest: Option<JsLocal<'a>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let dest = dest.to_js();
-        if dest.is_undefined_or_null() {
+        let Some(dest) = dest else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",
             )));
-        }
+        };
 
         let mut output = self.pipeline.get().output;
         // Extension inference only when dest is a plain string. BunFile/S3 dests
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
-        if output.is_none() && dest.is_string() {
-            let str = dest.to_bun_string(global)?;
+        if output.is_none()
+            && let Some(str) = destination_path(global, dest)?
+        {
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {
@@ -1864,7 +1839,7 @@ impl PipelineTask {
                         // ownership transfers to JSC; `ctx` is null and `out.free`
                         // ignores it.
                         let data = match unsafe {
-                            JSValue::create_buffer_with_ctx(
+                            JsLocal::create_buffer_with_ctx(
                                 global,
                                 out.bytes,
                                 core::ptr::null_mut(),
@@ -1874,12 +1849,9 @@ impl PipelineTask {
                             Ok(d) => d,
                             Err(e) => return promise.reject(global, Err(e)),
                         };
-                        let args = [dest_js];
-                        let mut arg_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &args);
-                        let mut path_or_blob = match crate::webcore::blob::write_destination_from_js(
-                            global,
-                            &mut arg_slice,
-                        ) {
+                        let mut path_or_blob = match PathOrBlob::from_js(global, dest_js, |dest| {
+                            crate::webcore::blob::write_destination_from_js(global, dest)
+                        }) {
                             Ok(p) => p,
                             Err(e) => return promise.reject(global, Err(e)),
                         };
@@ -1888,7 +1860,7 @@ impl PipelineTask {
                         let write_promise = match crate::webcore::blob::write_file_internal(
                             cx,
                             &mut path_or_blob,
-                            data,
+                            BunWriteData::Buffer(data),
                             Default::default(),
                         ) {
                             Ok(p) => p,

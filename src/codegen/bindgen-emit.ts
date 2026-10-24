@@ -2,7 +2,6 @@
 
 import assert from "node:assert";
 import {
-  AnyType,
   asciiLiteral,
   Builtin,
   ByteSpanType,
@@ -11,9 +10,12 @@ import {
   type ClassMember,
   ClassType,
   Constant,
+  Conversion,
+  ConvertedByBodyType,
   cppEmplace,
   cppReturnIfFailed,
   DefaultType,
+  DeferredDictionaryType,
   DictionaryType,
   EnumerationType,
   FunctionDefinition,
@@ -22,16 +24,20 @@ import {
   InternalFieldAccessor,
   isIfPassed,
   kindTests,
+  type Member,
   memberIdentifier,
+  mergeViewTests,
   type Method,
   type ModuleDefinition,
   NamedType,
   type NamespaceDefinition,
+  OpaqueType,
   OptionalType,
   type Origin,
   type OverloadDispatch,
   PrimitiveType,
   refusesNonObjects,
+  RestType,
   rustIdent,
   type RustScope,
   Signature,
@@ -40,7 +46,6 @@ import {
   UnionType,
   UnitType,
   type ValueKind,
-  VariadicType,
   wellKnownSymbol,
 } from "./bindgen-lib-internal.ts";
 import { cap, low } from "./helpers.ts";
@@ -53,6 +58,8 @@ export interface SchemaFile {
   /** Those of `namespaces` too. */
   functions: FunctionDefinition[];
   namespaces: NamespaceDefinition[];
+  /** `b.conversion`. */
+  conversions: Conversion[];
 }
 
 export interface Tables {
@@ -79,14 +86,62 @@ function walk(type: Type, visit: (type: Type) => void, seen = new Set<Type>()): 
   for (const dependency of type.dependencies) walk(dependency, visit, seen);
 }
 
+const signaturesOf = (file: SchemaFile): Signature[] => [
+  ...file.types.flatMap(type =>
+    type instanceof ClassType ? [...(type.construct ? [type.construct] : []), ...type.methods] : [],
+  ),
+  ...file.functions.flatMap(fn => fn.signatures),
+];
+
+/** The conversions the file's Rust calls, one of each symbol. */
+function conversionsOf(file: SchemaFile): Conversion[] {
+  const bySymbol = new Map<string, Conversion>();
+  for (const { args } of signaturesOf(file))
+    for (const { type } of args)
+      if (type instanceof ConvertedByBodyType && type.conversion && !bySymbol.has(type.conversion.symbol!))
+        bySymbol.set(type.conversion.symbol!, type.conversion);
+  const ofMembers = file.types.flatMap(type =>
+    type instanceof DeferredDictionaryType && type.accepted ? type.conversions : [],
+  );
+  return [...file.conversions, ...ofMembers, ...bySymbol.values()];
+}
+
+/** Those of one name are numbered from the second on. */
+function nameConversions(file: SchemaFile): void {
+  for (const type of file.types) {
+    if (!(type instanceof DeferredDictionaryType)) continue;
+    type.conversions.forEach((conversion, i) => {
+      conversion.rustName = `convert_${snakeCase(type.name)}_${snakeCase(type.members[i].name)}`;
+      conversion.symbol = `Bun__Bindgen__${file.origin.namespace}__${conversion.rustName}`;
+    });
+  }
+  const byName = new Map<string, string[]>();
+  for (const { args } of signaturesOf(file)) {
+    for (const { type } of args) {
+      if (!(type instanceof ConvertedByBodyType) || !type.conversion) continue;
+      const { conversion } = type;
+      const name = snakeCase(conversion.name);
+      const alike = byName.get(name) ?? [];
+      byName.set(name, alike);
+      const key = JSON.stringify([conversion.type.idlType, conversion.type.rustType(file.origin), conversion.expected]);
+      if (!alike.includes(key)) alike.push(key);
+      conversion.rustName = `convert_${name}${alike.indexOf(key) > 0 ? alike.indexOf(key) + 1 : ""}`;
+      conversion.symbol = `Bun__Bindgen__${file.origin.namespace}__${conversion.rustName}`;
+    }
+  }
+}
+
 /** Marks which direction each named type travels and gives every table entry its index. */
 export function analyze(files: readonly SchemaFile[]): Tables {
   const tables: Tables = { memberNames: [], enumerationValues: [], classes: [] };
   const markAccepted = (type: Type) => walk(type, t => void (t instanceof NamedType && (t.accepted = true)));
   const markReturned = (type: Type) => walk(type, t => void (t instanceof NamedType && (t.returned = true)));
   for (const file of files) {
+    nameConversions(file);
+    for (const conversion of file.conversions) markAccepted(conversion.type);
     for (const type of file.types) {
-      if (type instanceof DictionaryType && type.fromJS) markAccepted(type);
+      // `Name::new` wraps an object that Rust found, so no signature has to name it.
+      if (type.fromJS || type instanceof DeferredDictionaryType) markAccepted(type);
       if (!(type instanceof ClassType)) continue;
       type.classIndex = tables.classes.push(type) - 1;
       for (const arg of type.construct?.args ?? []) markAccepted(arg.type);
@@ -96,7 +151,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
       }
       for (const getter of [...type.getters, ...type.staticGetters]) {
         markReturned(getter.type);
-        if (getter.hasSetter) markAccepted(getter.type);
+        if (getter.hasSetter) markAccepted(getter.setterType);
       }
     }
     for (const fn of file.functions) {
@@ -119,12 +174,18 @@ export function analyze(files: readonly SchemaFile[]): Tables {
         if (!type.returned) continue;
         type.firstEnumerationValueIndex = tables.enumerationValues.length;
         tables.enumerationValues.push(...type.spellings.map(([canonical]) => canonical));
+      } else if (type instanceof DeferredDictionaryType) {
+        assert(!type.returned, `${type.name}: a dictionary that is returned is not deferred`);
+        if (!type.accepted) continue;
+        type.firstMemberNameIndex = tables.memberNames.length;
+        tables.memberNames.push(...type.names);
       } else if (type instanceof DictionaryType) {
         if (type.accepted) {
           type.firstMemberNameIndex = tables.memberNames.length;
           tables.memberNames.push(...type.names);
         }
         if (type.returned) {
+          assert(!type.members.some(member => member.privateSymbol), `${type.name}: a privateSymbol is only read`);
           type.firstReturnedMemberNameIndex = tables.memberNames.length;
           tables.memberNames.push(...type.members.map(member => member.name));
           const scope = type.origin!;
@@ -141,6 +202,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
   const symbols = files.flatMap(file => [
     ...file.functions.flatMap(fn => fn.signatures.map(signature => thunkSymbol(fn, signature))),
     ...file.types.flatMap(type => (type instanceof ClassType ? classSymbols(type) : [])),
+    ...conversionsOf(file).map(conversion => conversion.symbol!),
   ]);
   const repeated = symbols.filter((symbol, i) => symbols.indexOf(symbol) !== i);
   assert(repeated.length === 0, `two bindings make the same symbol: ${repeated.join(", ")}`);
@@ -185,7 +247,7 @@ function cppChooseByKind<T>(value: string, byKind: ReadonlyMap<ValueKind | "othe
       .map(([outcome, conditions]) => {
         const merged = nullish.every(test => conditions.includes(test))
           ? [`${value}.isUndefinedOrNull()`, ...conditions.filter(test => !nullish.includes(test))]
-          : conditions;
+          : mergeViewTests(conditions);
         return { condition: merged.join(" || "), index: outcomes.indexOf(outcome) };
       });
   const cppChain = (...tests: Map<T, string[]>[]) =>
@@ -226,6 +288,7 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
       const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "", "false");
       if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn true;`;
       const take = `result.tag = ${i};
+std::construct_at(&${member});
 ${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
 return true;`;
       // As the last, its own conversion reports what is not an object.
@@ -233,7 +296,7 @@ return true;`;
         return i === candidates.at(-1) ? take : `if (value.isObject()) {\n${indent(take, 4)}\n}`;
       if (alternative.refuses)
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
-    ${member} = WTF::move(*converted);
+    std::construct_at(&${member}, WTF::move(*converted));
     result.tag = ${i};
     return true;
 }${alternative.tryConvertThrows ? "\nRETURN_IF_EXCEPTION(scope, false);" : ""}`;
@@ -260,12 +323,44 @@ function cppHeaderForUnion(type: UnionType): string {
       : `case ${index}: {\n${indent(cppConvertToAlternative(type, candidates), 4)}${mayMatchNone(candidates) ? "\n    break;" : ""}\n}`,
   );
   const held = alternatives.filter(a => !(a.type instanceof UnitType));
+  const ofHeld = (statement: (name: string) => string) =>
+    held.length === 0
+      ? ""
+      : `switch (tag) {
+${held.map(a => `        case ${alternatives.indexOf(a)}:\n            ${statement(a.name)};\n            break;`).join("\n")}
+        }`;
   return `
 namespace Bun::Bindgen::Generated {
+// Only the alternative that \`tag\` names is constructed.
 struct ${name} {
-${cppDefaultConstructor(type)}
-${held.map(a => `    ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}> ${a.name}` : `${implementationType(a.type)} ${a.name} {}`};`).join("\n")}
-    uint8_t tag;
+${cppDefaultConstructor(type)}${
+    type.needsLifetime
+      ? ""
+      : `
+    ${name}(${name}&& other)
+        : tag(other.tag)
+    {
+        ${ofHeld(member => `std::construct_at(&this->${member}, WTF::move(other.${member}))`)}
+    }
+    ${name}& operator=(${name}&& other)
+    {
+        std::destroy_at(this);
+        std::construct_at(this, WTF::move(other));
+        return *this;
+    }`
+  }
+    ~${name}()
+    {
+        ${ofHeld(member => `std::destroy_at(&${member})`)}
+    }
+${
+  held.length === 0
+    ? ""
+    : `    union {
+${held.map(a => `        ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}>` : implementationType(a.type)} ${a.name};`).join("\n")}
+    };
+`
+}    uint8_t tag { ${alternatives.length} };
 };
 struct Extern${name} {
     union {
@@ -307,8 +402,9 @@ template<> struct WebCore::Converter<${type.idlType}> : Bun::DefaultContextConve
     }
 `
   }
+    // Inlined as DefaultTryConverter's is.
     template<Bun::IDLConversionContext Ctx>
-    static bool convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
+    ALWAYS_INLINE static bool convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
     {
         auto* globalObject = &lexicalGlobalObject;
         auto& vm = JSC::getVM(globalObject);
@@ -342,6 +438,7 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC
 `;
   }
   if (type instanceof UnionType) return type.accepted ? cppHeaderForUnion(type) : "";
+  if (type instanceof DeferredDictionaryType) return "";
   assert(type instanceof DictionaryType);
   if (!type.accepted) return "";
   return `
@@ -518,25 +615,40 @@ function cppContext(
   return `ctx${i}`;
 }
 
+const qualifiedName = (type: DictionaryType | DeferredDictionaryType, member: Member) =>
+  type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name;
+
+/** Declares `value`, read through `members` from the names of `member`, the first of which is at `nameIndex`. */
+function cppReadMember(member: Member, value: string, nameIndex: number, ctx: string): string[] {
+  const reads = member.privateSymbol
+    ? [`get(WebCore::builtinNames(vm).${member.privateSymbol}PrivateName())`]
+    : member.names.map((_, i) => `${member.own ? "getOwn" : "get"}(${nameIndex + i})`);
+  if (isIfPassed(member.type))
+    return [`JSC::JSValue ${value} = members.getOwnIfPresent(${nameIndex});`, "RETURN_IF_EXCEPTION(scope, false);"];
+  const [first, ...others] = reads.map(read => `members.${read};\n${cppReturnIfFailed(`!!${value}`, "false")}`);
+  return [
+    `JSC::JSValue ${value} = ${first}`,
+    ...others.map(read => `if (${value}.isUndefined()) {\n${indent(`${value} = ${read}`, 4)}\n}`),
+    ...(member.type.takesUndefined
+      ? []
+      : [
+          `if (${value}.isUndefined()) [[unlikely]] {
+    ${ctx}.throwRequired(*globalObject, scope);
+    return false;
+}`,
+        ]),
+  ];
+}
+
 function cppSourceForDictionary(type: DictionaryType): string {
   if (!type.accepted) return "";
   let nameIndex = 0;
   const members = type.members.map((member, i) => {
-    const [first, ...others] = member.names.map(
-      () => `members.get(${nameIndex++});\n${cppReturnIfFailed(`!!value${i}`, "false")}`,
-    );
-    const qualified = type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name;
+    const qualified = qualifiedName(type, member);
     const lines: string[] = [];
     const ctx = cppContext(lines, i, qualified, member.expected, `value${i}`);
-    lines.push(
-      `JSC::JSValue value${i} = ${first}`,
-      ...others.map(read => `if (value${i}.isUndefined()) {\n${indent(`value${i} = ${read}`, 4)}\n}`),
-    );
-    if (!member.type.takesUndefined)
-      lines.push(`if (value${i}.isUndefined()) [[unlikely]] {
-    ${ctx}.throwRequired(*globalObject, scope);
-    return false;
-}`);
+    lines.push(...cppReadMember(member, `value${i}`, nameIndex, ctx));
+    nameIndex += member.names.length;
     lines.push(member.type.cppConvertInto(`result.${member.fieldName}`, `value${i}`, ctx, qualified, "false"));
     return `    {\n${indent(lines.join("\n"), 8)}\n    }`;
   });
@@ -588,7 +700,7 @@ template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObje
 }${
     type.fromJS
       ? `
-extern "C" bool Bun__Bindgen__${type.name}__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value, Bun::Bindgen::Generated::Extern${type.name}* result)
+extern "C" bool ${fromJSSymbol(type)}(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value, Bun::Bindgen::Generated::Extern${type.name}* result)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -630,8 +742,20 @@ const cppHeldValue = (type: Type, variable: string) =>
     ? { holder: "JSC::JSValue", value: variable }
     : { holder: "JSC::EnsureStillAliveScope", value: `${variable}.value()` };
 
-/** The C ABI copies an argument that does not fit two registers. */
-const isPassedByPointer = (type: Type) => type.layout().size > 16;
+/**
+ * Whether each argument goes by pointer. The C ABI copies one that does not fit two registers. It also copies one that
+ * takes two once the six of x86-64 have run out, with one load as wide as the two stores before it, which stalls.
+ * `leading`: how many parameters sit between the global object and the arguments.
+ */
+function passedByPointer(args: readonly { type: Type }[], leading: number): boolean[] {
+  let registers = 6 - 1 - leading;
+  return args.map(({ type }) => {
+    const needed = Math.ceil(type.layout().size / 8);
+    const byPointer = needed > 2 || (needed === 2 && registers < 2);
+    registers -= byPointer ? 1 : needed;
+    return byPointer;
+  });
+}
 
 /**
  * Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns, or ends with the lines `finish` makes from that call.
@@ -648,7 +772,7 @@ function cppCallBody(
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
   const readLast: string[] = [];
   signature.args.forEach(({ name, type, expected }, i) => {
-    if (type instanceof VariadicType) {
+    if (type instanceof RestType) {
       lines.push(`auto converted${i} = Bun::Bindgen::variadicArguments(callFrame, ${i});`);
       return;
     }
@@ -665,11 +789,12 @@ function cppCallBody(
     lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, fromParameters?.failure ?? "{}"));
   });
   lines.push(...readLast);
+  const byPointer = passedByPointer(signature.args, leading.length);
   const args = signature.args.map(({ type }, i) => {
     const extern = type.passesValue
       ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`
       : toExtern(`converted${i}`);
-    if (!isPassedByPointer(type)) return extern;
+    if (!byPointer[i]) return extern;
     lines.push(`auto extern${i} = ${extern};`);
     return `&extern${i}`;
   });
@@ -680,13 +805,60 @@ function cppCallBody(
 const cppPrologue = `    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);`;
 
+const fromJSSymbol = (type: NamedType) => `Bun__Bindgen__${type.name}__fromJS`;
+
+/** `Name::from_js` of an enumeration or a union. */
+function cppSourceForFromJS(type: EnumerationType | UnionType): string {
+  if (!type.fromJS) return "";
+  const conversion = new Conversion(type, type.options.reportedAs ?? type.name, undefined);
+  conversion.symbol = fromJSSymbol(type);
+  return cppSourceForConversion(conversion);
+}
+
+function cppSourceForConversion(conversion: Conversion): string {
+  const { symbol, type, expected, member } = conversion;
+  const { holder, value } = cppHeldValue(type, "argument");
+  const name = member ? qualifiedName(member.of, member.of.members[member.index]) : conversion.name;
+  const lines: string[] = [];
+  const ctx = cppContext(lines, 0, name, expected, value);
+  if (member) {
+    const earlier = member.of.members.slice(0, member.index).flatMap(earlier => earlier.names);
+    lines.push(
+      `Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, JSC::asObject(JSC::JSValue::decode(encodedValue)), ${member.of.firstMemberNameIndex}, ${member.of.names.length});`,
+      ...cppReadMember(
+        member.of.members[member.index],
+        "read",
+        earlier.length,
+        cppContext([], 0, name, expected, "read"),
+      ),
+      `${holder} argument = read;`,
+    );
+  } else {
+    lines.push(`${holder} argument = JSC::JSValue::decode(encodedValue);`);
+  }
+  lines.push(
+    ...cppDeclareConverted(type, "converted", value, ctx, name, "false"),
+    `*result = ${toExtern("converted")};`,
+    "return true;",
+  );
+  return `
+extern "C" bool ${symbol}(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, ${externType(type)}* result)
+{
+${cppPrologue}
+${indent(lines.join("\n"), 4)}
+}
+`;
+}
+
 const cppExtern = (
   symbol: string,
   signature: Signature,
   leading: readonly string[] = [],
   returns = "JSC::EncodedJSValue",
-) =>
-  `extern "C" ${returns} ${symbol}(${["JSC::JSGlobalObject*", ...leading, ...signature.args.map(arg => externType(arg.type) + (isPassedByPointer(arg.type) ? "*" : ""))].join(", ")});`;
+) => {
+  const byPointer = passedByPointer(signature.args, leading.length);
+  return `extern "C" ${returns} ${symbol}(${["JSC::JSGlobalObject*", ...leading, ...signature.args.map((arg, i) => externType(arg.type) + (byPointer[i] ? "*" : ""))].join(", ")});`;
+};
 
 // ───────────────────────────── C++: classes ─────────────────────────────
 
@@ -1012,7 +1184,7 @@ function cppCalledFromRust(type: ClassType, member: CalledFromRustFunction): str
   const call = `thisObject->${member.name}(${[
     ...(member.takesGlobalObject ? ["globalObject"] : []),
     ...member.args.map(({ type }, i) =>
-      type instanceof AnyType ? `JSC::JSValue::decode(parameter${i})` : `parameter${i}`,
+      type instanceof OpaqueType ? `JSC::JSValue::decode(parameter${i})` : `parameter${i}`,
     ),
   ].join(", ")})`;
   const result = member.returnsValue ? `JSC::JSValue::encode(${call})` : call;
@@ -1080,12 +1252,12 @@ ${accessor.hasSetter ? cppInternalFieldSetter(type, accessor) : ""}`;
 
 /** The setter written in Rust. */
 function cppSetter(type: ClassType, getter: Getter): string {
-  assert(!isPassedByPointer(getter.type), `${type.name}.${getter.name}: a setter takes what fits two registers`);
+  assert(getter.setterType.layout().size <= 16, `${type.name}.${getter.name}: a setter takes what fits two registers`);
   const set = setterHostFunctionName(type, getter);
   const setSymbol = setterSymbolName(type, getter);
-  const { holder, value } = cppHeldValue(getter.type, "assigned");
+  const { holder, value } = cppHeldValue(getter.setterType, "assigned");
   return `
-extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, ${getter.isStatic ? "" : "JSC::JSCell*, "}${externType(getter.type)});
+extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, ${getter.isStatic ? "" : "JSC::JSCell*, "}${externType(getter.setterType)});
 static JSC_DECLARE_CUSTOM_SETTER(${set});
 JSC_DEFINE_CUSTOM_SETTER(${set}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue${getter.isStatic ? "" : " thisValue"}, JSC::EncodedJSValue encodedValue, JSC::PropertyName${getter.isStatic ? "" : " attributeName"}))
 {
@@ -1097,7 +1269,7 @@ ${
 }
     ${holder} assigned { JSC::JSValue::decode(encodedValue) };
     ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
-    ${cppDeclareConverted(getter.type, "value", value, "ctx", getter.name, "false").join("\n    ")}
+    ${cppDeclareConverted(getter.setterType, "value", value, "ctx", getter.name, "false").join("\n    ")}
     RELEASE_AND_RETURN(scope, ${setSymbol}(globalObject, ${getter.isStatic ? "" : "thisObject, "}${toExtern("value")}));
 }
 `;
@@ -1453,6 +1625,7 @@ export function cppSource(file: SchemaFile): string {
   for (const fn of file.functions) {
     for (const signature of fn.signatures) for (const arg of signature.args) arg.type.getHeaders(headers);
   }
+  for (const conversion of file.conversions) conversion.type.getHeaders(headers);
   for (const type of file.types) {
     if (!(type instanceof ClassType)) continue;
     for (const used of type.signatureTypes) used.getHeaders(headers);
@@ -1461,7 +1634,8 @@ export function cppSource(file: SchemaFile): string {
   }
   headers.delete(`Generated${file.origin.namespace}.h`);
   const accepted = file.types.filter(type => type instanceof DictionaryType && type.accepted) as DictionaryType[];
-  if (accepted.length > 0) headers.add("Bindgen/DictionaryMemberReader.h");
+  if (accepted.length > 0 || file.types.some(type => type instanceof DeferredDictionaryType && type.accepted))
+    headers.add("Bindgen/DictionaryMemberReader.h");
   const systemHeaders = ["JavaScriptCore/JSFunction.h"];
   const functions = [
     ...file.functions,
@@ -1477,14 +1651,18 @@ export function cppSource(file: SchemaFile): string {
 ${[...headers].map(header => `#include "${header}"\n`).join("")}${systemHeaders.map(header => `#include <${header}>\n`).join("")}${file.types
     .map(type =>
       type instanceof EnumerationType
-        ? cppSourceForEnum(type)
-        : type instanceof DictionaryType
-          ? cppSourceForDictionary(type)
-          : type instanceof ClassType
-            ? cppSourceForClass(type)
-            : "",
+        ? cppSourceForEnum(type) + cppSourceForFromJS(type)
+        : type instanceof UnionType
+          ? cppSourceForFromJS(type)
+          : type instanceof DictionaryType
+            ? cppSourceForDictionary(type)
+            : type instanceof ClassType
+              ? cppSourceForClass(type)
+              : "",
     )
-    .join("")}${file.functions.map(cppSourceForFunction).join("")}${file.namespaces
+    .join(
+      "",
+    )}${conversionsOf(file).map(cppSourceForConversion).join("")}${file.functions.map(cppSourceForFunction).join("")}${file.namespaces
     .map(namespace => cppSourceForNamespace(namespace, file.origin))
     .join("")}`;
 }
@@ -1556,19 +1734,24 @@ function rustArgumentName(arg: { name: string }): string {
   return rustIdent(name);
 }
 
-const rustExternParameters = (signature: Signature, scope: RustScope) =>
-  signature.args.map(
-    arg => `${rustArgumentName(arg)}: ${isPassedByPointer(arg.type) ? "*mut " : ""}${arg.type.rustExternType(scope)}`,
+/** `leading`: as `passedByPointer` takes it. */
+function rustExternParameters(signature: Signature, scope: RustScope, leading: number): string[] {
+  const byPointer = passedByPointer(signature.args, leading);
+  return signature.args.map(
+    (arg, i) => `${rustArgumentName(arg)}: ${byPointer[i] ? "*mut " : ""}${arg.type.rustExternType(scope)}`,
   );
+}
 const rustArguments = (signature: Signature) => signature.args.map(arg => arg.type.rustArgument(rustArgumentName(arg)));
 /** Each argument gets the call's lifetime here: left to inference in the call, a body could ask for `'static`. */
-function rustTakeArguments(args: readonly { name: string; type: Type }[], scope: RustScope): string {
+function rustTakeArguments(args: readonly { name: string; type: Type }[], scope: RustScope, leading: number): string {
+  const byPointer = passedByPointer(args, leading);
   // What can return early comes last: by then Rust owns whatever the other arguments hand over.
   const taken = args
-    .toSorted((a, b) => +a.type.rustFromExternThrows - +b.type.rustFromExternThrows)
-    .flatMap(arg => {
+    .map((arg, i) => ({ arg, byPointer: byPointer[i] }))
+    .toSorted((a, b) => +a.arg.type.rustFromExternThrows - +b.arg.type.rustFromExternThrows)
+    .flatMap(({ arg, byPointer }) => {
       const name = rustArgumentName(arg);
-      const converted = arg.type.rustFromExtern(isPassedByPointer(arg.type) ? `${name}.read()` : name, scope);
+      const converted = arg.type.rustFromExtern(byPointer ? `${name}.read()` : name, scope);
       if (arg.type.rustFromExternThrows)
         return [
           `let ${name} = match ${converted} {\n    Ok(value) => value,\n    Err(error) => return error.into_host_fn_return(cx),\n};\n`,
@@ -1601,7 +1784,34 @@ ${indent(body, 12)}
 }
 `;
 
-function rustForEnumeration(type: EnumerationType): string {
+function rustForConversion({ symbol, rustName, type, exported, member }: Conversion, scope: RustScope): string {
+  const converted = type.rustFromExtern("result.assume_init()", scope);
+  const ofUndefined = member ? null : type.rustOfUndefined(scope);
+  const declaration = `fn ${exported ? "convert_" : ""}${rustName}<'a>(cx: &mut bindgen::JsScope<'a>, value: JSValue)`;
+  return `${
+    exported
+      ? `
+#[inline]
+pub fn ${rustName}<'a, T>(global: &JSGlobalObject, value: bindgen::JsLocal<'a, T>) -> bun_jsc::JsResult<${type.rustType(scope)}> {
+    bindgen::convert_with(global, value, convert_${rustName})
+}`
+      : ""
+  }
+unsafe extern "C" {
+    fn ${symbol}(global: *mut JSGlobalObject, value: JSValue, result: *mut ${type.rustExternType(scope)}) -> bool;
+}
+${declaration} -> bindgen::Result<'a, ${type.rustType(scope)}> {
+    let mut result = core::mem::MaybeUninit::<${type.rustExternType(scope)}>::uninit();
+    // SAFETY: C++ fills \`result\` exactly when it returns true, and the call \`cx\` belongs to holds \`value\`.
+    unsafe {
+${ofUndefined ? `        if value.is_undefined() {\n            return Ok(${ofUndefined});\n        }\n` : ""}        bindgen::call_conversion(cx, |global| ${symbol}(global, value, result.as_mut_ptr()))?;
+${/\bheap\b/.test(converted) ? "        let heap = &cx.heap;\n" : ""}        ${type.rustFromExternThrows ? converted : `Ok(${converted})`}
+    }
+}
+`;
+}
+
+function rustForEnumeration(type: EnumerationType, scope: RustScope): string {
   return `
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1619,7 +1829,7 @@ ${
 }
 `
     : ""
-}`;
+}${rustFromJS(type, scope)}`;
 }
 
 /** An owner that is only returned owns what it holds. */
@@ -1685,7 +1895,90 @@ ${type.alternatives
 }
 `;
   }
-  return text;
+  return text + rustFromJS(type, scope);
+}
+
+/** `Name::from_js`, and for a type that holds JS values `Name::from_local`, which a host call uses. */
+function rustFromJS(type: NamedType, scope: RustScope): string {
+  if (!type.fromJS) return "";
+  const extern = type.rustExternType(scope);
+  const symbol = fromJSSymbol(type);
+  const converted = type.rustFromExtern("result.assume_init()", scope);
+  const convert = `let mut result = core::mem::MaybeUninit::<${extern}>::uninit();
+        // SAFETY: C++ fills \`result\` exactly when it returns true.`;
+  const declaration = `unsafe extern "C" {
+    fn ${symbol}(global: *mut JSGlobalObject, value: JSValue, result: *mut ${extern}) -> bool;
+}
+`;
+  if (!type.needsLifetime)
+    return `${declaration}impl ${type.name} {
+    pub fn from_js(global: &JSGlobalObject, value: impl bindgen::AnyValue) -> bun_jsc::JsResult<Self> {
+        ${convert}
+        bun_jsc::call_false_is_throw(global, || unsafe { ${symbol}(global.as_mut_ptr(), bindgen::to_extern(value), result.as_mut_ptr()) })?;
+        // SAFETY: as above.
+        Ok(unsafe { ${converted} })
+    }
+}
+`;
+  return `${declaration}impl ${type.name}<'_> {
+    /// Converts \`value\` and lends it to \`f\`.
+    pub fn from_js<R>(
+        global: &JSGlobalObject,
+        value: impl bindgen::AnyValue,
+        f: impl for<'call> FnOnce(${type.name}<'call>) -> bun_jsc::JsResult<R>,
+    ) -> bun_jsc::JsResult<R> {
+        ${convert}
+        bun_jsc::call_false_is_throw(global, || unsafe { ${symbol}(global.as_mut_ptr(), bindgen::to_extern(value), result.as_mut_ptr()) })?;
+        // SAFETY: as above; the scope only names the time until \`f\` returns.
+        unsafe {
+            bindgen::JsScope::with(global.as_mut_ptr(), |cx| {
+                let heap = &cx.heap;
+                f(${converted})
+            })
+        }
+    }
+}
+impl<'a> ${type.name}<'a> {
+    pub fn from_local<T>(global: &JSGlobalObject, value: bindgen::JsLocal<'a, T>) -> bun_jsc::JsResult<Self> {
+        ${convert}
+        bun_jsc::call_false_is_throw(global, || unsafe { ${symbol}(global.as_mut_ptr(), bindgen::to_extern(value), result.as_mut_ptr()) })?;
+        // SAFETY: as above, and the call \`'a\` holds \`value\`.
+        Ok(unsafe {
+            bindgen::with_scope_of(global, |cx| {
+                let heap = &cx.heap;
+                ${converted}
+            })
+        })
+    }
+}
+`;
+}
+
+function rustForDeferredDictionary(type: DeferredDictionaryType, scope: RustScope): string {
+  if (!type.accepted) return "";
+  return `
+#[derive(Clone, Copy)]
+pub struct ${type.name}<'a>(bindgen::JsLocal<'a, bun_jsc::JSObject>);
+impl<'a> ${type.name}<'a> {
+    #[inline(always)]
+    pub fn new(object: bindgen::JsLocal<'a, bun_jsc::JSObject>) -> Self {
+        Self(object)
+    }
+    #[inline(always)]
+    pub fn object(self) -> bindgen::JsLocal<'a, bun_jsc::JSObject> {
+        self.0
+    }
+${type.members
+  .map(
+    (member, i) => `    /// Reads \`${member.name}\` and converts it.
+    #[inline]
+    pub fn ${member.rustName}(self, global: &JSGlobalObject) -> bun_jsc::JsResult<${member.type.rustType(scope)}> {
+        bindgen::convert_with(global, self.0, ${type.conversions[i].rustName})
+    }`,
+  )
+  .join("\n")}
+}
+`;
 }
 
 function rustForDictionary(type: DictionaryType, scope: RustScope): string {
@@ -1728,41 +2021,14 @@ ${type.members.map(member => `                ${member.rustName}: ${member.type.
 }
 `;
   }
-  if (type.fromJS) {
-    text += `unsafe extern "C" {
-    fn Bun__Bindgen__${type.name}__fromJS(global: *mut JSGlobalObject, value: JSValue, result: *mut Extern${type.name}) -> bool;
-}
-impl ${type.name}${lifetime ? "<'_>" : ""} {
-    ${
-      lifetime
-        ? `/// Converts \`value\` and lends it to \`f\`.
-    pub fn from_js<R>(
-        global: &JSGlobalObject,
-        value: JSValue,
-        f: impl for<'call> FnOnce(${type.name}<'call>) -> bun_jsc::JsResult<R>,
-    ) -> bun_jsc::JsResult<R> {`
-        : `pub fn from_js(global: &JSGlobalObject, value: JSValue) -> bun_jsc::JsResult<Self> {`
-    }
-        let mut result = core::mem::MaybeUninit::<Extern${type.name}>::uninit();
-        // SAFETY: C++ fills \`result\` exactly when it returns true.
-        bun_jsc::call_false_is_throw(global, || unsafe { Bun__Bindgen__${type.name}__fromJS(global.as_mut_ptr(), value, result.as_mut_ptr()) })?;
-        // SAFETY: as above${lifetime && "; the scope only names the time until `f` returns"}.
-        ${
-          lifetime
-            ? `unsafe { bindgen::JsScope::with(global.as_mut_ptr(), |cx| f(${type.name}::from_extern(result.assume_init_ref(), &cx.heap))) }`
-            : `Ok(unsafe { ${type.name}::from_extern(result.assume_init_ref()) })`
-        }
-    }
-}
-`;
-  }
+  text += rustFromJS(type, scope);
   if (type.returned) {
     const value = (member: (typeof type.members)[number]) => {
       const field = `self.${member.rustName}`;
       if (member.type instanceof OptionalType && member.type.modifier === "optional") {
-        return `match ${field} { Some(value) => ${member.type.inner.rustToJS("value", scope)}?.to_js(), None => JSValue::ZERO }`;
+        return `match ${field} { Some(value) => ${member.type.inner.rustToJS("value", scope)}?, None => bindgen::JsLocal::EMPTY }`;
       }
-      return `${member.type.rustToJS(field, scope)}?.to_js()`;
+      return `${member.type.rustToJS(field, scope)}?`;
     };
     text += `impl${lifetime} ${type.name}${lifetime} {
     pub fn into_js${lifetime ? "" : "<'a>"}(self, heap: &bindgen::JsHeap<'a>) -> ${jsValueResult} {
@@ -1825,9 +2091,12 @@ function rustForClass(type: ClassType, scope: RustScope): string {
     ].join(", ")})`;
     thunks += rustThunk(
       classSymbolName(type, "construct"),
-      [...(returnsPointer ? [] : ["structure: *mut core::ffi::c_void"]), ...rustExternParameters(signature, scope)],
+      [
+        ...(returnsPointer ? [] : ["structure: *mut core::ffi::c_void"]),
+        ...rustExternParameters(signature, scope, returnsPointer ? 0 : 1),
+      ],
       returnsPointer ? "*mut core::ffi::c_void" : "JSValue",
-      `${rustTakeArguments(signature.args, scope)}let result = ${infallible(call, signature.throws)};
+      `${rustTakeArguments(signature.args, scope, returnsPointer ? 0 : 1)}let result = ${infallible(call, signature.throws)};
 ${
   returnsPointer
     ? "bindgen::host_fn_construct_return(cx, result)"
@@ -1846,15 +2115,15 @@ ${
     ].join(", ")})`;
     thunks += rustThunk(
       methodSymbolName(type, method),
-      [...(isStatic ? [] : ["this: *mut core::ffi::c_void"]), ...rustExternParameters(method, scope)],
+      [...(isStatic ? [] : ["this: *mut core::ffi::c_void"]), ...rustExternParameters(method, scope, isStatic ? 0 : 1)],
       ...((!method.isProperty && method.returns instanceof PrimitiveType
         ? [
             method.returns.rustType(),
-            `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope)}${call}`,
+            `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope, isStatic ? 0 : 1)}${call}`,
           ]
         : [
             "JSValue",
-            `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope)}let result = ${infallible(call, method.throws, method.returns)};
+            `${takeThis(method.receiver, method.passThis)}${rustTakeArguments(method.args, scope, isStatic ? 0 : 1)}let result = ${infallible(call, method.throws, method.returns)};
 bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("value", scope)})`,
           ]) as [string, string]),
     );
@@ -1875,9 +2144,12 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
     const set = `<${rustPath}>::${getter.setterRustName}(${[...leading(getter.setterReceiver, getter.passThis, getter.setterCapability), "value"].join(", ")})`;
     thunks += rustThunk(
       setterSymbolName(type, getter),
-      [...(getter.isStatic ? [] : ["this: *mut core::ffi::c_void"]), `value: ${getter.type.rustExternType(scope)}`],
+      [
+        ...(getter.isStatic ? [] : ["this: *mut core::ffi::c_void"]),
+        `value: ${getter.setterType.rustExternType(scope)}`,
+      ],
       "bool",
-      `${takeThis(getter.setterReceiver, getter.passThis)}${rustTakeArguments([{ name: "value", type: getter.type }], scope)}let result = ${infallible(set, getter.throws, unit)};
+      `${takeThis(getter.setterReceiver, getter.passThis)}${rustTakeArguments([{ name: "value", type: getter.setterType }], scope, getter.isStatic ? 0 : 1)}let result = ${infallible(set, getter.throws, unit)};
 !bindgen::host_fn_return(cx, result, bindgen::to_js::undefined).is_empty()`,
     );
   }
@@ -1994,9 +2266,9 @@ function rustForModule(type: ClassType, scope: RustScope): string {
   if (!type.sharedThis && type.internalFields.length === 0 && !type.construct && type.calledFromRust.length === 0)
     return "";
   const fromJS = symbolName(type, "fromJS");
-  const rustParameters = (member: CalledFromRustFunction) =>
+  const rustParameters = (member: CalledFromRustFunction, opaque: string) =>
     member.args.map(
-      arg => `${rustArgumentName(arg)}: ${arg.type instanceof AnyType ? "JSValue" : arg.type.rustType(scope)}`,
+      arg => `${rustArgumentName(arg)}: ${arg.type instanceof OpaqueType ? opaque : arg.type.rustType(scope)}`,
     );
   const safety = `// SAFETY: \`this_value\` is an instance, which has ${type.internalFields.length} internal fields.`;
   return `
@@ -2011,7 +2283,7 @@ ${
     }${type.calledFromRust
       .map(
         member => `
-    fn ${memberFunctionSymbolName(type, member.name)}(${[...(member.takesGlobalObject ? ["global: &JSGlobalObject"] : []), "this_value: JSValue", ...rustParameters(member)].join(", ")})${member.returnsValue ? " -> JSValue" : member.throws ? " -> bool" : ""};`,
+    fn ${memberFunctionSymbolName(type, member.name)}(${[...(member.takesGlobalObject ? ["global: &JSGlobalObject"] : []), "this_value: JSValue", ...rustParameters(member, "JSValue")].join(", ")})${member.returnsValue ? " -> JSValue" : member.throws ? " -> bool" : ""};`,
       )
       .join("")}
 }`
@@ -2065,7 +2337,7 @@ ${
         unsafe { bindgen::internal_field_at(this_value, ${offset}) }
     }
     #[inline]
-    pub fn ${id}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub fn ${id}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: impl bindgen::AnyValue) {
         debug_assert!(!${fromJS}(this_value).is_null());
         ${safety}
         unsafe { bindgen::set_internal_field_at(this_value, global, ${offset}, value) }
@@ -2081,11 +2353,11 @@ ${
     })
     .join("")}${type.calledFromRust
     .map(member => {
-      const call = `${memberFunctionSymbolName(type, member.name)}(${[...(member.takesGlobalObject ? ["global"] : []), "this_value", ...member.args.map(rustArgumentName)].join(", ")})`;
+      const call = `${memberFunctionSymbolName(type, member.name)}(${[...(member.takesGlobalObject ? ["global"] : []), "this_value", ...member.args.map(arg => (arg.type instanceof OpaqueType ? `bindgen::to_extern(${rustArgumentName(arg)})` : rustArgumentName(arg)))].join(", ")})`;
       const returns = member.returnsValue ? "JSValue" : "()";
       return `    /// \`${type.cpp.split("::").at(-1)}::${member.name}\`
     #[inline]
-    pub fn ${rustIdent(snakeCase(member.name))}(${["this_value: JSValue", ...(member.takesGlobalObject ? ["global: &JSGlobalObject"] : []), ...rustParameters(member)].join(", ")})${member.throws ? ` -> bun_jsc::JsResult<${returns}>` : member.returnsValue ? " -> JSValue" : ""} {
+    pub fn ${rustIdent(snakeCase(member.name))}(${["this_value: JSValue", ...(member.takesGlobalObject ? ["global: &JSGlobalObject"] : []), ...rustParameters(member, "impl bindgen::AnyValue")].join(", ")})${member.throws ? ` -> bun_jsc::JsResult<${returns}>` : member.returnsValue ? " -> JSValue" : ""} {
         debug_assert!(!${fromJS}(this_value).is_null());
         // SAFETY: \`this_value\` is an instance.
         ${
@@ -2126,9 +2398,9 @@ bun_jsc::jsc_abi_extern! {
         const call = `${path}(${[...capabilityArgument[signature.capability], ...leading, ...rustArguments(signature)].join(", ")})`;
         return rustThunk(
           thunkSymbol(fn, signature),
-          [...leading.map(name => `${name}: JSValue`), ...rustExternParameters(signature, scope)],
+          [...leading.map(name => `${name}: JSValue`), ...rustExternParameters(signature, scope, leading.length)],
           "JSValue",
-          `${leading.map(name => `let ${name} = bindgen::JsLocal::new(&cx.heap, ${name});\n`).join("")}${rustTakeArguments(signature.args, scope)}let result = ${infallible(call, signature.throws, signature.returns)};
+          `${leading.map(name => `let ${name} = bindgen::JsLocal::${name === "callee" ? "<bun_jsc::JSObject>::" : ""}from_extern(${name}, &cx.heap);\n`).join("")}${rustTakeArguments(signature.args, scope, leading.length)}let result = ${infallible(call, signature.throws, signature.returns)};
 bindgen::host_fn_return(cx, result, |heap, value| ${signature.returns.rustToJS("value", scope)})`,
         );
       })
@@ -2142,12 +2414,36 @@ const rustTraitImports = (file: SchemaFile) =>
     .map(path => `\n    use ${path} as _;`)
     .join("");
 
+const rustForFile = (file: SchemaFile) =>
+  file.types
+    .map(type =>
+      type instanceof EnumerationType
+        ? rustForEnumeration(type, file.origin)
+        : type instanceof UnionType
+          ? rustForUnion(type, file.origin)
+          : type instanceof ClassType
+            ? rustForClass(type, file.origin)
+            : type instanceof DeferredDictionaryType
+              ? rustForDeferredDictionary(type, file.origin)
+              : rustForDictionary(type as DictionaryType, file.origin),
+    )
+    .join("") +
+  conversionsOf(file)
+    .map(conversion => rustForConversion(conversion, file.origin))
+    .join("") +
+  file.functions.map(fn => rustForFunction(fn, file)).join("");
+
+/** A file of types alone names fewer of them. */
+const rustImports = (text: string) =>
+  ["JSGlobalObject", "JSValue", "bindgen"].filter(name => new RegExp(`\\b${name}\\b`).test(text)).join(", ");
+
 export function rustForCrate(files: readonly SchemaFile[]): string {
   return (
     banner(null) +
     files
+      .map(file => [file, rustForFile(file)] as const)
       .map(
-        file => `
+        ([file, text]) => `
 /// \`${file.origin.stem}.bind.ts\`
 #[allow(
     non_snake_case,
@@ -2156,6 +2452,7 @@ export function rustForCrate(files: readonly SchemaFile[]): string {
     dead_code,
     unused_unsafe,
     clippy::missing_safety_doc,
+    clippy::disallowed_methods,
     clippy::identity_op,
     clippy::derivable_impls,
     clippy::large_enum_variant,
@@ -2163,21 +2460,8 @@ export function rustForCrate(files: readonly SchemaFile[]): string {
     clippy::redundant_closure
 )]
 pub mod ${file.origin.rustModule} {
-    use bun_jsc::{JSGlobalObject, JSValue, bindgen};${rustTraitImports(file)}
-${indent(
-  file.types
-    .map(type =>
-      type instanceof EnumerationType
-        ? rustForEnumeration(type)
-        : type instanceof UnionType
-          ? rustForUnion(type, file.origin)
-          : type instanceof ClassType
-            ? rustForClass(type, file.origin)
-            : rustForDictionary(type as DictionaryType, file.origin),
-    )
-    .join("") + file.functions.map(fn => rustForFunction(fn, file)).join(""),
-  4,
-)}}
+    use bun_jsc::{${rustImports(text)}};${rustTraitImports(file)}
+${indent(text, 4)}}
 `,
       )
       .join("")
@@ -2194,7 +2478,7 @@ export function dts(files: readonly SchemaFile[]): string {
     );
     return signature.args
       .map((arg, i) =>
-        arg.type instanceof VariadicType
+        arg.type instanceof RestType
           ? `...${arg.name}: ${arg.type.tsType}`
           : `${arg.name}${i <= lastRequired ? "" : "?"}: ${arg.type.tsType}`,
       )
@@ -2211,14 +2495,18 @@ export function dts(files: readonly SchemaFile[]): string {
     wellKnownSymbol(fn.name)
       ? `    [Symbol.${wellKnownSymbol(fn.name)}]: ${overloadsType(fn)};`
       : member(fn.name, false, overloadsType(fn));
-  const getterMember = (getter: Getter) =>
-    getter.writable
-      ? member(getter.name, false, "any")
-      : `    ${getter.hasSetter ? "" : "readonly "}${JSON.stringify(getter.name)}: ${getter.hasSetter ? getter.type.tsType : resultType(getter.type)};`;
+  const getterMember = (getter: Getter) => {
+    if (getter.writable) return member(getter.name, false, "any");
+    const name = JSON.stringify(getter.name);
+    if (!getter.hasSetter) return `    readonly ${name}: ${resultType(getter.type)};`;
+    if (getter.setterType === getter.type) return `    ${name}: ${getter.type.tsType};`;
+    return `    get ${name}(): ${resultType(getter.type)};\n    set ${name}(value: ${getter.setterType.tsType});`;
+  };
   const declarations = files.flatMap(file =>
     file.types.map(type => {
-      if (type instanceof DictionaryType) {
-        return `  interface ${type.name} {\n${type.members.map(m => member(m.name, m.type.takesUndefined, m.type.tsType)).join("\n")}\n  }`;
+      if (type instanceof DictionaryType || type instanceof DeferredDictionaryType) {
+        const published = type.members.filter(m => !m.privateSymbol);
+        return `  interface ${type.name} {\n${published.map(m => member(m.name, m.type.takesUndefined, m.type.tsType)).join("\n")}\n  }`;
       }
       if (!(type instanceof ClassType)) return "";
       return `  interface ${type.name} {

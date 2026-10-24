@@ -188,23 +188,6 @@ pub enum Mode {
     Json,
 }
 
-bun_core::comptime_string_map! {
-    static MODE_MAP: Mode = {
-        b"advanced" => Mode::Advanced,
-        b"json" => Mode::Json,
-    };
-}
-
-impl Mode {
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
-        use bun_jsc::ComptimeStringMapExt as _;
-        if !value.is_string() {
-            return Ok(None);
-        }
-        MODE_MAP.from_js(global, value)
-    }
-}
-
 #[derive(Clone, Copy)]
 pub(crate) enum DecodedIPCMessage {
     Version(u32),
@@ -2624,7 +2607,7 @@ pub(crate) mod IPCHandlers {
 pub(crate) fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
-    handle: JSValue,
+    handle: impl bun_jsc::bindgen::AnyValue,
     options: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`

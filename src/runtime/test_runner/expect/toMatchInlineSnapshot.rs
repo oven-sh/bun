@@ -1,16 +1,18 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 
-use super::throw;
 use super::Expect;
+use super::throw;
+use crate::generated_bindgen::expect::SnapshotArgument;
 
 impl Expect {
     pub(crate) fn to_match_inline_snapshot(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+        first: Option<SnapshotArgument<'_>>,
+        second: Option<SnapshotArgument<'_>>,
+    ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 
@@ -31,15 +33,17 @@ impl Expect {
 
         let mut expected_string = None;
         let mut property_matchers: Option<JSValue> = None;
-        match *args {
-            [] => {}
-            [first] => {
-                let first = first.to_js();
-                if first.is_string() {
-                    expected_string = Some(first.to_js_string_view(global)?);
-                } else if first.is_object() {
-                    property_matchers = Some(first);
-                } else {
+        match (first, second) {
+            (None, _) => {}
+            (Some(first), None) => match first {
+                SnapshotArgument::String(string) => {
+                    expected_string = Some(string.to_js().to_js_string_view(global)?);
+                }
+                SnapshotArgument::StringObject(object) => {
+                    expected_string = Some(object.to_js().to_js_string_view(global)?);
+                }
+                SnapshotArgument::Object(object) => property_matchers = Some(object.to_js()),
+                SnapshotArgument::Absent | SnapshotArgument::Other => {
                     return throw!(
                         this,
                         global,
@@ -47,27 +51,37 @@ impl Expect {
                         "\n\nMatcher error: Expected first argument to be a string or object\n",
                     );
                 }
-            }
-            [first, second, ..] => {
-                let (first, second) = (first.to_js(), second.to_js());
-                if !first.is_object() {
-                    let signature = Expect::get_signature(
-                        "toMatchInlineSnapshot",
-                        "<green>properties<r><d>, <r>hint",
-                        false,
-                    );
-                    return throw!(
-                        this,
-                        global,
-                        signature,
-                        "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
-                    );
-                }
-
-                property_matchers = Some(first);
-
-                if second.is_string() {
-                    expected_string = Some(second.to_js_string_view(global)?);
+            },
+            (Some(first), Some(second)) => {
+                property_matchers = Some(match first {
+                    SnapshotArgument::StringObject(object) => object.to_js(),
+                    SnapshotArgument::Object(object) => object.to_js(),
+                    SnapshotArgument::Absent
+                    | SnapshotArgument::String(_)
+                    | SnapshotArgument::Other => {
+                        let signature = Expect::get_signature(
+                            "toMatchInlineSnapshot",
+                            "<green>properties<r><d>, <r>hint",
+                            false,
+                        );
+                        return throw!(
+                            this,
+                            global,
+                            signature,
+                            "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
+                        );
+                    }
+                });
+                match second {
+                    SnapshotArgument::String(string) => {
+                        expected_string = Some(string.to_js().to_js_string_view(global)?);
+                    }
+                    SnapshotArgument::StringObject(object) => {
+                        expected_string = Some(object.to_js().to_js_string_view(global)?);
+                    }
+                    SnapshotArgument::Absent
+                    | SnapshotArgument::Object(_)
+                    | SnapshotArgument::Other => {}
                 }
             }
         }

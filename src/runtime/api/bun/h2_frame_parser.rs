@@ -17,20 +17,24 @@ use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
-use bun_core::strings;
+use bun_core::{StringView, strings};
 use bun_http::lshpack;
-use bun_jsc::AbortSignal;
+use bun_jsc::AbortSignalRef;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{BufferSource, Callable, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
-};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StrongOptional};
 use bun_ptr::RefPtr;
 
-use crate::generated_bindgen::h2_frame_parser::js_H2FrameParser as js;
+use crate::generated_bindgen::h2_frame_parser::{
+    CustomSettingsRecord, FlagSetting, H2FrameCounters, H2FrameParserOptions, H2Handlers,
+    H2NativeSocket, H2SessionState, H2Settings, H2SettingsOption, H2StreamState, H2StringObject,
+    H2WriteResult, NumberSetting, OptionalStreamId, Origins, RequestHeaders,
+    RequestOptionsArgument, StreamContext, StreamResetBurst, WriteData, WriteEncoding,
+    js_H2FrameParser as js,
+};
 
 bun_output::declare_scope!(H2FrameParser, visible);
 
@@ -81,13 +85,13 @@ impl NativeSocket {
     /// write-only mode and hold a ref on the socket instead.
     fn attach<const SSL: bool>(
         &self,
-        socket: *mut crate::socket::NewSocket<SSL>,
+        socket: &crate::socket::NewSocket<SSL>,
         h2: RefPtr<H2FrameParser>,
     ) {
         debug_assert!(matches!(self.socket.get(), BunSocket::None));
         self.closed.set(false);
         // BACKREF: the caller's JS socket holds a ref on it.
-        let socket_nn = NonNull::new(socket).expect("non-null socket");
+        let socket_nn = NonNull::from(socket);
         let socket = bun_ptr::BackRef::from(socket_nn);
         self.socket
             .set(if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
@@ -515,7 +519,7 @@ fn is_valid_header_value(value: &[u8]) -> bool {
 /// UTF-8. Bun has no single rule above 0xFF: Node truncates such a code unit to
 /// its low byte, and object-form `respond()` drops the value in JS
 /// (`headerValueIsUnsendable`). ALTSVC and ORIGIN strings use the same rule.
-fn header_value_bytes<'a>(value: &'a bun_jsc::JSStringView<'_>) -> Cow<'a, [u8]> {
+fn header_value_bytes(value: &bun_core::String) -> Cow<'_, [u8]> {
     if !value.is_utf16() {
         return Cow::Borrowed(value.latin1());
     }
@@ -732,25 +736,19 @@ impl Handlers {
 
     pub(crate) fn from_js(
         global_object: &JSGlobalObject,
-        opts: JSValue,
+        opts: Option<H2Handlers<'_>>,
         this_value: JSValue,
     ) -> JsResult<Handlers> {
         let mut handlers = Handlers::new(global_object);
 
-        if !opts.is_object() {
+        let Some(opts) = opts else {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected \"handlers\" to be an object")));
-        }
+        };
 
         macro_rules! handler_pair {
-            ($field:ident, $key:literal) => {{
-                if let Some(callback_value) = opts.get_truthy(global_object, $key)? {
-                    if !callback_value.is_cell() || !callback_value.is_callable() {
-                        return Err(global_object.throw_invalid_arguments(format_args!(
-                            "Expected \"{}\" callback to be a function",
-                            $key
-                        )));
-                    }
+            ($field:ident, $key:ident) => {{
+                if let Some(callback_value) = opts.$key(global_object)? {
                     js::$field(
                         this_value,
                         global_object,
@@ -759,37 +757,24 @@ impl Handlers {
                 }
             }};
         }
-        handler_pair!(on_stream_start_set_cached, "streamStart");
-        handler_pair!(on_stream_headers_set_cached, "streamHeaders");
-        handler_pair!(on_stream_end_set_cached, "streamEnd");
-        handler_pair!(on_stream_data_set_cached, "streamData");
-        handler_pair!(on_stream_error_set_cached, "streamError");
-        handler_pair!(on_remote_settings_set_cached, "remoteSettings");
-        handler_pair!(on_local_settings_set_cached, "localSettings");
-        handler_pair!(on_want_trailers_set_cached, "wantTrailers");
-        handler_pair!(on_ping_set_cached, "ping");
-        handler_pair!(on_end_set_cached, "end");
-        // .{ "onError", "error" } using fastGet(.error) now
-        handler_pair!(on_go_away_set_cached, "goaway");
-        handler_pair!(on_aborted_set_cached, "aborted");
-        handler_pair!(on_write_set_cached, "write");
-        handler_pair!(on_alt_svc_set_cached, "altsvc");
-        handler_pair!(on_origin_set_cached, "origin");
-        handler_pair!(on_frame_error_set_cached, "frameError");
-        handler_pair!(on_stream_push_set_cached, "streamPush");
-
-        if let Some(callback_value) = opts.fast_get(global_object, bun_jsc::BuiltinName::Error)? {
-            if !callback_value.is_cell() || !callback_value.is_callable() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "Expected \"error\" callback to be a function"
-                )));
-            }
-            js::on_error_set_cached(
-                this_value,
-                global_object,
-                callback_value.with_async_context_if_needed(global_object),
-            );
-        }
+        handler_pair!(on_stream_start_set_cached, stream_start);
+        handler_pair!(on_stream_headers_set_cached, stream_headers);
+        handler_pair!(on_stream_end_set_cached, stream_end);
+        handler_pair!(on_stream_data_set_cached, stream_data);
+        handler_pair!(on_stream_error_set_cached, stream_error);
+        handler_pair!(on_remote_settings_set_cached, remote_settings);
+        handler_pair!(on_local_settings_set_cached, local_settings);
+        handler_pair!(on_want_trailers_set_cached, want_trailers);
+        handler_pair!(on_ping_set_cached, ping);
+        handler_pair!(on_end_set_cached, end);
+        handler_pair!(on_go_away_set_cached, goaway);
+        handler_pair!(on_aborted_set_cached, aborted);
+        handler_pair!(on_write_set_cached, write);
+        handler_pair!(on_alt_svc_set_cached, altsvc);
+        handler_pair!(on_origin_set_cached, origin);
+        handler_pair!(on_frame_error_set_cached, frame_error);
+        handler_pair!(on_stream_push_set_cached, stream_push);
+        handler_pair!(on_error_set_cached, error);
 
         // onWrite is required for duplex support or if more than 1 parser is attached to the same socket (unliked)
         if js::on_write_get_cached(this_value).is_none() {
@@ -797,21 +782,15 @@ impl Handlers {
                 .throw_invalid_arguments(format_args!("Expected at least \"write\" callback")));
         }
 
-        if let Some(binary_type_value) = opts.get_truthy(global_object, "binaryType")? {
-            if !binary_type_value.is_string() {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "Expected \"binaryType\" to be a string"
-                )));
-            }
-            handlers.binary_type =
-                match BinaryType::from_js_value(global_object, binary_type_value)? {
-                    Some(bt) => bt,
-                    None => {
-                        return Err(global_object.throw_invalid_arguments(format_args!(
-                            "Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'",
-                        )));
-                    }
-                };
+        if let Some(binary_type_value) = opts.binary_type(global_object)? {
+            handlers.binary_type = match BinaryType::from_bun_string(&binary_type_value) {
+                Some(bt) => bt,
+                None => {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'",
+                    )));
+                }
+            };
         }
 
         Ok(handlers)
@@ -1863,7 +1842,7 @@ impl Stream {
             .unwrap_or_else(|| JSValue::js_number(self.id as f64))
     }
 
-    pub(crate) fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
+    pub(crate) fn attach_signal(&mut self, parser: &H2FrameParser, signal: AbortSignalRef) {
         let signal_ref = bun_core::heap::into_raw(Box::new(SignalRef {
             abort_handle: bun_jsc::AbortHandle::for_owner::<SignalRef>(),
             parser: parser.ref_guard(),
@@ -1871,7 +1850,7 @@ impl Stream {
         }));
         // SAFETY: `signal_ref` is a live heap allocation; both calls keep its provenance.
         let signal_ref = unsafe {
-            bun_jsc::AbortHandle::follow_owner(signal_ref, signal.ref_());
+            bun_jsc::AbortHandle::follow_owner(signal_ref, signal);
             bun_core::heap::take(signal_ref)
         };
         self.signal = Some(signal_ref);
@@ -4338,12 +4317,8 @@ impl H2FrameParser {
     pub(crate) fn load_settings_from_js_value(
         &self,
         global_object: &JSGlobalObject,
-        options: JSValue,
+        options: H2Settings<'_>,
     ) -> JsResult<()> {
-        if !options.is_object() {
-            return Err(global_object.throw(format_args!("Expected settings to be a object")));
-        }
-
         // R-2: read-modify-write the `Cell<FullSettingsPayload>` via a local copy.
         let mut local_settings = self.local_settings.get();
         // The wire-emit mask is per-call: node's updateSettingsBuffer starts flags at 0 and only
@@ -4351,10 +4326,9 @@ impl H2FrameParser {
         let mut explicit_settings: u8 = 0;
 
         macro_rules! number_setting {
-            ($key:literal, $field:ident, $bit:expr, $min:expr, $max:expr, $err:literal) => {{
-                if let Some(v) = options.get(global_object, $key)? {
-                    if v.is_number() {
-                        let value = v.as_number();
+            ($key:literal, $setting:ident, $field:ident, $bit:expr, $min:expr, $max:expr, $err:literal) => {{
+                match options.$setting(global_object)? {
+                    NumberSetting::Number(value) => {
                         if value < ($min as f64) || value > $max {
                             return global_object
                                 .err_http2_invalid_setting_value_range_error($err)
@@ -4362,7 +4336,9 @@ impl H2FrameParser {
                         }
                         local_settings.$field = value as u32;
                         explicit_settings |= $bit;
-                    } else if !v.is_empty_or_undefined_or_null() {
+                    }
+                    NumberSetting::Missing => {}
+                    NumberSetting::Other => {
                         return global_object
                             .err_http2_invalid_setting_value_range_error(concat!(
                                 "Expected ",
@@ -4378,26 +4354,28 @@ impl H2FrameParser {
         number_setting!(
             "headerTableSize",
             header_table_size,
+            header_table_size,
             SETTING_BIT_HEADER_TABLE_SIZE,
             0,
             MAX_HEADER_TABLE_SIZE_F64,
             "Expected headerTableSize to be a number between 0 and 2^32-1"
         );
 
-        if let Some(enable_push) = options.get(global_object, "enablePush")? {
-            if enable_push.is_boolean() {
-                local_settings.enable_push = if enable_push.as_boolean() { 1 } else { 0 };
+        match options.enable_push(global_object)? {
+            FlagSetting::Flag(enable_push) => {
+                local_settings.enable_push = if enable_push { 1 } else { 0 };
                 explicit_settings |= SETTING_BIT_ENABLE_PUSH;
-            } else if !enable_push.is_undefined() {
+            }
+            FlagSetting::Missing => {}
+            FlagSetting::Other => {
                 return global_object
                     .err_http2_invalid_setting_value("Expected enablePush to be a boolean")
                     .throw();
             }
         }
 
-        if let Some(v) = options.get(global_object, "initialWindowSize")? {
-            if v.is_number() {
-                let value = v.as_number();
+        match options.initial_window_size(global_object)? {
+            NumberSetting::Number(value) => {
                 if value < 0.0 || value > MAX_WINDOW_SIZE_F64 {
                     return global_object
                         .err_http2_invalid_setting_value_range_error(
@@ -4408,7 +4386,9 @@ impl H2FrameParser {
                 bun_output::scoped_log!(H2FrameParser, "initialWindowSize: {}", value as u32);
                 local_settings.initial_window_size = value as u32;
                 explicit_settings |= SETTING_BIT_INITIAL_WINDOW_SIZE;
-            } else if !v.is_empty_or_undefined_or_null() {
+            }
+            NumberSetting::Missing => {}
+            NumberSetting::Other => {
                 return global_object
                     .err_http2_invalid_setting_value_range_error(
                         "Expected initialWindowSize to be a number",
@@ -4420,6 +4400,7 @@ impl H2FrameParser {
         number_setting!(
             "maxFrameSize",
             max_frame_size,
+            max_frame_size,
             SETTING_BIT_MAX_FRAME_SIZE,
             16384,
             MAX_FRAME_SIZE_F64,
@@ -4427,6 +4408,7 @@ impl H2FrameParser {
         );
         number_setting!(
             "maxConcurrentStreams",
+            max_concurrent_streams,
             max_concurrent_streams,
             SETTING_BIT_MAX_CONCURRENT_STREAMS,
             0,
@@ -4436,6 +4418,7 @@ impl H2FrameParser {
         number_setting!(
             "maxHeaderListSize",
             max_header_list_size,
+            max_header_list_size,
             SETTING_BIT_MAX_HEADER_LIST_SIZE,
             0,
             MAX_HEADER_TABLE_SIZE_F64,
@@ -4443,6 +4426,7 @@ impl H2FrameParser {
         );
         number_setting!(
             "maxHeaderSize",
+            max_header_size,
             max_header_list_size,
             SETTING_BIT_MAX_HEADER_LIST_SIZE,
             0,
@@ -4450,11 +4434,13 @@ impl H2FrameParser {
             "Expected maxHeaderSize to be a number between 0 and 2^32-1"
         );
 
-        if let Some(ecp) = options.get(global_object, "enableConnectProtocol")? {
-            if ecp.is_boolean() {
-                local_settings.enable_connect_protocol = if ecp.as_boolean() { 1 } else { 0 };
+        match options.enable_connect_protocol(global_object)? {
+            FlagSetting::Flag(ecp) => {
+                local_settings.enable_connect_protocol = if ecp { 1 } else { 0 };
                 explicit_settings |= SETTING_BIT_ENABLE_CONNECT_PROTOCOL;
-            } else if !ecp.is_undefined() {
+            }
+            FlagSetting::Missing => {}
+            FlagSetting::Other => {
                 return global_object
                     .err_http2_invalid_setting_value(
                         "Expected enableConnectProtocol to be a boolean",
@@ -4467,14 +4453,14 @@ impl H2FrameParser {
         // leave partial state installed for the next submission.
         let mut staged_custom: Vec<(u16, u32)> = Vec::new();
         // Validate customSettings and remember them so they go on the wire with our SETTINGS.
-        if let Some(custom_settings) = options.get(global_object, "customSettings")? {
-            if !custom_settings.is_undefined() {
-                let Some(custom_settings_obj) = custom_settings.get_object() else {
-                    return global_object
-                        .err_http2_invalid_setting_value("Expected customSettings to be an object")
-                        .throw();
-                };
-
+        match options.custom_settings(global_object)? {
+            CustomSettingsRecord::Missing => {}
+            CustomSettingsRecord::Other => {
+                return global_object
+                    .err_http2_invalid_setting_value("Expected customSettings to be an object")
+                    .throw();
+            }
+            CustomSettingsRecord::Record(custom_settings_obj) => {
                 let mut count: usize = 0;
                 let iter = bun_jsc::JSPropertyIterator::init(
                     global_object,
@@ -4544,23 +4530,21 @@ impl H2FrameParser {
         // before any state is committed so a throwing getter / iterator (Proxy/getter on the
         // user array) does not leave the four cells above already installed.
         let mut staged_remote_filter: Vec<u16> = Vec::new();
-        if let Some(remote_custom) = options.get(global_object, "remoteCustomSettings")? {
-            if remote_custom.is_array() {
-                let mut value_iter = remote_custom.array_iterator(global_object)?;
-                while let Some(item) = value_iter.next()? {
-                    if !item.is_number() {
-                        continue;
-                    }
-                    let id = item.as_number();
-                    if !(0.0..=65535.0).contains(&id) {
-                        continue;
-                    }
-                    let id = id as u16;
-                    if !staged_remote_filter.contains(&id)
-                        && staged_remote_filter.len() < MAX_CUSTOM_SETTINGS
-                    {
-                        staged_remote_filter.push(id);
-                    }
+        if let Some(remote_custom) = options.remote_custom_settings(global_object)? {
+            let mut value_iter = remote_custom.to_js().array_iterator(global_object)?;
+            while let Some(item) = value_iter.next()? {
+                if !item.is_number() {
+                    continue;
+                }
+                let id = item.as_number();
+                if !(0.0..=65535.0).contains(&id) {
+                    continue;
+                }
+                let id = id as u16;
+                if !staged_remote_filter.contains(&id)
+                    && staged_remote_filter.len() < MAX_CUSTOM_SETTINGS
+                {
+                    staged_remote_filter.push(id);
                 }
             }
         }
@@ -4587,9 +4571,15 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn settings(&self, cx: &mut JsScope<'_>, settings: JsLocal<'_>) -> JsResult<bool> {
+    pub(crate) fn settings(
+        &self,
+        cx: &mut JsScope<'_>,
+        settings: Option<H2Settings<'_>>,
+    ) -> JsResult<bool> {
         let global_object = cx.global();
-        let settings = settings.to_js();
+        let Some(settings) = settings else {
+            return Err(global_object.throw(format_args!("Expected settings to be a object")));
+        };
         self.load_settings_from_js_value(global_object, settings)?;
 
         Ok(self.set_settings(self.local_settings.get()))
@@ -4598,15 +4588,10 @@ impl H2FrameParser {
     pub(crate) fn set_local_window_size(
         &self,
         cx: &mut JsScope<'_>,
-        window_size: JsLocal<'_>,
+        window_size: f64,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let window_size = window_size.to_js();
-        if !window_size.is_number() {
-            return Err(global_object
-                .throw_invalid_arguments(format_args!("Expected windowSize to be a number")));
-        }
-        let window_size_value: u32 = window_size.to_u32();
+        let window_size_value = window_size as u32;
         if self.used_window_size.get() > window_size_value as u64 {
             return Err(global_object.throw_invalid_arguments(format_args!(
                 "Expected windowSize to be greater than usedWindowSize"
@@ -4656,104 +4641,54 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn get_frame_counters(&self, cx: &mut JsScope<'_>) -> JSValue {
-        let global_object = cx.global();
+    pub(crate) fn get_frame_counters(&self) -> H2FrameCounters {
         self.sync_engine_frame_counters();
-        let result = JSValue::create_empty_object(global_object, 2);
-        result.put(
-            global_object,
-            b"framesReceived",
-            JSValue::js_number(self.engine_frames_received.get() as f64),
-        );
-        result.put(
-            global_object,
-            b"framesSent",
-            JSValue::js_number(
-                (self.frames_sent_legacy.get() + self.engine_frames_sent.get()) as f64,
-            ),
-        );
-        result
+        H2FrameCounters {
+            frames_received: self.engine_frames_received.get() as f64,
+            frames_sent: (self.frames_sent_legacy.get() + self.engine_frames_sent.get()) as f64,
+        }
     }
 
-    pub(crate) fn get_current_state(&self, cx: &mut JsScope<'_>) -> JSValue {
-        let global_object = cx.global();
-        let result = JSValue::create_empty_object(global_object, 9);
-        result.put(
-            global_object,
-            b"effectiveLocalWindowSize",
-            JSValue::js_number(self.window_size.get() as f64),
-        );
-        result.put(
-            global_object,
-            b"effectiveRecvDataLength",
-            JSValue::js_number((self.window_size.get() - self.used_window_size.get()) as f64),
-        );
-        result.put(
-            global_object,
-            b"nextStreamID",
-            JSValue::js_number(self.get_next_stream_id() as f64),
-        );
-        result.put(
-            global_object,
-            b"lastProcStreamID",
-            JSValue::js_number(self.last_stream_id.get() as f64),
-        );
-
+    pub(crate) fn get_current_state(&self) -> H2SessionState {
         let settings = self.remote_settings.get().unwrap_or_default();
         let remote_iws = settings.initial_window_size;
         let local_iws = self.local_settings.get().initial_window_size;
         let local_hts = self.local_settings.get().header_table_size;
-        result.put(
-            global_object,
-            b"remoteWindowSize",
-            JSValue::js_number(remote_iws as f64),
-        );
-        result.put(
-            global_object,
-            b"localWindowSize",
-            JSValue::js_number(local_iws as f64),
-        );
-        result.put(
-            global_object,
-            b"deflateDynamicTableSize",
-            JSValue::js_number(local_hts as f64),
-        );
-        result.put(
-            global_object,
-            b"inflateDynamicTableSize",
-            JSValue::js_number(local_hts as f64),
-        );
-        result.put(
-            global_object,
-            b"outboundQueueSize",
-            JSValue::js_number(self.outbound_queue_size.get() as f64),
-        );
-        result
+        H2SessionState {
+            effective_local_window_size: self.window_size.get() as f64,
+            effective_recv_data_length: (self.window_size.get() - self.used_window_size.get())
+                as f64,
+            next_stream_id: self.get_next_stream_id() as f64,
+            last_proc_stream_id: self.last_stream_id.get() as f64,
+            remote_window_size: remote_iws as f64,
+            local_window_size: local_iws as f64,
+            deflate_dynamic_table_size: local_hts as f64,
+            inflate_dynamic_table_size: local_hts as f64,
+            outbound_queue_size: self.outbound_queue_size.get() as f64,
+        }
     }
 
-    pub(crate) fn goaway(
+    pub(crate) fn goaway<'a>(
         &self,
-        cx: &mut JsScope<'_>,
-        code: JsLocal<'_>,
-        last_stream_id: JsLocal<'_>,
-        opaque_data: JsLocal<'_>,
+        cx: &mut JsScope<'a>,
+        code: Option<f64>,
+        last_stream_id: OptionalStreamId,
+        opaque_data: Option<JsLocal<'a, BufferSource>>,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let code = code.to_js();
-        let last_stream_id = last_stream_id.to_js();
-        let opaque_data = opaque_data.to_js();
-        if !code.is_number() {
+        let Some(code) = code else {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
-        }
-        let error_code = code.to_int32();
+        };
+        let error_code = code as i32;
 
-        if !last_stream_id.is_undefined_or_null() && !last_stream_id.is_number() {
-            return Err(global_object.throw(format_args!("Expected lastStreamId to be a number")));
-        }
-        let id = if last_stream_id.is_number() {
-            last_stream_id.to_int32()
-        } else {
-            0
+        let id = match last_stream_id {
+            OptionalStreamId::Missing => 0,
+            OptionalStreamId::Id(id) => id as i32,
+            OptionalStreamId::Other => {
+                return Err(
+                    global_object.throw(format_args!("Expected lastStreamId to be a number"))
+                );
+            }
         };
         // As in node, 0 or less keeps the last processed id: Last-Stream-ID=0 tells the peer to retry every stream.
         let last_stream_id = if id > 0 {
@@ -4761,28 +4696,28 @@ impl H2FrameParser {
         } else {
             self.last_peer_stream_id.get()
         };
-        if !opaque_data.is_undefined_or_null() {
-            if let Some(array_buffer) = opaque_data.as_array_buffer(global_object) {
-                // Own the bytes: write() re-enters JS on JS-backed sockets and can detach this.
-                let copied = array_buffer.byte_slice().to_vec();
-                self.send_go_away(
-                    0,
-                    ErrorCode(error_code as u32),
-                    &copied,
-                    last_stream_id,
-                    false,
-                );
-                return Ok(());
-            }
+        if let Some(opaque_data) = opaque_data {
+            // Own the bytes: write() re-enters JS on JS-backed sockets and can detach this.
+            let copied = opaque_data.with_bytes(&cx.heap, <[u8]>::to_vec);
+            self.send_go_away(
+                0,
+                ErrorCode(error_code as u32),
+                &copied,
+                last_stream_id,
+                false,
+            );
+            return Ok(());
         }
 
         self.send_go_away(0, ErrorCode(error_code as u32), b"", last_stream_id, false);
         Ok(())
     }
 
-    pub(crate) fn ping(&self, cx: &mut JsScope<'_>, payload: JsLocal<'_>) -> JsResult<bool> {
-        let global_object = cx.global();
-        let payload = payload.to_js();
+    pub(crate) fn ping<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        payload: Option<JsLocal<'a, BufferSource>>,
+    ) -> JsResult<bool> {
         // node (Http2Session::AddPing): when the outstanding-ping budget is exhausted, ping()
         // returns false and the JS callback is invoked with ERR_HTTP2_PING_CANCEL — it does NOT
         // throw.
@@ -4790,100 +4725,103 @@ impl H2FrameParser {
             return Ok(false);
         }
 
-        if let Some(array_buffer) = payload.as_array_buffer(global_object) {
-            let slice = array_buffer.slice();
-            self.send_ping(false, slice);
+        if let Some(payload) = payload {
+            payload.with_bytes(&cx.heap, |slice| self.send_ping(false, slice));
             return Ok(true);
         }
 
-        Err(global_object.throw(format_args!("Expected payload to be a Buffer")))
+        Err(cx
+            .global()
+            .throw(format_args!("Expected payload to be a Buffer")))
     }
 
-    pub(crate) fn origin(&self, cx: &mut JsScope<'_>, origin: JsLocal<'_>) -> JsResult<()> {
+    pub(crate) fn origin(&self, cx: &mut JsScope<'_>, origin: Origins<'_>) -> JsResult<()> {
         let global_object = cx.global();
-        let origin = origin.to_js();
-        if origin.is_undefined_or_null() {
-            // empty origin frame
-            let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
-            let mut stream = FixedBufferStream::new(&mut buffer);
+        match origin {
+            Origins::None => {
+                // empty origin frame
+                let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
+                let mut stream = FixedBufferStream::new(&mut buffer);
 
-            let frame = FrameHeader {
-                type_: FrameType::HTTP_FRAME_ORIGIN as u8,
-                flags: 0,
-                stream_identifier: 0,
-                length: 0,
-            };
-            let _ = frame.write(&mut stream, &self.frames_sent_legacy);
-            let _ = self.write(&buffer);
-            return Ok(());
-        }
-
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L486-L489
-        if origin.is_string() {
-            let origin_view = origin.to_js_string_view(global_object)?;
-            let origin_bytes = header_value_bytes(&origin_view);
-            let slice: &[u8] = &origin_bytes;
-            if slice.len() + 2 > 16384 {
-                let exception = global_object.to_type_error(
-                    bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
-                    format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
-                );
-                return Err(global_object.throw_value(exception));
+                let frame = FrameHeader {
+                    type_: FrameType::HTTP_FRAME_ORIGIN as u8,
+                    flags: 0,
+                    stream_identifier: 0,
+                    length: 0,
+                };
+                let _ = frame.write(&mut stream, &self.frames_sent_legacy);
+                let _ = self.write(&buffer);
             }
-
-            let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
-            let mut stream = FixedBufferStream::new(&mut buffer);
-
-            let frame = FrameHeader {
-                type_: FrameType::HTTP_FRAME_ORIGIN as u8,
-                flags: 0,
-                stream_identifier: 0,
-                length: u32::try_from(slice.len() + 2).expect("int cast"),
-            };
-            let _ = frame.write(&mut stream, &self.frames_sent_legacy);
-            let _ = stream.write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes());
-            let _ = self.write(&buffer);
-            if !slice.is_empty() {
-                let _ = self.write(slice);
-            }
-        } else if origin.is_array() {
-            let mut buffer = vec![0u8; FrameHeader::BYTE_SIZE + 16384];
-            // Heap-allocated to avoid a 16K stack frame.
-            let mut stream = FixedBufferStream::new(&mut buffer);
-            stream.seek_to(FrameHeader::BYTE_SIZE);
-            let mut value_iter = origin.array_iterator(global_object)?;
-
-            while let Some(item) = value_iter.next()? {
-                if !item.is_string() {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "Expected origin to be a string or an array of strings"
-                    )));
-                }
-                let origin_view = item.to_js_string_view(global_object)?;
-                let origin_bytes = header_value_bytes(&origin_view);
-                let slice = origin_bytes.as_ref();
-                let fits = u16::try_from(slice.len()).is_ok_and(|len| {
-                    stream.write_all(&len.to_be_bytes()).is_ok() && stream.write_all(slice).is_ok()
-                });
-                if !fits {
+            // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L486-L489
+            Origins::One(origin) => {
+                let origin_bytes = header_value_bytes(&origin);
+                let slice: &[u8] = &origin_bytes;
+                if slice.len() + 2 > 16384 {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
                         format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
                     );
                     return Err(global_object.throw_value(exception));
                 }
-            }
 
-            let total_length: u32 = u32::try_from(stream.pos).expect("int cast");
-            let frame = FrameHeader {
-                type_: FrameType::HTTP_FRAME_ORIGIN as u8,
-                flags: 0,
-                stream_identifier: 0,
-                length: total_length - FrameHeader::BYTE_SIZE as u32, // payload length
-            };
-            stream.reset();
-            let _ = frame.write(&mut stream, &self.frames_sent_legacy);
-            let _ = self.write(&buffer[0..total_length as usize]);
+                let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
+                let mut stream = FixedBufferStream::new(&mut buffer);
+
+                let frame = FrameHeader {
+                    type_: FrameType::HTTP_FRAME_ORIGIN as u8,
+                    flags: 0,
+                    stream_identifier: 0,
+                    length: u32::try_from(slice.len() + 2).expect("int cast"),
+                };
+                let _ = frame.write(&mut stream, &self.frames_sent_legacy);
+                let _ =
+                    stream.write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes());
+                let _ = self.write(&buffer);
+                if !slice.is_empty() {
+                    let _ = self.write(slice);
+                }
+            }
+            Origins::Many(origin) => {
+                let mut buffer = vec![0u8; FrameHeader::BYTE_SIZE + 16384];
+                // Heap-allocated to avoid a 16K stack frame.
+                let mut stream = FixedBufferStream::new(&mut buffer);
+                stream.seek_to(FrameHeader::BYTE_SIZE);
+                let mut value_iter = origin.to_js().array_iterator(global_object)?;
+
+                while let Some(item) = value_iter.next()? {
+                    if !item.is_string() {
+                        return Err(global_object.throw_invalid_arguments(format_args!(
+                            "Expected origin to be a string or an array of strings"
+                        )));
+                    }
+                    let origin_view = item.to_js_string_view(global_object)?;
+                    let origin_bytes = header_value_bytes(&origin_view);
+                    let slice = origin_bytes.as_ref();
+                    let fits = u16::try_from(slice.len()).is_ok_and(|len| {
+                        stream.write_all(&len.to_be_bytes()).is_ok()
+                            && stream.write_all(slice).is_ok()
+                    });
+                    if !fits {
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
+                            format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
+                        );
+                        return Err(global_object.throw_value(exception));
+                    }
+                }
+
+                let total_length: u32 = u32::try_from(stream.pos).expect("int cast");
+                let frame = FrameHeader {
+                    type_: FrameType::HTTP_FRAME_ORIGIN as u8,
+                    flags: 0,
+                    stream_identifier: 0,
+                    length: total_length - FrameHeader::BYTE_SIZE as u32, // payload length
+                };
+                stream.reset();
+                let _ = frame.write(&mut stream, &self.frames_sent_legacy);
+                let _ = self.write(&buffer[0..total_length as usize]);
+            }
+            Origins::Other => {}
         }
         Ok(())
     }
@@ -4891,46 +4829,23 @@ impl H2FrameParser {
     pub(crate) fn altsvc(
         &self,
         cx: &mut JsScope<'_>,
-        origin: JsLocal<'_>,
-        value: JsLocal<'_>,
-        stream_id: JsLocal<'_>,
+        origin: Option<StringView<'_>>,
+        value: Option<StringView<'_>>,
+        stream_id: OptionalStreamId,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let mut origin_view = None;
-        let mut value_view = None;
-        let origin = origin.to_js();
-        if !origin.is_undefined_or_null() {
-            if !origin.is_string() {
-                return Err(
-                    global_object.throw_invalid_argument_type_value(b"origin", b"origin", origin)
-                );
+        let stream_id: u32 = match stream_id {
+            OptionalStreamId::Missing => 0,
+            OptionalStreamId::Id(id) => id as u32,
+            OptionalStreamId::Other => {
+                return Err(global_object.throw(format_args!("Expected streamId to be a number")));
             }
-            origin_view = Some(origin.to_js_string_view(global_object)?);
-        }
-
-        let value = value.to_js();
-        if !value.is_undefined_or_null() {
-            if !value.is_string() {
-                return Err(
-                    global_object.throw_invalid_argument_type_value(b"value", b"value", value)
-                );
-            }
-            value_view = Some(value.to_js_string_view(global_object)?);
-        }
-
-        let stream_id = stream_id.to_js();
-        let stream_id: u32 = if stream_id.is_undefined_or_null() {
-            0
-        } else if stream_id.is_number() {
-            stream_id.to_u32()
-        } else {
-            return Err(global_object.throw(format_args!("Expected streamId to be a number")));
         };
         // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
-        let origin_bytes = origin_view.as_ref().map(header_value_bytes);
-        let value_bytes = value_view.as_ref().map(header_value_bytes);
-        let origin = origin_bytes.as_deref().unwrap_or_default();
-        let value = value_bytes.as_deref().unwrap_or_default();
+        let origin = origin.unwrap_or(StringView::EMPTY);
+        let value = value.unwrap_or(StringView::EMPTY);
+        let origin = header_value_bytes(&origin);
+        let value = header_value_bytes(&value);
         if origin.len() + value.len() > MAX_ALTSVC_LENGTH {
             let exception = global_object.to_type_error(
                 bun_jsc::ErrorCode::HTTP2_ALTSVC_LENGTH,
@@ -4944,22 +4859,21 @@ impl H2FrameParser {
                 return Ok(());
             }
         }
-        self.send_alt_svc(stream_id, origin, value);
+        self.send_alt_svc(stream_id, &origin, &value);
         Ok(())
     }
 
     pub(crate) fn get_end_after_headers(
         &self,
         cx: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
+        stream_id: Option<f64>,
     ) -> JsResult<bool> {
         let global_object = cx.global();
-        let stream_id = stream_id.to_js();
-        if !stream_id.is_number() {
+        let Some(stream_id) = stream_id else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
+        };
 
-        let stream_id = stream_id.to_u32();
+        let stream_id = stream_id as u32;
         if stream_id == 0 {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
@@ -4975,15 +4889,14 @@ impl H2FrameParser {
     pub(crate) fn get_stream_state(
         &self,
         cx: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        stream_id: Option<f64>,
+    ) -> JsResult<H2StreamState> {
         let global_object = cx.global();
-        let stream_id = stream_id.to_js();
-        if !stream_id.is_number() {
+        let Some(stream_id) = stream_id else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
+        };
 
-        let stream_id = stream_id.to_u32();
+        let stream_id = stream_id as u32;
         if stream_id == 0 {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
@@ -4993,66 +4906,39 @@ impl H2FrameParser {
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
-        let state = JSValue::create_empty_object(global_object, 6);
 
-        state.put(
-            global_object,
-            b"localWindowSize",
-            JSValue::js_number(stream.window_size as f64),
-        );
-        state.put(
-            global_object,
-            b"state",
-            JSValue::js_number(stream.state as u8 as f64),
-        );
-        state.put(
-            global_object,
-            b"localClose",
-            JSValue::js_number(if stream.can_send_data() { 0.0 } else { 1.0 }),
-        );
-        state.put(
-            global_object,
-            b"remoteClose",
-            JSValue::js_number(if stream.can_receive_data() { 0.0 } else { 1.0 }),
-        );
-        // TODO: sumDependencyWeight
-        state.put(
-            global_object,
-            b"sumDependencyWeight",
-            JSValue::js_number(0.0),
-        );
-        state.put(
-            global_object,
-            b"weight",
-            JSValue::js_number(stream.weight as f64),
-        );
-
-        Ok(state)
+        Ok(H2StreamState {
+            local_window_size: stream.window_size as f64,
+            state: stream.state as u8 as f64,
+            local_close: if stream.can_send_data() { 0.0 } else { 1.0 },
+            remote_close: if stream.can_receive_data() { 0.0 } else { 1.0 },
+            // TODO: sumDependencyWeight
+            sum_dependency_weight: 0.0,
+            weight: stream.weight as f64,
+        })
     }
 
     pub(crate) fn rst_stream(
         &self,
         cx: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
-        code: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        stream_id: Option<f64>,
+        code: Option<f64>,
+    ) -> JsResult<Option<bool>> {
         let global_object = cx.global();
         bun_output::scoped_log!(H2FrameParser, "rstStream");
-        let stream_id = stream_id.to_js();
-        let code = code.to_js();
-        if !stream_id.is_number() {
+        let Some(stream_id) = stream_id else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
+        };
 
-        let stream_id = stream_id.to_u32();
+        let stream_id = stream_id as u32;
         if stream_id == 0 || stream_id > MAX_STREAM_ID {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        if !code.is_number() {
+        let Some(code) = code else {
             return Err(global_object.throw(format_args!("Invalid ErrorCode")));
-        }
-        let error_code = code.to_u32();
+        };
+        let error_code = code as u32;
 
         // maxSessionRejectedStreams: a REFUSED_STREAM reset from the JS layer (the
         // max-concurrent-streams refusal in streamStart) is the same rejection class the engine
@@ -5069,7 +4955,7 @@ impl H2FrameParser {
                     self.last_stream_id.get(),
                     true,
                 );
-                return Ok(JSValue::UNDEFINED);
+                return Ok(None);
             }
         }
 
@@ -5096,13 +4982,13 @@ impl H2FrameParser {
                 self.write(&frame);
                 let _ = self.flush();
             }
-            return Ok(JSValue::TRUE);
+            return Ok(Some(true));
         };
 
         // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
         self.end_stream(unsafe { &mut *stream }, ErrorCode(error_code));
 
-        Ok(JSValue::TRUE)
+        Ok(Some(true))
     }
 }
 
@@ -5379,13 +5265,13 @@ impl H2FrameParser {
     fn stream_from_js(
         &self,
         global_object: &JSGlobalObject,
-        stream_id: JSValue,
+        stream_id: Option<f64>,
     ) -> JsResult<*mut Stream> {
-        if !stream_id.is_number() {
+        let Some(stream_id) = stream_id else {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));
-        }
+        };
 
-        let stream_id = stream_id.to_u32();
+        let stream_id = stream_id as u32;
         if stream_id == 0 || stream_id > MAX_STREAM_ID {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
@@ -5396,8 +5282,8 @@ impl H2FrameParser {
         Ok(stream)
     }
 
-    pub(crate) fn no_trailers(&self, cx: &mut JsScope<'_>, stream_id: JsLocal<'_>) -> JsResult<()> {
-        let stream = self.stream_from_js(cx.global(), stream_id.to_js())?;
+    pub(crate) fn no_trailers(&self, cx: &mut JsScope<'_>, stream_id: Option<f64>) -> JsResult<()> {
+        let stream = self.stream_from_js(cx.global(), stream_id)?;
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
 
@@ -5431,16 +5317,13 @@ impl H2FrameParser {
     pub(crate) fn set_stream_reading(
         &self,
         _: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
-        reading: JsLocal<'_>,
+        stream_id: Option<f64>,
+        reading: bool,
     ) {
-        let stream_id = stream_id.to_js();
-        let reading = reading.to_js();
-        if !stream_id.is_number() {
+        let Some(stream_id) = stream_id else {
             return;
-        }
-        let stream_id = stream_id.to_u32();
-        let reading = reading.to_boolean();
+        };
+        let stream_id = stream_id as u32;
         let Some(stream) = self.streams.get().get(&stream_id).copied() else {
             // The stream already finished (or never reached the wire); nothing to backpressure.
             return;
@@ -5538,27 +5421,26 @@ impl H2FrameParser {
     pub(crate) fn send_trailers(
         &self,
         cx: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
-        headers: JsLocal<'_>,
-        sensitive_headers: JsLocal<'_>,
+        stream_id: Option<f64>,
+        headers: Option<JsLocal<'_, JSObject>>,
+        sensitive_headers: Option<JsLocal<'_, JSObject>>,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let headers = headers.to_js();
-        let sensitive_headers = sensitive_headers.to_js();
-        let stream_ptr = self.stream_from_js(global_object, stream_id.to_js())?;
+        let stream_ptr = self.stream_from_js(global_object, stream_id)?;
         // The header/sensitive-object getters and value coercions below can run user JS
         // while `stream` is borrowed.
         let mut stream = self.enter_stream_dispatch(stream_ptr);
 
-        let Some(headers_obj) = headers.get_object() else {
+        let Some(headers_obj) = headers else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
         };
 
-        if !sensitive_headers.is_object() {
+        let Some(sensitive_headers) = sensitive_headers else {
             return Err(
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
-        }
+        };
+        let sensitive_headers = sensitive_headers.to_js();
 
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
@@ -5844,77 +5726,90 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn write_stream(
+    pub(crate) fn write_stream<'a>(
         &self,
-        cx: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
-        data: JsLocal<'_>,
-        encoding: JsLocal<'_>,
-        close: JsLocal<'_>,
-        callback: JsLocal<'_>,
-        defer_callback: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        cx: &mut JsScope<'a>,
+        stream_id: Option<f64>,
+        data: WriteData<'a>,
+        encoding: WriteEncoding<'_>,
+        close: bool,
+        callback: Option<JsLocal<'_, Callable>>,
+        defer_callback: bool,
+    ) -> JsResult<H2WriteResult> {
         let global_object = cx.global();
-        let data = data.to_js();
-        let encoding = encoding.to_js();
-        let close = close.to_js().to_boolean();
-        let callback = callback.to_js();
-        let defer_callback = defer_callback.to_js();
+        let callback = callback.map_or(JSValue::UNDEFINED, JsLocal::to_js);
 
-        let stream_ptr = self.stream_from_js(global_object, stream_id.to_js())?;
+        let stream_ptr = self.stream_from_js(global_object, stream_id)?;
         // Coercing `data` (a String subclass's toString) can run user JS while `stream`
         // is borrowed.
         let mut stream = self.enter_stream_dispatch(stream_ptr);
         if !stream.can_send_data() {
             self.dispatch_write_callback(callback);
-            return Ok(JSValue::FALSE);
+            return Ok(H2WriteResult::Refused(false));
         }
 
-        let encoding: Encoding = 'brk: {
-            if encoding.is_undefined() {
-                break 'brk Encoding::Utf8;
-            }
-            if !encoding.is_string() {
-                return Err(global_object.throw_invalid_argument_type_value(
-                    b"write",
-                    b"encoding",
-                    encoding,
-                ));
-            }
-            match Encoding::from_js(encoding, global_object)? {
-                Some(e) => break 'brk e,
+        let encoding: Encoding = match encoding {
+            WriteEncoding::Utf8 => Encoding::Utf8,
+            WriteEncoding::Name(name) => match Encoding::from_bun_string(&name) {
+                Some(e) => e,
                 None => {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"write",
+                        b"encoding",
+                        name.to_js(global_object)?,
+                    ));
+                }
+            },
+            WriteEncoding::Other(encoding) => {
+                let found = match H2StringObject::from_js(global_object, encoding)? {
+                    H2StringObject::Text(name) => Encoding::from_bun_string(&name),
+                    H2StringObject::Other => None,
+                };
+                let Some(e) = found else {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"write",
                         b"encoding",
                         encoding,
                     ));
+                };
+                e
+            }
+        };
+
+        let encode = |text: bun_core::String| {
+            if encoding == Encoding::Utf8 || text.is_empty() {
+                StringOrBuffer::String(text.into_utf8_with_string())
+            } else {
+                StringOrBuffer::encoded(global_object, &text, encoding)
+            }
+        };
+        let mut send = |bytes: &[u8]| {
+            let payload = self.stable_payload(bytes);
+            self.send_data(
+                &mut stream,
+                &payload,
+                callback,
+                SendDataOptions {
+                    close,
+                    suppress_half_closed_local_dispatch: true,
+                    defer_write_callback: defer_callback,
+                },
+            )
+        };
+        let (settled_state, callback_deferred) = match data {
+            WriteData::Bytes(bytes) => bytes.with_bytes(&cx.heap, send),
+            WriteData::Text(text) => send(encode(text).slice()),
+            WriteData::Other(data) => match H2StringObject::from_js(global_object, data)? {
+                H2StringObject::Text(text) => send(encode(text).slice()),
+                H2StringObject::Other => {
+                    return Err(global_object.throw_invalid_argument_type_value(
+                        b"write",
+                        b"Buffer or String",
+                        data,
+                    ));
                 }
-            }
-        };
-
-        let buffer = match StringOrBuffer::from_js_with_encoding(global_object, data, encoding)? {
-            Some(b) => b,
-            None => {
-                return Err(global_object.throw_invalid_argument_type_value(
-                    b"write",
-                    b"Buffer or String",
-                    data,
-                ));
-            }
-        };
-
-        let payload = self.stable_payload(buffer.slice());
-        let (settled_state, callback_deferred) = self.send_data(
-            &mut stream,
-            &payload,
-            callback,
-            SendDataOptions {
-                close,
-                suppress_half_closed_local_dispatch: true,
-                defer_write_callback: defer_callback.to_boolean(),
             },
-        );
+        };
 
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of
         // the engine re-entering the VM with an onStreamEnd(5) dispatch.
@@ -5925,7 +5820,7 @@ impl H2FrameParser {
         if callback_deferred {
             result |= WRITE_FLUSHED_WITHOUT_CALLBACK;
         }
-        Ok(JSValue::js_number(result as f64))
+        Ok(H2WriteResult::State(result as f64))
     }
 
     /// `set_next_stream_id` can park `last_stream_id` anywhere in the u32 range, so the step
@@ -5948,17 +5843,16 @@ impl H2FrameParser {
     pub(crate) fn set_next_stream_id(
         &self,
         cx: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
+        stream_id: Option<f64>,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let stream_id = stream_id.to_js();
-        if !stream_id.is_number() {
+        let Some(stream_id) = stream_id else {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
-        }
+        };
         // Store the id `get_next_stream_id` steps from. A fractional id passes the JS layer's
         // `id <= 0` check and truncates to 0 here; 0 (and 1 on a client) has no predecessor,
         // so the subtraction saturates to the initial state instead of wrapping.
-        let next_stream_id = stream_id.to_u32();
+        let next_stream_id = stream_id as u32;
         let last_stream_id = if self.is_server.get() {
             if next_stream_id.is_multiple_of(2) {
                 next_stream_id.saturating_sub(2)
@@ -5991,36 +5885,33 @@ impl H2FrameParser {
     pub(crate) fn push_promise(
         &self,
         cx: &mut JsScope<'_>,
-        parent_id: JsLocal<'_>,
-        promised_id: JsLocal<'_>,
-        headers: JsLocal<'_>,
-        sensitive_headers: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        parent_id: Option<f64>,
+        promised_id: Option<f64>,
+        headers: Option<JsLocal<'_, JSObject>>,
+        sensitive_headers: Option<JsLocal<'_, JSObject>>,
+    ) -> JsResult<f64> {
         let global_object = cx.global();
         if !self.is_server.get() {
             return Err(
                 global_object.throw(format_args!("Push streams can only be created by servers"))
             );
         }
-        let parent_id = parent_id.to_js();
-        let promised_id = promised_id.to_js();
-        let headers = headers.to_js();
-        let sensitive_headers = sensitive_headers.to_js();
-        if !parent_id.is_number() {
+        let sensitive_headers = sensitive_headers.map_or(JSValue::UNDEFINED, JsLocal::to_js);
+        let Some(parent_id) = parent_id else {
             return Err(global_object.throw(format_args!("Expected parentId to be a number")));
-        }
-        if !promised_id.is_number() {
+        };
+        let Some(promised_id) = promised_id else {
             return Err(global_object.throw(format_args!("Expected promisedId to be a number")));
-        }
-        let parent_id = parent_id.to_u32();
-        let promised_id = promised_id.to_u32();
+        };
+        let parent_id = parent_id as u32;
+        let promised_id = promised_id as u32;
         if promised_id > MAX_STREAM_ID {
-            return Ok(JSValue::js_number(-1.0));
+            return Ok(-1.0);
         }
         if parent_id == 0 || parent_id > MAX_STREAM_ID || promised_id == 0 {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
-        let Some(headers_obj) = headers.get_object() else {
+        let Some(headers_obj) = headers else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
         };
 
@@ -6090,7 +5981,7 @@ impl H2FrameParser {
                         None => sensitive_headers.get_truthy(global_object, name)?.is_some(),
                     }
                 };
-                let mut encode_value = |item: JSValue| -> JsResult<Option<JSValue>> {
+                let mut encode_value = |item: JSValue| -> JsResult<Option<f64>> {
                     let value_view = item.to_js_string_view(global_object)?;
                     let value_bytes = header_value_bytes(&value_view);
                     let value = value_bytes.as_ref();
@@ -6123,7 +6014,7 @@ impl H2FrameParser {
                         // Same as the request/respond encode failures: nghttp2 fails the whole
                         // session, and node never surfaces this through the pushStream callback.
                         self.schedule_header_compression_session_error();
-                        return Ok(Some(JSValue::js_number(-1.0)));
+                        return Ok(Some(-1.0));
                     }
                     Ok(None)
                 };
@@ -6242,52 +6133,52 @@ impl H2FrameParser {
         }
 
         let _ = self.flush();
-        Ok(JSValue::js_number(promised_id as f64))
+        Ok(promised_id as f64)
     }
 
     pub(crate) fn get_stream_context(
         &self,
         cx: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        stream_id: Option<f64>,
+    ) -> JsResult<Option<JSValue>> {
         let global_object = cx.global();
-        let stream_id = stream_id.to_js();
-        if !stream_id.is_number() {
+        let Some(stream_id) = stream_id else {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
-        }
+        };
 
-        let Some(stream) = self.streams.get().get(&stream_id.to_u32()).copied() else {
+        let Some(stream) = self.streams.get().get(&(stream_id as u32)).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
 
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-        Ok(unsafe { (*stream).js_context.get() }.unwrap_or(JSValue::UNDEFINED))
+        Ok(unsafe { (*stream).js_context.get() })
     }
 
     pub(crate) fn set_stream_context(
         &self,
         cx: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
-        context: JsLocal<'_>,
+        stream_id: Option<f64>,
+        context: StreamContext<'_>,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let stream_id = stream_id.to_js();
-        let context = context.to_js();
-        if !stream_id.is_number() {
+        let Some(stream_id) = stream_id else {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
-        }
-        let stream_id = stream_id.to_u32();
-        if context.is_undefined_or_null() {
-            // Release: a pushed stream torn down before its PUSH_PROMISE left has no reset
-            // dispatch coming, so the JS layer drops the context root explicitly.
-            self.sctx.with_mut(|m| {
-                m.remove(&stream_id);
-            });
-            return Ok(());
-        }
-        if !context.is_object() {
-            return Err(global_object.throw(format_args!("Expected context to be an object")));
-        }
+        };
+        let stream_id = stream_id as u32;
+        let context = match context {
+            StreamContext::Release => {
+                // Release: a pushed stream torn down before its PUSH_PROMISE left has no reset
+                // dispatch coming, so the JS layer drops the context root explicitly.
+                self.sctx.with_mut(|m| {
+                    m.remove(&stream_id);
+                });
+                return Ok(());
+            }
+            StreamContext::Context(context) => context.to_js(),
+            StreamContext::Other => {
+                return Err(global_object.throw(format_args!("Expected context to be an object")));
+            }
+        };
 
         // Rewrite engine: record the JS stream context for the engine's Sink callbacks. Dropping a
         // previous entry releases its root (StrongOptional: Drop -> destroy).
@@ -6306,15 +6197,14 @@ impl H2FrameParser {
     pub(crate) fn for_each_stream(
         &self,
         cx: &mut JsScope<'_>,
-        callback: JsLocal<'_>,
+        callback: Option<JsLocal<'_, Callable>>,
         this_arg: JsLocal<'_>,
     ) {
         let global_object = cx.global();
-        let callback = callback.to_js();
-        if !callback.is_callable() {
+        let Some(callback) = callback else {
             return;
-        }
-        let this_arg = this_arg.to_js();
+        };
+        let callback = callback.to_js();
         let mut it = StreamResumableIterator::init(self);
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
@@ -6367,16 +6257,13 @@ impl H2FrameParser {
     pub(crate) fn emit_error_to_all_streams(
         &self,
         cx: &mut JsScope<'_>,
-        code: JsLocal<'_>,
+        code: Option<f64>,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let code = code.to_js();
-        // Like `goaway`: only numbers reach `to_u32` (it requires one), and the code is read
-        // once before any `&mut Stream` exists instead of once per stream inside the loop.
-        if !code.is_number() {
+        let Some(code) = code else {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
-        }
-        let rst_code = code.to_u32();
+        };
+        let rst_code = code as u32;
 
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `self` directly.
@@ -6391,7 +6278,11 @@ impl H2FrameParser {
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
                 stream.free_resources::<false>(self);
-                self.dispatch_with_extra(js::on_stream_error_get_cached, identifier, code);
+                self.dispatch_with_extra(
+                    js::on_stream_error_get_cached,
+                    identifier,
+                    JSValue::js_number(code),
+                );
             }
         }
         Ok(())
@@ -6404,42 +6295,37 @@ impl H2FrameParser {
     pub(crate) fn request(
         &self,
         cx: &mut JsScope<'_>,
-        stream_id: JsLocal<'_>,
-        context: JsLocal<'_>,
-        headers: JsLocal<'_>,
-        sensitive_headers: JsLocal<'_>,
-        options: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        stream_id: Option<f64>,
+        context: Option<JsLocal<'_, JSObject>>,
+        headers: RequestHeaders<'_>,
+        sensitive_headers: Option<JsLocal<'_, JSObject>>,
+        options: RequestOptionsArgument<'_>,
+    ) -> JsResult<Option<f64>> {
         let global_object = cx.global();
         bun_output::scoped_log!(H2FrameParser, "request");
 
-        let stream_id = stream_id.to_js();
-        let context = context.to_js();
-        let headers = headers.to_js();
-        let sensitive_headers = sensitive_headers.to_js();
-        let options = options.to_js();
-        let Some(headers_obj) = headers.get_object() else {
+        if matches!(headers, RequestHeaders::Other) {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
-        };
+        }
 
-        if !sensitive_headers.is_object() {
+        let Some(sensitive_headers) = sensitive_headers else {
             return Err(
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
-        }
+        };
+        let sensitive_headers = sensitive_headers.to_js();
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
-        let stream_id: u32 = if stream_id.is_number() {
-            stream_id.to_u32()
-        } else {
-            self.get_next_stream_id()
+        let stream_id: u32 = match stream_id {
+            Some(stream_id) => stream_id as u32,
+            None => self.get_next_stream_id(),
         };
         if stream_id > MAX_STREAM_ID {
-            return Ok(JSValue::js_number(-1.0));
+            return Ok(Some(-1.0));
         }
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
@@ -6448,10 +6334,9 @@ impl H2FrameParser {
         // Raw (flat [name, value, ...] array) headers form: encode each pair in
         // its given order, pseudo-headers first (same two-pass split as the
         // object form below), preserving interleaved duplicates on the wire.
-        let headers_are_raw_pairs = headers.js_type().is_array();
-        if headers_are_raw_pairs {
+        if let RequestHeaders::RawPairs(headers) = &headers {
             for ignore_pseudo_headers in 0..2usize {
-                let mut pairs = headers.array_iterator(global_object)?;
+                let mut pairs = headers.to_js().array_iterator(global_object)?;
                 loop {
                     let Some(name_js) = pairs.next()? else { break };
                     let Some(value_js) = pairs.next()? else { break };
@@ -6561,30 +6446,29 @@ impl H2FrameParser {
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
                         let Some(stream) = self.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
+                            return Ok(Some(-1.0));
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
-                        if context.is_object() {
-                            stream.set_context(context, global_object);
+                        if let Some(context) = context {
+                            stream.set_context(context.to_js(), global_object);
                         }
                         self.schedule_header_compression_session_error();
-                        return Ok(JSValue::js_number(stream_id as f64));
+                        return Ok(Some(stream_id as f64));
                     }
                 }
             }
         }
 
-        for ignore_pseudo_headers in 0..(if headers_are_raw_pairs {
-            0usize
-        } else {
-            2usize
-        }) {
+        for ignore_pseudo_headers in 0..2usize {
+            let RequestHeaders::Record(headers_obj) = &headers else {
+                break;
+            };
             // Note: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
             // re-initialize per pass instead — the observable property walk is the same.
             let iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
-                headers_obj,
+                *headers_obj,
                 bun_jsc::JSPropertyIteratorOptions {
                     skip_empty_name: false,
                     include_value: true,
@@ -6731,15 +6615,15 @@ impl H2FrameParser {
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
                             let Some(stream) = self.handle_received_stream_id(stream_id) else {
-                                return Ok(JSValue::js_number(-1.0));
+                                return Ok(Some(-1.0));
                             };
                             // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                             let stream = unsafe { &mut *stream };
-                            if context.is_object() {
-                                stream.set_context(context, global_object);
+                            if let Some(context) = context {
+                                stream.set_context(context.to_js(), global_object);
                             }
                             self.schedule_header_compression_session_error();
-                            return Ok(JSValue::UNDEFINED);
+                            return Ok(None);
                         }
                     }
                 } else if !js_value.is_empty_or_undefined_or_null() {
@@ -6799,15 +6683,15 @@ impl H2FrameParser {
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
                         let Some(stream) = self.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
+                            return Ok(Some(-1.0));
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
-                        if context.is_object() {
-                            stream.set_context(context, global_object);
+                        if let Some(context) = context {
+                            stream.set_context(context.to_js(), global_object);
                         }
                         self.schedule_header_compression_session_error();
-                        return Ok(JSValue::js_number(stream_id as f64));
+                        return Ok(Some(stream_id as f64));
                     }
                 }
             }
@@ -6815,12 +6699,12 @@ impl H2FrameParser {
         let encoded_size = encoded_headers.len();
 
         let Some(stream_ptr) = self.handle_received_stream_id(stream_id) else {
-            return Ok(JSValue::js_number(-1.0));
+            return Ok(Some(-1.0));
         };
         // The `options` getters below can run user JS while `stream` is borrowed.
         let mut stream = self.enter_stream_dispatch(stream_ptr);
-        if context.is_object() {
-            stream.set_context(context, global_object);
+        if let Some(context) = context {
+            stream.set_context(context.to_js(), global_object);
         }
         let mut flags: u8 = HeadersFrameFlags::END_HEADERS as u8;
         let mut exclusive: bool = false;
@@ -6830,125 +6714,69 @@ impl H2FrameParser {
         let mut silent: bool = false;
         let mut wait_for_trailers: bool = false;
         let mut end_stream: bool = false;
-        if !options.is_undefined_or_null() {
-            if !options.is_object() {
-                stream.state = StreamState::CLOSED;
-                stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                self.dispatch_with_extra(
-                    js::on_stream_error_get_cached,
-                    stream.get_identifier(),
-                    JSValue::js_number(stream.rst_code as f64),
-                );
-                return Ok(JSValue::js_number(stream_id as f64));
+        if matches!(options, RequestOptionsArgument::Other) {
+            stream.state = StreamState::CLOSED;
+            stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
+            self.dispatch_with_extra(
+                js::on_stream_error_get_cached,
+                stream.get_identifier(),
+                JSValue::js_number(stream.rst_code as f64),
+            );
+            return Ok(Some(stream_id as f64));
+        }
+        if let RequestOptionsArgument::Options(options) = options {
+            if let Some(padding_js) = options.padding_strategy(global_object)? {
+                stream.padding_strategy = match padding_js as u32 {
+                    1 => PaddingStrategy::Aligned,
+                    2 => PaddingStrategy::Max,
+                    _ => PaddingStrategy::None,
+                };
             }
 
-            if let Some(padding_js) = options.get(global_object, "paddingStrategy")? {
-                if padding_js.is_number() {
-                    stream.padding_strategy = match padding_js.to_u32() {
-                        1 => PaddingStrategy::Aligned,
-                        2 => PaddingStrategy::Max,
-                        _ => PaddingStrategy::None,
-                    };
-                }
+            if let Some(trailes_js) = options.wait_for_trailers(global_object)? {
+                wait_for_trailers = trailes_js;
+                stream.wait_for_trailers = wait_for_trailers;
             }
 
-            if let Some(trailes_js) = options.get(global_object, "waitForTrailers")? {
-                if trailes_js.is_boolean() {
-                    wait_for_trailers = trailes_js.as_boolean();
-                    stream.wait_for_trailers = wait_for_trailers;
-                }
+            if let Some(silent_js) = options.silent(global_object)? {
+                silent = silent_js;
             }
 
-            if let Some(silent_js) = options.get(global_object, "silent")? {
-                if silent_js.is_boolean() {
-                    silent = silent_js.as_boolean();
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.silent",
-                        b"boolean",
-                        silent_js,
-                    ));
-                }
-            }
-
-            if let Some(end_stream_js) = options.get(global_object, "endStream")? {
-                if end_stream_js.is_boolean() {
-                    if end_stream_js.as_boolean() {
-                        end_stream = true;
-                        // will end the stream after trailers
-                        if !wait_for_trailers || self.is_server.get() {
-                            flags |= HeadersFrameFlags::END_STREAM as u8;
-                        }
+            if let Some(end_stream_js) = options.end_stream(global_object)? {
+                if end_stream_js {
+                    end_stream = true;
+                    // will end the stream after trailers
+                    if !wait_for_trailers || self.is_server.get() {
+                        flags |= HeadersFrameFlags::END_STREAM as u8;
                     }
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.endStream",
-                        b"boolean",
-                        end_stream_js,
-                    ));
                 }
             }
 
-            if let Some(exclusive_js) = options.get(global_object, "exclusive")? {
-                if exclusive_js.is_boolean() {
-                    if exclusive_js.as_boolean() {
-                        exclusive = true;
-                        has_priority = true;
-                    }
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.exclusive",
-                        b"boolean",
-                        exclusive_js,
-                    ));
-                }
-            }
-
-            if let Some(parent_js) = options.get(global_object, "parent")? {
-                if parent_js.is_number() || parent_js.is_int32() {
+            if let Some(exclusive_js) = options.exclusive(global_object)? {
+                if exclusive_js {
+                    exclusive = true;
                     has_priority = true;
-                    parent = parent_js.to_int32();
-                    if parent <= 0 || parent as u32 > MAX_STREAM_ID {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        self.dispatch_with_extra(
-                            js::on_stream_error_get_cached,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream.id as f64));
-                    }
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.parent",
-                        b"number",
-                        parent_js,
-                    ));
                 }
             }
 
-            if let Some(weight_js) = options.get(global_object, "weight")? {
-                if weight_js.is_number() || weight_js.is_int32() {
-                    has_priority = true;
-                    weight = weight_js.to_int32();
-                    if weight < 1 || weight > u8::MAX as i32 {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        self.dispatch_with_extra(
-                            js::on_stream_error_get_cached,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream_id as f64));
-                    }
-                    stream.weight = u16::try_from(weight).expect("int cast");
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.weight",
-                        b"number",
-                        weight_js,
-                    ));
+            if let Some(parent_js) = options.parent(global_object)? {
+                has_priority = true;
+                parent = parent_js as i32;
+                if parent <= 0 || parent as u32 > MAX_STREAM_ID {
+                    stream.state = StreamState::CLOSED;
+                    stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
+                    self.dispatch_with_extra(
+                        js::on_stream_error_get_cached,
+                        stream.get_identifier(),
+                        JSValue::js_number(stream.rst_code as f64),
+                    );
+                    return Ok(Some(stream.id as f64));
                 }
+            }
+
+            if let Some(weight_js) = options.weight(global_object)? {
+                has_priority = true;
+                weight = weight_js as i32;
 
                 if weight < 1 || weight > u8::MAX as i32 {
                     stream.state = StreamState::CLOSED;
@@ -6958,31 +6786,21 @@ impl H2FrameParser {
                         stream.get_identifier(),
                         JSValue::js_number(stream.rst_code as f64),
                     );
-                    return Ok(JSValue::js_number(stream_id as f64));
+                    return Ok(Some(stream_id as f64));
                 }
 
                 stream.weight = u16::try_from(weight).expect("int cast");
             }
 
-            if let Some(signal_arg) = options.get(global_object, "signal")? {
-                if let Some(signal_ptr) = AbortSignal::from_js(signal_arg) {
-                    // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal_arg` on the stack.
-                    let signal_ = unsafe { &mut *signal_ptr };
-                    if signal_.aborted() {
-                        stream.state = StreamState::IDLE;
-                        let wrapped =
-                            Bun__wrapAbortError(global_object, signal_.js_reason(global_object));
-                        self.abort_stream(&mut stream, wrapped);
-                        return Ok(JSValue::js_number(stream_id as f64));
-                    }
-                    stream.attach_signal(self, signal_);
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.signal",
-                        b"AbortSignal",
-                        signal_arg,
-                    ));
+            if let Some(signal_) = options.signal(global_object)? {
+                if signal_.aborted() {
+                    stream.state = StreamState::IDLE;
+                    let wrapped =
+                        Bun__wrapAbortError(global_object, signal_.js_reason(global_object));
+                    self.abort_stream(&mut stream, wrapped);
+                    return Ok(Some(stream_id as f64));
                 }
+                stream.attach_signal(self, signal_);
             }
         }
 
@@ -7010,7 +6828,7 @@ impl H2FrameParser {
                     chunk,
                 );
             }
-            return Ok(JSValue::js_number(stream_id as f64));
+            return Ok(Some(stream_id as f64));
         }
         let mut length: usize = encoded_size;
         if has_priority {
@@ -7039,7 +6857,7 @@ impl H2FrameParser {
                 stream.get_identifier(),
                 JSValue::js_number(stream.rst_code as f64),
             );
-            return Ok(JSValue::js_number(stream_id as f64));
+            return Ok(Some(stream_id as f64));
         }
 
         let actual_max_frame_size = self
@@ -7199,7 +7017,7 @@ impl H2FrameParser {
             if wait_for_trailers {
                 stream.state = StreamState::HALF_CLOSED_LOCAL;
                 self.dispatch(js::on_want_trailers_get_cached, stream.get_identifier());
-                return Ok(JSValue::js_number(stream_id as f64));
+                return Ok(Some(stream_id as f64));
             }
 
             // A HEADERS frame carrying END_STREAM half-closes our side; when
@@ -7232,24 +7050,28 @@ impl H2FrameParser {
         }
 
         let _ = length;
-        Ok(JSValue::js_number(stream_id as f64))
+        Ok(Some(stream_id as f64))
     }
 
-    pub(crate) fn read(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<()> {
-        let global_object = cx.global();
-        let data = data.to_js();
+    pub(crate) fn read<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        data: Option<JsLocal<'a, BufferSource>>,
+    ) -> JsResult<()> {
         // Same engine-driven inbound path as on_native_read (JS-fed sockets / proxied streams).
         // The engine dispatches into JS between frames, and a handler can detach/transfer this
         // ArrayBuffer; copy the bytes so the parse never reads freed memory.
-        if let Some(array_buffer) = data.as_array_buffer(global_object) {
-            let copied = array_buffer.byte_slice().to_vec();
+        if let Some(data) = data {
+            let copied = data.with_bytes(&cx.heap, <[u8]>::to_vec);
             self.rewrite_read(&copied);
             if self.left_exception.replace(false) {
                 return Err(bun_jsc::JsError::Thrown);
             }
             Ok(())
         } else {
-            Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
+            Err(cx
+                .global()
+                .throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
         }
     }
 
@@ -7294,16 +7116,15 @@ impl H2FrameParser {
         self.detach_native_socket();
     }
 
-    pub(crate) fn set_native_socket(&self, _: &mut JsScope<'_>, socket: JsLocal<'_>) {
-        let socket = socket.to_js();
+    pub(crate) fn set_native_socket(&self, _: &mut JsScope<'_>, socket: H2NativeSocket<'_>) {
         self.detach_native_socket();
-        if let Some(socket) = TLSSocket::from_js(socket) {
+        if let H2NativeSocket::Tls(socket) = socket {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
             self.native_socket.attach::<true>(socket, self.ref_guard());
             // if we started with non native and go to native we now control the backpressure internally
             self.has_nonnative_backpressure.set(false);
             let _ = self.flush();
-        } else if let Some(socket) = TCPSocket::from_js(socket) {
+        } else if let H2NativeSocket::Tcp(socket) = socket {
             bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
             self.native_socket.attach::<false>(socket, self.ref_guard());
             // if we started with non native and go to native we now control the backpressure internally
@@ -7317,31 +7138,27 @@ impl H2FrameParser {
     }
 
     /// Saturating read of a numeric session limit into its u32 field.
-    fn session_option_u32(value: JSValue) -> u32 {
-        u32::try_from(value.to_uint64_no_truncate()).unwrap_or(u32::MAX)
+    fn session_option_u32(value: f64) -> u32 {
+        u32::try_from(JSValue::js_number(value).to_uint64_no_truncate()).unwrap_or(u32::MAX)
     }
 
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        options: JsLocal<'a>,
+        options: Option<H2FrameParserOptions<'a>>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global_object = cx.global();
-        let options = options.to_js();
 
-        if !options.is_object() {
+        let Some(options) = options else {
             return Err(
                 global_object.throw_invalid_arguments(format_args!("expected options as argument"))
             );
-        }
+        };
 
-        let Some(context_obj) = options.get(global_object, "context")? else {
+        let Some(context_obj) = options.context(global_object)? else {
             return Err(global_object.throw(format_args!("Expected \"context\" option")));
         };
-        let mut handler_js = JSValue::ZERO;
-        if let Some(handlers_) = options.get(global_object, "handlers")? {
-            handler_js = handlers_;
-        }
+        let handler_js = options.handlers(global_object)?;
 
         let init = H2FrameParser {
             abort_handle: bun_jsc::AbortHandle::for_owner::<H2FrameParser>(),
@@ -7448,23 +7265,31 @@ impl H2FrameParser {
             .set(Handlers::from_js(global_object, handler_js, js_value)?);
 
         // check if socket is provided, and if it is a valid native socket
-        if let Some(socket_js) = options.get(global_object, "native")? {
-            if let Some(socket) = TLSSocket::from_js(socket_js) {
-                bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-                this_ref
-                    .native_socket
-                    .attach::<true>(socket, this_ref.ref_guard());
-                let _ = this_ref.flush();
-            } else if let Some(socket) = TCPSocket::from_js(socket_js) {
-                bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-                this_ref
-                    .native_socket
-                    .attach::<false>(socket, this_ref.ref_guard());
-                let _ = this_ref.flush();
+        if let Some(socket_js) = options.native(global_object)? {
+            match H2NativeSocket::from_local(global_object, socket_js)? {
+                H2NativeSocket::Tls(socket) => {
+                    bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
+                    this_ref
+                        .native_socket
+                        .attach::<true>(socket, this_ref.ref_guard());
+                    let _ = this_ref.flush();
+                }
+                H2NativeSocket::Tcp(socket) => {
+                    bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
+                    this_ref
+                        .native_socket
+                        .attach::<false>(socket, this_ref.ref_guard());
+                    let _ = this_ref.flush();
+                }
+                H2NativeSocket::Other => {}
             }
         }
-        if let Some(settings_js) = options.get(global_object, "settings")? {
-            if !settings_js.is_empty_or_undefined_or_null() {
+        match options.settings(global_object)? {
+            H2SettingsOption::Missing => {}
+            H2SettingsOption::Other => {
+                return Err(global_object.throw(format_args!("Expected settings to be a object")));
+            }
+            H2SettingsOption::Settings(settings_js) => {
                 bun_output::scoped_log!(H2FrameParser, "settings received in the constructor");
                 this_ref.load_settings_from_js_value(global_object, settings_js)?;
                 // The constructor settings ride on the connection preface, so received header
@@ -7474,113 +7299,89 @@ impl H2FrameParser {
                     .enforced_max_header_list_size
                     .set(this_ref.local_settings.get().max_header_list_size);
 
-                if let Some(max_pings) = settings_js.get(global_object, "maxOutstandingPings")? {
-                    if max_pings.is_number() {
-                        this_ref
-                            .max_outstanding_pings
-                            .set(max_pings.to_uint64_no_truncate());
-                    }
+                if let Some(max_pings) = settings_js.max_outstanding_pings(global_object)? {
+                    this_ref
+                        .max_outstanding_pings
+                        .set(JSValue::js_number(max_pings).to_uint64_no_truncate());
                 }
-                if let Some(max_memory) = settings_js.get(global_object, "maxSessionMemory")? {
-                    if max_memory.is_number() {
-                        this_ref
-                            .max_session_memory
-                            .set(Self::session_option_u32(max_memory).max(1));
-                    }
+                if let Some(max_memory) = settings_js.max_session_memory(global_object)? {
+                    this_ref
+                        .max_session_memory
+                        .set(Self::session_option_u32(max_memory).max(1));
                 }
                 if let Some(max_header_list_pairs) =
-                    settings_js.get(global_object, "maxHeaderListPairs")?
+                    settings_js.max_header_list_pairs(global_object)?
                 {
-                    if max_header_list_pairs.is_number() {
-                        this_ref
-                            .max_header_list_pairs
-                            .set(Self::session_option_u32(max_header_list_pairs).max(4));
-                    }
+                    this_ref
+                        .max_header_list_pairs
+                        .set(Self::session_option_u32(max_header_list_pairs).max(4));
                 }
-                if let Some(max_settings) = settings_js.get(global_object, "maxSettings")? {
-                    if max_settings.is_number() {
-                        this_ref
-                            .max_settings
-                            .set(Self::session_option_u32(max_settings).max(1));
-                    }
+                if let Some(max_settings) = settings_js.max_settings(global_object)? {
+                    this_ref
+                        .max_settings
+                        .set(Self::session_option_u32(max_settings).max(1));
                 }
                 if let Some(max_rejected_streams) =
-                    settings_js.get(global_object, "maxSessionRejectedStreams")?
+                    settings_js.max_session_rejected_streams(global_object)?
                 {
-                    if max_rejected_streams.is_number() {
-                        this_ref
-                            .max_rejected_streams
-                            .set(Self::session_option_u32(max_rejected_streams));
-                    }
+                    this_ref
+                        .max_rejected_streams
+                        .set(Self::session_option_u32(max_rejected_streams));
                 }
                 if let Some(max_session_invalid_frames) =
-                    settings_js.get(global_object, "maxSessionInvalidFrames")?
+                    settings_js.max_session_invalid_frames(global_object)?
                 {
-                    if max_session_invalid_frames.is_number() {
-                        this_ref
-                            .max_session_invalid_frames
-                            .set(Self::session_option_u32(max_session_invalid_frames));
-                    }
+                    this_ref
+                        .max_session_invalid_frames
+                        .set(Self::session_option_u32(max_session_invalid_frames));
                 }
                 if let Some(strict) =
-                    settings_js.get(global_object, "strictFieldWhitespaceValidation")?
+                    settings_js.strict_field_whitespace_validation(global_object)?
                 {
-                    if strict.is_boolean() {
-                        this_ref.strict_field_whitespace.set(strict.as_boolean());
-                    }
+                    this_ref.strict_field_whitespace.set(strict);
                 }
                 // node: MathMax(1, x) per key (util.js), applied when both are given (node_http2.cc).
-                if let Some(reset_burst) = settings_js.get(global_object, "streamResetBurst")?
-                    && let Some(reset_rate) = settings_js.get(global_object, "streamResetRate")?
-                    && reset_burst.is_number()
-                    && reset_rate.is_number()
+                let reset_burst = settings_js.stream_reset_burst(global_object)?;
+                if !matches!(reset_burst, StreamResetBurst::Missing)
+                    && let Some(reset_rate) = settings_js.stream_reset_rate(global_object)?
+                    && let StreamResetBurst::Number(reset_burst) = reset_burst
                 {
-                    this_ref.stream_reset_burst.set(reset_burst.to_u32().max(1));
-                    this_ref.stream_reset_rate.set(reset_rate.to_u32().max(1));
+                    this_ref.stream_reset_burst.set((reset_burst as u32).max(1));
+                    this_ref.stream_reset_rate.set((reset_rate as u32).max(1));
                 }
                 if let Some(max_outstanding_settings) =
-                    settings_js.get(global_object, "maxOutstandingSettings")?
+                    settings_js.max_outstanding_settings(global_object)?
                 {
-                    if max_outstanding_settings.is_number() {
-                        this_ref
-                            .max_outstanding_settings
-                            .set(Self::session_option_u32(max_outstanding_settings).max(1));
-                    }
+                    this_ref
+                        .max_outstanding_settings
+                        .set(Self::session_option_u32(max_outstanding_settings).max(1));
                 }
                 if let Some(max_send_header_block_length) =
-                    settings_js.get(global_object, "maxSendHeaderBlockLength")?
+                    settings_js.max_send_header_block_length(global_object)?
                 {
-                    if max_send_header_block_length.is_number() {
-                        this_ref
-                            .max_send_header_block_length
-                            .set(max_send_header_block_length.to_int32() as u32);
-                    }
+                    this_ref
+                        .max_send_header_block_length
+                        .set(max_send_header_block_length as i32 as u32);
                 }
                 if let Some(strict_single_value) =
-                    settings_js.get(global_object, "strictSingleValueFields")?
+                    settings_js.strict_single_value_fields(global_object)?
                 {
-                    if strict_single_value.is_boolean() {
-                        this_ref
-                            .strict_single_value_fields
-                            .set(strict_single_value.to_boolean());
-                    }
+                    this_ref.strict_single_value_fields.set(strict_single_value);
                 }
-                if let Some(padding_strategy) = settings_js.get(global_object, "paddingStrategy")? {
-                    if padding_strategy.is_number() {
-                        this_ref
-                            .padding_strategy
-                            .set(match padding_strategy.to_u32() {
-                                1 => PaddingStrategy::Aligned,
-                                2 => PaddingStrategy::Max,
-                                _ => PaddingStrategy::None,
-                            });
-                    }
+                if let Some(padding_strategy) = settings_js.padding_strategy(global_object)? {
+                    this_ref
+                        .padding_strategy
+                        .set(match padding_strategy as u32 {
+                            1 => PaddingStrategy::Aligned,
+                            2 => PaddingStrategy::Max,
+                            _ => PaddingStrategy::None,
+                        });
                 }
             }
         }
         let mut is_server = false;
-        if let Some(type_js) = options.get(global_object, "type")? {
-            is_server = type_js.is_number() && type_js.to_u32() == 0;
+        if let Some(type_js) = options.r#type(global_object)? {
+            is_server = type_js as u32 == 0;
         }
 
         this_ref.is_server.set(is_server);

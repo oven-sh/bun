@@ -1,11 +1,11 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
-use super::JSValueTestExt;
 use super::FormatterTestExt;
-use bun_jsc::console_object::Formatter;
-use bun_jsc::JsClass;
+use super::JSValueTestExt;
+use crate::generated_bindgen::expect::{ExpectedError, js_ExpectAny};
 use bun_core::strings;
-use crate::generated_bindgen::expect::js_ExpectAny;
+use bun_jsc::JsClass;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::console_object::Formatter;
+use bun_jsc::{JSValue, JsResult};
 
 use super::Expect;
 use super::ExpectAny;
@@ -17,8 +17,8 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        (expected, expected_argument): (ExpectedError<'_>, JsLocal<'_>),
+    ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 
@@ -27,33 +27,36 @@ impl Expect {
         this.increment_expect_call_counter();
 
         let expected_value: JSValue = 'brk: {
-            let value = expected.to_js();
-            if value.is_undefined() {
-                break 'brk JSValue::ZERO;
-            }
-            if value.is_undefined_or_null() || (!value.is_object() && !value.is_string()) {
-                let mut fmt = Formatter::new(global).with_quote_strings(true);
-                return Err(global.throw(format_args!(
-                    "Expected value must be string or Error: {}",
-                    value.to_fmt(&mut fmt),
-                )));
-            }
-            if value.is_object() {
-                if ExpectAny::from_js_direct(value).is_some() {
-                    if let Some(inner_constructor_value) =
-                        js_ExpectAny::constructor_value_get_cached(value)
-                    {
-                        break 'brk inner_constructor_value;
+            match expected {
+                ExpectedError::Absent => JSValue::ZERO,
+                ExpectedError::Other => {
+                    let mut fmt = Formatter::new(global).with_quote_strings(true);
+                    return Err(global.throw(format_args!(
+                        "Expected value must be string or Error: {}",
+                        expected_argument.to_fmt(&mut fmt),
+                    )));
+                }
+                ExpectedError::Object(object) => {
+                    let value = object.to_js();
+                    if ExpectAny::from_js_direct(value).is_some() {
+                        if let Some(inner_constructor_value) =
+                            js_ExpectAny::constructor_value_get_cached(value)
+                        {
+                            break 'brk inner_constructor_value;
+                        }
                     }
+                    value
                 }
-            } else if value.is_string() {
-                // `.toThrow("")` behaves the same as `.toThrow()`
-                let s = value.to_js_string(global)?;
-                if s.length() == 0 {
-                    break 'brk JSValue::ZERO;
+                ExpectedError::String(string) => {
+                    let value = string.to_js();
+                    // `.toThrow("")` behaves the same as `.toThrow()`
+                    let s = value.to_js_string(global)?;
+                    if s.length() == 0 {
+                        break 'brk JSValue::ZERO;
+                    }
+                    value
                 }
             }
-            break 'brk value;
         };
         expected_value.ensure_still_alive();
 
@@ -70,7 +73,7 @@ impl Expect {
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
 
             if !did_throw {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             let result: JSValue = result_.unwrap();
@@ -119,7 +122,7 @@ impl Expect {
                     let expected_slice = expected_value.to_utf8(global)?;
                     let received_slice = received_message.to_utf8(global)?;
                     if !strings::contains(received_slice.slice(), expected_slice.slice()) {
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(());
                     }
                 }
 
@@ -146,7 +149,7 @@ impl Expect {
                 if let Some(test_fn) = expected_value.get(global, "test")? {
                     let matches = test_fn.call(global, expected_value, &[received_message])?;
                     if !matches.to_boolean() {
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(());
                     }
                 }
 
@@ -171,7 +174,7 @@ impl Expect {
 
                 // no partial match for this case
                 if !expected_message.is_same_value(received_message, global)? {
-                    return Ok(JSValue::UNDEFINED);
+                    return Ok(());
                 }
 
                 return throw!(
@@ -184,7 +187,7 @@ impl Expect {
             }
 
             if !result.is_instance_of(global, expected_value)? {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             let expected_class = expected_value.get_class_name(global)?;
@@ -216,7 +219,7 @@ impl Expect {
 
         if did_throw {
             if expected_value.is_empty() || expected_value.is_undefined() {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             let result: JSValue = if let Some(r) = result_.unwrap().to_error() {
@@ -237,7 +240,7 @@ impl Expect {
                     let expected_slice = expected_value.to_utf8(global)?;
                     let received_slice = received_message.to_utf8(global)?;
                     if strings::contains(received_slice.slice(), expected_slice.slice()) {
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(());
                     }
                 }
 
@@ -274,7 +277,7 @@ impl Expect {
                     if let Some(test_fn) = expected_value.get(global, "test")? {
                         let matches = test_fn.call(global, expected_value, &[received_message])?;
                         if matches.to_boolean() {
-                            return Ok(JSValue::UNDEFINED);
+                            return Ok(());
                         }
                     }
                 }
@@ -311,7 +314,7 @@ impl Expect {
                 let is_equal = result.jest_strict_deep_equals(expected_value, global)?;
 
                 if is_equal {
-                    return Ok(JSValue::UNDEFINED);
+                    return Ok(());
                 }
 
                 let mut formatter = Formatter::new(global).with_quote_strings(true);
@@ -334,7 +337,7 @@ impl Expect {
 
                 if let Some(received_message) = received_message_opt {
                     if received_message.is_same_value(expected_message, global)? {
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(());
                     }
                 }
 
@@ -364,7 +367,7 @@ impl Expect {
             }
 
             if result.is_instance_of(global, expected_value)? {
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             // error: received error not instance of received error constructor

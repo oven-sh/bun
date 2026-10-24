@@ -1,17 +1,19 @@
 use core::ptr::NonNull;
 
-use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::call_frame::ArgumentsSlice;
+use bun_jsc::bindgen::{
+    BufferSource, Callable, Deferred, JsLocal, JsPayload as _, JsScope, JsWrapper,
+};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
+use bun_jsc::{JSArray, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
-use crate::generated_bindgen::node_fs_binding::RmOptions;
+use crate::generated_bindgen::node_fs_binding::{self as schema, RmOptions};
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
     NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
+use crate::node::types::Parsing;
 
 // The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
 // spelled out once in `node_fs.rs` (the `NodeFS::dispatch` table +
@@ -25,15 +27,13 @@ use crate::node::fs::{
 fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
     this: &Binding,
     cx: &mut JsScope<'_>,
-    args: &[JsLocal<'_>],
+    from_js: impl FnOnce(&JSGlobalObject, &mut Parsing) -> JsResult<A>,
 ) -> JsResult<JSValue>
 where
     Op<{ F }>: NodeFSDispatch<R, A>,
 {
     let global = cx.global();
-    let vm: &VirtualMachine = global.bun_vm();
-    let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
-    let args = <A as FsArgument>::from_js(global, &mut slice)?;
+    let args = from_js(global, &mut Parsing::new(Flavor::Sync))?;
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
@@ -47,33 +47,10 @@ where
     }
 }
 
-/// Which arm of an async binding was called.
-#[derive(Clone, Copy)]
-enum AsyncArm {
-    /// `node:fs/promises`: returns a promise.
-    Promise,
-    /// Argument 0 is the callback. `fs.promises` forwards user arguments, so a trailing function cannot mark this arm.
-    Callback,
-}
-
-/// The arguments of the operation, and the callback for [`AsyncArm::Callback`].
-fn split_callback<'a>(
-    global: &JSGlobalObject,
-    args: &'a [JsLocal<'_>],
-    arm: AsyncArm,
-) -> JsResult<(Option<JSValue>, &'a [JSValue])> {
-    let arguments = JsLocal::to_js_slice(args);
-    match arm {
-        AsyncArm::Promise => Ok((None, arguments)),
-        AsyncArm::Callback => match arguments.split_first() {
-            Some((callback, rest)) if callback.is_callable() => Ok((Some(*callback), rest)),
-            _ => Err(global.throw_invalid_arguments(format_args!("callback must be a function"))),
-        },
-    }
-}
-
 /// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
 /// `.readdir` (those have bespoke entry points below).
+///
+/// Without `callback` it is `node:fs/promises` and returns a promise.
 ///
 /// `create_task` is `async_::<FunctionName>::create` — passed in because the
 /// Windows path picks `UVFSRequest` for a handful of fds-only ops while
@@ -82,8 +59,8 @@ fn split_callback<'a>(
 fn run_async<A: FsArgument>(
     this: &Binding,
     cx: &mut JsScope<'_>,
-    args: &[JsLocal<'_>],
-    arm: AsyncArm,
+    callback: Option<JsLocal<'_, Callable>>,
+    from_js: impl FnOnce(&JSGlobalObject, &mut Parsing) -> JsResult<A>,
     create_task: fn(
         &bun_jsc::JsThread<'_>,
         &Binding,
@@ -94,8 +71,8 @@ fn run_async<A: FsArgument>(
 ) -> JsResult<JSValue> {
     let cx = cx.js_thread();
     let global = cx.global();
-    let (callback, arguments) = split_callback(global, args, arm)?;
-    let args = match parse_async_args::<A>(global, arguments)? {
+    let callback = callback.map(JsLocal::to_js);
+    let args = match parse_async_args(global, from_js)? {
         ParsedAsyncArgs::Args(args) => args,
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
@@ -112,11 +89,12 @@ enum ParsedAsyncArgs<A> {
 /// Parses an async binding's arguments. A validation error is thrown, as node does for both arms.
 fn parse_async_args<A: FsArgument>(
     global: &JSGlobalObject,
-    arguments: &[JSValue],
+    from_js: impl FnOnce(&JSGlobalObject, &mut Parsing) -> JsResult<A>,
 ) -> JsResult<ParsedAsyncArgs<A>> {
-    let vm: &VirtualMachine = global.bun_vm();
-    let mut slice = ArgumentsSlice::init(vm, arguments);
-    let args = A::from_js_async(global, &mut slice)?;
+    let mut parsing = Parsing::new(Flavor::Async);
+    let args = from_js(global, &mut parsing)?;
+    // SAFETY: parsed under `Flavor::Async`.
+    let args = unsafe { ThreadIsolated::new(args) };
 
     if A::HAVE_ABORT_SIGNAL {
         if let Some(abort_error) = args
@@ -126,7 +104,7 @@ fn parse_async_args<A: FsArgument>(
             return Ok(ParsedAsyncArgs::Rejected(abort_error));
         }
     }
-    if let Some(err) = slice.deferred_error.take() {
+    if let Some(err) = parsing.deferred_error.take() {
         return Ok(ParsedAsyncArgs::Rejected((*err).to_error_instance(global)));
     }
     Ok(ParsedAsyncArgs::Args(args))
@@ -168,11 +146,20 @@ impl Binding {
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
     /// `callAsync(.cp)`.
-    pub(crate) fn cp(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    pub(crate) fn cp(
+        &self,
+        cx: &mut JsScope<'_>,
+        src: schema::PathLike<'_>,
+        dest: Deferred<'_, schema::PathLike<'_>>,
+        recursive: bool,
+        error_on_exist: bool,
+        force: Option<bool>,
+    ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let arguments = JsLocal::to_js_slice(args);
-        let cp_args = match parse_async_args::<args::Cp<'static>>(global, arguments)? {
+        let cp_args = match parse_async_args(global, |global, parsing| {
+            args::Cp::from_js(global, parsing, src, dest, recursive, error_on_exist, force)
+        })? {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
@@ -181,45 +168,70 @@ impl Binding {
     }
 
     /// `callSync(.cp)`.
-    pub(crate) fn cp_sync(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    pub(crate) fn cp_sync(
+        &self,
+        cx: &mut JsScope<'_>,
+        src: schema::PathLike<'_>,
+        dest: Deferred<'_, schema::PathLike<'_>>,
+        recursive: bool,
+        error_on_exist: bool,
+        force: Option<bool>,
+    ) -> JsResult<()> {
         let global = cx.global();
-        let vm: &VirtualMachine = global.bun_vm();
-        let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
 
         // `defer args.deinit()` → `Drop` on `cp_args` (its `PathLike` fields).
-        let cp_args = args::Cp::from_js(global, &mut slice)?;
+        let cp_args = args::Cp::from_js(
+            global,
+            &mut Parsing::new(Flavor::Sync),
+            src,
+            dest,
+            recursive,
+            error_on_exist,
+            force,
+        )?;
 
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
         match self.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
-            Ok(()) => Ok(JSValue::UNDEFINED),
+            Ok(()) => Ok(()),
         }
     }
 
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
-    pub(crate) fn readdir(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
-        self.run_readdir(cx, args, AsyncArm::Promise)
+    pub(crate) fn readdir(
+        &self,
+        cx: &mut JsScope<'_>,
+        path: schema::PathLike<'_>,
+        options: Deferred<'_, schema::EncodingOrReaddirOptions<'_>>,
+    ) -> JsResult<JSValue> {
+        self.run_readdir(cx, None, path, options)
     }
 
     pub(crate) fn readdir_cb(
         &self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
-        self.run_readdir(cx, args, AsyncArm::Callback)
+        callback: JsLocal<'_, Callable>,
+        path: schema::PathLike<'_>,
+        options: Deferred<'_, schema::EncodingOrReaddirOptions<'_>>,
+    ) -> JsResult<()> {
+        self.run_readdir(cx, Some(callback), path, options)?;
+        Ok(())
     }
 
     fn run_readdir(
         &self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
-        arm: AsyncArm,
+        callback: Option<JsLocal<'_, Callable>>,
+        path: schema::PathLike<'_>,
+        options: Deferred<'_, schema::EncodingOrReaddirOptions<'_>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let (callback, arguments) = split_callback(global, args, arm)?;
-        let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments)? {
+        let callback = callback.map(JsLocal::to_js);
+        let rd_args = match parse_async_args(global, |global, parsing| {
+            args::Readdir::from_js(global, parsing, path, options)
+        })? {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => {
                 return reject_before_schedule(global, callback, error);
@@ -239,18 +251,23 @@ impl Binding {
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
     /// through `FsArgument`/`dispatch`; call the inherent method directly.
-    pub(crate) fn watch(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    pub(crate) fn watch(
+        &self,
+        cx: &mut JsScope<'_>,
+        filename: schema::PathLike<'_>,
+        options: Option<schema::WatchOptions<'_>>,
+        listener: Option<JsLocal<'_, Callable>>,
+    ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let mut slice = ArgumentsSlice::init(cx.vm(), JsLocal::to_js_slice(args));
 
-        let watch_args = fs::Watcher::Arguments::from_js(&cx, &mut slice)?;
+        let watch_args = fs::Watcher::Arguments::from_js(&cx, filename, options, listener)?;
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
         match self
             .node_fs
-            .with_mut(|nfs| nfs.watch(&watch_args, Flavor::Sync))
+            .with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
@@ -261,13 +278,14 @@ impl Binding {
     pub(crate) fn watch_file(
         &self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
+        filename: schema::PathLike<'_>,
+        options: Deferred<'_, schema::WatchFileOptions>,
+        listener: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let mut slice = ArgumentsSlice::init(cx.vm(), JsLocal::to_js_slice(args));
 
-        let wf_args = fs::StatWatcher::Arguments::from_js(&cx, &mut slice)?;
+        let wf_args = fs::StatWatcher::Arguments::from_js(&cx, filename, options, listener)?;
 
         match self
             .node_fs
@@ -280,31 +298,35 @@ impl Binding {
 }
 
 /// Generates the sync, promise and callback member of each op.
-/// Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple for one op.
+/// Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple for one op, the arguments its
+/// schema declares, and how `args` is parsed from them.
 macro_rules! node_fs_bindings {
-    ( $( $sync:ident / $async_:ident / $callback:ident => $F:ident, $Args:ty, $Ret:ty ; )* ) => {
+    ( $( $sync:ident / $async_:ident / $callback:ident => $F:ident, $Args:ty, $Ret:ty,
+         ( $( $arg:ident : $Arg:ty ),* ), $from_js:expr ; )* ) => {
         impl Binding {
             $(
                 pub(crate) fn $sync(
                     &self,
                     cx: &mut JsScope<'_>,
-                    args: &[JsLocal<'_>],
+                    $( $arg: $Arg, )*
                 ) -> JsResult<JSValue> {
-                    run_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>(self, cx, args)
+                    run_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>(self, cx, $from_js)
                 }
                 pub(crate) fn $async_(
                     &self,
                     cx: &mut JsScope<'_>,
-                    args: &[JsLocal<'_>],
+                    $( $arg: $Arg, )*
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Promise, async_::$F::create)
+                    run_async::<$Args>(self, cx, None, $from_js, async_::$F::create)
                 }
                 pub(crate) fn $callback(
                     &self,
                     cx: &mut JsScope<'_>,
-                    args: &[JsLocal<'_>],
-                ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, args, AsyncArm::Callback, async_::$F::create)
+                    callback: JsLocal<'_, Callable>,
+                    $( $arg: $Arg, )*
+                ) -> JsResult<()> {
+                    run_async::<$Args>(self, cx, Some(callback), $from_js, async_::$F::create)?;
+                    Ok(())
                 }
             )*
         }
@@ -313,46 +335,129 @@ macro_rules! node_fs_bindings {
 
 #[rustfmt::skip]
 node_fs_bindings! {
-    access_sync          / access          / access_cb          => Access,            args::Access<'static>,     ret::Access;
-    append_file_sync     / append_file     / append_file_cb     => AppendFile,        args::AppendFile<'static>, ret::AppendFile;
-    close_sync           / close           / close_cb           => Close,             args::Close,               ret::Close;
-    copy_file_sync       / copy_file       / copy_file_cb       => CopyFile,          args::CopyFile<'static>,   ret::CopyFile;
-    exists_sync          / exists          / exists_cb          => Exists,            args::Exists<'static>,     ret::Exists;
-    chown_sync           / chown           / chown_cb           => Chown,             args::Chown<'static>,      ret::Chown;
-    chmod_sync           / chmod           / chmod_cb           => Chmod,             args::Chmod<'static>,      ret::Chmod;
-    fchmod_sync          / fchmod          / fchmod_cb          => Fchmod,            args::FChmod,              ret::Fchmod;
-    fchown_sync          / fchown          / fchown_cb          => Fchown,            args::Fchown,              ret::Fchown;
-    fstat_sync           / fstat           / fstat_cb           => Fstat,             args::Fstat,               ret::Fstat;
-    fsync_sync           / fsync           / fsync_cb           => Fsync,             args::Fsync,               ret::Fsync;
-    ftruncate_sync       / ftruncate       / ftruncate_cb       => Ftruncate,         args::FTruncate,           ret::Ftruncate;
-    futimes_sync         / futimes         / futimes_cb         => Futimes,           args::Futimes,             ret::Futimes;
-    lchmod_sync          / lchmod          / lchmod_cb          => Lchmod,            args::LCHmod<'static>,     ret::Lchmod;
-    lchown_sync          / lchown          / lchown_cb          => Lchown,            args::LChown<'static>,     ret::Lchown;
-    link_sync            / link            / link_cb            => Link,              args::Link<'static>,       ret::Link;
-    lstat_sync           / lstat           / lstat_cb           => Lstat,             args::Lstat<'static>,      ret::Lstat;
-    mkdir_sync           / mkdir           / mkdir_cb           => Mkdir,             args::Mkdir<'static>,      ret::Mkdir;
-    mkdtemp_sync         / mkdtemp         / mkdtemp_cb         => Mkdtemp,           args::MkdirTemp<'static>,  ret::Mkdtemp;
-    open_sync            / open            / open_cb            => Open,              args::Open<'static>,       ret::Open;
-    read_sync            / read            / read_cb            => Read,              args::Read,                ret::Read;
-    write_sync           / write           / write_cb           => Write,             args::Write<'static>,      ret::Write;
-    read_file_sync       / read_file       / read_file_cb       => ReadFile,          args::ReadFile<'static>,   ret::ReadFile;
-    write_file_sync      / write_file      / write_file_cb      => WriteFile,         args::WriteFile<'static>,  ret::WriteFile;
-    readlink_sync        / readlink        / readlink_cb        => Readlink,          args::Readlink<'static>,   ret::Readlink;
-    rm_sync              / rm              / rm_cb              => Rm,                args::Rm<'static>,         ret::Rm;
-    rmdir_sync           / rmdir           / rmdir_cb           => Rmdir,             args::RmDir<'static>,      ret::Rmdir;
-    realpath_sync        / realpath        / realpath_cb        => RealpathNonNative, args::Realpath<'static>,   ret::Realpath;
-    realpath_native_sync / realpath_native / realpath_native_cb => Realpath,          args::Realpath<'static>,   ret::Realpath;
-    rename_sync          / rename          / rename_cb          => Rename,            args::Rename<'static>,     ret::Rename;
-    stat_sync            / stat            / stat_cb            => Stat,              args::Stat<'static>,       ret::Stat;
-    statfs_sync          / statfs          / statfs_cb          => Statfs,            args::StatFS<'static>,     ret::StatFS;
-    symlink_sync         / symlink         / symlink_cb         => Symlink,           args::Symlink<'static>,    ret::Symlink;
-    truncate_sync        / truncate        / truncate_cb        => Truncate,          args::Truncate<'static>,   ret::Truncate;
-    unlink_sync          / unlink          / unlink_cb          => Unlink,            args::Unlink<'static>,     ret::Unlink;
-    utimes_sync          / utimes          / utimes_cb          => Utimes,            args::Utimes<'static>,     ret::Utimes;
-    lutimes_sync         / lutimes         / lutimes_cb         => Lutimes,           args::Lutimes<'static>,    ret::Lutimes;
-    writev_sync          / writev          / writev_cb          => Writev,            args::Writev,              ret::Writev;
-    readv_sync           / readv           / readv_cb           => Readv,             args::Readv,               ret::Readv;
-    fdatasync_sync       / fdatasync       / fdatasync_cb       => Fdatasync,         args::FdataSync,           ret::Fdatasync;
+    access_sync / access / access_cb => Access, args::Access<'static>, ret::Access,
+        (path: schema::PathLike<'_>, mode: Deferred<'_, Option<f64>>),
+        |global, parsing| args::Access::from_js(global, parsing, path, mode);
+    append_file_sync / append_file / append_file_cb => AppendFile, args::AppendFile<'static>, ret::AppendFile,
+        (path: schema::PathOrFileDescriptor<'_>, data: schema::WriteFileData<'_>, options: Deferred<'_, schema::EncodingOrWriteFileOptions<'_>>),
+        |global, parsing| args::WriteFile::from_js_with_default_flag(global, parsing, path, data, options, crate::node::types::FileSystemFlags::A).map(args::AppendFile);
+    close_sync / close / close_cb => Close, args::Close, ret::Close,
+        (fd: i32),
+        |_, _| Ok(args::Close::from_js(fd));
+    copy_file_sync / copy_file / copy_file_cb => CopyFile, args::CopyFile<'static>, ret::CopyFile,
+        (src: schema::PathLike<'_>, dest: Deferred<'_, schema::PathLike<'_>>, mode: Deferred<'_, Option<f64>>),
+        |global, parsing| args::CopyFile::from_js(global, parsing, src, dest, mode);
+    exists_sync / exists / exists_cb => Exists, args::Exists<'static>, ret::Exists,
+        (path: schema::PathLike<'_>),
+        |global, parsing| args::Exists::from_js(global, parsing, path);
+    chown_sync / chown / chown_cb => Chown, args::Chown<'static>, ret::Chown,
+        (path: schema::PathLike<'_>, uid: Deferred<'_, i64>, gid: Deferred<'_, i64>),
+        |global, parsing| args::Chown::from_js(global, parsing, path, uid, gid);
+    chmod_sync / chmod / chmod_cb => Chmod, args::Chmod<'static>, ret::Chmod,
+        (path: schema::PathLike<'_>, mode: Deferred<'_, schema::Mode<'_>>),
+        |global, parsing| args::Chmod::from_js(global, parsing, path, mode);
+    fchmod_sync / fchmod / fchmod_cb => Fchmod, args::FChmod, ret::Fchmod,
+        (fd: i32, mode: schema::Mode<'_>),
+        |global, _| args::FChmod::from_js(global, fd, mode);
+    fchown_sync / fchown / fchown_cb => Fchown, args::Fchown, ret::Fchown,
+        (fd: i32, uid: i64, gid: i64),
+        |_, _| Ok(args::Fchown::from_js(fd, uid, gid));
+    fstat_sync / fstat / fstat_cb => Fstat, args::Fstat, ret::Fstat,
+        (fd: i32, options: &schema::BigIntOptions),
+        |_, _| Ok(args::Fstat::from_js(fd, options));
+    fsync_sync / fsync / fsync_cb => Fsync, args::Fsync, ret::Fsync,
+        (fd: i32),
+        |_, _| Ok(args::Fsync::from_js(fd));
+    ftruncate_sync / ftruncate / ftruncate_cb => Ftruncate, args::FTruncate, ret::Ftruncate,
+        (fd: i32, len: i64),
+        |_, _| Ok(args::FTruncate::from_js(fd, len));
+    futimes_sync / futimes / futimes_cb => Futimes, args::Futimes, ret::Futimes,
+        (fd: i32, atime: schema::TimeLike<'_>, mtime: schema::TimeLike<'_>),
+        |global, _| args::Futimes::from_js(global, fd, atime, mtime);
+    lchmod_sync / lchmod / lchmod_cb => Lchmod, args::LCHmod<'static>, ret::Lchmod,
+        (path: schema::PathLike<'_>, mode: Deferred<'_, schema::Mode<'_>>),
+        |global, parsing| args::LCHmod::from_js(global, parsing, path, mode);
+    lchown_sync / lchown / lchown_cb => Lchown, args::LChown<'static>, ret::Lchown,
+        (path: schema::PathLike<'_>, uid: Deferred<'_, i64>, gid: Deferred<'_, i64>),
+        |global, parsing| args::LChown::from_js(global, parsing, path, uid, gid);
+    link_sync / link / link_cb => Link, args::Link<'static>, ret::Link,
+        (old_path: schema::PathLike<'_>, new_path: Deferred<'_, schema::PathLike<'_>>),
+        |global, parsing| args::Link::from_js(global, parsing, old_path, new_path);
+    lstat_sync / lstat / lstat_cb => Lstat, args::Lstat<'static>, ret::Lstat,
+        (path: schema::PathLike<'_>, options: Deferred<'_, schema::StatOptions>),
+        |global, parsing| args::Lstat::from_js(global, parsing, path, options);
+    mkdir_sync / mkdir / mkdir_cb => Mkdir, args::Mkdir<'static>, ret::Mkdir,
+        (path: schema::PathLike<'_>, options: Deferred<'_, schema::MkdirOptionsOrMode<'_>>),
+        |global, parsing| args::Mkdir::from_js(global, parsing, path, options);
+    mkdtemp_sync / mkdtemp / mkdtemp_cb => Mkdtemp, args::MkdirTemp<'static>, ret::Mkdtemp,
+        (prefix: schema::PathLike<'_>, options: Deferred<'_, schema::EncodingOrOptions>),
+        |global, parsing| args::MkdirTemp::from_js(global, parsing, prefix, options);
+    open_sync / open / open_cb => Open, args::Open<'static>, ret::Open,
+        (path: schema::PathLike<'_>, flags: Deferred<'_, Option<schema::Flags<'_>>>, mode: Deferred<'_, Option<schema::Mode<'_>>>),
+        |global, parsing| args::Open::from_js(global, parsing, path, flags, mode);
+    read_sync / read / read_cb => Read, args::Read, ret::Read,
+        (fd: i32, buffer: JsLocal<'_, BufferSource>, offset: u64, length: Option<f64>, position: Deferred<'_, schema::ReadPosition>),
+        |global, parsing| args::Read::from_js(global, parsing, fd, buffer, offset, length, position);
+    write_buffer_sync / write_buffer / write_buffer_cb => Write, args::Write<'static>, ret::Write,
+        (fd: i32, buffer: JsLocal<'_, BufferSource>, offset: schema::WriteOffset<'_>, length: schema::WriteLength, position: Option<f64>),
+        |global, parsing| args::Write::from_buffer(global, parsing, fd, buffer, offset, length, position);
+    write_string_sync / write_string / write_string_cb => Write, args::Write<'static>, ret::Write,
+        (fd: i32, buffer: (schema::WriteString, JsLocal<'_>), position: Option<f64>, encoding: Deferred<'_, Option<bun_core::String>>),
+        |global, parsing| args::Write::from_string(global, parsing, fd, buffer, position, encoding);
+    read_file_sync / read_file / read_file_cb => ReadFile, args::ReadFile<'static>, ret::ReadFile,
+        (path: schema::PathOrFileDescriptor<'_>, options: Deferred<'_, schema::EncodingOrReadFileOptions<'_>>),
+        |global, parsing| args::ReadFile::from_js(global, parsing, path, options);
+    write_file_sync / write_file / write_file_cb => WriteFile, args::WriteFile<'static>, ret::WriteFile,
+        (path: schema::PathOrFileDescriptor<'_>, data: schema::WriteFileData<'_>, options: Deferred<'_, schema::EncodingOrWriteFileOptions<'_>>),
+        |global, parsing| args::WriteFile::from_js(global, parsing, path, data, options);
+    readlink_sync / readlink / readlink_cb => Readlink, args::Readlink<'static>, ret::Readlink,
+        (path: schema::PathLike<'_>, options: Deferred<'_, schema::EncodingOrOptions>),
+        |global, parsing| args::Readlink::from_js(global, parsing, path, options);
+    rm_sync / rm / rm_cb => Rm, args::Rm<'static>, ret::Rm,
+        (path: schema::PathLike<'_>, options: Deferred<'_, schema::RmOptionsArgument>),
+        |global, parsing| args::Rm::from_js(global, parsing, path, options);
+    rmdir_sync / rmdir / rmdir_cb => Rmdir, args::RmDir<'static>, ret::Rmdir,
+        (path: schema::PathLike<'_>, options: Deferred<'_, schema::RmdirOptions>),
+        |global, parsing| args::RmDir::from_js(global, parsing, path, options);
+    realpath_sync / realpath / realpath_cb => RealpathNonNative, args::Realpath<'static>, ret::Realpath,
+        (path: schema::PathLike<'_>, options: Deferred<'_, schema::EncodingOrOptions>),
+        |global, parsing| args::Realpath::from_js(global, parsing, path, options);
+    realpath_native_sync / realpath_native / realpath_native_cb => Realpath, args::Realpath<'static>, ret::Realpath,
+        (path: schema::PathLike<'_>, options: Deferred<'_, schema::EncodingOrOptions>),
+        |global, parsing| args::Realpath::from_js(global, parsing, path, options);
+    rename_sync / rename / rename_cb => Rename, args::Rename<'static>, ret::Rename,
+        (old_path: schema::PathLike<'_>, new_path: Deferred<'_, schema::PathLike<'_>>),
+        |global, parsing| args::Rename::from_js(global, parsing, old_path, new_path);
+    stat_sync / stat / stat_cb => Stat, args::Stat<'static>, ret::Stat,
+        (path: schema::PathLike<'_>, options: Deferred<'_, schema::StatOptions>),
+        |global, parsing| args::Stat::from_js(global, parsing, path, options);
+    statfs_sync / statfs / statfs_cb => Statfs, args::StatFS<'static>, ret::StatFS,
+        (path: schema::PathLike<'_>, options: Deferred<'_, schema::BigIntOptions>),
+        |global, parsing| args::StatFS::from_js(global, parsing, path, options);
+    symlink_sync / symlink / symlink_cb => Symlink, args::Symlink<'static>, ret::Symlink,
+        (target: schema::PathLike<'_>, path: Deferred<'_, schema::PathLike<'_>>, r#type: Deferred<'_, schema::SymlinkType>),
+        |global, parsing| args::Symlink::from_js(global, parsing, target, path, r#type);
+    truncate_sync / truncate / truncate_cb => Truncate, args::Truncate<'static>, ret::Truncate,
+        (path: schema::PathOrFileDescriptor<'_>, len: Deferred<'_, i64>),
+        |global, parsing| args::Truncate::from_js(global, parsing, path, len);
+    unlink_sync / unlink / unlink_cb => Unlink, args::Unlink<'static>, ret::Unlink,
+        (path: schema::PathLike<'_>),
+        |global, parsing| args::Unlink::from_js(global, parsing, path);
+    utimes_sync / utimes / utimes_cb => Utimes, args::Utimes<'static>, ret::Utimes,
+        (path: schema::PathLike<'_>, atime: schema::TimeLike<'_>, mtime: schema::TimeLike<'_>),
+        |global, parsing| args::Utimes::from_js(global, parsing, path, atime, mtime);
+    lutimes_sync / lutimes / lutimes_cb => Lutimes, args::Lutimes<'static>, ret::Lutimes,
+        (path: schema::PathLike<'_>, atime: schema::TimeLike<'_>, mtime: schema::TimeLike<'_>),
+        |global, parsing| args::Lutimes::from_js(global, parsing, path, atime, mtime);
+    writev_sync / writev / writev_cb => Writev, args::Writev, ret::Writev,
+        (fd: i32, buffers: JsLocal<'_, JSArray>, position: Option<f64>),
+        |global, parsing| args::Writev::from_js(global, parsing, fd, buffers, position);
+    readv_sync / readv / readv_cb => Readv, args::Readv, ret::Readv,
+        (fd: i32, buffers: JsLocal<'_, JSArray>, position: Option<f64>),
+        |global, parsing| args::Readv::from_js(global, parsing, fd, buffers, position);
+    fdatasync_sync / fdatasync / fdatasync_cb => Fdatasync, args::FdataSync, ret::Fdatasync,
+        (fd: i32),
+        |_, _| Ok(args::FdataSync::from_js(fd));
 }
 
 // `readdirSync` goes through the generic sync path; only the async side is
@@ -361,10 +466,13 @@ impl Binding {
     pub(crate) fn readdir_sync(
         &self,
         cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
+        path: schema::PathLike<'_>,
+        options: Deferred<'_, schema::EncodingOrReaddirOptions<'_>>,
     ) -> JsResult<JSValue> {
         run_sync::<ret::Readdir, args::Readdir<'static>, { NodeFSFunctionEnum::Readdir }>(
-            self, cx, args,
+            self,
+            cx,
+            |global, parsing| args::Readdir::from_js(global, parsing, path, options),
         )
     }
     // pub const statfs = callAsync(.statfs);
@@ -387,12 +495,11 @@ pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
 /// validation (including its rejection of own-but-`undefined` booleans).
 pub(crate) fn rm_options_for_testing(
     cx: &mut JsScope<'_>,
-    args: &[JsLocal<'_>],
+    path: schema::PathLike<'_>,
+    options: Deferred<'_, schema::RmOptionsArgument>,
 ) -> JsResult<RmOptions> {
     let global = cx.global();
-    let vm: &VirtualMachine = global.bun_vm();
-    let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
-    let parsed = args::Rm::from_js(global, &mut slice)?;
+    let parsed = args::Rm::from_js(global, &mut Parsing::new(Flavor::Sync), path, options)?;
     Ok(RmOptions {
         retry_delay: parsed.retry_delay,
         max_retries: parsed.max_retries,
@@ -406,10 +513,10 @@ pub(crate) fn rm_options_for_testing(
 /// `internal/fs/utils` `stringToFlags` tests can assert the production mapping.
 pub(crate) fn string_to_flags_for_testing(
     cx: &mut JsScope<'_>,
-    flags: JsLocal<'_>,
+    flags: Option<schema::Flags<'_>>,
 ) -> JsResult<i32> {
     use crate::node::types::FileSystemFlags;
-    let flags = FileSystemFlags::from_js(cx.global(), flags.to_js())?.unwrap_or(FileSystemFlags::R);
+    let flags = FileSystemFlags::from_js(cx.global(), flags)?.unwrap_or(FileSystemFlags::R);
     // On Windows the internal bun.O bits are POSIX-shaped and translated to the
     // MSVCRT `_O_*` values at the open boundary; node's stringToFlags and
     // fs.constants both speak MSVCRT, so translate here too.

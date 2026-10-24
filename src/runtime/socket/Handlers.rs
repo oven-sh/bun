@@ -3,12 +3,13 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use crate::generated_bindgen::socket_config::{
-    SocketHandler, SocketHandlerBinaryType, SocketOptions, SocketOptionsTLS,
+    SocketCallback, SocketHandler, SocketHandlerBinaryType, SocketOptions, SocketOptionsTLS,
 };
 use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
+use bun_jsc::bindgen::JsLocal;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
 use bun_uws as uws;
 
@@ -299,7 +300,7 @@ impl Handlers {
 
     pub(crate) fn from_js(
         global_object: &JSGlobalObject,
-        opts: JSValue,
+        opts: JsLocal<'_>,
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
         SocketHandler::from_js(global_object, opts, |generated| {
@@ -340,16 +341,15 @@ impl Handlers {
     ) -> JsResult<[JSValue; CALLBACK_COUNT]> {
         macro_rules! validated_callback {
             ($field:ident, $name:literal) => {{
-                let value = generated.$field.to_js();
-                if value.is_undefined_or_null() {
-                    JSValue::ZERO
-                } else if !value.is_callable() {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "Expected \"{}\" callback to be a function",
-                        $name
-                    )));
-                } else {
-                    value
+                match generated.$field {
+                    SocketCallback::None => JSValue::ZERO,
+                    SocketCallback::Callback(callback) => callback.to_js(),
+                    SocketCallback::Other => {
+                        return Err(global_object.throw_invalid_arguments(format_args!(
+                            "Expected \"{}\" callback to be a function",
+                            $name
+                        )));
+                    }
                 }
             }};
         }
@@ -397,7 +397,7 @@ impl Handlers {
     /// modified.
     pub(crate) fn prepare_reload(
         global_object: &JSGlobalObject,
-        opts: JSValue,
+        opts: JsLocal<'_>,
     ) -> JsResult<ReloadedHandlers> {
         SocketHandler::from_js(global_object, opts, |generated| {
             let callbacks = Self::validate_callbacks(global_object, &generated)?;
@@ -444,13 +444,13 @@ impl Scope {
     }
 }
 
-pub(crate) struct SocketConfig {
+pub(crate) struct SocketConfig<'a> {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
     pub(crate) ssl: Option<SSLConfig>,
     pub(crate) handlers: Rc<Handlers>,
-    pub(crate) default_data: JSValue,
+    pub(crate) default_data: Option<JsLocal<'a>>,
     pub(crate) exclusive: bool,
     pub(crate) allow_half_open: bool,
     pub(crate) reuse_port: bool,
@@ -459,7 +459,7 @@ pub(crate) struct SocketConfig {
     pub(crate) pause_on_connect: bool,
 }
 
-impl SocketConfig {
+impl<'a> SocketConfig<'a> {
     // Full teardown is handled by Drop (all owned fields impl Drop).
 
     pub(crate) fn socket_flags(&self) -> i32 {
@@ -487,10 +487,10 @@ impl SocketConfig {
     pub(crate) fn from_generated(
         vm: &'static VirtualMachine,
         global: &JSGlobalObject,
-        generated: SocketOptions<'_>,
+        generated: SocketOptions<'a>,
         mode: SocketMode,
-    ) -> JsResult<SocketConfig> {
-        let mut result: SocketConfig = 'blk: {
+    ) -> JsResult<SocketConfig<'a>> {
+        let mut result: SocketConfig<'a> = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
                 SocketOptionsTLS::None => None,
                 SocketOptionsTLS::Boolean(b) => {
@@ -519,11 +519,7 @@ impl SocketConfig {
                 }),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
-                default_data: if generated.data.is_undefined() {
-                    JSValue::ZERO
-                } else {
-                    generated.data.to_js()
-                },
+                default_data: generated.data,
                 exclusive: false,
                 allow_half_open: false,
                 reuse_port: false,
@@ -589,12 +585,11 @@ impl SocketConfig {
 
     pub(crate) fn from_js(
         vm: &'static VirtualMachine,
-        opts: JSValue,
+        opts: JsLocal<'a, JSObject>,
         global_object: &JSGlobalObject,
         mode: SocketMode,
-    ) -> JsResult<SocketConfig> {
-        SocketOptions::from_js(global_object, opts, |generated| {
-            Self::from_generated(vm, global_object, generated, mode)
-        })
+    ) -> JsResult<SocketConfig<'a>> {
+        let generated = SocketOptions::from_local(global_object, opts)?;
+        Self::from_generated(vm, global_object, generated, mode)
     }
 }

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
+import { readFile, rm, writeFile } from "fs/promises";
+import { bunExe, compileFixture, bunEnv as env, isLinux, isMusl, readdirSorted, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
 import {
@@ -48,11 +48,11 @@ afterEach(async () => {
 // bunfig cache dirs these tests populate and inspect
 const { BUN_INSTALL_CACHE_DIR: _ciCacheDir, ...installEnv } = env;
 
-async function install(cwd: string, args: string[]) {
+async function install(cwd: string, args: string[], extraEnv: Record<string, string> = {}) {
   await using proc = spawn({
     cmd: [bunExe(), "install", ...args],
     cwd,
-    env: installEnv,
+    env: { ...installEnv, ...extraEnv },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -95,6 +95,52 @@ it("--prefer-offline resolves from cached manifests without touching the network
   expect(urls.slice(before)).toEqual([]);
   expect(await readdirSorted(join(dir2, "node_modules", "baz"))).toContain("package.json");
 });
+
+// bun-musl is statically linked: LD_PRELOAD cannot load the shim.
+it.skipIf(!isLinux || isMusl || !(Bun.which("cc") || Bun.which("clang") || Bun.which("gcc")))(
+  "an install does not exit before the manifests it fetched are in the cache",
+  async () => {
+    const source = join(mkdtemp(), "slow-manifest-cache.c");
+    // The file gets its name in the cache long after everything else the install has to do is done.
+    await writeFile(
+      source,
+      /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <string.h>
+#include <unistd.h>
+
+static void slow(const char *to) {
+  size_t len = strlen(to);
+  if (len > 4 && strcmp(to + len - 4, ".npm") == 0) usleep(300 * 1000);
+}
+
+int linkat(int from_dir, const char *from, int to_dir, const char *to, int flags) {
+  slow(to);
+  return ((int (*)(int, const char *, int, const char *, int))dlsym(RTLD_NEXT, "linkat"))(from_dir, from, to_dir, to, flags);
+}
+
+int renameat(int from_dir, const char *from, int to_dir, const char *to) {
+  slow(to);
+  return ((int (*)(int, const char *, int, const char *))dlsym(RTLD_NEXT, "renameat"))(from_dir, from, to_dir, to);
+}
+`,
+    );
+    const shim = compileFixture(source, { flags: ["-ldl"] });
+    setHandler(dummyRegistry([], { "0.0.3": {} }));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+    );
+    let r = await install(package_dir, [], { LD_PRELOAD: [shim, env.LD_PRELOAD].filter(Boolean).join(":") });
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+
+    r = await install(await newProject({ baz: "<=0.0.3" }), ["--offline"]);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+  },
+);
 
 describe.each(["hoisted", "isolated"] as const)("--offline (%s linker)", linker => {
   it("never issues a request and fails cleanly on a cache miss", async () => {
@@ -160,6 +206,30 @@ describe.each(["--prefer-offline", "--offline"])("%s with an expired cached mani
       expect(urls.slice(before).filter(u => !u.endsWith(".tgz"))).toEqual([]);
     }
   });
+});
+
+it("--offline leaves a cached manifest that another version of bun wrote where it is", async () => {
+  setHandler(dummyRegistry([], { "0.0.3": {} }));
+  const warm = await install(await newProject({ baz: "0.0.3" }), []);
+  expect(warm.err).not.toContain("error:");
+  expect(warm.code).toBe(0);
+
+  const names = (await readdirSorted(cache_dir)).filter(name => name.endsWith(".npm"));
+  expect(names).toHaveLength(1);
+  const path = join(cache_dir, names[0]);
+  const own = await readFile(path);
+  // The header ends with the number of the format and a line feed.
+  const header = own.indexOf("\n", own.indexOf("\n") + 1);
+  expect(own.subarray(0, header).toString()).toMatch(/^#!\/usr\/bin\/env bun\nbun-npm-manifest-cache-v0\.0\.\d$/);
+  const other = Buffer.from(own);
+  other[header - 1] = own[header - 1] === 0x39 ? 0x30 : own[header - 1] + 1;
+  await writeFile(path, other);
+
+  const r = await install(await newProject({ baz: "<=0.0.3" }), ["--offline"]);
+  expect(r.err).toContain('--offline: no cached manifest for "baz"');
+  expect(r.code).toBe(1);
+  expect(await readdirSorted(cache_dir)).toContain(names[0]);
+  expect((await readFile(path)).equals(other)).toBe(true);
 });
 
 it("--offline skips an optional dependency that is not in the cache", async () => {

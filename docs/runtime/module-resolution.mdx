@@ -185,6 +185,7 @@ Once it finds the `foo` package, Bun reads its `package.json` to determine the p
 {
   "name": "foo",
   "exports": {
+    "macro": "./index.macro.js", // if the import is a macro import
     "bun": "./index.js",
     "node-addons": "./index.js", // unless --no-addons was passed
     "node": "./index.js",
@@ -195,7 +196,7 @@ Once it finds the `foo` package, Bun reads its `package.json` to determine the p
 }
 ```
 
-Whichever of these conditions occurs _first_ in the `package.json` determines the package's entrypoint.
+Whichever of these conditions occurs _first_ in the `package.json` determines the package's entrypoint. The `"macro"` condition only matches an import with `{ type: "macro" }`: see [macros](/bundler/macros#export-condition-macro).
 
 Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-exports) and [`"imports"`](https://nodejs.org/api/packages.html#imports).
 

@@ -772,7 +772,7 @@ impl TranspilerJob {
         // ~0.5 GB after 100k iterations). The owned `MimallocArena` inside is
         // now lazy (`bump: Option<Arena>`, init on first `.call()`), so the
         // per-iteration `mi_heap_new()` is gone; this guard just reclaims the
-        // small `Box`.
+        // small `Box` (and the macro resolver, when the module called a macro).
         let _macro_ctx_guard =
             scopeguard::guard(ptr::addr_of_mut!(transpiler.macro_context), |slot| {
                 // SAFETY: `slot` points into `transpiler_storage`, which is

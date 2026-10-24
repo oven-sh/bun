@@ -2426,10 +2426,7 @@ describe("Bun.Archive", () => {
           name: "a file holds the name of its parent",
           tar: tarOf(directory("x/y/")),
           prepare: dest => writeFileSync(join(dest, "x"), "in the way"),
-          glob: {
-            settled: isWindows ? expect.stringMatching(/^rejected E\w+ mkdir x/) : "rejected ENOTDIR mkdir x/y",
-            files: ["x"],
-          },
+          glob: { settled: `rejected ${isWindows ? "ENOENT" : "ENOTDIR"} mkdir x/y`, files: ["x"] },
         },
         {
           name: "a dangling symlink holds the name of its parent",

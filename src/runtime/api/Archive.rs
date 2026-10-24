@@ -1359,7 +1359,9 @@ fn extract_to_disk_filtered(
                     }
                     made => made,
                 };
-                if let Err(err) = made {
+                if let Err(mut err) = made {
+                    // Windows makes a directory with an open call, and names that call in the error.
+                    err.syscall = bun_sys::Tag::mkdir;
                     return ExtractResult::refused(&err, root, name.as_bytes());
                 }
                 count += 1;

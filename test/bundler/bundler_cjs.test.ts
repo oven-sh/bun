@@ -2069,10 +2069,13 @@ describe("bundler", () => {
   });
   for (const [name, program] of Object.entries(requireAssignmentPrograms)) {
     const entry = Object.keys(program.files)[0];
-    for (const [target, exe] of [
+    for (const [target, found] of [
       ...(program.bun === false ? [] : [["bun", bunExe()]]),
-      ...(program.node && node ? [["node", node]] : []),
+      ...(program.node ? [["node", node]] : []),
     ] as const) {
+      // On a machine without Node.js its cases show as skipped.
+      const register = found ? test.todoIf(!!program.todo) : test.skip;
+      const exe = found ?? target;
       // One directory and one run of the source for both formats.
       let source: Promise<{ dir: ReturnType<typeof tempDir>; printed: Awaited<ReturnType<typeof run>> }> | undefined;
       const runSource = async () => {
@@ -2081,7 +2084,7 @@ describe("bundler", () => {
         return { dir, printed: await run([exe, entry], String(dir)) };
       };
       for (const format of program.formats ?? (["esm", "cjs"] as const)) {
-        test.todoIf(!!program.todo).concurrent(`cjs/require_assignment: ${name} (${target}, ${format})`, async () => {
+        register.concurrent(`cjs/require_assignment: ${name} (${target}, ${format})`, async () => {
           const { dir, printed } = await (source ??= runSource());
           expect(printed).toEqual({ stdout: expect.stringMatching(/\S/), stderr: "", exitCode: 0 });
           const bundle = `${target}.${format === "esm" ? "mjs" : "cjs"}`;

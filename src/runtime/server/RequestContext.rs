@@ -832,6 +832,8 @@ where
 
         // SAFETY: `response` is the live, protect()'d cell pointer.
         unsafe { self.render(response) };
+        #[cfg(debug_assertions)]
+        self.assert_no_parked_open_head();
     }
 
     #[inline]
@@ -2157,6 +2159,87 @@ where
         readable_ref.deinit();
     }
 
+    /// HTTP/1.1, and the sink has not ended the response (`resp` is stale after that).
+    fn takes_early_head(sink: &ResponseStream<SSL_ENABLED>, resp: uws::AnyResponse) -> bool {
+        !MUX && !sink.ended_response && !resp.state().is_ancient_request()
+    }
+
+    /// Commits the head after the microtask drain, so a body that ends in it keeps its framing.
+    fn defer_head_commit(&self) {
+        debug_assert!(!self.flags.has_deferred_head_commit());
+        self.flags.set_has_deferred_head_commit(true);
+        // Released by the task.
+        self.ref_();
+        let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
+        let found_existing = self
+            .server()
+            .vm()
+            .as_mut()
+            .event_loop_mut()
+            .deferred_tasks
+            .post_task(ctx, Self::on_deferred_head_commit);
+        debug_assert!(!found_existing);
+    }
+
+    /// The task of [`Self::defer_head_commit`].
+    extern "C" fn on_deferred_head_commit(ctx: *mut c_void) -> bool {
+        // Adopts the ref `defer_head_commit` took.
+        let pinned = RequestContextRef::adopt(ctx.cast::<Self>());
+        let this = pinned.ctx();
+        this.flags.set_has_deferred_head_commit(false);
+
+        // Detached: the response ended, failed or was aborted inside the drain.
+        let Some(resp) = this.resp.get() else {
+            return false;
+        };
+        // No sink: the stream settled in the drain, and its teardown ends the response.
+        let Some(sink) = this.sink_mut() else {
+            return false;
+        };
+        if !sink.sends_head_itself() {
+            resp.commit_head();
+        }
+        false
+    }
+
+    /// `render_metadata` and the rest of the head, for a body that has no bytes yet.
+    fn render_committed_head_corked(this: *mut Self) {
+        // SAFETY: this is the live RequestContext threaded through cork user-data.
+        let this = unsafe { &*this };
+        this.render_metadata();
+        if let Some(resp) = this.resp.get() {
+            resp.commit_head();
+        }
+    }
+
+    /// A parked HTTP/1 response with a status has its whole head out, or a task that sends it.
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_no_parked_open_head(&self) {
+        // File bodies are exempt: `prepare_for_sendfile` ends the head without a state bit.
+        if MUX
+            || !self.flags.has_marked_pending()
+            || !self.flags.has_written_status()
+            || self.flags.has_sendfile_ctx()
+            || self.flags.has_deferred_head_commit()
+        {
+            return;
+        }
+        let Some(resp) = self.resp.get() else {
+            return;
+        };
+        if self.sink_mut().is_some_and(|sink| sink.sends_head_itself()) {
+            return;
+        }
+        let state = resp.state();
+        debug_assert!(
+            !state.is_response_pending()
+                || state.is_http_write_called()
+                || state.is_http_end_called()
+                || state.is_ancient_request(),
+            "a parked response left its head open"
+        );
+    }
+
     fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>) {
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
@@ -2295,6 +2378,15 @@ where
                             response_stream.on_first_write = None;
                             response_stream.ctx = None;
                             this.render_metadata();
+                        }
+
+                        if Self::takes_early_head(response_stream, resp) {
+                            if this.is_async() {
+                                // No drain ran above: the body's microtasks are still queued.
+                                this.defer_head_commit();
+                            } else if !response_stream.sends_head_itself() {
+                                resp.commit_head();
+                            }
                         }
 
                         // TODO: should this timeout?
@@ -3247,15 +3339,16 @@ where
                                 || matches!(
                                     byte_stream.parent_const().producer.get(),
                                     WebCore::streams::SourceHandle::HTMLRewriter(_)
+                                        | WebCore::streams::SourceHandle::S3DownloadBody(_)
                                 )
                             {
                                 // Defer status/headers to the first chunk/end
-                                // so a pre-first-byte handler failure can
+                                // so a failure before the first byte can
                                 // still reach `error()`.
                             } else {
-                                // if we only have metadata to send, send it now
+                                // No body bytes yet: send the whole head now.
                                 resp.run_corked_with_type(
-                                    Self::render_metadata_corked,
+                                    Self::render_committed_head_corked,
                                     this.as_ctx_ptr(),
                                 );
                             }
@@ -3318,7 +3411,7 @@ where
         }
         let resp = this.resp.get().expect("infallible: resp bound");
 
-        // A rewriter-produced `Source::Bytes` body defers metadata until the
+        // A rewriter or S3 `Source::Bytes` body defers metadata until the
         // first chunk so a pre-first-byte failure can still reach the
         // server's `error()` hook. Flush it now, corked.
         if !this.flags.has_written_status() {
@@ -4599,6 +4692,8 @@ bitflags::bitflags! {
         const REQUEST_BODY_PAUSED         = 1 << 16;
         /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
+        /// `defer_head_commit` posted its task and the task has not run yet.
+        const HAS_DEFERRED_HEAD_COMMIT    = 1 << 18;
     }
 }
 
@@ -4679,6 +4774,11 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         request_body_buffer_all,
         set_request_body_buffer_all,
         REQUEST_BODY_BUFFER_ALL
+    );
+    flag_accessor!(
+        has_deferred_head_commit,
+        set_has_deferred_head_commit,
+        HAS_DEFERRED_HEAD_COMMIT
     );
 
     #[inline]

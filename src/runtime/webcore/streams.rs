@@ -1806,6 +1806,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         source.abort(CommonAbortReason::ConnectionClosed);
     }
 
+    /// The sink ended the response, parked an `end()`, or queued a flush: each completes the head.
+    pub(crate) fn sends_head_itself(&self) -> bool {
+        self.ended_response
+            || self.requested_end
+            || (self.auto_flusher.registered.get() && !self.readable_slice().is_empty())
+    }
+
     fn unregister_auto_flusher(&mut self) {
         if self.auto_flusher.registered.get() {
             let vm = self.global_this().bun_vm();

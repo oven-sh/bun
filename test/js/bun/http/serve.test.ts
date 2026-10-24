@@ -190,12 +190,13 @@ it("should call cancel() on ReadableStream when the Request is aborted", async (
     async server => {
       const controller = new AbortController();
       const signal = controller.signal;
-      const request = fetch(server.url, { signal });
+      // The head arrives before the body has a chunk, so fetch() resolves
+      // and the abort shows on the body.
+      const response = await fetch(server.url, { signal });
       await onIncomingRequest.promise;
       controller.abort();
-      expect(async () => await request).toThrow();
-      // Delay for one run of the event loop.
-      await Bun.sleep(1);
+      await expect(response.text()).rejects.toMatchObject({ name: "AbortError" });
+      await waitForCancel.promise;
 
       expect(abortedFn).toHaveBeenCalled();
       expect(cancelledFn).toHaveBeenCalled();
@@ -5078,6 +5079,445 @@ it("applies backpressure to a ReadableStream response while the client drains", 
   // If the sink ignored backpressure it would have already drained all chunkCount
   // chunks into uWS's buffer by the time the client read 1 MB.
   expect(sentAtPartialDrain).toBeLessThan(chunkCount);
+});
+
+// A response answers its request with the status and the headers, also when
+// the body has nothing to send yet: a server-sent events stream that is quiet,
+// a proxied upstream that has only sent its own head. Each case below holds the
+// first body chunk back until the client has the whole header section.
+describe("the response head does not wait for a body that is not ready", () => {
+  const enc = new TextEncoder();
+  const later = () => new Promise<void>(r => setImmediate(r));
+  type Respond = (req: Request) => Response | Promise<Response>;
+  const handlers: Record<string, (respond: Respond) => Respond> = {
+    "fetch()": respond => respond,
+    "async fetch()": respond => async req => (await later(), respond(req)),
+  };
+
+  /** One request on a raw socket: `head` settles at the blank line, `body` when the server closes. */
+  function exchange(port: number, secure: boolean, request: string) {
+    const head = Promise.withResolvers<string>();
+    const body = Promise.withResolvers<string>();
+    let received = Buffer.alloc(0);
+    let headEnd = -1;
+    let bodyAtHead = "";
+    const socket: net.Socket = secure
+      ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+      : net.connect({ port, host: "127.0.0.1" });
+    socket.on(secure ? "secureConnect" : "connect", () => socket.write(request));
+    socket.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      if (headEnd >= 0) return;
+      headEnd = received.indexOf("\r\n\r\n");
+      if (headEnd < 0) return;
+      bodyAtHead = received.subarray(headEnd + 4).toString("latin1");
+      head.resolve(received.subarray(0, headEnd).toString("latin1"));
+    });
+    const closed = (error?: Error) => {
+      const failure = error ?? new Error("closed before the header section was complete");
+      head.reject(failure);
+      if (headEnd < 0) body.reject(failure);
+      else body.resolve(received.subarray(headEnd + 4).toString("latin1"));
+    };
+    socket.on("error", closed);
+    socket.on("close", () => closed());
+    // A case that awaits only one of the two must not leave the other as an unhandled rejection.
+    head.promise.catch(() => {});
+    body.promise.catch(() => {});
+    return {
+      socket,
+      head: head.promise,
+      body: body.promise,
+      /** What followed the blank line in the read that completed the header section. */
+      bodyAtHead: () => bodyAtHead,
+    };
+  }
+
+  const field = (head: string, name: string) =>
+    head
+      .split("\r\n")
+      .slice(1)
+      .find(line => line.toLowerCase().startsWith(name + ":"))
+      ?.slice(name.length + 1)
+      .trim() ?? null;
+
+  function dechunk(body: string) {
+    let out = "";
+    for (let at = 0; ;) {
+      const lineEnd = body.indexOf("\r\n", at);
+      if (lineEnd < 0) throw new Error("chunked body has no terminating chunk: " + JSON.stringify(body));
+      const size = parseInt(body.slice(at, lineEnd), 16);
+      if (Number.isNaN(size)) throw new Error("bad chunk size line: " + JSON.stringify(body.slice(at, lineEnd)));
+      if (size === 0) return out;
+      out += body.slice(lineEnd + 2, lineEnd + 2 + size);
+      at = lineEnd + 2 + size + 2;
+    }
+  }
+
+  const kinds: Record<string, (gate: Promise<void>) => Response> = {
+    "ReadableStream with start()": gate =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            gate.then(() => (c.enqueue(enc.encode("x")), c.close()));
+          },
+        }),
+      ),
+    "text/event-stream": gate =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            gate.then(() => (c.enqueue(enc.encode("x")), c.close()));
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+    "ReadableStream with async pull()": gate =>
+      new Response(
+        new ReadableStream({
+          async pull(c) {
+            await gate;
+            c.enqueue(enc.encode("x"));
+            c.close();
+          },
+        }),
+      ),
+    'ReadableStream with type: "bytes"': gate =>
+      new Response(
+        new ReadableStream({
+          type: "bytes",
+          start(c) {
+            gate.then(() => (c.enqueue(enc.encode("x")), c.close()));
+          },
+        }),
+      ),
+    'ReadableStream with type: "direct"': gate =>
+      new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c: any) {
+            await gate;
+            c.write("x");
+            c.close();
+          },
+        } as any),
+      ),
+    'type: "direct" that calls flush() first': gate =>
+      new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(c: any) {
+            c.flush();
+            await gate;
+            c.write("x");
+            c.close();
+          },
+        } as any),
+      ),
+    "async generator": gate =>
+      new Response(async function* () {
+        await gate;
+        yield "x";
+      } as any),
+  };
+
+  describe.each([
+    ["http", false],
+    ["https", true],
+  ] as const)("over %s", (_scheme, secure) => {
+    describe.each(Object.keys(handlers))("%s", handler => {
+      it.concurrent.each(Object.keys(kinds))("%s", async kind => {
+        const gate = Promise.withResolvers<void>();
+        await using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          idleTimeout: 0,
+          tls: secure ? tls : undefined,
+          fetch: handlers[handler](() => kinds[kind](gate.promise)),
+        });
+        const wire = exchange(server.port!, secure, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        try {
+          const head = await wire.head;
+          // The body has produced nothing: the gate is still shut.
+          expect({
+            status: head.split("\r\n")[0],
+            transferEncoding: field(head, "transfer-encoding"),
+            hasDate: field(head, "date") !== null,
+            bodyAtHead: wire.bodyAtHead(),
+          }).toEqual({ status: "HTTP/1.1 200 OK", transferEncoding: "chunked", hasDate: true, bodyAtHead: "" });
+          gate.resolve();
+          expect(dechunk(await wire.body)).toBe("x");
+        } finally {
+          wire.socket.destroy();
+        }
+      });
+    });
+  });
+
+  // The close of the connection ends the body of an HTTP/1.0 response. A cut behind a
+  // whole head would read as a whole, empty answer, so that head still waits for the
+  // first body byte. The body below then ends in one step and keeps Content-Length.
+  it("an HTTP/1.0 response keeps its head for the first body byte", async () => {
+    const gate = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      // The gate opens in a later task: the stream is parked by then.
+      fetch: () => (setImmediate(gate.resolve), kinds["ReadableStream with async pull()"](gate.promise)),
+    });
+    const wire = exchange(server.port!, false, "GET / HTTP/1.0\r\n\r\n");
+    try {
+      const head = await wire.head;
+      expect({
+        contentLength: field(head, "content-length"),
+        transferEncoding: field(head, "transfer-encoding"),
+        body: await wire.body,
+      }).toEqual({ contentLength: "1", transferEncoding: null, body: "x" });
+    } finally {
+      wire.socket.destroy();
+    }
+  });
+
+  // The body of a fetch() response and the body of a request are native byte
+  // streams: the server pipes them without the JavaScript stream pump.
+  describe("a native byte stream", () => {
+    /** An upstream that sends its whole head at once, and its body when released. */
+    async function quietUpstream() {
+      const release = Promise.withResolvers<void>();
+      const upstream = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n");
+          release.promise.then(() => socket.end("1\r\nx\r\n0\r\n\r\n"));
+        });
+      });
+      await once(upstream.listen(0, "127.0.0.1"), "listening");
+      return { upstream, release, url: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/` };
+    }
+
+    it.concurrent.each([
+      ["return fetch(upstream)", (url: string) => fetch(url)],
+      ["new Response((await fetch(upstream)).body)", async (url: string) => new Response((await fetch(url)).body)],
+    ] as const)("%s", async (_name, respond) => {
+      const { upstream, release, url } = await quietUpstream();
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        idleTimeout: 0,
+        fetch: () => respond(url),
+      });
+      const wire = exchange(server.port!, false, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      try {
+        const head = await wire.head;
+        expect({
+          status: head.split("\r\n")[0],
+          transferEncoding: field(head, "transfer-encoding"),
+          bodyAtHead: wire.bodyAtHead(),
+        }).toEqual({ status: "HTTP/1.1 200 OK", transferEncoding: "chunked", bodyAtHead: "" });
+        release.resolve();
+        expect(dechunk(await wire.body)).toBe("x");
+      } finally {
+        wire.socket.destroy();
+        upstream.close();
+      }
+    });
+
+    it("new Response(req.body), and the request body comes after the response head", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        idleTimeout: 0,
+        fetch: req => new Response(req.body),
+      });
+      const wire = exchange(
+        server.port!,
+        false,
+        "POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n",
+      );
+      try {
+        const head = await wire.head;
+        expect({
+          status: head.split("\r\n")[0],
+          transferEncoding: field(head, "transfer-encoding"),
+          bodyAtHead: wire.bodyAtHead(),
+        }).toEqual({ status: "HTTP/1.1 200 OK", transferEncoding: "chunked", bodyAtHead: "" });
+        wire.socket.write("1\r\nx\r\n0\r\n\r\n");
+        expect(dechunk(await wire.body)).toBe("x");
+      } finally {
+        wire.socket.destroy();
+      }
+    });
+  });
+
+  // The answer to an S3 download is not known yet when the handler returns its
+  // stream, and a key that is missing or denied is an ordinary answer. The head
+  // waits for the first byte of such a body, so error() still makes the response.
+  describe("an S3 download", () => {
+    it.concurrent.each(Object.keys(handlers))("%s", async handler => {
+      const s3Error = (status: number, code: string) =>
+        new Response(
+          `<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>${code}</Code><Message>${code}</Message></Error>`,
+          {
+            status,
+            headers: { "Content-Type": "application/xml" },
+          },
+        );
+      await using bucket = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const key = new URL(req.url).pathname.split("/").pop();
+          if (key === "found") return new Response("object bytes");
+          if (key === "empty") return new Response("");
+          return key === "denied" ? s3Error(403, "AccessDenied") : s3Error(404, "NoSuchKey");
+        },
+      });
+      const client = new Bun.S3Client({
+        endpoint: `http://127.0.0.1:${bucket.port}`,
+        accessKeyId: "id",
+        secretAccessKey: "secret",
+        bucket: "bucket",
+      });
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        error: (error: Error & { code?: string }) => new Response(`error() got ${error.code}`, { status: 500 }),
+        fetch: handlers[handler](req => new Response(client.file(new URL(req.url).pathname.slice(1)).stream())),
+      });
+      const answers: Record<string, string> = {};
+      for (const key of ["found", "empty", "missing", "denied"]) {
+        answers[key] = await fetch(`http://127.0.0.1:${server.port}/${key}`).then(
+          async response => `${response.status} ${await response.text()}`,
+          (error: Error & { code?: string }) => `fetch() rejected ${error.code}`,
+        );
+      }
+      expect(answers).toEqual({
+        found: "200 object bytes",
+        empty: "200 ",
+        missing: "500 error() got NoSuchKey",
+        denied: "500 error() got AccessDenied",
+      });
+    });
+  });
+
+  // A body that ends after its head was sent ends through end(), not through
+  // a tryEnd() that parks. The response is then complete while most of its
+  // bytes are still queued for the socket, and a graceful stop() waits for them.
+  describe("a graceful stop() right after the body ended delivers the whole body", () => {
+    const payload = Buffer.alloc(8 * 1024 * 1024, "a");
+
+    it.each([
+      ["a body that wrote before it ended", undefined, false],
+      ["a body that ended in one step", payload.length + 1, false],
+      ["over https, a body that wrote before it ended", undefined, true],
+    ] as const)("%s", async (_name, highWaterMark, secure) => {
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        idleTimeout: 0,
+        tls: secure ? tls : undefined,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller: any) {
+                // With a highWaterMark above the payload, write() only buffers.
+                if (highWaterMark !== undefined) controller.start({ highWaterMark });
+                await later();
+                controller.write(payload);
+                controller.end();
+                server.stop();
+              },
+            } as any),
+          ),
+      });
+      const wire = exchange(server.port!, secure, "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      try {
+        const [head, body] = await Promise.all([wire.head, wire.body]);
+        const chunked = field(head, "transfer-encoding") === "chunked";
+        const framing = chunked ? `${payload.length.toString(16)}\r\n`.length + "\r\n0\r\n\r\n".length : 0;
+        expect({ bytes: body.length, end: chunked ? body.slice(-5) : "" }).toEqual({
+          bytes: payload.length + framing,
+          end: chunked ? "0\r\n\r\n" : "",
+        });
+      } finally {
+        wire.socket.destroy();
+        server.stop(true);
+      }
+    });
+  });
+
+  // The head commit waits for the microtasks of the handler, so these bodies
+  // keep the framing they had: a Content-Length response, not a chunked one.
+  it.concurrent.each(Object.keys(handlers))(
+    "a body that ends in its first microtask keeps Content-Length (%s)",
+    async handler => {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: handlers[handler](
+          () =>
+            new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(c: any) {
+                  await Promise.resolve();
+                  c.write("hello");
+                  c.close();
+                },
+              } as any),
+            ),
+        ),
+      });
+      const wire = exchange(server.port!, false, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      try {
+        const head = await wire.head;
+        expect({
+          contentLength: field(head, "content-length"),
+          transferEncoding: field(head, "transfer-encoding"),
+          body: await wire.body,
+        }).toEqual({ contentLength: "5", transferEncoding: null, body: "hello" });
+      } finally {
+        wire.socket.destroy();
+      }
+    },
+  );
+
+  // A body that fails before the head is sent does not get a whole 2xx head in front of the reset.
+  it.concurrent.each(Object.keys(handlers))(
+    "a body that fails in its first microtask gets no whole response head (%s)",
+    async handler => {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch: handlers[handler](
+          () =>
+            new Response(
+              new ReadableStream({
+                async pull() {
+                  await Promise.resolve();
+                  throw new Error("the body failed before its first chunk");
+                },
+              }),
+              { status: 202 },
+            ),
+        ),
+      });
+      const wire = exchange(server.port!, false, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      try {
+        expect(
+          await wire.head.then(
+            head => head,
+            () => null,
+          ),
+        ).toBeNull();
+      } finally {
+        wire.socket.destroy();
+      }
+    },
+  );
 });
 
 // A TLS connection the server accepted before stop() but whose handshake completes afterwards must still

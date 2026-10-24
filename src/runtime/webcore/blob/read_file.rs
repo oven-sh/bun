@@ -655,6 +655,10 @@ impl ReadFile {
         self.run_async(task);
     }
 
+    #[cfg_attr(
+        windows,
+        expect(clippy::needless_pass_by_value, reason = "stored on POSIX")
+    )]
     fn run_async(&mut self, task: ReadFileTask) {
         #[cfg(windows)]
         {
@@ -1183,7 +1187,7 @@ impl<'a> ReadFileUV<'a> {
         let rc = unsafe {
             libuv::uv_fs_fstat(
                 self.loop_,
-                &mut self.req,
+                &raw mut self.req,
                 opened_fd.uv(),
                 Some(Self::on_file_initial_stat),
             )
@@ -1233,15 +1237,14 @@ impl<'a> ReadFileUV<'a> {
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
             this.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             this.system_error = Some(SystemError {
-                code: BunString::static_("EISDIR").into(),
+                code: BunString::static_("EISDIR"),
                 path: if this.file_store.pathlike.is_path() {
                     BunString::clone_utf8(this.file_store.pathlike.path().slice())
                 } else {
                     BunString::EMPTY
-                }
-                .into(),
-                message: BunString::static_("Directories cannot be read like files").into(),
-                syscall: BunString::static_("read").into(),
+                },
+                message: BunString::static_("Directories cannot be read like files"),
+                syscall: BunString::static_("read"),
                 ..Default::default()
             });
             this.on_finish();
@@ -1369,7 +1372,7 @@ impl<'a> ReadFileUV<'a> {
             let res = unsafe {
                 libuv::uv_fs_read(
                     self.loop_,
-                    &mut self.req,
+                    &raw mut self.req,
                     self.opened_fd.uv(),
                     bufs.as_mut_ptr(),
                     bufs.len() as u32,

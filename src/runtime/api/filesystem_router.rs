@@ -242,14 +242,14 @@ impl FileSystemRouter {
         let global = cx.global();
         Valid::no_null_bytes(options.dir, "dir", "a string", global)?;
 
-        let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
+        let mut out_buf = bun_core::boxed_zeroed::<[u8; MAX_PATH_BYTES * 2]>();
         let mut root_dir_path = global.bun_vm().top_level_dir();
         if !(options.dir.is_empty() || options.dir == b".") {
             // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
             let Some(joined) =
                 path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     Fs::FileSystem::instance().top_level_dir(),
-                    &mut out_buf,
+                    &mut out_buf[..],
                     &[options.dir],
                 )
             else {

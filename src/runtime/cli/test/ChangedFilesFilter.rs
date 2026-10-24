@@ -18,7 +18,6 @@ use bun_alloc::Arena;
 use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
-use bun_core::PathBuffer as CorePathBuffer;
 use bun_core::strings;
 use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
@@ -447,7 +446,7 @@ fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
 ) -> core::result::Result<StringSet, GitError> {
-    let mut which_buf = CorePathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
+    let mut which_buf = bun_paths::path_buffer_pool::get();
     let Some(git_path) = which(
         &mut which_buf,
         env_var::PATH.get().unwrap_or(b""),

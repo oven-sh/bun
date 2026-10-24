@@ -1340,10 +1340,7 @@ impl WindowsBufferedReader {
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
         let loop_ = self.vtable.loop_();
-        let source = match Source::open(loop_.cast(), fd) {
-            sys::Result::Err(err) => return sys::Result::Err(err),
-            sys::Result::Ok(source) => source,
-        };
+        let source = Source::open(loop_.cast(), fd)?;
         self.set_source(source);
         self.start_with_current_pipe()
     }
@@ -1433,6 +1430,8 @@ impl WindowsBufferedReader {
                 // take a local copy so `slice_mut` can borrow `&mut self`
                 // (libuv's `read_cb` hands us `*const`).
                 let mut b = unsafe { *buf };
+                // SAFETY: `buf` is what this reader's alloc callback gave libuv: writable, and
+                // nothing else holds a reference into it during this callback.
                 let slice = unsafe { b.slice_mut() };
                 let data = &mut slice[..len];
                 if matches!(this.source, Some(Source::Tty(_))) {
@@ -1541,7 +1540,7 @@ impl WindowsBufferedReader {
                 // The boxed `File` lives in its own heap allocation, so a
                 // `*mut File` snapshot is provenance-disjoint from `&mut self`.
                 let file_raw: *mut crate::source::File = match this.source.as_mut() {
-                    Some(Source::File(f)) => f.as_mut() as *mut _,
+                    Some(Source::File(f)) => std::ptr::from_mut(f.as_mut()),
                     _ => core::ptr::null_mut(),
                 };
                 if !file_raw.is_null() {
@@ -1565,11 +1564,11 @@ impl WindowsBufferedReader {
                     // Re-snapshot — `on_read` may have mutated `this.source`.
                     let this_ptr = core::ptr::from_mut(this).cast::<c_void>();
                     let file_raw: *mut crate::source::File = match this.source.as_mut() {
-                        Some(Source::File(f)) => f.as_mut() as *mut _,
+                        Some(Source::File(f)) => std::ptr::from_mut(f.as_mut()),
                         _ => core::ptr::null_mut(),
                     };
                     if !file_raw.is_null() {
-                        // SAFETY (each access below): see the snapshot above —
+                        // SAFETY: (each access below) see the snapshot above —
                         // `file_raw` points into the boxed `File`, a heap
                         // allocation disjoint from `*this`, so the scoped
                         // borrows never overlap the `this` accesses interleaved
@@ -1595,9 +1594,9 @@ impl WindowsBufferedReader {
                             if let Some(err) = unsafe {
                                 uv::uv_fs_read(
                                     this.vtable.loop_().cast(),
-                                    &mut (*file_raw).fs,
+                                    &raw mut (*file_raw).fs,
                                     (*file_raw).file,
-                                    &(*file_raw).iov,
+                                    &raw const (*file_raw).iov,
                                     1,
                                     offset,
                                     Some(Self::on_file_read),
@@ -1635,7 +1634,7 @@ impl WindowsBufferedReader {
         // `get_read_buffer_…`/`flags`) while also holding `&mut File` borrowed
         // out of `self.source`. The boxed `File` is its own heap allocation, so
         // a `*mut File` snapshot is provenance-disjoint from `&mut self`.
-        let self_ptr = self as *mut Self as *mut c_void;
+        let self_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         let Some(source) = self.source.as_mut() else {
             return sys::Result::Err(sys::Error::from_code(sys::E::BADF, sys::Tag::read));
         };
@@ -1644,7 +1643,7 @@ impl WindowsBufferedReader {
         match source {
             Source::File(file) | Source::SyncFile(file) => {
                 let file_raw: *mut crate::source::File = file.as_mut();
-                // SAFETY (each access below): `file_raw` points into the boxed
+                // SAFETY: (each access below) `file_raw` points into the boxed
                 // File owned by `self.source` — a heap allocation disjoint
                 // from `*self` — and is live until `self.source` is replaced;
                 // the scoped borrows never overlap the `self` accesses
@@ -1674,9 +1673,9 @@ impl WindowsBufferedReader {
                 if let Some(err) = unsafe {
                     uv::uv_fs_read(
                         self.vtable.loop_().cast(),
-                        &mut (*file_raw).fs,
+                        &raw mut (*file_raw).fs,
                         (*file_raw).file,
-                        &(*file_raw).iov,
+                        &raw const (*file_raw).iov,
                         1,
                         offset,
                         Some(Self::on_file_read),
@@ -1847,6 +1846,7 @@ impl WindowsBufferedReader {
                 // Already closing/closed: a uv close callback may still be
                 // pending on this allocation; dropping the Box would free
                 // memory libuv still owns, so leak it instead.
+                #[expect(clippy::mem_forget, reason = "see above")]
                 core::mem::forget(source);
             }
         }
@@ -1970,6 +1970,7 @@ impl Drop for WindowsBufferedReader {
                 if let Some(file) = source.file_key() {
                     uv::open_handles::remove_file(file);
                 }
+                #[expect(clippy::mem_forget, reason = "see above")]
                 core::mem::forget(source);
             }
         }

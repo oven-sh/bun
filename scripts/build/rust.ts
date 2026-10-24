@@ -105,6 +105,15 @@ export const allRustTargets = [
 ] as const;
 
 /**
+ * What `rust:clippy` and `rust:mordant` lint. Once any `--target` is given,
+ * cargo checks only the targets listed, so the Linux one is named too. One
+ * target per OS: a second Windows or macOS target would lint the same
+ * `cfg(windows)` / `cfg(target_os = "macos")` code again for the few dozen
+ * arch gates.
+ */
+export const rustLintTargets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "aarch64-apple-darwin"] as const;
+
+/**
  * Tier 3 targets — rustup ships no prebuilt `rust-std` for these, so
  * `rustup target add` would fail and cargo needs `-Zbuild-std` (which in turn
  * needs the `rust-src` component). As of nightly-2026-05, the only Tier 3

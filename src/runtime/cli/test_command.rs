@@ -255,29 +255,22 @@ impl Metrics {
 
 impl JunitReporter {
     pub(crate) fn get_hostname(&mut self) -> Option<&[u8]> {
+        #[cfg(not(windows))]
         if self.hostname_value.is_none() {
-            #[cfg(windows)]
-            {
+            const HOST_NAME_MAX: usize = 256;
+            let mut name_buffer = [0u8; HOST_NAME_MAX];
+            if bun_sys::posix::gethostname(&mut name_buffer).is_err() {
+                self.hostname_value = Some(Box::default());
                 return None;
             }
+            let hostname = bun_core::slice_to_nul(&name_buffer);
 
-            #[cfg(not(windows))]
-            {
-                const HOST_NAME_MAX: usize = 256;
-                let mut name_buffer = [0u8; HOST_NAME_MAX];
-                if bun_sys::posix::gethostname(&mut name_buffer).is_err() {
-                    self.hostname_value = Some(Box::default());
-                    return None;
-                }
-                let hostname = bun_core::slice_to_nul(&name_buffer);
-
-                let mut arraylist_writer: Vec<u8> = Vec::new();
-                if escape_xml(hostname, &mut arraylist_writer).is_err() {
-                    self.hostname_value = Some(Box::default());
-                    return None;
-                }
-                self.hostname_value = Some(arraylist_writer.into_boxed_slice());
+            let mut arraylist_writer: Vec<u8> = Vec::new();
+            if escape_xml(hostname, &mut arraylist_writer).is_err() {
+                self.hostname_value = Some(Box::default());
+                return None;
             }
+            self.hostname_value = Some(arraylist_writer.into_boxed_slice());
         }
 
         if let Some(hostname) = &self.hostname_value {

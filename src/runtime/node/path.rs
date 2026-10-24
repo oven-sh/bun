@@ -466,15 +466,7 @@ unsafe extern "C" fn Bun__Node__Path_joinWTF(
     let lhs = lhs.to_utf8();
     let paths: [&[u8]; 2] = [lhs.slice(), rhs];
     let buf_len = join_buf_len::<u8>(cfg!(windows), &paths);
-    let mut fixed = [0u8; path_size::<u8>() * 2];
-    let mut spill = Vec::new();
-    // Fall back to the heap when the joined path is too long for the stack buffer.
-    let scratch: &mut [u8] = if buf_len * 2 <= fixed.len() {
-        &mut fixed
-    } else {
-        spill.resize(buf_len * 2, 0);
-        &mut spill
-    };
+    let mut scratch = vec![0u8; buf_len * 2];
     let (buf, buf2) = scratch.split_at_mut(buf_len);
     #[cfg(windows)]
     let joined = join_windows_t::<u8>(&paths, buf, buf2);

@@ -345,7 +345,7 @@ impl FileRoute {
                 Err(_) => break 'brk (false, 0, 0, FileType::File, false),
             };
 
-            let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
+            let stat_size: u64 = bun_sys::stat_size(&stat);
             let offset: u64 = self.blob.offset.get().min(stat_size);
             let size: u64 = self.blob.size.get().min(stat_size - offset);
 

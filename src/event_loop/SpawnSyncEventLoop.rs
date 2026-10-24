@@ -346,7 +346,8 @@ impl PreparedSpawnSyncEventLoop<'_> {
                 .cast_mut()
                 .cast();
             self.with_uv_timer(|timer| {
-                timer.init(uv_loop);
+                // SAFETY: `uv_loop` is this loop's own, and the timer was leaked to the heap above.
+                unsafe { timer.init(uv_loop) };
                 timer.data = data;
             });
         }

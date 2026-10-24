@@ -669,7 +669,8 @@ impl All {
             "ensure_uv_timer: called off the owning JS thread; TLS loop/VM would diverge from vm.event_loop_handle",
         );
         if self.uv_timer.data.is_null() {
-            self.uv_timer.init(uv::Loop::get());
+            // SAFETY: the thread's live loop; the timer is embedded in the VM, which does not move.
+            unsafe { self.uv_timer.init(uv::Loop::get()) };
             self.uv_timer.data =
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
             self.uv_timer.unref();
@@ -715,7 +716,7 @@ impl All {
         let wait_ms = core::cmp::max(1, wait.ms_unsigned());
 
         // SAFETY: `uv_timer_init` ran above; the handle is live.
-        let due_in = unsafe { uv::uv_timer_get_due_in(&self.uv_timer) };
+        let due_in = unsafe { uv::uv_timer_get_due_in(&raw const self.uv_timer) };
         // Restarting an overdue handle shifts the wakeup out by 1ms. Done
         // on every insert, the already-due callback never runs.
         if !(self.uv_timer.is_active() && due_in <= wait_ms) {
@@ -1068,7 +1069,9 @@ impl All {
                 // it with a no-op callback so `uv_run` does not block in poll
                 // while immediates are pending (matches Node.js).
                 if self.uv_idle.data.is_null() {
-                    self.uv_idle.init(uv::Loop::get());
+                    // SAFETY: the thread's live loop; the handle is embedded in the VM, which
+                    // does not move.
+                    unsafe { self.uv_idle.init(uv::Loop::get()) };
                     // Note: `data` is only used as a
                     // non-null "initialized" sentinel — never dereferenced.
                     self.uv_idle.data = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr()

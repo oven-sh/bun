@@ -97,7 +97,7 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
     let rc = unsafe {
         uv::uv_fs_open(
             uv::Loop::get(),
-            &mut *req,
+            &raw mut *req,
             file_path.as_ptr(),
             flags,
             perm as c_int,
@@ -124,7 +124,7 @@ pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
     let rc = unsafe {
         uv::uv_fs_mkdir(
             uv::Loop::get(),
-            &mut *req,
+            &raw mut *req,
             file_path.as_ptr(),
             flags as c_int,
             None,
@@ -151,7 +151,7 @@ pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
     let rc = unsafe {
         uv::uv_fs_chmod(
             uv::Loop::get(),
-            &mut *req,
+            &raw mut *req,
             file_path.as_ptr(),
             flags as c_int,
             None,
@@ -175,7 +175,8 @@ pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
     let uv_fd = fd.uv();
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fchmod(uv::Loop::get(), &mut *req, uv_fd, flags as c_int, None) };
+    let rc =
+        unsafe { uv::uv_fs_fchmod(uv::Loop::get(), &raw mut *req, uv_fd, flags as c_int, None) };
 
     log!("uv fchmod({}, {}) = {}", uv_fd, flags, rc.int());
     if let Some(errno) = rc.errno() {
@@ -192,7 +193,7 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
     // free.
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_statfs(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_statfs(uv::Loop::get(), &raw mut *req, file_path.as_ptr(), None) };
 
     log!(
         "uv statfs({}) = {}",
@@ -210,6 +211,7 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
         // *before* `FsReq::drop` runs `uv_fs_req_cleanup` and frees the
         // backing allocation.
         let p = unsafe { req.ptr_as::<StatFS>() };
+        // SAFETY: see above.
         Result::Ok(unsafe { core::ptr::read_unaligned(p) })
     }
 }
@@ -220,7 +222,7 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
     let rc = unsafe {
         uv::uv_fs_chown(
             uv::Loop::get(),
-            &mut *req,
+            &raw mut *req,
             file_path.as_ptr(),
             uid,
             gid,
@@ -248,7 +250,7 @@ pub fn lchown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<
     let rc = unsafe {
         uv::uv_fs_lchown(
             uv::Loop::get(),
-            &mut *req,
+            &raw mut *req,
             file_path.as_ptr(),
             uid,
             gid,
@@ -275,7 +277,7 @@ pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
 
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fchown(uv::Loop::get(), &mut *req, uv_fd, uid, gid, None) };
+    let rc = unsafe { uv::uv_fs_fchown(uv::Loop::get(), &raw mut *req, uv_fd, uid, gid, None) };
 
     log!("uv chown({}, {}, {}) = {}", uv_fd, uid, gid, rc.int());
     if let Some(errno) = rc.errno() {
@@ -288,7 +290,7 @@ pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
 pub fn rmdir(file_path: &ZStr) -> Result<()> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_rmdir(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_rmdir(uv::Loop::get(), &raw mut *req, file_path.as_ptr(), None) };
 
     log!(
         "uv rmdir({}) = {}",
@@ -305,7 +307,7 @@ pub fn rmdir(file_path: &ZStr) -> Result<()> {
 pub fn unlink(file_path: &ZStr) -> Result<()> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_unlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_unlink(uv::Loop::get(), &raw mut *req, file_path.as_ptr(), None) };
 
     log!(
         "uv unlink({}) = {}",
@@ -327,7 +329,8 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mu
     let mut req = FsReq::new();
     // Edge cases: http://docs.libuv.org/en/v1.x/fs.html#c.uv_fs_realpath
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_readlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
+    let rc =
+        unsafe { uv::uv_fs_readlink(uv::Loop::get(), &raw mut *req, file_path.as_ptr(), None) };
 
     if let Some(errno) = rc.errno() {
         log!(
@@ -339,7 +342,8 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mu
     } else {
         // Seems like `rc` does not contain the size?
         debug_assert!(rc.int() == 0);
-        let result_ptr: *mut c_char = unsafe { req.ptr_as::<c_char>() } as *mut c_char;
+        // SAFETY: the request succeeded, so libuv populated `req.ptr`.
+        let result_ptr: *mut c_char = unsafe { req.ptr_as::<c_char>() }.cast_mut();
         let Some(result_ptr) = (!result_ptr.is_null()).then_some(result_ptr) else {
             return Result::Err(
                 Error::new(E::NOENT, Tag::readlink).with_path(file_path.as_bytes()),
@@ -377,8 +381,15 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mu
 pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc =
-        unsafe { uv::uv_fs_rename(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
+    let rc = unsafe {
+        uv::uv_fs_rename(
+            uv::Loop::get(),
+            &raw mut *req,
+            from.as_ptr(),
+            to.as_ptr(),
+            None,
+        )
+    };
 
     log!(
         "uv rename({}, {}) = {}",
@@ -397,8 +408,15 @@ pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
 pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc =
-        unsafe { uv::uv_fs_link(uv::Loop::get(), &mut *req, from.as_ptr(), to.as_ptr(), None) };
+    let rc = unsafe {
+        uv::uv_fs_link(
+            uv::Loop::get(),
+            &raw mut *req,
+            from.as_ptr(),
+            to.as_ptr(),
+            None,
+        )
+    };
 
     log!(
         "uv link({}, {}) = {}",
@@ -423,7 +441,7 @@ pub fn symlink_uv(target: &ZStr, new_path: &ZStr, flags: c_int) -> Result<()> {
     let rc = unsafe {
         uv::uv_fs_symlink(
             uv::Loop::get(),
-            &mut *req,
+            &raw mut *req,
             target.as_ptr(),
             new_path.as_ptr(),
             flags,
@@ -450,7 +468,7 @@ pub fn ftruncate(fd: Fd, size: i64) -> Result<()> {
     let uv_fd = fd.uv();
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut *req, uv_fd, size, None) };
+    let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &raw mut *req, uv_fd, size, None) };
 
     log!("uv ftruncate({}, {}) = {}", uv_fd, size, rc.int());
     if let Some(errno) = rc.errno() {
@@ -464,7 +482,7 @@ pub fn fstat(fd: Fd) -> Result<Stat> {
     let uv_fd = fd.uv();
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fstat(uv::Loop::get(), &mut *req, uv_fd, None) };
+    let rc = unsafe { uv::uv_fs_fstat(uv::Loop::get(), &raw mut *req, uv_fd, None) };
 
     log!("uv fstat({}) = {}", uv_fd, rc.int());
     if let Some(errno) = rc.errno() {
@@ -479,7 +497,7 @@ pub fn fdatasync(fd: Fd) -> Result<()> {
     let uv_fd = fd.uv();
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fdatasync(uv::Loop::get(), &mut *req, uv_fd, None) };
+    let rc = unsafe { uv::uv_fs_fdatasync(uv::Loop::get(), &raw mut *req, uv_fd, None) };
 
     log!("uv fdatasync({}) = {}", uv_fd, rc.int());
     if let Some(errno) = rc.errno() {
@@ -493,7 +511,7 @@ pub fn fsync(fd: Fd) -> Result<()> {
     let uv_fd = fd.uv();
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fsync(uv::Loop::get(), &mut *req, uv_fd, None) };
+    let rc = unsafe { uv::uv_fs_fsync(uv::Loop::get(), &raw mut *req, uv_fd, None) };
 
     log!("uv fsync({}) = {}", uv_fd, rc.int());
     if let Some(errno) = rc.errno() {
@@ -506,7 +524,7 @@ pub fn fsync(fd: Fd) -> Result<()> {
 pub fn stat(path: &ZStr) -> Result<Stat> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_stat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_stat(uv::Loop::get(), &raw mut *req, path.as_ptr(), None) };
 
     log!("uv stat({}) = {}", BStr::new(path.as_bytes()), rc.int());
     if let Some(errno) = rc.errno() {
@@ -520,7 +538,7 @@ pub fn stat(path: &ZStr) -> Result<Stat> {
 pub fn lstat(path: &ZStr) -> Result<Stat> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_lstat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
+    let rc = unsafe { uv::uv_fs_lstat(uv::Loop::get(), &raw mut *req, path.as_ptr(), None) };
 
     log!("uv lstat({}) = {}", BStr::new(path.as_bytes()), rc.int());
     if let Some(errno) = rc.errno() {
@@ -581,7 +599,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
         let _ = unsafe {
             uv::uv_fs_read(
                 uv::Loop::get(),
-                &mut *req,
+                &raw mut *req,
                 uv_fd,
                 chunk_bufs.as_ptr(),
                 c_uint::try_from(chunk_len).expect("int cast"),
@@ -654,7 +672,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
         let _ = unsafe {
             uv::uv_fs_write(
                 uv::Loop::get(),
-                &mut *req,
+                &raw mut *req,
                 uv_fd,
                 chunk_bufs.as_ptr().cast(),
                 c_uint::try_from(chunk_len).expect("int cast"),
@@ -721,20 +739,16 @@ pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Result<usize> {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
         let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(&mut remaining[0..chunk_len])];
 
-        match preadv(fd, &bufs, current_position) {
-            Result::Err(err) => return Result::Err(err),
-            Result::Ok(bytes_read) => {
-                total_read += bytes_read;
+        let bytes_read = preadv(fd, &bufs, current_position)?;
+        total_read += bytes_read;
 
-                if bytes_read == 0 || bytes_read < chunk_len {
-                    break;
-                }
+        if bytes_read == 0 || bytes_read < chunk_len {
+            break;
+        }
 
-                remaining = &mut remaining[chunk_len..];
-                if current_position >= 0 {
-                    current_position += i64::try_from(bytes_read).expect("int cast");
-                }
-            }
+        remaining = &mut remaining[chunk_len..];
+        if current_position >= 0 {
+            current_position += i64::try_from(bytes_read).expect("int cast");
         }
     }
 
@@ -756,18 +770,14 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
         let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(&mut remaining[0..chunk_len])];
 
-        match readv(fd, &bufs) {
-            Result::Err(err) => return Result::Err(err),
-            Result::Ok(bytes_read) => {
-                total_read += bytes_read;
+        let bytes_read = readv(fd, &bufs)?;
+        total_read += bytes_read;
 
-                if bytes_read == 0 || bytes_read < chunk_len {
-                    break;
-                }
-
-                remaining = &mut remaining[chunk_len..];
-            }
+        if bytes_read == 0 || bytes_read < chunk_len {
+            break;
         }
+
+        remaining = &mut remaining[chunk_len..];
     }
 
     Result::Ok(total_read)
@@ -779,7 +789,8 @@ pub fn writev(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
     // layout-identical on Windows (size/align asserted in lib.rs); the
     // fat-pointer cast preserves the original slice's (ptr, len) metadata
     // exactly instead of re-deriving it.
-    let const_bufs = unsafe { &*(bufs as *const [PlatformIOVec] as *const [PlatformIOVecConst]) };
+    let const_bufs =
+        unsafe { &*(std::ptr::from_ref::<[PlatformIOVec]>(bufs) as *const [PlatformIOVecConst]) };
     pwritev(fd, const_bufs, -1)
 }
 
@@ -800,20 +811,16 @@ pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
         let bufs: [PlatformIOVecConst; 1] =
             [crate::platform_iovec_const_create(&remaining[0..chunk_len])];
 
-        match pwritev(fd, &bufs, current_position) {
-            Result::Err(err) => return Result::Err(err),
-            Result::Ok(bytes_written) => {
-                total_written += bytes_written;
+        let bytes_written = pwritev(fd, &bufs, current_position)?;
+        total_written += bytes_written;
 
-                if bytes_written == 0 || bytes_written < chunk_len {
-                    break;
-                }
+        if bytes_written == 0 || bytes_written < chunk_len {
+            break;
+        }
 
-                remaining = &remaining[chunk_len..];
-                if current_position >= 0 {
-                    current_position += i64::try_from(bytes_written).expect("int cast");
-                }
-            }
+        remaining = &remaining[chunk_len..];
+        if current_position >= 0 {
+            current_position += i64::try_from(bytes_written).expect("int cast");
         }
     }
 
@@ -836,18 +843,14 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
         let bufs: [PlatformIOVecConst; 1] =
             [crate::platform_iovec_const_create(&remaining[0..chunk_len])];
 
-        match writev_const(fd, &bufs) {
-            Result::Err(err) => return Result::Err(err),
-            Result::Ok(bytes_written) => {
-                total_written += bytes_written;
+        let bytes_written = writev_const(fd, &bufs)?;
+        total_written += bytes_written;
 
-                if bytes_written == 0 || bytes_written < chunk_len {
-                    break;
-                }
-
-                remaining = &remaining[chunk_len..];
-            }
+        if bytes_written == 0 || bytes_written < chunk_len {
+            break;
         }
+
+        remaining = &remaining[chunk_len..];
     }
 
     Result::Ok(total_written)

@@ -434,7 +434,7 @@ impl Write for StderrWriter {
                     h,
                     bytes.as_ptr(),
                     bytes.len() as u32,
-                    &mut written,
+                    &raw mut written,
                     core::ptr::null_mut(),
                 );
             }
@@ -957,12 +957,13 @@ mod draft {
                                     let result = unsafe {
                                         bun_sys::windows::GetThreadDescription(
                                             bun_sys::windows::GetCurrentThread(),
-                                            &mut name,
+                                            &raw mut name,
                                         )
                                     };
-                                    // SAFETY: `name` is the PWSTR out-param written by GetThreadDescription; deref is guarded by the S_OK check via `&&` short-circuit
                                     if bun_sys::windows::HRESULT_CODE(result)
                                         == bun_sys::windows::S_OK
+                                        // SAFETY: given S_OK, `name` is the PWSTR
+                                        // out-param GetThreadDescription wrote.
                                         && unsafe { *name } != 0
                                     {
                                         // SAFETY: `name` is a valid NUL-terminated wide string
@@ -1663,7 +1664,7 @@ mod draft {
                 // Publish to T0 storage (single source of truth — see note above
                 // `reset_on_posix`). `HANDLE` is `*mut c_void`; cast is identity.
                 bun_core::WINDOWS_SEGFAULT_HANDLE
-                    .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
+                    .store(handle.cast::<core::ffi::c_void>(), Ordering::Relaxed);
 
                 // Backstop for exceptions the VEH passed on: runs only after
                 // every frame-based (SEH) handler has declined, so an
@@ -1969,6 +1970,7 @@ mod draft {
     ) -> c_long {
         // SAFETY: kernel provides a valid EXCEPTION_POINTERS / EXCEPTION_RECORD.
         let info = unsafe { &*info };
+        // SAFETY: as above.
         let record = unsafe { &*info.ExceptionRecord };
 
         // exception used for thread naming
@@ -2064,6 +2066,7 @@ mod draft {
     ) -> c_long {
         // SAFETY: kernel provides a valid EXCEPTION_POINTERS / EXCEPTION_RECORD.
         let info = unsafe { &*info };
+        // SAFETY: as above.
         let record = unsafe { &*info.ExceptionRecord };
         let Some(reason) = classify_exception_windows(record) else {
             return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH;
@@ -2187,9 +2190,9 @@ mod draft {
                 }
                 #[cfg(windows)]
                 {
-                    write!(
+                    writeln!(
                         writer,
-                        "Windows v{}\n",
+                        "Windows v{}",
                         bun_sys::windows::detect_runtime_version()
                     )
                     .map_err(fmt_err)?;
@@ -2843,8 +2846,8 @@ mod draft {
                     0,
                     core::ptr::null_mut(),
                     core::ptr::null(),
-                    &mut startup_info,
-                    &mut process,
+                    &raw mut startup_info,
+                    &raw mut process,
                 )
             };
 

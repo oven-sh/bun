@@ -219,10 +219,9 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // child end disagree on framing and the channel never delivers a
             // frame.
             let mut pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
-            if let Some(e) = pipe
-                .init(uv::Loop::get(), true)
-                .to_error(bun_sys::Tag::pipe)
-            {
+            // SAFETY: the thread's live loop, and the Box keeps the handle in place.
+            let rc = unsafe { pipe.init(uv::Loop::get(), true) };
+            if let Some(e) = rc.to_error(bun_sys::Tag::pipe) {
                 bun_core::debug_warn!(
                     "Channel.adopt: uv_pipe_init failed: {}",
                     e.name().escape_ascii(),

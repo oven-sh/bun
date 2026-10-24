@@ -284,6 +284,13 @@ fn write_sourcemap_to_disk(
     Ok(())
 }
 
+#[cfg_attr(
+    windows,
+    expect(
+        clippy::large_stack_frames,
+        reason = "`PatternBuffer` embeds a `PathBuffer`, 96 KiB on Windows"
+    )
+)]
 fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
     // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
     // `as_ptr()` is `Copy` and does not borrow `pt`.

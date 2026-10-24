@@ -655,7 +655,7 @@ impl PatchTask {
             }
             sys::Result::Ok(s) => s,
         };
-        let size: u64 = u64::try_from(stat.st_size).expect("int cast");
+        let size: u64 = bun_sys::stat_size(&stat);
         if size == 0 {
             bun_ast::add_error_pretty!(
                 log,

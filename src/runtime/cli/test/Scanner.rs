@@ -28,7 +28,7 @@ pub(crate) struct Scanner<'a> {
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
     pub(crate) fs: *mut FileSystem,
-    pub(crate) open_dir_buf: PathBuffer,
+    pub(crate) open_dir_buf: Box<PathBuffer>,
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) has_iterated: bool,
     pub(crate) search_count: usize,
@@ -85,7 +85,7 @@ impl<'a> Scanner<'a> {
             options: &transpiler.options,
             fs: transpiler.fs,
             test_files: results,
-            open_dir_buf: PathBuffer::ZEROED,
+            open_dir_buf: bun_core::boxed_zeroed(),
             has_iterated: false,
             search_count: 0,
             current_dir: None,

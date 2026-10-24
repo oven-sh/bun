@@ -481,7 +481,7 @@ mod _impl {
         let mut cpu_infos: *mut libuv::uv_cpu_info_t = core::ptr::null_mut();
         let mut count: c_int = 0;
         // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
+        let err = unsafe { libuv::uv_cpu_info(&raw mut cpu_infos, &raw mut count) };
         if err != 0 {
             return Err(OsError::Any);
         }
@@ -557,7 +557,7 @@ mod _impl {
             let mut out = bun_paths::path_buffer_pool::get();
             let mut size: usize = out.len();
             // SAFETY: valid buffer + size out-param
-            if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
+            if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &raw mut size) }
                 .to_error(bun_sys::Tag::uv_os_homedir)
             {
                 return Err(global.throw_value(err.to_js(global)));
@@ -1039,14 +1039,14 @@ mod _impl {
         let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
         let mut count: c_int = 0;
         // SAFETY: valid out-pointers
-        let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
+        let err = unsafe { libuv::uv_interface_addresses(&raw mut ifaces, &raw mut count) };
         if err != 0 {
             let sys_err = SystemError {
-                message: BunString::static_("uv_interface_addresses failed").into(),
-                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
+                message: BunString::static_("uv_interface_addresses failed"),
+                code: BunString::static_("ERR_SYSTEM_ERROR"),
                 //.info = info,
                 errno: err,
-                syscall: BunString::static_("uv_interface_addresses").into(),
+                syscall: BunString::static_("uv_interface_addresses"),
                 ..Default::default()
             };
             return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
@@ -1077,9 +1077,11 @@ mod _impl {
                 let family = unsafe { iface.address.address4.sin_family } as c_int;
                 let maybe_suffix: Option<u8> = match family {
                     bun_sys::posix::AF::INET => {
+                        // SAFETY: union read tagged by family
                         netmask_to_cidr_suffix(unsafe { iface.netmask.netmask4.sin_addr.s_addr })
                     }
                     bun_sys::posix::AF::INET6 => {
+                        // SAFETY: union read tagged by family
                         netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
                             iface.netmask.netmask6.sin6_addr.s6_addr
                         }))
@@ -1237,7 +1239,7 @@ mod _impl {
             // SAFETY: zeroed POD
             let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
+            let err = unsafe { libuv::uv_os_uname(&raw mut info) };
             if err != 0 {
                 break 'slice b"unknown";
             }
@@ -1327,13 +1329,13 @@ mod _impl {
         {
             let mut uptime_value: f64 = 0.0;
             // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
+            let err = unsafe { libuv::uv_uptime(&raw mut uptime_value) };
             if err != 0 {
                 return Err(Box::new(SystemError {
-                    message: BunString::static_("failed to get system uptime").into(),
-                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
+                    message: BunString::static_("failed to get system uptime"),
+                    code: BunString::static_("ERR_SYSTEM_ERROR"),
                     errno: err,
-                    syscall: BunString::static_("uv_uptime").into(),
+                    syscall: BunString::static_("uv_uptime"),
                     ..Default::default()
                 }));
             }
@@ -1431,7 +1433,7 @@ mod _impl {
             // SAFETY: zeroed POD
             let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
             // SAFETY: valid out-pointer
-            let err = unsafe { libuv::uv_os_uname(&mut info) };
+            let err = unsafe { libuv::uv_os_uname(&raw mut info) };
             if err != 0 {
                 break 'slice b"unknown";
             }

@@ -1571,6 +1571,8 @@ struct ModuleBufs {
     resolve_target_buf: PathBuffer,
     resolve_target_buf2: PathBuffer,
 }
+// SAFETY: every field is.
+unsafe impl bun_core::ffi::Zeroable for ModuleBufs {}
 
 /// Same shape as `resolver::BufsSlot`: the `Drop` reclaims the box when a worker thread exits.
 struct ModuleBufsSlot(core::cell::Cell<*mut ModuleBufs>);
@@ -1602,11 +1604,7 @@ fn module_bufs() -> *mut ModuleBufs {
     MODULE_BUFS.with(|slot| {
         let mut p = slot.0.get();
         if p.is_null() {
-            p = bun_core::heap::into_raw(Box::new(ModuleBufs {
-                resolved_path_buf_percent: PathBuffer::ZEROED,
-                resolve_target_buf: PathBuffer::ZEROED,
-                resolve_target_buf2: PathBuffer::ZEROED,
-            }));
+            p = bun_core::heap::into_raw(bun_core::boxed_zeroed::<ModuleBufs>());
             slot.0.set(p);
         }
         p

@@ -706,9 +706,11 @@ impl RunCommand {
                 let mut replaced = false;
                 loop {
                     // `as_ptr()` stays inline: the buffer is mutated below (Stacked Borrows).
-                    if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None)
-                        != 0
-                    {
+                    // SAFETY: `name` ends the buffer's path with a NUL, and `image_path` is a `WStr`.
+                    let linked = unsafe {
+                        win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None)
+                    };
+                    if linked != 0 {
                         break;
                     }
                     match win::Win32Error::get() {

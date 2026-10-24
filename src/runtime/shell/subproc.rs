@@ -1037,9 +1037,9 @@ impl Writable {
                     // the blob is moved exactly once.
                     let old =
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    // SAFETY: `old` is Blob (matched above) and ManuallyDrop
-                    // prevents its Drop from running, so this is the sole move.
                     let blob = match &*old {
+                        // SAFETY: `old` is Blob (matched above) and ManuallyDrop
+                        // prevents its Drop from running, so this is the sole move.
                         Stdio::Blob(b) => unsafe { core::ptr::read(b) },
                         _ => unreachable!(),
                     };

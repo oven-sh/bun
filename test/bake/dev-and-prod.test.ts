@@ -166,6 +166,7 @@ devTest("require() of a stylesheet in a module that has no other use of the runt
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("object {}");
+    await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
 devAndProductionTest("inline script and styles appear", {

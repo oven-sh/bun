@@ -99,8 +99,9 @@ pub(crate) fn entry_point_takes_run_main(
     if !vm.has_patched_run_main {
         // `reload_entry_point` loads the entry point itself. Run as `node`, `main` is the path as typed.
         return key.eql_utf8(bun_jsc::virtual_machine::MAIN_FILE_NAME)
-            || key.eql_utf8(vm.main())
-            || name.eql_utf8(vm.main());
+            || vm
+                .main()
+                .is_some_and(|main| key.eql_utf8(main) || name.eql_utf8(main));
     }
     // `reload_entry_point` takes the first load of the `Module.runMain` that it calls.
     if vm.pending_internal_promise().is_none() {
@@ -110,19 +111,18 @@ pub(crate) fn entry_point_takes_run_main(
     false
 }
 
-// HOST_EXPORT(Bun__onRunMainRejected)
-pub(crate) fn on_run_main_rejected(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
-    let reason = callframe.argument(0);
+pub(crate) fn on_run_main_rejected<'a>(
+    cx: &mut JsScope<'a>,
+    reason: JsLocal<'a>,
+) -> bun_jsc::bindgen::Result<'a, ()> {
+    let global = cx.global();
     let vm = global.bun_vm().as_mut();
     // Rethrown, it goes to the rejection tracker, as a reloaded entry point's does: a watcher has to stay.
     if vm.is_watcher_enabled() && vm.exits_on_uncaught_exception() {
-        return Err(global.throw_value(reason));
+        return Err(bun_jsc::bindgen::Error::from_value(reason));
     }
-    let _ = vm.uncaught_rejection(global, reason);
-    Ok(JSValue::UNDEFINED)
+    let _ = vm.uncaught_rejection(global, reason.to_js());
+    Ok(())
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.

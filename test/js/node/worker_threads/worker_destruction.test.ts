@@ -70,4 +70,53 @@ describe("Worker destruction", () => {
     expect(stdout).toBe("worker exit 0\n");
     expect(exitCode).toBe(0);
   });
+
+  test.each(["terminate", "worker-exit"])("%s uses the final heap sweep without another tracing GC", async mode => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const { writeSync } = require("node:fs");
+        (async () => {
+          const worker = new Worker(\`
+            const { parentPort } = require("node:worker_threads");
+            parentPort.on("message", () => process.exit(0));
+            Bun.gc(true);
+            parentPort.postMessage("ready");
+          \`, { eval: true });
+          const exited = new Promise((resolve, reject) => {
+            worker.once("exit", resolve);
+            worker.once("error", reject);
+          });
+          await Promise.race([
+            new Promise(resolve => worker.once("message", resolve)),
+            exited.then(code => { throw new Error("early exit " + code); }),
+          ]);
+          writeSync(2, "\\nWORKER_TEARDOWN_BEGIN\\n");
+          const code = ${JSON.stringify(mode)} === "terminate"
+            ? await worker.terminate()
+            : (worker.postMessage("exit"), await exited);
+          writeSync(2, "\\nWORKER_TEARDOWN_END\\n");
+          console.log(code);
+        })().catch(error => { console.error(error); process.exitCode = 1; });
+        `,
+      ],
+      env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_useConcurrentGC: "false" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toBe(mode === "terminate" ? "1" : "0");
+    const parts = stderr.split("WORKER_TEARDOWN_BEGIN\n");
+    expect(parts).toHaveLength(2);
+    const teardown = parts[1].split("WORKER_TEARDOWN_END\n");
+    expect(teardown).toHaveLength(2);
+    const shutdowns = [...teardown[0].matchAll(/\[GC<([^>]+)>: shutdown [^\]]*ms\]/g)];
+    expect(shutdowns).toHaveLength(1);
+    const collections = [...teardown[0].matchAll(/\[GC<([^>]+)>: START [^\n]*=> FullCollection/g)];
+    expect(collections.filter(match => match[1] === shutdowns[0][1])).toHaveLength(0);
+  });
 });

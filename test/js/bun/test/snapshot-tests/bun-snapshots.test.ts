@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import vm from "node:vm";
 
 test("it will create a snapshot file if it doesn't exist", () => {
   expect({ a: { b: { c: false } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(Boolean) } } });
@@ -229,6 +230,55 @@ describe("property matchers leave the received value as it was", () => {
       configurable: true,
     });
     expect(received.bytes[0]).toBe(1);
+  });
+
+  test("when a node:vm timeout ends the printing", () => {
+    let inTrap = false;
+    let spin = false;
+    const inherited = Object.create({ fromPrototype: 5 });
+    Object.defineProperty(inherited, "getter", { get: () => 7, enumerable: true, configurable: true });
+    const received = {
+      id: 42,
+      name: "abc",
+      list: [1, 2],
+      inherited,
+      // Only the termination ends this trap, so it arrives while the value is printed.
+      endless: new Proxy(
+        {},
+        {
+          ownKeys() {
+            inTrap = true;
+            while (spin);
+            return [];
+          },
+        },
+      ),
+    };
+    const matchers = {
+      id: expect.any(Number),
+      name: expect.any(String),
+      list: [expect.any(Number), 2],
+      inherited: { fromPrototype: expect.any(Number), getter: expect.any(Number) },
+    };
+    const before = ownState(received, matchers);
+
+    for (const print of [
+      () => expect(received).toMatchSnapshot(matchers),
+      () => expect(received).toMatchObject({ ...matchers, missing: 1 }),
+    ]) {
+      // A timeout that fires before the trap runs proves nothing, so it is tried again with more time.
+      for (let timeout = 50; ; timeout *= 2) {
+        inTrap = false;
+        spin = true;
+        expect(() => vm.runInNewContext("print()", { print }, { timeout })).toThrow(
+          expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
+        );
+        spin = false;
+        if (inTrap) break;
+      }
+      expect(ownState(received, matchers)).toBe(before);
+      expect(() => expect({ id: received.id }).toEqual({ id: 999 })).toThrow();
+    }
   });
 });
 

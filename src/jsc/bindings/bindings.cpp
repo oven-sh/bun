@@ -3314,13 +3314,18 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     if (!scope.exception()) [[likely]]
         format(ctx, matched);
 
-    // `undo` calls into JSC, which returns early while an exception is pending.
-    JSC::Exception* exception = scope.exception();
-    if (exception && !scope.tryClearException()) [[unlikely]]
-        exception = nullptr;
-    matcherWrites.undo(globalObject, scope);
-    if (exception && !scope.exception()) [[unlikely]]
-        scope.throwException(globalObject, exception);
+    {
+        // A termination (a `node:vm` timeout, `worker.terminate()`) cannot be cleared, and one can be
+        // requested between two puts. This takes it off the VM and throws it again at the end of the block.
+        DeferTermination deferTermination(scope.vm());
+        // `undo` calls into JSC, which returns early while an exception is pending.
+        JSC::Exception* exception = scope.exception();
+        if (exception && !scope.tryClearException()) [[unlikely]]
+            exception = nullptr;
+        matcherWrites.undo(globalObject, scope);
+        if (exception && !scope.exception()) [[unlikely]]
+            scope.throwException(globalObject, exception);
+    }
     return matched;
 }
 

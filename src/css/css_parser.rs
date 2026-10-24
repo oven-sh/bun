@@ -152,15 +152,6 @@ impl VendorPrefix {
 pub use crate::SourceLocation;
 
 impl SourceLocation {
-    pub(crate) fn to_logger_location(self, file: &'static [u8]) -> bun_ast::Location {
-        bun_ast::Location {
-            file: std::borrow::Cow::Borrowed(file),
-            line: i32::try_from(self.line).expect("int cast"),
-            column: i32::try_from(self.column).expect("int cast"),
-            ..Default::default()
-        }
-    }
-
     /// Create a new BasicParseError at this location for an unexpected token
     pub(crate) fn new_basic_unexpected_token_error(self, token: Token) -> ParseError<ParserError> {
         BasicParseError {
@@ -360,7 +351,10 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
     // SAFETY: `name` points into the parser's source/arena, which outlives every
     // `AtRulePrelude`/warning produced from this parser (see `src_str`).
     let name: &'static [u8] = unsafe { src_str(name) };
-    options.warn(&input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
+    options.warn_at(
+        input.loc(),
+        format_args!("{}", BasicParseErrorKind::at_rule_invalid(name)),
+    );
     input.skip_whitespace();
     let tokens = TokenListFns::parse(input, options, 0)?;
     Ok(AtRulePrelude::Unknown { name, tokens })
@@ -985,11 +979,13 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
 
 // ───────────────────────────── NestedRuleParser ─────────────────────────────
 
+/// Whether a style rule can hold `composes`.
 #[derive(Clone, Copy)]
 pub enum ComposesState {
-    Allow(SourceLocation),
-    DisallowNested(SourceLocation),
-    DisallowNotSingleClass(SourceLocation),
+    Allow,
+    DisallowNested,
+    /// Where that rule starts, for the note of the warning.
+    DisallowNotSingleClass(bun_ast::Loc),
     DisallowEntirely,
 }
 
@@ -1403,17 +1399,13 @@ mod rule_parsers {
         ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
             // TODO: think about memory management in error cases
             let mut rules = CssRuleList::<T::AtRule>::default();
-            let composes_state = if self.is_in_style_rule
-                && matches!(self.composes_state, ComposesState::Allow(_))
-            {
-                let ComposesState::Allow(l) = self.composes_state else {
-                    unreachable!()
+            let composes_state =
+                if self.is_in_style_rule && matches!(self.composes_state, ComposesState::Allow) {
+                    ComposesState::DisallowNested
+                } else {
+                    // ComposesState is Copy.
+                    self.composes_state
                 };
-                ComposesState::DisallowNested(l)
-            } else {
-                // ComposesState is Copy.
-                self.composes_state
-            };
             // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
             // parser arena.
             let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
@@ -1633,7 +1625,10 @@ mod rule_parsers {
                         break 'brk AtRulePrelude::Scope { scope_start, scope_end };
                     },
                     b"nest" => if this.is_in_style_rule {
-                        this.options.warn(&input.new_custom_error(ParserError::deprecated_nest_rule));
+                        this.options.warn_at(
+                            input.loc(),
+                            format_args!("{}", ParserError::deprecated_nest_rule),
+                        );
                         let mut selector_parser = selector_parser::SelectorParser {
                             is_nesting_allowed: true,
                             options: this.options,
@@ -1992,45 +1987,29 @@ mod rule_parsers {
             // - NOT in nested style rules
             // - AND there is only one class selector
             if input.flags.css_modules() {
+                let rule_start = bun_ast::usize2loc(start.position);
                 'out: {
                     if this.is_in_style_rule {
-                        this.composes_state = ComposesState::DisallowNested(SourceLocation {
-                            line: loc.line,
-                            column: loc.column,
-                        });
+                        this.composes_state = ComposesState::DisallowNested;
                         break 'out;
                     }
                     if selectors.v.len() != 1 {
-                        this.composes_state =
-                            ComposesState::DisallowNotSingleClass(SourceLocation {
-                                line: loc.line,
-                                column: loc.column,
-                            });
+                        this.composes_state = ComposesState::DisallowNotSingleClass(rule_start);
                         break 'out;
                     }
                     let sel = &selectors.v.slice()[0];
                     if sel.components.len() != 1 {
-                        this.composes_state =
-                            ComposesState::DisallowNotSingleClass(SourceLocation {
-                                line: loc.line,
-                                column: loc.column,
-                            });
+                        this.composes_state = ComposesState::DisallowNotSingleClass(rule_start);
                         break 'out;
                     }
                     let comp = &sel.components[0];
                     if let Some(r) = comp.as_class() {
                         let ref_ = r.as_ref().unwrap();
                         this.composes_refs.append(ref_);
-                        this.composes_state = ComposesState::Allow(SourceLocation {
-                            line: loc.line,
-                            column: loc.column,
-                        });
+                        this.composes_state = ComposesState::Allow;
                         break 'out;
                     }
-                    this.composes_state = ComposesState::DisallowNotSingleClass(SourceLocation {
-                        line: loc.line,
-                        column: loc.column,
-                    });
+                    this.composes_state = ComposesState::DisallowNotSingleClass(rule_start);
                 }
             }
             let location = input.position();
@@ -2038,7 +2017,7 @@ mod rule_parsers {
 
             // We parsed a style rule with the `composes` property. Track which
             // properties it used so we can validate it later.
-            if matches!(this.composes_state, ComposesState::Allow(_)) {
+            if matches!(this.composes_state, ComposesState::Allow) {
                 let len = input.position() - location;
                 let mut usage = PropertyBitset::init_empty();
                 let mut custom_properties: Vec<&'static [u8]> = Vec::new();
@@ -2537,10 +2516,10 @@ mod stylesheet_impl {
             return Ok(ToCssResult { code: dest });
         }
 
-        pub fn parse(
+        pub fn parse<'a>(
             arena: &'static Bump,
-            code: &[u8],
-            options: ParserOptions<'_>,
+            source: &'a bun_ast::Source,
+            options: ParserOptions<'a>,
             import_records: Option<&mut Vec<ImportRecord>>,
             source_index: SrcIndex,
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
@@ -2556,7 +2535,7 @@ mod stylesheet_impl {
             };
             StyleSheet::<DefaultAtRule>::parse_with(
                 arena,
-                code,
+                source,
                 options,
                 &mut at_rule_parser,
                 import_records.map(core::ptr::NonNull::from),
@@ -2564,15 +2543,16 @@ mod stylesheet_impl {
             )
         }
 
-        /// Parse a style sheet from a string.
-        pub(crate) fn parse_with<P: CustomAtRuleParser<AtRule = AtRule>>(
+        /// Parse the style sheet in `source`.
+        pub(crate) fn parse_with<'a, P: CustomAtRuleParser<AtRule = AtRule>>(
             arena: &'static Bump,
-            code: &[u8],
-            options: ParserOptions<'_>,
+            source: &'a bun_ast::Source,
+            mut options: ParserOptions<'a>,
             at_rule_parser: &mut P,
             import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
+            options.source = Some(source);
             // TODO: 'bump lifetime threading — every arena-backed slice the
             // parser hands back is currently detached to `'static` (matching the
             // crate-wide erasure on `DeclarationBlock<'static>`/`Token` payloads).
@@ -2580,7 +2560,7 @@ mod stylesheet_impl {
             // returned `StyleSheet`.
             // TODO(refactor): re-thread the lifetime through `CssRuleList<'bump, R>`
             // and drop the `'static` bound on `arena`.
-            check_input_len(code)?;
+            check_input_len(source.contents())?;
             let mut composes = ComposesMap::default();
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
@@ -2589,7 +2569,7 @@ mod stylesheet_impl {
             };
             let mut local_properties = LocalPropertyUsage::default();
 
-            let mut input = ParserInput::new(code, arena);
+            let mut input = ParserInput::new(source.contents(), arena);
             let mut parser = Parser::new(
                 &mut input,
                 import_records,
@@ -2673,23 +2653,24 @@ mod stylesheet_impl {
     }
 
     impl StyleAttribute {
-        pub fn parse(
+        pub fn parse<'a>(
             arena: &'static Bump,
-            code: &[u8],
-            options: &ParserOptions,
+            source: &'a bun_ast::Source,
+            mut options: ParserOptions<'a>,
             import_records: &mut Vec<ImportRecord>,
             source_index: SrcIndex,
         ) -> Maybe<StyleAttribute, Err<ParserError>> {
+            options.source = Some(source);
             // TODO: 'bump lifetime threading — `DeclarationBlock<'static>` in
             // `StyleAttribute` vs `Parser<'a>` here; `arena: &'static Bump`
             // matches the crate-wide erasure (see `parse_with`).
-            check_input_len(code)?;
+            check_input_len(source.contents())?;
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
                 symbols: SymbolList::default(),
                 source_index,
             };
-            let mut input = ParserInput::new(code, arena);
+            let mut input = ParserInput::new(source.contents(), arena);
             let mut parser = Parser::new(
                 &mut input,
                 Some(core::ptr::NonNull::from(import_records)),
@@ -2702,7 +2683,7 @@ mod stylesheet_impl {
             );
             let sources: Vec<Box<[u8]>> = vec![options.filename.into()];
             Ok(StyleAttribute {
-                declarations: match DeclarationBlock::parse(&mut parser, options) {
+                declarations: match DeclarationBlock::parse(&mut parser, &options) {
                     Ok(v) => v,
                     Err(e) => return Err(Err::from_parse_error(e, b"")),
                 },
@@ -2743,10 +2724,10 @@ mod stylesheet_impl {
     }
 
     impl StyleSheet<BundlerAtRule> {
-        pub fn parse_bundler(
+        pub fn parse_bundler<'a>(
             arena: &'static Bump,
-            code: &[u8],
-            options: ParserOptions<'_>,
+            source: &'a bun_ast::Source,
+            options: ParserOptions<'a>,
             import_records: &mut Vec<ImportRecord>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
@@ -2768,7 +2749,7 @@ mod stylesheet_impl {
             };
             Self::parse_with(
                 arena,
-                code,
+                source,
                 options,
                 &mut at_rule_parser,
                 Some(import_records_ptr),
@@ -2915,47 +2896,47 @@ pub struct ParserOptions<'a> {
     /// — see PORTING.md §Forbidden patterns. Only `default` sets it, from a
     /// `&'a mut Log`.
     logger: Option<core::ptr::NonNull<Log>>,
+    /// The sheet that is parsed, set by the parse entry points: a warning is located in it.
+    source: Option<&'a bun_ast::Source>,
     /// Feature flags to enable.
     pub flags: ParserFlags,
     _lt: core::marker::PhantomData<&'a mut Log>,
 }
 
 impl<'a> ParserOptions<'a> {
+    /// Log an error that `error_recovery` skipped, with the file only: it has no byte position.
     pub(crate) fn warn(&self, warning: &ParseError<ParserError>) {
+        self.warn_at(bun_ast::Loc::EMPTY, format_args!("{}", warning.kind));
+    }
+
+    /// Log a warning at byte position `at` of the sheet.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn warn_at(&self, at: bun_ast::Loc, text: fmt::Arguments<'_>) {
         if let Some(lg) = self.logger {
             // SAFETY: `logger` was constructed from a unique `&'a mut Log` (see
             // `default`); the pointee outlives `'a` and no other borrow of the
             // Log exists for the duration of parsing.
             let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
-            lg.add_warning_fmt_line_col(
-                self.filename,
-                warning.location.line,
-                warning.location.column,
-                format_args!("{}", warning.kind),
-            );
+            lg.add_warning_fmt_no_long_excerpt(self.source, at, text, None);
         }
     }
 
-    pub(crate) fn warn_fmt(&self, args: fmt::Arguments<'_>, line: u32, column: u32) {
-        if let Some(lg) = self.logger {
-            // SAFETY: see `warn` — `logger` carries `*mut Log` provenance from a
-            // unique `&'a mut Log`; no other borrow exists during this call.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
-            lg.add_warning_fmt_line_col(self.filename, line, column, args);
-        }
-    }
-
-    pub(crate) fn warn_fmt_with_notes(
+    /// [`warn_at`](Self::warn_at), with a note at byte position `note_at`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn warn_with_note(
         &self,
-        args: fmt::Arguments<'_>,
-        line: u32,
-        column: u32,
-        notes: Box<[bun_ast::Data]>,
+        at: bun_ast::Loc,
+        text: fmt::Arguments<'_>,
+        note_at: bun_ast::Loc,
+        note_text: fmt::Arguments<'_>,
     ) {
         if let Some(lg) = self.logger {
-            // SAFETY: see `warn`.
+            // SAFETY: see `warn_at`.
             let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
-            lg.add_warning_fmt_line_col_with_notes(self.filename, line, column, args, notes);
+            let note = Some((note_at, note_text));
+            lg.add_warning_fmt_no_long_excerpt(self.source, at, text, note);
         }
     }
 
@@ -2966,6 +2947,7 @@ impl<'a> ParserOptions<'a> {
             source_index: 0,
             error_recovery: false,
             logger: log.map(core::ptr::NonNull::from),
+            source: None,
             flags: ParserFlags::default(),
             _lt: core::marker::PhantomData,
         }
@@ -3577,6 +3559,11 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn position(&self) -> usize {
         self.input.tokenizer.position
+    }
+
+    /// [`Parser::position`] as a position for the logger.
+    pub(crate) fn loc(&self) -> bun_ast::Loc {
+        bun_ast::usize2loc(self.position())
     }
 
     fn parse_empty(_: &mut Parser) -> CssResult<()> {

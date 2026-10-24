@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join, relative } from "node:path";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -671,4 +671,277 @@ test("a resolve error in CSS covers the whole url() and composes path", async ()
     position!.lineText.slice(position!.column - 1, position!.column - 1 + position!.length),
   );
   expect(ranges).toEqual([`url('/fonts/missing.woff2')`, `url("./missing.png")`, `'./missing.css'`]);
+});
+
+// A warning of the CSS parser says where it is, as an error of the same sheet
+// does: the file, the 1-based line, the column and the text of the line.
+describe.concurrent("css parser warning positions", () => {
+  // The `.notes` getter is not declared in bun-types yet.
+  type Log = BuildMessage & { notes?: BuildMessage[] };
+
+  function positionIn(dir: string, log: Log) {
+    const { file, namespace, line, column, lineText } = log.position!;
+    return { file: relative(dir, file), namespace, line, column, lineText };
+  }
+
+  async function buildLogs(name: string, sheet: string) {
+    using dir = tempDir("css-warning-position", { [name]: sheet });
+    const result = await Bun.build({ entrypoints: [join(String(dir), name)], throw: false });
+    return (result.logs as Log[]).map(log => ({
+      level: log.level,
+      message: log.message,
+      ...positionIn(String(dir), log),
+      notes: (log.notes ?? []).map(note => ({ message: note.message, ...positionIn(String(dir), note) })),
+    }));
+  }
+
+  const unknownAtRule = (name: string, line: number, lineText = "@unknown-rule x;", column = 14) => ({
+    level: "warn",
+    message: "invalid @ rule encountered: '@unknown-rule'",
+    file: name,
+    namespace: "file",
+    line,
+    column,
+    lineText,
+    notes: [],
+  });
+
+  test("each kind of warning, and the note, in a CSS module", async () => {
+    const sheet = [
+      /*  1 */ "@unknownrule foo;",
+      /*  2 */ ".base { color: red; }",
+      /*  3 */ ".outer {",
+      /*  4 */ "  .inner {",
+      /*  5 */ "    composes: base;",
+      /*  6 */ "  }",
+      /*  7 */ "}",
+      /*  8 */ ".a .b {",
+      /*  9 */ "  color: blue;",
+      /* 10 */ "  composes: base;",
+      /* 11 */ "}",
+      /* 12 */ ".c::custom-thing { color: green; }",
+      /* 13 */ ".d:_internal { color: green; }",
+      /* 14 */ ".e::custom-fn(x) { color: green; }",
+      /* 15 */ ".f:custom-fn(x) { color: green; }",
+      /* 16 */ ".p { @nest .q & { color: red } }",
+      /* 17 */ "@other bar;",
+    ];
+    const warning = (message: string, line: number, column: number, notes: object[] = []) => ({
+      level: "warn",
+      message,
+      file: "styles.module.css",
+      namespace: "file",
+      line,
+      column,
+      lineText: sheet[line - 1],
+      notes,
+    });
+    const unsupported = (name: string) => `Invalid selector. Unsupported pseudo-class or pseudo-element '${name}'`;
+
+    const logs = await buildLogs("styles.module.css", sheet.join("\n"));
+    // The misplaced `composes` declarations also make printing the sheet fail.
+    expect(logs.filter(log => log.level !== "error")).toEqual([
+      warning("invalid @ rule encountered: '@unknownrule'", 1, 13),
+      warning('"composes" is not allowed inside nested selectors', 5, 14),
+      warning('"composes" only works inside single class selectors', 10, 12, [
+        {
+          message: "The parent selector is not a single class selector because of the syntax here:",
+          file: "styles.module.css",
+          namespace: "file",
+          line: 8,
+          column: 1,
+          lineText: sheet[7],
+        },
+      ]),
+      warning(unsupported("custom-thing"), 12, 4),
+      warning(unsupported("_internal"), 13, 4),
+      warning(unsupported("custom-fn"), 14, 15),
+      warning(unsupported("custom-fn"), 15, 14),
+      warning("The @nest rule is deprecated, use standard CSS nesting instead", 16, 11),
+      warning("invalid @ rule encountered: '@other'", 17, 7),
+    ]);
+  });
+
+  test.each([
+    ["in a nested rule", [".outer {", "  .inner {", "    composes: base;", "  }", "}"], 3, 14],
+    ["two levels deep", [".a {", "  .b {", "    .c {", "      composes: base;", "    }", "  }", "}"], 4, 16],
+    ["in a nested @media", [".outer {", "  @media (min-width: 1px) {", "    composes: base;", "  }", "}"], 3, 14],
+  ])('the warning for a "composes" %s is on the declaration', async (_, rules, line, column) => {
+    const logs = await buildLogs("styles.module.css", [...rules, ".base { color: red; }"].join("\n"));
+    expect(logs.filter(log => log.level !== "error")).toEqual([
+      {
+        level: "warn",
+        message: '"composes" is not allowed inside nested selectors',
+        file: "styles.module.css",
+        namespace: "file",
+        line,
+        column,
+        lineText: rules[line - 1],
+        notes: [],
+      },
+    ]);
+  });
+
+  test("a sheet that is not a CSS module", async () => {
+    const rules = ".a { color: red }\n.b { color: blue }\n";
+    expect(await buildLogs("styles.css", rules + "@unknown-rule x;\n")).toEqual([unknownAtRule("styles.css", 3)]);
+  });
+
+  test.each([
+    ["on the first line", "@unknown-rule x;\n.a { color: red }\n", 1, "@unknown-rule x;"],
+    ["after a CRLF line break", ".a { color: red }\r\n@unknown-rule x;\r\n", 2, "@unknown-rule x;"],
+    ["after a lone CR line break", ".a { color: red }\r@unknown-rule x;\r", 2, "@unknown-rule x;"],
+    ["on a last line with no line break", ".a { color: red }\n@unknown-rule x;", 2, "@unknown-rule x;"],
+  ])("a warning %s", async (_, sheet, line, lineText) => {
+    expect(await buildLogs("styles.css", sheet)).toEqual([unknownAtRule("styles.css", line, lineText)]);
+  });
+
+  test("a warning at the end of the sheet", async () => {
+    const sheet = ".a { color: red }\n@unknown-rule";
+    using dir = tempDir("css-warning-position", { "styles.css": sheet });
+    const { logs } = await Bun.build({ entrypoints: [join(String(dir), "styles.css")], throw: false });
+    // The logger has no column after the last character of a source: it reports that character.
+    expect(logs.map(({ position }) => position)).toEqual([
+      expect.objectContaining({ line: 2, column: 13, offset: sheet.length, lineText: "@unknown-rule" }),
+    ]);
+  });
+
+  // The logger cuts a long line around the position, or keeps it whole for a position in its last
+  // 80 bytes, and indents the caret by the whole column. Such a warning has its place and no line
+  // text. The first warning of each sheet is on a cut line and the second on a whole one.
+  test("warnings on a long line have their place and no line text", async () => {
+    const rules = Buffer.alloc(130, ".a{color:red}").toString();
+    const logs = await buildLogs("styles.css", rules + "@unknown-rule x;" + rules + "@unknown-rule x;\n");
+    expect(logs).toEqual([unknownAtRule("styles.css", 1, "", 144), unknownAtRule("styles.css", 1, "", 290)]);
+  });
+
+  test("bun build prints the place and no code frame for warnings on a long line", async () => {
+    const rules = Buffer.alloc(130, ".a{color:red}").toString();
+    using dir = tempDir("css-warning-long-line", {
+      "styles.css": rules + "@unknown-rule x;" + rules + "@unknown-rule x;\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./styles.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode }).toEqual({
+      stderr: [
+        "warn: invalid @ rule encountered: '@unknown-rule'",
+        "   at <dir>/styles.css:1:144",
+        "",
+        "warn: invalid @ rule encountered: '@unknown-rule'",
+        "   at <dir>/styles.css:1:290",
+      ].join("\n"),
+      exitCode: 0,
+    });
+  });
+
+  test("a warning has the file and the namespace that an error of the same sheet has", async () => {
+    const logs = await buildLogs("styles.css", "@unknown-rule x;\n.a { color: red }\n}\n");
+    expect(logs.map(({ level, file, namespace, line }) => ({ level, file, namespace, line }))).toEqual([
+      { level: "warn", file: "styles.css", namespace: "file", line: 1 },
+      { level: "error", file: "styles.css", namespace: "file", line: 4 },
+    ]);
+  });
+
+  test("a sheet that a plugin loads in another namespace, and an in-memory sheet", async () => {
+    const sheet = ".a { color: red }\n@unknown-rule x;\n";
+    using dir = tempDir("css-warning-namespace", { "entry.ts": `import "virtual:sheet.css";` });
+
+    const plugin = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      throw: false,
+      plugins: [
+        {
+          name: "virtual",
+          setup(builder) {
+            builder.onResolve({ filter: /^virtual:/ }, args => ({
+              path: args.path.slice("virtual:".length),
+              namespace: "virtual",
+            }));
+            builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: sheet, loader: "css" }));
+          },
+        },
+      ],
+    });
+    expect(plugin.logs.map(log => ({ level: log.level, message: log.message, ...log.position }))).toEqual([
+      {
+        level: "warn",
+        message: "invalid @ rule encountered: '@unknown-rule'",
+        file: "sheet.css",
+        namespace: "virtual",
+        line: 2,
+        column: 14,
+        length: 0,
+        offset: sheet.indexOf(" x;"),
+        lineText: "@unknown-rule x;",
+      },
+    ]);
+
+    // The same in-memory path, once with a warning and once with an error.
+    const inMemory = (contents: string) =>
+      Bun.build({ entrypoints: ["/memory/sheet.css"], files: { "/memory/sheet.css": contents }, throw: false });
+    const [warned, failed] = await Promise.all([inMemory(sheet), inMemory(".a { color: red }\n}\n")]);
+    const place = ({ level, position }: BuildMessage) => ({
+      level,
+      file: position!.file,
+      namespace: position!.namespace,
+      line: position!.line,
+    });
+    const error = place(failed.logs[0] as BuildMessage);
+    expect([place(warned.logs[0] as BuildMessage), error]).toEqual([
+      { level: "warn", file: error.file, namespace: "file", line: 2 },
+      { level: "error", file: expect.stringContaining("sheet.css"), namespace: "file", line: 3 },
+    ]);
+  });
+
+  test("a sheet in a data: URL has the URL as its file", async () => {
+    const url = "data:text/css,.a{color:red}%0A@unknown-rule%20x;";
+    using dir = tempDir("css-warning-data-url", { "styles.css": `@import "${url}";\n` });
+    const { logs } = await Bun.build({ entrypoints: [join(String(dir), "styles.css")], throw: false });
+    expect(logs.map(log => ({ level: log.level, ...log.position }))).toEqual([
+      {
+        level: "warn",
+        file: url,
+        namespace: "dataurl",
+        line: 2,
+        column: 14,
+        length: 0,
+        offset: ".a{color:red}\n@unknown-rule".length,
+        lineText: "@unknown-rule x;",
+      },
+    ]);
+  });
+
+  test.each([
+    ["bun build", "styles.css", []],
+    ["bun build", "styles.module.css", []],
+    ["bun build --no-bundle", "styles.css", ["--no-bundle"]],
+    ["bun build --no-bundle", "styles.module.css", ["--no-bundle"]],
+  ])("%s of %s prints the line and the place of a warning", async (_, name, flags) => {
+    using dir = tempDir("css-warning-position-cli", {
+      [name]: ".a { color: red }\n.b { color: blue }\n@unknown-rule x;\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...flags, "./" + name],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, String(dir))).toBe(
+      [
+        "3 | @unknown-rule x;",
+        "                 ^",
+        "warn: invalid @ rule encountered: '@unknown-rule'",
+        `   at <dir>/${name}:3:14`,
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
 });

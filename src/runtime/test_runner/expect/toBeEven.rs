@@ -12,7 +12,7 @@ impl Expect {
             if v.is_any_int() {
                 let n = v.to_int64();
                 n == 0 || n.rem_euclid(2) == 0
-            } else if v.is_big_int() || v.is_big_int32() {
+            } else if v.is_big_int() {
                 let n = v.to_int64();
                 n == 0 || n & 1 == 0
             } else if v.is_number() {

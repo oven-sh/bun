@@ -4010,12 +4010,9 @@ unsafe fn normalize_specifier_for_loader<'a>(
         slice = &slice[opath.len()..];
     }
     let specifier = slice;
-    let mut query: &[u8] = b"";
-    if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
-        let i = i as usize;
-        query = &slice[i..];
-        slice = &slice[..i];
-    }
+    let path = bun_jsc::resolver_jsc::module_key_without_query(slice);
+    let query = &slice[path.len()..];
+    slice = path;
     (slice, specifier, query)
 }
 

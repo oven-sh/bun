@@ -4214,12 +4214,9 @@ fn normalize_specifier_for_resolution<'a>(
     if bun_core::strings::has_prefix_comptime(specifier_, b"data:") {
         return specifier_;
     }
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
-        *query_string = &specifier_[i..];
-        &specifier_[..i]
-    } else {
-        specifier_
-    }
+    let path = crate::resolver_jsc::module_key_without_query(specifier_);
+    *query_string = &specifier_[path.len()..];
+    path
 }
 
 /// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.
@@ -5526,6 +5523,72 @@ impl VirtualMachine {
         Ok(())
     }
 
+    #[cfg(windows)]
+    fn namespaced_unc_resolution_error(
+        &mut self,
+        specifier: &[u8],
+        source: &[u8],
+        is_a_file_path: bool,
+    ) -> Option<bun_sys::Error> {
+        fn ordinary_unc_path(path: &[u8]) -> Option<Vec<u8>> {
+            if path.len() < 8
+                || !bun_paths::resolve_path::is_sep_any(path[0])
+                || !bun_paths::resolve_path::is_sep_any(path[1])
+                || path[2] != b'?'
+                || !bun_paths::resolve_path::is_sep_any(path[3])
+                || !path[4..7].eq_ignore_ascii_case(b"UNC")
+                || !bun_paths::resolve_path::is_sep_any(path[7])
+            {
+                return None;
+            }
+            let mut ordinary = b"\\\\".to_vec();
+            ordinary.extend_from_slice(&path[8..]);
+            Some(ordinary)
+        }
+
+        if self.transpiler.resolver.opts.preserve_symlinks {
+            return None;
+        }
+        let specifier = crate::resolver_jsc::module_key_without_query(specifier);
+        let ordinary_specifier = ordinary_unc_path(specifier);
+        let ordinary_source = ordinary_unc_path(source);
+        let namespace = if ordinary_specifier.is_some() {
+            specifier
+        } else if ordinary_source.is_some() {
+            source
+        } else {
+            return None;
+        };
+
+        // Only recover a realpath error after normal resolution failed. Resolve the
+        // ordinary UNC spelling to distinguish existing modules from missing ones,
+        // including extension and package-main lookup, without changing their keys.
+        let mut candidate = ResolveFunctionResult::default();
+        self._resolve(
+            &mut candidate,
+            ordinary_specifier.as_deref().unwrap_or(specifier),
+            ordinary_source.as_deref().unwrap_or(source),
+            false,
+            is_a_file_path,
+            bun_resolver::GlobalCache::disable,
+        )
+        .ok()?;
+        let mut candidate_path = candidate.path.to_vec();
+        candidate_path.push(0);
+        let stat = bun_sys::stat(bun_core::ZStr::from_slice_with_nul(&candidate_path)).ok()?;
+        if !bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) {
+            return None;
+        }
+
+        // Node's realpath traversal probes this partial namespace root, and its
+        // Windows error path omits the device prefix and trailing separator.
+        let mut root = *b"\\\\?\\UNC\\\0";
+        root[4..7].copy_from_slice(&namespace[4..7]);
+        bun_sys::lstat(bun_core::ZStr::from_slice_with_nul(&root))
+            .err()
+            .map(|err| err.with_path(&namespace[4..7]))
+    }
+
     /// Module-resolution core: resolves `specifier` relative to `source`, with
     /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(value))` is a
     /// resolution failure to be thrown/rejected with `value`.
@@ -5743,7 +5806,21 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
-        if let Err(err) = resolve_result {
+        if let Err(err_) = resolve_result {
+            #[cfg(windows)]
+            if err_ == crate::CrateError::ModuleNotFound && !mode.is_esm() {
+                let message_count = log.msgs.len();
+                let unc_error = jsc_vm.namespaced_unc_resolution_error(
+                    specifier_utf8.slice(),
+                    normalize_source(source_utf8.slice()),
+                    IS_A_FILE_PATH,
+                );
+                log.msgs.truncate(message_count);
+                if let Some(err) = unc_error {
+                    return Ok(Err(crate::SysErrorJsc::to_js(&err, global)));
+                }
+            }
+            let err = err_;
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
             let resolve_msg_index = log
@@ -8043,10 +8120,7 @@ fn run_on_resolve(
     };
     // The importer's key ends in the query it was imported with.
     let importer = importer.to_utf8();
-    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
-        Some(query) => &importer[..query],
-        None => &importer[..],
-    };
+    let importer = crate::resolver_jsc::module_key_without_query(&importer);
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         &bun_core::StringView::from_bytes(if namespace == b"file" { b"" } else { namespace }),
         &bun_core::StringView::borrow_utf8(path),

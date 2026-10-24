@@ -19,6 +19,7 @@ use bun_alloc::ArenaVecExt as _;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
+use css_values::ident::is_reserved_custom_ident;
 use css_values::length::{LengthPercentage, LengthValue};
 use css_values::number::{CSSNumber, CSSNumberFns};
 use css_values::percentage::{DimensionPercentage, Percentage};
@@ -381,28 +382,31 @@ impl FontFamily {
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
 
-                if !val.is_empty()
-                    && !css::parse_utility::parse_string::<GenericFontFamily>(
-                        dest.arena,
-                        val,
-                        GenericFontFamily::parse,
-                    )
-                    .is_ok()
-                {
-                    // AST crate: std.Io.Writer.Allocating on dest.arena (arena) → bumpalo Vec
-                    let mut id = bun_alloc::ArenaVec::<u8>::new_in(dest.arena);
-                    let mut first = true;
-                    for slice in bun_core::strings::split(val, b" ") {
-                        if first {
-                            first = false;
-                        } else {
-                            id.push(b' ');
+                // Like lightningcss, drop a blank at either end: in published CSS it is a typo.
+                let name = val.strip_prefix(b" ").unwrap_or(val);
+                let name = name.strip_suffix(b" ").unwrap_or(name);
+                let mut words = bun_core::strings::split(name, b" ");
+                let first = words.next().unwrap_or(b"");
+                let generic_first = !is_reserved_custom_ident(first)
+                    && <GenericFontFamily as css::EnumProperty>::from_ascii_case_insensitive(first)
+                        .is_some();
+                // Parsed back, a leading generic family is the keyword, and blanks collapse to one.
+                let mut quoted =
+                    first.is_empty() || generic_first || is_reserved_custom_ident(name);
+                if !quoted {
+                    dest.scratchbuf.clear();
+                    let _ = css::serializer::serialize_identifier(first, &mut dest.scratchbuf);
+                    for word in words {
+                        if word.is_empty() {
+                            quoted = true;
+                            break;
                         }
-                        // `ArenaVec<u8>: WriteAll<Error = Infallible>` — cannot fail.
-                        let _ = css::serializer::serialize_identifier(slice, &mut id);
+                        dest.scratchbuf.push(b' ');
+                        let _ = css::serializer::serialize_identifier(word, &mut dest.scratchbuf);
                     }
-                    if id.len() < val.len() + 2 {
-                        return dest.write_str(&id[..]);
+                    let len = dest.scratchbuf.len();
+                    if !quoted && len < name.len() + 2 {
+                        return dest.write_scratchbuf(0..len);
                     }
                 }
                 dest.serialize_string(val)

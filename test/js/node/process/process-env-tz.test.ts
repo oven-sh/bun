@@ -1,6 +1,6 @@
 // TZ takes more than a zone name: the C library also reads ":name" and a POSIX value such as "MSK-3".
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 
 // getTimezoneOffset() for 09:00 local time on 15 January and on 15 July 2026, and the zone that Intl reports.
 type Zone = [january: number, july: number, timeZone: string];
@@ -85,9 +85,10 @@ describe("process.env.TZ = value", () => {
       ["XYZ+0", [0, 0, "UTC"]],
       ["XYZ-0:00:00", [0, 0, "UTC"]],
       ["<-03>3", [180, 180, "Etc/GMT+3"]],
-      // A zone name that looks like a POSIX value is the zone of the name.
-      ["EST5EDT", [300, 240, "America/New_York"]],
     ];
+    // A zone name that looks like a POSIX value is the zone of the name. Not on macOS: the system ICU takes the name
+    // there, and JavaScriptCore then has no zone for it.
+    if (!isMacOS) posixEdges.push(["EST5EDT", [300, 240, "America/New_York"]]);
     // Only the C library reads what follows `std offset` in a POSIX value, and the tzfile at a path. It reads the
     // environment and not an assignment, so those values give the zone of the host. No zone has a name for 7:15,
     // 15 or 13 hours from UTC.

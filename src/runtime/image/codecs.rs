@@ -16,6 +16,7 @@ use core::ptr::NonNull;
 pub(crate) use super::codec_bmp as bmp;
 pub(crate) use super::codec_gif as gif;
 pub(crate) use super::codec_jpeg as jpeg;
+pub(crate) use super::codec_jxl as jxl;
 pub(crate) use super::codec_png as png;
 pub(crate) use super::codec_webp as webp;
 
@@ -112,6 +113,8 @@ pub(crate) enum Format {
     /// Decode-only, first frame. Static LZW decoder everywhere; system
     /// backend tried first (handles disposal/animation we don't).
     Gif,
+    /// Static everywhere: jxl-rs decodes the first frame, libjxl encodes. ImageIO can't write JXL.
+    Jxl,
 }
 
 impl Format {
@@ -133,6 +136,9 @@ impl Format {
         }
         if bytes.len() >= 6 && (&bytes[0..6] == b"GIF87a" || &bytes[0..6] == b"GIF89a") {
             return Some(Format::Gif);
+        }
+        if jxl::sniff(bytes) {
+            return Some(Format::Jxl);
         }
         // ISO BMFF: u32be box-size · "ftyp" · major-brand · minor-version ·
         // compatible-brands… HEIC and AVIF share this container; the brands
@@ -194,6 +200,7 @@ impl Format {
             Format::Bmp => bun_core::zstr!("image/bmp"),
             Format::Tiff => bun_core::zstr!("image/tiff"),
             Format::Gif => bun_core::zstr!("image/gif"),
+            Format::Jxl => bun_core::zstr!("image/jxl"),
         }
     }
 }
@@ -203,7 +210,7 @@ bun_core::comptime_string_map! {
         b"jpg" => Format::Jpeg,  b"jpeg" => Format::Jpeg, b"png" => Format::Png,
         b"webp" => Format::Webp, b"heic" => Format::Heic, b"heif" => Format::Heic,
         b"avif" => Format::Avif, b"bmp" => Format::Bmp,   b"gif" => Format::Gif,
-        b"tif" => Format::Tiff,  b"tiff" => Format::Tiff,
+        b"tif" => Format::Tiff,  b"tiff" => Format::Tiff, b"jxl" => Format::Jxl,
     };
 }
 
@@ -263,6 +270,8 @@ pub(crate) struct DecodeHint {
     /// Final output dims (after rotate). 0 = "no resize, full decode".
     pub(crate) target_w: u32,
     pub(crate) target_h: u32,
+    /// JXL turns upright as it decodes; JPEG's EXIF turn stays a pipeline pass.
+    pub(crate) auto_orient: bool,
 }
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
@@ -271,6 +280,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         Format::Jpeg => jpeg::decode(bytes, max_pixels, hint),
         Format::Png => png::decode(bytes, max_pixels),
         Format::Webp => webp::decode(bytes, max_pixels),
+        Format::Jxl => jxl::decode(bytes, max_pixels, hint.auto_orient),
         // Static codecs cover everything we ship; profiling on M-series showed
         // ImageIO is no faster (AppleJPEG ≈ libjpeg-turbo since Huffman is the
         // bottleneck and isn't vectorisable; spng+zlib-ng beats ImageIO's
@@ -373,6 +383,9 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             w = u32::try_from(cw).expect("int cast");
             h = u32::try_from(ch).expect("int cast");
         }
+        Format::Jxl => {
+            (w, h) = jxl::probe(bytes)?;
+        }
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;
             w = ih.width;
@@ -435,9 +448,9 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
 #[derive(Copy, Clone)]
 pub(crate) struct EncodeOptions {
     pub(crate) format: Format,
-    /// 0–100 for JPEG/WebP-lossy. Ignored for PNG.
+    /// 0–100 for JPEG/WebP-lossy/JXL. Ignored for PNG.
     pub(crate) quality: u8,
-    /// WebP only: emit lossless VP8L instead of lossy VP8.
+    /// WebP and JXL: emit a lossless encode instead of a lossy one.
     pub(crate) lossless: bool,
     /// PNG only: zlib level 0–9. -1 = libspng default.
     pub(crate) compression_level: i8,
@@ -568,6 +581,7 @@ pub(crate) fn encode(
             }
         }
         Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
+        Format::Jxl => jxl::encode(rgba, width, height, opts.quality, opts.lossless, icc),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match
         // libjpeg-turbo's, and it can't honour compressionLevel/palette/

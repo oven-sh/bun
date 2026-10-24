@@ -17,7 +17,7 @@ const HIGHWAY_COMMIT = "2607d3b5b0113992fe84d3848859eae13b3b52c1";
 // The scalable SVE/SVE2 targets and SVE_256, which Highway starts building at clang >= 22, stay
 // off: bun's movemask-style kernels (highway_json/xml/sourcemap.cpp) use BitsFromMask, which only
 // fixed-width targets have. SVE2_128 (Neoverse V2/N2) is fixed-width and stays on, as before.
-const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128";
+export const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128";
 
 export const highway: Dependency = {
   name: "highway",

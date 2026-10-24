@@ -19,6 +19,7 @@ import { highway } from "./highway.ts";
 import { libarchive } from "./libarchive.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
+import { libjxl } from "./libjxl.ts";
 import { libspng } from "./libspng.ts";
 import { libuv } from "./libuv.ts";
 import { libwebp } from "./libwebp.ts";
@@ -30,6 +31,7 @@ import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
 import { rustArgon2 } from "./rust-argon2.ts";
+import { skcms } from "./skcms.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
@@ -60,6 +62,10 @@ export const allDeps: readonly Dependency[] = [
   cares,
   hdrhistogram,
   highway,
+  // libjxl compiles against highway, brotli and skcms headers (fetchDeps),
+  // so after all three. Direct builds, so link order doesn't apply.
+  skcms,
+  libjxl,
   libuv,
   lolhtml,
   rustArgon2,
@@ -88,6 +94,7 @@ export {
   libarchive,
   libdeflate,
   libjpegTurbo,
+  libjxl,
   libspng,
   libuv,
   libwebp,
@@ -99,6 +106,7 @@ export {
   nodejsHeaders,
   picohttpparser,
   rustArgon2,
+  skcms,
   sqlite,
   tinycc,
   webkit,

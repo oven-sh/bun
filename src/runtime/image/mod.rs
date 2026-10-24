@@ -32,6 +32,9 @@ pub(crate) mod codec_bmp;
 #[path = "codec_gif.rs"]
 pub(crate) mod codec_gif;
 
+#[path = "codec_jxl.rs"]
+pub(crate) mod codec_jxl;
+
 #[cfg(target_os = "macos")]
 #[path = "backend_coregraphics.rs"]
 pub(crate) mod backend_coregraphics;

@@ -858,6 +858,7 @@ pub mod store {
                     .as_ref()
                     .map(|c| c.estimated_size())
                     .unwrap_or(0)
+                + self.tagging.as_ref().map_or(0, |t| t.len())
         }
 
         pub fn path(&self) -> &[u8] {

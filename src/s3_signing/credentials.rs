@@ -847,9 +847,6 @@ impl S3Credentials {
             r.acl = headers.acl;
             r.url = authorization;
             r.storage_class = headers.storage_class;
-            if header_key.tagging {
-                r.tagging = Box::<[u8]>::from(tagging.unwrap());
-            }
             return Ok(r);
         }
 

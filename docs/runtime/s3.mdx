@@ -173,8 +173,11 @@ const writer = s3file.writer({ tagging: { state: "staged" } });
 writer.write(data);
 await writer.end();
 
-// A client default tags every object the client writes.
+// A client default tags every object the client writes or presigns for PUT.
 const client = new Bun.S3Client({ tagging: { owner: "app" } });
+
+// An empty record writes without the default tags.
+await client.write("untagged.txt", data, { tagging: {} });
 ```
 
 ### Working with large files (streams)
@@ -278,7 +281,7 @@ await fetch(url, {
 });
 ```
 
-A presigned `GET`, `HEAD` or `DELETE` URL ignores the option.
+A client or file default is signed into a presigned `PUT` URL too. Pass `tagging: {}` to presign without it. A presigned `GET`, `HEAD` or `DELETE` URL ignores the option.
 
 ### Expiring URLs
 

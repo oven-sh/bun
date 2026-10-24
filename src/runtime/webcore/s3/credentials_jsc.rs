@@ -279,13 +279,13 @@ fn contains_newline_or_cr(value: &[u8]) -> bool {
 }
 
 /// Sets `tagging` from `opts.tagging`: a record, URL-encoded here as `k=v&k2=v2`,
-/// or that string. An absent option keeps the default. An empty record clears it.
+/// or that string. An absent option keeps the default. An empty one clears it.
 fn get_tagging(
     opts: JSValue,
     global: &JSGlobalObject,
     tagging: &mut Option<Box<[u8]>>,
 ) -> JsResult<()> {
-    let Some(value) = opts.get_truthy(global, "tagging")? else {
+    let Some(value) = opts.get(global, "tagging")? else {
         return Ok(());
     };
     if value.is_empty_or_undefined_or_null() {
@@ -297,11 +297,11 @@ fn get_tagging(
         // S3 collapses whitespace before it verifies, so such a value can never sign.
         if !bytes.iter().all(|b| b.is_ascii_graphic()) {
             return Err(global.throw_invalid_arguments(format_args!(
-                "tagging must be a URL-encoded query string (\"key=value&key2=value2\") \
-                 without whitespace or control characters"
+                "tagging must be a URL-encoded query string (\"key=value&key2=value2\") of \
+                 printable ASCII without spaces. Pass a record to have Bun encode the tags"
             )));
         }
-        *tagging = Some(Box::<[u8]>::from(bytes));
+        *tagging = (!bytes.is_empty()).then(|| Box::<[u8]>::from(bytes));
         return Ok(());
     }
     let Some(object) = value.get_object() else {

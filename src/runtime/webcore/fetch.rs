@@ -131,20 +131,17 @@ pub(crate) fn s3_credentials_from_env(
     )
 }
 
-/// The `s3` option headers of a `fetch("s3://")` write. A request `Content-*` header wins.
+/// The headers of a `fetch("s3://")` write: the `s3` options, and the `Content-*` request headers.
 fn s3_put_headers<'a>(
     credentials_with_options: &'a s3::S3CredentialsWithOptions,
     headers: Option<&'a Headers>,
 ) -> s3::PutHeaders<'a> {
-    let mut put_headers = credentials_with_options.put_headers(None);
-    if let Some(h) = headers {
-        put_headers.content_type = h.get_content_type().or(put_headers.content_type);
-        put_headers.content_disposition = h
-            .get_content_disposition()
-            .or(put_headers.content_disposition);
-        put_headers.content_encoding = h.get_content_encoding().or(put_headers.content_encoding);
+    s3::PutHeaders {
+        content_type: headers.and_then(Headers::get_content_type),
+        content_disposition: headers.and_then(Headers::get_content_disposition),
+        content_encoding: headers.and_then(Headers::get_content_encoding),
+        ..credentials_with_options.put_headers(None)
     }
-    put_headers
 }
 
 /// `Blob.Any` accessor shim.

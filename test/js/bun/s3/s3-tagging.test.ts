@@ -74,6 +74,18 @@ describe("s3 tagging", () => {
     const c = randomUUIDv7();
     await client.write(c, "hello", { tagging: {} });
     expect(storedTags(c)).toEqual({});
+
+    const d = randomUUIDv7();
+    await client.write(d, "hello", { tagging: "" });
+    expect(storedTags(d)).toEqual({});
+  });
+
+  test("a record value is any string and the string form is ASCII", async () => {
+    const key = randomUUIDv7();
+    const client = new S3Client(options);
+    await client.write(key, "hello", { tagging: { owner: "José" } });
+    expect(storedTags(key)).toEqual({ owner: "José" });
+    expect(() => client.file("k", { tagging: "owner=José" })).toThrow("printable ASCII");
   });
 
   test("writer() sends the tags on the single PUT", async () => {
@@ -86,11 +98,24 @@ describe("s3 tagging", () => {
     expect(requestsFor(key)).toEqual([["PutObject", "state=staged"]]);
   });
 
-  test("writer() sends the tags on CreateMultipartUpload only", async () => {
+  test("writer() without options sends the file's tags on the single PUT", async () => {
     const key = randomUUIDv7();
-    const client = new S3Client({ ...options, tagging: { state: "staged" } });
-    const partSize = 5 * 1024 * 1024;
-    const writer = client.file(key).writer({ partSize });
+    const client = new S3Client(options);
+    const writer = client.file(key, { tagging: { via: "file" } }).writer();
+    writer.write("hello");
+    await writer.end();
+    expect(storedTags(key)).toEqual({ via: "file" });
+    expect(requestsFor(key)).toEqual([["PutObject", "via=file"]]);
+  });
+
+  const partSize = 5 * 1024 * 1024;
+  test.each([
+    ["writer({ partSize })", (client: S3Client, key: string) => client.file(key).writer({ partSize })],
+    ["the client's partSize and a bare writer()", (client: S3Client, key: string) => client.file(key).writer()],
+  ])("a multipart upload with %s sends the client's tags on CreateMultipartUpload only", async (_, open) => {
+    const key = randomUUIDv7();
+    const client = new S3Client({ ...options, partSize, tagging: { state: "staged" } });
+    const writer = open(client, key);
     writer.write(Buffer.alloc(partSize, "a"));
     writer.write(Buffer.alloc(1024, "b"));
     await writer.end();
@@ -151,14 +176,62 @@ describe("s3 tagging", () => {
     expect(storedTags(key)).toEqual({ state: "staged", n: "1" });
   });
 
-  test("a presigned GET ignores a client default tagging", async () => {
+  test("a presigned PUT signs only host and x-amz-tagging when every other option is set", async () => {
+    const key = randomUUIDv7();
+    const client = new S3Client(options);
+    const url = client.presign(key, {
+      method: "PUT",
+      acl: "public-read",
+      storageClass: "STANDARD_IA",
+      requestPayer: true,
+      contentDisposition: "attachment",
+      tagging: { state: "staged" },
+    });
+    expect(new URL(url).searchParams.get("X-Amz-SignedHeaders")).toBe("host;x-amz-tagging");
+    const res = await fetch(url, { method: "PUT", body: "hello", headers: { "x-amz-tagging": "state=staged" } });
+    expect(res.status).toBe(200);
+    expect(storedTags(key)).toEqual({ state: "staged" });
+  });
+
+  test("a presigned GET, HEAD or DELETE ignores tagging", async () => {
     const key = randomUUIDv7();
     const client = new S3Client({ ...options, tagging: { owner: "app" } });
     await client.write(key, "hello");
-    const url = client.presign(key);
-    expect(url).toEndWith("X-Amz-SignedHeaders=host");
-    const res = await fetch(url);
-    expect(await res.text()).toBe("hello");
+
+    const plain = client.presign(key);
+    expect(new URL(plain).searchParams.get("X-Amz-SignedHeaders")).toBe("host");
+    expect(await (await fetch(plain)).text()).toBe("hello");
+
+    const tagging = { state: "staged" };
+    const get = client.presign(key, { method: "GET", tagging });
+    expect(new URL(get).searchParams.get("X-Amz-SignedHeaders")).toBe("host");
+    expect(await (await fetch(get)).text()).toBe("hello");
+
+    const head = client.presign(key, { method: "HEAD", tagging });
+    expect(new URL(head).searchParams.get("X-Amz-SignedHeaders")).toBe("host");
+    expect((await fetch(head, { method: "HEAD" })).status).toBe(200);
+
+    const del = client.presign(key, { method: "DELETE", tagging });
+    expect(new URL(del).searchParams.get("X-Amz-SignedHeaders")).toBe("host");
+    expect((await fetch(del, { method: "DELETE" })).status).toBe(204);
+  });
+
+  test("a client default tagging is signed into a presigned PUT and an empty record opts out", async () => {
+    const key = randomUUIDv7();
+    const client = new S3Client({ ...options, tagging: { owner: "app" } });
+
+    const url = client.presign(key, { method: "PUT" });
+    expect(new URL(url).searchParams.get("X-Amz-SignedHeaders")).toBe("host;x-amz-tagging");
+    expect((await fetch(url, { method: "PUT", body: "hello" })).status).toBe(403);
+    expect((await fetch(url, { method: "PUT", body: "hello", headers: { "x-amz-tagging": "owner=app" } })).status).toBe(
+      200,
+    );
+    expect(storedTags(key)).toEqual({ owner: "app" });
+
+    const untagged = client.presign(key, { method: "PUT", tagging: {} });
+    expect(new URL(untagged).searchParams.get("X-Amz-SignedHeaders")).toBe("host");
+    expect((await fetch(untagged, { method: "PUT", body: "hello" })).status).toBe(200);
+    expect(storedTags(key)).toEqual({});
   });
 
   test("a tagging value larger than the signer's stack buffer signs", async () => {
@@ -205,7 +278,23 @@ describe("s3 write headers carried by the shared path", () => {
     expect(request.headers.get("content-disposition")).toBe("attachment");
   });
 
-  test("writer() sends acl and the file's storageClass", async () => {
+  test("fetch() with a GET sends requestPayer and no write header", async () => {
+    const key = randomUUIDv7();
+    const client = new S3Client(options);
+    await client.write(key, "hello");
+    const res = await fetch(`s3://${key}`, {
+      s3: { ...options, acl: "public-read", storageClass: "STANDARD_IA", requestPayer: true, tagging: { a: "b" } },
+    });
+    expect(await res.text()).toBe("hello");
+    const [, request] = server.requests.filter(r => r.key === key);
+    expect(request.operation).toBe("GetObject");
+    expect(request.headers.get("x-amz-request-payer")).toBe("requester");
+    expect(request.headers.get("x-amz-acl")).toBeNull();
+    expect(request.headers.get("x-amz-storage-class")).toBeNull();
+    expect(request.headers.get("x-amz-tagging")).toBeNull();
+  });
+
+  test("writer() sends acl and the file's acl and storageClass", async () => {
     const client = new S3Client(options);
     const a = randomUUIDv7();
     const writer = client.file(a).writer({ acl: "public-read" });
@@ -215,10 +304,11 @@ describe("s3 write headers carried by the shared path", () => {
     expect(withAcl.headers.get("x-amz-acl")).toBe("public-read");
 
     const b = randomUUIDv7();
-    const plain = client.file(b, { storageClass: "STANDARD_IA" }).writer();
+    const plain = client.file(b, { acl: "private", storageClass: "STANDARD_IA" }).writer();
     plain.write("hello");
     await plain.end();
-    const [withStorageClass] = server.requests.filter(r => r.key === b);
-    expect(withStorageClass.headers.get("x-amz-storage-class")).toBe("STANDARD_IA");
+    const [fromFile] = server.requests.filter(r => r.key === b);
+    expect(fromFile.headers.get("x-amz-acl")).toBe("private");
+    expect(fromFile.headers.get("x-amz-storage-class")).toBe("STANDARD_IA");
   });
 });

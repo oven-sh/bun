@@ -2188,10 +2188,10 @@ where
             return false;
         };
         // No sink: the stream settled in the drain, and its teardown ends the response.
-        let Some(wrapper) = this.sink_mut() else {
+        let Some(sink) = this.sink_mut() else {
             return false;
         };
-        if !wrapper.sink.sends_head_itself() {
+        if !sink.sends_head_itself() {
             resp.commit_head();
         }
         false
@@ -2222,10 +2222,7 @@ where
         let Some(resp) = self.resp.get() else {
             return;
         };
-        if self
-            .sink_mut()
-            .is_some_and(|wrapper| wrapper.sink.sends_head_itself())
-        {
+        if self.sink_mut().is_some_and(|sink| sink.sends_head_itself()) {
             return;
         }
         let state = resp.state();
@@ -2382,7 +2379,7 @@ where
                             if this.is_async() {
                                 // No drain ran above: the body's microtasks are still queued.
                                 this.defer_head_commit();
-                            } else if !response_stream.sink.sends_head_itself() {
+                            } else if !response_stream.sends_head_itself() {
                                 resp.commit_head();
                             }
                         }

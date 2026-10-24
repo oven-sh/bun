@@ -9,7 +9,6 @@ import {
   bunRun,
   tls as COMMON_CERT_,
   isASAN,
-  isMacOS,
   isWindows,
   nodeExe,
   nodeExeAtLeast,
@@ -4633,10 +4632,10 @@ describe.each([
 // the TLS layer hands to the kernel in one write, which has to fit once the peer has read.
 const kernelBuffer = 256 << 10;
 
-// Names the step in place of the test's own timeout. `report` adds what is known at that moment.
-async function step<T>(name: string, promise: Promise<T>, report: () => string = () => "") {
+// Names the step in place of the test's own timeout.
+async function step<T>(name: string, promise: Promise<T>) {
   const late = Promise.withResolvers<never>();
-  const timer = setTimeout(() => late.reject(new Error(`still waiting for ${name}${report()}`)), 60_000);
+  const timer = setTimeout(() => late.reject(new Error(`still waiting for ${name}`)), 60_000);
   try {
     return await Promise.race([promise, late.promise]);
   } finally {
@@ -4644,51 +4643,11 @@ async function step<T>(name: string, promise: Promise<T>, report: () => string =
   }
 }
 
-// A reset is sent once, and a kernel can lose it. One that arrived shows within a few turns of the loop. Otherwise a
-// packet to the port, which is closed by now, draws another.
+// macOS 26 can lose a reset that is sent while data is on its way, from Node.js too. One that arrived shows within a few
+// turns of the loop. Otherwise a byte to the port, which is closed by now, draws another.
 async function pokeUnlessReset(socket: net.Socket) {
   for (let turns = 0; turns < 1000 && !socket.destroyed; turns++) await new Promise(resolve => setImmediate(resolve));
   if (!socket.destroyed) socket.write("?");
-}
-
-// Temporary: one line for each connection that closed.
-function printClose(row: string, leftAt: number, socket: net.Socket, seen: unknown[]) {
-  const ms = Math.round(performance.now() - leftAt);
-  console.log(`closed: ${JSON.stringify({ row, ms, bytesRead: socket.bytesRead, seen })}`);
-}
-
-// Temporary: prints what the relay, the child and the kernel know about a connection that didn't close.
-function stuckConnection(socket: net.Socket, port: number, events: string[], childSaid: string) {
-  const relay = {
-    events,
-    localPort: socket.localPort,
-    bytesRead: socket.bytesRead,
-    bytesWritten: socket.bytesWritten,
-    readableFlowing: socket.readableFlowing,
-    readableLength: socket.readableLength,
-    destroyed: socket.destroyed,
-    paused: socket.isPaused(),
-  };
-  return [
-    "",
-    `server port ${port}, relay ${JSON.stringify(relay)}`,
-    `child said ${JSON.stringify(childSaid)}`,
-    ...kernelSays(new RegExp(`[.:](${port}|${socket.localPort})\\s`), "netstat", "-an", "-p", "tcp"),
-    ...kernelSays(/./, "lsof", "-nP", `-iTCP:${port}`),
-    ...kernelSays(/reset|rst|challenge|low memory/i, "netstat", "-s", "-p", "tcp"),
-  ].join("\n");
-}
-
-// Temporary: the lines of a tool's output that match, on macOS.
-function kernelSays(pattern: RegExp, ...cmd: string[]) {
-  if (!isMacOS) return [];
-  let text: string;
-  try {
-    text = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore", timeout: 3_000 }).stdout.toString();
-  } catch (error) {
-    text = String(error);
-  }
-  return [`${cmd.join(" ")}:`, ...text.split("\n").filter(line => pattern.test(line))];
 }
 
 // The peer stops reading before the server writes, so most of the 4 MB is still unsent when the server leaves.
@@ -4697,7 +4656,7 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
   it.concurrent.each([
     { name: "is reset by stop(true)", leaves: "stop(true)", events: ["error ECONNRESET", "close true"] },
     { name: "ends with a FIN when its Worker ends", leaves: "worker", events: ["end", "close false"] },
-  ])("$name", async ({ name, leaves, events: expected }) => {
+  ])("$name", async ({ leaves, events: expected }) => {
     using dir = tempDir("leaves-with-unsent-data", {
       "server.mjs": `
         import { setSocketOptions } from "bun:internal-for-testing";
@@ -4748,8 +4707,8 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
       written: Promise.withResolvers<string>(),
       left: Promise.withResolvers<string>(),
     };
-    let text = "";
     const stdout = (async () => {
+      let text = "";
       for await (const chunk of proc.stdout) {
         text += Buffer.from(chunk).toString();
         for (const line of text.split("\n").slice(0, -1)) {
@@ -4763,8 +4722,8 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
     const port = Number(await step("the port", said.port.promise));
     const upstream = Promise.withResolvers<net.Socket>();
     const closed = Promise.withResolvers<string[]>();
-    const events: string[] = [];
     await using relay = net.createServer(client => {
+      const events: string[] = [];
       const server = net.connect(port, "127.0.0.1");
       client.on("error", () => {});
       client.on("data", chunk => server.write(chunk));
@@ -4800,17 +4759,12 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
     server.pause();
     client.write("go");
     await step("the server to write", said.written.promise);
-    const leftAt = performance.now();
     proc.stdin.write("leave\n");
     await step("the server to leave", said.left.promise);
     server.resume();
     if (leaves === "stop(true)") await pokeUnlessReset(server);
 
-    const seen = await step("the connection to close", closed.promise, () =>
-      stuckConnection(server, port, events, text),
-    );
-    printClose(name, leftAt, server, seen);
-    expect(seen).toEqual(expected);
+    expect(await step("the connection to close", closed.promise)).toEqual(expected);
     proc.stdin.end();
     const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
@@ -4819,8 +4773,8 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
 });
 
 // A close_notify says that the stream is whole. The server queues megabytes for a peer that isn't reading, then its thread
-// stands still while the peer reads some, so the kernel has room again when the connection is closed. A TLS 1.2 record
-// shows its type to the relay: 23 is data, 21 is an alert.
+// stands still while the peer reads what the kernel holds, so the kernel has room again when the connection is closed. A
+// TLS 1.2 record shows its type to the relay: 23 is data, 21 is an alert.
 describe("a TLS connection with queued data gets no close_notify", () => {
   const threadEnds = { leaves: "process.exit(0)", events: ["end", "close false"], lastRecord: 23 };
   // A reset drops what the kernel hasn't sent yet, so only a peer that reads on would get an alert ahead of it.
@@ -4842,8 +4796,6 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     { server: "Bun.serve() WebSocket", call: "send(data)", ...threadEnds },
     { server: "Bun.listen()", call: "end(data)", ...stopped },
     { server: "Bun.serve()", call: "Response(data)", ...stopped },
-    // Temporary: one socket reset by itself.
-    { server: "Bun.listen()", call: "end(data)", ...stopped, leaves: "socket.terminate()" },
     { server: "Bun.serve()", call: "Response(data)", ...timedOut },
     // Nothing is queued here: the rest of the body doesn't exist yet.
     { server: "Bun.serve()", call: "Response(unfinished)", ...timedOut },
@@ -4973,8 +4925,8 @@ describe("a TLS connection with queued data gets no close_notify", () => {
       queued: Promise.withResolvers<string>(),
       left: Promise.withResolvers<string>(),
     };
-    let text = "";
     const stdout = (async () => {
+      let text = "";
       for await (const chunk of proc.stdout) {
         text += Buffer.from(chunk).toString();
         for (const line of text.split("\n").slice(0, -1)) {
@@ -4989,9 +4941,8 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     const upstream = Promise.withResolvers<net.Socket>();
     const closed = Promise.withResolvers<{ events: string[]; lastRecord: number }>();
     let length = 0;
-    const relayed: string[] = [];
     await using relay = net.createServer(client => {
-      const events = relayed;
+      const events: string[] = [];
       const fromServer: Buffer[] = [];
       const server = net.connect(port, "127.0.0.1");
       client.on("error", () => {});
@@ -5050,17 +5001,12 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     }
     // One write sends for as long as the kernel takes more, which would be all of the data with a peer that reads on.
     if (!("readsOn" in row)) server.pause();
-    const leftAt = performance.now();
     proc.stdin.write("leave\n");
     await step("the server to leave", said.left.promise);
     server.resume();
     if ("readsOn" in row) await pokeUnlessReset(server);
 
-    const seen = await step("the connection to close", closed.promise, () =>
-      stuckConnection(server, port, relayed, text),
-    );
-    printClose(`${kind}, ${call}, ${leaves}`, leftAt, server, [...seen.events, seen.lastRecord]);
-    expect(seen).toEqual({ events, lastRecord });
+    expect(await step("the connection to close", closed.promise)).toEqual({ events, lastRecord });
     if (!client.closed) await step("the client to close", once(client, "close"));
     expect(received).toBeGreaterThan(0);
     expect(received).toBeLessThan(size);
@@ -5145,95 +5091,6 @@ describe("an idle TLS connection of a server in a Worker", () => {
       URL.revokeObjectURL(url);
     }
   });
-});
-
-// Temporary: prints whether the reset of a plain TCP server reaches a peer that reads on. It asserts nothing.
-describe("a reset while data is on its way", () => {
-  const script = `
-    const chunk = Buffer.alloc(1 << 20);
-    let current, reset;
-    if (process.argv[2] === "Bun.listen") {
-      const pump = socket => {
-        while (socket.write(chunk) === chunk.length) {}
-      };
-      const socket = { open: socket => pump((current = socket)), drain: pump, data() {}, error() {} };
-      reset = () => current.terminate();
-      console.log("port " + Bun.listen({ hostname: "127.0.0.1", port: 0, socket }).port + " " + process.version);
-    } else {
-      const pump = socket => {
-        while (!socket.destroyed && socket.write(chunk)) {}
-      };
-      const server = require("node:net").createServer(socket => {
-        current = socket.on("error", () => {}).on("drain", () => pump(socket));
-        pump(socket);
-      });
-      reset = () => current.resetAndDestroy();
-      server.listen(0, "127.0.0.1", () => console.log("port " + server.address().port + " " + process.version));
-    }
-    process.stdin.on("data", () => {
-      reset();
-      console.log("reset");
-    });
-    process.stdin.on("end", () => process.exit(0));
-  `;
-  it.each([
-    { runtime: "node", api: "node:net" },
-    { runtime: "bun", api: "node:net" },
-    { runtime: "bun", api: "Bun.listen" },
-  ])(
-    "$runtime, $api",
-    async ({ runtime, api }) => {
-      const exe = runtime === "node" ? nodeExe() : bunExe();
-      if (!exe) return console.log(`reset: ${JSON.stringify({ runtime, api, skipped: "not found" })}`);
-      using dir = tempDir("reset-while-sending", { "server.cjs": script });
-      await using proc = Bun.spawn({
-        cmd: [exe, "server.cjs", api],
-        env: bunEnv,
-        cwd: String(dir),
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const lines: string[] = [];
-      let wake = () => {};
-      (async () => {
-        for await (const chunk of proc.stdout) {
-          lines.push(...Buffer.from(chunk).toString().trim().split("\n"));
-          wake();
-        }
-      })();
-      const within = (ms: number, done: () => boolean) =>
-        new Promise<boolean>(resolve => {
-          const timer = setTimeout(() => resolve(false), ms);
-          (wake = () => done() && (clearTimeout(timer), resolve(true)))();
-        });
-      await within(30_000, () => lines.length > 0);
-      const [, port, version] = lines.shift()?.split(" ") ?? [];
-      for (let run = 1; run <= 8; run++) {
-        const events: string[] = [];
-        const socket = net.connect(Number(port), "127.0.0.1");
-        socket.on("data", () => wake());
-        socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
-        socket.on("end", () => events.push("end"));
-        socket.on("close", () => (events.push("close"), wake()));
-        await within(30_000, () => socket.bytesRead > 4 << 20);
-        const resetAt = performance.now();
-        proc.stdin.write("reset\n");
-        await within(30_000, () => lines.shift() === "reset");
-        const closed = await within(5_000, () => socket.destroyed);
-        const ms = Math.round(performance.now() - resetAt);
-        const seen = [...events];
-        if (!closed) socket.write("?");
-        const poked = closed ? undefined : await within(5_000, () => socket.destroyed);
-        console.log(
-          `reset: ${JSON.stringify({ runtime, version, api, run, closed, ms, bytesRead: socket.bytesRead, seen, poked, events })}`,
-        );
-        socket.destroy();
-      }
-      proc.stdin.end();
-    },
-    150_000,
-  );
 });
 
 // Runs report(mode, version) of a fixture module in node, for every row at

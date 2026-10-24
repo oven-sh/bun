@@ -472,13 +472,13 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
 
   // Enable fast path
   if (fastPath) {
-    this[kWriteStreamFastPath] = fd != null ? fastWriter : true;
+    this[kWriteStreamFastPath] = fd != null ? fastWriter : fastPath;
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
     this._final = finalFast;
-    if (fd != null) {
-      // Already-open fd (stdio): skip the async _construct round-trip so the
+    if (fd != null || fastPath !== true) {
+      // Already-open sink (stdio): skip the async _construct round-trip so the
       // stream is born constructed, like node's stdio streams (net.Socket /
       // tty.WriteStream), which never allocate construct TickObjects.
       this._construct = undefined;
@@ -831,9 +831,7 @@ function writableFromFileSink(fileSink: any) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
-  const w = new WriteStream("", { $fastPath: true });
-  $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
-  w[kWriteStreamFastPath] = fileSink;
+  const w = new WriteStream("", { $fastPath: fileSink });
   w.path = undefined;
   return w;
 }

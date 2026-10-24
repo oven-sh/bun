@@ -102,7 +102,7 @@ namespace Zig {
 class JSCStackTrace;
 
 // What a microtask checkpoint says to its caller.
-enum class Checkpoint : uint8_t {
+enum class DrainResult : uint8_t {
     Drained = 0,
     // Drained, and a promise that the checkpoint leaves rejected has no handler. The frame that an event
     // loop callback returns to reports it before the next callback: handleRejectedPromisesAfterCallback().
@@ -352,18 +352,18 @@ public:
     JSC::JSObject* processEnvObject();
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
-    Checkpoint drainMicrotasks();
+    DrainResult drainMicrotasks();
     // drainMicrotasks() for the frame that an event loop callback returns to.
-    ALWAYS_INLINE Checkpoint drainMicrotasksAfterCallback()
+    ALWAYS_INLINE DrainResult drainMicrotasksAfterCallback()
     {
         auto result = drainMicrotasks();
-        if (result == Checkpoint::DrainedWithRejections) [[unlikely]]
+        if (result == DrainResult::DrainedWithRejections) [[unlikely]]
             return handleRejectedPromisesAfterCallback();
         return result;
     }
 
     void handleRejectedPromises();
-    Checkpoint handleRejectedPromisesAfterCallback();
+    DrainResult handleRejectedPromisesAfterCallback();
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const

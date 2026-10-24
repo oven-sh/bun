@@ -144,7 +144,7 @@ impl Default for EventLoop {
     }
 }
 
-/// `Zig::Checkpoint` (ZigGlobalObject.h).
+/// `Zig::DrainResult` (ZigGlobalObject.h).
 mod drain_result {
     pub(super) const SUCCESS: u8 = 0;
     /// Drained, and a promise that the checkpoint leaves rejected has no handler.
@@ -520,8 +520,6 @@ impl EventLoop {
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
-    /// [`drain_microtasks`](Self::drain_microtasks) as
-    /// [`drain_microtasks_after_callback_with_global`](Self::drain_microtasks_after_callback_with_global).
     #[inline(always)]
     fn drain_microtasks_after_callback(&mut self) -> Result<(), Stopped> {
         let global = self.global_ref();

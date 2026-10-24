@@ -1,3 +1,5 @@
+import { bunEnv, bunExe } from "harness";
+
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
@@ -456,4 +458,32 @@ test("transferring a port from inside peerClosed()'s flush preserves the remaini
   await done.promise;
   // m1 delivered to the old owner; m2/m3 buffered for the new owner.
   expect(seen).toEqual(["old:m1", "new:m2", "new:m3"]);
+});
+
+// In a subprocess: under `bun test` the error goes to the test runner.
+test.each([
+  ["throws", `throw new Error("check failed");`],
+  ["leaves a rejection", `Promise.reject(new Error("check failed"));`],
+])("a 'message' handler that %s ends the run before the next message", async (_, fail) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { port1, port2 } = new MessageChannel();
+       let delivered = 0;
+       port2.onmessage = () => {
+         if (delivered++ === 0) { ${fail} return; }
+         console.log("the second message was delivered");
+         process.exit(0);
+       };
+       port1.postMessage(1);
+       port1.postMessage(2);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: check failed");
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });

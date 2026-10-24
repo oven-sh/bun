@@ -1763,11 +1763,11 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
 }
 
-/// Cold tail shared by the rejected-entry-point and load-failure paths in
-/// `Run::start`: flag the exit code, run `on_exit`, optionally print the
-/// "unhandled error" sourcemap note + version string, then hard-exit. Hoisted
-/// out (and parked in `.text.unlikely` on linux) so the linker keeps it off the
-/// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
+/// How the run ends once an error that nothing handled is printed (`vm.unhandled_error_exit`),
+/// and the cold tail of the load-failure path in `Run::start`: flag the exit code, run
+/// `on_exit`, optionally print the "unhandled error" sourcemap note + version string, then
+/// hard-exit. Hoisted out (and parked in `.text.unlikely` on linux) so the linker keeps it off
+/// the `.text.hot` fault-around window the `require('fs')` startup path pulls in.
 #[cold]
 #[inline(never)]
 #[cfg_attr(

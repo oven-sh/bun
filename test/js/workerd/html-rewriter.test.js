@@ -1150,31 +1150,43 @@ describe("HTMLRewriter", () => {
     // Fixture note: it has to be a real-await handler on a Response. A sync
     // handler on a string input behaves the same pre- and post-PR, so that
     // shape pins nothing.
-    it("a detached rejection inside a handler reaches unhandledRejection", async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const r = new HTMLRewriter()
-             .on("p", { async element(e) {
-               (async () => { throw new Error("detached"); })();
-               await Bun.sleep(5);
-               e.setInnerContent("ok");
-             } })
-             .transform(new Response("<p>x</p>"));
-           console.log("BODY:" + (await r.text()));`,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+    describe("a detached rejection inside a handler reaches unhandledRejection", () => {
+      async function run(listener) {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `${listener}
+             const r = new HTMLRewriter()
+               .on("p", { async element(e) {
+                 (async () => { throw new Error("detached"); })();
+                 await Bun.sleep(5);
+                 e.setInnerContent("ok");
+               } })
+               .transform(new Response("<p>x</p>"));
+             console.log("BODY:" + (await r.text()));`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.trim(), reported: stderr.includes("detached"), exitCode };
+      }
+
+      // The detached rejection is reported and takes the process down where
+      // it is reported, rather than being captured by transform().
+      it("with no listener", async () => {
+        expect(await run("")).toEqual({ stdout: "", reported: true, exitCode: 1 });
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // The rewrite itself succeeds; the detached rejection is reported and
-      // takes the process down, rather than being captured by transform().
-      expect({ stdout: stdout.trim(), reported: stderr.includes("detached"), exitCode }).toEqual({
-        stdout: "BODY:<p>ok</p>",
-        reported: true,
-        exitCode: 1,
+
+      // A listener takes it, and the rewrite itself succeeds.
+      it("with a listener", async () => {
+        expect(await run(`process.on("unhandledRejection", e => console.log("UNHANDLED:" + e.message));`)).toEqual({
+          stdout: "UNHANDLED:detached\nBODY:<p>ok</p>",
+          reported: false,
+          exitCode: 0,
+        });
       });
     });
 

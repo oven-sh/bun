@@ -2255,8 +2255,8 @@ impl VirtualMachine {
             if unhandled == Unhandled::EndsTheRun
                 && let Some(exit) = self.unhandled_error_exit
             {
-                // `exit` emits 'exit'. A listener that throws re-enters here: as above, without
-                // the recursion guard.
+                // `exit` emits 'exit', and a listener that throws re-enters here. As above: no
+                // handler is running, so the recursion guard goes first.
                 self.is_handling_uncaught_exception = false;
                 exit(self);
             }

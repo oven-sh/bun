@@ -3150,6 +3150,33 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
 // Once a worker's VM has been stopped — by its own process.exit(), from a timer, from a subprocess
 // onExit callback (a foreign trampoline), or by the parent's terminate() landing mid-callback —
 // nothing it had queued may run: not the rest of the callback, not a nextTick, not a microtask.
+// In a subprocess: under `bun test` a rejection goes to the test runner.
+test("an unhandled rejection stops a worker before its next callback", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const worker = new Worker(
+         'const { parentPort } = require("worker_threads");' +
+         'setTimeout(() => { Promise.reject(new Error("check failed")); }, 1);' +
+         'setTimeout(() => parentPort.postMessage("the next timer ran"), 2);' +
+         // Both timers are due when the worker's loop first looks.
+         'const end = performance.now() + 20; while (performance.now() < end);',
+         { eval: true },
+       );
+       worker.on("message", message => console.log("message: " + message));
+       worker.on("error", error => console.log("error: " + error.message));
+       worker.on("exit", () => console.log("exit"));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "error: check failed\nexit\n", stderr: "", exitCode: 0 });
+});
+
 describe("nothing queued runs after the worker's VM stops", () => {
   const cases: [string, string, (w: Worker) => void][] = [
     [

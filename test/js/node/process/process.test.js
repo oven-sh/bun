@@ -998,6 +998,208 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(0);
   });
 
+  // `next` is the step behind the failed check. It is due or queued when the check fails, so a
+  // run that goes on always reaches it, and it exits 0.
+  describe("a fatal error stops the run", () => {
+    const helpers = `
+const fail = () => { throw new Error("check failed"); };
+const reject = () => { Promise.reject(new Error("check failed")); };
+const log = line => fs.writeSync(1, line + "\\n");
+const next = () => { log("the next step ran"); process.exit(0); };
+// The timers armed before this are all due when it returns.
+const spin = () => { const end = performance.now() + 20; while (performance.now() < end); };
+`;
+    const preludes = {
+      mjs: `import fs from "node:fs"; import net from "node:net";` + helpers,
+      cjs: `const fs = require("node:fs"); const net = require("node:net");` + helpers,
+    };
+    async function run(script, { format = "mjs", args = [] } = {}) {
+      using dir = tempDir("fatal-error-stops-the-run", { [`entry.${format}`]: preludes[format] + script });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args, `entry.${format}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    describe.each(["mjs", "cjs"])("in entry.%s", format => {
+      it.each([
+        ["a throw in a timer, with a second timer due", `setTimeout(fail, 1); setTimeout(next, 2); spin();`],
+        ["a rejection in a timer, with a second timer due", `setTimeout(reject, 1); setTimeout(next, 2); spin();`],
+        [
+          "an async function that throws after a timer, with a second timer due",
+          `(async () => { await new Promise(resolve => setTimeout(resolve, 1)); fail(); })(); setTimeout(next, 2); spin();`,
+        ],
+        ["a throw in an immediate, with a second immediate queued", `setImmediate(fail); setImmediate(next);`],
+        ["a rejection in an immediate, with a second immediate queued", `setImmediate(reject); setImmediate(next);`],
+        ["a throw in an immediate, with a timer due", `setImmediate(() => { setTimeout(next, 1); spin(); fail(); });`],
+        [
+          "a rejection in an immediate, with a timer due",
+          `setImmediate(() => { setTimeout(next, 1); spin(); reject(); });`,
+        ],
+        ["a throw in a timer that queued an immediate", `setTimeout(() => { setImmediate(next); fail(); }, 1);`],
+        ["a rejection in a timer that queued an immediate", `setTimeout(() => { setImmediate(next); reject(); }, 1);`],
+        ["a throw in a tick, with a second tick queued", `process.nextTick(fail); process.nextTick(next);`],
+        ["a throw in a microtask, with a second microtask queued", `queueMicrotask(fail); queueMicrotask(next);`],
+        ["a throw in a tick that queued a microtask", `process.nextTick(() => { queueMicrotask(next); fail(); });`],
+        ["a rejection at the top level, with an immediate queued", `reject(); setImmediate(next);`],
+        [
+          "a rejection that only a later timer handles",
+          `let promise;
+           setTimeout(() => { promise = Promise.reject(new Error("check failed")); }, 1);
+           setTimeout(() => { promise.catch(() => {}); next(); }, 2);
+           spin();`,
+        ],
+        [
+          "a throw in a server's 'listening' callback that queued an immediate",
+          `const server = net.createServer().listen(0, "127.0.0.1", () => { server.close(); setImmediate(next); fail(); });`,
+        ],
+        [
+          "a throw in a socket's 'data' listener that queued an immediate",
+          `const server = net.createServer(socket => socket.end("data")).listen(0, "127.0.0.1", () => {
+             net.connect(server.address().port, "127.0.0.1").on("data", () => { server.close(); setImmediate(next); fail(); });
+           });`,
+        ],
+      ])("%s", async (_, script) => {
+        const { stdout, stderr, exitCode } = await run(script, { format });
+        expect(stderr).toContain("error: check failed");
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      });
+    });
+
+    it.each([
+      [
+        "a rejection in a timer, before the timer that lets the entry point go on",
+        `setTimeout(reject, 1);
+         const entry = new Promise(resolve => setTimeout(resolve, 2));
+         spin();
+         await entry;
+         log("the entry point went on");`,
+      ],
+      [
+        "a timer that rejects what the entry point awaits, with a second timer due",
+        `const check = new Promise((resolve, reject) => setTimeout(() => reject(new Error("check failed")), 1));
+         setTimeout(next, 2);
+         spin();
+         await check;`,
+      ],
+      [
+        "an async function that the entry point awaits, with a second timer due",
+        `const check = (async () => { await new Promise(resolve => setTimeout(resolve, 1)); fail(); })();
+         setTimeout(next, 2);
+         spin();
+         await check;`,
+      ],
+    ])("while the entry point awaits: %s", async (_, script) => {
+      const { stdout, stderr, exitCode } = await run(script);
+      expect(stderr).toContain("error: check failed");
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    });
+
+    it("a listener that throws under dispatchEvent() lets its caller finish first", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        `const target = new EventTarget();
+         target.addEventListener("check", fail);
+         target.addEventListener("check", () => log("second listener"));
+         setTimeout(next, 0);
+         target.dispatchEvent(new Event("check"));
+         log("after dispatchEvent");`,
+      );
+      expect(stderr).toContain("error: check failed");
+      expect({ stdout, exitCode }).toEqual({ stdout: "second listener\nafter dispatchEvent\n", exitCode: 1 });
+    });
+
+    it.each([
+      ["a throw", "fail"],
+      ["a rejection", "reject"],
+    ])("'exit' listeners see code 1 after %s, and the code they set wins", async (_, how) => {
+      const { stdout, stderr, exitCode } = await run(
+        `process.on("exit", code => { log("exit " + code + " " + process.exitCode); process.exitCode = 42; });
+         setTimeout(${how}, 1);`,
+      );
+      expect(stderr).toContain("error: check failed");
+      expect({ stdout, exitCode }).toEqual({ stdout: "exit 1 1\n", exitCode: 42 });
+    });
+
+    it.each(["strict", "throw"])("--unhandled-rejections=%s reports the rejection once", async mode => {
+      const { stdout, stderr, exitCode } = await run(`setTimeout(reject, 1); setTimeout(next, 2); spin();`, {
+        args: [`--unhandled-rejections=${mode}`],
+      });
+      expect(stderr.split("error: check failed").length - 1).toBe(1);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    });
+
+    // What handles the error, or only warns about it, lets the run go on to `later`.
+    describe("the run goes on after", () => {
+      const later = `setTimeout(() => log("later"), 2); spin();`;
+      it.each([
+        [
+          "a throw that an 'uncaughtException' listener takes",
+          `process.on("uncaughtException", error => log("listener: " + error.message)); setTimeout(fail, 1);`,
+          "listener: check failed\nlater\n",
+        ],
+        [
+          "a throw that the capture callback takes",
+          `process.setUncaughtExceptionCaptureCallback(error => log("capture: " + error.message)); setTimeout(fail, 1);`,
+          "capture: check failed\nlater\n",
+        ],
+        [
+          "a rejection that an 'unhandledRejection' listener takes",
+          `process.on("unhandledRejection", error => log("listener: " + error.message)); setTimeout(reject, 1);`,
+          "listener: check failed\nlater\n",
+        ],
+        [
+          "a rejection that a microtask of the same callback handles",
+          `setTimeout(() => {
+             const promise = Promise.reject(new Error("check failed"));
+             queueMicrotask(() => promise.catch(error => log("caught: " + error.message)));
+           }, 1);`,
+          "caught: check failed\nlater\n",
+        ],
+        [
+          "a rejection that a tick of the same callback handles",
+          `setTimeout(() => {
+             const promise = Promise.reject(new Error("check failed"));
+             process.nextTick(() => promise.catch(error => log("caught: " + error.message)));
+           }, 1);`,
+          "caught: check failed\nlater\n",
+        ],
+        [
+          "a rejection that the await of a try block takes",
+          `setTimeout(async () => {
+             try { await Promise.reject(new Error("check failed")); } catch (error) { log("caught: " + error.message); }
+           }, 1);`,
+          "caught: check failed\nlater\n",
+        ],
+      ])("%s", async (_, script, expected) => {
+        expect(await run(script + later)).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+      });
+
+      it.each([
+        ["none", 0],
+        ["warn", 0],
+        ["warn-with-error-code", 1],
+      ])("a rejection under --unhandled-rejections=%s", async (mode, code) => {
+        const { stdout, exitCode } = await run(`setTimeout(reject, 1);` + later, {
+          args: [`--unhandled-rejections=${mode}`],
+        });
+        expect({ stdout, exitCode }).toEqual({ stdout: "later\n", exitCode: code });
+      });
+
+      it("reportError()", async () => {
+        const { stdout, stderr, exitCode } = await run(
+          `reportError(new Error("check failed")); reportError(new Error("check failed")); log("after reportError");`,
+        );
+        expect(stderr.split("error: check failed").length - 1).toBe(2);
+        expect({ stdout, exitCode }).toEqual({ stdout: "after reportError\n", exitCode: 1 });
+      });
+    });
+  });
+
   describe("process.onBeforeExit", () => {
     it("emitted", async () => {
       await using proc = Bun.spawn({

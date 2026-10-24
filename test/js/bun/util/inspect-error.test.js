@@ -252,7 +252,8 @@ test("an uncaught error whose message getter throws exits with code 1", async ()
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("throw new E()");
-  expect(stdout).toBe("after\nimmediate\n");
+  // The report ends the run: the immediate does not run.
+  expect(stdout).toBe("after\n");
   expect(exitCode).toBe(1);
 });
 

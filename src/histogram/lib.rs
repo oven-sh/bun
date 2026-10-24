@@ -94,7 +94,7 @@ impl Histogram {
         {
             let index = self.index_of(value);
             if index >= self.counts.len() {
-                self.counts.resize(index + 1, 0);
+                self.grow(index);
             }
             if let Some(slot) = self.counts.get_mut(index) {
                 *slot += n;
@@ -106,6 +106,18 @@ impl Histogram {
         }
         self.exceeds = self.exceeds.saturating_add(n);
         false
+    }
+
+    /// Makes `index`, which is past the end of `counts`, its last slot.
+    #[cold]
+    fn grow(&mut self, index: usize) {
+        let len = self.counts.len();
+        // Twice as much as before, so that rising values do not copy the counts each time, but no slot that no value
+        // can reach.
+        let whole = self.index_of(self.highest_trackable_value) + 1;
+        let capacity = (index + 1).max(len * 2).min(whole);
+        self.counts.reserve_exact(capacity - len);
+        self.counts.resize(index + 1, 0);
     }
 
     /// Counts everything `other` counted, each value as the lowest of its slot in `other`. All of it is refused if the

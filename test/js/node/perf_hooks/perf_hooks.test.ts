@@ -22,6 +22,8 @@ test("the garbage collector knows the size of a histogram", () => {
     expect(estimateShallowMemoryUsageOf(histogram)).toBeLessThan(1024);
     histogram.record(100);
     expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(101 * 8, 101 * 8 + 1024);
+    // Growing in steps does not overshoot the last bucket.
+    for (let value = 2 ** 40; value < Number.MAX_SAFE_INTEGER; value *= 2) histogram.record(value);
     histogram.record(Number.MAX_SAFE_INTEGER);
     expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(buckets * 8, buckets * 8 + 1024);
 

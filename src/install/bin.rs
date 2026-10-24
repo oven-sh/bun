@@ -1080,21 +1080,21 @@ impl<'a> Linker<'a> {
             return;
         };
         let fchmod_regular_file = |fd: Fd| {
-            let _close = sys::CloseOnDrop::new(fd);
-            let Ok(stat) = sys::fstat(fd) else {
-                return;
-            };
-            if sys::kind_from_mode(stat.st_mode as Mode) != sys::FileKind::File {
-                return;
+            if let Ok(stat) = sys::fstat(fd)
+                && sys::kind_from_mode(stat.st_mode as Mode) == sys::FileKind::File
+            {
+                let _ = sys::fchmod(fd, mode);
             }
-            let _ = sys::fchmod(fd, mode);
         };
         let flags = sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NONBLOCK | sys::O::NOCTTY;
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if let Some(rel) = Self::target_rel_to_package_dir(package_dir, abs_target) {
             match Self::open_beneath_package_dir(package_dir, rel, flags) {
-                Beneath::Opened(fd) => return fchmod_regular_file(fd),
+                Beneath::Opened(fd) => {
+                    let _close = sys::CloseOnDrop::new(fd);
+                    return fchmod_regular_file(fd);
+                }
                 Beneath::Escapes => return,
                 Beneath::Unavailable => {}
             }
@@ -1107,6 +1107,7 @@ impl<'a> Linker<'a> {
         let Ok(fd) = sys::open(abs_target, flags, 0) else {
             return;
         };
+        let _close = sys::CloseOnDrop::new(fd);
         // Exact, not case-insensitive: both paths come from the kernel.
         let mut fd_path_buf = path::path_buffer_pool::get();
         let is_inside = sys::get_fd_path(fd, &mut fd_path_buf).is_ok_and(|fd_path| {
@@ -1116,8 +1117,6 @@ impl<'a> Linker<'a> {
         });
         if is_inside {
             fchmod_regular_file(fd);
-        } else {
-            let _ = sys::close(fd);
         }
     }
 

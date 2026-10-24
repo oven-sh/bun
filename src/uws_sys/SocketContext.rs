@@ -188,6 +188,14 @@ impl BunSocketContextOptions {
         Some(ctx)
     }
 
+    /// Whether the context is built from a file, of which `digest()` only knows the path, the size and the time.
+    pub fn reads_files(&self) -> bool {
+        !self.key_file_name.is_null()
+            || !self.cert_file_name.is_null()
+            || !self.dh_params_file_name.is_null()
+            || !self.ca_file_name.is_null()
+    }
+
     /// SHA-256 over every field this struct carries, dereferencing string
     /// pointers so the digest is content-addressed (not pointer-addressed).
     /// Two option structs that build the same `SSL_CTX*` produce the same

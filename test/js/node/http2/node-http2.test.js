@@ -7457,7 +7457,8 @@ describe("session teardown", () => {
   it("a response that waits for trailers doesn't emit 'wantTrailers' when the connection closes", async () => {
     const server = http2.createServer();
     await once(server.listen(0, "127.0.0.1"), "listening");
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    const client = http2.connect("http://127.0.0.1", { createConnection: () => socket });
     client.on("error", () => {});
     try {
       const req = client.request({ ":path": "/", ":method": "POST" });
@@ -7469,7 +7470,7 @@ describe("session teardown", () => {
       stream.write("partial");
       await once(req, "data");
       const closed = once(stream, "close");
-      client.destroy();
+      socket.end();
       await closed;
       expect(events).toEqual(["aborted", "finish"]);
     } finally {
@@ -7530,6 +7531,9 @@ describe("session teardown", () => {
         "a GOAWAY with an error code and a lower id",
         ({ stream }) => stream.session.goaway(NGHTTP2_INTERNAL_ERROR, 0),
       ],
+      ["server", "session.destroy()", ({ stream }) => stream.session.destroy()],
+      ["server", "session.destroy(err)", ({ stream }) => stream.session.destroy(new Error("boom"))],
+      ["server", "a GOAWAY with an error code", ({ client }) => client.goaway(NGHTTP2_INTERNAL_ERROR)],
     ])("sees a destroyed %s session during %s", async (side, _, teardown) => {
       const pair = await openStream();
       try {
@@ -7587,7 +7591,7 @@ describe("session teardown", () => {
         stream.on("aborted", () =>
           seen.resolve({ destroyed: session.destroyed, hasSession: stream.session === session }),
         );
-        (side === "client" ? pair.serverSocket : pair.clientSocket).destroy();
+        (side === "client" ? pair.serverSocket : pair.clientSocket).end();
         expect(await seen.promise).toEqual({ destroyed: false, hasSession: true });
       } finally {
         pair.client.destroy();
@@ -7632,6 +7636,37 @@ describe("session teardown", () => {
         expect(frameTypesFromGoaway(Buffer.concat(received).subarray(http2utils.kClientMagic.length))).toEqual([7]);
       } finally {
         client.destroy();
+        server.close();
+      }
+    });
+
+    it("can't put a frame behind the GOAWAY of server session.destroy()", async () => {
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        const { session } = stream;
+        stream.on("error", () => {});
+        stream.on("aborted", () => callSession(session));
+        session.destroy();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const socket = net.connect(server.address().port, "127.0.0.1");
+      try {
+        const received = [];
+        socket.on("data", chunk => received.push(chunk));
+        socket.on("error", () => {});
+        // :method POST, :scheme http and :path / from the static table, then a literal :authority.
+        const requestBlock = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+        socket.write(
+          Buffer.concat([
+            http2utils.kClientMagic,
+            new http2utils.SettingsFrame().data,
+            new http2utils.HeadersFrame(1, requestBlock, 0, true).data,
+          ]),
+        );
+        await once(socket, "close");
+        expect(frameTypesFromGoaway(Buffer.concat(received))).toEqual([7]);
+      } finally {
+        socket.destroy();
         server.close();
       }
     });

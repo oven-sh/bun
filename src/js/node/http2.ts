@@ -4574,7 +4574,8 @@ class ServerHttp2Session extends Http2Session {
     return this[bunHTTP2Socket]?.connecting === false;
   }
   get destroyed() {
-    return this[bunHTTP2Socket] === null;
+    // Like Node's flag, true before a teardown reaches the first stream. The socket slot is cleared last.
+    return this.#destroying || this[bunHTTP2Socket] === null;
   }
   get encrypted() {
     return this.#encrypted;
@@ -4584,12 +4585,12 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get remoteSettings() {
-    if (this.destroyed || this.connecting) return {};
+    if (this[bunHTTP2Socket] === null || this.connecting) return {};
     return (this.#remoteSettings ??= getDefaultSettings());
   }
 
   get localSettings() {
-    if (this.destroyed || this.connecting) return {};
+    if (this[bunHTTP2Socket] === null || this.connecting) return {};
     return (this.#localSettings ??= getDefaultSettings());
   }
 
@@ -4726,7 +4727,7 @@ class ServerHttp2Session extends Http2Session {
   }
 
   destroy(error: Error | number | undefined = NGHTTP2_NO_ERROR, code?: number) {
-    // Idempotent like Node's. Uses a latch because `destroyed` only flips once the socket detaches below.
+    // Idempotent like Node's. `destroyed` reads this latch.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
     if (this.#destroying) {
       return;
@@ -4764,7 +4765,7 @@ class ServerHttp2Session extends Http2Session {
       this.#closed = true;
       if (socket && (!this[kGoawaySent] || code)) {
         // close() already sent GOAWAY(NO_ERROR), so only an error code is worth a second frame.
-        this.goaway(code || constants.NGHTTP2_NO_ERROR);
+        sendGoaway(this, code || constants.NGHTTP2_NO_ERROR, 0);
       }
       const parser = this.#parser;
       if (parser) {

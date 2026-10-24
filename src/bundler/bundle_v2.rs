@@ -6049,6 +6049,8 @@ pub mod bv2_impl {
                                 if loaders[record.source_index.get() as usize] != Loader::Css {
                                     continue;
                                 }
+                                // A plugin's specifier is still here. The printer reads this path.
+                                record.path = sources[record.source_index.get() as usize].path;
                                 record
                                     .flags
                                     .insert(bun_ast::ImportRecordFlags::IS_DEV_SERVER_STYLESHEET);

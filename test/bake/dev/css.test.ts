@@ -992,9 +992,9 @@ devTest("require() and import() of a CSS module do not give an empty module", {
     await c.expectMessage({ pass: "importer edited", requiredIsEmptyModule: false, importedIsEmptyModule: false });
   },
 });
-// A plugin can give a module for a path that looks like a stylesheet, or for any specifier.
-// Its importer keeps a source index under the dev server, as the importer of a stylesheet does.
-devTest("require() and import() of a module from a plugin give that module", {
+// A record that a plugin answers keeps its source index under the dev server, as the record of a stylesheet does.
+// A plugin can answer with a module for a path that looks like a stylesheet, or with a stylesheet for any specifier.
+devTest("require() and import() of what a plugin resolves or loads", {
   files: {
     "bunfig.toml": `
       [serve.static]
@@ -1002,27 +1002,51 @@ devTest("require() and import() of a module from a plugin give that module", {
     `,
     "plugin.ts": `
       import * as path from "path";
+      const files = { "virtual:tokens": "tokens.ts", "virtual:sheet": "sheet.css", "virtual:card": "card.module.css" };
       export default {
         name: "modules",
         setup(build) {
           build.onLoad({ filter: /theme\\.css$/ }, () => ({ contents: "export const color = 'red';", loader: "js" }));
-          build.onResolve({ filter: /^virtual:tokens$/ }, () => ({ path: path.join(import.meta.dirname, "tokens.ts") }));
+          build.onResolve({ filter: /^virtual:/ }, args => ({ path: path.join(import.meta.dirname, files[args.path]) }));
         },
       };
     `,
     "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
     "theme.css": `.theme { color: red; }`,
     "tokens.ts": `export const size = 4;`,
+    "sheet.css": `.sheet { color: red; }`,
+    "card.module.css": `.card { color: green; }`,
     "app.ts": `
-      const required = [require("./theme.css").color, require("virtual:tokens").size];
+      ${shapeOf}
+      const read = (load: () => unknown) => {
+        try {
+          return shape(load());
+        } catch {
+          return "threw";
+        }
+      };
+      const modules = [require("./theme.css").color, require("virtual:tokens").size];
+      const stylesheet = read(() => require("virtual:sheet"));
+      const cssModule = read(() => require("virtual:card"));
       Promise.all([import("./theme.css"), import("virtual:tokens")]).then(([theme, tokens]) =>
-        console.log({ required, imported: [theme.color, tokens.size] }),
+        console.log({
+          modules,
+          imported: [theme.color, tokens.size],
+          stylesheet,
+          cssModuleIsEmptyModule: cssModule === "object {}",
+        }),
       );
     `,
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage({ required: ["red", 4], imported: ["red", 4] });
+    await c.expectMessage({
+      modules: ["red", 4],
+      imported: ["red", 4],
+      stylesheet: "object {}",
+      cssModuleIsEmptyModule: false,
+    });
+    await c.style(".sheet").color.expect.toBe("red");
   },
 });
 devTest("require() and import() of a stylesheet in a server module", {

@@ -220,6 +220,8 @@ const paramRows: ParamRow[] = [
   ["[[ ${X:-a b} == ab ]] && echo glued", "", false],
   ["true \"${X:?}\" && echo RAN", "", false],
   ["X=1; true \"${X:?}\" && echo RAN", "RAN\n"],
+  ["X=v; ./args.sh ${X:-{}} \"${X:-{}}\" ${X:+{m}}", "<v}><v}><{m}>\n"],
+  ["./args.sh ${X:={}}; ./args.sh \"$X\"", "<{}>\n<{>\n"],
 ];
 
 // `--shell=system` runs bash when there is one. bash 3.2 (macOS) and dash give other results for a few rows.

@@ -4449,6 +4449,32 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_deeply_nested_among(t, stacks, is_source, &[], max_depth)
     }
 
+    /// `isDeeplyNestedType(source, sourceStack, sourceDepth, 10)` for a conditional type. On the way into
+    /// `Exclude<Exclude<.., A>, B>` tsgo compares the instantiations that the constraint of each level makes, which are
+    /// newer level by level. Here a level's constraint is the type inside it, which is lower, so height says nothing
+    /// about which is newer. Every level is pushed after the one around it.
+    fn is_conditional_source_deeply_nested(
+        &mut self,
+        source: TypeId,
+        source_stack: &[(TypeId, u32)],
+    ) -> bool {
+        let max_depth = 10;
+        if source_stack.len() < max_depth {
+            return false;
+        }
+        let identity = self.recursion_identity(source);
+        let mut count = 0;
+        for &(on_stack, _) in source_stack {
+            if self.has_matching_recursion_identity(on_stack, identity) {
+                count += 1;
+                if count >= max_depth {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// `known` has an `OnStack` for each entry of the stack, or is empty.
     fn is_deeply_nested_among(
         &mut self,
@@ -4496,16 +4522,23 @@ impl<'p, 's> Checker<'p, 's> {
     /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
     /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
     /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
-    /// so this is a total order: of two different types, exactly one is newer.
+    /// so of two different types with the same height, exactly one is newer. A lower type is older if `last` is built from
+    /// it: a walk into a finite type meets its parts, and they don't count. A lower type that was pushed later and that
+    /// `last` isn't built from is an instantiation the comparison made after `last`, such as `Exclude<A, 3>` for the
+    /// constraint of `Exclude<Exclude<A, 2>, 3>`.
     fn is_at_least_as_new(&self, t: TypeId, last: TypeId, stacks: [&[(TypeId, u32)]; 2]) -> bool {
         let pushed = |t: TypeId| {
             let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
             stacks.into_iter().filter_map(first).min()
         };
         t == last
-            || (self.types().nesting_order(t, last))
-                .then_with(|| pushed(t).cmp(&pushed(last)))
-                .is_ge()
+            || match self.types().nesting_order(t, last) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Equal => pushed(t) >= pushed(last),
+                std::cmp::Ordering::Less => {
+                    pushed(t) > pushed(last) && !self.types().is_built_from(last, t)
+                }
+            }
     }
 
     /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for
@@ -5588,8 +5621,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { .. } => {
-                if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10)
-                {
+                if self.is_conditional_source_deeply_nested(source, &r.source_stack) {
                     return Ternary::MAYBE;
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {

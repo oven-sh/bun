@@ -107,3 +107,10 @@ function turn(i: number): number {
   for (const rule of rules) if (rule.test(label)) hits++;
   return hits;
 }
+//// an-alternative-tried-at-the-start-alone-matches-beside-one-that-holds-a-text
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("^(?:.*/)?src/.*\\.tsx?$|never-built" + nothing);
+const subjects: string[] = ["packages/app/src/components/button/primary/index.test.tsx" + nothing, "src/index.ts" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}

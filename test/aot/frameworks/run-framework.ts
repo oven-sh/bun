@@ -62,8 +62,12 @@ const env = {
   NG_CLI_ANALYTICS: "false",
 };
 
-async function run(cwd: string, cmd: string[]) {
-  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, env);
+// The frameworks' own build tools have pools of native threads, a thread for each processor, and end a whole pool at once.
+// glibc keeps the stacks of ended threads mapped up to this many bytes; its default has room for twenty of them.
+const buildToolEnv = { ...env, GLIBC_TUNABLES: "glibc.pthread.stack_cache_size=1073741824" };
+
+async function run(cwd: string, cmd: string[], variables: typeof env = env) {
+  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, variables);
   return { output: exitCode === 0 ? "" : stdout + stderr, exitCode };
 }
 
@@ -185,8 +189,8 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
       mkdirSync(join(site, "node_modules", "@types"), { recursive: true });
       symlinkSync(join(import.meta.dir, "..", "..", "..", "packages", "bun-types"), join(site, "node_modules", "@types", "bun"));
 
-      if (name === "sveltekit") expect(await run(site, [bunExe(), "--bun", "node_modules/@sveltejs/kit/svelte-kit.js", "sync"])).toEqual({ output: "", exitCode: 0 });
-      expect(await run(site, [...(framework.isBuiltByNode ? [nodeExe()!] : [bunExe(), "--bun"]), ...framework.build])).toEqual({ output: "", exitCode: 0 });
+      if (name === "sveltekit") expect(await run(site, [bunExe(), "--bun", "node_modules/@sveltejs/kit/svelte-kit.js", "sync"], buildToolEnv)).toEqual({ output: "", exitCode: 0 });
+      expect(await run(site, [...(framework.isBuiltByNode ? [nodeExe()!] : [bunExe(), "--bun"]), ...framework.build], buildToolEnv)).toEqual({ output: "", exitCode: 0 });
       for (const [from, to] of framework.copiedAfterTheBuild ?? []) cpSync(join(site, from), join(site, to), { recursive: true });
 
       const directory = join(site, framework.directory);

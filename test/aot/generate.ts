@@ -121,6 +121,7 @@ export const generators: Record<string, () => Generator> = {
   }),
   "classes-below-built-in-classes": () => require("./generate/classes-below-built-in-classes"),
   "closed-world": () => require("./generate/closed-world"),
+  "code-that-built-ins-run": () => require("./generate/code-that-built-ins-run"),
   "copies-born-in-their-holders": () => require("./programs/generate-copies-born-in-their-holders"),
   "copies-of-heirs": () => require("./generate/copies-of-heirs"),
   "data-from-outside": () => require("./generate/data-from-outside"),

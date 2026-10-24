@@ -539,7 +539,7 @@ group("other names for Bun and process", () => {
     ["await import() is in a function", `async function paint() { const { color } = await import("bun"); return color("red", "hex"); }\nconsole.log(await paint());\nexport {};`],
     ["the promise of import() is asked for it", `import("bun").then((B: any) => console.log(B.color("red", "hex")));`],
     ["the promise of import() is in a constant", `const promise = import("bun");\nconsole.log((await promise).color("red", "hex"));\nexport {};`],
-    gap(notYet.bunOutOfSight, ["the promise of import() is passed on", `const [B] = await Promise.all([import("bun")]);\n${paints}\nexport {};`]),
+    ["the promise of import() is passed on", `const [B] = await Promise.all([import("bun")]);\n${paints}\nexport {};`],
     ["it is the default of a parameter", `function paint(b: any = Bun) { return b.color("red", "hex"); }\nconsole.log(paint());`],
     ["it is the default of a parameter that is also a property of the class", `class Painter { constructor(public b: any = Bun) {} }\nconsole.log(new Painter().b.color("red", "hex"));`],
     ["module.require loads it", `console.log(module.require("bun").color("red", "hex"));`],

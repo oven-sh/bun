@@ -67,9 +67,6 @@ const UNKNOWN_LOADS: &[(Setup, &str)] = &[
     (SCRIPT, "f(module.require);"),
     (SCRIPT, "f(module);"),
     (SCRIPT, "require.extensions[name];"),
-    (PROGRAM, "new Worker(name);"),
-    (PROGRAM, "new Worker('./worker.ts');"),
-    (PROGRAM, "f(Worker);"),
     (PROGRAM, "f(process);"),
     (PROGRAM, "process[name];"),
     (PROGRAM, "Bun.plugin(plugin);"),
@@ -141,6 +138,13 @@ const UNKNOWN_LOADS: &[(Setup, &str)] = &[
     (SCRIPT, "f(require('node:module'));"),
 ];
 
+// A Worker has a global of its own and starts with an entry point of the build, which begins a program of its own.
+const WORKERS: &[(Setup, &str)] = &[
+    (PROGRAM, "new Worker(name);"),
+    (PROGRAM, "new Worker('./worker.ts');"),
+    (PROGRAM, "f(Worker);"),
+];
+
 // Machine code is native code like Bun's own. It brings no module that the compiler has not seen.
 const MACHINE_CODE_LOADS: &[(Setup, &str)] = &[
     (PROGRAM, "process.dlopen(target, name);"),
@@ -174,6 +178,15 @@ fn calling_or_exposing_a_loader_loads_unknown_modules() {
     for &(setup, source) in UNKNOWN_LOADS {
         with_case(setup, source, |case| {
             assert!(case.resolved.loads_unknown_modules(), "{source}");
+        });
+    }
+}
+
+#[test]
+fn starting_a_worker_loads_nothing_unknown() {
+    for &(setup, source) in WORKERS {
+        with_case(setup, source, |case| {
+            assert!(!case.resolved.loads_unknown_modules(), "{source}");
         });
     }
 }

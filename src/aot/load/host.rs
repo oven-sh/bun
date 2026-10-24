@@ -517,6 +517,10 @@ impl CodeHost for LoadHost<'_> {
             }
             PluginResolution::NotHandled => {}
         }
+        let keys = &self.input.options.load.in_memory_file_keys;
+        if let Ok(index) = keys.binary_search_by(|(key, _)| key.as_slice().cmp(request.specifier)) {
+            return HostResolution::Path(from_native(&keys[index].1));
+        }
         let externals = &self.input.options.load.externals;
         let directory = to_native(request.directory);
         match is_import && is_external(externals, request.specifier, directory) {

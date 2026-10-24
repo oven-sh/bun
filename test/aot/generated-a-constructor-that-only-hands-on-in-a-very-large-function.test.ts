@@ -30,9 +30,9 @@ generated(
 );
 
 // The trace of the TypeError that a native method throws for a frozen list starts with the frame of that method.
-const frozen = (method: string) => `
+const frozen = (method: string, list = "Object.freeze([1, 2])") => `
 const framesOf = error => error.stack.split("\\n").slice(1).map(line => /at (\\S+)/.exec(line)?.[1]).filter(name => name && !name.includes("/") && !name.includes(":")).join(" < ");
-const frozen = Object.freeze([1, 2]);
+const frozen = ${list};
 function mine(list, x) { return list.${method}(x); }
 function run(f) { try { f(frozen, 1); } catch (error) { console.log(error.constructor.name, framesOf(error)); } }
 run(mine);
@@ -44,7 +44,23 @@ generated(
     name: `${method}.`,
     isAlwaysRun: method === "push" || method === "pop",
     isOnlyCompiled: true as const,
-    failsToday: method === "push" ? "the frame of push is missing" : undefined,
     make: () => ({ file: "main.js", text: frozen(method) }),
+  })),
+);
+generated(
+  "the frames of push where a list refuses one more element",
+  Object.entries({
+    "sealed": "Object.seal([1, 2])",
+    "not extensible": "Object.preventExtensions([1, 2])",
+    "of a fixed length": 'Object.defineProperty([1, 2], "length", { writable: false })',
+    "frozen, of numbers that are no integers": "Object.freeze([1.5, 2.5])",
+    "frozen, of texts": 'Object.freeze(["a", "b"])',
+    "frozen, empty": "Object.freeze([])",
+    "frozen, with a hole": "Object.freeze([1, , 3])",
+  }).map(([name, list]) => ({
+    name: `${name}.`,
+    isAlwaysRun: true,
+    isOnlyCompiled: true as const,
+    make: () => ({ file: "main.js", text: frozen("push", list) }),
   })),
 );

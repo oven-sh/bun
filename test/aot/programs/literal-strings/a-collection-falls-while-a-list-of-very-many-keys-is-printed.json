@@ -1,6 +1,5 @@
 {
   "env": {
     "BUN_JSC_validateAOTRuntime": "1"
-  },
-  "skipWithASAN": "TODO: a build with assertions asks for an exception check between two calls of JSOrderedHashTable::add"
+  }
 }

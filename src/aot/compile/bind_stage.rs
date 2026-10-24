@@ -127,7 +127,9 @@ impl Build<'_> {
                 let left_out = left_out.in_other_program(application.graph.to_local);
                 graph.adopt_plan(&application.graph);
                 graph.leave_out_files(&left_out.files, &in_parallel);
-                graph.limit_exports(|file, export| left_out.find_export_use(file, export));
+                graph.limit_exports(&in_parallel, &|file, export| {
+                    left_out.find_export_use(file, export)
+                });
                 left_out
             }
             (ProjectId::Application, None) if graph.errors().is_empty() => {
@@ -140,7 +142,9 @@ impl Build<'_> {
                 let (left_out, reached) = find_left_out_code(&input, &in_parallel);
                 finish_modules(&mut graph, &reached);
                 graph.leave_out_files(&left_out.files, &in_parallel);
-                graph.limit_exports(|file, export| left_out.find_export_use(file, export));
+                graph.limit_exports(&in_parallel, &|file, export| {
+                    left_out.find_export_use(file, export)
+                });
                 left_out
             }
             (ProjectId::Application | ProjectId::Runtime, None) => LeftOutCode::default(),

@@ -74,6 +74,12 @@ pub fn runs_in_place() -> bool {
     compiled_program().is_some_and(|program| program.preserves_source_paths)
 }
 
+/// BunCompiledModules.cpp
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__compiledProgramRunsInPlace() -> bool {
+    runs_in_place()
+}
+
 fn bytes_of(image: &[u8]) -> Bytes {
     Bytes {
         ptr: image.as_ptr(),

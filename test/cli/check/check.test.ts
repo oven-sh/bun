@@ -4114,6 +4114,39 @@ export { n, area, u };
   });
 
   describe("cases not covered by TypeScript's test suite", () => {
+    // From ten levels of one conditional type on, tsc takes the source for a type that expands without an end and says maybe.
+    test.each([
+      [1, 1],
+      [9, 1],
+      [10, 0],
+      [11, 0],
+      [30, 0],
+    ])("a source of %i conditional types inside each other has %i errors", async (levels, errors) => {
+      const call = Array.from({ length: levels }).reduce<string>(
+        (inner, _, i) => `provide<A${i}>()(${inner})`,
+        "input",
+      );
+      using dir = tempDir("bun-check", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+        "main.ts": `interface E<R> { readonly r: () => R }
+declare function provide<S>(): <R>(self: E<R>) => E<Exclude<R, S>>;
+interface Scope { readonly scope: 1 }
+declare function take(e: E<Scope>): void;
+${Array.from({ length: levels }, (_, i) => `interface A${i} { readonly a${i}: 1 }\n`).join("")}export function add<R>(input: E<R | Scope>) {
+  take(${call});
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(
+        stdout
+          .split("\n")
+          .filter(line => line.includes("error TS"))
+          .map(line => /TS\d+/.exec(line)![0]),
+      ).toEqual(Array.from({ length: errors }, () => "TS2345"));
+      expect(exitCode).toBe(errors);
+    });
+
     // `sortByBestName` orders two modules by their specifiers, and a module and a namespace by their positions. With
     // modules on both sides of the namespace, that ordering is cyclic.
     test.each([9, 11, 40])(
@@ -24944,7 +24977,7 @@ describe.concurrent("--check", () => {
       Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "typescript-go", "bundle.zst"))),
     );
     const entries: [path: string, start: number, length: number][] = [];
-    for (let at = 0; at < bundle.length;) {
+    for (let at = 0; at < bundle.length; ) {
       const end = bundle.indexOf(10, at);
       const [, path, length] = /^=== (.*) (\d+)$/.exec(bundle.toString("latin1", at, end))!;
       entries.push([path, end + 1, +length]);

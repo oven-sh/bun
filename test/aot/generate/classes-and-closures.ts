@@ -642,6 +642,42 @@ console.log(churn());
 console.log(sumOf(r), JSON.stringify(a).length, JSON.stringify(r).length);
 `,
     ),
+    "objects-of-about-4095-functions-over-the-variables-around-them.js": text(
+      `// Generated: object literals of 4,094, 4,095 and 4,200 functions that read a variable of the function around them, which runs more than once.
+function makeMethods(start) {
+    let captured = start;
+    const object = {`,
+      [4094, n => `        member${n}() { return captured + ${n}; },`],
+      `    };
+    captured++;
+    return object;
+}
+function makeFunctions(start) {
+    let captured = start;
+    const object = {`,
+      [4095, n => `        member${n}: function () { return captured + ${n}; },`],
+      `    };
+    captured++;
+    return object;
+}
+function makeArrowFunctions(start) {
+    let captured = start;
+    const object = {`,
+      [4200, n => `        member${n}: () => captured + ${n},`],
+      `    };
+    captured++;
+    return object;
+}
+for (const start of [1, 10]) {
+    const methods = makeMethods(start);
+    console.log(Object.keys(methods).length, methods.member0(), methods.member2047(), methods.member4093());
+    const functions = makeFunctions(start);
+    console.log(Object.keys(functions).length, functions.member0(), functions.member2047(), functions.member4094());
+    const arrowFunctions = makeArrowFunctions(start);
+    console.log(Object.keys(arrowFunctions).length, arrowFunctions.member0(), arrowFunctions.member2047(), arrowFunctions.member4199());
+}
+`,
+    ),
     "more-guarded-members-than-one-word-of-bits.js": text(
       `const stored = [];
 function Record(seed) {`,

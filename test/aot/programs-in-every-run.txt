@@ -1,5 +1,9 @@
+arrays/a-copy-of-a-local-array-is-walked-by-callbacks-that-change-the-array
 arrays/a-list-is-filled-from-the-entries-of-a-map-an-array-or-a-set
 arrays/a-list-that-is-a-literal-or-is-filled-is-walked-by-two-loops
+arrays/a-list-written-three-hundred-deep-is-taken-apart-by-flat
+arrays/a-list-written-three-hundred-deep-is-walked-by-a-function-that-calls-itself
+arrays/a-list-written-three-hundred-deep-is-walked-by-a-loop
 arrays/a-literal-of-a-number-read-out-of-an-object-that-took-a-value-whose-check-may-fail
 arrays/a-local-table-of-small-counts-is-read-where-nothing-asks-for-undefined
 arrays/a-long-list-of-fractions-grows-behind-a-shift-an-unshift-and-a-splice
@@ -76,6 +80,7 @@ async-and-generators/suspended-generator-keeps-alive
 async-and-generators/suspended-generator-partial-reads
 async-and-generators/sync-iterables-delegated-to-and-awaited-over
 async-and-generators/the-async-context-follows-awaits-timers-ticks-and-promises
+async-and-generators/the-parameters-of-a-generator-function-are-evaluated-at-the-call
 async-and-generators/what-a-yield-answers-is-used-and-its-operand-rejects
 async-and-generators/what-an-async-generator-throws-reaches-the-catch-around-the-loop
 built-ins-alone/array-from-over-maps-sets-and-their-iterators

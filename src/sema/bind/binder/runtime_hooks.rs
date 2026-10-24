@@ -58,11 +58,16 @@ impl Binder<'_, '_> {
         self.runtime_hooks.private_environments.pop();
     }
 
+    #[inline(always)]
     pub(super) fn note_private_reference(&mut self, reference: ExprId) {
+        if self.options.runtime.is_some() {
+            self.note_private_reference_for_runtime(reference);
+        }
+    }
+
+    fn note_private_reference_for_runtime(&mut self, reference: ExprId) {
         let f = self.f;
-        if self.options.runtime.is_none()
-            || !f.expr_flags(reference).contains(ExprFlags::PRIVATE_NAME)
-        {
+        if !f.expr_flags(reference).contains(ExprFlags::PRIVATE_NAME) {
             return;
         }
         let (ExprKind::PrivateIdentifier(name) | ExprKind::Dot { name, .. }) = f[reference].kind

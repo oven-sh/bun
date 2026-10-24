@@ -391,6 +391,90 @@ export const shapes: Shape[] = [
         ` let thrown = 0; for (const f of table) { try { f(null); } catch { thrown++; } } console.log(thrown);\n`,
     }),
   },
+  {
+    name: "constant objects in one array literal",
+    counted: "objects",
+    size: 10000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}const table = [\n${lines(size, index => `  { id: ${index}, name: "n${index}", tags: ["a", "b${index % 5}"] },`)}];\nconsole.log(table.length);\n`,
+    }),
+  },
+  {
+    name: "pairs in the array literal that a Map is made of",
+    counted: "pairs",
+    size: 20000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `const table = new Map([\n${lines(size, index => `  ["key${index}", ${index}],`)}]);\nconsole.log(table.size);\n`,
+    }),
+  },
+  {
+    name: "objects in the array of a JSON module",
+    counted: "objects",
+    size: 10000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(withoutLibraryTypes).compilerOptions, resolveJsonModule: true } }) + "\n",
+      "data.json": `[${upTo(size, index => `{ "id": ${index}, "name": "n${index}", "tags": ["a", "b${index % 5}"] }`).join(",\n")}]\n`,
+      "main.ts": `${declaredConsole}import data from "./data.json";\nconsole.log(data.length);\n`,
+    }),
+  },
+  {
+    name: "objects with a computed member in one array literal",
+    counted: "objects",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function make(k) {\n  return [\n${lines(size, index => `    { id: ${index} + k, name: "n${index}" },`)}  ];\n}\nconsole.log(make(1).length);\n`,
+    }),
+  },
+  {
+    name: "states of one switch in a loop",
+    counted: "states",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function run(k) {\n  let state = 0, sum = 0;\n  for (;;) {\n    switch (state) {\n` +
+        lines(size, index =>
+          index % 3
+            ? `      case ${index}: sum += k + ${index}; state = ${index + 1}; continue;`
+            : `      case ${index}: sum ^= ${index}; state = k > 0 ? ${index + 1} : ${Math.min(index + 2, size)}; break;`,
+        ) +
+        `      default: return sum;\n    }\n  }\n}\nconsole.log(run(1), run(-1));\n`,
+    }),
+  },
+  {
+    name: "names that one function reads from an object nobody knows",
+    counted: "names",
+    size: 2500,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function f(o) {\n  let sum = 0;\n${lines(size, index => `  sum += o.name${index} | 0;`)}  return sum;\n}\nconsole.log(f({ name1: 4 }));\n`,
+    }),
+  },
+  {
+    name: "floored divisions that each take the result of the one before",
+    counted: "divisions",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function f(a) {\n  let x = a | 0;\n${lines(size, () => `  x = Math.floor(x / 3) + 7;`)}  return x;\n}\nconsole.log(f(1000000));\n`,
+    }),
+  },
+  {
+    name: "functions in a ring that hand a new object on",
+    counted: "functions",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js": size
+        ? `${lines(size, index => `function f${index}(x, d) { return d <= 0 ? x : f${(index + 1) % size}({ v: x.v + ${index} }, d - 1); }`)}console.log(f0({ v: 1 }, 50).v);\n`
+        : "console.log(0);\n",
+    }),
+  },
 ];
 
 if (import.meta.main) {

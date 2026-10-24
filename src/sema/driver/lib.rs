@@ -497,6 +497,8 @@ struct JoinableRegion {
     region: *const Region<'static>,
     /// `JoinableRegion::IS_CLOSED`, plus `JoinableRegion::ONE_HELPER` for each helper that is at work.
     state: AtomicU32,
+    /// How many more helpers may be asked for.
+    helpers_left: AtomicUsize,
 }
 
 // SAFETY: `region` is only read, by `help`, and a `Region` is shared between threads by design.
@@ -508,7 +510,55 @@ impl JoinableRegion {
     const IS_CLOSED: u32 = 1;
     const ONE_HELPER: u32 = 2;
 
-    fn help(&self) {
+    /// Asks the pool threads that have nothing to do right now to help, as far as there is a run for each.
+    ///
+    /// # Safety
+    /// `region` is valid: the caller started the region, or `state` counts it.
+    unsafe fn ask_idle_threads(self: &Arc<JoinableRegion>) {
+        use bun_threading::thread_pool::{Batch, Node, Task};
+        #[repr(C)]
+        struct Helper {
+            task: Task,
+            region: Arc<JoinableRegion>,
+        }
+        unsafe fn help(task: *mut Task) {
+            // SAFETY: the first field of a `Helper` allocated below, which is queued once.
+            let helper = unsafe { bun_core::heap::take(task.cast::<Helper>()) };
+            helper.region.help();
+        }
+        if self.helpers_left.load(Ordering::Relaxed) == 0 {
+            return;
+        }
+        let pool = region_pool();
+        // SAFETY: the caller's.
+        let runs_left = unsafe { (*self.region).runs_left() };
+        let wanted = pool.available_threads().min(runs_left.saturating_sub(1));
+        if wanted == 0 {
+            return;
+        }
+        let take = |left: usize| Some(left - wanted.min(left));
+        let left = self
+            .helpers_left
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, take)
+            .unwrap_or(0);
+        let helpers = wanted.min(left);
+        if helpers == 0 {
+            return;
+        }
+        let mut batch = Batch::default();
+        for _ in 0..helpers {
+            let task = Task {
+                node: Node::default(),
+                callback: help,
+            };
+            let region = Arc::clone(self);
+            let helper = bun_core::heap::into_raw(Box::new(Helper { task, region }));
+            batch.push(Batch::from(helper.cast::<Task>()));
+        }
+        pool.schedule(batch);
+    }
+
+    fn help(self: &Arc<JoinableRegion>) {
         let joined = self
             .state
             .try_update(Ordering::Acquire, Ordering::Relaxed, |state| {
@@ -519,7 +569,7 @@ impl JoinableRegion {
             return;
         }
         // SAFETY: `state` counts this thread.
-        unsafe { (*self.region).work_off() };
+        unsafe { (*self.region).work_off_asking(&mut || self.ask_idle_threads()) };
         self.state
             .fetch_or(JoinableRegion::IS_CLOSED, Ordering::Relaxed);
         let before = self
@@ -544,41 +594,50 @@ impl JoinableRegion {
 }
 
 impl Region<'_> {
-    /// `work_off` on the calling thread, which at most `helpers` pool threads with nothing else to do join.
+    /// `work_off` on the calling thread, which at most `helpers` pool threads with nothing else to do join: those that
+    /// are idle now, and those that become idle while there are runs left.
     fn work_off_with_idle_threads(&self, helpers: usize) {
-        use bun_threading::thread_pool::{Batch, Node, Task};
-        #[repr(C)]
-        struct Helper {
-            task: Task,
-            region: Arc<JoinableRegion>,
-        }
-        unsafe fn help(task: *mut Task) {
-            // SAFETY: the first field of a `Helper` allocated below, which is queued once.
-            let helper = unsafe { bun_core::heap::take(task.cast::<Helper>()) };
-            helper.region.help();
-        }
-        let pool = region_pool();
-        let helpers = helpers.min(pool.available_threads());
         if helpers == 0 {
             return self.work_off();
         }
-        let region = Arc::new(JoinableRegion {
-            region: std::ptr::from_ref(self).cast::<Region<'static>>(),
-            state: AtomicU32::new(0),
+        let mut joinable: Option<Arc<JoinableRegion>> = None;
+        self.work_off_asking(&mut || {
+            if joinable.is_none() && region_pool().available_threads() == 0 {
+                return;
+            }
+            let joinable = joinable.get_or_insert_with(|| {
+                Arc::new(JoinableRegion {
+                    region: std::ptr::from_ref(self).cast::<Region<'static>>(),
+                    state: AtomicU32::new(0),
+                    helpers_left: AtomicUsize::new(helpers),
+                })
+            });
+            // SAFETY: this thread started the region.
+            unsafe { joinable.ask_idle_threads() };
         });
-        let mut batch = Batch::default();
-        for _ in 0..helpers {
-            let task = Task {
-                node: Node::default(),
-                callback: help,
-            };
-            let region = Arc::clone(&region);
-            let helper = bun_core::heap::into_raw(Box::new(Helper { task, region }));
-            batch.push(Batch::from(helper.cast::<Task>()));
+        if let Some(joinable) = joinable {
+            joinable.close_and_wait_for_helpers();
         }
-        pool.schedule(batch);
-        self.work_off();
-        region.close_and_wait_for_helpers();
+    }
+
+    fn runs_left(&self) -> usize {
+        let claimed = self.next.load(Ordering::Relaxed);
+        self.count.saturating_sub(claimed).div_ceil(self.run)
+    }
+
+    /// `work_off` that calls `ask` before each run.
+    fn work_off_asking(&self, ask: &mut dyn FnMut()) {
+        let _lent = self.caches.lend();
+        loop {
+            ask();
+            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
+            if from >= self.count {
+                break;
+            }
+            for i in from..(from + self.run).min(self.count) {
+                (self.work)(i);
+            }
+        }
     }
 
     /// `work_off`, for a thread that already has its caches. Before each run it looks for spare threads to help.

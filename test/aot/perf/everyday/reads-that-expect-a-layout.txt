@@ -43,3 +43,22 @@ function turn(i: number): number {
   const tree: Tree = (globalThis as any).tree;
   return ((tree.branch.leaf.size as number) + i) | 0;
 }
+//// rules-whose-one-property-is-defined-after-birth-beside-a-payload-with-a-layout
+type Payload = { value: number; issues: number[]; failed: boolean };
+function Rule(this: any, limit: number) {
+  Object.defineProperty(this, "inner", { value: { limit, check(payload: Payload) { if (payload.value > limit) payload.issues.push(limit); } }, enumerable: false });
+}
+(globalThis as any).placeholderRule = { inner: { limit: 0, check(payload: Payload) {} } };
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "rules"] = [new (Rule as any)(5), new (Rule as any)(6), new (Rule as any)(7), new (Rule as any)(8)];
+function runRules(payload: any, rules: any) {
+  for (const rule of rules) {
+    const before = payload.issues.length;
+    rule.inner.check(payload);
+    if (payload.issues.length !== before) payload.failed = true;
+  }
+  return payload;
+}
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "runRules"] = runRules;
+function turn(i: number): number {
+  return (globalThis as any).runRules({ value: i & 7, issues: [], failed: false }, (globalThis as any).rules).issues.length;
+}

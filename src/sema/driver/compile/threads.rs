@@ -67,7 +67,7 @@ mod tests {
     use super::*;
     use crate::for_each_parallel_in_runs;
     use std::sync::Once;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     fn set_up_output() {
         static OUTPUT: Once = Once::new();
@@ -119,6 +119,51 @@ mod tests {
             || {},
         );
         assert_eq!(arrived.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn region_started_on_pool_thread_gets_threads_that_become_idle_later() {
+        set_up_output();
+        let threads = region_pool().max_threads();
+        if threads < 3 {
+            return;
+        }
+        let caches = ThreadCaches::default();
+        let (busy, gives_up) = (AtomicUsize::new(0), AtomicBool::new(false));
+        let (has_begun, has_joined) = (AtomicBool::new(false), AtomicBool::new(false));
+        let started = std::time::Instant::now();
+        let is_late = |seconds: u64| started.elapsed() > std::time::Duration::from_secs(seconds);
+        for_each_parallel_in_runs(&caches, threads, threads, 1, &|outer| {
+            busy.fetch_add(1, Ordering::SeqCst);
+            if outer != 0 {
+                // Keeps its thread until the region below has begun.
+                while !has_begun.load(Ordering::SeqCst) && !gives_up.load(Ordering::SeqCst) {
+                    std::thread::yield_now();
+                }
+                return;
+            }
+            while busy.load(Ordering::SeqCst) < threads {
+                if is_late(5) {
+                    // Other tests hold threads of the pool.
+                    return gives_up.store(true, Ordering::SeqCst);
+                }
+                std::thread::yield_now();
+            }
+            let starter = std::thread::current().id();
+            for_each_parallel_in_runs(&caches, 2, 1 << 22, 1, &|_| {
+                if !has_begun.load(Ordering::SeqCst) {
+                    has_begun.store(true, Ordering::SeqCst);
+                }
+                if std::thread::current().id() != starter {
+                    has_joined.store(true, Ordering::SeqCst);
+                }
+                if !has_joined.load(Ordering::SeqCst) {
+                    assert!(!is_late(25), "no thread joined the region");
+                    std::thread::yield_now();
+                }
+            });
+        });
+        assert!(has_joined.load(Ordering::SeqCst) || gives_up.load(Ordering::SeqCst));
     }
 
     fn pool_without_spare_threads() -> &'static bun_threading::ThreadPool {

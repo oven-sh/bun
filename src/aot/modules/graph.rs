@@ -19,7 +19,7 @@ use super::unread_exports::remove_unread_data_exports;
 use super::wrapped::WrappedModules;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
-use crate::ir::parallel::InParallel;
+use crate::ir::parallel::{InParallel, for_each_mut};
 use crate::load::ProjectId;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::SymbolId;
@@ -459,15 +459,23 @@ impl ModuleGraph {
         }
     }
 
-    pub fn limit_exports(&mut self, find_use: impl Fn(FileId, &ModuleExport) -> ExportUse) {
-        for row in &mut self.rows {
-            let file = row.file;
-            row.exports
-                .retain(|export| find_use(file, export) != ExportUse::None);
-            for export in &mut row.exports {
-                export.is_read_from_object = find_use(file, export) == ExportUse::ReadFromObject;
+    pub fn limit_exports(
+        &mut self,
+        in_parallel: InParallel<'_>,
+        find_use: &(dyn Fn(FileId, &ModuleExport) -> ExportUse + Sync),
+    ) {
+        const ROWS_IN_A_TASK: usize = 128;
+        let mut tasks: Vec<&mut [FileRow]> = self.rows.chunks_mut(ROWS_IN_A_TASK).collect();
+        for_each_mut(&mut tasks, in_parallel, &|rows| {
+            for row in rows.iter_mut() {
+                let file = row.file;
+                row.exports.retain_mut(|export| {
+                    let export_use = find_use(file, export);
+                    export.is_read_from_object = export_use == ExportUse::ReadFromObject;
+                    export_use != ExportUse::None
+                });
             }
-        }
+        });
     }
 
     pub fn import_bindings(&self, file: FileId) -> &[(SymbolId, ImportBinding)] {

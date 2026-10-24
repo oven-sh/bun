@@ -158,5 +158,53 @@
     "growth": {
       "peakBytes": 2.7
     }
+  },
+  "constant objects in one array literal": {
+    "millionInstructions": 8100,
+    "megabytes": 230
+  },
+  "pairs in the array literal that a Map is made of": {
+    "millionInstructions": 12500,
+    "megabytes": 230
+  },
+  "objects in the array of a JSON module": {
+    "millionInstructions": 7600,
+    "megabytes": 230
+  },
+  "objects with a computed member in one array literal": {
+    "millionInstructions": 13100,
+    "megabytes": 230,
+    "growth": {
+      "instructions": 3.2
+    }
+  },
+  "states of one switch in a loop": {
+    "millionInstructions": 21100,
+    "megabytes": 230,
+    "growth": {
+      "instructions": 3.6
+    }
+  },
+  "names that one function reads from an object nobody knows": {
+    "millionInstructions": 13000,
+    "megabytes": 420,
+    "growth": {
+      "peakBytes": 6.0
+    }
+  },
+  "floored divisions that each take the result of the one before": {
+    "millionInstructions": 15200,
+    "megabytes": 230,
+    "growth": {
+      "instructions": 3.9
+    }
+  },
+  "functions in a ring that hand a new object on": {
+    "millionInstructions": 17700,
+    "megabytes": 530,
+    "growth": {
+      "instructions": 3.6,
+      "peakBytes": 6.5
+    }
   }
 }

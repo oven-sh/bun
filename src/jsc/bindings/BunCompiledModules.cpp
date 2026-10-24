@@ -26,6 +26,7 @@
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
 extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObject*);
+extern "C" bool Bun__compiledProgramRunsInPlace();
 
 namespace Bun {
 using namespace JSC;
@@ -471,9 +472,14 @@ JSValue errorIfDebuggerIsRefused(JSGlobalObject* globalObject, ASCIILiteral buil
     return createCodeNotCompiledError(globalObject, makeString("Cannot use "_s, builtin, ": rebuild this executable with --compile-inspector."_s));
 }
 
+bool compiledModulesRunInPlaceOfFiles()
+{
+    return hasCompiledModules() && Bun__compiledProgramRunsInPlace();
+}
+
 String firstCompiledModuleMatching(JSGlobalObject* globalObject, RegExp* filter)
 {
-    if (!hasCompiledModules())
+    if (!compiledModulesRunInPlaceOfFiles())
         return {};
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     String found;
@@ -539,6 +545,7 @@ JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, bool, int64_t
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return {}; }
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
+bool compiledModulesRunInPlaceOfFiles() { return false; }
 String firstCompiledModuleMatching(JSGlobalObject*, RegExp*) { return {}; }
 ASCIILiteral adviceToKeepFunctionSource() { return ""_s; }
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable)

@@ -220,6 +220,56 @@ const noticedBy: Record<string, Row | Row[]> = {
     "untyped/theSameNamesStandAbove-aStoredFieldIsDeletedThroughAProxy-addsThemUp-once",
     "untyped/constructorStores-aStoredFieldIsDeletedThroughAProxy-addsThemUp-once",
   ),
+  HoistedReadsAreStoredInTheirLoops: ofFamily(
+    "variables-of-enclosing-code-in-loops",
+    "typed/functionAbove-object-reads-aWriterOnOneTurn-testedBehind-inAClosure",
+    "untyped/functionAbove-object-reads-aWriterOnOneTurn-testedBehind-inAClosure",
+  ),
+  CarriedVariablesAreWrittenByOthers: ofFamily(
+    "variables-of-enclosing-code-in-loops",
+    "typed/functionAbove-list-stores-aWriterOnOneTurn-testedBehind-moduleLoop",
+    "typed/functionAbove-wholeAtItsBorder-readsThenStores-aWriterUnderAProxy-testedBehind-module",
+  ),
+  DelayedStoresAreLeftOut: ofFamily(
+    "variables-of-enclosing-code-in-loops",
+    "typed/moduleLet-wholeAtItsBorder-stores-aWriterUnderABuiltIn-counted-module",
+    "untyped/moduleLet-whole-stores-aHandlerInTheTurn-tested-copiedIntoItsCaller",
+  ),
+  DelayedStoresPassWhatMayThrow: ofFamily(
+    "variables-of-enclosing-code-in-loops",
+    "untyped/twoFunctionsAbove-text-storesOnBothSides-aBuiltInThatThrowsOutOfTheFunction-overAList-loopUnderAHandler",
+    "untyped/twoFunctionsAbove-text-storesOnBothSides-aBuiltInThatThrowsOutOfTheFunction-overAList-handler",
+  ),
+  TailCallsSwapTheirLastArguments: ofFamily(
+    "functions-whose-last-act-is-to-call-themselves",
+    "typed/declared-behindATest-turnsTwoAround-aClosureThatCounts-loop",
+    "typed/declared-inAChoice-turnsTwoAround-aClosureThatCounts-cleanup",
+  ),
+  RememberedReadsOutlastStoresThroughOtherNames: ofFamily(
+    "one-thing-under-two-names",
+    "typed/fieldOfALiteral-counts-chosenByATest-storeStoreRead-loop",
+    "typed/hiddenField-bumps-twoParameters-readStoreRead-loopsWithLabels",
+  ),
+  RememberedReadsOutlastWrites: ofFamily(
+    "one-thing-under-two-names",
+    "typed/fieldOfAnInstance-stores-outOfAField-readInALoop-inAClosure",
+    "typed/hiddenField-sets-thisAndAParameter-storeOnSomeTurns-whileLoop",
+  ),
+  FusedGeneratorsAreSeenByOthers: ofFamily(
+    "generators-walked-where-they-are-made",
+    "typed/twoLoops-byHandAndEnds-runsOut-moduleLoop",
+    "typed/returnsAValue-forOfThroughAVariable-runsOut-yieldUnderACleanup",
+  ),
+  ParsedMembersComeOnce: ofFamily(
+    "texts-read-as-records",
+    "typed/anything-fits-theFirstTwice-parsedByAHelper-copiesIt-moduleLoop",
+    "typed/anything-fits-theFirstTwice-outOfAResponse-writesItBack-aroundAnAwait",
+  ),
+  GrowingTextsAreHeldInOneState: ofFamily(
+    "texts-put-together-piece-by-piece",
+    "typed/element-fraction-growsWhileWhatItWasIsStillHeld-aFunction-constructor",
+    "untyped/element-character-growsWhileWhatItWasIsStillHeld-aKey-loopWithBreak",
+  ),
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
 const noticedByTheEngineTestsAlone: Record<string, string> = {

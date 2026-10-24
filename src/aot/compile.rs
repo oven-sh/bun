@@ -39,7 +39,7 @@ use crate::load::source_provider::SourceProvider;
 use crate::load::sources::parsed_source;
 use crate::load::typed_packages::TypedPackages;
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
-use crate::module_list::ModuleList;
+use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
 use crate::options::{Options, PathOptions};
 use crate::package_diagnostics::PackageView;
@@ -412,7 +412,6 @@ fn begins_program_at_each_entry_point(options: &Options<'_>) -> bool {
         && !aot.checks_only
         && !aot.runs_in_place
         && !aot.runs_tests
-        && !options.lists_modules
         && options.entry_points.iter().all(is_code)
 }
 
@@ -552,10 +551,42 @@ pub fn compile(
         first.summary.entry_points.extend(summary.entry_points);
         first.summary.folders.extend(summary.folders);
         first.summary.validates_by_type |= summary.validates_by_type;
+        if let (Some(listed), Some(further)) = (&mut first.summary.modules, summary.modules) {
+            add_modules(listed, further);
+        }
     }
     first.summary.folders.shared_sort_unstable();
     first.summary.folders.dedup();
     Ok(first)
+}
+
+// A file that several programs hold is listed once, with the code that all of them have made of it.
+fn add_modules(listed: &mut ModuleList, further: ModuleList) {
+    let place_of: Vec<u32> = (further.inputs.iter())
+        .map(|input| {
+            let known = listed.inputs.iter().position(|it| it.path == input.path);
+            known.unwrap_or_else(|| {
+                listed.inputs.push(ModuleInput {
+                    imports: Vec::new(),
+                    code_byte_count: 0,
+                    ..input.clone()
+                });
+                listed.inputs.len() - 1
+            }) as u32
+        })
+        .collect();
+    for (input, &place) in further.inputs.into_iter().zip(&place_of) {
+        let known = &mut listed.inputs[place as usize];
+        known.code_byte_count += input.code_byte_count;
+        if known.imports.is_empty() {
+            known.imports = input.imports;
+            for import in &mut known.imports {
+                if let ImportTarget::Input(target) = &mut import.target {
+                    *target = place_of[*target as usize];
+                }
+            }
+        }
+    }
 }
 
 // What is said about a file that several programs hold is said once.

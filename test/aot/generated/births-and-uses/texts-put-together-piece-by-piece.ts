@@ -49,7 +49,7 @@ const ways: Record<string, (text: string, piece: string, other: string) => strin
   addsInALoopOnSomeTurns: (text, piece, other) => `for (let at = 0; at < 4; at++) { if (at % 2) ${text} += ${piece}; else ${text} += "."; ${other} }`,
   addsOnOneOfTwoWays: (text, piece, other) => `if (${text}.length % 2) ${text} += ${piece}; else ${text} += "e" + ${piece}; ${other}`,
   addsByConcat: (text, piece, other) => `${text} = ${text}.concat(String(${piece}), "!"); ${other}`,
-  isMadeATextThatBecomesPartOfAKey: (text, piece, other) => `{ const first = \`\${${piece}}\`; ${other} counts[first + "k"] = ${text}.length; }`,
+  isMadeATextThatBecomesPartOfAKey: (text, piece, other) => `{ const asText = \`\${${piece}}\`; ${other} counts[asText + "k"] = ${text}.length; }`,
   getsAPieceAheadOfACallThatMayThrow: (text, piece, other) => `${text} = ${text} + "a" + ${piece} + orStop(${text}.length); ${other}`,
   growsWhileWhatItWasIsStillHeld: (text, piece, other) => `const was = ${text}; ${text} += ${piece}; ${other} ${text} += "."; say(was.length, was.slice(-2));`,
   growsInALoopWhileWhatItWasIsStillHeld: (text, piece, other) => `let was = ""; for (let at = 0; at < 3; at++) { if (at === 1) was = ${text}; ${text} += ${piece}; ${other} } say(was.length, was.slice(-2));`,

@@ -225,7 +225,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
         return {};
     }
 
-    if (Bun::hasCompiledModules() && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
+    if (Bun::compiledModulesRunInPlaceOfFiles() && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
         JSValue main = JSValue::decode(BunObject_getter_main(defaultGlobalObject(globalObject)));
         RETURN_IF_EXCEPTION(scope, {});
         if (main.isString()) {

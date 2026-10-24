@@ -335,7 +335,7 @@ def main():
     options.columns = [dict(options.columns[index % len(options.columns)], filler=True) for index in range(len(lanes) - len(options.columns))] + options.columns
     options.starts = options.starts or (len(lanes) if len(lanes) < 4 or len(lanes) & (len(lanes) - 1) else len(lanes) - 1)
     wanted = options.routes.split(",")
-    routes = sorted((route for route in spec["routes"] + measure.PAGES if route["name"] in wanted), key=lambda route: wanted.index(route["name"]))
+    routes = sorted((route for route in spec["routes"] + ([] if options.routes_file else measure.PAGES) if route["name"] in wanted), key=lambda route: wanted.index(route["name"]))
     barrier, results = multiprocessing.Barrier(len(lanes)), multiprocessing.Queue()
     drivers = [multiprocessing.Process(target=run_lane, args=(options, routes, lanes, index, barrier, results)) for index in range(len(lanes))]
     for driver in drivers:

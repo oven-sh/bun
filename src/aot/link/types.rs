@@ -1,7 +1,7 @@
 use super::LinkError;
 use super::state::{MergedTypes, UnitIds, UnitMarks};
 use super::type_hashes::ContentHash;
-use super::unit::{LinkUnit, SHARD_COUNT, shard_of};
+use super::unit::{FindsByUnit, LinkUnit, SHARD_COUNT, shard_of};
 use crate::ir::{Id, IdMap, InParallel, PreparedType, Type, TypeId, TypeTable, for_each_mut};
 use crate::load::ProgramFile;
 use core::cmp::Ordering;
@@ -72,29 +72,20 @@ fn number_types(
     units: &[LinkUnit],
     in_parallel: InParallel<'_>,
 ) -> Vec<(u32, TypeId)> {
-    let count: usize = shards.iter().map(|shard| shard.entries.len()).sum();
-    let mut entries = Vec::with_capacity(count);
-    for shard in shards.iter() {
-        entries.extend_from_slice(&shard.entries);
-    }
-    entries.sort_unstable();
-    let mut order: Vec<u32> = (0..count as u32).collect();
-    for run in order.chunk_by_mut(|&a, &b| entries[a as usize].0 == entries[b as usize].0) {
-        let unit = &units[entries[run[0] as usize].0 as usize];
-        run.sort_unstable_by_key(|&entry| order_in_unit(unit, entries[entry as usize].1));
-    }
-    let mut program_ids = vec![TypeId::new(0); count];
-    for (position, &entry) in order.iter().enumerate() {
-        program_ids[entry as usize] = TypeId::new(position);
-    }
-    for_each_mut(shards, in_parallel, &|shard| {
-        let program_id = |entry: &(u32, TypeId)| {
-            let position = entries.binary_search(entry);
-            program_ids[position.expect("every entry is a representative")]
-        };
-        shard.program_ids = shard.entries.iter().map(program_id).collect();
+    let entries: Vec<&[(u32, TypeId)]> = shards.iter().map(|shard| &shard.entries[..]).collect();
+    let by_unit = FindsByUnit::new(units.len(), &entries);
+    let order = by_unit.order_rows_by(in_parallel, &|unit, local| {
+        order_in_unit(&units[unit as usize], local)
     });
-    order.iter().map(|&entry| entries[entry as usize]).collect()
+    let program_ids = by_unit.number_in(&order);
+    let mut shards: Vec<(&mut TypeShard, &Vec<u32>)> =
+        shards.iter_mut().zip(&by_unit.places).collect();
+    for_each_mut(&mut shards, in_parallel, &|(shard, places)| {
+        let program_id = |&place: &u32| program_ids[place as usize];
+        shard.program_ids = places.iter().map(program_id).collect();
+    });
+    let representative = |&place: &u32| by_unit.finds[place as usize];
+    order.iter().map(representative).collect()
 }
 
 pub(super) fn merge_types(

@@ -39,6 +39,9 @@ bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule* target, const W
 
 JSC::JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const WTF::String& path);
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool isTypeScriptLoader);
+// True where the compiled modules have the paths of their source files, for which `bun run` asks the plugins of the run time. An executable is a bundle: no plugin is asked for a module in it.
+bool compiledModulesRunInPlaceOfFiles();
+// Null in an executable.
 WTF::String firstCompiledModuleMatching(JSC::JSGlobalObject*, JSC::RegExp* filter);
 // The end of every message about code that is not in the executable: what to do in one that was built with --no-compile-function-source, and nothing in any other.
 ASCIILiteral adviceToKeepFunctionSource();

@@ -18734,5 +18734,11 @@
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
     }
+  },
+  "a-chain-of-ten-conditional-types-that-gets-shorter": {
+    "files": {
+      "a.ts": "export {};\nfunction take1<R>(value: Exclude<R, 1>): string { return value; }\nfunction take3<R>(value: Exclude<Exclude<Exclude<R, 1>, 2>, 3>): string { return value; }\nfunction take9<R>(value: Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>): string { return value; }\nfunction take10<R>(value: Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>, 10>): string { return value; }\nfunction take11<R>(value: Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>, 10>, 11>): string { return value; }\nfunction take15<R>(value: Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>, 10>, 11>, 12>, 13>, 14>, 15>): string { return value; }\ninterface Needs<out R> { readonly needs: R }\nfunction provided9<R>(value: Needs<\"scope\" | Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>>): Needs<\"scope\"> { return value; }\nfunction provided15<R>(value: Needs<\"scope\" | Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<Exclude<R, 1>, 2>, 3>, 4>, 5>, 6>, 7>, 8>, 9>, 10>, 11>, 12>, 13>, 14>, 15>>): Needs<\"scope\"> { return value; }\ninterface Box<T> { readonly inner: T }\ndeclare const boxes: Box<Box<Box<Box<Box<number>>>>>;\nconst other: Box<Box<Box<Box<Box<string>>>>> = boxes;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
   }
 }

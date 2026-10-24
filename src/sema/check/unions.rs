@@ -1,7 +1,7 @@
 //! Construction of union and intersection types.
 
 use super::*;
-use crate::util::{PositionSet, fx_hash};
+use crate::util::{FxHashMap, PositionSet, fx_hash};
 
 /// A declaration's sort key for `compareNodes`: library files first, then by file, then by position.
 type DeclarationPosition = (bool, FileId, u32);
@@ -1043,6 +1043,15 @@ impl<'p, 's> Checker<'p, 's> {
         for &ty in types {
             actual.extend_from_slice(self.parts(ty));
         }
+        // The sort asks for a position at every comparison.
+        let first_positions = (actual.len() > 64).then(|| {
+            let mut positions: FxHashMap<TypeId, usize> = FxHashMap::default();
+            positions.reserve(actual.len());
+            for (position, &ty) in actual.iter().enumerate() {
+                positions.entry(ty).or_insert(position);
+            }
+            positions
+        });
         let is_created_by_expression = |c: &Self, m: TypeId| {
             matches!(
                 c.data(m),
@@ -1067,7 +1076,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => is_created_by_expression(c, m),
             };
-            let position = || actual.iter().position(|&g| g == m).unwrap_or(usize::MAX);
+            let position = || match &first_positions {
+                Some(positions) => positions.get(&m).copied().unwrap_or(usize::MAX),
+                None => actual.iter().position(|&g| g == m).unwrap_or(usize::MAX),
+            };
             created_by_expression.then(position)
         };
         let mut compare = |&x: &TypeId, &y: &TypeId| {

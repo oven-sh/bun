@@ -5,8 +5,6 @@ import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from 
 import { join } from "node:path";
 import { run as runCommand } from "../harness/run";
 
-// TODO: the build of this one ends with exit code 134.
-const notYetBuilt = ["sentry"];
 const shipsNoBuildForThisPlatform = ["win32-arm64", "darwin-x64"].includes(`${process.platform}-${process.arch}`) ? ["argon2"] : [];
 
 function testEachProgram(
@@ -64,7 +62,7 @@ function testEachProgram(
     }, 600_000);
 
     for (const program of programs) {
-      (notYetBuilt.includes(program) ? test.todo : test.skipIf(shipsNoBuildForThisPlatform.includes(program)))(
+      test.skipIf(shipsNoBuildForThisPlatform.includes(program))(
         program,
         async () => {
           const env = withoutExceptionValidation.includes(program) ? { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined } : bunEnv;

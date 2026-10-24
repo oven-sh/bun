@@ -29,6 +29,8 @@ ${js}t("x", () => [it.named, it.where(), it.file()]);
   },
   {
     name: "import-meta",
+    differs:
+      "import.meta.require() of a path that only the caller knows: the file is looked for when the program runs, and it is not there. `bun build --compile` throws there too, an error of another class.",
     files: {
       ...pkg("meta", {
         "index.mjs": `const m = import.meta;

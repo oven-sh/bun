@@ -50,12 +50,9 @@ describe.concurrent("one line, many operations", () => {
     expect(causes[0].estimatedPercent).toBeGreaterThan(90);
   }, 120_000);
 
-  // TODO: the report lists the four reads in the handlers as causes of their own.
-  test.todo(
-    "what a function is given by code outside the program begins where the function was handed over",
-    async () => {
-      const { causes, exitCode } = await explain({
-        "main.ts": `const handlers = {
+  test("what a function is given by code outside the program begins where the function was handed over", async () => {
+    const { causes, exitCode } = await explain({
+      "main.ts": `const handlers = {
   open(event: any) {
     return event.target.name;
   },
@@ -66,12 +63,15 @@ describe.concurrent("one line, many operations", () => {
 (globalThis as any)[process.argv[2] ?? "handlers"] = handlers;
 console.log((globalThis as any).handlers.open({ target: { name: "a" } }));
 `,
-      });
-      const inHandlers = causes.filter(cause => cause.line >= 2 && cause.line <= 7 && cause.accesses > 0);
-      expect({ exitCode, inHandlers: inHandlers.map(placeOf) }).toEqual({ exitCode: 0, inHandlers: [] });
-    },
-    60_000,
-  );
+    });
+    const inHandlers = causes.filter(cause => cause.line >= 2 && cause.line <= 7 && cause.accesses > 0);
+    const atTheStore = causes.filter(cause => cause.reason === "called-by-unknown-code" && cause.accesses >= 4);
+    expect({ exitCode, inHandlers: inHandlers.map(placeOf), atTheStore: atTheStore.map(placeOf) }).toEqual({
+      exitCode: 0,
+      inHandlers: [],
+      atTheStore: ["main.ts:9 called-by-unknown-code"],
+    });
+  }, 60_000);
 
   test("tests, comparisons, arithmetic and calls on a value of unknown type count for the line it comes from", async () => {
     const { causes, exitCode } = await explain({

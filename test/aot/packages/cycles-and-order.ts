@@ -2,7 +2,7 @@
 import { js, pkg, type Case } from "./run-packages";
 
 const differs =
-  "An ES module and a CommonJS module that need each other: `bun run` throws, the bundler hoists, --aot reports the binding as not yet initialized.";
+  "An ES module and a CommonJS module that need each other: where the CommonJS file requires its importer, the importer runs there and then, as under `bun run`, and sees what the file has exported so far. `bun run` then throws, the bundler hoists.";
 
 export const cases: Case[] = [
   {
@@ -137,6 +137,8 @@ ${js}t("mixed", () => [fromCjs, look()]);
   },
   {
     name: "order",
+    differs:
+      "A CommonJS module that throws while it loads, required again: `bun run` runs it again, the bundler answers the exports it had made so far. Under --aot a module of the executable runs at most once, and what it threw is thrown again.",
     fails: true,
     files: {
       ...pkg("order", {

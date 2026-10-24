@@ -262,6 +262,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         react_compiler: options.react_compiler,
         runs_macros: !options.no_macros,
         in_memory_files: in_memory_files(input),
+        in_memory_file_keys: in_memory_file_keys(input),
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
     }
@@ -276,6 +277,18 @@ fn in_memory_files(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> 
     files
         .map(|(path, (_, contents))| (path, contents.to_vec()))
         .collect()
+}
+
+fn in_memory_file_keys(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let Some(file_map) = input.file_map else {
+        return Vec::new();
+    };
+    let by_path = in_memory_files_by_path(file_map, input.working_directory);
+    let mut keys: Vec<_> = (by_path.into_iter())
+        .map(|(path, (key, _))| (key.to_vec(), path))
+        .collect();
+    keys.sort_unstable();
+    keys
 }
 
 /// For the path of each file of `files`, its key as it is written and its contents. Of two keys for one path the later one counts.

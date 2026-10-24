@@ -11,8 +11,8 @@ use crate::ir::generated::{
     TypeSite, Variable,
 };
 use crate::ir::{
-    FunctionId, Id, LayoutId, PropertyKeyId, PropertyKeyTable, Reference, StringTable, TypeTable,
-    VariableId,
+    FunctionId, Id, InParallel, LayoutId, PropertyKeyId, PropertyKeyTable, Reference, StringTable,
+    TypeTable, VariableId, for_each_mut,
 };
 use crate::load::ProgramFile;
 use crate::lower::{DefinedObjectType, FamilyFacts, Fragment, ModuleFragment, ObjectTypeKey};
@@ -63,6 +63,67 @@ impl ShardIndex {
 
     pub(super) fn shard(&self, shard: usize) -> &[u32] {
         &self.ids[self.starts[shard] as usize..self.starts[shard + 1] as usize]
+    }
+}
+
+/// What the shards have found first in each unit, the finds of one unit in a row and the units in order.
+pub(super) struct FindsByUnit<I> {
+    /// Each with its unit. Within a row they stand in no order that means anything.
+    pub finds: Vec<(u32, I)>,
+    /// By shard, then by the shard's own order: where the find stands in `finds`.
+    pub places: Vec<Vec<u32>>,
+}
+
+impl<I: Id + Sync> FindsByUnit<I> {
+    pub(super) fn new(unit_count: usize, shards: &[&[(u32, I)]]) -> FindsByUnit<I> {
+        let mut cursors = vec![0u32; unit_count + 1];
+        for &(unit, _) in shards.iter().copied().flatten() {
+            cursors[unit as usize + 1] += 1;
+        }
+        for unit in 0..unit_count {
+            cursors[unit + 1] += cursors[unit];
+        }
+        let mut finds = vec![(0, I::default()); cursors[unit_count] as usize];
+        let mut place = |&find: &(u32, I)| {
+            let cursor = &mut cursors[find.0 as usize];
+            finds[*cursor as usize] = find;
+            *cursor += 1;
+            *cursor - 1
+        };
+        let places = shards
+            .iter()
+            .map(|shard| shard.iter().map(&mut place).collect())
+            .collect();
+        FindsByUnit { finds, places }
+    }
+
+    /// The places of `finds`, those of each unit ordered by `key`, which tells the finds of a unit apart.
+    pub(super) fn order_rows_by<K: Ord>(
+        &self,
+        in_parallel: InParallel<'_>,
+        key: &(dyn Fn(u32, I) -> K + Sync),
+    ) -> Vec<u32> {
+        let unit_at = |place: u32| self.finds[place as usize].0;
+        let mut order: Vec<u32> = (0..self.finds.len() as u32).collect();
+        let mut rows: Vec<&mut [u32]> = order
+            .chunk_by_mut(|&a, &b| unit_at(a) == unit_at(b))
+            .collect();
+        for_each_mut(&mut rows, in_parallel, &|row| {
+            row.sort_unstable_by_key(|&place| {
+                let (unit, find) = self.finds[place as usize];
+                key(unit, find)
+            });
+        });
+        order
+    }
+
+    /// By place in `finds`: the number of the find where `order` is the order of all.
+    pub(super) fn number_in(&self, order: &[u32]) -> Vec<I> {
+        let mut numbers = vec![I::default(); order.len()];
+        for (number, &place) in order.iter().enumerate() {
+            numbers[place as usize] = I::new(number);
+        }
+        numbers
     }
 }
 

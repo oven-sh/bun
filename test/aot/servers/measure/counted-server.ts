@@ -8,7 +8,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { routes as allRoutes } from "../answers";
+import { apiRoutes, routes as plainRoutes } from "../answers";
 
 /** A line of the file of counts: how often, the counter's name, and for some counters what it saw. */
 export type Count = { count: number; name: string; what: string };
@@ -20,7 +20,7 @@ export async function countServer(flag: string) {
     options: { bun: { type: "string" }, server: { type: "string" }, modules: { type: "string" }, routes: { type: "string" }, requests: { type: "string", default: "1000" }, rows: { type: "string", default: "40" }, work: { type: "string" } },
   });
   if (!values.bun || !values.server) throw new Error("--bun and --server are needed");
-  const routes = allRoutes.filter(route => !values.routes || values.routes.split(",").includes(route.name));
+  const routes = (values.server.startsWith("api-") ? apiRoutes : plainRoutes).filter(route => !values.routes || values.routes.split(",").includes(route.name));
   const work = values.work ?? mkdtempSync(join(tmpdir(), "counted-server-"));
   const app = join(work, "app");
   mkdirSync(work, { recursive: true });

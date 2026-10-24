@@ -29,6 +29,7 @@ const programFolders: Record<string, number> = {
   "built-ins-asked-in-place": 0,
   "calls": 2,
   "classes-below-built-in-classes": 8,
+  "code-that-built-ins-run": 8,
   "copies-born-in-their-holders": 0,
   "counterexamples": 3,
   "data-from-outside": 2,

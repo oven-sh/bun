@@ -839,7 +839,7 @@ If a module doesn't match its declaration, or the JavaScript from a plugin doesn
 
 The executable is the same with and without a metafile.
 
-`bun build` on the command line has no plugins, with or without `--aot`. [`Bun.plugin`](/runtime/plugins) in your program is about [code that isn't in the executable](#code-from-strings): a plugin can't replace a module that was compiled.
+`bun build` on the command line has no plugins, with or without `--aot`. [`Bun.plugin`](/runtime/plugins) in your program is about [code that isn't in the executable](#code-from-strings). As in every executable from `bun build --compile`, a plugin is never asked for a module that's in the executable, whatever its filters match.
 
 ## `Function.prototype.toString()`
 

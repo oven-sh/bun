@@ -114,6 +114,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
 
         let mut state = std::mem::take(walk.state.get_mut());
         erase_sites_nothing_asked_for(&mut state);
+        import_what_is_required(self, &mut state);
         let OrderedFiles {
             mut entries,
             entry_points,
@@ -590,6 +591,49 @@ fn erase_sites_nothing_asked_for(state: &mut WalkState<'_, '_>) {
     }
 }
 
+/// A package that has one file for `import` and another for `require` is in the program once: where anything requires it, the imports get that file too.
+fn import_what_is_required<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    state: &mut WalkState<'_, 'r>,
+) {
+    let mut replacements: FxHashMap<u32, u32> = FxHashMap::default();
+    for (index, file) in state.files.iter().enumerate() {
+        let key = file.target.key;
+        if key.loader != HostLoader::default() {
+            continue;
+        }
+        let Some(required) = context.resolver.file_required_in_place_of(key.path) else {
+            continue;
+        };
+        let path = to_path(required, context.is_case_sensitive);
+        let required_key = LoadKey {
+            path: &path,
+            loader: key.loader,
+        };
+        if let Some(&required) = state.index_of.get(&required_key) {
+            replacements.insert(index as u32, required);
+        }
+    }
+    if replacements.is_empty() {
+        return;
+    }
+    let targets_of_files: Vec<CodeTarget<'r>> = state.files.iter().map(|it| it.target).collect();
+    for file in &mut state.files {
+        let Some(parsed) = &mut file.parsed else {
+            continue;
+        };
+        for (loaded, target) in file.targets.iter_mut().zip(&mut parsed.code.targets) {
+            if let Some(&required) = replacements.get(loaded) {
+                *loaded = required;
+                *target = CodeTarget {
+                    increases_depth: target.increases_depth,
+                    ..targets_of_files[required as usize]
+                };
+            }
+        }
+    }
+}
+
 struct OrderedFiles<'s, 'r> {
     entries: Vec<CodeEntry<'s, 'r>>,
     entry_points: Vec<u32>,
@@ -636,7 +680,8 @@ fn order_files<'s, 'r>(
             }
         }
     }
-    debug_assert_eq!(order.len(), files.len());
+    // `import_what_is_required` leaves files that nothing loads.
+    debug_assert!(order.len() <= files.len());
 
     let mut entry_of = vec![0u32; files.len()];
     for (entry, &index) in order.iter().enumerate() {

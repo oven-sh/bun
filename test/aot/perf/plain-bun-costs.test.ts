@@ -5,6 +5,7 @@
 //   start         hello, a TypeScript file, the node: modules most programs load, a server's first answer
 //   interpreter   ./plain-bun-costs/*.js with BUN_JSC_useJIT=0: the interpreter, the run time and the collector
 //   jit           the same programs with every JIT tier compiling on the program's own thread, so that compile time counts too
+//   tools         `bun test` over ten files of 300 tests, and a program of 300 TypeScript modules, in both of those ways
 //
 // Counted: the instructions of the program's first thread in user mode, the least of three runs, and the page faults of the whole process.
 // Collections come by bytes allocated and run on that thread. The same binary repeats a row within 0.3%.
@@ -60,6 +61,40 @@ const startRows: [string, Until][] = [
   ["node-http-server.js", { route: "/", answers: "hello" }],
   ["bun-serve.js", { route: "/", answers: "hello" }],
 ];
+const testFile = (file: number) => `import { describe, expect, test } from "bun:test";
+describe("file ${file}", () => {
+  for (let k = 0; k < 300; k++)
+    test("case " + k, () => {
+      const made = { a: k, b: [k, k + 1], c: { d: "x" + k } };
+      expect(made).toEqual({ a: k, b: [k, k + 1], c: { d: "x" + k } });
+      expect(made.b).toContain(k);
+      expect(JSON.stringify(made)).toMatch(/x\\d+/);
+      expect(() => {
+        if (k >= 0) throw new Error("e" + k);
+      }).toThrow("e" + k);
+    });
+  test("async", async () => expect(await Promise.resolve(${file})).toBe(${file}));
+});
+`;
+const moduleCount = 300;
+const moduleFile = (index: number) => {
+  const imported = [...new Set([index >> 1, Math.floor(index / 3), index - 1])].filter(
+    other => other >= 0 && other !== index,
+  );
+  return `${imported.map(other => `import { v${other} } from "./m${other}";\nimport type { C${other} } from "./m${other}";`).join("\n")}
+interface Shape { id: number; name?: string; tags: readonly string[] }
+enum Kind { A = 1, B, C }
+function work(x: number): number { let total: number = 0; for (let k = 0; k < 3; k++) total += x + k; const shape: Shape = { id: total, tags: [] }; return (shape as Partial<Shape>).id! + Kind.A - 1; }
+${Array.from({ length: 12 }, (_, k) => `export function unused${k}<T extends number>(a: T, b: T): number { if (a > b) return a - b; const list: number[] = [a, b, ${k}]; return list.map((v: number): number => v * 2).filter(Boolean).length; }`).join("\n")}
+export class C${index} { constructor(private readonly a: number, public b = ${index}) {} get sum(): number { return this.a + this.b; } }
+export const v${index}: number = work(${index})${imported.map(other => ` + (v${other} % 7)`).join("")};
+`;
+};
+const toolFiles = {
+  ...Object.fromEntries(Array.from({ length: 10 }, (_, file) => [`tests/file-${file}.test.ts`, testFile(file)])),
+  ...Object.fromEntries(Array.from({ length: moduleCount }, (_, index) => [`modules/m${index}.ts`, moduleFile(index)])),
+  "modules/main.ts": `import { v${moduleCount - 1} } from "./m${moduleCount - 1}";\nconsole.log("modules", v${moduleCount - 1});`,
+};
 const tiers = { interpreter: "BUN_JSC_useJIT", jit: "BUN_JSC_useConcurrentJIT" };
 const environment: Record<string, string | undefined> = startEnvironment;
 
@@ -115,7 +150,7 @@ async function row(name: string, command: string[], until: Until) {
 test.skipIf(!measurable)(
   "a program that never asks for the compiler costs what it did",
   async () => {
-    using dir = tempDir("plain-bun-costs", startFiles);
+    using dir = tempDir("plain-bun-costs", { ...startFiles, ...toolFiles });
     const bun = join(String(dir), "bun");
     symlinkSync(bunExe(), bun);
     for (const [file, until] of startRows) await row(`start ${file}`, [bun, join(String(dir), file)], until);
@@ -126,6 +161,27 @@ test.skipIf(!measurable)(
         environment[option] = "0";
         try {
           await row(`${tier} ${file}`, [bun, join(programs, file)], { prints: expected });
+        } finally {
+          delete environment[option];
+        }
+      }
+    }
+    const tools: [string, string[]][] = [
+      ["bun test", [bun, "test", join(String(dir), "tests")]],
+      [`${moduleCount} modules`, [bun, join(String(dir), "modules", "main.ts")]],
+    ];
+    for (const [name, command] of tools) {
+      const prints = Bun.spawnSync({
+        cmd: command,
+        cwd: "/",
+        env: environment,
+        stdout: "pipe",
+        stderr: "ignore",
+      }).stdout.toString();
+      for (const [tier, option] of Object.entries(tiers)) {
+        environment[option] = "0";
+        try {
+          await row(`${tier} ${name}`, command, { prints });
         } finally {
           delete environment[option];
         }

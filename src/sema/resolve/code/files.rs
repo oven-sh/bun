@@ -102,14 +102,26 @@ impl<'h> Resolver<'h> {
             let Some(found) = self.load_from_main_field(directory, value, order) else {
                 continue;
             };
-            if !(prefers_main && matches!(field.as_slice(), b"module" | b"jsnext:main")) {
+            let has_other_for_require = options.has_default_main_fields
+                && matches!(field.as_slice(), b"module" | b"jsnext:main");
+            if !has_other_for_require {
                 return Some(found);
             }
             let main = match manifest.main_field(b"main") {
                 Some(main_value) => self.load_from_main_field(directory, main_value, main_order),
                 None => self.load_as_index(directory, main_order),
             };
-            return main.or(Some(found));
+            if prefers_main {
+                return main.or(Some(found));
+            }
+            if let Some(main) = main {
+                let (imported, required) = (self.module_path(&found), self.module_path(&main));
+                if imported != required {
+                    let required_files = &self.code_state().required_files;
+                    required_files.insert_ref(self.keep(&imported), self.keep(&required));
+                }
+            }
+            return Some(found);
         }
         None
     }

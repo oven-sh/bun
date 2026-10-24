@@ -42,6 +42,8 @@ pub struct LoadOptions {
     pub react_compiler: ReactCompilerMode,
     pub runs_macros: bool,
     pub in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Sorted. The key of each of `in_memory_files` as the build's options write it, and its path. An import that spells the key means the file, wherever the import stands.
+    pub in_memory_file_keys: Vec<(Vec<u8>, Vec<u8>)>,
     pub omits_builtin_modules: bool,
     pub runs_tests: bool,
 }
@@ -113,6 +115,7 @@ impl LoadOptions {
             react_compiler: ReactCompilerMode::Disabled,
             runs_macros: true,
             in_memory_files: Vec::new(),
+            in_memory_file_keys: Vec::new(),
             omits_builtin_modules: false,
             runs_tests: false,
         }

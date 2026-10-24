@@ -4,6 +4,8 @@ import { js, pkg, ts, type Case } from "./run-packages";
 export const cases: Case[] = [
   {
     name: "create-require",
+    differs:
+      "createRequire() of a directory: a build follows createRequire(import.meta.url) and createRequire(__filename). What a require made from another text asks for is looked for when the program runs, and the file is not there. `bun build --compile` throws there too, an error of another class.",
     files: {
       ...pkg("creq", {
         "index.mjs": `import { createRequire } from "node:module";

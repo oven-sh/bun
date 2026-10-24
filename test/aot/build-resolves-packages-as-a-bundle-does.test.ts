@@ -35,7 +35,7 @@ console.log(which());`,
     },
     prints: "main\n",
   },
-  // A bundle holds one of the two files, "main", once anything requires the package. With `aot` each way of asking gets its own file.
+  // The program holds the package once: "main", since something requires it.
   "both in one program": {
     files: {
       "main.ts": `import { which } from "both";
@@ -45,7 +45,6 @@ console.log(which(), required());`,
       ...both,
     },
     prints: "main main\n",
-    differs: { stdout: "module main\n" },
   },
   'a package with "module" alone, and one with "main" alone': {
     files: {
@@ -60,6 +59,39 @@ console.log(a, b, require("only-module").a, require("only-main").b);`,
       "node_modules/only-main/cjs.js": `exports.b = "b";`,
     },
     prints: "a b a b\n",
+  },
+});
+
+buildBothWays("compile/aot/a file of the `files` option", {
+  "an import that spells its key, from another folder": {
+    files: {
+      "main.ts": `import { table } from "./deep/er/reader";
+console.log(JSON.stringify(await table()));`,
+      "deep/er/reader.ts": `export function table(): Promise<unknown> {
+  // @ts-ignore
+  return import("generated-table.ts").then(module => module.default).catch(() => null);
+}`,
+    },
+    options: `files: { "generated-table.ts": "export default { made: 'by the build' };" }`,
+    prints: `{"made":"by the build"}\n`,
+  },
+  "the same import without the file": {
+    files: {
+      "main.ts": `// @ts-ignore
+console.log(await import("generated-table.ts").then(module => module.default).catch(() => null));`,
+    },
+    prints: "null\n",
+  },
+  "a key that is also the name of a package": {
+    files: {
+      "main.ts": `import { from } from "shadowed.js";
+console.log(from);`,
+      "node_modules/shadowed.js/package.json": `{ "name": "shadowed.js", "version": "1.0.0", "main": "./index.js", "types": "./index.d.ts" }`,
+      "node_modules/shadowed.js/index.d.ts": `export declare const from: string;`,
+      "node_modules/shadowed.js/index.js": `exports.from = "the package";`,
+    },
+    options: `files: { "shadowed.js": "export const from = 'the files option';" }`,
+    prints: "the files option\n",
   },
 });
 

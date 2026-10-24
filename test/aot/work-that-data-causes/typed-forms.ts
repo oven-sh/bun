@@ -30,6 +30,19 @@ class Holder {
     Object.assign(this, from);
   }
 }
+// An instance with n names from outside, and a field that was created again behind them: in the order of the keys the names stand between two fields.
+function namesInFrontOfField(n: number) {
+  const made = new Point() as Point & Record<string, number>;
+  const names = Array.from({ length: n }, (_, at) => "id" + at);
+  for (const name of names) made[name] = 1;
+  delete (made as Partial<Point>).y;
+  made.y = 1;
+  return { made, names };
+}
+function removeAll({ made, names }: ReturnType<typeof namesInFrontOfField>, placeOf: (turn: number) => number) {
+  for (let turn = 0; turn < names.length; turn++) delete made[names[placeOf(turn)]];
+  return Object.keys(made).join();
+}
 
 // What is made ready, then the work that is timed.
 const form = <Ready,>(prepare: (n: number) => Ready, work: (ready: Ready) => unknown) => (n: number) => {
@@ -59,6 +72,12 @@ const forms: Record<string, (n: number) => () => unknown> = {
   "read by a written name: made in every order": form(n => everyOrder(n).map(madeIn), list => list.reduce((sum, value) => sum + value.a! + value.j!, 0)),
   "Object.freeze: made in every order": form(n => everyOrder(n).map(madeIn), list => list.forEach(value => void Object.freeze(value))),
   "structuredClone: made in every order": form(n => everyOrder(n).map(madeIn), list => structuredClone(list).length),
+  "names in front of a field are removed: the last one first": form(namesInFrontOfField, ready => removeAll(ready, turn => ready.names.length - 1 - turn)),
+  "names in front of a field are removed: the first one first": form(namesInFrontOfField, ready => removeAll(ready, turn => turn)),
+  "names in front of a field are removed: here and there": form(namesInFrontOfField, ready => removeAll(ready, turn => (turn * 7919) % ready.names.length)),
+  "names in front of a field stay: another one comes and goes": form(namesInFrontOfField, ({ made, names }) => { for (const name of names) { made["late" + name] = 1; delete made["late" + name]; } return Object.keys(made).length; }),
+  "a name comes and a field is created again behind it": form(n => Array.from({ length: n }, (_, at) => "id" + at), names => { const made = new Point() as Point & Record<string, number>; for (const name of names) { made[name] = 1; delete (made as Partial<Point>).y; made.y = 1; } return Object.keys(made).length; }),
+  "a name comes and two fields are created again behind it": form(n => Array.from({ length: n }, (_, at) => "id" + at), names => { const made = new Point() as Point & Record<string, number>; for (const name of names) { made[name] = 1; delete (made as Partial<Point>).x; delete (made as Partial<Point>).y; made.y = 1; made["late" + name] = 1; made.x = 1; } return Object.keys(made).slice(-3).join(); }),
   "Map<string, Ten> of n names": form(n => Array.from({ length: n }, (_, at) => "id" + at), names => { const map = new Map<string, Ten>(); for (const name of names) map.set(name, full()); return map.size; }),
 };
 

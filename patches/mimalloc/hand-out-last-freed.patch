@@ -57,22 +57,39 @@
  
 --- a/src/free.c
 +++ b/src/free.c
-@@ -57,8 +57,16 @@
+@@ -37,6 +37,24 @@
+ // ------------------------------------------------------
+ // Free
+ // ------------------------------------------------------
++
++static mi_decl_noinline void mi_free_block_local_to_hand_out_next(mi_page_t* page, mi_block_t* block, bool check_full)
++{
++  mi_block_set_next(page, block, page->free);
++  page->free = block;
++  page->free_is_zero = false;
++  if mi_unlikely(mi_page_alloc_count(page) >= 0x8000) { _mi_page_update_stats(page); }
++  const size_t used = mi_xused_dec_used(&page->xused);
++  mi_assert_internal(mi_page_alloc_count(page) + mi_page_last_used(page) >= mi_page_used(page));
++  if mi_unlikely(used == 0) {
++    if (page->retire_expire==0) {
++      _mi_page_retire(page);
++    }
++  }
++  else if mi_unlikely(check_full && mi_page_is_in_full(page)) {
++    _mi_page_unfull(page);
++  }
++}
+ 
+ // regular free of a (thread local) block pointer
+ // fast path written carefully to prevent spilling on the stack
+@@ -57,6 +75,10 @@
    #endif
    
    // actual free: push on the local free list
--  mi_block_set_next(page, block, page->local_free);
--  page->local_free = block;
 +  if mi_unlikely(_mi_hands_out_last_freed) {
-+    mi_block_set_next(page, block, page->free);
-+    page->free = block;
-+    page->free_is_zero = false;
-+    if mi_unlikely(mi_page_alloc_count(page) >= 0x8000) { _mi_page_update_stats(page); }
++    mi_free_block_local_to_hand_out_next(page, block, check_full);
++    return;
 +  }
-+  else {
-+    mi_block_set_next(page, block, page->local_free);
-+    page->local_free = block;
-+  }
+   mi_block_set_next(page, block, page->local_free);
+   page->local_free = block;
    const size_t used = mi_xused_dec_used(&page->xused);
-   mi_assert_internal(mi_page_alloc_count(page) + mi_page_last_used(page) >= mi_page_used(page));
-   if mi_unlikely(used == 0) {

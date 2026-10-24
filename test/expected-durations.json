@@ -3117,6 +3117,9 @@
     "asan": 8872,
     "windows": 61
   },
+  "aot/generated-instances-of-classes-below-built-in-classes-in-typed-code.test.ts": {
+    "default": 90000
+  },
   "aot/generated-joined-literals.test.ts": {
     "default": 4521,
     "asan": 4704,

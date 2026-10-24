@@ -199,6 +199,8 @@ pub(super) struct CodeState<'h> {
     resolutions: Memo<&'h [u8], CodeResolution<'h>>,
     manifests: Memo<&'h [u8], Option<&'h CodeManifest<'h>>>,
     typed_versions: Memo<&'h [u8], Option<TypedVersionFile<'h>>>,
+    /// For the file that "module" names in a package, the file that `require` of the package finds.
+    required_files: Memo<&'h [u8], &'h [u8]>,
     configs: ConfigCaches<'h>,
 }
 
@@ -219,6 +221,7 @@ impl<'h> Resolver<'h> {
             resolutions: Memo::new(false),
             manifests: Memo::new(false),
             typed_versions: Memo::new(false),
+            required_files: Memo::new(false),
             configs: ConfigCaches::new(false),
         };
         Resolver {
@@ -232,6 +235,11 @@ impl<'h> Resolver<'h> {
         self.code
             .as_deref()
             .expect("the code question needs `Resolver::for_compile`")
+    }
+
+    /// `Some` if an import of a package found `path` where `require` finds another file.
+    pub fn file_required_in_place_of(&self, path: &[u8]) -> Option<&'h [u8]> {
+        self.code_state().required_files.get_ref(path).copied()
     }
 
     fn code_options(&self) -> &'h CodeOptions {

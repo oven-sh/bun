@@ -498,8 +498,9 @@ group("parts of Bun that run code the compiler does not see", () => {
     expect(completeness(await of(text))).toEqual(open(unseenCode(builtin)));
   });
 
-  test("the report is open with a Worker, whose file is loaded at run time", async () => {
-    expect(completeness(await of(`new Worker("./other.ts");`))).toEqual(open(computedModuleName + " (Worker)"));
+  // A Worker has a global of its own and starts with an entry point of the build, and the report holds what every entry point uses.
+  test("the report stays closed with a Worker", async () => {
+    expect(completeness(await of(`new Worker("./other.ts");`))).toEqual(closed);
   });
 
   eachRow([
@@ -751,16 +752,16 @@ group("members of built-in classes", () => {
   };
 
   eachRow([
-    gap(notYet.everyBuiltin, ["a member", `console.log(input.localeCompare("a"));`]),
-    gap(notYet.everyBuiltin, ["a member of an optional chain", `console.log(input?.localeCompare);`]),
-    gap(notYet.everyBuiltin, ["a string in brackets", `console.log(input["localeCompare"]);`]),
-    gap(notYet.everyBuiltin, ["a template without substitutions in brackets", "console.log(input[`localeCompare`]);"]),
-    gap(notYet.everyBuiltin, ["a constant in brackets", `const key = "localeCompare";\nconsole.log(input[key]);`]),
-    gap(notYet.everyBuiltin, ["a pattern", `const { localeCompare } = input;\nconsole.log(localeCompare);`]),
-    gap(notYet.everyBuiltin, ["a pattern that renames it", `const { localeCompare: compare } = input;\nconsole.log(compare);`]),
-    gap(notYet.everyBuiltin, ["a pattern inside a pattern", `const { inner: { localeCompare } } = input;\nconsole.log(localeCompare);`]),
-    gap(notYet.everyBuiltin, ["the pattern of a parameter", `function compare({ localeCompare }: any) { return localeCompare; }\nconsole.log(compare(input));`]),
-    gap(notYet.everyBuiltin, ["a pattern that is assigned to", `let compare;\n({ localeCompare: compare } = input);\nconsole.log(compare);`]),
+    ["a member", `console.log(input.localeCompare("a"));`],
+    ["a member of an optional chain", `console.log(input?.localeCompare);`],
+    ["a string in brackets", `console.log(input["localeCompare"]);`],
+    ["a template without substitutions in brackets", "console.log(input[`localeCompare`]);"],
+    ["a constant in brackets", `const key = "localeCompare";\nconsole.log(input[key]);`],
+    ["a pattern", `const { localeCompare } = input;\nconsole.log(localeCompare);`],
+    ["a pattern that renames it", `const { localeCompare: compare } = input;\nconsole.log(compare);`],
+    ["a pattern inside a pattern", `const { inner: { localeCompare } } = input;\nconsole.log(localeCompare);`],
+    ["the pattern of a parameter", `function compare({ localeCompare }: any) { return localeCompare; }\nconsole.log(compare(input));`],
+    ["a pattern that is assigned to", `let compare;\n({ localeCompare: compare } = input);\nconsole.log(compare);`],
   ])("a member is named by %s", async (_, text) => {
     expect(await members(text)).toEqual({ first: closed.first, named: true, every: false });
   });
@@ -870,12 +871,12 @@ group("members of built-in classes", () => {
   });
 
   eachRow([
-    gap(notYet.everyBuiltin, ["a number", `console.log(input[0]);`]),
-    gap(notYet.everyBuiltin, ["a counter", `for (let i = 0; i < 9; i++) console.log(input[i]);`]),
-    gap(notYet.everyBuiltin, ["a function of Math", `console.log(input[Math.floor(input.length / 2)]);`]),
-    gap(notYet.everyBuiltin, ["a well-known symbol", `console.log(input[Symbol.iterator]);`]),
-    gap(notYet.everyBuiltin, ["a number as an argument", `function read(at: number) { return input[at]; }\nconsole.log(read(1));`]),
-    gap(notYet.everyBuiltin, ["a parameter that only literals reach", `function read(key: string) { return input[key]; }\nconsole.log(read("a"));`]),
+    ["a number", `console.log(input[0]);`],
+    ["a counter", `for (let i = 0; i < 9; i++) console.log(input[i]);`],
+    ["a function of Math", `console.log(input[Math.floor(input.length / 2)]);`],
+    ["a well-known symbol", `console.log(input[Symbol.iterator]);`],
+    ["a number as an argument", `function read(at: number) { return input[at]; }\nconsole.log(read(1));`],
+    ["a parameter that only literals reach", `function read(key: string) { return input[key]; }\nconsole.log(read("a"));`],
     ["a store under a parameter that only literals reach", `function store(key: string) { input[key] = 1; }\nstore("a");`],
     ["a key of a class of the program's own", `class Point { x = 1; y = 2; }\nfunction read(point: Point, key: keyof Point) { return point[key] === 1; }\nconsole.log(read(new Point(), "x"));`],
     ["a key in a function that nothing calls", `function never(key: string) { return input[key]; }\nconsole.log(1);`],

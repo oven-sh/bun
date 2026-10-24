@@ -8,7 +8,8 @@ use crate::ir::{
 };
 use crate::link::InProject;
 use crate::link::testing::{
-    TestUnit, test_class_key, test_function_key, test_variable_key, unit_in, with_test_files,
+    TestUnit, forward, reverse, test_class_key, test_function_key, test_variable_key, unit_in,
+    with_test_files,
 };
 use crate::load::ProjectId;
 use crate::lower::FragmentBuilder;
@@ -25,6 +26,59 @@ fn assert_shards_match(index: &ShardIndex, hashes: &[u64]) {
         }
     }
     assert!(occurrences.iter().all(|&count| count == 1));
+}
+
+fn finds_of_three_shards() -> [Vec<(u32, StringId)>; 3] {
+    let find = |unit: u32, id: usize| (unit, StringId::new(id));
+    [
+        vec![find(0, 4), find(2, 1), find(2, 7)],
+        Vec::new(),
+        vec![find(0, 2), find(0, 9), find(2, 3), find(3, 0)],
+    ]
+}
+
+#[test]
+fn finds_of_one_unit_stand_in_a_row() {
+    let shards = finds_of_three_shards();
+    let lists: Vec<&[(u32, StringId)]> = shards.iter().map(|shard| &shard[..]).collect();
+    let by_unit = FindsByUnit::new(5, &lists);
+    let units: Vec<u32> = by_unit.finds.iter().map(|find| find.0).collect();
+    assert_eq!(units, [0, 0, 0, 2, 2, 2, 3]);
+    assert_eq!(by_unit.places.len(), shards.len());
+    for (shard, places) in shards.iter().zip(&by_unit.places) {
+        let found: Vec<(u32, StringId)> = (places.iter())
+            .map(|&place| by_unit.finds[place as usize])
+            .collect();
+        assert_eq!(found, *shard);
+    }
+}
+
+#[test]
+fn rows_of_finds_are_ordered_by_key_whatever_the_task_order() {
+    let shards = finds_of_three_shards();
+    let lists: Vec<&[(u32, StringId)]> = shards.iter().map(|shard| &shard[..]).collect();
+    let by_unit = FindsByUnit::new(5, &lists);
+    let key = |_: u32, id: StringId| core::cmp::Reverse(id.index());
+    let order = by_unit.order_rows_by(&forward, &key);
+    assert_eq!(order, by_unit.order_rows_by(&reverse, &key));
+    let ordered: Vec<(u32, usize)> = (order.iter())
+        .map(|&place| by_unit.finds[place as usize])
+        .map(|(unit, id)| (unit, id.index()))
+        .collect();
+    let expected = [(0, 9), (0, 4), (0, 2), (2, 7), (2, 3), (2, 1), (3, 0)];
+    assert_eq!(ordered, expected);
+    let numbers = by_unit.number_in(&order);
+    for (number, &place) in order.iter().enumerate() {
+        assert_eq!(numbers[place as usize].index(), number);
+    }
+}
+
+#[test]
+fn no_finds_make_no_rows() {
+    let by_unit = FindsByUnit::<StringId>::new(3, &[&[], &[]]);
+    assert!(by_unit.finds.is_empty());
+    assert_eq!(by_unit.places, [Vec::<u32>::new(), Vec::new()]);
+    assert!(by_unit.order_rows_by(&forward, &|_, id| id).is_empty());
 }
 
 fn list_references(functions: &[Function]) -> ReferenceLists {

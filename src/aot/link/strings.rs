@@ -1,5 +1,5 @@
 use super::state::{MergedStrings, UnitMarks};
-use super::unit::{LinkUnit, SHARD_COUNT, shard_of};
+use super::unit::{FindsByUnit, LinkUnit, SHARD_COUNT, shard_of};
 use crate::ir::{Id, InParallel, StringId, StringTable, for_each_mut};
 use hashbrown::HashTable;
 
@@ -52,49 +52,29 @@ impl StringShard {
     }
 }
 
-fn merge_sorted_entries(shards: &[StringShard]) -> Vec<(u32, StringId)> {
-    let count: usize = shards.iter().map(|shard| shard.entries.len()).sum();
-    let mut first_occurrences = Vec::with_capacity(count);
-    for shard in shards {
-        debug_assert!(shard.entries.is_sorted());
-        first_occurrences.extend_from_slice(&shard.entries);
-    }
-    first_occurrences.sort();
-    first_occurrences
-}
-
 fn build_string_table(
     shards: &mut [StringShard],
     units: &[LinkUnit],
     in_parallel: InParallel<'_>,
 ) -> StringTable {
-    let first_occurrences = merge_sorted_entries(shards);
-    let unit_of = |entry: u32| first_occurrences[entry as usize].0;
-    let mut order: Vec<u32> = (0..first_occurrences.len() as u32).collect();
-    let mut runs: Vec<&mut [u32]> = order
-        .chunk_by_mut(|&a, &b| unit_of(a) == unit_of(b))
-        .collect();
-    for_each_mut(&mut runs, in_parallel, &|run| {
-        let strings = &units[unit_of(run[0]) as usize].strings;
-        run.sort_unstable_by_key(|&entry| strings.get(first_occurrences[entry as usize].1));
+    let entries: Vec<&[(u32, StringId)]> = shards.iter().map(|shard| &shard.entries[..]).collect();
+    let first_occurrences = FindsByUnit::new(units.len(), &entries);
+    let order = first_occurrences.order_rows_by(in_parallel, &|unit, id| {
+        units[unit as usize].strings.get(id)
     });
 
     let string_at = |place: usize| {
-        let (unit, id) = first_occurrences[order[place] as usize];
+        let (unit, id) = first_occurrences.finds[order[place] as usize];
         (&units[unit as usize].strings, id)
     };
     let table = StringTable::of_distinct_strings(order.len(), &string_at, in_parallel);
-    let mut program_ids = vec![StringId::new(0); first_occurrences.len()];
-    for (place, &entry) in order.iter().enumerate() {
-        program_ids[entry as usize] = StringId::new(place);
-    }
+    let program_ids = first_occurrences.number_in(&order);
 
-    for_each_mut(shards, in_parallel, &|shard| {
-        let program_id = |entry: &(u32, StringId)| {
-            let position = first_occurrences.binary_search(entry);
-            program_ids[position.expect("every entry is a first occurrence")]
-        };
-        shard.program_ids = shard.entries.iter().map(program_id).collect();
+    let mut shards: Vec<(&mut StringShard, &Vec<u32>)> =
+        shards.iter_mut().zip(&first_occurrences.places).collect();
+    for_each_mut(&mut shards, in_parallel, &|(shard, places)| {
+        let program_id = |&place: &u32| program_ids[place as usize];
+        shard.program_ids = places.iter().map(program_id).collect();
     });
     table
 }

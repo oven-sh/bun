@@ -84,6 +84,20 @@ pub enum ImportKind {
 // - packages/bun-types/bun.d.ts
 
 impl ImportKind {
+    /// With code splitting, whether an edge of this kind puts its target in a
+    /// chunk of its own that is loaded when the expression runs, rather than
+    /// in the importer's static closure. `require()` qualifies only when the
+    /// output runs in Bun, which loads the chunk synchronously through
+    /// `import.meta.require`.
+    #[inline]
+    pub fn can_be_lazy_chunk(self, target_is_bun: bool) -> bool {
+        match self {
+            ImportKind::Dynamic => true,
+            ImportKind::Require => target_is_bun,
+            _ => false,
+        }
+    }
+
     #[inline]
     pub fn label(self) -> &'static [u8] {
         match self {
@@ -123,6 +137,11 @@ impl ImportKind {
     #[inline]
     pub fn is_common_js(self) -> bool {
         matches!(self, Self::Require | Self::RequireResolve)
+    }
+
+    #[inline]
+    pub fn is_entry_point(self) -> bool {
+        matches!(self, Self::EntryPointRun | Self::EntryPointBuild)
     }
 
     pub fn is_from_css(self) -> bool {
@@ -336,11 +355,6 @@ impl Ref {
     pub const fn eql(self, other: Ref) -> bool {
         // User-bit lane is not part of identity — see type-level doc.
         self.as_u64() == other.as_u64()
-    }
-    /// deprecated alias
-    #[inline]
-    pub const fn is_null(self) -> bool {
-        self.is_empty()
     }
     /// `Ref::NONE` → `None`, otherwise `Some(self)`. For sites that previously
     /// stored `Option<Ref>` and want option combinators on the sentinel form.
@@ -617,15 +631,16 @@ pub struct Location {
     // - 4-byte fields last: i32
     // This eliminates padding between differently-sized fields.
     //
-    // `file` / `line_text` are `Cow` (not `Str`) because
+    // `file` / `namespace` / `line_text` are `Cow` (not `Str`) because
     // `Location::clone()` must deep-dupe them so a
     // `BuildMessage`/`ResolveMessage` that outlives the
-    // `Source.contents` it borrowed from doesn't read poisoned memory. The
+    // `Source` it borrowed from doesn't read poisoned memory. The
     // borrowed arm covers the common case where the slice points into
-    // arena-owned source text.
+    // the bundle's arena.
     pub file: Cow<'static, [u8]>,
-    pub namespace: Str,
-    /// Text on the line, avoiding the need to refetch the source code
+    pub namespace: Cow<'static, [u8]>,
+    /// Text on the line, avoiding the need to refetch the source code. It may be prefixed by the
+    /// preceding lines, which are printed too.
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
@@ -643,9 +658,9 @@ pub struct Location {
     pub column: i32,
 }
 
-// NOT `#[derive(Clone)]`. `file` / `line_text` are
+// NOT `#[derive(Clone)]`. `file` / `namespace` / `line_text` are
 // `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
-// into `Source.contents` (see `init_or_null`, `css_parser.rs`, `error.rs`,
+// into a `Source` (see `init_or_null`, `css_parser.rs`, `error.rs`,
 // `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
 // `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
 // could outlive the source buffer and read poisoned memory. Instead,
@@ -654,7 +669,7 @@ impl Clone for Location {
     fn clone(&self) -> Self {
         Location {
             file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            namespace: Cow::Owned(self.namespace.to_vec()),
             line: self.line,
             column: self.column,
             length: self.length,
@@ -668,7 +683,7 @@ impl Default for Location {
     fn default() -> Self {
         Location {
             file: Cow::Borrowed(b""),
-            namespace: b"file",
+            namespace: Cow::Borrowed(b"file"),
             line_text: None,
             length: 0,
             offset: 0,
@@ -679,6 +694,37 @@ impl Default for Location {
 }
 
 impl Location {
+    /// Writes `at file:line:column` on its own line, under a message of `kind`. Writes nothing if there's no file.
+    pub fn write_place<const ENABLE_ANSI_COLORS: bool>(
+        &self,
+        to: &mut impl fmt::Write,
+        kind: Kind,
+    ) -> fmt::Result {
+        if self.file.is_empty() {
+            return Ok(());
+        }
+        to.write_str("\n")?;
+        write_n_bytes(to, b' ', (kind.string().len() + ": ".len()) - "at ".len())?;
+        bun_core::write_pretty!(
+            to,
+            ENABLE_ANSI_COLORS,
+            "<d>at <r><cyan>{}<r>",
+            bun_core::fmt::EscapeControlChars(bstr::BStr::new(&self.file))
+        )?;
+        if self.line > 0 && self.column > -1 {
+            bun_core::write_pretty!(
+                to,
+                ENABLE_ANSI_COLORS,
+                "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
+                self.line,
+                self.column,
+            )?;
+        } else if self.line > -1 {
+            bun_core::write_pretty!(to, ENABLE_ANSI_COLORS, "<d>:<r><yellow>{}<r>", self.line)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.file.len();
@@ -691,7 +737,7 @@ impl Location {
 
     pub fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.file.as_ref().into_str());
-        builder.count(self.namespace);
+        builder.count(self.namespace.as_ref().into_str());
         if let Some(text) = &self.line_text {
             builder.count(text.as_ref().into_str());
         }
@@ -713,7 +759,7 @@ impl Location {
         // single-buffer packing.
         Location {
             file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            namespace: Cow::Owned(self.namespace.to_vec()),
             line: self.line,
             column: self.column,
             length: self.length,
@@ -734,7 +780,7 @@ impl Location {
     ) -> Location {
         Location {
             file: Cow::Borrowed(file),
-            namespace,
+            namespace: Cow::Borrowed(namespace),
             line,
             column,
             length: length as usize,
@@ -767,7 +813,7 @@ impl Location {
             if r.is_empty() {
                 return Some(Location {
                     file: Cow::Borrowed(source.path.text),
-                    namespace: source.path.namespace,
+                    namespace: Cow::Borrowed(source.path.namespace),
                     line: -1,
                     column: -1,
                     length: 0,
@@ -802,7 +848,7 @@ impl Location {
 
             return Some(Location {
                 file: Cow::Borrowed(source.path.text),
-                namespace: source.path.namespace,
+                namespace: Cow::Borrowed(source.path.namespace),
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
@@ -943,16 +989,17 @@ impl Data {
         }
 
         // `pub const &'static str` — accepted by `const_format::concatcp!` below.
-        use bun_core::output::ansi::{BLUE, BOLD as B, DIM as D, RED};
+        use bun_core::output::ansi::{BLUE, BOLD as B, DIM as D, RED, YELLOW};
 
         let message_color: &'static str = match kind {
-            Kind::Err => B,
+            Kind::Err | Kind::Warn => B,
             Kind::Note => BLUE,
             _ => const_format::concatcp!(D, B),
         };
 
         let color_name: &'static str = match kind {
             Kind::Err => RED,
+            Kind::Warn => YELLOW,
             Kind::Note => BLUE,
             _ => D,
         };
@@ -961,9 +1008,33 @@ impl Data {
             if let Some(line_text_) = location.line_text.as_deref() {
                 let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
+                // The creator of the location may have included the lines preceding its own line.
+                let mut lines_before: Vec<&[u8]> =
+                    bun_core::strings::split(line_text, b"\n").collect();
+                let line_text = lines_before.pop().unwrap_or_default();
                 if location.column > 0 && !line_text.is_empty() {
-                    let mut line_offset_for_second_line: usize =
-                        usize::try_from(location.column - 1).expect("int cast");
+                    let mut line_offset_for_second_line: usize = width_before(
+                        line_text,
+                        usize::try_from(location.column - 1).expect("int cast"),
+                    );
+                    let gutter = bun_core::fmt::digit_count(location.line);
+                    for (line, text) in
+                        (location.line - lines_before.len() as i32..).zip(lines_before)
+                    {
+                        pretty_write!("<d>{:>1$} | <r>", line, gutter)?;
+                        writeln!(
+                            to,
+                            "{}",
+                            bun_core::fmt::fmt_javascript(
+                                &printable(text),
+                                bun_core::fmt::HighlighterOptions {
+                                    enable_colors: ENABLE_ANSI_COLORS,
+                                    redact_sensitive_information,
+                                    ..Default::default()
+                                },
+                            )
+                        )?;
+                    }
 
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
@@ -982,7 +1053,7 @@ impl Data {
                         to,
                         "{}",
                         bun_core::fmt::fmt_javascript(
-                            line_text,
+                            &printable(line_text),
                             bun_core::fmt::HighlighterOptions {
                                 enable_colors: ENABLE_ANSI_COLORS,
                                 redact_sensitive_information,
@@ -1023,26 +1094,41 @@ impl Data {
         pretty_write!("{}<r>", bstr::BStr::new(&*self.text))?;
 
         if let Some(location) = &self.location {
-            if !location.file.is_empty() {
-                to.write_str("\n")?;
-                write_n_bytes(to, b' ', (kind.string().len() + ": ".len()) - "at ".len())?;
-
-                pretty_write!("<d>at <r><cyan>{}<r>", bstr::BStr::new(&location.file))?;
-
-                if location.line > 0 && location.column > -1 {
-                    pretty_write!(
-                        "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
-                        location.line,
-                        location.column,
-                    )?;
-                } else if location.line > -1 {
-                    pretty_write!("<d>:<r><yellow>{}<r>", location.line)?;
-                }
-            }
+            location.write_place::<ENABLE_ANSI_COLORS>(to, kind)?;
         }
 
         Ok(())
     }
+}
+
+/// Returns a source line as it is shown in a diagnostic: control characters other than tabs are
+/// written as escape sequences such as `\x1b`.
+fn printable(line: &[u8]) -> Vec<u8> {
+    let mut printed = Vec::with_capacity(line.len());
+    // NUL bytes are copied through unescaped because a terminal ignores them.
+    for (i, part) in bun_core::strings::split(line, b"\0").enumerate() {
+        if i > 0 {
+            printed.push(0);
+        }
+        let part = bun_core::fmt::escape_control_chars_multiline(part);
+        printed.extend_from_slice(part.to_string().as_bytes());
+    }
+    printed
+}
+
+/// Width in terminal columns of the first `units` UTF-16 code units of `line`, as `printable`
+/// renders them. A tab counts as one column.
+fn width_before(line: &[u8], units: usize) -> usize {
+    use bun_core::strings;
+    let before = &line[..strings::wtf8_offset_of_utf16_index(line, units as u32)];
+    let past_the_end = units.saturating_sub(strings::wtf8_len_utf16(before) as usize);
+    let before = printable(before);
+    if strings::is_all_ascii(line) {
+        return before.len() + past_the_end;
+    }
+    // The width of a tab is 0 there.
+    let tabs = strings::count_char(&before, b'\t');
+    strings::visible::width::exclude_ansi_colors::utf8(&before) + tabs + past_the_end
 }
 
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
@@ -1077,15 +1163,20 @@ impl BabyString {
         (self.0 >> 16) as u16
     }
 
-    pub fn r#in(parent: &[u8], text: &[u8]) -> BabyString {
+    /// Locates `substring` inside `container` (the string later passed to
+    /// [`BabyString::slice`]) and records its offset and length.
+    pub fn r#in(container: &[u8], substring: &[u8]) -> BabyString {
         // bun_core::strings::index_of deliberately returns None for an empty
-        // needle, but an empty `text` reaches this path via resolve errors for
-        // `import ""`, so short-circuit it here to offset 0.
-        if text.is_empty() {
+        // needle, but an empty `substring` reaches this path via resolve errors
+        // for `import ""`, so short-circuit it here to offset 0.
+        if substring.is_empty() {
             return BabyString::new(0, 0);
         }
-        let off = bun_core::strings::index_of(parent, text).expect("unreachable");
-        BabyString::new(off as u16, text.len() as u16) // @truncate
+        // `container` is formatted lossily, so a `substring` with invalid UTF-8 may not be in it.
+        let Some(off) = bun_core::strings::index_of(container, substring) else {
+            return BabyString::new(0, 0);
+        };
+        BabyString::new(off as u16, substring.len() as u16) // @truncate
     }
 
     pub fn slice<'a>(self, container: &'a [u8]) -> &'a [u8] {
@@ -1206,6 +1297,22 @@ impl Msg {
 pub enum Metadata {
     Build,
     Resolve(MetadataResolve),
+    /// An error of TypeScript's, by its code: `TS2322`.
+    TypeScript {
+        code: u32,
+        kind: TypeScriptKind,
+    },
+}
+
+/// How TypeScript reports an error, which decides what suppresses it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TypeScriptKind {
+    /// `parseErrorAtRange`
+    Parse,
+    /// `grammarErrorOnNode`
+    Grammar,
+    /// `Checker.error`
+    Checker,
 }
 
 #[derive(Copy, Clone)]
@@ -1213,16 +1320,6 @@ pub struct MetadataResolve {
     pub specifier: BabyString,
     pub import_kind: ImportKind,
     pub err: crate::Error,
-}
-
-impl Default for MetadataResolve {
-    fn default() -> Self {
-        MetadataResolve {
-            specifier: BabyString::new(0, 0),
-            import_kind: ImportKind::default(),
-            err: crate::Error::ModuleNotFound,
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1534,7 +1631,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1613,23 +1709,21 @@ impl Log {
         r: Range,
         text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
-        clone: bool,
-        redact: bool,
+        redact_sensitive_information: bool,
     ) {
         match kind {
             Kind::Err => self.errors += 1,
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let mut data = self.tracked_range_data(source, r, text);
-        if clone {
-            data = data.clone_line_text(self.clone_line_text);
-        }
+        let data = self
+            .tracked_range_data(source, r, text)
+            .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind,
             data,
             notes,
-            redact_sensitive_information: redact,
+            redact_sensitive_information,
             ..Default::default()
         })
     }
@@ -1743,7 +1837,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), false)
     }
 
     #[inline]
@@ -1755,7 +1849,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Err, source, r, text, notes, false)
     }
 
     #[inline]
@@ -1775,7 +1869,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1793,7 +1886,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             opts.redact_sensitive_information,
         )
     }
@@ -1857,9 +1949,27 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
+    }
+
+    /// A warning at `loc` that never prints the source line, which may hold a secret the redactor cannot recognise.
+    #[cold]
+    pub fn add_warning_fmt_no_excerpt(
+        &mut self,
+        source: &Source,
+        loc: Loc,
+        args: fmt::Arguments<'_>,
+    ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        let range = Range { loc, len: 1 };
+        let text = alloc_print(args);
+        self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
+        if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
+            location.line_text = None;
+        }
     }
 
     #[cold]
@@ -1921,7 +2031,7 @@ impl Log {
             return;
         }
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), false)
     }
 
     #[cold]
@@ -1959,7 +2069,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, notes, false)
     }
 
     #[cold]
@@ -2053,12 +2163,23 @@ impl Log {
         })
     }
 
-    #[cold]
+    #[inline]
     pub fn add_range_error_with_notes(
         &mut self,
         source: Option<&Source>,
         r: Range,
         text: impl IntoText,
+        notes: Box<[Data]>,
+    ) {
+        self.add_range_error_with_notes_text(source, r, text.into_text(), notes)
+    }
+
+    #[cold]
+    fn add_range_error_with_notes_text(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
     ) {
         self.errors += 1;
@@ -2075,8 +2196,15 @@ impl Log {
         self.msgs.push(msg);
     }
 
+    /// Generic only over the text conversion; the body is shared so each
+    /// `&[u8; N]` literal length does not get its own copy.
+    #[inline]
+    pub fn add_error(&mut self, source: Option<&Source>, loc: Loc, text: impl IntoText) {
+        self.add_error_text(source, loc, text.into_text());
+    }
+
     #[cold]
-    pub fn add_error(&mut self, _source: Option<&Source>, loc: Loc, text: impl IntoText) {
+    fn add_error_text(&mut self, _source: Option<&Source>, loc: Loc, text: Cow<'static, [u8]>) {
         self.errors += 1;
         let data = self.tracked_range_data(
             _source,
@@ -2213,32 +2341,25 @@ pub struct AddErrorOptions<'a> {
 /// `AddErrorOptions`.
 pub type ErrorOpts<'a> = AddErrorOptions<'a>;
 
-/// Call-site helper: rewrites `<red>..<r>` markup
-/// in the *literal* format string via `bun_core::pretty_fmt!` (compile-time),
-/// then formats. Expands to a `fmt::Arguments` so it drops in wherever a
-/// pre-built `fmt::Arguments` was previously passed to `alloc_print`.
+/// `alloc_print!(fmt, args..)` — markup-aware form of [`alloc_print`]: rewrites
+/// `<red>..<r>` markup in the *literal* format string via `bun_core::pretty_fmt!`
+/// (compile-time), then formats into an owned buffer. Message text with markup
+/// must go through this; a raw `format_args!` passed to the function form
+/// below keeps the tags verbatim.
 ///
-/// Callers that build messages with markup must use this (or `alloc_print!`) so
-/// the tags are converted/stripped; passing a raw `format_args!` through the
-/// function form below leaves the markup verbatim.
-#[macro_export]
-macro_rules! pretty_format_args {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {{
-        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
-            .load(::core::sync::atomic::Ordering::Relaxed)
-        {
-            ::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
-        } else {
-            ::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
-        }
-    }};
-}
-
-/// `alloc_print!(fmt, args..)` — owned-buffer form of `pretty_format_args!`.
+/// Each branch holds the whole call: a `format_args!` in block-tail position
+/// is dropped with the block (E0716), so it cannot be handed out of an
+/// `if`/`else`. Only one branch executes, so each `$arg` evaluates once.
 #[macro_export]
 macro_rules! alloc_print {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::alloc_print($crate::pretty_format_args!($fmt $(, $arg)*))
+        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
+            .load(::core::sync::atomic::Ordering::Relaxed)
+        {
+            $crate::alloc_print(::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*))
+        } else {
+            $crate::alloc_print(::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*))
+        }
     };
 }
 
@@ -2297,8 +2418,8 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     // Markup conversion happens over the *format-string literal only*;
     // interpolated values are never inspected for `<..>` markup.
     // With `fmt::Arguments` the literal is opaque, so callers that need markup
-    // conversion must go through `pretty_format_args!` / `alloc_print!` above
-    // (which do the rewrite at the macro call site). The function form here
+    // conversion must go through `alloc_print!` above (which does the rewrite
+    // at the macro call site). The function form here
     // renders `args` verbatim: do NOT run a runtime markup pass over the
     // rendered bytes, or user-supplied argument values containing `<`
     // (`<stdin>`, `Array<string>`, JSX/HTML snippets) get mangled.
@@ -2310,6 +2431,7 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     Cow::Owned(v)
 }
 
+/// In range for every position in a source that passed [`Source::check_parseable_len`].
 #[inline]
 pub fn usize2loc(loc: usize) -> Loc {
     Loc {
@@ -2557,6 +2679,10 @@ impl LineColumnTracker {
     }
 }
 
+/// Returned by [`Source::check_parseable_len`] once it has logged the error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceTooLarge;
+
 impl Source {
     /// Borrowed view of the source bytes. Provided as a method so callers that
     /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
@@ -2564,6 +2690,23 @@ impl Source {
     #[inline]
     pub fn contents(&self) -> &[u8] {
         &self.contents
+    }
+
+    /// Positions are `i32` [`Loc`]s, so no parser can take a longer source.
+    pub const MAX_PARSEABLE_LEN: usize = i32::MAX as usize;
+
+    /// Parsers call this before reading a source, whichever way it reached them.
+    pub fn check_parseable_len(&self, log: &mut Log, what: &str) -> Result<(), SourceTooLarge> {
+        if self.contents.len() <= Self::MAX_PARSEABLE_LEN {
+            return Ok(());
+        }
+        // Without a position: finding the line of one would scan the oversized source.
+        log.add_error_fmt(
+            Some(self),
+            Loc::EMPTY,
+            format_args!("{what} is too large to parse (2 GiB maximum)"),
+        );
+        Err(SourceTooLarge)
     }
 
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {
@@ -2750,9 +2893,14 @@ impl Source {
     }
 }
 
+#[inline]
 pub fn range_data(source: Option<&Source>, r: Range, text: impl IntoText) -> Data {
+    range_data_text(source, r, text.into_text())
+}
+
+fn range_data_text(source: Option<&Source>, r: Range, text: Cow<'static, [u8]>) -> Data {
     Data {
-        text: text.into_text(),
+        text,
         location: Location::init_or_null(source, r),
     }
 }
@@ -3209,21 +3357,29 @@ pub fn initialize_store_or_reset() {
 
 /// RAII guard that pins the thread-local `disable_reset` flag on both AST
 /// `Store`s for its scope.
-#[must_use = "disable_reset is cleared on drop; bind to a named local"]
-pub struct DisableStoreReset(());
+#[must_use = "disable_reset is restored on drop; bind to a named local"]
+pub struct DisableStoreReset {
+    prev_expr: bool,
+    prev_stmt: bool,
+}
 impl DisableStoreReset {
     #[inline]
     pub fn new() -> Self {
+        let prev_expr = expr::data::Store::disable_reset();
+        let prev_stmt = stmt::data::Store::disable_reset();
         expr::data::Store::set_disable_reset(true);
         stmt::data::Store::set_disable_reset(true);
-        Self(())
+        Self {
+            prev_expr,
+            prev_stmt,
+        }
     }
 }
 impl Drop for DisableStoreReset {
     #[inline]
     fn drop(&mut self) {
-        expr::data::Store::set_disable_reset(false);
-        stmt::data::Store::set_disable_reset(false);
+        expr::data::Store::set_disable_reset(self.prev_expr);
+        stmt::data::Store::set_disable_reset(self.prev_stmt);
     }
 }
 
@@ -3358,14 +3514,18 @@ mod line_column_tracker_tests {
     #[test]
     fn line_column_tracker_interleaved_diagnostic_streams_match_full_scan() {
         let statement = b"try {} catch ([a,a,a,a,a,a,a,a,a,a,a,a, `]) {}\n";
+        // Every lookup below re-scans from an earlier line, so cost grows with
+        // the square of the statement count; under Miri 4 statements still
+        // interleave forward and backward jumps across lines at ~1/9 the work.
+        let statements: usize = if cfg!(miri) { 4 } else { 12 };
         let mut contents = Vec::new();
-        for _ in 0..12 {
+        for _ in 0..statements {
             contents.extend_from_slice(statement);
         }
         let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents.as_slice());
 
         let mut offsets = Vec::new();
-        for statement_index in 0..12usize {
+        for statement_index in 0..statements {
             let start = statement_index * statement.len();
             let first_binding = start + 15;
             offsets.push(start + statement.len() - 6);

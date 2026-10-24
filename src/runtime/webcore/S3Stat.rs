@@ -1,10 +1,7 @@
-use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_core::String as BunString;
+use bun_jsc::{JSGlobalObject, JsResult, bun_string_jsc};
 
-bun_output::declare_scope!(S3Stat, visible);
-
-#[bun_jsc::JsClass]
-pub struct S3Stat {
+pub(crate) struct S3Stat {
     pub(crate) size: u64,
     pub(crate) etag: BunString,
     pub(crate) content_type: BunString,
@@ -12,59 +9,39 @@ pub struct S3Stat {
 }
 
 impl S3Stat {
-    pub(crate) fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
-        Err(global.throw_illegal_constructor())
-    }
-
     pub(crate) fn init(
         size: u64,
         etag: &[u8],
         content_type: &[u8],
         last_modified: &[u8],
         global: &JSGlobalObject,
-    ) -> JsResult<Box<Self>> {
-        // `bun_core::String` is `Copy` (no `Drop`); wrap in `OwnedString` so the
-        // string is deref'd on both the `Ok` and `?`-error paths.
-        let mut date_str = OwnedString::new(BunString::init(last_modified));
-        let last_modified = bun_jsc::bun_string_jsc::parse_date(&mut date_str, global)?;
+    ) -> JsResult<Self> {
+        let last_modified =
+            bun_string_jsc::parse_date(&BunString::from_bytes(last_modified), global)?;
 
-        Ok(Box::new(S3Stat {
+        Ok(S3Stat {
             size,
             etag: BunString::clone_utf8(etag),
             content_type: BunString::clone_utf8(content_type),
             last_modified,
-        }))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_size(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(self.size as f64)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_etag(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        self.etag.to_js(global)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_content_type(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        self.content_type.to_js(global)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_last_modified(&self, global: &JSGlobalObject) -> JSValue {
-        JSValue::from_date_number(global, self.last_modified)
+        })
     }
 }
 
-impl Drop for S3Stat {
-    fn drop(&mut self) {
-        // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl
-        // (src/string/lib.rs), so dropping the Box alone would leak the +1
-        // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them
-        // explicitly.
-        // The default `JsFinalize::finalize` (`drop(self)`) runs this on GC.
-        self.etag.deref();
-        self.content_type.deref();
+impl S3Stat {
+    pub(crate) fn get_etag(&self) -> BunString {
+        self.etag.clone()
+    }
+
+    pub(crate) fn get_last_modified(&self) -> f64 {
+        self.last_modified
+    }
+
+    pub(crate) fn get_size(&self) -> u64 {
+        self.size
+    }
+
+    pub(crate) fn get_type(&self) -> BunString {
+        self.content_type.clone()
     }
 }

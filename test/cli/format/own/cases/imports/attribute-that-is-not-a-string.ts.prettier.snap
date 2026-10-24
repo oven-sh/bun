@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+import data from "mod" with {
+  type: 123,
+};
+import a from "a" with { type: "json" };
+import b from "b" with { type: "json", other: "x" };
+
+-------------------
+{ printWidth: 100 }
+-------------------
+import data from "mod" with {
+  type: 123,
+};
+import a from "a" with { type: "json" };
+import b from "b" with { type: "json", other: "x" };
+
+===================== End =====================

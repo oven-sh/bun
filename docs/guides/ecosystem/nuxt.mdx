@@ -4,25 +4,45 @@ sidebarTitle: Nuxt with Bun
 mode: center
 ---
 
-Bun supports [Nuxt](https://nuxt.com) with no extra configuration. Initialize a Nuxt app with the official `nuxi` CLI.
+Bun supports [Nuxt](https://nuxt.com) with no extra configuration. Initialize a Nuxt app with the official `create-nuxt` CLI.
 
 ```sh terminal icon="terminal"
-bunx nuxi init my-nuxt-app
+bun create nuxt@latest my-nuxt-app
 ```
 
 ```txt
-✔ Which package manager would you like to use?
-bun
-◐ Installing dependencies...
-bun install v1.3.3 (16b4bf34)
- + @nuxt/devtools@0.8.2
- + nuxt@3.7.0
- 785 packages installed [2.67s]
-✔ Installation completed.
-✔ Types generated in .nuxt
-✨ Nuxt project has been created with the v3 template. Next steps:
- › cd my-nuxt-app
- › Start development server with bun run dev
+┌  Welcome to Nuxt!
+│
+◇  Templates loaded
+│
+◇  Which template would you like to use?
+│  minimal – Minimal starter with a single app.vue.
+│
+◇  Creating project in my-nuxt-app
+│
+◇  Downloaded minimal template
+│
+◇  Which package manager would you like to use?
+│  bun
+│
+◇  Initialize git repository?
+│  Yes
+│
+◇  Dependencies installed
+│
+◇  Git repository initialized
+│
+◇  Would you like to browse and install modules?
+│  No
+│
+└  ✨ Nuxt project has been created with the minimal template.
+
+╭── 👉 Next steps ─────╮
+│                      │
+│   › cd my-nuxt-app   │
+│   › bun run dev      │
+│                      │
+╰──────────────────────╯
 ```
 
 ---
@@ -39,23 +59,27 @@ bun --bun run dev
 ```
 
 ```txt
-nuxt dev
-Nuxi 3.6.5
-Nuxt 3.6.5 with Nitro 2.5.2
-  > Local:    http://localhost:3000/
-  > Network:  http://192.168.0.21:3000/
-  > Network:  http://[fd8a:d31d:481c:4883:1c64:3d90:9f83:d8a2]:3000/
+$ nuxt dev
+│
+●  Nuxt 4.5.2 (with Nitro 2.13.4, Vite 8.2.1 and Vue 3.5.41)
 
-✔ Nuxt DevTools is enabled v0.8.0 (experimental)
-ℹ Vite client warmed up in 547ms
-✔ Nitro built in 244 ms
+  ➜ Local:    http://localhost:3000/
+  ➜ Network:  use --host to expose
+
+  ➜ DevTools: press Shift + Alt + D in the browser (v3.4.1)
+
+✔ Vite client built in 95ms
+✔ Vite server built in 33ms
+[nitro] ✔ Nuxt Nitro server built in 948ms
+ℹ Vite server warmed up in 3ms
+ℹ Vite client warmed up in 9ms
 ```
 
 ---
 
 Once the dev server starts, open [http://localhost:3000](http://localhost:3000) to see the app. It renders Nuxt's built-in `NuxtWelcome` template component.
 
-To start developing your app, replace `<NuxtWelcome />` in `app.vue` with your own UI.
+To start developing your app, replace `<NuxtWelcome />` in `app/app.vue` with your own UI.
 
 <Frame>
   ![Demo Nuxt app running on

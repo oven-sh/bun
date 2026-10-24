@@ -46,7 +46,6 @@ test/cli/install/bunx.test.ts
 test/cli/install/isolated-install.test.ts
 test/cli/install/migration/complex-workspace.test.ts
 test/cli/install/npmrc.test.ts
-test/cli/install/overrides.test.ts
 test/cli/install/test-dev-peer-dependency-priority.test.ts
 test/cli/run/commonjs-invalid.test.ts
 test/cli/run/preload-test.test.js
@@ -95,6 +94,9 @@ test/cli/install/bun-install-security-provider.test.ts
 test/js/node/test/parallel/test-tls-fast-writing.js
 test/js/bun/sqlite/sqlite.test.js
 test/regression/issue/12250.test.ts
+# `bun test --bail` exits with a bare exit(1), so the VM teardown is skipped and
+# LeakSanitizer aborts the child with 134 after several seconds (#32183).
+test/regression/issue/26851.test.ts
 test/js/bun/test/parallel/test-http-10177-response.write-with-non-ascii-latin1-should-not-cause-duplicated-character-or-segfault.ts
 test/cli/install/minimum-release-age.test.ts
 
@@ -154,6 +156,7 @@ test/js/node/test/parallel/test-http-server-keepalive-req-gc.js
 # Timeouts
 test/js/node/test/parallel/test-cluster-primary-kill.js
 test/cli/test/parallel.test.ts
+test/cli/test/parallel-startup-failure.test.ts
 
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
 # @call(bun.callmod_inline, Subprocess.finalize, .{thisValue});
@@ -352,6 +355,10 @@ test/regression/issue/10139.test.ts
 test/js/bun/udp/udp_socket.test.ts
 test/cli/init/init.test.ts
 
+# `bun create ./Component.tsx` exits from inside the bundler's dependency scan, so the
+# bundle (its worker map, the CSS it parsed) is never torn down.
+test/cli/create/create-jsx.test.ts
+
 # There are some leaks related to the dev server closing on process exit, the fix is to
 # tick the event loop on globalExit but this breaks like 50 tests. Since the
 # leak is when process exits it should be fine for now but it should be fixed at
@@ -363,7 +370,6 @@ test/bake/dev/server-sourcemap.test.ts
 # Watcher Thread
 test/bake/dev-and-prod.test.ts
 test/bake/dev/bundle.test.ts
-test/bake/dev/css.test.ts
 test/bake/dev/esm.test.ts
 test/bake/dev/hot.test.ts
 test/bake/dev/react-spa.test.ts

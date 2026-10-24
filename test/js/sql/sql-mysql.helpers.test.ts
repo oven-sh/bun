@@ -170,7 +170,7 @@ describeWithContainer(
       try {
         await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: undefined })} WHERE id IN ${sql([1, 2])}`;
         expect.unreachable();
-      } catch (e) {
+      } catch (e: any) {
         expect(e).toBeInstanceOf(SyntaxError);
         expect(e.message).toBe("Update needs to have at least one column");
       }

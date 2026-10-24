@@ -16,7 +16,10 @@
 //! - integers parse as `f64` but are validated as 64-bit integers first;
 //!   values outside `Number.MAX_SAFE_INTEGER` are errors (TOML requires
 //!   lossless handling or an error)
-//! - date/time values (all four kinds) become strings of their source text
+//! - date/time values become `E::String`s tagged with `toml_datetime`, which
+//!   materialize as Temporal objects (offset date-time → `Temporal.Instant`,
+//!   local date-time → `Temporal.PlainDateTime`, local date →
+//!   `Temporal.PlainDate`, local time → `Temporal.PlainTime`)
 //! - strings are UTF-8; non-ASCII content is re-encoded to UTF-16 EStrings
 //!   so both the JS conversion and the printer paths agree
 
@@ -133,8 +136,11 @@ enum ValueData<'a> {
         is_ascii: bool,
     },
     Number(f64),
-    /// All four TOML date/time kinds, as their source text (always ASCII).
-    DateTime(&'a [u8]),
+    /// One of the four TOML date/time kinds, as its source text (always ASCII).
+    DateTime {
+        text: &'a [u8],
+        kind: E::TomlDateTimeKind,
+    },
     Boolean(bool),
     ArrayOpen,
     InlineOpen,
@@ -147,15 +153,82 @@ enum ArrayItem<'a> {
     Eof { pos: usize },
 }
 
+/// A token of a document, as a range of its text. What is between two tokens is white space, line
+/// breaks and comments.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TokenKind {
+    /// `[` of `[a]`
+    TableOpen,
+    /// `]` of `[a]`
+    TableClose,
+    /// `[[` of `[[a]]`
+    ArrayTableOpen,
+    /// `]]` of `[[a]]`
+    ArrayTableClose,
+    /// One segment of a key, with its quotes.
+    Key,
+    Dot,
+    Equals,
+    /// A string, a number, a date, a time or a boolean.
+    Scalar,
+    ArrayOpen,
+    ArrayClose,
+    InlineOpen,
+    InlineClose,
+    Comma,
+}
+
 pub struct TOML;
 
 impl TOML {
+    /// The tokens of `text` in its order, for who wants a document as it is written. The syntax is
+    /// what [`TOML::parse`] takes. What tables and keys mean is not looked at (a key can be there
+    /// twice), and an integer can have any size. `Err`: what is wrong with the syntax, and at which byte.
+    pub fn tokens(text: &[u8]) -> Result<Vec<Token>, (Vec<u8>, usize)> {
+        let source = Source::init_path_string(b"".as_slice(), text);
+        let mut log = Log::init();
+        let bump = Bump::new();
+        let is_short_enough = source
+            .check_parseable_len(&mut log, "TOML document")
+            .is_ok();
+        let mut tokenizer = Tokenizer {
+            scanner: Scanner {
+                src: text,
+                pos: 0,
+                bump: &bump,
+                source: &source,
+                log: &mut log,
+                redact: false,
+                keeps_text: true,
+            },
+            tokens: Vec::new(),
+        };
+        if is_short_enough && tokenizer.document().is_ok() {
+            return Ok(tokenizer.tokens);
+        }
+        Err(match log.msgs.first() {
+            Some(first) => (
+                first.data.text.to_vec(),
+                first.data.location.as_ref().map_or(0, |it| it.offset),
+            ),
+            None => (b"Syntax error".to_vec(), 0),
+        })
+    }
+
     pub fn parse<'a>(
         source: &'a Source,
         log: &mut Log,
         bump: &'a Bump,
         redact_logs: bool,
     ) -> crate::Result<Expr> {
+        source.check_parseable_len(log, "TOML document")?;
         let mut parser = Parser {
             scanner: Scanner {
                 src: source.contents.as_ref(),
@@ -164,6 +237,7 @@ impl TOML {
                 source,
                 log,
                 redact: redact_logs,
+                keeps_text: false,
             },
             bump,
             stack_check: StackCheck::init(),
@@ -184,6 +258,28 @@ const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
 
 const BARE_CR: &[u8] = b"Bare carriage return is not allowed; use \\r\\n or \\n";
 const UNDERSCORE_IN_NUMBER: &[u8] = b"Underscores in numbers must be surrounded by digits";
+
+/// TOML says excess fractional-second precision "should be truncated, not
+/// rounded"; Temporal rejects more than its 9 digits, so drop the rest here.
+fn truncate_fractional_seconds<'a>(text: &'a [u8], bump: &'a Bump) -> &'a [u8] {
+    let Some(dot) = bun_core::strings::index_of_char_usize(text, b'.') else {
+        return text;
+    };
+    let frac_start = dot + 1;
+    let mut frac_end = frac_start;
+    while frac_end < text.len() && text[frac_end].is_ascii_digit() {
+        frac_end += 1;
+    }
+    if frac_end - frac_start <= 9 {
+        return text;
+    }
+    let keep = frac_start + 9;
+    let mut out: ArenaVec<'a, u8> =
+        ArenaVec::with_capacity_in(keep + (text.len() - frac_end), bump);
+    out.extend_from_slice(&text[..keep]);
+    out.extend_from_slice(&text[frac_end..]);
+    out.into_bump_slice()
+}
 
 fn is_bare_key_char(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'-' || c == b'_'
@@ -207,6 +303,8 @@ struct Scanner<'a, 'log> {
     source: &'a Source,
     log: &'log mut Log,
     redact: bool,
+    /// The caller goes by the text of a number, so its value need not fit anything.
+    keeps_text: bool,
 }
 
 impl<'a, 'log> Scanner<'a, 'log> {
@@ -635,15 +733,18 @@ impl<'a, 'log> Scanner<'a, 'log> {
         if self.peek().is_ascii_digit() {
             let d1 = self.digit_run_len(self.pos);
             if d1 == 4 && self.peek_at(self.pos + 4) == b'-' {
-                let text = self.scan_datetime_from_date()?;
+                let (text, kind) = self.scan_datetime_from_date()?;
                 self.expect_value_terminator()?;
-                return Ok(ValueData::DateTime(text));
+                return Ok(ValueData::DateTime { text, kind });
             }
             if d1 == 2 && self.peek_at(self.pos + 2) == b':' {
                 let start = self.pos;
                 self.scan_time_digits()?;
                 self.expect_value_terminator()?;
-                return Ok(ValueData::DateTime(&self.src[start..self.pos]));
+                return Ok(ValueData::DateTime {
+                    text: &self.src[start..self.pos],
+                    kind: E::TomlDateTimeKind::LocalTime,
+                });
             }
         }
 
@@ -673,8 +774,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
     }
 
     /// `YYYY-MM-DD` and everything that may follow it (time, offset).
-    /// Returns the full source text of the literal.
-    fn scan_datetime_from_date(&mut self) -> PResult<&'a [u8]> {
+    /// Returns the full source text of the literal and which kind it is.
+    fn scan_datetime_from_date(&mut self) -> PResult<(&'a [u8], E::TomlDateTimeKind)> {
         let start = self.pos;
 
         let year = self.read_digits(4, b"Invalid date: expected a 4-digit year")?;
@@ -725,44 +826,53 @@ impl<'a, 'log> Scanner<'a, 'log> {
             _ => false,
         };
 
-        if has_time {
-            self.scan_time_digits()?;
-            // Optional offset.
-            match self.peek() {
-                b'Z' | b'z' => {
-                    self.pos += 1;
-                }
-                b'+' | b'-' => {
-                    self.pos += 1;
-                    let hour =
-                        self.read_digits(2, b"Invalid date-time offset: expected 2-digit hours")?;
-                    if self.peek() != b':' {
-                        return Err(self.err(
-                            self.pos,
-                            b"Invalid date-time offset: expected ':' between hours and minutes",
-                        ));
-                    }
-                    self.pos += 1;
-                    let minute =
-                        self.read_digits(2, b"Invalid date-time offset: expected 2-digit minutes")?;
-                    if hour > 23 {
-                        return Err(self.err(
-                            start,
-                            b"Invalid date-time offset: hours must be between 00 and 23",
-                        ));
-                    }
-                    if minute > 59 {
-                        return Err(self.err(
-                            start,
-                            b"Invalid date-time offset: minutes must be between 00 and 59",
-                        ));
-                    }
-                }
-                _ => {}
-            }
+        if !has_time {
+            return Ok((&self.src[start..self.pos], E::TomlDateTimeKind::LocalDate));
         }
 
-        Ok(&self.src[start..self.pos])
+        self.scan_time_digits()?;
+        // Optional offset.
+        let has_offset = match self.peek() {
+            b'Z' | b'z' => {
+                self.pos += 1;
+                true
+            }
+            b'+' | b'-' => {
+                self.pos += 1;
+                let hour =
+                    self.read_digits(2, b"Invalid date-time offset: expected 2-digit hours")?;
+                if self.peek() != b':' {
+                    return Err(self.err(
+                        self.pos,
+                        b"Invalid date-time offset: expected ':' between hours and minutes",
+                    ));
+                }
+                self.pos += 1;
+                let minute =
+                    self.read_digits(2, b"Invalid date-time offset: expected 2-digit minutes")?;
+                if hour > 23 {
+                    return Err(self.err(
+                        start,
+                        b"Invalid date-time offset: hours must be between 00 and 23",
+                    ));
+                }
+                if minute > 59 {
+                    return Err(self.err(
+                        start,
+                        b"Invalid date-time offset: minutes must be between 00 and 59",
+                    ));
+                }
+                true
+            }
+            _ => false,
+        };
+
+        let kind = if has_offset {
+            E::TomlDateTimeKind::OffsetDateTime
+        } else {
+            E::TomlDateTimeKind::LocalDateTime
+        };
+        Ok((&self.src[start..self.pos], kind))
     }
 
     /// `HH:MM[:SS[.frac]]` — seconds are optional in TOML 1.1.
@@ -974,6 +1084,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
         } else {
             i64::MAX as u64
         };
+        if self.keeps_text {
+            return Ok(ValueData::Number(0.0));
+        }
         if int_overflow || magnitude > signed_limit {
             return Err(self.err(start, b"Integer is outside the 64-bit signed range"));
         }
@@ -1045,6 +1158,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
         self.expect_value_terminator()?;
 
+        if self.keeps_text {
+            return Ok(ValueData::Number(0.0));
+        }
         if overflow || value > i64::MAX as u64 {
             return Err(self.err(start, b"Integer is outside the 64-bit signed range"));
         }
@@ -1436,6 +1552,147 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
 // ── parser ──────────────────────────────────────────────────────────────────
 
+/// Consumes tokens from the scanner and lists their ranges: [`TOML::tokens`]. The grammar is that
+/// of [`Parser`]. There is no recursion.
+struct Tokenizer<'a, 'log> {
+    scanner: Scanner<'a, 'log>,
+    tokens: Vec<Token>,
+}
+
+impl<'a> Tokenizer<'a, '_> {
+    /// A token from `start` to the cursor.
+    fn push(&mut self, kind: TokenKind, start: usize) {
+        self.tokens.push(Token {
+            kind,
+            start: start as u32,
+            end: self.scanner.pos as u32,
+        });
+    }
+
+    /// A token of `len` bytes that ends at the cursor.
+    fn push_last(&mut self, kind: TokenKind, len: usize) {
+        self.push(kind, self.scanner.pos - len);
+    }
+
+    fn document(&mut self) -> PResult<()> {
+        self.scanner.init_document()?;
+        loop {
+            match self.scanner.scan_line_start()? {
+                LineStart::Eof => return Ok(()),
+                LineStart::TableOpen { aot, pos } => {
+                    let (open, close) = match aot {
+                        true => (TokenKind::ArrayTableOpen, TokenKind::ArrayTableClose),
+                        false => (TokenKind::TableOpen, TokenKind::TableClose),
+                    };
+                    self.push(open, pos);
+                    loop {
+                        let key = self.scanner.scan_key_after_sep()?;
+                        self.push(TokenKind::Key, key.pos);
+                        match self.scanner.scan_header_sep(aot)? {
+                            HeaderSep::Dot => self.push_last(TokenKind::Dot, 1),
+                            HeaderSep::Close => break,
+                        }
+                    }
+                    self.push_last(close, 1 + usize::from(aot));
+                    self.scanner.scan_line_end(b"a table header")?;
+                }
+                LineStart::Key(first) => {
+                    self.keyval(first)?;
+                    self.scanner.scan_line_end(b"a key/value pair")?;
+                }
+            }
+        }
+    }
+
+    /// `first` has been scanned: the rest of its key, `=` and the value with all that is in it.
+    fn keyval(&mut self, first: KeySeg<'a>) -> PResult<()> {
+        // What closes the arrays and inline tables that are open.
+        let mut open: Vec<TokenKind> = Vec::new();
+        let mut key = first;
+        'keyval: loop {
+            self.push(TokenKind::Key, key.pos);
+            while let KeyvalSep::Dot = self.scanner.scan_keyval_sep()? {
+                self.push_last(TokenKind::Dot, 1);
+                let next = self.scanner.scan_key_after_sep()?;
+                self.push(TokenKind::Key, next.pos);
+            }
+            self.push_last(TokenKind::Equals, 1);
+            let mut value = self.scanner.scan_value_required()?;
+            'value: loop {
+                // Whether a value is complete. Otherwise an array or an inline table has been opened.
+                let mut is_after_value = false;
+                match value.data {
+                    ValueData::ArrayOpen => {
+                        self.push(TokenKind::ArrayOpen, value.pos);
+                        open.push(TokenKind::ArrayClose);
+                    }
+                    ValueData::InlineOpen => {
+                        self.push(TokenKind::InlineOpen, value.pos);
+                        open.push(TokenKind::InlineClose);
+                    }
+                    _ => {
+                        self.push(TokenKind::Scalar, value.pos);
+                        is_after_value = true;
+                    }
+                }
+                loop {
+                    let Some(&close) = open.last() else {
+                        return Ok(());
+                    };
+                    let is_inline = close == TokenKind::InlineClose;
+                    if is_after_value {
+                        let separator = if is_inline {
+                            let what = "Expected ',' or '}' in an inline table but found";
+                            self.scanner.scan_list_sep(b'}', what)?
+                        } else {
+                            let what = "Expected ',' or ']' in an array but found";
+                            self.scanner.scan_list_sep(b']', what)?
+                        };
+                        match separator {
+                            ListSep::Comma => self.push_last(TokenKind::Comma, 1),
+                            ListSep::Close => {
+                                self.push_last(close, 1);
+                                open.pop();
+                                continue;
+                            }
+                        }
+                    }
+                    if is_inline {
+                        match self.scanner.scan_inline_key()? {
+                            InlineKey::Close => {}
+                            InlineKey::Eof { pos } => {
+                                return Err(self
+                                    .scanner
+                                    .err(pos, b"Unterminated inline table; expected '}'"));
+                            }
+                            InlineKey::Key(first) => {
+                                key = first;
+                                continue 'keyval;
+                            }
+                        }
+                    } else {
+                        match self.scanner.scan_array_item()? {
+                            ArrayItem::Close => {}
+                            ArrayItem::Eof { pos } => {
+                                return Err(self
+                                    .scanner
+                                    .err(pos, b"Unterminated array; expected ']'"));
+                            }
+                            ArrayItem::Value(item) => {
+                                value = item;
+                                continue 'value;
+                            }
+                        }
+                    }
+                    self.push_last(close, 1);
+                    open.pop();
+                    is_after_value = true;
+                }
+            }
+        }
+    }
+}
+
 /// Consumes tokens from the scanner and builds the `Expr` tree. Has no
 /// access to source bytes; every decision is made on a typed token.
 struct Parser<'a, 'log> {
@@ -1716,7 +1973,10 @@ impl<'a, 'log> Parser<'a, 'log> {
         match token.data {
             ValueData::String { text, is_ascii } => Ok(self.string_expr(text, is_ascii, loc)),
             ValueData::Number(n) => Ok(Expr::init(E::Number::new(n), loc)),
-            ValueData::DateTime(text) => Ok(Expr::init(E::String::init(text), loc)),
+            ValueData::DateTime { text, kind } => {
+                let text = truncate_fractional_seconds(text, self.bump);
+                Ok(Expr::init(E::String::init_toml_datetime(text, kind), loc))
+            }
             ValueData::Boolean(b) => Ok(Expr::init(E::Boolean { value: b }, loc)),
             ValueData::ArrayOpen => self.parse_array(token.pos),
             ValueData::InlineOpen => self.parse_inline_table(token.pos),

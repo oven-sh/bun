@@ -13,9 +13,7 @@
 //! original in place; a final `finish()` call emits the runtime import and
 //! any outlined function decls as a separate `Part`.
 
-use crate::diagnostics::{
-    CompilerError, CompilerErrorOrDiagnostic, ErrorCategory, cold_diagnostic,
-};
+use crate::diagnostics::{CompilerError, ErrorCategory, cold_diagnostic};
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::OutputMode;
 use crate::hir::environment_config::EnvironmentConfig;
@@ -63,6 +61,36 @@ pub trait Host {
     fn symbols(&self) -> &[Symbol];
     fn module_scope(&self) -> &Scope;
     fn import_records(&self) -> &[ImportRecord];
+
+    /// The operand of each `x as T` with the cast, in the order of the operands. The parser drops casts.
+    fn type_casts(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
+    /// The `x` of each `x = d` in a pattern with the whole, in the order of the `x`. The parser has no node for it.
+    fn targets_with_defaults(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
+    /// What is in parentheses with the outermost of them, in the order of what is in them. The parser drops them, and so
+    /// does upstream's. For a tree that has a node for them.
+    fn parentheses(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
+    /// The namespace import that `item` is a member of. The parser makes an import of its own of `ns.member`.
+    fn namespace_of_import_item(&self, _item: Ref) -> Option<Ref> {
+        None
+    }
+
+    /// Whether `ref_` is bound outside of the function that is compiled, which for the parser is
+    /// in the scope of the module.
+    fn is_module_level(&self, ref_: Ref) -> bool {
+        self.symbols()
+            .get(ref_.inner_index() as usize)
+            .and_then(|sym| self.module_scope().members.get(sym.original_name.slice()))
+            .is_some_and(|member| member.ref_ == ref_)
+    }
     fn source(&self) -> &[u8];
     fn arena(&self) -> &bun_alloc::Arena;
 
@@ -81,13 +109,29 @@ pub trait Host {
     /// post-visit JSX-import emission picks it up.
     fn jsx_import(&mut self, kind: JsxImportKind) -> Ref;
 
+    /// Which JSX runtime symbol `ref_` is, if the visit pass or
+    /// [`Host::jsx_import`] declared it on the parser's `jsx_imports` table.
+    fn jsx_import_kind(&self, ref_: Ref) -> Option<JsxImportKind>;
+
     /// Whether JSX is being compiled in development mode (selects `jsxDEV`
     /// over `jsx`/`jsxs` and emits the trailing dev-only call args).
     fn is_jsx_dev(&self) -> bool {
         false
     }
 
+    /// Whether this file uses the classic JSX runtime: every element is a
+    /// `factory(type, props, ...children)` call and nothing is auto-imported.
+    fn is_jsx_classic(&self) -> bool;
+
+    /// The classic runtime's factory (`React.createElement`, `h`, ...),
+    /// resolved from the current scope the way the visit pass resolves it.
+    fn jsx_classic_factory(&mut self, loc: Loc) -> Expr;
+
+    /// A new symbol for a module-level name, such as an outlined function.
     fn new_generated(&mut self, name: &[u8]) -> Ref;
+
+    /// A new symbol for a name that the compiled function (or one outlined from it) declares.
+    fn new_local(&mut self, name: &[u8]) -> Ref;
 
     fn new_import_item(&mut self, name: &[u8]) -> Ref {
         self.new_generated(name)
@@ -108,9 +152,6 @@ pub trait Host {
     fn record_usage(&mut self, ref_: Ref);
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
-
-// Back-compat alias for the parser hook written against the previous API.
-pub use Host as SymbolHost;
 
 // -----------------------------------------------------------------------
 // Constants
@@ -501,10 +542,6 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
             b"validateNoDerivedComputationsInEffects" => {
                 env_bool!(validate_no_derived_computations_in_effects, val)
             }
-            b"validateNoDerivedComputationsInEffectsExp"
-            | b"validateNoDerivedComputationsInEffects_exp" => {
-                env_bool!(validate_no_derived_computations_in_effects_exp, val)
-            }
             b"validateNoJsxInTryStatements" | b"validateNoJSXInTryStatements" => {
                 env_bool!(validate_no_jsx_in_try_statements, val)
             }
@@ -676,6 +713,10 @@ fn returns_non_node_in_stmts(stmts: &[Stmt]) -> bool {
 }
 
 fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
+    if !crate::lowering::thread_has_stack() {
+        return;
+    }
+
     match &stmt.data {
         StmtData::SReturn(ret) => {
             // Visit folds `return undefined` → bare `return;`, so None ≡ undefined here.
@@ -736,6 +777,10 @@ fn calls_hooks_or_creates_jsx_in_stmts(host: &dyn Host, stmts: &[Stmt]) -> bool 
 }
 
 fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+
     match &stmt.data {
         StmtData::SExpr(e) => calls_hooks_or_creates_jsx_in_expr(host, &e.value),
         StmtData::SReturn(ret) => ret
@@ -823,6 +868,10 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
 }
 
 fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+
     match &expr.data {
         ExprData::EJsxElement(_) => true,
         ExprData::ECall(call) => {
@@ -991,6 +1040,11 @@ fn get_component_or_hook_like(
     None
 }
 
+/// The part of [`get_component_or_hook_like`] that the binding decides.
+fn is_component_or_hook_like_name(name: Option<&[u8]>, in_react_hoc: bool) -> bool {
+    name.is_some_and(|name| is_component_name(name) || is_hook_name(name)) || in_react_hoc
+}
+
 // -----------------------------------------------------------------------
 // Error handling
 // -----------------------------------------------------------------------
@@ -1009,22 +1063,19 @@ fn handle_error(
         // surface as Invariant/Todo for inputs upstream compiles cleanly. Those
         // are port bugs, not user-facing diagnostics; bail per-function so the
         // suite measures the user-visible error surface.
-        "all_errors" if opts.parse_test_pragmas => err.details.iter().any(|d| {
-            let cat = match d {
-                CompilerErrorOrDiagnostic::Diagnostic(d) => d.category,
-                CompilerErrorOrDiagnostic::ErrorDetail(d) => d.category,
-            };
-            !matches!(cat, ErrorCategory::Invariant | ErrorCategory::Todo)
-        }),
+        "all_errors" if opts.parse_test_pragmas => err
+            .details
+            .iter()
+            .any(|d| !matches!(d.category(), ErrorCategory::Invariant | ErrorCategory::Todo)),
         "all_errors" => true,
         "critical_errors" => err.has_errors(),
         _ => false,
     };
 
-    let is_config_error = err.details.iter().any(|d| match d {
-        CompilerErrorOrDiagnostic::Diagnostic(d) => d.category == ErrorCategory::Config,
-        CompilerErrorOrDiagnostic::ErrorDetail(d) => d.category == ErrorCategory::Config,
-    });
+    let is_config_error = err
+        .details
+        .iter()
+        .any(|d| d.category() == ErrorCategory::Config);
 
     if should_panic || is_config_error {
         Some(CompileOutput::Error {
@@ -1177,6 +1228,46 @@ impl ReactCompilerState {
             if let Some(fatal) = handle_error(err, &mut self.diagnostics, &self.options) {
                 self.fatal = Some(fatal);
             }
+        }
+    }
+
+    /// Whether [`maybe_compile_pending`] can take this function, decided before its body is visited.
+    pub fn may_compile(
+        &self,
+        name: Option<&[u8]>,
+        in_react_hoc: bool,
+        has_react_hooks_suppression: bool,
+        body: &[Stmt],
+    ) -> bool {
+        if self.fatal.is_some()
+            || self.context.has_module_scope_opt_out
+            || has_react_hooks_suppression
+        {
+            return false;
+        }
+        let directives = collect_body_directives(body);
+        if find_directive_disabling_memoization(&directives).is_some() {
+            return false;
+        }
+        // Fixture pragmas set the mode when `lazy_init` reads them.
+        if self.options.parse_test_pragmas && !self.did_lazy_init {
+            return true;
+        }
+        if self.options.output_mode.as_deref() == Some("lint") {
+            return false;
+        }
+        if find_directive_enabling_memoization(&directives).is_some()
+            || (self.options.dynamic_gating.is_some()
+                && directives
+                    .iter()
+                    .any(|d| d.starts_with(DYNAMIC_GATING_DIRECTIVE_PREFIX)))
+        {
+            return true;
+        }
+        match self.options.compilation_mode.as_deref().unwrap_or("infer") {
+            "all" => true,
+            "infer" => is_component_or_hook_like_name(name, in_react_hoc),
+            _ => false,
         }
     }
 }

@@ -1,0 +1,10 @@
+{
+  "name": "v9-snapshot-only-file-variants",
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "dir": "workspace:*",
+    "local": "file:vendor/local"
+  }
+}

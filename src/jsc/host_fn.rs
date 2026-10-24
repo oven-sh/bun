@@ -127,18 +127,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
 
 // ──────────────────────── safe codegen-thunk entry points ────────────────────────
 //
-// The thunks of `generate-host-exports.ts` and `generate-jssink.ts` call these.
-
-/// `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>`.
-#[track_caller]
-#[inline]
-pub fn host_fn_static(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>,
-) -> JSValue {
-    to_js_host_call(global, || f(global, callframe))
-}
+// The thunks of `generate-host-exports.ts` call these.
 
 /// Lazy property creator, no exception scope (bare-`JSValue` impls).
 #[inline]

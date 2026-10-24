@@ -5156,9 +5156,6 @@ enum class BuiltinNamesMap : uint8_t {
     toString,
     redirect,
     inspectCustom,
-    highWaterMark,
-    path,
-    stream,
     asyncIterator,
     name,
     message,
@@ -5210,15 +5207,6 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::inspectCustom: {
         return clientData->builtinNames().inspectCustomPublicName();
-    }
-    case BuiltinNamesMap::highWaterMark: {
-        return clientData->builtinNames().highWaterMarkPublicName();
-    }
-    case BuiltinNamesMap::path: {
-        return clientData->builtinNames().pathPublicName();
-    }
-    case BuiltinNamesMap::stream: {
-        return clientData->builtinNames().streamPublicName();
     }
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;

@@ -1031,6 +1031,8 @@ When you provide a string for the `naming` field, Bun uses it only for bundles t
 
 Every entry point, chunk, and copied asset needs its own output path. If a template gives two of them the same path, the build fails with `Multiple files share the same output path` and writes nothing. For example, `asset: '[name].[ext]'` gives `a/logo.png` and `b/logo.png` the path `logo.png`. Add `[dir]` or `[hash]` to the template to keep the two files apart. Two copied assets with identical contents can share a path.
 
+Two paths that differ only in the case of the letters A to Z, like `Logo.png` and `logo.png`, are one file in an output directory that ignores letter case. That is the default on macOS and Windows. A build with `outdir` fails the same way when the output directory stores two such paths as one file and their contents differ. A build without `outdir` returns both files.
+
 ### root
 
 The root directory of the project.

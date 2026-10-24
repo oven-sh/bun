@@ -648,6 +648,17 @@ export const dgramInternals = {
   closeRawFd: $bindgen("udp_socket.bind.ts", "dgramCloseFd"),
 };
 
+// A socket that is bound and does not listen yet, as the cluster primary makes for its workers.
+export const clusterInternals = {
+  rawBind: $newRustFunction("node_cluster_binding.rs", "clusterRawBind", 4) as (
+    addressType: 4 | 6 | -1,
+    address: string,
+    port: number,
+    flags: number,
+  ) => number | { fd: number; port: number },
+  closeHandle: $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle"),
+};
+
 export const decodeURIComponentSIMD = $newCppFunction(
   "decodeURIComponentSIMD.cpp",
   "jsFunctionDecodeURIComponentSIMD",

@@ -59,9 +59,12 @@ impl JSMySQLQuery {
         pending_value: JsLocal<'a, JSArray>,
         bigint: bool,
         simple: bool,
+        internal: bool,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
+        // START TRANSACTION, COMMIT and SAVEPOINT cannot be prepared: they take the text protocol.
+        let simple = simple || internal;
         query_ctor_args::validate(global_this, &query, values, simple)?;
 
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {

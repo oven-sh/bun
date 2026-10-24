@@ -65,6 +65,9 @@ pub struct Flags {
     pub(crate) formats: ResultFormats,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
+    /// A statement of begin() or savepoint() itself. It has no parameters and returns no rows. It
+    /// goes out as the unnamed statement, in one write with its Bind, and is pipelined.
+    pub(crate) internal: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
     pub(crate) describe_first: bool,
     /// Its values are what `write_bind` sends. See `PostgresRequest::stage_parameters`.
@@ -117,6 +120,7 @@ impl Default for Flags {
             formats: ResultFormats::Text,
             bigint: false,
             simple: false,
+            internal: false,
             describe_first: false,
             staged: false,
             discard_response: false,
@@ -381,10 +385,11 @@ impl PostgresSQLQuery {
         pending_value: JsLocal<'a, JSArray>,
         bigint: bool,
         simple: bool,
+        internal: bool,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
         let (values, pending_value) = (values.to_js(), pending_value.to_js());
-        query_ctor_args::validate(global_this, &query, values, simple)?;
+        query_ctor_args::validate(global_this, &query, values, simple || internal)?;
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 
@@ -398,6 +403,7 @@ impl PostgresSQLQuery {
             (*ptr).flags.set(Flags {
                 bigint,
                 simple,
+                internal,
                 ..Default::default()
             });
         }
@@ -461,7 +467,8 @@ impl PostgresSQLQuery {
             .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS);
         // Reading the values can run user code, so it comes before any look at the connection's state.
         let mut declared = Vec::new();
-        if !self.flags.get().simple {
+        let flags = self.flags.get();
+        if !flags.simple && !flags.internal {
             declared = Signature::declared_types(global_object, binding_value)?;
             let describe_first =
                 !unnamed || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
@@ -503,7 +510,7 @@ impl PostgresSQLQuery {
             // It has no Parse of its own: the Query message is the whole request.
             s.status = StatementStatus::Parsing;
             RefPtr::new(s)
-        } else if unnamed {
+        } else if unnamed || self.flags.get().internal {
             new_statement(None)
         } else {
             let query_str = self.query.to_utf8();

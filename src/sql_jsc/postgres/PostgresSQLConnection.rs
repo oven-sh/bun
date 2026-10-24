@@ -1891,6 +1891,29 @@ impl PostgresSQLConnection {
             .get()
             .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS);
 
+        // BEGIN, COMMIT and the like. The unnamed statement cannot have been forgotten by the
+        // server (26000), and its Parse is in the write of its Bind, so nothing waits for it.
+        if req.flags.get().internal {
+            if self.has_request_in_flight() && !self.can_pipeline() {
+                return false;
+            }
+            req.update_flags(|f| f.formats = ResultFormats::Text);
+            if let Err(err) = PostgresRequest::parse_and_bind_and_execute(
+                self.global(),
+                req.query.to_utf8().slice(),
+                statement,
+                values,
+                ResultFormats::Text,
+                false,
+                self.writer(),
+            ) {
+                return self.fail_write(err);
+            }
+            statement.status = StatementStatus::Prepared;
+            self.note_request_bound(&req);
+            return true;
+        }
+
         match statement.status {
             StatementStatus::Failed => {
                 debug_assert!(statement.error_response.is_some());

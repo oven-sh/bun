@@ -112,6 +112,9 @@ class Scope implements Target {
 
   statements: TransactionCommands | null = null;
   distributed = false;
+  /// BEGIN can be refused (its options, the name of a distributed transaction): the callback waits for its answer.
+  /// Otherwise what the callback sends follows BEGIN in the same flush.
+  awaitsStart = false;
   savepoints = 0;
   /// of a transaction that waits for the one before it on the reservation
   start: (() => void) | null = null;
@@ -305,13 +308,7 @@ function dispatchEnd(this: Scope, commit: boolean, query: Query, handle: QueryHa
 }
 
 function send(scope: Scope, text: string, handler: QueryHandler): Query {
-  return new Query(
-    text,
-    [],
-    scope.flags | SQLQueryFlags.unsafe | SQLQueryFlags.simple | SQLQueryFlags.internal,
-    handler,
-    scope.pool,
-  );
+  return new Query(text, [], scope.flags | SQLQueryFlags.unsafe | SQLQueryFlags.internal, handler, scope.pool);
 }
 
 function shut(scope: Scope) {
@@ -522,14 +519,25 @@ async function end(scope: Scope, commit: boolean, grace: number | undefined) {
 
 async function run(scope: Scope, callback: TransactionCallback) {
   const parent = scope.parent;
-  try {
-    // SAVEPOINT is a statement of the scope that savepoint() was called on: it goes through that scope's gate.
-    await (scope.kind === Kind.savepoint
+  // SAVEPOINT is a statement of the scope that savepoint() was called on: it goes through that scope's gate.
+  const started =
+    scope.kind === Kind.savepoint
       ? send(parent!, scope.statements!.BEGIN, parent!.handler)
-      : send(scope, scope.statements!.BEGIN, dispatchOwn.bind(scope)));
-  } catch (err) {
-    leave(scope);
-    return settle(scope, scope.reject, err);
+      : send(scope, scope.statements!.BEGIN, dispatchOwn.bind(scope));
+  // Queued now: what the callback sends follows it on the connection.
+  started.execute();
+  const awaited = scope.awaitsStart || !scope.accepting;
+  if (awaited) {
+    try {
+      await started;
+    } catch (err) {
+      leave(scope);
+      return settle(scope, scope.reject, err);
+    }
+  } else {
+    // Its answer is read after the callback, which runs in a later job as it does when BEGIN is awaited.
+    started.$then(undefined, noop);
+    await undefined;
   }
   // close() or the loss of the connection came first
   if (!scope.accepting) {
@@ -574,8 +582,21 @@ async function run(scope: Scope, callback: TransactionCallback) {
 
   let answer: { command?: string | null } | undefined;
   scope.awaitingAnswer = true;
+  // Handed over now: a statement made after the callback settled is refused, whatever BEGIN was answered with.
+  const ending = finish(scope, failure === null, undefined);
+  if (!awaited) {
+    // Its answer comes before BEGIN's is read.
+    ending.$then(undefined, noop);
+    try {
+      await started;
+    } catch (err) {
+      // BEGIN was refused: what the callback sent was refused, or ran outside a transaction, and so does the end.
+      await ending.$then(undefined, noop);
+      return settle(scope, scope.reject, err);
+    }
+  }
   try {
-    answer = await finish(scope, failure === null, undefined);
+    answer = await ending;
   } catch (err) {
     if (failure === null) {
       return settle(scope, scope.reject, err === nothingToEnd ? refusal(scope) : err);
@@ -669,6 +690,7 @@ function begin(this: Client | Scope, distributed: boolean, optionsOrFn: unknown,
   const scope = new Scope(this.client, Kind.transaction, reservation, reservation && reservation.connection);
   scope.statements = statements;
   scope.distributed = distributed;
+  scope.awaitsStart = distributed || options !== undefined;
   scope.resolve = resolve;
   scope.reject = reject;
   if (reservation === null) {

@@ -44,7 +44,8 @@ function answerInOrder(hold: Hold) {
   };
 }
 
-// A prepared statement is answered as one with text parameters and no columns.
+// A prepared statement is answered as one with text parameters and no columns. BEGIN, COMMIT and SAVEPOINT are
+// prepared statements too: the server refuses one at its Execute, and leaves behind its ReadyForQuery.
 const pgMockServer: MockServer = (received, hold, drops, leavesAfter, tagOf) => {
   let nextConn = 0;
   return listeningServer(socket => {
@@ -73,6 +74,10 @@ const pgMockServer: MockServer = (received, hold, drops, leavesAfter, tagOf) => 
           const nameEnd = body.indexOf(0);
           prepared = body.subarray(nameEnd + 1, body.indexOf(0, nameEnd + 1)).toString("utf8");
           received.push({ conn: connId, sql: prepared });
+          if (drops(prepared)) {
+            socket.destroy();
+            return;
+          }
           answer(prepared, () => socket.write(pgParseComplete()));
         } else if (type === "D") {
           const parameters = Array(new Set(prepared.match(/\$\d+/g)).size).fill(25 /* text */);
@@ -81,9 +86,21 @@ const pgMockServer: MockServer = (received, hold, drops, leavesAfter, tagOf) => 
         } else if (type === "B") {
           answer(prepared, () => socket.write(pgBindComplete()));
         } else if (type === "E") {
-          answer(prepared, () => socket.write(pgCommandComplete("SELECT 0")));
+          const sql = prepared;
+          answer(
+            sql,
+            () => socket.write(pgCommandComplete(tagOf(sql))),
+            () => socket.write(pgErrorResponse({ S: "ERROR", C: "XX000", M: `refused: ${sql}` })),
+          );
         } else if (type === "S") {
-          answer(prepared, () => socket.write(pgReadyForQuery()));
+          const sql = prepared;
+          answer(sql, () =>
+            leavesAfter(sql)
+              ? socket.end(
+                  Buffer.concat([pgReadyForQuery(), pgErrorResponse({ S: "FATAL", C: "57P01", M: "goodbye" })]),
+                )
+              : socket.write(pgReadyForQuery()),
+          );
         } else if (type === "Q") {
           const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
           received.push({ conn: connId, sql });
@@ -364,7 +381,7 @@ type ScopeState =
 // prettier-ignore
 const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, rejects?: string][] = [
   ["transaction", "open",             "SSSSSSSSSiiii.R"],
-  ["transaction", "callback settled", "SSSSeSeSSiiii.R", "SSSSeSeSSiiii.E"],
+  ["transaction", "callback settled", "SSSSeSSSSiiii.R", "SSSSeSSSSiiii.E"],
   ["transaction", "end in flight",    "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["transaction", "ended",            "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["transaction", "close waits",      "rrrrrrrrriiii..", "rrrrrrrrriiii.."],
@@ -373,7 +390,7 @@ const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, re
   ["transaction", "connection lost",  "rrrrrrrrriiii.C"],
 
   ["savepoint", "open",               "SSSSSSSSSiiii.R"],
-  ["savepoint", "callback settled",   "SSSSeSeSSiiii.R", "SSSSeSeSSiiii.E"],
+  ["savepoint", "callback settled",   "SSSSeSSSSiiii.R", "SSSSeSSSSiiii.E"],
   ["savepoint", "end in flight",      "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["savepoint", "ended",              "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["savepoint", "outer rolled back",  "eeeeeeeeeiiiirD", "eeeeeeeeeiiiirE"],
@@ -384,7 +401,7 @@ const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, re
   ["savepoint", "connection lost",    "rrrrrrrrriiii.E"],
 
   ["nested savepoint", "open",               "SSSSSSSSSiiii.R"],
-  ["nested savepoint", "callback settled",   "SSSSeSeSSiiii.R", "SSSSeSeSSiiii.E"],
+  ["nested savepoint", "callback settled",   "SSSSeSSSSiiii.R", "SSSSeSSSSiiii.E"],
   ["nested savepoint", "end in flight",      "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["nested savepoint", "ended",              "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["nested savepoint", "outer rolled back",  "eeeeeeeeeiiiirD", "eeeeeeeeeiiiirE"],
@@ -400,7 +417,7 @@ const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, re
   ["reserved", "connection lost",    "rrrrrr-rriiii.."],
 
   ["transaction on reserved", "open",             "SSSSSSSSSiiii.R"],
-  ["transaction on reserved", "callback settled", "SSSSeSeSSiiii.R", "SSSSeSeSSiiii.E"],
+  ["transaction on reserved", "callback settled", "SSSSeSSSSiiii.R", "SSSSeSSSSiiii.E"],
   ["transaction on reserved", "end in flight",    "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["transaction on reserved", "ended",            "eeeeeeeeeiiii.R", "eeeeeeeeeiiii.E"],
   ["transaction on reserved", "outer completed",  "SSSSeSSSSiiiiSR", "SSSSeSSSSiiiiSE"],
@@ -1386,8 +1403,11 @@ describe.each(adapters)("$adapter", entry => {
     )("$scope rejects with the goodbye: only $answered was answered", ({ answered, run }) =>
       scenario(async ({ sql, received, leaveAfter }) => {
         leaveAfter(answered);
-        expect((await errorOf(run(sql))).message).toBe("goodbye");
-        expect(received.at(-1)).toEqual({ conn: 0, sql: answered });
+        // On MySQL the callback's statement follows START TRANSACTION in the same write: the goodbye is the answer
+        // to that statement, and the transaction hears of the close. A simple query waits for BEGIN's answer.
+        const pipelined = entry.adapter === "mysql" && answered === BEGIN;
+        expect((await errorOf(run(sql))).message).toBe(pipelined ? "Connection closed" : "goodbye");
+        expect(received.at(-1)).toEqual({ conn: 0, sql: pipelined ? "SELECT 'T1'" : answered });
       }),
     );
   });
@@ -1969,7 +1989,10 @@ describe("what a handle keeps", () => {
           await savepoint;
         });
         expect(await outcome(transaction)).toBe(entry.closedCode);
-        expect({ cancelled, log: log() }).toEqual({ cancelled: 0, log: [entry.BEGIN, "SAVEPOINT s0", "ROLLBACK"] });
+        expect({ cancelled, log: log() }).toEqual({
+          cancelled: 0,
+          log: [entry.BEGIN, "SAVEPOINT s0", "RELEASE SAVEPOINT s0", "ROLLBACK"],
+        });
       } finally {
         prototype.cancel = cancel;
       }

@@ -1178,6 +1178,8 @@ await sql.begin(async tx => {
 });
 ```
 
+Bun does not wait for the database to answer `BEGIN` before it calls the callback. The queries the callback starts at once go out in the same write as `BEGIN`, so the array form costs two round trips: one for `BEGIN` and the queries, one for `COMMIT`. `COMMIT` goes out once every result is read, so a result the client cannot decode still rolls the transaction back. A `BEGIN` with options, such as `sql.begin("read only", ...)`, and a distributed transaction wait for the answer to `BEGIN`: the database can refuse it.
+
 The adapters differ in two ways:
 
 - **MySQL**: DDL (`CREATE`, `ALTER`, `DROP`) commits the open transaction, so `sql.begin` cannot roll back past it. PostgreSQL and SQLite roll DDL back.

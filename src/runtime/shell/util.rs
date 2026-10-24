@@ -10,9 +10,7 @@ pub(crate) enum OutKind {
 // `bun_spawn` *crate* re-exports under the same name.
 pub(crate) use crate::api::bun_spawn::stdio::Stdio;
 
-/// Throws for a `Response` body that has no bytes for a `<` redirect to take:
-/// a stream, a used or failed body (`use_as_any_blob()` and `use_()` return an
-/// empty `Blob` for those), or an S3-backed `Blob`. Leaves the body unread.
+/// Throws for a `Response` body a `<` redirect cannot take: stream, used, failed or S3-backed.
 pub(crate) fn throw_if_body_unavailable(
     global: &crate::jsc::JSGlobalObject,
     body: &mut crate::webcore::body::Value,

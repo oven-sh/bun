@@ -4322,8 +4322,7 @@ impl<'a> Resolver<'a> {
         let mut top = Dirname::dirname(&path[..input_path_len]);
 
         let mut top_parent = Self::NO_PARENT;
-        // The walk below stopped at a cached negative: a directory that is cached
-        // as not found, or whose cached listing is an error.
+        // The walk below stopped at a cached "not found" or at a cached listing error.
         let mut below_negative = false;
         #[cfg(windows)]
         let root_path = strings::without_trailing_slash_windows_path(
@@ -4543,8 +4542,7 @@ impl<'a> Resolver<'a> {
                     match open_req {
                         Ok(fd) => break 'open_dir fd,
                         Err(err) => {
-                            // An ancestor that does not open again stays as it is cached,
-                            // and the directory below it is built with no parent, as before.
+                            // An ancestor that still does not open stays as cached.
                             if queue_slice_len >= reopened_from {
                                 top_parent = Self::NO_PARENT;
                                 continue 'walk;
@@ -4771,9 +4769,7 @@ impl<'a> Resolver<'a> {
                 )?;
             }
 
-            // A directory is about to be built below a cached negative, so the
-            // negative can be stale. Queue the ancestors to be opened again, then
-            // come back to this directory: it gets the parent they give it.
+            // A negative above a directory that exists can be stale: open the ancestors again first.
             if below_negative {
                 below_negative = false;
                 let mut len = queue_slice_len + 1;
@@ -4848,12 +4844,7 @@ impl<'a> Resolver<'a> {
         status: allocators::ItemStatus::NotFound,
     };
 
-    /// Queues `top` and each directory above it that has no `DirInfo`, cached
-    /// negatives included, for `dir_info_cached_miss` to open again. Returns
-    /// the `top_parent` of the last directory queued, or `None` when there
-    /// are more directories than the queue holds.
-    ///
-    /// The caller holds `entries_mutex`.
+    /// Queues the ancestors with no `DirInfo`, negatives included. `None`: the queue is full.
     fn queue_ancestors_to_reopen(
         &mut self,
         queue: &mut [core::mem::MaybeUninit<DirEntryResolveQueueItem>],

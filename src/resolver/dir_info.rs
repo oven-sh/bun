@@ -378,11 +378,10 @@ pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
     }
 }
 
-/// Drops the "not found" that is cached for `dir`, if there is one. The
-/// caller has read the directory, so it exists.
+/// Drops the "not found" cached for `dir`. The caller has read the directory, so it exists.
 pub(crate) fn forget_not_found(dir: &[u8]) {
-    // SAFETY: ARENA — the never-freed singleton. `get_or_put` and `remove`
-    // take the map's own mutex, as in `Resolver::bust_dir_cache`.
+    // SAFETY: the singleton is never freed. `get_or_put` and `remove` take the
+    // map's own mutex, which `Resolver::bust_dir_cache` relies on too.
     let map = unsafe { &mut *hash_map_instance() };
     if map
         .get_or_put(dir)

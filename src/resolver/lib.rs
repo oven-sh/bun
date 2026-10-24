@@ -1191,8 +1191,7 @@ pub mod fs {
 
             let out = self.entries.put(&mut cache_result, result)?;
             if cache_result.status == bun_alloc::ItemStatus::NotFound {
-                // The directory exists now, so the "not found" that the
-                // resolver cached for it with this listing is stale too.
+                // The directory exists now, so its "not found" in the `DirInfo` cache is stale too.
                 crate::dir_info::forget_not_found(dir);
             }
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).

@@ -152,14 +152,22 @@ function addListener<T>(
 }
 
 function createOutputChannel(name: string) {
+  // `append` does not end the current line, so it extends the last entry (like the real
+  // OutputChannel) instead of adding a new one.
+  let lineOpen = false;
+  const write = (text: string, endsLine: boolean) => {
+    const lines = getOutputLines(name);
+    if (lineOpen && lines.length > 0) {
+      lines[lines.length - 1] += text;
+    } else {
+      lines.push(text);
+    }
+    lineOpen = !endsLine;
+  };
   return {
     name,
-    append: (value: string) => {
-      getOutputLines(name).push(value);
-    },
-    appendLine: (line: string) => {
-      getOutputLines(name).push(line);
-    },
+    append: (value: string) => write(value, false),
+    appendLine: (line: string) => write(line, true),
     replace: () => {},
     clear: () => {},
     show: () => {},

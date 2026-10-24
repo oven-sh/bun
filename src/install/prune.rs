@@ -2889,7 +2889,34 @@ fn remove_store_entry(dir: &Dir, name: &[u8], staging: Staging) -> sys::Maybe<()
     match moved {
         Ok(()) => dir.delete_tree(staged.as_bytes()),
         Err(err) if err.get_errno() == E::ENOENT => Ok(()),
-        Err(err) => Err(err),
+        // A directory in a lower overlayfs layer cannot be renamed.
+        Err(_) => {
+            unlink_install_markers(dir, name);
+            dir.delete_tree(name)
+        }
+    }
+}
+
+/// Unlinks the files the next install checks to reuse the package of a store entry.
+fn unlink_install_markers(store: &Dir, entry: &[u8]) {
+    let (alias, _) = split_store_key(entry);
+    let Some(package) = store
+        .open_at(&join(entry, b"node_modules"))
+        .ok()
+        .and_then(|node_modules| descend(&node_modules, &alias))
+    else {
+        return;
+    };
+    let mut iter = sys::iterate_dir(package.fd());
+    let mut markers: Vec<Vec<u8>> = Vec::new();
+    while let Ok(Some(found)) = iter.next() {
+        let name = found.name.slice_u8();
+        if name == b"package.json" || name.starts_with(crate::package_install::BUN_TAG) {
+            markers.push(zname(name));
+        }
+    }
+    for marker in &markers {
+        let _ = sys::unlinkat(package.fd(), ZStr::from_slice_with_nul(marker));
     }
 }
 

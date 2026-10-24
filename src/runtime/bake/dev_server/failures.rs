@@ -84,7 +84,7 @@ impl DevServer {
 
         StaticRoute::send_blob_then_deinit(
             resp,
-            crate::webcore::blob::Any::from_array_list(buf),
+            crate::webcore::blob::Any::from_owned_slice(buf),
             crate::server::static_route::InitFromBytesOptions {
                 mime_type: Some(&MimeType::HTML),
                 server: self.server,

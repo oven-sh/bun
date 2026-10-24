@@ -933,6 +933,31 @@ describe("Content-Type header propagation", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/33012
+it.each([
+  ["banner", "image/webp"],
+  ["a.txt", "text/plain"],
+  ["a.json", "text/plain; charset=iso-8859-1"],
+])("a multipart file part named %s keeps its Content-Type %s", async (filename, type) => {
+  const body =
+    "--formboundary\r\n" +
+    `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
+    "X-Other: 1\r\n" +
+    `Content-Type: ${type}\r\n` +
+    "\r\n" +
+    "content\r\n" +
+    "--formboundary--\r\n";
+  const formData = await new Response(body, {
+    headers: { "Content-Type": "multipart/form-data; boundary=formboundary" },
+  }).formData();
+  const file = formData.get("file") as File;
+  expect({ name: file.name, type: file.type, text: await file.text() }).toEqual({
+    name: filename,
+    type,
+    text: "content",
+  });
+});
+
 it("drops multipart part Content-Type values containing control characters", async () => {
   // A part header line is only terminated by an exact \r\n, so a bare LF can
   // survive inside a part's Content-Type value. That value becomes the

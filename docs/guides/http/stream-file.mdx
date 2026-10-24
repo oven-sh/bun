@@ -34,16 +34,27 @@ new Response(Bun.file("./img.png")).headers.get("Content-Type");
 
 Putting it all together with [`Bun.serve()`](/runtime/http/server).
 
+The client chooses the request path, and `new URL(req.url).pathname` starts with `/`. Passing it straight to `Bun.file()` would serve any file the process can read. Resolve it against a fixed directory and reject anything outside that directory.
+
 ```ts server.ts icon="/icons/typescript.svg"
+import path from "node:path";
+
+const root = path.resolve("./public");
+
 // static file server
 Bun.serve({
   async fetch(req) {
-    const path = new URL(req.url).pathname;
-    const file = Bun.file(path);
+    const filePath = path.join(root, decodeURIComponent(new URL(req.url).pathname));
+    if (!filePath.startsWith(root + path.sep)) return new Response("Forbidden", { status: 403 });
+
+    const file = Bun.file(filePath);
+    if (!(await file.exists())) return new Response("Not Found", { status: 404 });
     return new Response(file);
   },
 });
 ```
+
+To serve a whole directory without writing this yourself, use a [directory route](/runtime/http/routing#directory-routes).
 
 ---
 

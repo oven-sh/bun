@@ -1,6 +1,8 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
+import { duplexPair } from "node:stream";
 import http2utils from "./helpers";
 
 // These tests craft malformed PADDED frames from a raw TCP server and feed them
@@ -315,5 +317,85 @@ test("should zero-fill padding octets in padded DATA frames sent by the client",
   } finally {
     client.destroy();
     server.close();
+  }
+});
+
+// nghttp2 drops the priority spec of a request, so Node never sets the PRIORITY flag on HEADERS.
+describe.each([
+  ["NONE", http2.constants.PADDING_STRATEGY_NONE],
+  ["ALIGNED", http2.constants.PADDING_STRATEGY_ALIGNED],
+  ["MAX", http2.constants.PADDING_STRATEGY_MAX],
+])("request() priority options with PADDING_STRATEGY_%s", (_, paddingStrategy) => {
+  /** The HEADERS frame a fresh session writes for `request({ ":path": "/" }, options)`. */
+  async function headersFrame(options?: http2.ClientSessionRequestOptions) {
+    const [transport, wire] = duplexPair();
+    const client = http2.connect("http://localhost", { createConnection: () => transport, paddingStrategy });
+    client.on("error", () => {});
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{ flags: number; payload: string }>();
+      let received = Buffer.alloc(0);
+      wire.on("data", (chunk: Buffer) => {
+        received = Buffer.concat([received, chunk]);
+        let offset = http2utils.kClientMagic.length;
+        while (received.length >= offset + 9) {
+          const end = offset + 9 + received.readUIntBE(offset, 3);
+          if (received.length < end) return;
+          if (received[offset + 3] === 1) {
+            resolve({ flags: received[offset + 4], payload: received.toString("hex", offset + 9, end) });
+            return;
+          }
+          offset = end;
+        }
+      });
+      client.request({ ":path": "/" }, options).on("error", reject);
+      return await promise;
+    } finally {
+      client.destroy();
+    }
+  }
+
+  test.each([{ parent: 0 }, { exclusive: true }, { exclusive: true, parent: 3, weight: 16 }])(
+    "%j sends the same HEADERS frame as no options",
+    async options => {
+      expect(await headersFrame(options)).toEqual(await headersFrame());
+    },
+  );
+
+  test("the server answers the request and the next one", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond();
+      stream.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, { paddingStrategy });
+    try {
+      const statuses: unknown[] = [];
+      for (const options of [{ exclusive: true, parent: 3 }, { parent: 0 }, undefined]) {
+        const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+        client.on("error", reject);
+        const req = client.request({ ":path": "/" }, options);
+        req.on("response", headers => resolve(headers[":status"]));
+        req.on("error", reject);
+        req.resume();
+        statuses.push(await promise);
+      }
+      expect(statuses).toEqual([200, 200, 200]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
+test.each([-1, -0.5, NaN])("request() throws ERR_OUT_OF_RANGE for parent: %d", parent => {
+  const client = http2.connect("http://localhost", { createConnection: () => duplexPair()[0] });
+  client.on("error", () => {});
+  try {
+    expect(() => client.request({ ":path": "/" }, { parent })).toThrow(
+      expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE" }),
+    );
+  } finally {
+    client.destroy();
   }
 });

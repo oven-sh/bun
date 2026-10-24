@@ -39,7 +39,6 @@ pub(crate) struct FileResponseStream {
     event_loop_handle: Cell<EventLoopHandle>,
     fd: Cell<Fd>,
     auto_close: Cell<bool>,
-    idle_timeout: Cell<u8>,
 
     /// Taken by whichever of complete / abort / error fires first.
     owner: Cell<Option<StreamOwner>>,
@@ -109,7 +108,6 @@ pub(crate) struct StartOptions {
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
     /// should be `stat.size - offset` (after Range/slice clamping).
     pub length: Option<u64>,
-    pub idle_timeout: u8,
     pub owner: StreamOwner,
 }
 
@@ -171,7 +169,6 @@ impl FileResponseStream {
                 )),
                 fd: Cell::new(opts.fd),
                 auto_close: Cell::new(opts.auto_close),
-                idle_timeout: Cell::new(opts.idle_timeout),
                 owner: Cell::new(Some(opts.owner)),
                 mode: Cell::new(if use_sendfile {
                     Mode::Sendfile
@@ -189,7 +186,11 @@ impl FileResponseStream {
         let this_ref = unsafe { &*this };
 
         let resp = this_ref.resp.get();
-        resp.timeout(opts.idle_timeout);
+        // Arm without storing a value: `server.timeout()` may have set one, and sendfile(2) makes no uWS write that would arm it.
+        resp.reset_timeout();
+        if opts.length.is_some() {
+            resp.mark_fixed_length_file_body();
+        }
         resp.on_aborted(
             |p: *mut FileResponseStream, r| {
                 // SAFETY: uWS hands back the userdata pointer set below; the
@@ -223,49 +224,61 @@ impl FileResponseStream {
             return;
         }
 
-        // BufferedReader path
-        this_ref.reader.with_mut(|reader| {
+        // The caller's fd can be at any position, so read its file at `offset` even when that's 0.
+        let positional = opts.offset > 0 || (!opts.auto_close && opts.file_type == FileType::File);
+        this_ref.start_reader(
+            opts.file_type,
+            opts.pollable,
+            positional.then_some(opts.offset),
+            opts.length,
+        );
+    }
+
+    /// Reads with `pread` from `offset`, or with `read` from the fd's position if `None`.
+    fn start_reader(
+        &self,
+        file_type: FileType,
+        pollable: bool,
+        offset: Option<u64>,
+        length: Option<u64>,
+    ) {
+        let fd = self.fd.get();
+        self.reader.with_mut(|reader| {
             reader.flags.remove(ReaderFlags::CLOSE_HANDLE); // we own fd via auto_close
-            reader.flags.set(ReaderFlags::POLLABLE, opts.pollable);
+            reader.flags.set(ReaderFlags::POLLABLE, pollable);
             reader
                 .flags
-                .set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
+                .set(ReaderFlags::NONBLOCKING, file_type != FileType::File);
             #[cfg(unix)]
-            if opts.file_type == FileType::Socket {
+            if file_type == FileType::Socket {
                 reader.flags.insert(ReaderFlags::SOCKET);
             }
             // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
-            reader.set_limit(opts.length.map(|len| len as usize));
-            reader.set_parent(this.cast::<c_void>());
+            reader.set_limit(length.map(|len| len as usize));
+            reader.set_parent(self.as_ptr().cast::<c_void>());
         });
 
         // SAFETY: `start()`/`start_file_offset()` re-enter this object through
         // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
-        let reader = this_ref.reader_mut();
-        let start_result = if opts.offset > 0 {
-            reader.start_file_offset(opts.fd, opts.pollable, opts.offset as usize)
-        } else {
-            reader.start(opts.fd, opts.pollable)
+        let reader = self.reader_mut();
+        let start_result = match offset {
+            Some(offset) => reader.start_file_offset(fd, pollable, offset as usize),
+            None => reader.start(fd, pollable),
         };
         if let Err(err) = start_result {
-            this_ref.fail_with(err);
+            self.fail_with(err);
             return;
         }
 
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
-        this_ref.reader_mut().update_ref(true);
+        self.reader_mut().update_ref(true);
 
         #[cfg(unix)]
-        if let Some(poll) = this_ref.reader.get().handle.get_poll() {
-            if this_ref
-                .reader
-                .get()
-                .flags
-                .contains(ReaderFlags::NONBLOCKING)
-            {
+        if let Some(poll) = self.reader.get().handle.get_poll() {
+            if self.reader.get().flags.contains(ReaderFlags::NONBLOCKING) {
                 poll.set_flag(FilePollFlag::Nonblocking);
             }
-            match opts.file_type {
+            match file_type {
                 FileType::Socket => poll.set_flag(FilePollFlag::Socket),
                 FileType::NonblockingPipe | FileType::Pipe => poll.set_flag(FilePollFlag::Fifo),
                 FileType::File => {}
@@ -273,10 +286,10 @@ impl FileResponseStream {
         }
 
         // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
-        this_ref.hold_read_ref();
+        self.hold_read_ref();
         // SAFETY: `reader` is live for the stream's lifetime; `read` is the
         // raw re-entrancy-safe entry (its dispatch runs user JS).
-        unsafe { BufferedReader::read(this_ref.reader.as_ptr()) };
+        unsafe { BufferedReader::read(self.reader.as_ptr()) };
     }
 
     #[inline]
@@ -313,12 +326,11 @@ impl FileResponseStream {
         }
 
         let resp = self.resp.get();
-        resp.timeout(self.idle_timeout.get());
 
         if state == ReadState::Eof {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
-            resp.end(chunk, resp.should_close_connection());
+            resp.end(chunk, self.should_close_connection());
             self.deliver(resp, StreamEnd::Complete);
             return false;
         }
@@ -390,7 +402,6 @@ impl FileResponseStream {
             self.finish();
             return true;
         }
-        self.resp.get().timeout(self.idle_timeout.get());
         self.hold_read_ref();
         // A paused POSIX reader ignores `read()`.
         self.reader_mut().unpause();
@@ -465,6 +476,13 @@ impl FileResponseStream {
                 }
                 sys::E::EINTR => continue,
                 sys::E::EAGAIN => return self.arm_sendfile_writable(),
+                // The kernel, a seccomp filter or the file's filesystem doesn't allow sendfile(2).
+                sys::E::EINVAL | sys::E::ENOSYS | sys::E::ENOTSUP | sys::E::EPERM => {
+                    self.mode.set(Mode::Reader);
+                    let sf = self.sendfile.get();
+                    self.start_reader(FileType::File, false, Some(sf.offset), Some(sf.remain));
+                    return true;
+                }
                 _ => {
                     self.fail_with(
                         sys::Error::from_code(errno, sys::Tag::sendfile).with_fd(self.fd.get()),
@@ -496,7 +514,7 @@ impl FileResponseStream {
                 self.as_ptr(),
             );
         }
-        self.resp.get().mark_needs_more();
+        self.resp.get().request_writable();
         true
     }
 
@@ -509,7 +527,7 @@ impl FileResponseStream {
         self.insert_state(State::RESPONSE_DONE);
         self.detach_resp();
         let resp = self.resp.get();
-        resp.end_send_file(self.sendfile.get().offset, resp.should_close_connection());
+        resp.end_send_file(self.sendfile.get().offset, self.should_close_connection());
         self.deliver(resp, StreamEnd::Complete);
         // `end_send_file` bypasses every shouldCloseConnection() gate: it does
         // not go through internalEnd, and the onWritable gate is skipped
@@ -542,6 +560,15 @@ impl FileResponseStream {
             self.deliver(self.resp.get(), StreamEnd::Abort);
         }
         self.finish();
+    }
+
+    /// A file that ran out before `StartOptions::length` leaves the client waiting for the rest of its Content-Length, so close.
+    fn should_close_connection(&self) -> bool {
+        let ended_short = match self.mode.get() {
+            Mode::Reader => self.reader.get().is_below_limit(),
+            Mode::Sendfile => self.sendfile.get().remain > 0,
+        };
+        ended_short || self.resp.get().should_close_connection()
     }
 
     fn fail_with(&self, err: sys::Error) {
@@ -588,7 +615,7 @@ impl FileResponseStream {
             let resp = self.resp.get();
             // `end` writes a chunked body's final chunk, or `Content-Length: 0` if no
             // length was declared, and runs the uWS close check.
-            resp.end(b"", resp.should_close_connection());
+            resp.end(b"", self.should_close_connection());
             self.deliver(resp, StreamEnd::Complete);
         }
 

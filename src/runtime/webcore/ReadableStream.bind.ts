@@ -50,7 +50,7 @@ export const BlobInternalReadableStreamSource = b.class({
 export const FileInternalReadableStreamSource = b.class({
   ...source,
   rustPath: "crate::webcore::file_reader::Source",
-  /** `lockedStream` is the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
+  /** `lockedStream` is the stream `ReadableStream__tryLockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
   internalFields: [...internalFields, "lockedStream"],
   proto: {
     cancel: members.cancel,
@@ -69,4 +69,11 @@ export const BytesInternalReadableStreamSource = b.class({
   rustPath: "crate::webcore::byte_stream::Source",
   internalFields: [...internalFields, "lockedStream"],
   proto: bufferedSource,
+});
+
+/** For `undici`. The stream is a body that `fetch()` decoded, so `Content-Encoding` and `Content-Length` describe other bytes. */
+export const isDecodedBody = b.fn({
+  args: { stream: b.any },
+  returns: b.bool,
+  rustPath: "crate::webcore::readable_stream::is_decoded_body",
 });

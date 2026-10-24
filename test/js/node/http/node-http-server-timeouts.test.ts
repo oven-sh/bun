@@ -1,8 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, tls as tlsCert } from "harness";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import http from "node:http";
+import http2 from "node:http2";
 import net from "node:net";
 import { pipeline, Writable } from "node:stream";
+import { text } from "node:stream/consumers";
+import tls from "node:tls";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
 // few hundred ms and waits for the server to close the connection. A small
@@ -10,7 +15,7 @@ import { pipeline, Writable } from "node:stream";
 // the probe window. Every probe awaits the 'close' event rather than a fixed
 // delay, so on a build that does not enforce the knob the test times out.
 
-async function listen(server: http.Server) {
+async function listen(server: net.Server) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return (server.address() as net.AddressInfo).port;
@@ -277,9 +282,61 @@ describe("node:http server timeout enforcement", () => {
       socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
       await done;
       // Node clears the inactivity timer in Socket._destroy, so the callback
-      // never runs for a socket destroyed before the expired timer fired.
-      expect(timeoutCalls).toEqual([]);
+      // never runs for a destroyed socket. The 5ms timer can expire once on the
+      // live socket before the request arrives.
+      expect(timeoutCalls).not.toContain(true);
+      expect(timeoutCalls.length).toBeLessThanOrEqual(1);
     } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("requestTimeout doesn't fire on an idle connection after a Content-Length: 0 request whose head was split across reads", async () => {
+    const server = http.createServer({ connectionsCheckingInterval: 25, keepAliveTimeout: 0 }, (req, res) => {
+      req.resume();
+      res.end("ok");
+    });
+    server.headersTimeout = 100;
+    server.requestTimeout = 100;
+    const port = await listen(server);
+    const idle = net.connect(port, "127.0.0.1");
+    let stalled: net.Socket | undefined;
+    try {
+      let received = "";
+      let wake = Promise.withResolvers<void>();
+      idle.setNoDelay(true);
+      idle.on("error", () => {});
+      idle.on("close", () => wake.resolve());
+      idle.on("data", chunk => {
+        received += chunk.toString("latin1");
+        wake.resolve();
+      });
+      // Resolves with the number of responses received once there are `count`, or once the server closes the connection.
+      const responses = async (count: number) => {
+        while ((received.match(/\r\n\r\nok/g) ?? []).length < count && !idle.closed) {
+          wake = Promise.withResolvers<void>();
+          await wake.promise;
+        }
+        return (received.match(/\r\n\r\nok/g) ?? []).length;
+      };
+      idle.write("GET /1 HTTP/1.1\r\nHost: a\r\n\r\nPOST /2 HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\n");
+      expect(await responses(1)).toBe(1);
+      idle.write("\r\n");
+      expect(await responses(2)).toBe(2);
+
+      // The sweep that closes this stalled upload has also checked the idle connection, whose last request is older.
+      stalled = net.connect(port, "127.0.0.1");
+      stalled.on("error", () => {});
+      stalled.resume();
+      stalled.write("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 50\r\n\r\nab");
+      await once(stalled, "close");
+
+      idle.write("GET /3 HTTP/1.1\r\nHost: a\r\n\r\n");
+      expect(await responses(3)).toBe(3);
+    } finally {
+      idle.destroy();
+      stalled?.destroy();
       server.closeAllConnections();
       server.close();
     }
@@ -458,11 +515,242 @@ describe("node:http server timeout enforcement", () => {
       server.close();
     }
   });
+
+  test("keepAliveTimeout closes an idle connection after setSystemTime() moved the clock back", async () => {
+    const server = http.createServer({ keepAliveTimeout: 200, keepAliveTimeoutBuffer: 0 }, (req, res) => res.end("ok"));
+    const port = await listen(server);
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+      await once(socket, "data");
+      setSystemTime(new Date(Date.now() - 3_600_000));
+      await once(socket, "close");
+    } finally {
+      setSystemTime();
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // Timers fire in deadline order, so a slow machine can't reorder these. The check is due after the timeout's first
+  // deadline and before the one the write moved it to.
+  test.each(["server.timeout", "req.setTimeout()", "res.setTimeout()"])(
+    "%s doesn't fire while the response keeps writing",
+    async knob => {
+      let timedOut = false;
+      const server = http.createServer((req, res) => {
+        setTimeout(() => res.end(timedOut ? "timed out" : "done"), 700);
+        setTimeout(() => res.write("x"), 200);
+        if (knob === "req.setTimeout()") req.setTimeout(600);
+        if (knob === "res.setTimeout()") res.setTimeout(600);
+      });
+      if (knob === "server.timeout") server.timeout = 600;
+      server.on("timeout", () => {
+        timedOut = true;
+      });
+      const port = await listen(server);
+      try {
+        const [res] = await once(http.get({ port, host: "127.0.0.1", agent: false }), "response");
+        expect(await text(res)).toBe("xdone");
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    },
+  );
+
+  test("'timeout' fires again after a write when its listener kept the socket open", async () => {
+    let timeouts = 0;
+    const server = http.createServer((req, res) => {
+      server.once("timeout", () => res.write("x"));
+    });
+    server.timeout = 200;
+    server.on("timeout", socket => {
+      if (++timeouts === 2) socket.destroy();
+    });
+    const port = await listen(server);
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      socket.resume();
+      socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+      await once(socket, "close");
+      expect(timeouts).toBe(2);
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("server.timeout still fires when the handler keeps writing to a client that stopped reading", async () => {
+    const chunk = Buffer.alloc(1024 * 1024, "x");
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const server = http.createServer((req, res) => {
+      interval = setInterval(() => res.write(chunk), 20);
+    });
+    server.timeout = 300;
+    const port = await listen(server);
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      socket.pause();
+      socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+      const [timedOutSocket] = await once(server, "timeout");
+      timedOutSocket.destroy();
+    } finally {
+      clearInterval(interval);
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // The "tr" column of /proc/net/tcp for the server's end of a connection: "02" while the keep-alive timer is armed.
+  function kernelTimer({ localPort, remotePort }: net.Socket) {
+    const hex = (port: number | undefined) => ":" + port!.toString(16).toUpperCase().padStart(4, "0");
+    for (const line of readFileSync("/proc/self/net/tcp", "utf8").split("\n")) {
+      const [, local, remote, , , timer] = line.trim().split(/\s+/);
+      if (local?.endsWith(hex(localPort)) && remote.endsWith(hex(remotePort))) return timer.slice(0, 2);
+    }
+  }
+
+  test.skipIf(!isLinux)("socket.setKeepAlive() and the keepAlive option turn on TCP keep-alive", async () => {
+    const timers = async (options: http.ServerOptions) => {
+      const server = http.createServer(options, (req, res) => {
+        const accepted = kernelTimer(req.socket);
+        const enabled = kernelTimer(req.socket.setKeepAlive(true, 1000));
+        const disabled = kernelTimer(req.socket.setKeepAlive(false));
+        res.end(JSON.stringify({ accepted, enabled, disabled }));
+      });
+      const port = await listen(server);
+      try {
+        const [res] = await once(http.get({ port, host: "127.0.0.1", agent: false }), "response");
+        return JSON.parse(await text(res));
+      } finally {
+        server.close();
+      }
+    };
+    expect(await timers({})).toEqual({ accepted: "00", enabled: "02", disabled: "00" });
+    expect(await timers({ keepAlive: true, keepAliveInitialDelay: 1000 })).toEqual({
+      accepted: "02",
+      enabled: "02",
+      disabled: "00",
+    });
+  });
+
+  test("createServer() stores keepAlive and keepAliveInitialDelay like net.Server", () => {
+    const { keepAlive, keepAliveInitialDelay } = http.createServer({ keepAlive: true, keepAliveInitialDelay: 2500 });
+    expect({ keepAlive, keepAliveInitialDelay }).toEqual({ keepAlive: true, keepAliveInitialDelay: 2 });
+    expect(() => http.createServer({ keepAliveInitialDelay: "5" as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
 });
 
 // server.setTimeout (applied per connection), req.setTimeout, res.setTimeout
 // and req.socket.setTimeout all end up in the server socket's setTimeout,
 // which has to check msecs the way net.Socket#setTimeout does.
+describe.concurrent.each(["server.emit('connection')", "an allowHTTP1 http2 server"])(
+  "timeouts on an HTTP/1.1 connection from %s",
+  kind => {
+    // Sends `request`, waits for the server to close the connection, and resolves with what the server reported.
+    async function closedBy(options: http.ServerOptions & { timeout?: number }, request: string) {
+      const events: string[] = [];
+      const { timeout, ...serverOptions } = { connectionsCheckingInterval: 20, ...options };
+      const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
+        req.resume().on("end", () => res.end("ok"));
+      };
+      let server: http.Server | http2.Http2SecureServer;
+      let listener: net.Server;
+      if (kind === "server.emit('connection')") {
+        server = http.createServer(serverOptions, handler);
+        listener = net.createServer(socket => server.emit("connection", socket));
+        // The headersTimeout and requestTimeout sweep starts at 'listening'.
+        await listen(server);
+      } else {
+        server = listener = http2.createSecureServer(
+          { ...tlsCert, allowHTTP1: true, ...serverOptions },
+          handler as any,
+        );
+      }
+      if (timeout) server.setTimeout(timeout);
+      server.on("clientError", (err: NodeJS.ErrnoException, socket: net.Socket) => {
+        events.push(err.code!);
+        socket.destroy();
+      });
+      server.on("timeout", (socket: net.Socket) => {
+        events.push("timeout");
+        socket.destroy();
+      });
+      const port = await listen(listener);
+      const client =
+        listener === server
+          ? tls.connect({ port, host: "127.0.0.1", ca: tlsCert.cert, ALPNProtocols: ["http/1.1"] })
+          : net.connect(port, "127.0.0.1");
+      try {
+        let received = "";
+        client.on("error", () => {});
+        client.on("data", chunk => (received += chunk));
+        client.write(request);
+        await new Promise(resolve => client.on("close", resolve));
+        return { events, statusLine: received.split("\r\n")[0] };
+      } finally {
+        client.destroy();
+        listener.close();
+        server.close();
+      }
+    }
+
+    test.each([
+      ["headersTimeout", "sends nothing", { headersTimeout: 100 }, ""],
+      ["headersTimeout", "sends half a request head", { headersTimeout: 100 }, "GET / HTTP/1.1\r\nHost:"],
+      [
+        "requestTimeout",
+        "sends half a request body",
+        { headersTimeout: 100, requestTimeout: 100 },
+        "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc",
+      ],
+    ])("%s closes a connection that %s", async (_, __, options, request) => {
+      expect(await closedBy(options, request)).toEqual({ events: ["ERR_HTTP_REQUEST_TIMEOUT"], statusLine: "" });
+    });
+
+    test("keepAliveTimeout closes a connection that is idle after a response", async () => {
+      const options = { keepAliveTimeout: 100, keepAliveTimeoutBuffer: 0 };
+      expect(await closedBy(options, "GET / HTTP/1.1\r\nHost: x\r\n\r\n")).toEqual({
+        events: ["timeout"],
+        statusLine: "HTTP/1.1 200 OK",
+      });
+    });
+
+    test("server.setTimeout() closes a connection that sends nothing", async () => {
+      expect(await closedBy({ timeout: 100 }, "")).toEqual({ events: ["timeout"], statusLine: "" });
+    });
+  },
+);
+
+test("an allowHTTP1 http2 server listens in a process that never loaded node:http", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const server = require("node:http2").createSecureServer({ allowHTTP1: true });
+      server.listen(0, "127.0.0.1", () => {
+        console.log("listening");
+        server.close();
+      });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "listening\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 describe.concurrent("node:http server socket setTimeout(msecs) checks", () => {
   const TIMEOUT_MAX = 2 ** 31 - 1;
 
@@ -531,7 +819,8 @@ describe.concurrent("node:http server socket setTimeout(msecs) checks", () => {
       req: expectedInvalidDurations,
       res: expectedInvalidDurations,
       msecsIsCheckedBeforeCallback: outOfRange("-1"),
-      timeoutAfterRejectedCalls: 0,
+      // net.Socket#setTimeout() stores msecs before it checks it, as in Node.
+      timeoutAfterRejectedCalls: -1,
       validCallReturnsSocket: true,
       timeoutAfterValidCall: 1000,
     });

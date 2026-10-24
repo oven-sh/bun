@@ -261,7 +261,7 @@ public:
     // default is not this VM's, e.g. the collector thread running a collection's end phase. gcProtect'ed for the VM's life.
     JSC::JSGlobalObject* defaultGlobalObject { nullptr };
 
-    // Idle full collections GarbageCollectionController requested that have not finished (see
+    // Collections GarbageCollectionController requested that finish while the JS thread is parked, and have not yet (see
     // Bun__JSC_onBeforeWait). Counted up on the JS thread, down at the end of each one's end phase, on either thread.
     std::atomic<unsigned> idleCollectionsPending { 0 };
     // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).

@@ -132,3 +132,28 @@ describe("fake node cli", () => {
     expect(result.success).toBe(false);
   });
 });
+
+test.concurrent.each(["--tls-keylog", "--network-family-autoselection-attempt-timeout"])(
+  "%s takes the next argument as its value",
+  async flag => {
+    using dir = tempDir("node-net-flags", {
+      "value.mjs": `throw new Error("ran the flag's value as the script");`,
+      "app.mjs": `console.log(JSON.stringify({ argv: process.argv.slice(2), execArgv: process.execArgv }));`,
+    });
+    for (const launcher of [[], ["run"], ["--bun", "node"]]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...launcher, flag, "./value.mjs", "app.mjs", "scriptarg"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ argv: ["scriptarg"], execArgv: [flag, "./value.mjs"] }),
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+  },
+);

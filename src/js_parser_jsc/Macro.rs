@@ -717,8 +717,7 @@ impl<'a> Run<'a> {
                 let mut blob_: Option<*const WebCore::Blob> = None;
 
                 if value.js_type() == jsc::JSType::DOMWrapper {
-                    // LAYERING: `Response`/`Request` (and their `BodyMixin::
-                    // get_blob_without_call_frame`) live in `bun_runtime::
+                    // LAYERING: `Response`/`Request` (and their `blob()`) live in `bun_runtime::
                     // webcore`, which depends on this crate. The downcast +
                     // body-extract is dispatched through `RuntimeHooks` (the
                     // established §Dispatch cycle-break) so the data shapes

@@ -234,6 +234,8 @@ pub struct RareData {
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
     /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
     pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
+    /// The config of a `fetch` without TLS options, kept so each request doesn't copy and hash the default CA list.
+    pub http_client_tls_defaults: Option<bun_http::ssl_config::SharedPtr>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
@@ -251,8 +253,8 @@ pub struct RareData {
 
     pub pipe_read_scratch: Box<bun_event_loop::PipeReadScratch>,
 
-    /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
-    h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
+    /// `node:http2` outbound header block scratch; see [`Self::take_h2_header_scratch`].
+    h2_header_scratch: Option<H2HeaderScratch>,
     /// Output scratch for one JS-thread `CompressionStream` step; see [`Self::take_compression_scratch`].
     compression_scratch: Option<Vec<u8>>,
     /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
@@ -270,9 +272,11 @@ pub struct RareData {
     pub node_quic_callbacks: Strong,
     pub(crate) default_csrf_secret: Box<[u8]>,
 
-    /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
-    /// [`Self::tls_default_ciphers`] strips it.
+    /// The TLS 1.2 list assigned to `tls.DEFAULT_CIPHERS`.
     pub(crate) tls_default_ciphers: Option<Box<[u8]>>,
+
+    /// PEM blocks given to `tls.setDefaultCACertificates`, for clients built natively.
+    pub(crate) tls_default_ca: Option<Box<[Box<[u8]>]>>,
 
     // proxy_env_storage moved to VirtualMachine — see comment there on why
     // lazy RareData creation raced with worker spawn.
@@ -302,11 +306,12 @@ impl Default for RareData {
             test_parallel_ipc_group: SocketGroup::default(),
             socket_groups: SocketGroups::default(),
             default_client_ssl_ctx: None,
+            http_client_tls_defaults: None,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
-            h2_padded_frame_buffer: None,
+            h2_header_scratch: None,
             compression_scratch: None,
             websocket_inflate_scratch: None,
             libdeflate_decompressor: None,
@@ -314,6 +319,7 @@ impl Default for RareData {
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
+            tls_default_ca: None,
             spawn_sync_event_loop_: None,
             path_buf: PathBuf::default(),
         }
@@ -357,8 +363,12 @@ impl PathBuf {
 
 // Drop is automatic for Option<Box<...>> fields — no explicit deinit needed.
 
-/// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
-pub type H2PaddedFrameBuffer = [u8; 16384];
+/// One outbound `node:http2` header block: the staged fields and their HPACK encoding.
+#[derive(Default)]
+pub struct H2HeaderScratch {
+    pub block: bun_http::lshpack::HeaderBlock,
+    pub encoded: Vec<u8>,
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ProxyEnvStorage
@@ -642,14 +652,17 @@ impl SocketGroups {
     ///
     /// # Safety
     /// `this` is a live, boxed set.
-    pub(crate) unsafe fn close_all(this: *mut Self) {
+    pub(crate) unsafe fn close_all(this: *mut Self, reason: crate::StopReason) {
         for i in 0..Self::COUNT {
             // SAFETY: fn contract; the borrow ends before `close_all` dispatches.
             let group: *mut SocketGroup = unsafe { &mut *this }.each()[i];
             // SAFETY: `group` is embedded in the live set.
             unsafe {
                 if !(*group).loop_.is_null() {
-                    (*group).close_all();
+                    match reason {
+                        crate::StopReason::VmTeardown => (*group).close_all_as_thread_ends(),
+                        crate::StopReason::Disposed => (*group).close_all(),
+                    }
                 }
             }
         }
@@ -734,18 +747,22 @@ impl RareData {
 
     // ── lazy-init: misc heap slots ────────────────────────────────────────
 
-    /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather
-    /// than borrowed: the socket write it feeds can re-enter JS and reach this path
-    /// again, and that nested caller then finds the slot empty and allocates its own.
-    pub fn take_h2_padded_frame_buffer(&mut self) -> Box<H2PaddedFrameBuffer> {
-        self.h2_padded_frame_buffer
-            .take()
-            .unwrap_or_else(bun_core::boxed_zeroed::<H2PaddedFrameBuffer>)
+    /// Taken by value: a header value's `toString` can re-enter, and the nested caller then finds the slot empty and makes its own.
+    pub fn take_h2_header_scratch(&mut self) -> H2HeaderScratch {
+        self.h2_header_scratch.take().unwrap_or_default()
     }
 
-    /// Hand a taken buffer back; the slot keeps the first one returned.
-    pub fn put_back_h2_padded_frame_buffer(&mut self, buffer: Box<H2PaddedFrameBuffer>) {
-        self.h2_padded_frame_buffer.get_or_insert(buffer);
+    /// Returns a taken scratch. Keeps the first one returned and drops oversized ones.
+    pub fn put_back_h2_header_scratch(&mut self, mut scratch: H2HeaderScratch) {
+        const KEEP: usize = 64 * 1024;
+        if self.h2_header_scratch.is_none()
+            && scratch.block.capacity() <= KEEP
+            && scratch.encoded.capacity() <= KEEP
+        {
+            scratch.block.clear();
+            scratch.encoded.clear();
+            self.h2_header_scratch = Some(scratch);
+        }
     }
 
     /// Empty `Vec` with whatever capacity the last step left behind.
@@ -763,7 +780,7 @@ impl RareData {
     }
 
     /// Empty `Vec` with whatever capacity the last WebSocket client inflate left behind. By value,
-    /// like [`Self::take_h2_padded_frame_buffer`]: delivering the payload runs JS, which can reach
+    /// like [`Self::take_h2_header_scratch`]: delivering the payload runs JS, which can reach
     /// this path again before the buffer comes back.
     pub fn take_websocket_inflate_scratch(&mut self) -> Vec<u8> {
         self.websocket_inflate_scratch.take().unwrap_or_default()
@@ -809,23 +826,28 @@ impl RareData {
     }
 
     pub(crate) fn tls_default_ciphers(&self) -> Option<&[u8]> {
-        // The stored buffer is NUL-terminated (set_tls_default_ciphers
-        // appends 0); the trailing NUL is stripped from the returned slice's
-        // length. Callers needing a C string can still take `.as_ptr()` — the
-        // NUL byte remains in storage one-past-the-end.
-        self.tls_default_ciphers
-            .as_deref()
-            .map(|s| &s[..s.len() - 1])
+        self.tls_default_ciphers.as_deref()
     }
 
     pub(crate) fn set_tls_default_ciphers(&mut self, ciphers: &[u8]) {
-        // Old value (if any) drops here via Box<[u8]> Drop.
-        let mut owned = Vec::with_capacity(ciphers.len() + 1);
-        owned.extend_from_slice(ciphers);
-        owned.push(0);
-        self.tls_default_ciphers = Some(owned.into_boxed_slice());
-        // Built from the previous list. Open connections hold their own reference.
+        self.tls_default_ciphers = Some(ciphers.into());
+        self.drop_client_tls_defaults();
+    }
+
+    pub(crate) fn tls_default_ca(&self) -> Option<&[Box<[u8]>]> {
+        self.tls_default_ca.as_deref()
+    }
+
+    /// An empty list trusts nothing, as in Node.
+    pub(crate) fn set_tls_default_ca(&mut self, certs: Box<[Box<[u8]>]>) {
+        self.tls_default_ca = Some(certs);
+        self.drop_client_tls_defaults();
+    }
+
+    /// Both were built from the previous defaults. Open connections hold their own reference.
+    pub(crate) fn drop_client_tls_defaults(&mut self) {
         self.default_client_ssl_ctx = None;
+        self.http_client_tls_defaults = None;
     }
 
     pub fn push_cleanup_hook(
@@ -1075,7 +1097,7 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TLS default ciphers JS bindings
+// `rare_data.bind.ts` and `node_tls_binding.bind.ts`
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn set_tls_default_ciphers(heap: &JsHeap<'_>, ciphers: &[u8]) {
@@ -1101,13 +1123,29 @@ pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
     }
 }
 
+pub fn get_default_ca() -> Option<&'static [Box<[u8]>]> {
+    VirtualMachine::get().tls_default_ca()
+}
+
+pub fn set_default_ca(certs: Vec<bun_core::Utf8Bytes<'static>>) {
+    VirtualMachine::get()
+        .as_mut()
+        .rare_data()
+        .set_tls_default_ca(
+            certs
+                .into_iter()
+                .map(|cert| cert.into_vec().into())
+                .collect(),
+        );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Drop
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
+        // pipe_read_scratch / spawn_sync_event_loop_ /
         // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
         // tls_default_ciphers:
         // all dropped automatically via field Drop.

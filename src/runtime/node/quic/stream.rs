@@ -3,9 +3,10 @@ use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;
 use std::collections::VecDeque;
 
-use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{
-    ArrayBuffer, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
+    ArrayBuffer, ErrorCode, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
+    Strong,
 };
 use bun_lsquic_sys as lsquic;
 
@@ -36,6 +37,7 @@ pub(crate) struct StreamState {
     pub(crate) wants_headers: u8,
     pub(crate) wants_reset: u8,
     pub(crate) wants_trailers: u8,
+    pub(crate) wants_stop_sending: u8,
     pub(crate) received_early_data: u8,
     pub(crate) write_desired_size: u32,
     pub(crate) high_water_mark: u32,
@@ -67,6 +69,9 @@ const IDX_STATS_BYTES_ACCUMULATED: usize = 11;
 const IDX_STATS_MAX_BYTES_ACCUMULATED: usize = 12;
 
 const DEFAULT_HIGH_WATER_MARK: u32 = 16 * 1024;
+
+/// A stream with this many unread bytes stops raising its receive limit until JS has read half of them.
+const INBOUND_HOLD_BYTES: usize = 256 * 1024;
 
 /// Stream-id bit 1 selects the direction: 0 = bidirectional,
 /// 1 = unidirectional (RFC 9000 §2.1).
@@ -100,9 +105,21 @@ pub(super) struct Outbound {
     pub started: bool,
 }
 
+impl Outbound {
+    /// Drops the allocation too. `VecDeque::clear` would keep it until the stream is collected.
+    fn free(&mut self) {
+        self.data = VecDeque::new();
+    }
+    fn has_output(&self) -> bool {
+        !self.data.is_empty() || self.end != PendingEnd::None
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Inbound {
     pub chunks: VecDeque<Vec<u8>>,
+    pub unread: usize,
+    pub window_held: bool,
     pub ended: bool,
     pub errored: bool,
 }
@@ -125,15 +142,21 @@ pub(crate) struct QuicStream {
     inbound: JsCell<Inbound>,
     wakeup: JsCell<Option<Strong>>,
     peer_stop_sending_code: Cell<Option<u64>>,
+    /// `open_stream` returned before lsquic opened the stream.
+    was_pending: Cell<bool>,
     wrote_to_lsquic: Cell<bool>,
     headers_received: Cell<bool>,
+    headers_sent: Cell<bool>,
+    headers_refused: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
-    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool)>>,
+    /// (nul-joined pairs, pair count, eos, frameless).
+    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool, bool)>>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
     close_reported: Cell<bool>,
+    unfinished_at_close: Cell<bool>,
     destroyed: Cell<bool>,
 }
 
@@ -169,14 +192,18 @@ impl QuicStream {
             inbound: JsCell::new(Inbound::default()),
             wakeup: JsCell::new(None),
             peer_stop_sending_code: Cell::new(None),
+            was_pending: Cell::new(false),
             wrote_to_lsquic: Cell::new(false),
             headers_received: Cell::new(false),
+            headers_sent: Cell::new(false),
+            headers_refused: Cell::new(false),
             priority: Cell::new(DEFAULT_PRIORITY),
             pending_headers: JsCell::new(Vec::new()),
             trailers_requested: Cell::new(false),
             blocked_reported: Cell::new(false),
             announce_suppressed: Cell::new(false),
             close_reported: Cell::new(false),
+            unfinished_at_close: Cell::new(false),
             destroyed: Cell::new(false),
         };
         let this_value = stream.into_js_wrapper(global);
@@ -245,7 +272,6 @@ impl QuicStream {
                 s.close();
             }
         }
-        // Bit 0 of the id is the initiator (RFC 9000 §2.1).
         let uni = id & STREAM_ID_UNI_BIT != 0;
         let (urgency, incremental) = self.priority.get();
         if (urgency, incremental) != DEFAULT_PRIORITY {
@@ -255,9 +281,9 @@ impl QuicStream {
         // drain_outbound needs a write event, which nothing else requests
         // unless the JS side already started the writer.
         let mut want_write = false;
-        for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
+        for (bytes, count, eos, frameless) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 {
+            if self.put_header_block(s, &bytes, count, eos, frameless) {
                 if eos {
                     self.with_state(|st| {
                         st.fin_sent = 1;
@@ -270,34 +296,23 @@ impl QuicStream {
             } else {
                 // sendHeaders() returned true when it queued this block, so
                 // `closed` is what reports the failure.
-                s.reset(H3_INTERNAL_ERROR);
-                s.stop_sending(H3_INTERNAL_ERROR);
-                self.mark_reset(H3_INTERNAL_ERROR);
-                self.with_state(|st| st.write_ended = 1);
-                self.outbound.with_mut(|o| {
-                    o.data.clear();
-                    o.end = PendingEnd::None;
-                });
+                self.fail_message(s);
                 break;
             }
         }
         if uni {
-            let session = self.session.get();
-            // SAFETY: the session outlives its streams.
-            let is_server = !session.is_null() && unsafe { (*session).is_server() };
-            let local = (id & 1 == 0) != is_server;
-            if local {
-                self.inbound.with_mut(|i| i.ended = true);
-                self.with_state(|s| s.read_ended = 1);
-            } else {
+            if self.is_receive_only() {
                 self.with_state(|s| s.write_ended = 1);
                 s.want_read(true);
+            } else {
+                self.inbound.with_mut(|i| i.ended = true);
+                self.with_state(|s| s.read_ended = 1);
             }
         } else {
             s.want_read(true);
         }
         if want_write || self.outbound.get().started {
-            s.want_write(true);
+            self.request_write(s);
         }
     }
 
@@ -316,6 +331,31 @@ impl QuicStream {
         // lsquic gave us; lsquic frees it only after `on_close` returns,
         // where we null it first.
         unsafe { lsquic::Stream::from_raw(self.raw.get()) }
+    }
+
+    /// Sends one header block, or skips a `frameless` one. Returns true if the stream accepted it.
+    fn put_header_block(
+        &self,
+        s: lsquic::Stream,
+        bytes: &[u8],
+        count: c_int,
+        eos: bool,
+        frameless: bool,
+    ) -> bool {
+        // lsquic resets a request stream whose FIN arrives before a header block, so skipping trailers needs one sent.
+        if frameless
+            && (!eos || self.headers_sent.get())
+            && self.stream_id() & STREAM_ID_UNI_BIT == 0
+            && self.with_state(|s| s.fin_sent == 0 && s.write_ended == 0)
+        {
+            return true;
+        }
+        let accepted = s.send_headers(bytes, count, eos) == 0;
+        self.headers_refused.set(!accepted);
+        if accepted {
+            self.headers_sent.set(true);
+        }
+        accepted
     }
 
     fn state_mut(&self) -> *mut StreamState {
@@ -365,6 +405,17 @@ impl QuicStream {
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
         self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
     }
+    pub(super) fn peer_stop_sending_code(&self) -> Option<u64> {
+        self.peer_stop_sending_code.get()
+    }
+    pub(super) fn mark_pending_if_unbound(&self) {
+        if self.raw.get().is_null() {
+            self.was_pending.set(true);
+        }
+    }
+    pub(super) fn was_pending(&self) -> bool {
+        self.was_pending.get()
+    }
     pub(super) fn release_close_root(&self) {
         self.this_value.with_mut(|r| r.downgrade());
     }
@@ -403,6 +454,16 @@ impl QuicStream {
         self.with_state(|s| s.id)
     }
 
+    /// Returns true for a unidirectional stream the peer opened. Bit 0 of the id is the initiator (RFC 9000 §2.1).
+    fn is_receive_only(&self) -> bool {
+        let id = self.stream_id();
+        id >= 0
+            && id & STREAM_ID_UNI_BIT != 0
+            && self
+                .session_ref()
+                .is_some_and(|session| (id & 1 == 0) == session.is_server())
+    }
+
     fn push_inbound(&self, data: &[u8], fin: bool) {
         if self.destroyed.get() {
             return;
@@ -410,6 +471,7 @@ impl QuicStream {
         self.inbound.with_mut(|inbound| {
             if !data.is_empty() {
                 inbound.chunks.push_back(data.to_vec());
+                inbound.unread += data.len();
             }
             if fin {
                 inbound.ended = true;
@@ -430,6 +492,29 @@ impl QuicStream {
         }
     }
 
+    /// `on_stream_read` drains lsquic, which returns the peer's credit. Holding the window ties the credit to what the application has read.
+    fn update_window_hold(&self) {
+        let changed = self.inbound.with_mut(|i| {
+            let mark = if i.window_held {
+                INBOUND_HOLD_BYTES / 2
+            } else {
+                INBOUND_HOLD_BYTES
+            };
+            let hold = i.unread >= mark;
+            (core::mem::replace(&mut i.window_held, hold) != hold).then_some(hold)
+        });
+        let (Some(hold), Some(s)) = (changed, self.ls()) else {
+            return;
+        };
+        s.hold_window(hold);
+        if !hold {
+            // Sends the MAX_STREAM_DATA that the release queued.
+            if let Some(session) = self.session_ref() {
+                session.schedule_process();
+            }
+        }
+    }
+
     pub(super) fn take_wakeup(&self) -> Option<Strong> {
         self.wakeup.replace(None)
     }
@@ -439,7 +524,7 @@ impl QuicStream {
     pub(super) fn cancel_early_rejected(&self, code: u64) {
         self.mark_reset(code);
         self.outbound.with_mut(|o| {
-            o.data.clear();
+            o.free();
             o.end = PendingEnd::None;
         });
         self.with_state(|st| st.write_ended = 1);
@@ -459,6 +544,29 @@ impl QuicStream {
                 s.reset_code = code;
             }
         });
+        self.outbound.with_mut(|o| {
+            o.free();
+            o.end = PendingEnd::None;
+        });
+        // lsquic already queued its RESET_STREAM. Ending our write side lets the stream finish once that's acknowledged.
+        if let Some(s) = self.ls() {
+            if self.with_state(|st| st.read_ended != 0) {
+                s.close();
+            } else {
+                s.shutdown(1);
+            }
+        }
+    }
+
+    /// Ends both directions of a stream whose HTTP/3 message is malformed (RFC 9114 §4.1.2).
+    fn reset_malformed(&self) {
+        const H3_MESSAGE_ERROR: u64 = 0x10e;
+        if let Some(s) = self.ls() {
+            // reset() ends the read side only if the peer has ended it, so STOP_SENDING stops the rest of the message.
+            s.reset(H3_MESSAGE_ERROR);
+            s.stop_sending(H3_MESSAGE_ERROR);
+        }
+        self.mark_reset(H3_MESSAGE_ERROR);
     }
 
     fn mark_reset(&self, code: u64) {
@@ -467,6 +575,7 @@ impl QuicStream {
         }
         self.inbound.with_mut(|inbound| {
             inbound.chunks.clear();
+            inbound.unread = 0;
             inbound.errored = true;
             inbound.ended = true;
         });
@@ -482,6 +591,10 @@ impl QuicStream {
         });
     }
 
+    /// Returns true if lsquic closed the stream before it finished on its own.
+    pub(super) fn unfinished_at_close(&self) -> bool {
+        self.unfinished_at_close.get()
+    }
     pub(super) fn mark_close_reported(&self) -> bool {
         self.close_reported.replace(true)
     }
@@ -497,6 +610,9 @@ impl QuicStream {
     pub(super) fn wants_block(&self) -> bool {
         self.with_state(|s| s.wants_block != 0)
     }
+    pub(super) fn wants_stop_sending(&self) -> bool {
+        self.with_state(|s| s.wants_stop_sending != 0)
+    }
     fn note_write_blocked(&self) {
         if self.blocked_reported.replace(true) {
             return;
@@ -510,30 +626,45 @@ impl QuicStream {
         }
     }
 
+    /// Resets an HTTP/3 stream whose message can't be sent.
+    fn fail_message(&self, s: lsquic::Stream) {
+        s.reset(H3_INTERNAL_ERROR);
+        s.stop_sending(H3_INTERNAL_ERROR);
+        self.mark_reset(H3_INTERNAL_ERROR);
+        self.with_state(|st| st.write_ended = 1);
+        self.outbound.with_mut(|o| {
+            o.free();
+            o.end = PendingEnd::None;
+        });
+    }
+
     fn drain_outbound(&self) {
         let Some(s) = self.ls() else { return };
-        loop {
-            let (slice, contig): (Vec<u8>, usize) = {
-                let out = self.outbound.get();
-                if out.data.is_empty() {
-                    break;
-                }
-                let (a, _) = out.data.as_slices();
-                (a.to_vec(), a.len())
-            };
-            let n = s.write(&slice);
-            if n <= 0 {
+        if self.headers_refused.get() && self.outbound.get().has_output() {
+            // Neither a body nor a FIN can follow a header block that lsquic refused.
+            self.fail_message(s);
+            return;
+        }
+        while !self.outbound.get().data.is_empty() {
+            // lsquic copies what it accepts. Move the queue out of the cell so no borrow spans the call.
+            let mut data = self.outbound.with_mut(|o| core::mem::take(&mut o.data));
+            let offered = data.as_slices().0.len();
+            let n = s.write(data.as_slices().0);
+            data.drain(..usize::try_from(n).unwrap_or(0).min(offered));
+            self.outbound.with_mut(|o| o.data = data);
+            if n < 0 {
+                // Not flow control, so no write event clears it. sendHeaders() re-arms a body that's waiting for its header block.
+                s.want_write(false);
+                break;
+            }
+            if n == 0 {
                 self.note_write_blocked();
                 break;
             }
             self.blocked_reported.set(false);
             self.wrote_to_lsquic.set(true);
-            let n = n as usize;
-            self.outbound.with_mut(|out| {
-                out.data.drain(..n.min(contig));
-            });
             self.add_stat(IDX_STATS_BYTES_SENT, n as u64);
-            if n < slice.len() {
+            if (n as usize) < offered {
                 self.note_write_blocked();
                 break;
             }
@@ -544,14 +675,9 @@ impl QuicStream {
         };
         if empty {
             if end == PendingEnd::Fin {
-                s.shutdown(1);
-                self.wrote_to_lsquic.set(true);
-                self.outbound.with_mut(|o| o.end = PendingEnd::None);
-                self.with_state(|s| s.fin_sent = 1);
-                if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
-                    s.shutdown(0);
-                }
+                self.send_fin(s);
             } else if end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
+                self.outbound.with_mut(Outbound::free);
                 if let Some(session) = self.session_ref() {
                     session.push_event(SessionEvent::StreamWantsTrailers { stream: self.key });
                 }
@@ -572,9 +698,40 @@ impl QuicStream {
         }
     }
 
+    fn send_fin(&self, s: lsquic::Stream) {
+        s.shutdown(1);
+        self.wrote_to_lsquic.set(true);
+        self.outbound.with_mut(|o| {
+            o.free();
+            o.end = PendingEnd::None;
+        });
+        self.with_state(|s| s.fin_sent = 1);
+        if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
+            s.shutdown(0);
+        }
+    }
+
+    /// lsquic only gives a write event to a stream with flow-control credit, and a FIN needs none (RFC 9000 §4.1).
+    fn request_write(&self, s: lsquic::Stream) {
+        let bare_fin = {
+            let out = self.outbound.get();
+            out.end == PendingEnd::Fin && out.data.is_empty()
+        };
+        // HTTP/3 waits for the write event, because headers or trailers can still follow an ended body in the same turn.
+        if bare_fin
+            && self.with_state(|st| st.write_ended == 0)
+            && !self.session_ref().is_some_and(QuicSession::is_http)
+            && s.write_avail() == 0
+        {
+            self.send_fin(s);
+        } else {
+            s.want_write(true);
+        }
+    }
+
     fn kick_write(&self) {
         if let Some(s) = self.ls() {
-            s.want_write(true);
+            self.request_write(s);
         }
         if let Some(session) = self.session_ref() {
             session.schedule_process();
@@ -618,11 +775,9 @@ impl QuicStream {
             // stream. SAFETY: as above.
             unsafe { (*session).remove_stream(self.key) };
         }
-        self.outbound.with_mut(|o| o.data.clear());
-        self.inbound.with_mut(|i| {
-            i.chunks.clear();
-            i.ended = true;
-        });
+        self.outbound.with_mut(Outbound::free);
+        // Received bytes stay readable, as in Node. Only a peer's reset discards them.
+        self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm().as_mut();
@@ -677,6 +832,7 @@ impl QuicStream {
             if inbound.errored {
                 (PULL_STATUS_ERROR, None)
             } else if let Some(chunk) = inbound.chunks.pop_front() {
+                inbound.unread -= chunk.len();
                 (PULL_STATUS_DATA, Some(chunk))
             } else if inbound.ended {
                 (PULL_STATUS_EOS, None)
@@ -691,6 +847,7 @@ impl QuicStream {
                     self.read_stat(IDX_STATS_BYTES_ACCUMULATED)
                         .saturating_sub(bytes.len() as u64),
                 );
+                self.update_window_hold();
                 ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, &bytes)?
             }
             None => JSValue::UNDEFINED,
@@ -708,14 +865,15 @@ impl QuicStream {
 
     pub(crate) fn attach_source(&self, cx: &mut JsScope<'_>, source: JsLocal<'_>) -> JsResult<()> {
         let global = cx.global();
-        if self.destroyed.get() {
+        // Node's `Stream::set_outbound` drops the source of a stream that isn't writable.
+        if self.destroyed.get() || self.is_receive_only() {
             return Ok(());
         }
         let source = source.to_js();
-        let bytes = if source.is_undefined_or_null() {
-            Vec::new()
+        let body = if source.is_undefined_or_null() {
+            None
         } else if let Some(buf) = source.as_array_buffer(global) {
-            buf.byte_slice().to_vec()
+            Some(buf)
         } else {
             return Err(global.throw(format_args!(
                 "Unsupported QUIC stream body source (Blob and FileHandle sources are not implemented yet)"
@@ -723,7 +881,9 @@ impl QuicStream {
         };
         self.outbound.with_mut(|o| {
             o.started = true;
-            o.data.extend(bytes.iter().copied());
+            if let Some(body) = &body {
+                o.data.extend(body.byte_slice());
+            }
             o.end = PendingEnd::Fin;
         });
         self.with_state(|s| s.has_outbound = 1);
@@ -731,15 +891,22 @@ impl QuicStream {
         Ok(())
     }
 
-    pub(crate) fn init_streaming_source(&self) {
+    pub(crate) fn init_streaming_source<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, ()> {
         if self.destroyed.get() {
-            return;
+            return Ok(());
+        }
+        if self.is_receive_only() {
+            return Err(heap.error_with_code(
+                ErrorCode::INVALID_STATE,
+                format_args!("Stream is not writable"),
+            ));
         }
         self.outbound.with_mut(|o| o.started = true);
         self.with_state(|s| {
             s.has_outbound = 1;
             s.write_desired_size = s.high_water_mark;
         });
+        Ok(())
     }
 
     pub(crate) fn write(&self, cx: &mut JsScope<'_>, batch: JsLocal<'_>) -> JsResult<JSValue> {
@@ -751,8 +918,7 @@ impl QuicStream {
         let mut queued: u64 = 0;
         let mut append = |bytes: &[u8]| {
             queued += bytes.len() as u64;
-            self.outbound
-                .with_mut(|o| o.data.extend(bytes.iter().copied()));
+            self.outbound.with_mut(|o| o.data.extend(bytes));
         };
         if batch.is_array() {
             let len = batch.get_length(global)?;
@@ -844,9 +1010,13 @@ impl QuicStream {
         Ok(())
     }
 
-    pub(crate) fn reset_stream(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
+    /// Returns false for a receive-only stream, which has nothing to reset.
+    pub(crate) fn reset_stream(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) -> bool {
         if self.destroyed.get() {
-            return;
+            return true;
+        }
+        if self.is_receive_only() {
+            return false;
         }
         let code = error_code_arg(code.to_js());
         self.with_state(|s| {
@@ -855,13 +1025,14 @@ impl QuicStream {
             s.reset_code = code;
         });
         self.outbound.with_mut(|o| {
-            o.data.clear();
+            o.free();
             o.end = PendingEnd::None;
         });
         if let Some(s) = self.ls() {
             s.reset(code);
         }
         self.kick_write();
+        true
     }
 
     pub(crate) fn stop_sending(&self, _: &mut JsScope<'_>, code: JsLocal<'_>) {
@@ -915,7 +1086,7 @@ impl QuicStream {
                 s.reset_code = code;
             });
             self.outbound.with_mut(|o| {
-                o.data.clear();
+                o.free();
                 o.end = PendingEnd::None;
             });
         }
@@ -979,17 +1150,18 @@ impl QuicStream {
         use crate::webcore::encoding::BunStringEncode as _;
         let bytes = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
-        let is_trailing = kind.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
-        let eos = is_trailing
+        let kind = kind.coerce_to_i32(global)? as u32;
+        let eos = kind == QUIC_STREAM_HEADERS_KIND_TRAILING
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
+        // Node sends no HEADERS frame for hints or trailers without fields, and an ls-qpack peer closes the connection on one.
+        let frameless = header_count == 0 && kind != QUIC_STREAM_HEADERS_KIND_INITIAL;
         let Some(s) = self.ls() else {
             self.pending_headers
-                .with_mut(|q| q.push((bytes, header_count, eos)));
+                .with_mut(|q| q.push((bytes, header_count, eos, frameless)));
             self.with_state(|s| s.has_outbound = 1);
             return Ok(JSValue::js_boolean(true));
         };
-        let rv = s.send_headers(&bytes, header_count, eos);
-        if rv == 0 {
+        if self.put_header_block(s, &bytes, header_count, eos, frameless) {
             self.wrote_to_lsquic.set(true);
             self.with_state(|s| s.has_outbound = 1);
             if eos {
@@ -1006,6 +1178,9 @@ impl QuicStream {
             }
             Ok(JSValue::js_boolean(true))
         } else {
+            if self.outbound.get().has_output() {
+                self.kick_write();
+            }
             Ok(JSValue::js_boolean(false))
         }
     }
@@ -1078,10 +1253,6 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     let claim_header_sets = || -> bool {
         while let Some(hset) = stream.take_header_set() {
             let pairs = hset.pairs();
-            /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
-            /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
-            /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
-            const H3_MESSAGE_ERROR: u64 = 0x10e;
             let has_status = pairs
                 .as_chunks::<2>()
                 .0
@@ -1093,14 +1264,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
             // the request unanswered until the idle timeout.
             let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
             if peer_is_client && has_status.is_some() {
-                if let Some(s) = qs.ls() {
-                    // reset() only ends the read side when the peer already
-                    // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
-                    // request streaming a body into a stream nothing will answer.
-                    s.reset(H3_MESSAGE_ERROR);
-                    s.stop_sending(H3_MESSAGE_ERROR);
-                }
-                qs.mark_reset(H3_MESSAGE_ERROR);
+                qs.reset_malformed();
                 return false;
             }
             // 1xx interim responses are HINTS (RFC 9114 §4.1).
@@ -1122,9 +1286,6 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         }
         true
     };
-    if !claim_header_sets() {
-        return;
-    }
     if stream.received_early_data() {
         qs.with_state(|s| s.received_early_data = 1);
     }
@@ -1133,6 +1294,10 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut got_any = false;
     loop {
+        // Until a header block is claimed, a read fails and sets no errno.
+        if !claim_header_sets() {
+            break;
+        }
         let n = stream.read(buf);
         match n {
             n if n > 0 => {
@@ -1170,12 +1335,21 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                         });
                     }
                     got_any = true;
+                } else if bun_core::ffi::errno() == libc::EBADMSG
+                    && qs
+                        .session_ref()
+                        .and_then(|session| session.conn())
+                        .is_some_and(|conn| conn.status().0 != lsquic::LSCONN_ST_ERROR)
+                {
+                    // No frame error, which closes the connection: there's no header block where one belongs (RFC 9114 §4.1). lsquic calls on_read on every tick for this too.
+                    qs.reset_malformed();
                 }
                 break;
             }
         }
     }
     if got_any {
+        qs.update_window_hold();
         if let Some(session) = qs.session_ref() {
             session.push_event(SessionEvent::StreamWake { stream: qs.key });
         }
@@ -1188,6 +1362,7 @@ lsquic_callback! {
     }
 
     pub(super) fn on_stream_close(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
+        qs.unfinished_at_close.set(qs.ls().is_some_and(|s| !s.is_finished()));
         // The lsquic_stream is freed immediately after this callback returns.
         qs.raw.set(null_mut());
         if let Some(session) = qs.session_ref() {

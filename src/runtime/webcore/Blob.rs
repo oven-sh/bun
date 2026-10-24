@@ -105,7 +105,9 @@ pub(crate) trait ReadBytesHandler {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, SizeType};
+pub(crate) use bun_jsc::webcore_types::{
+    Blob, BlobContentType, BodyFacts, ClosingState, MAX_SIZE, SizeType,
+};
 
 /// 1: Initial
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
@@ -133,7 +135,7 @@ use crate::generated_bindgen::blob::{
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) trait BlobExt {
-    fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>>;
+    fn get_form_data_encoding(&self) -> Option<bun_core::form_data::Encoding>;
     // `has_content_type_from_user`/`content_type_or_mime_type`/`is_s3`/
     // `needs_to_read_file`/`get_file_name`: data-only predicates, hoisted to
     // inherent `impl Blob` in `bun_jsc::webcore_types` (LAYERING).
@@ -171,7 +173,11 @@ pub(crate) trait BlobExt {
     ) -> Blob
     where
         Self: Sized;
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob
+    /// Returns the error instead of throwing it if a file-backed entry can't be read.
+    fn from_dom_form_data(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+    ) -> bun_sys::Result<Blob>
     where
         Self: Sized;
     fn content_type(&self) -> &[u8];
@@ -293,7 +299,6 @@ pub(crate) trait BlobExt {
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue>;
-    fn to_string_transfer(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn to_string(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     fn to_json(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     /// # Safety
@@ -380,11 +385,8 @@ pub(crate) trait BlobExt {
 }
 
 impl BlobExt for Blob {
-    fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
-        let content_type_slice = self.get_content_type()?;
-        let encoding = bun_core::form_data::Encoding::get(content_type_slice.slice())?;
-        // drop content_type_slice via Drop
-        Some(bun_core::form_data::AsyncFormData::init(encoding))
+    fn get_form_data_encoding(&self) -> Option<bun_core::form_data::Encoding> {
+        bun_core::form_data::Encoding::get(self.get_content_type()?.slice())
     }
 
     /// `Function` is the `*WithBytes` callback.
@@ -787,7 +789,10 @@ impl BlobExt for Blob {
         blob
     }
 
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
+    fn from_dom_form_data(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+    ) -> bun_sys::Result<Blob> {
         // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
         const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
@@ -802,8 +807,7 @@ impl BlobExt for Blob {
         let mut context = FormDataContext {
             joiner: bun_core::string_joiner::StringJoiner::default(),
             boundary,
-            failed: false,
-            global_this,
+            read_error: None,
         };
         // Size the node list up front: a file entry pushes at most 13 slices, a
         // string entry 8, plus 3 for the closing boundary.
@@ -875,12 +879,12 @@ impl BlobExt for Blob {
             (&raw mut context).cast::<c_void>(),
             for_each_thunk,
         );
-        if context.failed {
+        if let Some(err) = context.read_error {
             // Drop the joiner (Drop runs StringJoiner::deinit) so every
             // heap-owned slice already pushed — escaped names, non-ASCII
             // conversions, NodeFS read_file result buffers — is freed.
             drop(context.joiner);
-            return Blob::init_empty(global_this);
+            return Err(err);
         }
 
         context.joiner.push_static(b"--");
@@ -903,7 +907,7 @@ impl BlobExt for Blob {
             .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
         blob.content_type_was_set.set(true);
 
-        blob
+        Ok(blob)
     }
 
     fn content_type(&self) -> &[u8] {
@@ -1251,7 +1255,7 @@ impl BlobExt for Blob {
         }
         // A borrowed view with NO ref bumps; `write_file_internal` then `dupe()`s
         // its own owned `destination_blob` from it.
-        let mut blob_internal = PathOrBlob::Blob(Box::new(self.borrowed_view()));
+        let mut blob_internal = PathOrBlob::Blob(Box::new(self.dupe()));
         write_file_internal(
             &cx,
             &mut blob_internal,
@@ -1810,7 +1814,7 @@ impl BlobExt for Blob {
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
         if self.content_type_was_set.get() {
-            return Some(MimeType::init(self.content_type_slice(), false, None));
+            return Some(MimeType::init(self.content_type_slice(), false));
         }
         self.store().map(|s| s.mime_type.clone())
     }
@@ -2236,8 +2240,6 @@ impl BlobExt for Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
     }
 
-    // dupe / dupe_with_content_type / to_js: defined once below (top-level impl); duplicates removed (E0592).
-
     /// Raw-pointer counterpart of [`shared_view`]: returns a `*mut [u8]` into
     /// the Store's byte buffer with **mutable provenance** (derived through
     /// `RefPtr<Store>::as_ptr()` → the original `heap::alloc` tag), suitable for
@@ -2452,10 +2454,6 @@ impl BlobExt for Blob {
         }
     }
 
-    fn to_string_transfer(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        self.to_string(cx, Lifetime::Transfer)
-    }
-
     fn to_string(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
             return Ok(self.do_read_file::<ToStringWithBytesFn>(cx));
@@ -2622,7 +2620,7 @@ impl BlobExt for Blob {
         global: &JSGlobalObject,
         buf: *mut [u8],
     ) -> JSValue {
-        let Some(encoder) = self.get_form_data_encoding() else {
+        let Some(encoding) = self.get_form_data_encoding() else {
             return global.create_error_instance(format_args!("Invalid encoding"));
         };
 
@@ -2632,13 +2630,8 @@ impl BlobExt for Blob {
         // leaked Box for `Temporary` or a store-backed view otherwise);
         // `FormData::to_js` only reads it.
         let buf = unsafe { &*buf };
-        match crate::webcore::form_data::FormData::to_js(global, buf, &encoder.encoding) {
-            Ok(v) => v,
-            Err(crate::Error::JSError) => global.take_error(jsc::JsError::Thrown),
-            Err(err) => {
-                global.create_error_instance(format_args!("FormData encoding failed: {err}"))
-            }
-        }
+        crate::webcore::form_data::FormData::to_js(global, buf, &encoding)
+            .unwrap_or_else(|err| global.take_error(err))
     }
 
     /// # Safety
@@ -2688,16 +2681,20 @@ impl BlobExt for Blob {
         // SAFETY: `buf` is valid for reads for the duration of this call (either a
         // leaked Box for `Temporary` or a store-backed view otherwise).
         let buf_len = unsafe { &*buf }.len();
+        // ArrayBuffer doesn't have this limit.
+        if TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
+            && buf_len > jsc::virtual_machine::synthetic_allocation_limit()
+        {
+            match LIFETIME {
+                Lifetime::Clone | Lifetime::Transfer => self.detach(),
+                Lifetime::Share => {}
+                // SAFETY: `Temporary` ⇒ `buf` is a leaked default-allocator `Box<[u8]>`.
+                Lifetime::Temporary => unsafe { drop(bun_core::heap::take(buf)) },
+            }
+            return Err(global.throw_out_of_memory());
+        }
         match LIFETIME {
             Lifetime::Clone => {
-                if TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
-                    // ArrayBuffer doesn't have this limit.
-                    if buf_len > jsc::virtual_machine::synthetic_allocation_limit() {
-                        self.detach();
-                        return Err(global.throw_out_of_memory());
-                    }
-                }
-
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     use crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator;
@@ -2744,11 +2741,6 @@ impl BlobExt for Blob {
                 jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
             }
             Lifetime::Share => {
-                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
-                    && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
-                {
-                    return Err(global.throw_out_of_memory());
-                }
                 let store = self.store().expect("infallible: store present").clone();
                 // SAFETY: `from_bytes` only records ptr+len into the FFI struct; the
                 // pointer is then handed to JSC as an external buffer backing whose
@@ -2774,12 +2766,6 @@ impl BlobExt for Blob {
                     self.detach();
                     return copied;
                 }
-                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
-                    && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
-                {
-                    self.detach();
-                    return Err(global.throw_out_of_memory());
-                }
                 // Move the existing +1 out. Cloning then `transfer()` would leak a ref.
                 let store = self.take_store().expect("transfer with null store");
                 // SAFETY: see `Share` arm. After `take()` the store ref is moved
@@ -2793,13 +2779,6 @@ impl BlobExt for Blob {
                 }
             }
             Lifetime::Temporary => {
-                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
-                    && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
-                {
-                    // SAFETY: `Temporary` ⇒ `buf` is a leaked default-allocator `Box<[u8]>`.
-                    unsafe { drop(bun_core::heap::take(buf)) };
-                    return Err(global.throw_out_of_memory());
-                }
                 // SAFETY: `Temporary` ⇒ `buf` is a leaked `Box<[u8]>` we exclusively own;
                 // ownership is transferred to JSC.
                 // `to_js_unchecked`: `to_js`'s heap-region probe would skip the deallocator
@@ -3017,6 +2996,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    body_facts: Cell::new(blob.body_facts.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -3444,15 +3424,12 @@ where
 // FormDataContext
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Stack-local helper for `Blob::from_dom_form_data`. `boundary` borrows the
-/// caller's `hex_buf` and `global_this` borrows the incoming `&JSGlobalObject`;
-/// both strictly outlive this struct, so they are stored as plain references
-/// rather than raw pointers.
+/// Stack-local helper for `Blob::from_dom_form_data`.
 struct FormDataContext<'a> {
     joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
-    failed: bool,
-    global_this: &'a JSGlobalObject,
+    /// Set by the first file-backed entry that can't be read. Later entries are skipped.
+    read_error: Option<bun_sys::Error>,
 }
 
 /// Which piece of a `multipart/form-data` entry a string is, selecting the
@@ -3542,12 +3519,11 @@ impl FormDataContext<'_> {
     }
 
     fn on_entry(&mut self, name: EncodedSlice, entry: FormDataEntry<'_>) {
-        if self.failed {
+        if self.read_error.is_some() {
             return;
         }
         // Copy the borrowed refs out first (disjoint-field reads) so the
         // long-lived `&mut self.joiner` below doesn't conflict.
-        let global_this = self.global_this;
         let boundary = self.boundary;
         let joiner = &mut self.joiner;
 
@@ -3585,7 +3561,8 @@ impl FormDataContext<'_> {
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
-                    if blob.size.get() == MAX_SIZE {
+                    // `read_file` reads a file of unknown size to EOF. macOS reports only the buffered bytes as a pipe's `st_size`.
+                    if blob.size.get() == MAX_SIZE && !blob.needs_to_read_file() {
                         blob.resolve_size();
                     }
                     let store = blob
@@ -3612,11 +3589,7 @@ impl FormDataContext<'_> {
                             rf_args.max_size = Some(blob.size.get());
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
                             match res {
-                                Err(err) => {
-                                    self.failed = true;
-                                    let js_err = err.to_js(global_this);
-                                    let _ = global_this.throw_value(js_err);
-                                }
+                                Err(err) => self.read_error = Some(err),
                                 Ok(mut result) => {
                                     joiner.push_cloned(result.slice());
                                     // StringOrBuffer::Drop is a no-op for Buffer; release
@@ -3930,7 +3903,7 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) 
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
-    Blob::new(this.dupe_with_content_type(true))
+    Blob::new(this.dupe())
 }
 
 #[unsafe(no_mangle)]
@@ -4306,8 +4279,8 @@ pub(crate) fn write_file_with_source_destination(
             match write_file::WriteFileWindows::create(
                 cx.vm().event_loop(),
                 cx.context(),
-                destination_blob.borrowed_view(),
-                source_blob.borrowed_view(),
+                destination_blob.dupe(),
+                source_blob.dupe(),
                 write_file_promise,
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
@@ -4322,8 +4295,8 @@ pub(crate) fn write_file_with_source_destination(
         #[cfg(not(windows))]
         {
             let file_copier = write_file::WriteFile::create(
-                destination_blob.borrowed_view(),
-                source_blob.borrowed_view(),
+                destination_blob.dupe(),
+                source_blob.dupe(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
@@ -5925,17 +5898,7 @@ impl Any {
     }
 
     pub(crate) fn from_owned_slice(bytes: Vec<u8>) -> Any {
-        Any::InternalBlob(Internal {
-            bytes,
-            was_string: false,
-        })
-    }
-
-    pub(crate) fn from_array_list(list: Vec<u8>) -> Any {
-        Any::InternalBlob(Internal {
-            bytes: list,
-            was_string: false,
-        })
+        Any::InternalBlob(bytes.into())
     }
 
     /// Assumed that AnyBlob itself is covered by the caller.
@@ -5997,6 +5960,20 @@ impl Any {
         }
     }
 
+    /// Returns the code units after a leading U+FEFF. `text()` and `json()` drop one, like a UTF-8 decode does.
+    fn units_after_bom(&self) -> Option<&[u16]> {
+        let Any::WTFStringImpl(string) = self else {
+            return None;
+        };
+        if string.is_8bit() {
+            return None;
+        }
+        match string.utf16_slice() {
+            [0xFEFF, rest @ ..] => Some(rest),
+            _ => None,
+        }
+    }
+
     fn to_internal_blob_if_possible(&mut self) {
         let Any::Blob(blob) = self else {
             return;
@@ -6030,14 +6007,14 @@ impl Any {
                 if matches!(self, Any::Blob(_)) {
                     return self.to_string(cx, Lifetime::Clone);
                 }
-                self.to_string_transfer(cx)
+                self.to_string(cx, Lifetime::Transfer)
             }
             streams::BufferActionTag::Bytes => {
                 if matches!(self, Any::Blob(_)) {
                     return self
                         .to_array_buffer_view::<{ jsc::JSType::Uint8Array }>(cx, Lifetime::Clone);
                 }
-                self.to_uint8_array_transfer(cx)
+                self.to_uint8_array(cx, Lifetime::Transfer)
             }
             streams::BufferActionTag::Blob => {
                 let result = Blob::new(self.to_blob(cx.global()));
@@ -6053,7 +6030,7 @@ impl Any {
                     return self
                         .to_array_buffer_view::<{ jsc::JSType::ArrayBuffer }>(cx, Lifetime::Clone);
                 }
-                self.to_array_buffer_transfer(cx)
+                self.to_array_buffer(cx, Lifetime::Transfer)
             }
             streams::BufferActionTag::Json => self.to_json(cx, Lifetime::Share),
         }
@@ -6106,6 +6083,11 @@ impl Any {
                 str
             }
             Any::WTFStringImpl(_) => {
+                if let Some(units) = self.units_after_bom() {
+                    let json = EncodedSlice::utf16(units).to_json_object(cx.global());
+                    *self = Any::Blob(Blob::default());
+                    return json;
+                }
                 let str = self.take_string();
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
@@ -6113,28 +6095,6 @@ impl Any {
                 str.to_js_by_parse_json(cx.global())
             }
         }
-    }
-
-    pub(crate) fn to_json_share(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        self.to_json(cx, Lifetime::Share)
-    }
-
-    pub(crate) fn to_string_transfer(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        self.to_string(cx, Lifetime::Transfer)
-    }
-
-    pub(crate) fn to_uint8_array_transfer(
-        &mut self,
-        cx: &bun_jsc::JsThread<'_>,
-    ) -> JsResult<JSValue> {
-        self.to_uint8_array(cx, Lifetime::Transfer)
-    }
-
-    pub(crate) fn to_array_buffer_transfer(
-        &mut self,
-        cx: &bun_jsc::JsThread<'_>,
-    ) -> JsResult<JSValue> {
-        self.to_array_buffer(cx, Lifetime::Transfer)
     }
 
     pub(crate) fn to_blob(&mut self, global: &JSGlobalObject) -> Blob {
@@ -6156,7 +6116,7 @@ impl Any {
         let Any::InternalBlob(ib) = self else {
             unreachable!()
         };
-        let blob = Blob::init(core::mem::take(&mut ib.bytes), global);
+        let blob = ib.to_blob(global);
         *self = Any::Blob(Blob::default());
         blob
     }
@@ -6176,7 +6136,18 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 Ok(owned)
             }
-            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
+            Any::WTFStringImpl(_) => {
+                if let Some(units) = self.units_after_bom() {
+                    let mut text = Vec::new();
+                    if text.try_reserve_exact(units.len()).is_err() {
+                        return Err(cx.global().throw_memory_allocation_failed());
+                    }
+                    text.extend_from_slice(units);
+                    *self = Any::Blob(Blob::default());
+                    return bun_string_jsc::owned_utf16_into_js(cx.global(), text);
+                }
+                self.take_string().into_js(cx.global())
+            }
         }
     }
 
@@ -6255,9 +6226,20 @@ impl Any {
 
     pub(crate) fn was_string(&self) -> bool {
         match self {
-            Any::Blob(b) => b.charset.get() == strings::AsciiStatus::AllAscii,
+            Any::Blob(b) => {
+                b.body_facts.get().contains(BodyFacts::STRING)
+                    || b.charset.get() == strings::AsciiStatus::AllAscii
+            }
             Any::WTFStringImpl(_) => true,
-            Any::InternalBlob(ib) => ib.was_string,
+            Any::InternalBlob(ib) => ib.facts.contains(BodyFacts::STRING),
+        }
+    }
+
+    pub(crate) fn set_facts(&mut self, facts: BodyFacts) {
+        match self {
+            Any::Blob(blob) => blob.body_facts.set(facts),
+            Any::InternalBlob(internal) => internal.facts = facts,
+            Any::WTFStringImpl(_) => {}
         }
     }
 
@@ -6310,10 +6292,34 @@ impl Any {
 #[derive(Default)]
 pub struct Internal {
     pub(crate) bytes: Vec<u8>,
-    pub(crate) was_string: bool,
+    pub(crate) facts: BodyFacts,
+}
+
+impl From<Vec<u8>> for Internal {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            facts: BodyFacts::empty(),
+        }
+    }
 }
 
 impl Internal {
+    /// The UTF-8 bytes of a JS string.
+    pub(crate) fn from_string_bytes(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            facts: BodyFacts::STRING,
+        }
+    }
+
+    /// Moves the bytes into a `Blob`, which can be shared.
+    pub(crate) fn to_blob(&mut self, global_this: &JSGlobalObject) -> Blob {
+        let blob = Blob::init(self.to_owned_slice(), global_this);
+        blob.body_facts.set(self.facts);
+        blob
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         self.bytes.capacity()
     }
@@ -6361,7 +6367,7 @@ impl Internal {
         // MimeType::{TEXT,OTHER} are `const` (not `static`), so
         // borrowing `.value` would borrow a temporary. Inline the literals
         // (matches `MimeType::init_comptime` values).
-        if self.was_string {
+        if self.facts.contains(BodyFacts::STRING) {
             return b"text/plain;charset=utf-8"; // MimeType::TEXT
         }
         b"application/octet-stream" // MimeType::OTHER

@@ -98,13 +98,6 @@ extern "C" bool is_executable_file(const char* path)
 }
 #endif
 
-extern "C" void bun_ignore_sigpipe()
-{
-#if !OS(WINDOWS)
-    // ignore SIGPIPE
-    signal(SIGPIPE, SIG_IGN);
-#endif
-}
 extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 {
 #ifdef __APPLE__
@@ -532,7 +525,6 @@ typedef struct {
     const char* value;
     size_t value_len;
     bool never_index;
-    uint16_t hpack_index;
 } lshpack_header;
 
 lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapper_free free, unsigned max_capacity)
@@ -549,29 +541,39 @@ lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapp
     return coders;
 }
 
-size_t lshpack_wrapper_encode(lshpack_wrapper* self,
-    const unsigned char* name, size_t name_len,
-    const unsigned char* val, size_t val_len,
-    int never_index,
-    unsigned char* buffer, size_t buffer_len, size_t buffer_offset)
+// Returns the bytes written, 0 if the block is refused (encoder untouched), or SIZE_MAX if lshpack ran out of memory mid-block.
+size_t lshpack_wrapper_encode_block(lshpack_wrapper* self,
+    const unsigned char* bytes, const uint32_t* fields, size_t field_count,
+    unsigned char* dst, size_t dst_len)
 {
-    if (name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
+    size_t needed = 0;
+    for (size_t i = 0; i < field_count; i++) {
+        size_t name_len = fields[i * 2] & 0x7fffffffu;
+        size_t val_len = fields[i * 2 + 1];
+        if (name_len > LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN || name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
+            return 0;
+        needed += name_len + val_len + 32;
+    }
+    if (dst_len < needed)
         return 0;
 
-    char* shared_header_buffer = shared_header_buffer_get();
-    lsxpack_header_t hdr;
-    memset(&hdr, 0, sizeof(lsxpack_header_t));
-    memcpy(&shared_header_buffer[0], name, name_len);
-    memcpy(&shared_header_buffer[name_len], val, val_len);
-    lsxpack_header_set_offset2(&hdr, &shared_header_buffer[0], 0, name_len, name_len, val_len);
-    if (never_index) {
-        hdr.indexed_type = 2;
+    unsigned char* cursor = dst;
+    unsigned char* const end = dst + dst_len;
+    for (size_t i = 0; i < field_count; i++) {
+        size_t name_len = fields[i * 2] & 0x7fffffffu;
+        size_t val_len = fields[i * 2 + 1];
+        lsxpack_header_t hdr;
+        lsxpack_header_set_offset2(&hdr, reinterpret_cast<const char*>(bytes), 0, name_len, name_len, val_len);
+        if (fields[i * 2] >> 31) {
+            hdr.indexed_type = 2;
+        }
+        auto* next = lshpack_enc_encode(&self->enc, cursor, end, &hdr);
+        if (next == cursor)
+            return SIZE_MAX;
+        cursor = next;
+        bytes += name_len + val_len;
     }
-    auto* start = buffer + buffer_offset;
-    auto* ptr = lshpack_enc_encode(&self->enc, start, buffer + buffer_len, &hdr);
-    if (!ptr)
-        return 0;
-    return ptr - start;
+    return cursor - dst;
 }
 
 size_t lshpack_wrapper_decode(lshpack_wrapper* self,
@@ -593,17 +595,17 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     output->value = lsxpack_header_get_value(&hdr);
     output->value_len = hdr.val_len;
     output->never_index = (hdr.flags & LSXPACK_NEVER_INDEX) != 0;
-    if (hdr.hpack_index != LSHPACK_HDR_UNKNOWN && hdr.hpack_index <= LSHPACK_HDR_WWW_AUTHENTICATE) {
-        output->hpack_index = hdr.hpack_index - 1;
-    } else {
-        output->hpack_index = 255;
-    }
     return s - src;
 }
 
 void lshpack_wrapper_enc_set_max_capacity(lshpack_wrapper* self, unsigned max_capacity)
 {
     lshpack_enc_set_max_capacity(&self->enc, max_capacity);
+}
+
+void lshpack_wrapper_dec_set_max_capacity(lshpack_wrapper* self, unsigned max_capacity)
+{
+    lshpack_dec_set_max_capacity(&self->dec, max_capacity);
 }
 
 void lshpack_wrapper_deinit(lshpack_wrapper* self)
@@ -951,26 +953,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] size_t Bun__ramSize()
     // This value is cached internally.
     return WTF::ramSize();
 }
-
-#if !OS(WINDOWS)
-
-extern "C" void Bun__disableSOLinger(int fd)
-{
-    struct linger l = { 1, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l));
-}
-
-#else
-
-#include <winsock2.h>
-
-extern "C" void Bun__disableSOLinger(SOCKET fd)
-{
-    struct linger l = { 1, 0 };
-    setsockopt(fd, SOL_SOCKET, SO_LINGER, (char*)&l, sizeof(l));
-}
-
-#endif
 
 extern "C" int ffi_vprintf(const char* fmt, va_list ap)
 {

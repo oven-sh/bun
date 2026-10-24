@@ -5028,6 +5028,24 @@ impl Timespec {
         }
     }
 
+    /// The monotonic clock as of the kernel's last timer tick on Linux, so 1 to 10 ms behind [`Timespec::now`] at a fifth of the cost.
+    pub fn now_coarse() -> Timespec {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let mut ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            if clock_gettime(libc::CLOCK_MONOTONIC_COARSE, &mut ts) == 0 {
+                return Timespec {
+                    sec: ts.tv_sec,
+                    nsec: ts.tv_nsec,
+                };
+            }
+        }
+        Self::now_real()
+    }
+
     #[inline]
     pub fn since_now(&self, mode: TimespecMockMode) -> u64 {
         Self::now(mode).duration(self).ns()
@@ -5042,14 +5060,6 @@ impl Timespec {
 pub enum TimespecMockMode {
     AllowMockedTime,
     ForceRealTime,
-}
-
-/// `bun_core::timespec_mode::Mode` namespace shim —
-/// Rust can't do inherent associated types stably, so expose a module
-/// instead. Callers write `bun_core::timespec_mode::AllowMockedTime` or use
-/// the `Timespec::now_allow_mocked_time()` helper.
-pub mod timespec_mode {
-    pub use super::TimespecMockMode::*;
 }
 
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
@@ -5251,8 +5261,6 @@ pub mod perf {
         unsafe extern "C" {
             /// No preconditions; returns 0/1 based on tracefs availability.
             pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
-            /// No preconditions.
-            pub safe fn Bun__linux_trace_close();
             pub fn Bun__linux_trace_emit(
                 event_name: *const core::ffi::c_char,
                 duration_ns: i64,
@@ -5330,7 +5338,7 @@ pub mod perf {
 }
 
 // ── form_data ─────────────────────────────────────────────────────────────
-// `bun.FormData.{Encoding, AsyncFormData, getBoundary}`.
+// `bun.FormData.{Encoding, getBoundary}`.
 // The JSC-touching parts (`toJS`, the field map,
 // multipart parser) stay in `bun_runtime::webcore::form_data`; T0 owns only
 // the encoding-detection types so `Request`/`Response`/`Body` can name them
@@ -5422,22 +5430,6 @@ pub mod form_data {
             i += 1;
         }
         None
-    }
-
-    /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.
-    /// Cleanup is `Drop` on the
-    /// `Box`/`Box<[u8]>` fields — no explicit impl needed.
-    #[derive(Debug)]
-    pub struct AsyncFormData {
-        pub encoding: Encoding,
-    }
-
-    impl AsyncFormData {
-        #[inline]
-        pub fn init(encoding: Encoding) -> Box<AsyncFormData> {
-            // With `Box<[u8]>`, boundary ownership has already transferred.
-            Box::new(AsyncFormData { encoding })
-        }
     }
 }
 /// `bun.FormData` — capitalized namespace alias.

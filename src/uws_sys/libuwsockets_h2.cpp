@@ -32,18 +32,17 @@ typedef void (*uws_h2_method_handler)(uws_h2_res_t*, uws_h3_req_t*, void*);
 
 /* ───── app ───── */
 
-uws_h2_app_t* uws_h2_create_app(int ssl, uws_app_t* parent, bool allow_http1, unsigned int idle_timeout_s)
+uws_h2_app_t* uws_h2_create_app(int ssl, uws_app_t* parent, bool allow_http1, unsigned int idle_timeout_s, uint64_t max_request_body_size)
 {
     if (ssl) {
-        return (uws_h2_app_t*)H2App::create((uWS::TemplatedApp<true>*)parent, allow_http1, idle_timeout_s);
+        return (uws_h2_app_t*)H2App::create((uWS::TemplatedApp<true>*)parent, allow_http1, idle_timeout_s, max_request_body_size);
     }
-    return (uws_h2_app_t*)H2App::create((uWS::TemplatedApp<false>*)parent, allow_http1, idle_timeout_s);
+    return (uws_h2_app_t*)H2App::create((uWS::TemplatedApp<false>*)parent, allow_http1, idle_timeout_s, max_request_body_size);
 }
 
 void uws_h2_app_destroy(uws_h2_app_t* app) { delete (H2App*)app; }
 void uws_h2_app_on_schedule_drain(uws_h2_app_t* app, void (*cb)(void*, void*), void* user) { ((H2App*)app)->onScheduleDrain((void (*)(void*, uWS::Http2Context*))cb, user); }
 bool uws_h2_app_drain(uws_h2_app_t* app) { return ((H2App*)app)->drain(); }
-void uws_h2_app_close(uws_h2_app_t* app) { ((H2App*)app)->close(); }
 void uws_h2_app_clear_routes(uws_h2_app_t* app) { ((H2App*)app)->clearRoutes(); }
 
 #define H2_ROUTE(name, method)                                                                         \
@@ -87,7 +86,7 @@ void uws_h2_res_end_stream(uws_h2_res_t* res, bool close_connection)
 
 bool uws_h2_res_is_closed(uws_h2_res_t* res) { return ((Http2Response*)res)->dead; }
 
-/* END_STREAM on the request HEADERS, or content-length: 0 (declaredContentLength is -1 when absent). */
+/* END_STREAM on the request HEADERS, or content-length: 0. */
 bool uws_h2_res_request_body_ended(uws_h2_res_t* res)
 {
     Http2Response* r = (Http2Response*)res;
@@ -108,11 +107,13 @@ bool uws_h2_res_try_end(uws_h2_res_t* res, const char* bytes, size_t len, size_t
     return ((Http2Response*)res)->tryEnd(h2sv(bytes, len), total_len, close).first;
 }
 
-void uws_h2_res_end_without_body(uws_h2_res_t* res, bool close_connection)
+bool uws_h2_res_accept_request_body(uws_h2_res_t* res) { return ((Http2Response*)res)->acceptRequestBody(); }
+
+void uws_h2_res_end_without_body(uws_h2_res_t* res)
 {
     Http2Response* r = (Http2Response*)res;
     r->clearOnWritableAndAborted();
-    r->endWithoutBody(std::nullopt, close_connection);
+    r->endWithoutBody();
 }
 
 void uws_h2_res_grow_request_window(uws_h2_res_t* res) { ((uWS::Http2Response*)res)->growReceiveWindow(); }
@@ -136,17 +137,6 @@ void uws_h2_res_write_header_int(uws_h2_res_t* res, const char* key, size_t key_
     ((Http2Response*)res)->writeHeader(h2sv(key, key_len), value);
 }
 
-void uws_h2_res_mark_wrote_content_length_header(uws_h2_res_t* res)
-{
-    ((Http2Response*)res)->getHttpResponseData()->state |= Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-}
-
-void uws_h2_res_mark_wrote_date_header(uws_h2_res_t* res)
-{
-    ((Http2Response*)res)->getHttpResponseData()->state |= Http2ResponseData::HTTP_WROTE_DATE_HEADER;
-}
-
-void uws_h2_res_write_mark(uws_h2_res_t* res) { ((Http2Response*)res)->writeMark(); }
 void uws_h2_res_flush_headers(uws_h2_res_t* res, bool) { ((Http2Response*)res)->flushHeaders(); }
 
 bool uws_h2_res_write(uws_h2_res_t* res, const char* data, size_t* length)

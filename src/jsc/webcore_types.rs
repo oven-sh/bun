@@ -100,6 +100,19 @@ impl From<MimeType> for BlobContentType {
     }
 }
 
+bitflags::bitflags! {
+    /// What is known about a body's bytes. It moves with them through every form a body takes.
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub struct BodyFacts: u8 {
+        /// They are a JS string's, which `Bun.serve` sends as `text/plain;charset=utf-8`.
+        const STRING = 1 << 0;
+        /// `fetch()` decoded them, so the response's `Content-Encoding` no longer describes them.
+        const DECODED = 1 << 1;
+        /// They reach a reader through a stream that Bun made, not one the program made.
+        const NATIVE_STREAM = 1 << 2;
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Blob
 // ──────────────────────────────────────────────────────────────────────────
@@ -123,6 +136,8 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
+    /// Set while these are, or were, the bytes of a Request or Response body.
+    pub body_facts: Cell<BodyFacts>,
     /// Zero for a by-value `Blob`. On a heap one, the JS wrapper, `BlobRefPtr`s and `ExternalShared`s each hold a ref.
     ///
     /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
@@ -157,6 +172,7 @@ impl Default for Blob {
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
             is_jsdom_file: Cell::new(false),
+            body_facts: Cell::new(BodyFacts::empty()),
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
@@ -325,21 +341,6 @@ impl Blob {
     /// New view onto the same store, +1 ref.
     #[inline]
     pub fn dupe(&self) -> Blob {
-        self.dupe_with_content_type(false)
-    }
-
-    /// Alias for [`Self::dupe`].
-    #[inline]
-    pub fn borrowed_view(&self) -> Blob {
-        self.dupe()
-    }
-
-    /// Ignores
-    /// `include_content_type` and **always** deep-copies a heap-allocated
-    /// `content_type` so freeing one side does not dangle the other (the old
-    /// borrow path was removed because it dropped user-supplied parameters
-    /// like multipart boundaries on a static-mime miss).
-    pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
         Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),
@@ -349,6 +350,7 @@ impl Blob {
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
             is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
+            body_facts: Cell::new(self.body_facts.get()),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
@@ -364,15 +366,15 @@ impl Blob {
     // pulling the whole `BlobExt` trait into scope.
     // ────────────────────────────────────────────────────────────────────
 
-    /// `Blob.hasContentTypeFromUser()` — `true` when the user set a type
-    /// explicitly *or* the store is file/S3-backed (whose mime is sniffed).
+    /// Returns true if the type isn't empty and the user set it or the store is file/S3-backed (whose mime is sniffed).
     #[inline]
     pub fn has_content_type_from_user(&self) -> bool {
-        self.content_type_was_set.get()
-            || self
-                .store()
-                .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
-                .unwrap_or(false)
+        !self.content_type_slice().is_empty()
+            && (self.content_type_was_set.get()
+                || self
+                    .store()
+                    .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
+                    .unwrap_or(false))
     }
 
     /// `Blob.contentTypeOrMimeType()` — explicit `content_type` if set, else

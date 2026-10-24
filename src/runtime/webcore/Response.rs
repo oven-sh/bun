@@ -7,17 +7,18 @@ use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
-    BuiltinName, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef, JsResult,
-    StringJsc as _,
+    BuiltinName, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult, StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
-use super::{FetchHeaders, ReadableStream, Request};
+use super::request::Pristine;
+use super::{FetchHeaders, ReadableStream};
 
-use super::blob::Blob;
+use super::blob::{Blob, BodyFacts};
+use super::fetch::request_init::HeadersInit;
 use bun_ptr::weak_ptr::WeakPtrData;
 
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
@@ -72,13 +73,32 @@ impl HeadersRef {
         Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
     }
 
+    /// Converts a `RequestInit` or `ResponseInit` `headers` member. Returns `None` if it's empty.
+    pub(crate) fn from_init_value(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<Self>> {
+        match HeadersInit::from_js(global, value)? {
+            Some(HeadersInit::Created(headers)) => Ok(Some(headers)),
+            Some(borrowed) => Self::clone_of(borrowed.get(), global),
+            None => Ok(None),
+        }
+    }
+
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
-    #[inline]
-    pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
+    pub(crate) fn clone_of(
+        headers: &mut FetchHeaders,
+        global: &JSGlobalObject,
+    ) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
-        Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
+        Ok(headers
             .clone_this(global)?
             .map(|p| unsafe { Self::adopt(p) }))
+    }
+
+    #[inline]
+    pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
+        Self::clone_of(bun_opaque::opaque_deref_mut(self.0.as_ptr()), global)
     }
 }
 
@@ -276,21 +296,12 @@ impl BodyMixin for Response {
         Response::get_body_value(self)
     }
     #[inline]
-    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Opaque C++ handle. Return the raw `*mut`
-        // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
-        // going through `as_deref()` would derive it from a `&FetchHeaders`
-        // and make the later `as_mut()` UB under Stacked Borrows.
-        self.init.get().headers.as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr())
-                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
-        })
+    fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
+        Response::get_content_type(self)
     }
     #[inline]
-    fn get_form_data_encoding(
-        &self,
-    ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        Response::get_form_data_encoding(self)
+    fn ensure_headers(&self, global_this: &JSGlobalObject) -> bun_jsc::JsResult<()> {
+        self.get_or_create_headers(global_this).map(|_| ())
     }
 }
 
@@ -393,6 +404,22 @@ impl Response {
         self.init.with_mut(|init| init.headers.take())
     }
 
+    /// Settles what the body says about the headers. Call it before the body is taken to be sent.
+    pub(crate) fn prepare_headers_for_send(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        if self.get_body_value().facts().contains(BodyFacts::DECODED) {
+            if let Some(headers) = self.get_init_headers_mut() {
+                headers.fast_remove(HTTPHeaderName::ContentEncoding);
+            }
+        }
+        let body = self.get_body_value();
+        body.to_blob_if_possible();
+        // Bytes are sent with their own type. A stream's type can only be sent as a header.
+        if matches!(body, BodyValue::Locked(_)) {
+            self.copy_content_type_to_headers(global_this)?;
+        }
+        Ok(())
+    }
+
     #[inline]
     pub(crate) fn get_method(&self) -> Method {
         self.init.get().method
@@ -415,20 +442,6 @@ impl Response {
 }
 
 impl Response {
-    #[inline]
-    pub(crate) fn get_form_data_encoding(
-        &self,
-    ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        let Some(content_type_slice) = self.get_content_type()? else {
-            return Ok(None);
-        };
-        // content_type_slice drops at scope exit
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
-            return Ok(None);
-        };
-        Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
-    }
-
     pub(crate) fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size.set(
             self.body.get().value.get().estimated_size()
@@ -506,10 +519,6 @@ impl Response {
 }
 
 impl Response {
-    pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.init.get().headers.as_deref()
-    }
-
     #[inline]
     pub(crate) fn status_code(&self) -> u16 {
         self.init.get().status_code
@@ -529,11 +538,16 @@ impl Response {
     }
 
     pub(crate) fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue {
-        if self.init.get().status_code < 200 {
-            return cx.global().common_strings().error();
+        // https://fetch.spec.whatwg.org/#concept-response-type
+        let common_strings = cx.global().common_strings();
+        if self.init.get().status_code == 0 {
+            return common_strings.error();
         }
-
-        cx.global().common_strings().default()
+        // Only a fetched response has a URL. Bun has no origin, so "cors" and "opaque" never apply.
+        if !self.url.get().is_empty() {
+            return common_strings.basic();
+        }
+        common_strings.default()
     }
 
     pub(crate) fn get_status_text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -565,18 +579,9 @@ impl Response {
         // hold the borrow across calls that re-enter Response host-fns.
         let init = self.init_mut();
         if init.headers.is_none() {
-            init.headers = Some(HeadersRef::create_empty());
-
-            if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
-                    init.headers.as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
-                }
-            }
+            let headers = init.headers.insert(HeadersRef::create_empty());
+            self.get_body_value()
+                .put_content_type_default(headers, global_this)?;
         }
 
         Ok(init.headers.as_mut().unwrap())
@@ -587,23 +592,17 @@ impl Response {
         Ok(self.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
+    pub(crate) fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
         // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
         if let Some(headers) = self.init_mut().headers.as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_utf8()));
+                return Some(value.to_utf8());
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body.get().value.get() {
-            let content_type = blob.content_type_slice();
-            if !content_type.is_empty() {
-                return Ok(Some(Utf8Bytes::Borrowed(content_type)));
-            }
-        }
-
-        Ok(None)
+        let content_type = self.body.get().value.get().content_type().as_slice();
+        (!content_type.is_empty()).then_some(Utf8Bytes::Borrowed(content_type))
     }
 }
 
@@ -800,13 +799,11 @@ impl Response {
             //
             // - `Init` field drop glue releases `headers` (HeadersRef::Drop →
             //   C++ deref) and `status_text` (WTF deref).
-            // - `Body` has NO `Drop`; `reset()` is the explicit cleanup API
-            //   (Body.rs renames `deinit` → `reset`). `drop_in_place` here
-            //   would leak refcounted payloads (WTFStringImpl, Blob store).
+            // - `body` — assignment drops the old `Value`, a locked one's owned fields included.
             // - `url` — assignment drops the old value (WTF deref).
             // - `JsRef` — assignment drops the `Strong` arm (block slot released).
             (*this).init.set(Init::default());
-            (*this).body.get_mut().reset();
+            (*this).body.set(Body::default());
             (*this).url.set(BunString::EMPTY);
             (*this).js_ref.set(JsRef::empty());
             (*this).abort_listener.set(None);
@@ -851,35 +848,22 @@ impl Response {
         );
 
         if let Some(&json_value) = args.first() {
-            // Validate top-level values that are not JSON serializable (Node.js compatibility)
-            if json_value.is_undefined()
-                || json_value.is_symbol()
-                || json_value.js_type() == bun_jsc::JSType::JSFunction
-            {
-                let err = global_this
-                    .create_type_error_instance(format_args!("Value is not JSON serializable"));
-                return Err(global_this.throw_value(err));
-            }
-
-            // BigInt has a different error message to match Node.js exactly
-            if json_value.is_big_int() {
-                let err = global_this.create_type_error_instance(format_args!(
-                    "Do not know how to serialize a BigInt"
-                ));
-                return Err(global_this.throw_value(err));
-            }
-
             // Use jsonStringifyFast which passes undefined for the space parameter,
             // triggering JSC's FastStringifier optimization. This is significantly faster
             // than jsonStringify which passes 0 for space and uses the slower Stringifier.
             let str = json_value.json_stringify_fast(global_this)?;
 
-            if !str.is_empty() {
-                debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
-                let value = &response.body.get().value;
-                value.set(BodyValue::WTFStringImpl(str.leak_wtf_impl()));
-                value.with_mut(|v| v.to_blob_if_possible());
+            // An empty string means `JSON.stringify` returned undefined.
+            if str.is_empty() {
+                return Err(
+                    global_this.throw_type_error(format_args!("Value is not JSON serializable"))
+                );
             }
+
+            debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
+            let value = &response.body.get().value;
+            value.set(BodyValue::WTFStringImpl(str.leak_wtf_impl()));
+            value.with_mut(|v| v.to_blob_if_possible());
         }
 
         if let Some(&arg_init) = args.get(1) {
@@ -950,15 +934,18 @@ impl Response {
             } else if arg_init.is_number() {
                 let status = Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
                 response.init.with_mut(|i| i.status_code = status);
-            } else if let Some(init) = Init::init(global_this, arg_init)? {
-                // cleanup is handled by Init's drop glue on `?` below
+            } else if let Some(init) = Init::init_with_default_status(global_this, arg_init, 302)? {
+                if init.status_code != 200 {
+                    let status = i32::from(init.status_code);
+                    Self::validate_redirect_status_code(global_this, status)?;
+                }
                 response.init.set(init);
-
-                let status = response.init.get().status_code;
-                if status != 200 {
-                    let status =
-                        Self::validate_redirect_status_code(global_this, i32::from(status))?;
-                    response.init.with_mut(|i| i.status_code = status);
+            } else if arg_init.is_string() {
+                // "307" is 307. A string that isn't a redirect status is ignored.
+                if let status @ (301 | 302 | 303 | 307 | 308) =
+                    arg_init.coerce_to_i32(global_this)?
+                {
+                    response.init.with_mut(|i| i.status_code = status as u16);
                 }
             }
         }
@@ -1070,16 +1057,17 @@ impl Response {
                 }
             }
         }
+        let init_value = init;
         let mut init: Init = 'brk: {
-            if init.is_undefined_or_null() {
+            if init_value.is_undefined_or_null() {
                 break 'brk Init {
                     status_code: 200,
                     headers: None,
                     ..Default::default()
                 };
             }
-            if init.is_object() {
-                break 'brk Init::init(global_this, init)?.expect("unreachable");
+            if init_value.is_object() {
+                break 'brk Init::init(global_this, init_value)?.expect("unreachable");
             }
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
@@ -1097,23 +1085,23 @@ impl Response {
         // error returns below release the extracted body payload.
         let body = scopeguard::guard(body, |b| b.reset());
 
-        // extract() throws without returning Err; see Blob::from_dom_form_data
-        if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
-        }
-
         // Perform the only remaining fallible op BEFORE heap-allocating:
         // doing it on stack locals lets `?` trigger the scopeguard and
         // `init`'s drop glue and avoids leaking the heap allocation entirely.
-        if let BodyValue::Blob(blob) = body.value.get() {
-            if let Some(headers) = init.headers.as_deref_mut() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
-                    headers.put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
+        if let Some(headers) = init.headers.as_deref_mut() {
+            body.value
+                .get()
+                .put_content_type_default(headers, global_this)?;
+        } else if let Some(source) = BodyValue::from_request_or_response(init_value) {
+            // SAFETY: `init_value` is an argument of this call, so the Request or Response it wraps is live.
+            let source = unsafe { &*source };
+            // It has no header list either, so the type its body implies is the one header to copy.
+            if body.value.get().content_type().is_empty() && !source.content_type().is_empty() {
+                if let BodyValue::Locked(stream) = body.value_mut() {
+                    stream.content_type.clone_from(source.content_type());
+                } else {
+                    let headers = init.headers.insert(HeadersRef::create_empty());
+                    source.put_content_type_default(headers, global_this)?;
                 }
             }
         }
@@ -1132,8 +1120,7 @@ impl Response {
 
 // We deliberately do NOT `impl Drop for Init` so struct-update
 // syntax (`Init { status_code: x, ..Default::default() }`) and partial moves
-// (e.g. Request::construct_into reading `response_init.headers`) keep working;
-// the fields' own drop glue releases `headers` and `status_text`.
+// keep working; the fields' own drop glue releases `headers` and `status_text`.
 pub(crate) struct Init {
     pub(crate) headers: Option<HeadersRef>,
     pub(crate) status_code: u16,
@@ -1173,8 +1160,17 @@ impl Init {
         global_this: &JSGlobalObject,
         response_init: JSValue,
     ) -> JsResult<Option<Init>> {
+        Self::init_with_default_status(global_this, response_init, 200)
+    }
+
+    /// Returns `None` if `response_init` is not an object.
+    fn init_with_default_status(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+        default_status: u16,
+    ) -> JsResult<Option<Init>> {
         let mut result = Init {
-            status_code: 200,
+            status_code: default_status,
             ..Default::default()
         };
 
@@ -1182,55 +1178,25 @@ impl Init {
             return Ok(None);
         }
 
-        let js_type = response_init.js_type();
-
-        if !js_type.is_object() {
+        if !response_init.js_type().is_object() {
             return Ok(None);
         }
 
-        if js_type == JSType::DOMWrapper {
-            // fast path: it's a Request object or a Response object
-            // we can skip calling JS getters
-            if let Some(req) = response_init.as_direct::<Request>() {
-                // SAFETY: `as_direct` returned a live `*mut Request` owned by the
-                // JS wrapper cell; the wrapper is rooted by `response_init` for
-                // the duration of this call, so no GC can finalize it here.
-                // Everything touched is `&self`.
-                let req = unsafe { &*req };
+        match Pristine::of(response_init) {
+            Pristine::Request(req) => {
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
                 }
 
-                result.method = req.method;
+                result.method = req.method.known().unwrap_or(Method::GET);
                 return Ok(Some(result));
             }
-
-            if let Some(resp) = response_init.as_direct::<Response>() {
-                // SAFETY: `as_direct` returned a live `*mut Response` owned by the
-                // JS wrapper cell; rooted by `response_init` for this call.
-                let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
-            }
+            Pristine::Response(resp) => return Ok(Some(resp.init.get().clone(global_this)?)),
+            Pristine::No => {}
         }
 
         if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
-            // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
-            // FetchHeaders is a hand-bound opaque, so use its dedicated
-            // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
-            if let Some(orig) = FetchHeaders::cast(headers) {
-                // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
-                if !orig.is_empty() {
-                    result.headers = orig.clone_this(global_this)?.map(|p| {
-                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
-                        // ownership of that ref is transferred into the `HeadersRef`.
-                        unsafe { HeadersRef::adopt(p) }
-                    });
-                }
-            } else {
-                result.headers = HeadersRef::create_from_js(global_this, headers)?;
-            }
+            result.headers = HeadersRef::from_init_value(global_this, headers)?;
         }
 
         if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {

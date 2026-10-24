@@ -3,7 +3,7 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
 const http = require("node:http");
 const { isIP } = require("internal/net/isIP");
-const { urlToHttpOptions } = require("internal/url");
+const { isURL, urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
 const {
@@ -11,8 +11,14 @@ const {
   checkShouldUseProxy,
   kWaitForProxyTunnel,
   kPerRequestCheckServerIdentity,
+  getMaxHTTPHeaderSize,
   isTlsSymbol,
+  serverSymbol,
+  tlsSymbol,
 } = require("internal/http");
+const { kSNIContexts } = require("internal/net/symbols");
+const setListenerSecureContext = $bindgen("Listener.bind.ts", "setSecureContext");
+const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const { validateHeaderValue } = require("node:_http_common");
 const { isAnyArrayBuffer, isDataView } = require("node:util/types");
 
@@ -39,7 +45,7 @@ function request(...args: [input?: unknown, options?: unknown, cb?: unknown]) {
   if (typeof args[0] === "string") {
     const urlStr = ArrayPrototypeShift.$call(args);
     options = urlToHttpOptions(new URL(urlStr));
-  } else if (args[0] instanceof URL) {
+  } else if (isURL(args[0])) {
     options = urlToHttpOptions(ArrayPrototypeShift.$call(args));
   }
 
@@ -106,6 +112,7 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
   const result = {
     __proto__: null,
     proxyTunnelPayload: payload,
+    maxHeaderSize: reqOptions.maxHeaderSize || getMaxHTTPHeaderSize(),
     requestOptions: {
       // Options used for the request sent after the tunnel is established.
       __proto__: null,
@@ -120,8 +127,8 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
   return result;
 }
 
-function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
-  const { proxyTunnelPayload } = tunnelConfig;
+function establishTunnel(agent, socket, tunnelConfig, afterSocket) {
+  const { proxyTunnelPayload, maxHeaderSize } = tunnelConfig;
   // Once the tunnel outcome is decided the raw socket belongs to the TLS
   // wrap; stop reading from it and never re-register the readable listener.
   let tunnelDone = false;
@@ -158,14 +165,20 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
 
   // Read the headers from the chunks and check for the status code. If it fails we
   // clean up the socket and return an error. Otherwise we establish the tunnel.
-  let buffer = "";
+  let buffer;
   function onProxyData(chunk) {
-    const str = chunk.toString();
-    $debug("onProxyData", str);
-    buffer += str;
+    $debug("onProxyData", chunk.length);
+    buffer = buffer === undefined ? chunk : Buffer.concat([buffer, chunk], buffer.length + chunk.length);
     const headerEndIndex = buffer.indexOf("\r\n\r\n");
+    const headerLength = headerEndIndex === -1 ? buffer.length : headerEndIndex + 4;
+    if (headerLength > maxHeaderSize) {
+      $debug(`Proxy response headers exceed ${maxHeaderSize} bytes, cleaning up`);
+      cleanup();
+      afterSocket($ERR_PROXY_TUNNEL(`Proxy response headers exceeded ${maxHeaderSize} bytes`), socket);
+      return headerLength;
+    }
     if (headerEndIndex === -1) return headerEndIndex;
-    const statusLine = buffer.substring(0, buffer.indexOf("\r\n"));
+    const statusLine = buffer.subarray(0, buffer.indexOf("\r\n")).toString();
     const statusCode = statusLine.split(" ")[1];
     if (statusCode !== "200") {
       $debug(`onProxyData receives ${statusCode}, cleaning up`);
@@ -340,7 +353,7 @@ function createConnection(...args) {
     });
     function onProxyConnection() {
       socket.removeListener("error", onError);
-      establishTunnel(agent, socket, options, tunnelConfig, cleanupAndPropagate);
+      establishTunnel(agent, socket, tunnelConfig, cleanupAndPropagate);
     }
     if (this[kProxyConfig].protocol === "http:") {
       socket = require("node:net").connect(connectOptions, onProxyConnection);
@@ -590,7 +603,8 @@ function Server(options, requestListener): void {
     options = {};
   } else {
     validateObject(options, "options");
-    options = { ...options };
+    // tls.Server gets the caller's own enumerable options, as in Node. What Node reads by name is still found on the caller's object.
+    options = { __proto__: options, ...options };
   }
   if (!options.ALPNProtocols && !options.ALPNCallback) {
     // http/1.0 is not defined as a Protocol ID in the IANA registry, so
@@ -615,6 +629,30 @@ function Server(options, requestListener): void {
 $toClass(Server, "Server", http.Server);
 // A listener of this class speaks TLS whatever its options hold.
 Server.prototype[isTlsSymbol] = true;
+
+Server.prototype.addContext = function addContext(hostname, context) {
+  const tlsServer = this[tlsSymbol];
+  tlsServer.addContext(hostname, context);
+  const handle = this[serverSymbol];
+  if (handle) addServerName(handle, hostname, tlsServer[kSNIContexts].$get(hostname).context);
+};
+
+Server.prototype.setSecureContext = function setSecureContext(options) {
+  validateObject(options, "options");
+  const tlsServer = this[tlsSymbol];
+  // Inherits, because tls.Server reads each option by name: one that is inherited, a getter or non-enumerable counts, as in Node.
+  tlsServer.setSecureContext({ __proto__: options, ...require("internal/tls").ignoredByHttpsServer });
+  const handle = this[serverSymbol];
+  if (handle) setListenerSecureContext(handle, tlsServer._sharedCreds.context);
+};
+
+Server.prototype.getTicketKeys = function getTicketKeys() {
+  return this[tlsSymbol].getTicketKeys();
+};
+
+Server.prototype.setTicketKeys = function setTicketKeys(keys) {
+  this[tlsSymbol].setTicketKeys(keys);
+};
 
 function createServer(options, requestListener) {
   return new Server(options, requestListener);

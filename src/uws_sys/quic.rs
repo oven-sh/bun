@@ -10,6 +10,8 @@
 
 #[path = "quic/Context.rs"]
 pub mod context;
+#[path = "quic/Driver.rs"]
+pub mod driver;
 #[path = "quic/Header.rs"]
 pub mod header;
 #[path = "quic/PendingConnect.rs"]
@@ -20,19 +22,10 @@ pub mod socket;
 pub mod stream;
 
 pub use self::context::Context;
+pub use self::driver::{Driver, PassPoint, Udp};
 pub use self::pending_connect::PendingConnect;
 pub use self::socket::Socket;
 pub use self::stream::Stream;
 
 pub use self::header::Header;
 pub use self::header::Qpack;
-
-unsafe extern "C" {
-    // safe: no args; idempotent C-side initialization with no preconditions.
-    pub(crate) safe fn us_quic_global_init();
-}
-
-#[inline]
-pub fn global_init() {
-    us_quic_global_init()
-}

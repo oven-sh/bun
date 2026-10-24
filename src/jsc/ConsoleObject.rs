@@ -1559,7 +1559,6 @@ pub mod formatter {
         /// Raw pointer (not `Box`) because `visited::Pool` owns the
         /// `heap::alloc`/`from_raw` lifecycle.
         pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
-        pub(crate) hide_native: bool,
         pub(crate) indent: u32,
         pub depth: u16,
         pub(crate) max_depth: u16,
@@ -1591,7 +1590,6 @@ pub mod formatter {
                 remaining_values: bun_ptr::RawSlice::EMPTY,
                 map: visited::Map::default(),
                 map_node: None,
-                hide_native: false,
                 indent: 0,
                 depth: 0,
                 max_depth: 8,
@@ -1627,7 +1625,6 @@ pub mod formatter {
                 remaining_values: self.remaining_values,
                 map: visited::Map::default(),
                 map_node: None,
-                hide_native: self.hide_native,
                 indent: self.indent,
                 depth: self.depth,
                 max_depth: self.max_depth,
@@ -5869,41 +5866,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let _ = bun_io::Write::flush(&mut writer);
 }
 
-/// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's
-/// `ConsoleClient` vtable requires but Bun leaves unimplemented. Two arms cover
-/// the two trailing-arg shapes the C++ side declares in
-/// `bindings/headers.h:686-694`: `(…, *const u8, usize)` for the title-string
-/// hooks and `(…, *mut ScriptArguments)` for the inspector-args hooks.
-///
-/// Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`)
-/// and `paste` is not a `bun_jsc` dep, so the full `Bun__ConsoleObject__<name>`
-/// export symbol is passed verbatim.
-macro_rules! console_noop_hooks {
-    (str: $($name:ident),+ $(,)?) => {$(
-        #[unsafe(no_mangle)]
-        #[crate::host_call]
-        pub extern "C" fn $name(
-            _console: *mut ConsoleObject,
-            _global: &JSGlobalObject,
-            _chars: *const u8,
-            _len: usize,
-        ) {
-        }
-    )+};
-    (args: $($name:ident),+ $(,)?) => {$(
-        #[unsafe(no_mangle)]
-        #[crate::host_call]
-        pub extern "C" fn $name(
-            _console: *mut ConsoleObject,
-            _global: &JSGlobalObject,
-            _args: *mut ScriptArguments,
-        ) {
-        }
-    )+};
-}
-
-console_noop_hooks!(str: Bun__ConsoleObject__profile, Bun__ConsoleObject__profileEnd);
-
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
@@ -5928,13 +5890,14 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     }
 }
 
-console_noop_hooks!(
-    args:
-    Bun__ConsoleObject__timeStamp,
-    Bun__ConsoleObject__record,
-    Bun__ConsoleObject__recordEnd,
-    Bun__ConsoleObject__screenshot,
-);
+#[unsafe(no_mangle)]
+#[crate::host_call]
+pub(crate) extern "C" fn Bun__ConsoleObject__timeStamp(
+    _console: *mut ConsoleObject,
+    _global: &JSGlobalObject,
+    _args: *mut ScriptArguments,
+) {
+}
 
 #[unsafe(no_mangle)]
 #[crate::host_call]

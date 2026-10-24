@@ -317,6 +317,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // node:net reads these two from `process.execArgv`.
+    parse_param!("--network-family-autoselection-attempt-timeout <STR>"),
+    parse_param!("--tls-keylog <STR>"),
 ];
 
 const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -764,16 +767,6 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
         }
     }
     out.into_boxed_slice()
-}
-
-use crate::generated_bindgen::node_tls_binding::CAStore;
-
-pub(crate) fn get_ca_store() -> CAStore {
-    match Global::ca_store() {
-        Global::CAStore::Bundled => CAStore::Bundled,
-        Global::CAStore::System => CAStore::System,
-        Global::CAStore::OpenSSL => CAStore::Openssl,
-    }
 }
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
@@ -1285,6 +1278,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if let Some(order) = args.option(b"--dns-result-order") {
             ctx.runtime_options.dns_result_order = order.into();
+            // `run_command` rejects an invalid value.
+            if let Some(order) = bun_dns::Order::from_string(order) {
+                bun_dns::Order::set_for_connect(order);
+            }
         }
 
         let has_cron_title = args.option(b"--cron-title");

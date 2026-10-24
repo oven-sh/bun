@@ -473,6 +473,49 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// process.stdin reads from the stream that Bun.stdin.stream() returns, and pauses its source when it lets go of it.
+describe.each([
+  ["pause()", `process.stdin.pause();`],
+  ["resume() and pause()", `process.stdin.resume(); process.stdin.pause();`],
+  [
+    "one 'data' event and pause()",
+    `await new Promise(resolve => process.stdin.once("data", chunk => { head = chunk.length; process.stdin.pause(); resolve(); }));`,
+  ],
+])("Bun.stdin.stream() after process.stdin's %s", (_, before) => {
+  // Not concurrent: tests above depend on how soon this process writes to their children, and these keep it busy.
+  test.each([
+    ["for await", `for await (const chunk of Bun.stdin.stream()) rest += chunk.length;`],
+    ["pipeTo()", `await Bun.stdin.stream().pipeTo(new WritableStream({ write(chunk) { rest += chunk.length; } }));`],
+    ["tee()", `for await (const chunk of Bun.stdin.stream().tee()[0]) rest += chunk.length;`],
+  ])("%s reads the rest of stdin", async (_, consume) => {
+    // More than the pipe and the reader can buffer, so most of it is still unread when process.stdin pauses.
+    const size = 4 * 1024 * 1024;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let head = 0, rest = 0;
+        ${before}
+        // process.stdin lets go of the stream a tick after pause().
+        await new Promise(resolve => setImmediate(resolve));
+        ${consume}
+        // What process.stdin read before it let go is in its own buffer.
+        console.log(head + process.stdin.readableLength + rest);
+        `,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    proc.stdin.write(Buffer.alloc(size, "x"));
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: size + "\n", stderr: "", exitCode: 0 });
+  });
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the

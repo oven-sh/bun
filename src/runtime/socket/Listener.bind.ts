@@ -1,5 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
+import { DebugHTTPSServer, HTTPSServer } from "../server/server.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::listener" });
 
@@ -29,14 +30,14 @@ const fromOptions = { args: { options: b.any }, capability: "js", throws: true }
 export const connect = b.fn({ ...fromOptions, returns: b.any, rustPath: "crate::socket::Listener::connect" });
 export const listen = b.fn({ ...fromOptions, returns: Listener, rustPath: "crate::socket::Listener::listen" });
 
+/** What accepts the connections of a `tls.Server` (its `_handle`) or an `https.Server`. A cluster worker's `_handle` is neither: JS wraps its connections. */
+export const TLSListener = b.union({
+  listener: Listener,
+  https: HTTPSServer,
+  debugHttps: DebugHTTPSServer,
+  ignored: b.any,
+});
 export const addServerName = b.fn({
-  args: { listener: Listener, hostname: b.string.utf8, tls: b.any },
-  capability: "js",
-  throws: true,
-  rustPath: "crate::socket::Listener::add_server_name",
+  args: { listener: TLSListener, hostname: b.string.utf8, context: SecureContext },
 });
-
-/** `handle` is the `_handle` of a `tls.Server`. A cluster worker's is no `Listener`: JS wraps its connections. */
-export const setSecureContext = b.fn({
-  args: { handle: Listener.otherAsNull, context: SecureContext.otherAsNull },
-});
+export const setSecureContext = b.fn({ args: { listener: TLSListener, context: SecureContext } });

@@ -8,30 +8,27 @@ import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
-import { Writable } from "node:stream";
+import { getDefaultHighWaterMark, PassThrough, Writable } from "node:stream";
+import { text } from "node:stream/consumers";
+import { pipeline } from "node:stream/promises";
 import tls from "node:tls";
 import { WebSocketServer } from "ws";
-function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, add_http_prefix: boolean) {
-  const client = net.connect({ port: proxyAddress.port, host: proxyAddress.address }, () => {
-    client.write(
-      `CONNECT ${add_http_prefix ? "http://" : ""}${targetAddress.address}:${targetAddress.port} HTTP/1.1\r\nHost: ${targetAddress.address}:${targetAddress.port}\r\nProxy-Authorization: Basic dXNlcjpwYXNzd29yZA==\r\n\r\n`,
-    );
-  });
 
-  const received: string[] = [];
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
+const ESTABLISHED = "HTTP/1.1 200 Connection established\r\n\r\n";
+// The server's default response to a request its parser rejects (no 'clientError' listener).
+const BAD_REQUEST = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
 
-  client.on("data", data => {
-    if (data.toString().includes("200 Connection established")) {
-      client.write("GET / HTTP/1.1\r\nHost: www.example.com:80\r\nConnection: close\r\n\r\n");
-    }
-    received.push(data.toString());
-  });
-  client.on("error", reject);
-
-  client.on("end", () => {
-    resolve(received.join(""));
-  });
+// Writes one raw request and resolves with everything the server sent plus the
+// client-side events seen before the connection closed.
+function rawRequest(address: AddressInfo, request: string) {
+  const { promise, resolve } = Promise.withResolvers<{ response: string; events: string[] }>();
+  const client = net.connect(address.port, address.address, () => client.write(request));
+  const received: Buffer[] = [];
+  const events: string[] = [];
+  client.on("data", (chunk: Buffer) => received.push(chunk));
+  client.on("end", () => events.push("end"));
+  client.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+  client.on("close", () => resolve({ response: Buffer.concat(received).toString(), events }));
   return promise;
 }
 
@@ -58,10 +55,13 @@ async function writeInTwoReads(
   client.write(second);
 }
 
-const BIG_DATA = Buffer.alloc(1024 * 1024 * 64, "bun").toString();
 describe("HTTP server CONNECT", () => {
   test("should handle backpressure", async () => {
+    // Several times what loopback accepts in one write, so the target's end()
+    // waits for buffered bytes and the proxy pipes across many reads.
+    const payload = Buffer.alloc(8 * 1024 * 1024, "bun");
     const responseHeader = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
+    const proxyResponse = "HTTP/1.1 200 Connection established\r\nConnection: close\r\n\r\n";
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
     });
@@ -69,22 +69,21 @@ describe("HTTP server CONNECT", () => {
       // Accepted net sockets start in Node's flowing=null state; drain the
       // inbound GET so 'end' can fire and server.close() can resolve.
       socket.resume();
-      socket.write(responseHeader, () => {
-        socket.write(BIG_DATA, () => {
-          //TODO: is this a net bug? on windows the connection is closed before everything is sended
-          Bun.sleep(100).then(() => {
-            socket.end();
-          });
-        });
-      });
+      socket.write(responseHeader);
+      socket.end(payload);
     });
-    let proxyHeaders = {};
+    let connectRequest: { method?: string; url?: string; proxyAuthorization?: string; head?: Buffer } = {};
     proxyServer.on("connect", (req, socket, head) => {
-      proxyHeaders = req.headers;
+      connectRequest = {
+        method: req.method,
+        url: req.url,
+        proxyAuthorization: req.headers["proxy-authorization"],
+        head,
+      };
       const [host, port] = req.url?.split(":") ?? [];
 
       const serverSocket = net.connect(parseInt(port), host, async () => {
-        socket.write(`HTTP/1.1 200 Connection established\r\nConnection: close\r\n\r\n`);
+        socket.write(proxyResponse);
         serverSocket.pipe(socket);
         socket.pipe(serverSocket);
       });
@@ -104,69 +103,104 @@ describe("HTTP server CONNECT", () => {
     await once(targetServer.listen(0, "127.0.0.1"), "listening");
     const targetAddress = targetServer.address() as AddressInfo;
 
-    {
-      const response = await connectClient(proxyAddress, targetAddress, false);
-      expect(proxyHeaders["proxy-authorization"]).toBe("Basic dXNlcjpwYXNzd29yZA==");
-      expect(response).toContain("HTTP/1.1 200 OK");
-      expect(response.length).toBeGreaterThan(responseHeader.length + BIG_DATA.length);
-      expect(response).toContain(BIG_DATA);
-    }
+    const target = `${targetAddress.address}:${targetAddress.port}`;
+    const client = net.connect({ port: proxyAddress.port, host: proxyAddress.address }, () => {
+      client.write(
+        `CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\nProxy-Authorization: Basic dXNlcjpwYXNzd29yZA==\r\n\r\n`,
+      );
+    });
+    const received: Buffer[] = [];
+    const { promise: response, resolve, reject } = Promise.withResolvers<Buffer>();
+    let sentRequest = false;
+    client.on("data", (data: Buffer) => {
+      received.push(data);
+      if (!sentRequest && Buffer.concat(received).includes(proxyResponse)) {
+        sentRequest = true;
+        client.write("GET / HTTP/1.1\r\nHost: www.example.com:80\r\nConnection: close\r\n\r\n");
+      }
+    });
+    client.on("error", reject);
+    client.on("end", () => resolve(Buffer.concat(received)));
+
+    const expected = Buffer.concat([Buffer.from(proxyResponse), Buffer.from(responseHeader), payload]);
+    const tunneled = await response;
+    // Compared by hand: a failed toEqual on 8 MiB buffers prints megabytes of diff.
+    expect({
+      connectRequest,
+      response: { length: tunneled.length, equalsExpected: tunneled.equals(expected) },
+    }).toEqual({
+      connectRequest: {
+        method: "CONNECT",
+        url: target,
+        proxyAuthorization: "Basic dXNlcjpwYXNzd29yZA==",
+        head: Buffer.alloc(0),
+      },
+      response: { length: expected.length, equalsExpected: true },
+    });
   });
 
   test("should handle data, drain, end and close events", async () => {
+    // One write of this size doesn't fill the loopback buffers, so the loop
+    // below runs a few times before write() returns false.
+    const chunk = Buffer.alloc(1024 * 1024, "bun");
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
     });
 
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
-    let data_received: string[] = [];
-    let client_data_received: string[] = [];
-    let proxy_drain_received = false;
-    let proxy_end_received = false;
+    const proxyReceived: Buffer[] = [];
+    const clientReceived: Buffer[] = [];
+    const proxyEvents: string[] = [];
+    let connectRequest: { url?: string; head?: Buffer } = {};
+    let writes = 0;
 
-    const { promise, resolve, reject } = Promise.withResolvers<string>();
-
-    const { promise: clientPromise, resolve: clientResolve, reject: clientReject } = Promise.withResolvers<string>();
+    const { promise: proxyClosed, resolve: resolveProxyClosed, reject: rejectProxy } = Promise.withResolvers<void>();
+    const { promise: clientEnded, resolve: resolveClientEnded, reject: rejectClient } = Promise.withResolvers<void>();
     const clientSocket = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      clientSocket.on("error", clientReject);
-      clientSocket.on("data", chunk => {
-        client_data_received.push(chunk?.toString());
-      });
-      clientSocket.on("end", () => {
-        clientSocket.end();
-        clientResolve(client_data_received.join(""));
-      });
-
       clientSocket.write("CONNECT localhost:80 HTTP/1.1\r\nHost: localhost:80\r\nConnection: close\r\n\r\n");
+    });
+    clientSocket.on("error", rejectClient);
+    clientSocket.on("data", (data: Buffer) => clientReceived.push(data));
+    clientSocket.on("end", () => {
+      clientSocket.end();
+      resolveClientEnded();
     });
 
     proxyServer.on("connect", (req, socket, head) => {
-      expect(head).toBeInstanceOf(Buffer);
-      socket.on("data", chunk => {
-        data_received.push(chunk?.toString());
-      });
-      socket.on("end", () => {
-        proxy_end_received = true;
-      });
+      connectRequest = { url: req.url, head };
+      socket.on("data", data => proxyReceived.push(data));
+      socket.on("end", () => proxyEvents.push("end"));
       socket.on("close", () => {
-        resolve(data_received.join(""));
+        proxyEvents.push("close");
+        resolveProxyClosed();
       });
       socket.on("drain", () => {
-        proxy_drain_received = true;
+        proxyEvents.push("drain");
         socket.end();
       });
-      socket.on("error", reject);
-      proxy_drain_received = false;
+      socket.on("error", rejectProxy);
       // write until backpressure
-      while (socket.write(BIG_DATA)) {}
+      do {
+        writes++;
+      } while (socket.write(chunk));
       clientSocket.write("Hello World");
     });
 
-    expect(await promise).toContain("Hello World");
-    expect(await clientPromise).toContain(BIG_DATA);
-    expect(proxy_drain_received).toBe(true);
-    expect(proxy_end_received).toBe(true);
+    await Promise.all([proxyClosed, clientEnded]);
+    const expected = Buffer.concat(Array.from({ length: writes }, () => chunk));
+    const received = Buffer.concat(clientReceived);
+    expect({
+      connectRequest,
+      proxyReceived: Buffer.concat(proxyReceived).toString(),
+      proxyEvents,
+      clientReceived: { length: received.length, equalsExpected: received.equals(expected) },
+    }).toEqual({
+      connectRequest: { url: "localhost:80", head: Buffer.alloc(0) },
+      proxyReceived: "Hello World",
+      proxyEvents: ["drain", "end", "close"],
+      clientReceived: { length: expected.length, equalsExpected: true },
+    });
   });
 
   test("should handle CONNECT with invalid target", async () => {
@@ -194,23 +228,18 @@ describe("HTTP server CONNECT", () => {
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
 
-    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write("CONNECT invalid.host.that.does.not.exist:9999 HTTP/1.1\r\nHost: invalid.host:9999\r\n\r\n");
-    });
+    // A loopback port with no listener, so the upstream connect is refused
+    // without DNS. The established connection keeps the port bound, so a
+    // concurrent listen(0) can't claim it during the test.
+    await using sink = net.createServer();
+    await once(sink.listen(0, "127.0.0.1"), "listening");
+    const holder = net.connect((sink.address() as AddressInfo).port, "127.0.0.1");
+    await once(holder, "connect");
+    const target = `127.0.0.1:${holder.localPort}`;
 
-    const { promise, resolve } = Promise.withResolvers<string>();
-    const received: string[] = [];
-
-    client.on("data", data => {
-      received.push(data.toString());
-    });
-
-    client.on("end", () => {
-      resolve(received.join(""));
-    });
-
-    const response = await promise;
-    expect(response).toContain("502 Bad Gateway");
+    const result = await rawRequest(proxyAddress, `CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`);
+    holder.destroy();
+    expect(result).toEqual({ response: "HTTP/1.1 502 Bad Gateway\r\n\r\n", events: ["end"] });
   });
 
   // TODO: timeout is not supported in bun socket yet
@@ -483,9 +512,9 @@ describe("HTTP server CONNECT", () => {
       expect({ intact: Buffer.concat(chunks).equals(payload), drains }).toEqual({ intact: true, drains: 0 });
     });
 
-    // The server pauses the reads of a connection whose response the client does not take (flood
-    // prevention), and resumes them when that response has left.
-    test("the end of flood prevention does not resume the reads that a full buffer stopped", async () => {
+    // The server pauses the reads of an HTTP connection whose response the client does not take (flood
+    // prevention). The tunnel behind that response has the socket's own backpressure.
+    test("the drain of the response ahead does not resume the reads that a full buffer stopped", async () => {
       const t = setup();
       const responseWritten = Promise.withResolvers<void>();
       const { promise: tunnelPromise, resolve: onTunnel } = Promise.withResolvers<net.Socket>();
@@ -512,13 +541,6 @@ describe("HTTP server CONNECT", () => {
       client.write(handshake);
       const tunnel = await unlessClosed(client, tunnelPromise);
       sendPayload(client);
-
-      // Flood prevention holds the reads: part of the response is still unsent.
-      await t.barrier(server);
-      expect(tunnel.readableLength).toBe(0);
-      // A reader starts them, as a 'data' listener does, then lets the buffer fill.
-      tunnel.resume();
-      tunnel.pause();
       const buffered = await t.untilReadsStop(server, tunnel);
 
       // The client takes the response. It ends with the last chunk of the chunked encoding.
@@ -1090,8 +1112,10 @@ describe("HTTP server CONNECT", () => {
   test("should handle malformed CONNECT requests", async () => {
     await using proxyServer = http.createServer();
 
+    const connectUrls: string[] = [];
     proxyServer.on("connect", (req, socket, head) => {
-      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+      connectUrls.push(req.url ?? "");
+      socket.write(ESTABLISHED);
       socket.end();
     });
 
@@ -1113,61 +1137,21 @@ describe("HTTP server CONNECT", () => {
       "CONNECT :80 HTTP/1.1\r\n\r\n", // Missing host
     ];
 
-    for (const request of acceptedRequests) {
-      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-        client.write(request);
-      });
-
-      const { promise, resolve } = Promise.withResolvers<string>();
-      const received: string[] = [];
-      client.on("data", data => {
-        received.push(data.toString());
-      });
-      client.on("end", () => {
-        resolve(received.join(""));
-      });
-      client.on("error", () => {
-        resolve("CONNECTION_ERROR");
-      });
-
-      const response = await promise;
-      expect(response).toContain("200 Connection established");
-    }
-
-    for (const request of malformedRequests) {
-      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-        client.write(request);
-      });
-
-      const { promise, resolve } = Promise.withResolvers<string>();
-      const received: string[] = [];
-
-      client.on("data", data => {
-        received.push(data.toString());
-      });
-
-      client.on("end", () => {
-        resolve(received.join(""));
-      });
-
-      client.on("error", () => {
-        resolve("CONNECTION_ERROR");
-      });
-
-      setTimeout(() => {
-        client.end();
-        resolve(received.join("") || "TIMEOUT");
-      }, 100);
-
-      const response = await promise;
-      // Should either get an error response or timeout/connection error
-      expect(response).not.toContain("200 Connection established");
-    }
+    const results = await Promise.all(
+      [...acceptedRequests, ...malformedRequests].map(async request => ({
+        request,
+        ...(await rawRequest(proxyAddress, request)),
+      })),
+    );
+    expect({ results, connectUrls: connectUrls.sort() }).toEqual({
+      results: [
+        ...acceptedRequests.map(request => ({ request, response: ESTABLISHED, events: ["end"] })),
+        ...malformedRequests.map(request => ({ request, response: BAD_REQUEST, events: ["end"] })),
+      ],
+      connectUrls: [":80", "example.com"],
+    });
   });
 
-  // https CONNECT: server socket.end() after peer FIN must also FIN the TCP
-  // write side. Linux-only: the close is observed via EPOLLHUP once both halves
-  // have FIN'd; kqueue/libuv need the readable_ended re-arm to re-derive it.
   test.skipIf(!isLinux)(
     "https CONNECT socket.end() after peer FIN half-closes TCP so the socket can close",
     async () => {
@@ -1181,10 +1165,6 @@ describe("HTTP server CONNECT", () => {
 
       const server = https.createServer({ cert: process.env.CERT, key: process.env.KEY }, () => {});
       server.on("connect", (req, socket) => {
-        // autoDestroy off: only the transport (EPOLLHUP once our FIN answers
-        // the peer's) can close this socket.
-        socket._readableState.autoDestroy = false;
-        socket._writableState.autoDestroy = false;
         socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
         socket.on("end", () => {
           console.log("server:end");
@@ -1230,6 +1210,48 @@ describe("HTTP server CONNECT", () => {
       });
     },
   );
+
+  test.each([
+    ["ends after the peer's FIN by default", undefined, "allowHalfOpen=false end close"],
+    ["stays writable after the peer's FIN with allowHalfOpen: true", true, "allowHalfOpen=true end writable"],
+  ])("an https 'upgrade' socket %s", async (_label, allowHalfOpen, expected) => {
+    await using server = https.createServer({ ...tlsCert, allowHalfOpen });
+    const events: string[] = [];
+    const done = Promise.withResolvers<void>();
+    server.on("upgrade", (_req, socket) => {
+      events.push(`allowHalfOpen=${socket.allowHalfOpen}`);
+      socket.on("close", () => {
+        events.push("close");
+        done.resolve();
+      });
+      socket.on("end", () => {
+        events.push("end");
+        if (!allowHalfOpen) return;
+        socket.end("still writable", () => {
+          events.push("writable");
+          socket.removeAllListeners("close");
+          done.resolve();
+        });
+      });
+      socket.resume();
+      client.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = tls.connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      ca: tlsCert.cert,
+      allowHalfOpen: true,
+    });
+    client.on("error", done.reject);
+    client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+    try {
+      await done.promise;
+      expect(events.join(" ")).toBe(expected);
+    } finally {
+      client.destroy();
+    }
+  });
 
   test.skipIf(isWindows)(
     "AF_UNIX CONNECT sockets whose peer closes first do not spin the loop on EPOLLHUP",
@@ -1586,6 +1608,57 @@ describe("CONNECT pipelined behind a pending response", () => {
       firstFinished: false,
     });
   });
+
+  // A proxy that serves some tunnels in-process does this (proxy-chain's customConnectServer).
+  test.concurrent("should let a second server take the tunnel with emit('connection')", async () => {
+    const fixture = /* js */ `
+      const http = require("node:http");
+      const net = require("node:net");
+      function run(event) {
+        const { promise, resolve } = Promise.withResolvers();
+        const second = http.createServer();
+        const server = http.createServer((req, res) => void res.write("first"));
+        server.on("connect", (req, socket) => {
+          socket.once(event, () => {
+            console.log(event);
+            socket.destroy();
+            server.close();
+          });
+          socket.once("close", resolve);
+          socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+          second.emit("connection", socket);
+          if (event === "drain") {
+            const chunk = Buffer.alloc(1 << 20, "x");
+            while (socket.write(chunk)) {}
+          }
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          let head = "";
+          client.on("data", chunk => {
+            if (event !== "close" || head.includes("Established")) return;
+            head += chunk.toString("latin1");
+            if (head.includes("Established")) client.destroy();
+          });
+          client.on("error", () => {});
+          client.write(
+            "GET /first HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n" +
+              "CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n",
+          );
+        });
+        return promise;
+      }
+      run("drain").then(() => run("close"));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "drain\nclose\n", stderr: "", exitCode: 0 });
+  });
 });
 
 /**
@@ -1595,40 +1668,23 @@ describe("CONNECT pipelined behind a pending response", () => {
 
 describe("HTTP server socket access via normal requests", () => {
   test("should handle socket errors during normal requests", async () => {
-    let errorHandled = false;
+    const { promise: serverError, resolve: resolveServerError } = Promise.withResolvers<Error>();
 
     await using server = http.createServer((req, res) => {
       const socket = res.socket!;
-
-      socket.on("error", err => {
-        errorHandled = true;
-      });
-
-      // Simulate an error condition
-      setTimeout(() => {
-        socket.destroy(new Error("Simulated error"));
-      }, 50);
+      socket.on("error", resolveServerError);
+      socket.destroy(new Error("Simulated error"));
     });
 
     await once(server.listen(0, "127.0.0.1"), "listening");
     const serverAddress = server.address() as AddressInfo;
 
-    const client = net.connect(serverAddress.port, serverAddress.address, () => {
-      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    const result = await rawRequest(serverAddress, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect({ ...result, serverError: (await serverError).message }).toEqual({
+      response: "",
+      events: ["end"],
+      serverError: "Simulated error",
     });
-
-    const { promise, resolve } = Promise.withResolvers<boolean>();
-
-    client.on("error", () => {
-      resolve(true);
-    });
-
-    client.on("close", () => {
-      resolve(false);
-    });
-
-    await promise;
-    expect(errorHandled).toBe(true);
   });
 
   test.todo("should handle socket pause/resume during request", async () => {
@@ -1699,7 +1755,7 @@ describe("HTTP server socket access via normal requests", () => {
   });
 });
 
-describe("Should be compatible with node.js", () => {
+describe.concurrent("Should be compatible with node.js", () => {
   // https://github.com/oven-sh/bun/issues/34158
   test("server.close(cb) completes after a CONNECT handoff once both sockets are destroyed", async () => {
     const server = http.createServer();
@@ -1743,18 +1799,59 @@ describe("Should be compatible with node.js", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
+    // A nested `bun test` run takes more than the default 5s on a debug build.
+  }, 60_000);
+});
+
+test("a CONNECT tunnel can write after an earlier response on the connection ended corked", async () => {
+  const corked: number[] = [];
+  await using server = http.createServer((req, res) => {
+    res.cork();
+    res.end("body");
+    corked.push(req.socket.writableCorked);
+  }) as http.Server & AsyncDisposable;
+  let tunnel: Duplex | undefined;
+  server.on("connect", (req, socket) => {
+    tunnel = socket;
+    corked.push(socket.writableCorked);
+    socket.write(ESTABLISHED);
+    socket.write("tunnel-data");
   });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const client = net.connect(port, "127.0.0.1");
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let received = "";
+    client.on("error", reject);
+    client.on("close", () => reject(new Error(`closed after ${JSON.stringify(received)}`)));
+    client.on("data", chunk => {
+      received += chunk;
+      if (received.endsWith("body")) client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+      else if (received.endsWith(ESTABLISHED + "tunnel-data")) resolve();
+    });
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await promise;
+    expect(corked).toEqual([0, 0]);
+  } finally {
+    client.destroy();
+    tunnel?.destroy();
+  }
 });
 
 // Windows: after FIN on a CONNECT-tunnel socket, AFD's level-triggered
 // UV_DISCONNECT used to re-derive EOF and bounce the poll between 0 and
 // WRITABLE forever (pins the poll_cb allow_half_open arm).
-test("CONNECT: process exits after the tunnel socket is re-emitted as a connection and the server closes", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const http = require("node:http");
+test.concurrent(
+  "CONNECT: process exits after the tunnel socket is re-emitted as a connection and the server closes",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http = require("node:http");
        let endCount = 0;
        const server = http.createServer(() => { throw new Error("request listener should not run"); });
        server.on("connect", (req, socket) => {
@@ -1771,19 +1868,20 @@ test("CONNECT: process exits after the tunnel socket is re-emitted as a connecti
          if (endCount !== 1) throw new Error("end fired " + endCount + " times (expected 1)");
          console.log("ok");
        });`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "ok\n",
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
-  });
-});
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
 
 // The socket is half-open after the peer's FIN (an http.Server socket has allowHalfOpen) and has
 // nothing to send. In Node.js such a handle is not active, so it does not keep the process alive.
@@ -1833,7 +1931,7 @@ test.concurrent.each([
   },
 );
 
-test("server.close(cb) still waits for a tunnel that is half-open after the peer's FIN", async () => {
+test.concurrent("server.close(cb) still waits for a tunnel that is half-open after the peer's FIN", async () => {
   const server = http.createServer();
   const tunnel = Promise.withResolvers<net.Socket>();
   server.on("connect", (req, socket) => {
@@ -1870,7 +1968,7 @@ test("server.close(cb) still waits for a tunnel that is half-open after the peer
   }
 });
 
-test("a half-open tunnel with bytes left to send keeps the process alive until they are sent", async () => {
+test.concurrent("a half-open tunnel with bytes left to send keeps the process alive until they are sent", async () => {
   // More than a loopback socket takes in one write, so the rest waits for a writable event.
   const size = 64 * 1024 * 1024;
   await using proc = Bun.spawn({
@@ -1922,6 +2020,113 @@ test("a half-open tunnel with bytes left to send keeps the process alive until t
   } finally {
     client.destroy();
   }
+});
+
+async function runToExit(...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    // A child that hangs exits with the test process.
+    env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+const exitedWith = (result: object) => ({ stdout: JSON.stringify(result) + "\n", stderr: "", exitCode: 0 });
+
+test.concurrent(
+  "a CONNECT proxy built from two pipes exits after server.close() when its upstream closed",
+  async () => {
+    expect(await runToExit(join(import.meta.dir, "node-http-connect-proxy-pipes-fixture.js"))).toEqual(
+      exitedWith({ clientSocketIsPaused: true }),
+    );
+  },
+);
+
+// 16 KiB on Windows, 64 KiB elsewhere. A socket that nothing reads stops its reads once it buffers this much.
+const highWaterMark = getDefaultHighWaterMark(false);
+
+// `listener` is the 'connect' listener's body. `peer` runs once `client` has the reply. The process prints `result` at exit.
+function runTunnel(proto: string, listener: string, peer = "client.write(full);") {
+  return runToExit(
+    "-e",
+    `const server = require("node:${proto}").createServer(${JSON.stringify(proto === "https" ? tlsCert : {})});
+     const reply = "HTTP/1.1 200 OK\\r\\n\\r\\n";
+     const full = Buffer.alloc(${highWaterMark}, "a");
+     const result = {};
+     let client;
+     server.on("connect", (req, socket) => {
+       ${listener}
+     });
+     server.listen(0, "127.0.0.1", () => {
+       client = require("node:${proto === "https" ? "tls" : "net"}").connect({
+         port: server.address().port,
+         host: "127.0.0.1",
+         ca: ${JSON.stringify(tlsCert.cert)},
+         allowHalfOpen: true,
+       });
+       // Only the server's side of the tunnel may keep the process alive.
+       client.unref();
+       client.write("CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n");
+       client.once("data", () => {
+         ${peer}
+       });
+     });
+     process.on("exit", () => console.log(JSON.stringify(result)));`,
+  );
+}
+
+describe.concurrent.each(["http", "https"])("%s: a tunnel whose reads stopped, after server.close()", proto => {
+  test("doesn't keep the process alive", async () => {
+    const listener = `
+      server.close();
+      socket.end(reply);
+      process.on("beforeExit", () => (result.buffered = socket.readableLength));`;
+    expect(await runTunnel(proto, listener)).toEqual(exitedWith({ buffered: highWaterMark }));
+  });
+
+  test("keeps the process alive again while it has bytes to send", async () => {
+    const listener = `
+      server.close();
+      socket.write(reply);
+      process.once("beforeExit", () => {
+        // The peer is in this process, so it reads nothing during the loop and the kernel's buffers fill up.
+        const chunk = Buffer.alloc(1024 * 1024, "x");
+        while (socket.writable && socket.writableLength === 0) socket.write(chunk);
+        socket.write(chunk, () => (result.sent = true));
+      });`;
+    expect(await runTunnel(proto, listener, "client.write(full); client.resume();")).toEqual(
+      exitedWith({ sent: true }),
+    );
+  });
+
+  test("keeps the process alive again once it reads", async () => {
+    const more = 8 * 1024 * 1024;
+    const listener = `
+      server.close();
+      socket.write(reply);
+      result.received = 0;
+      process.once("beforeExit", () => {
+        socket.on("data", chunk => (result.received += chunk.length)).on("end", () => socket.end());
+        client.end(Buffer.alloc(${more}, "b"));
+      });`;
+    expect(await runTunnel(proto, listener)).toEqual(exitedWith({ received: highWaterMark + more }));
+  });
+
+  // Node keeps this process alive: there each socket holds the loop itself. Bun 1.4 exits, and still does.
+  test("doesn't keep the process alive once it reads, after server.unref()", async () => {
+    const listener = `
+      socket.write(reply);
+      server.unref();
+      server.close();
+      const hold = setInterval(() => {
+        if (socket.readableLength === full.length) clearInterval(hold);
+      }, 1);
+      result.received = 0;
+      process.once("beforeExit", () => socket.on("data", chunk => (result.received += chunk.length)));`;
+    expect(await runTunnel(proto, listener)).toEqual(exitedWith({ received: highWaterMark }));
+  });
 });
 
 // A listener with nothing to send ends its side in the listener. It still reads: an http.Server
@@ -2095,6 +2300,46 @@ describe("a tunnel behind a request head that took more than one read", () => {
   });
 });
 
+describe.each([
+  [
+    "connect",
+    "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+    "HTTP/1.1 200 Connection Established\r\n\r\n",
+  ],
+  [
+    "upgrade",
+    "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+  ],
+] as const)("req.destroy() on a '%s' request", (event, request, accepted) => {
+  test.each([
+    ["in the listener, after its reply", accepted, false],
+    ["in a later task, after the listener's reply", accepted, true],
+    ["in the listener, with no reply", "", false],
+    ["in a later task, with no reply", "", true],
+  ])("%s, writes nothing to the tunnel", async (_, reply, later) => {
+    await using server = http.createServer();
+    server.on(event, (req: http.IncomingMessage, socket: Duplex) => {
+      socket.on("error", () => {});
+      if (reply) socket.write(reply);
+      if (later) setImmediate(() => req.destroy());
+      else req.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      client.on("error", () => {});
+      client.write(request);
+      await once(client, "close");
+      expect(received).toBe(reply);
+    } finally {
+      client.destroy();
+    }
+  });
+});
+
 test("a tunnel write that waits for a drain settles its callbacks when the client goes away", async () => {
   const events: string[] = [];
   const wrote = Promise.withResolvers<void>();
@@ -2129,6 +2374,313 @@ test("a tunnel write that waits for a drain settles its callbacks when the clien
     server.closeAllConnections();
     server.close();
   }
+});
+
+// Node.js keeps the socket for a reader.
+test("a proxy made of two pipes closes the socket of a tunnel with its connection", async () => {
+  const origin = net.createServer(socket => void socket.on("error", () => {}).end("bye"));
+  const proxy = http.createServer();
+  const { promise: tunnelClosed, resolve: onTunnelClosed } = Promise.withResolvers<void>();
+  proxy.on("connect", (_req, clientSocket, head) => {
+    const serverSocket = net.connect((origin.address() as AddressInfo).port, "127.0.0.1", () => {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      serverSocket.write(head);
+      serverSocket.pipe(clientSocket);
+      clientSocket.pipe(serverSocket);
+    });
+    serverSocket.on("error", () => {});
+    clientSocket.on("error", () => {}).on("close", () => onTunnelClosed());
+  });
+  await once(origin.listen(0, "127.0.0.1"), "listening");
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  const client = net.connect({ port: (proxy.address() as AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true });
+  try {
+    client.on("error", () => {}).resume();
+    client.write("CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n\r\n");
+    await once(client, "end");
+    client.end("more from the client");
+    await tunnelClosed;
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<Error | undefined>();
+    proxy.close(onClosed);
+    expect(await closed).toBeUndefined();
+  } finally {
+    client.destroy();
+    origin.close();
+    proxy.close();
+  }
+});
+
+// Node.js emits 'error' in every row.
+describe.each(["http", "https"] as const)("%s: a socket handed to a listener, when its connection fails", proto => {
+  const requests = {
+    upgrade: "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+    connect: "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n\r\n",
+  };
+  const rows = (["upgrade", "connect"] as const).flatMap(event =>
+    [false, true].flatMap(listens =>
+      [false, true].map(
+        writes =>
+          [
+            `'${event}', ${writes ? "writing" : "reading"}, ${listens ? "with" : "without"} an 'error' listener`,
+            event,
+            listens,
+            writes,
+          ] as const,
+      ),
+    ),
+  );
+
+  test.each(rows)("%s", async (_name, event, listens, writes) => {
+    const { promise: handedOff, resolve: onHandedOff } = Promise.withResolvers<net.Socket>();
+    await using server = proto === "https" ? https.createServer({ ...tlsCert }) : http.createServer();
+    server.on(event, (_req, socket) => {
+      socket.write("HTTP/1.1 200 OK\r\n\r\n");
+      onHandedOff(socket as net.Socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const client = proto === "https" ? tls.connect({ socket: raw, host: "127.0.0.1", ca: tlsCert.cert }) : raw;
+    try {
+      raw.on("error", () => {});
+      client.on("error", () => {}).write(requests[event]);
+      const [socket] = await Promise.all([handedOff, once(client, "data")]);
+
+      const events: string[] = [];
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<unknown>();
+      if (listens) socket.on("error", () => events.push("error"));
+      const listeners = socket.listenerCount("error");
+      socket.on("end", () => events.push("end"));
+      socket.on("close", onClosed).resume();
+      raw.resetAndDestroy();
+      let callbacks = 0;
+      if (writes) for (const chunk of ["a", "b"]) socket.write(chunk, () => callbacks++);
+
+      expect({ hadError: await closed, events, callbacks, listeners }).toEqual({
+        hadError: false,
+        events: ["end"],
+        callbacks: writes ? 2 : 0,
+        // A TLSSocket has one of its own, as in Node.js.
+        listeners: Number(listens) + Number(proto === "https"),
+      });
+    } finally {
+      client.destroy();
+      raw.destroy();
+    }
+  });
+
+  test.each(
+    (["upgrade", "connect"] as const).flatMap(event =>
+      [false, true].flatMap(both =>
+        [false, true].map(
+          writes =>
+            [
+              `'${event}', ${both ? "piped into and from" : "piped into"}, ${writes ? "writing" : "reading"}`,
+              event,
+              both,
+              writes,
+            ] as const,
+        ),
+      ),
+    ),
+  )("%s", async (_name, event, both, writes) => {
+    const { promise: handedOff, resolve: onHandedOff } = Promise.withResolvers<net.Socket>();
+    await using server = proto === "https" ? https.createServer({ ...tlsCert }) : http.createServer();
+    server.on(event, (_req, socket) => {
+      socket.write("HTTP/1.1 200 OK\r\n\r\n");
+      onHandedOff(socket as net.Socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const client = proto === "https" ? tls.connect({ socket: raw, host: "127.0.0.1", ca: tlsCert.cert }) : raw;
+    try {
+      raw.on("error", () => {});
+      client.on("error", () => {}).write(requests[event]);
+      const [socket] = await Promise.all([handedOff, once(client, "data")]);
+
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      const source = new PassThrough();
+      const sink = new PassThrough();
+      source.pipe(socket);
+      if (both) socket.pipe(sink).resume();
+      socket.on("close", () => onClosed());
+      raw.resetAndDestroy();
+      if (writes) for (const chunk of ["a", "b"]) source.write(chunk);
+      await closed;
+      expect({ destroyed: socket.destroyed, sinkEnded: sink.writableEnded }).toEqual({
+        destroyed: true,
+        sinkEnded: both,
+      });
+    } finally {
+      client.destroy();
+      raw.destroy();
+    }
+  });
+});
+
+test.each([
+  ["for await", async (socket: net.Socket) => void (await Array.fromAsync(socket))],
+  ["events.once(socket, 'close')", async (socket: net.Socket) => void (await once(socket.resume(), "close"))],
+  ["events.once(socket, 'end')", async (socket: net.Socket) => void (await once(socket.resume(), "end"))],
+  ["stream/promises.pipeline()", (socket: net.Socket) => pipeline(socket, new PassThrough().resume())],
+  ["stream/consumers.text()", async (socket: net.Socket) => void (await text(socket))],
+])("%s on a socket handed to 'upgrade' resolves when the connection fails", async (_name, read) => {
+  const { promise: handedOff, resolve: onHandedOff } = Promise.withResolvers<net.Socket>();
+  await using server = http.createServer();
+  server.on("upgrade", (_req, socket) => {
+    socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+    onHandedOff(socket as net.Socket);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
+    const [socket] = await Promise.all([handedOff, once(client, "data")]);
+    const done = read(socket);
+    client.resetAndDestroy();
+    expect(await done).toBeUndefined();
+  } finally {
+    client.destroy();
+  }
+});
+
+test.each([
+  ["", ""],
+  [", also after server.ref()", "server.ref();"],
+])("unref() on the socket that 'upgrade' got lets the process exit with the connection open%s", async (_name, then) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const server = require("node:http").createServer();
+        server.on("upgrade", (req, socket) => {
+          socket.write("HTTP/1.1 101 Switching Protocols\\r\\n\\r\\n");
+          socket.unref();
+          ${then}
+          server.close();
+        });
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+        process.on("exit", () => console.log("exit"));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  while (!stdout.includes("\n")) stdout += decoder.decode((await reader.read()).value, { stream: true });
+  const client = net.connect(parseInt(stdout), "127.0.0.1");
+  try {
+    client.on("error", () => {}).resume();
+    client.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
+    for (let read; !(read = await reader.read()).done;) stdout += decoder.decode(read.value, { stream: true });
+    expect(stdout.replace(/^\d+/, "<port>")).toBe("<port>\nexit\n");
+    expect(await proc.exited).toBe(0);
+  } finally {
+    client.destroy();
+  }
+});
+
+// Node.js throws a TypeError for each of these assignments.
+test("the socket of a server's connection keeps a peer address that the program assigns", async () => {
+  const { promise: assigned, resolve: onAssigned, reject } = Promise.withResolvers<object>();
+  await using server = http.createServer((req, res) => {
+    try {
+      const socket = req.socket as any;
+      const before = { address: socket.remoteAddress, family: socket.remoteFamily, port: typeof socket.remotePort };
+      socket.remoteAddress = "192.0.2.1";
+      socket.remotePort = 7;
+      socket.remoteFamily = "IPv6";
+      onAssigned({ before, address: socket.remoteAddress, port: socket.remotePort, family: socket.remoteFamily });
+    } catch (error) {
+      reject(error);
+    }
+    res.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    client.on("error", () => {}).resume();
+    client.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+    expect(await assigned).toEqual({
+      before: { address: "127.0.0.1", family: "IPv4", port: "number" },
+      address: "192.0.2.1",
+      port: 7,
+      family: "IPv6",
+    });
+  } finally {
+    client.destroy();
+  }
+});
+
+// Every value is Node v26.3.0's.
+describe.each(["http", "https"] as const)("%s: the socket of a server's connection", proto => {
+  test("is a plain net.Socket or tls.TLSSocket over one handle, before and after 'upgrade'", async () => {
+    const prototype = proto === "https" ? tls.TLSSocket.prototype : net.Socket.prototype;
+    const sockets: net.Socket[] = [];
+    const handles: unknown[] = [];
+    const seen: object[] = [];
+    const look = (event: string, socket: net.Socket) => {
+      sockets.push(socket);
+      handles.push((socket as any)._handle);
+      seen.push({
+        event,
+        plain: Object.getPrototypeOf(socket) === prototype,
+        address: socket.address(),
+        flowing: socket.readableFlowing,
+        encrypted: (socket as any).encrypted,
+        server: (socket as any).server === server && (socket as any)._server === server,
+        connections: (server as any)._connections,
+        fd: typeof (socket as any)._handle.fd,
+      });
+    };
+    await using server = proto === "https" ? https.createServer({ ...tlsCert }) : http.createServer();
+    server.on(proto === "https" ? "secureConnection" : "connection", socket => look("connection", socket));
+    server.on("request", (req, res) => {
+      look("request", req.socket);
+      res.end();
+    });
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<unknown>();
+    server.on("upgrade", (req, socket) => {
+      look("upgrade", socket as net.Socket);
+      socket.on("close", onClosed).destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const client =
+      proto === "https" ? tls.connect({ port, host: "127.0.0.1", ca: tlsCert.cert }) : net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
+      await once(client, "data");
+      client.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
+      expect({ hadError: await closed }).toEqual({ hadError: false });
+    } finally {
+      client.destroy();
+    }
+    const same = {
+      plain: true,
+      address: { address: "127.0.0.1", family: "IPv4", port },
+      encrypted: proto === "https" ? true : undefined,
+      server: true,
+      connections: 1,
+      fd: "number",
+    };
+    expect(seen).toEqual([
+      { event: "connection", flowing: true, ...same },
+      { event: "request", flowing: true, ...same },
+      { event: "upgrade", flowing: null, ...same },
+    ]);
+    expect((server as any).highWaterMark).toBe(getDefaultHighWaterMark(false));
+    expect(handles[0]).toBeObject();
+    expect({ oneSocket: new Set(sockets).size, oneHandle: new Set(handles).size }).toEqual({
+      oneSocket: 1,
+      oneHandle: 1,
+    });
+  });
 });
 
 describe("tunnel socket bytesWritten and bytesRead", () => {
@@ -2369,4 +2921,106 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
       callbacks: ["empty", "reply", "end"],
     });
   });
+});
+
+test.concurrent(
+  "'connect' and 'upgrade' don't pass a promise-settling internal to a patched Function.prototype.bind",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      // Record every function bind() is called on without calling any of them.
+      const original = Function.prototype.bind;
+      const handed = [];
+      Function.prototype.bind = function (...args) {
+        handed.push(this);
+        return Reflect.apply(original, this, args);
+      };
+      const settlesAPromise = fn => /(resolve|reject|fulfill)Promise/.test(Function.prototype.toString.call(fn));
+      const http = await import("node:http");
+      const net = await import("node:net");
+      const server = http.createServer();
+      server.on("connect", (req, socket) => socket.end("HTTP/1.1 200 OK\\r\\n\\r\\n"));
+      server.on("upgrade", (req, socket) => socket.end("HTTP/1.1 101 Switching Protocols\\r\\n\\r\\n"));
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      for (const request of [
+        "CONNECT example.com:80 HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n",
+        "GET / HTTP/1.1\\r\\nHost: example.com\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n\\r\\n",
+      ]) {
+        await new Promise((resolve, reject) => {
+          const client = net.connect(server.address().port, "127.0.0.1", () => client.write(request));
+          client.on("error", reject);
+          client.on("close", resolve);
+          client.resume();
+        });
+      }
+      await new Promise(resolve => server.close(resolve));
+      function own() {}
+      own.bind();
+      console.log(JSON.stringify({ recordsOwn: handed.includes(own), settlers: handed.filter(settlesAPromise).map(fn => fn.name) }));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      out: { recordsOwn: true, settlers: [] },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+test("only a CONNECT or a body-less Upgrade request gets a 'head' Buffer from the native dispatcher", async () => {
+  const host = "Host: example.com\r\n";
+  const upgrade = "Connection: Upgrade\r\nUpgrade: test\r\n";
+  const next = `GET /next HTTP/1.1\r\n${host}\r\n`;
+  // [request, bytes after it in the same write, expected head]
+  const cases: Record<string, [string, string, string | null]> = {
+    "/post": [`POST /post HTTP/1.1\r\n${host}Content-Length: 5\r\n\r\n`, "hello", null],
+    "/pipelined": [`GET /pipelined HTTP/1.1\r\n${host}\r\n`, next, null],
+    "/upgrade-with-body": [
+      `POST /upgrade-with-body HTTP/1.1\r\n${host}${upgrade}Content-Length: 5\r\n\r\n`,
+      "hello",
+      null,
+    ],
+    "/upgrade-behind-pending": [
+      `GET /pending HTTP/1.1\r\n${host}\r\nGET /upgrade-behind-pending HTTP/1.1\r\n${host}${upgrade}\r\n`,
+      next,
+      null,
+    ],
+    "/upgrade": [`GET /upgrade HTTP/1.1\r\n${host}${upgrade}\r\n`, "tunneled", "tunneled"],
+    "/connect": [`CONNECT /connect HTTP/1.1\r\n${host}\r\n`, "tunneled", "tunneled"],
+  };
+  const heads: Record<string, string | null> = {};
+  const dispatched = new Map<string, () => void>();
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    // @ts-expect-error internal option used by node:http's Server
+    onNodeHTTPRequest(url: string, ...rest: unknown[]) {
+      const head = rest.find(argument => ArrayBuffer.isView(argument)) as Buffer | undefined;
+      heads[url] = head ? head.toString("latin1") : null;
+      dispatched.get(url)?.();
+    },
+  });
+  for (const [url, [request, behind]] of Object.entries(cases)) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    dispatched.set(url, resolve);
+    const client = net.connect(server.port!, "127.0.0.1", () => client.write(request + behind));
+    client.on("error", reject);
+    client.on("close", () => reject(new Error(`the connection closed before ${url} was dispatched`)));
+    try {
+      await promise;
+    } finally {
+      client.destroy();
+    }
+  }
+  expect(Object.fromEntries(Object.keys(cases).map(url => [url, heads[url]]))).toEqual(
+    Object.fromEntries(Object.entries(cases).map(([url, [, , head]]) => [url, head])),
+  );
 });

@@ -1307,16 +1307,23 @@ pub enum URLProto {
 
 impl Display for URLFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}://",
-            match self.proto {
-                URLProto::Http => "http",
-                URLProto::Https => "https",
-                URLProto::Unix => "unix",
-                URLProto::Abstract => "abstract",
+        match self.proto {
+            URLProto::Http => f.write_str("http://")?,
+            URLProto::Https => f.write_str("https://")?,
+            URLProto::Unix => {
+                let path = self.hostname.unwrap_or(b"");
+                // Without a leading `/`, the URL parser reads the first segment as the host.
+                let host_len = strings::index_of_char_usize(path, b'/').unwrap_or(path.len());
+                f.write_str("unix://")?;
+                write_socket_path(f, &path[..host_len], true)?;
+                return write_socket_path(f, &path[host_len..], false);
             }
-        )?;
+            URLProto::Abstract => {
+                f.write_str("abstract://")?;
+                write_socket_path(f, self.hostname.unwrap_or(b""), true)?;
+                return f.write_str("/");
+            }
+        }
 
         if let Some(hostname) = self.hostname {
             let needs_brackets =
@@ -1330,10 +1337,6 @@ impl Display for URLFormatter<'_> {
             f.write_str("localhost")?;
         }
 
-        if self.proto == URLProto::Unix {
-            return Ok(());
-        }
-
         let is_port_optional = self.port.is_none()
             || (self.proto == URLProto::Https && self.port == Some(443))
             || (self.proto == URLProto::Http && self.port == Some(80));
@@ -1343,6 +1346,26 @@ impl Display for URLFormatter<'_> {
             write!(f, ":{}/", self.port.unwrap())
         }
     }
+}
+
+/// Percent-encodes `%` and every byte the URL parser rejects, strips, encodes or reads as a delimiter.
+fn write_socket_path(f: &mut Formatter<'_>, bytes: &[u8], is_host: bool) -> fmt::Result {
+    for &b in bytes {
+        let encode = match b {
+            0..=b' ' | 0x7F.. | b'#' | b'%' | b'<' | b'>' | b'?' | b'^' => true,
+            // Forbidden host code points.
+            b'/' | b':' | b'@' | b'[' | b'\\' | b']' | b'|' => is_host,
+            // The rest of the path percent-encode set.
+            b'"' | b'`' | b'{' | b'}' => !is_host,
+            _ => false,
+        };
+        if encode {
+            write!(f, "%{b:02X}")?;
+        } else {
+            f.write_char(b as char)?;
+        }
+    }
+    Ok(())
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3593,6 +3616,28 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
         remain = &remain[i + 1..];
     }
     write_bytes(writer, remain)
+}
+
+/// `parts` joined into one POSIX shell word: `'...'`, with each `'` written as `'\''`.
+pub struct QuotePosixShell<'a>(pub(crate) &'a [&'a [u8]]);
+
+pub fn quote_posix_shell<'a>(parts: &'a [&'a [u8]]) -> QuotePosixShell<'a> {
+    QuotePosixShell(parts)
+}
+
+impl Display for QuotePosixShell<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("'")?;
+        for part in self.0 {
+            let mut remain = *part;
+            while let Some(i) = crate::strings::index_of_char_usize(remain, b'\'') {
+                write!(f, "{}'\\''", bstr::BStr::new(&remain[..i]))?;
+                remain = &remain[i + 1..];
+            }
+            write!(f, "{}", bstr::BStr::new(remain))?;
+        }
+        f.write_str("'")
+    }
 }
 
 /// Escapes C0/C1 control characters, DEL, U+2028-U+202E (line separators, bidirectional overrides)

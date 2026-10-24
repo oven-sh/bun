@@ -14,6 +14,7 @@
 #include "JavaScriptCore/Exception.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
+#include "StringSizeLimit.h"
 #include "JavaScriptCore/ThrowScope.h"
 
 #include "JavaScriptCore/JSCast.h"
@@ -225,15 +226,7 @@ using namespace WebCore;
 typedef uint8_t ExpectFlags;
 
 // Note: keep this in sync with Flags in src/runtime/test_runner/expect.rs
-// clang disable unused warning
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-variable"
-
-static constexpr int FLAG_PROMISE_RESOLVES = (1 << 0);
-static constexpr int FLAG_PROMISE_REJECTS = (1 << 1);
 static constexpr int FLAG_NOT = (1 << 2);
-
-#pragma clang diagnostic pop
 
 extern "C" bool ExpectCustomAsymmetricMatcher__execute(void* self, JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue leftValue);
 
@@ -2170,9 +2163,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     return std::nullopt;
 }
 
-// The other combinations are instantiated by their uses in this file. This one is
-// only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
+// Only `Bun.deepEquals` in BunObject.cpp uses these two. The others are instantiated by their uses in this file.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
+template bool Bun__deepEquals<false, false, false, false>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
 /**
  * @brief `Bun.deepMatch(a, b)`
@@ -2356,7 +2349,7 @@ bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0)
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
     return headers;
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
@@ -2370,6 +2363,11 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
 
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     throwScope.assertNoException();
+
+    if (!argument0.value().isUndefined() && !argument0.value().isObject()) {
+        Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "headers"_s, "Headers, Array, or Object"_s, argument0.value());
+        return nullptr;
+    }
 
     // Note that we use IDLDOMString here rather than IDLByteString: while headers
     //  should be ASCII only, we want the headers->fill implementation to discover
@@ -2400,7 +2398,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
         }
     }
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
 
     // `fill` doesn't set an exception on the VM if it fails, it returns an
     //  ExceptionOr<void>.  So we need to check for the exception and, if set,
@@ -2437,7 +2435,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, 
 WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* clone = new WebCore::FetchHeaders();
     WebCore::propagateException(*lexicalGlobalObject, throwScope, clone->fill(*headers));
     return clone;
 }
@@ -2546,7 +2544,7 @@ typedef struct PicoHTTPHeaders {
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
 
     if (pico_headers.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
@@ -2592,7 +2590,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
 
     HTTPHeaderMap map = HTTPHeaderMap();
 
@@ -2618,7 +2616,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
 {
     auto* req = reinterpret_cast<uWS::Http3Request*>(arg1);
 
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders();
 
     HTTPHeaderMap map = HTTPHeaderMap();
     req->forEachHeader([&](std::string_view name, std::string_view val) {
@@ -2657,7 +2655,11 @@ extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPH
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     throwScope.assertNoException(); // can't throw an exception when there's already one.
     // `toWTFString()` refs a `WTFStringImpl`-tagged value instead of copying it.
-    WebCore::propagateException(*global, throwScope, headers->set(name, arg2->toWTFString()));
+    WTF::String value = arg2->toWTFString();
+    // HTTPHeaderMap treats a null value as absent in get() and iteration, but not in has().
+    if (value.isNull())
+        value = WTF::emptyString();
+    WebCore::propagateException(*global, throwScope, headers->set(name, value));
 }
 void WebCore__FetchHeaders__fastRemove_(WebCore::FetchHeaders* headers, unsigned char headerName)
 {
@@ -2784,6 +2786,9 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
     WTF::String message = WTF::emptyString();
     if (err.message.tag != BunStringTag::Empty) {
         message = err.message.toWTFString();
+        // As in BunString__toErrorInstance.
+        if (message.isNull() || Bun::exceedsStringLimit(message.length())) [[unlikely]]
+            message = "The error message exceeds the maximum string length"_s;
     }
 
     auto& names = WebCore::builtinNames(vm);
@@ -3023,19 +3028,6 @@ JSC::JSPromise* JSC__JSValue__asPromise(JSC::EncodedJSValue JSValue0)
     return dynamicDowncast<JSC::JSPromise>(value);
 }
 
-JSC::EncodedJSValue JSC__JSValue__createInternalPromise(JSC::JSGlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    return JSC::JSValue::encode(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
-}
-
-void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-
-    JSC::optimizeNextInvocation(value);
-}
-
 bool JSC__JSFunction__getSourceCode(JSC::EncodedJSValue JSValue0, BunString* outSourceCode)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -3084,14 +3076,6 @@ CPP_DECL JSC::JSString* JSC__jsTypeStringForValue(JSC::JSGlobalObject* globalObj
     return jsTypeStringForValue(globalObject, jsValue);
 }
 
-JSC::EncodedJSValue JSC__JSPromise__asValue(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1)
-{
-    JSValue value = arg0;
-    ASSERT_WITH_MESSAGE(!value.isEmpty(), "JSPromise.asValue() called on a empty JSValue");
-    ASSERT_WITH_MESSAGE(value.inherits<JSC::JSPromise>(), "JSPromise::asValue() called on a non-promise object");
-    return JSC::JSValue::encode(value);
-}
-
 JSC::JSPromise* JSC__JSPromise__create(JSC::JSGlobalObject* arg0)
 {
     return JSC::JSPromise::create(arg0->vm(), arg0->promiseStructure());
@@ -3123,16 +3107,30 @@ void JSC__VM__collectAsync(JSC::VM* vm, bool full)
         vm->heap.collectAsync();
 }
 
+static void collectAsyncWhileParked(JSC::VM*, JSC::GCRequest);
+
 // The full collection GarbageCollectionController requests because the heap has gone quiet: tagged so JSC may let idle
 // optimized code age out in it (GCRequest::isIdle), which it never does in a collection the program forces or allocation paces.
 void JSC__VM__collectAsyncIdle(JSC::VM* vm)
+{
+    JSC::GCRequest request(JSC::CollectionScope::Full);
+    request.isIdle = true;
+    collectAsyncWhileParked(vm, request);
+}
+
+// For a finalizer that something outside the heap waits for. Full: the object may have survived an eden collection. One at a time is enough.
+void JSC__VM__collectAsyncForFinalizers(JSC::VM* vm)
+{
+    if (!WebCore::clientData(*vm)->idleCollectionsPending.load())
+        collectAsyncWhileParked(vm, JSC::CollectionScope::Full);
+}
+
+static void collectAsyncWhileParked(JSC::VM* vm, JSC::GCRequest request)
 {
     JSC::JSLockHolder lock(*vm);
     if (!JSC::Options::useGC())
         return;
     auto* clientData = WebCore::clientData(*vm);
-    JSC::GCRequest request(JSC::CollectionScope::Full);
-    request.isIdle = true;
     // See Bun__JSC_onBeforeWait. The end phase may run on the collector thread while the JS thread is parked, and the
     // epilogue that sweeps what the collection freed runs when the JS thread takes heap access back: wake it for that. A
     // request with this hook is never coalesced into another, so the count always comes back down.
@@ -3180,11 +3178,6 @@ bool JSC__JSValue__isSameValue(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue
     JSC::JSValue left = JSC::JSValue::decode(JSValue0);
     JSC::JSValue right = JSC::JSValue::decode(JSValue1);
     return JSC::sameValue(globalObject, left, right);
-}
-
-bool JSC__JSValue__deepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
-{
-    return deepEqualsWrapperImpl<false, false, false>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__jestDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
@@ -3310,12 +3303,6 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     return JSC::JSValue::encode(result);
 }
 
-// CPP_DECL size_t JSC__PropertyNameArray__length(JSC__PropertyNameArray* arg0);
-// CPP_DECL const JSC__PropertyName*
-// JSC__PropertyNameArray__next(JSC__PropertyNameArray* arg0, size_t arg1);
-// CPP_DECL void JSC__PropertyNameArray__release(JSC__PropertyNameArray* arg0);
-size_t JSC__JSObject__getArrayLength(JSC::JSObject* arg0) { return arg0->getArrayLength(); }
-
 JSC::EncodedJSValue JSC__JSObject__getIndex(JSC::EncodedJSValue jsValue, JSC::JSGlobalObject* globalObject,
     uint32_t index)
 {
@@ -3337,16 +3324,7 @@ JSC::EncodedJSValue JSC__JSValue__getDirectIndex(JSC::EncodedJSValue jsValue, JS
 
 #pragma mark - JSC::JSCell
 
-JSC::JSObject* JSC__JSCell__getObject(JSC::JSCell* arg0)
-{
-    return arg0->getObject();
-}
 unsigned char JSC__JSCell__getType(JSC::JSCell* arg0) { return arg0->type(); }
-
-JSC::JSObject* JSC__JSCell__toObject(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject)
-{
-    return cell->toObject(globalObject);
-}
 
 #pragma mark - JSC::JSString
 
@@ -3365,11 +3343,6 @@ BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global, c
 
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
-
-JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject* arg1)
-{
-    return arg0->toObject(arg1);
-}
 
 #pragma mark - JSC::JSModuleLoader
 
@@ -3927,12 +3900,6 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* globalObjec
     arg0->resolve(arg1, arg1->vm(), JSC::JSValue::decode(JSValue2));
 }
 
-// This implementation closely mimics the one in JSC::JSPromise::resolve
-void JSC__JSPromise__resolveOnNextTick(JSC::JSPromise* promise, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue encoedValue)
-{
-    return JSC__JSPromise__resolve(promise, lexicalGlobalObject, encoedValue);
-}
-
 bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -3945,46 +3912,6 @@ bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0)
     }
 
     return type == JSC::ErrorInstanceType;
-}
-
-// This implementation closely mimics the one in JSC::JSPromise::reject
-void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::JSGlobalObject* lexicalGlobalObject,
-    JSC::EncodedJSValue encoedValue, bool handled)
-{
-    JSC::JSValue value = JSC::JSValue::decode(encoedValue);
-
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    uint16_t flags = promise->flags();
-    if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
-        if (handled) {
-            flags |= JSC::JSPromise::isHandledFlag;
-        }
-
-        promise->setFlags(static_cast<uint16_t>(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
-        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(promise->globalObject());
-        auto rejectPromiseFunction = globalObject->rejectPromiseFunction();
-
-        auto asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-
-#if ASSERT_ENABLED
-        ASSERT_WITH_MESSAGE(rejectPromiseFunction, "Invalid microtask callback");
-        ASSERT_WITH_MESSAGE(!value.isEmpty(), "Invalid microtask value");
-#endif
-
-        if (asyncContext.isEmpty()) {
-            asyncContext = jsUndefined();
-        }
-
-        if (value.isEmpty()) {
-            value = jsUndefined();
-        }
-
-        // BunPerformMicrotaskJob: rejectPromiseFunction, asyncContext, promise, value
-        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
-        globalObject->vm().queueMicrotask(WTF::move(task));
-        RETURN_IF_EXCEPTION(scope, );
-    }
 }
 
 JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
@@ -4036,63 +3963,10 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
 
 #pragma mark - JSC::JSInternalPromise (now aliased to JSPromise)
 
-JSC::JSPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    return JSC::JSPromise::create(vm, globalObject->promiseStructure());
-}
-
-void JSC__JSInternalPromise__rejectAsHandled(JSC::JSPromise* arg0,
-    JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
-{
-    auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, JSC::JSValue::decode(JSValue2));
-}
-void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSPromise* arg0,
-    JSC::JSGlobalObject* arg1,
-    JSC::Exception* arg2)
-{
-    auto& vm = JSC::getVM(arg1);
-    arg0->rejectAsHandled(vm, arg2);
-}
-
-JSC::JSPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0,
-    JSC::EncodedJSValue JSValue1)
-{
-    return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
-}
-
 JSC::JSPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0,
     JSC::EncodedJSValue JSValue1)
 {
     return JSC::JSPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1));
-}
-
-JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSPromise* arg0)
-{
-    return JSC::JSValue::encode(arg0->result());
-}
-uint32_t JSC__JSInternalPromise__status(const JSC::JSPromise* arg0)
-{
-    switch (arg0->status()) {
-    case JSC::JSPromise::Status::Pending:
-        return 0;
-    case JSC::JSPromise::Status::Fulfilled:
-        return 1;
-    case JSC::JSPromise::Status::Rejected:
-        return 2;
-    default:
-        return 255;
-    }
-}
-bool JSC__JSInternalPromise__isHandled(const JSC::JSPromise* arg0)
-{
-    return arg0->isHandled();
-}
-void JSC__JSInternalPromise__setHandled(JSC::JSPromise* promise, JSC::VM* arg1)
-{
-    UNUSED_PARAM(arg1);
-    promise->markAsHandled();
 }
 
 #pragma mark - JSC::JSGlobalObject
@@ -4141,10 +4015,6 @@ JSC::JSString* JSC__JSValue__asString(JSC::EncodedJSValue JSValue0)
     return JSC::asString(value);
 };
 
-bool JSC__JSValue__eqlCell(JSC::EncodedJSValue JSValue0, JSC::JSCell* arg1)
-{
-    return JSC::JSValue::decode(JSValue0) == arg1;
-};
 bool JSC__JSValue__eqlValue(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1)
 {
     return JSC::JSValue::decode(JSValue0) == JSC::JSValue::decode(JSValue1);
@@ -4245,11 +4115,6 @@ bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
     }
     return false;
 }
-bool JSC__JSValue__isError(JSC::EncodedJSValue JSValue0)
-{
-    JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
-    return obj != nullptr && obj->isErrorInstance();
-}
 
 bool JSC__JSValue__isAggregateError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global)
 {
@@ -4305,18 +4170,6 @@ void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
     return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
 }
 __attribute__((__always_inline__)) JSC::EncodedJSValue JSC__JSValue__jsNumberFromDouble(double arg0)
-{
-    return JSC::JSValue::encode(JSC::jsNumber(arg0));
-}
-JSC::EncodedJSValue JSC__JSValue__jsNumberFromInt32(int32_t arg0)
-{
-    return JSC::JSValue::encode(JSC::jsNumber(arg0));
-}
-JSC::EncodedJSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0)
-{
-    return JSC::JSValue::encode(JSC::jsNumber(arg0));
-}
-JSC::EncodedJSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
@@ -4429,7 +4282,7 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
 
 // Returns empty for exception, returns deleted if not found.
 // Be careful when handling the return value.
-// Cannot handle numeric index property names! If it is possible that this will be a integer index, use JSC__JSValue__getPropertyValue instead
+// Cannot handle numeric index property names!
 [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsImpl(JSC::EncodedJSValue JSValue0,
     JSC::JSGlobalObject* globalObject,
     const unsigned char* arg1, size_t arg2)
@@ -4450,43 +4303,6 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
     const auto property = JSC::PropertyName(identifier);
 
     return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
-}
-
-// Returns empty for exception, returns deleted if not found.
-// Be careful when handling the return value.
-// Can handle numeric index property names safely. If you know that the property name is not an integer index, use JSC__JSValue__getIfPropertyExistsImpl instead.
-JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedValue,
-    JSC::JSGlobalObject* globalObject,
-    const unsigned char* propertyName, uint32_t propertyNameLength)
-{
-
-    ASSERT_NO_PENDING_EXCEPTION(globalObject);
-    JSValue value = JSC::JSValue::decode(encodedValue);
-    ASSERT_WITH_MESSAGE(!value.isEmpty(), "getPropertyValue() must not be called on empty value");
-
-    auto& vm = JSC::getVM(globalObject);
-    JSC::JSObject* object = value.getObject();
-    if (!object) [[unlikely]] {
-        return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
-    }
-
-    // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
-    const auto propertyString = String(StringImpl::createWithoutCopying({ byteCast<Latin1Character>(propertyName), propertyNameLength }));
-    const auto identifier = JSC::Identifier::fromString(vm, propertyString);
-    const auto property = JSC::PropertyName(identifier);
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-    if (!object->getPropertySlot(globalObject, property, slot)) {
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue result = slot.getValue(globalObject, property);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(result);
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, BunString* propertyName)
@@ -5022,16 +4838,6 @@ void JSC__JSString__iterator(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, voi
     arg0->value(iter);
 }
 
-void JSC__VM__deleteAllCode(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
-{
-    JSC::JSLockHolder locker(globalObject->vm());
-
-    arg1->drainMicrotasks();
-    globalObject->moduleLoader()->clearAll(); // takes the loader's cellLock itself
-    arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
-    arg1->heap.reportAbandonedObjectGraph();
-}
-
 void JSC__VM__reportExtraMemory(JSC::VM* arg0, size_t arg1)
 {
     arg0->heap.deprecatedReportExtraMemory(arg1);
@@ -5092,14 +4898,6 @@ bool JSC__JSGlobalObject__hasPendingTerminationException(JSC::JSGlobalObject* gl
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {
     arg0->notifyNeedTermination();
-}
-void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
-{
-    (*arg0).notifyNeedDebuggerBreak();
-}
-void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
-{
-    (*arg0).notifyNeedShellTimeoutCheck();
 }
 
 void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
@@ -5171,6 +4969,7 @@ enum class BuiltinNamesMap : uint8_t {
     // Private names below: set by builtins via $putByIdDirectPrivate, unreachable from user code.
     internal,
     sharedFd,
+    defaultTimeout,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5250,18 +5049,14 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     case BuiltinNamesMap::sharedFd: {
         return clientData->builtinNames().sharedFdPrivateName();
     }
+    case BuiltinNamesMap::defaultTimeout: {
+        return clientData->builtinNames().defaultTimeoutPrivateName();
+    }
     default: {
         ASSERT_NOT_REACHED();
         __builtin_unreachable();
     }
     }
-}
-
-JSC::EncodedJSValue JSC__JSValue__fastGetDirect_(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, unsigned char arg2)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    ASSERT(value.isCell());
-    return JSValue::encode(value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject->vm(), arg2))));
 }
 
 // Returns empty for exception, returns deleted if not found.
@@ -5277,25 +5072,6 @@ JSC::EncodedJSValue JSC__JSValue__fastGet(JSC::EncodedJSValue JSValue0, JSC::JSG
 
     const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
     return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
-}
-
-extern "C" JSC::EncodedJSValue JSC__JSValue__fastGetOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, unsigned char arg2)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    ASSERT(value.isCell());
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertySlot slot = PropertySlot(value, PropertySlot::InternalMethodType::GetOwnProperty);
-    const Identifier name = builtinNameMap(globalObject->vm(), arg2);
-    auto* object = value.getObject();
-
-    bool hasOwnProperty = object->getOwnPropertySlot(object, globalObject, name, slot);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (hasOwnProperty) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, name)));
-    }
-
-    return {};
 }
 
 __attribute__((__always_inline__)) bool JSC__JSValue__toBoolean(JSC::EncodedJSValue JSValue0)
@@ -5715,29 +5491,10 @@ bool JSC__JSValue__isInstanceOf(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObjec
     return result;
 }
 
-extern "C" JSC::EncodedJSValue JSC__JSValue__createRopeString(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSString* str0 = JSC::JSValue::decode(JSValue0).toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSString* str1 = JSC::JSValue::decode(JSValue1).toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsString(globalObject, str0, str1)));
-}
-
 extern "C" size_t JSC__VM__blockBytesAllocated(JSC::VM* vm)
 {
 #if ENABLE(RESOURCE_USAGE)
     return vm->heap.blockBytesAllocated() + vm->heap.extraMemorySize();
-#else
-    return 0;
-#endif
-}
-extern "C" size_t JSC__VM__externalMemorySize(JSC::VM* vm)
-{
-#if ENABLE(RESOURCE_USAGE)
-    return vm->heap.externalMemorySize();
 #else
     return 0;
 #endif
@@ -6160,14 +5917,6 @@ extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObje
     return JSValue::encode(date);
 }
 
-extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const Latin1Character* nullTerminatedChars)
-{
-    double dateSeconds = WTF::parseDate(std::span<const Latin1Character>(nullTerminatedChars, strlen(reinterpret_cast<const char*>(nullTerminatedChars))));
-    JSC::DateInstance* date = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), dateSeconds);
-
-    return JSValue::encode(date);
-}
-
 // Formats a Date's internal time value with JSC's date cache, as
 // `Date.prototype.toISOString` does (`Bun::toISOString` is copied from it).
 // Returns -1 when `dateValue` is not a Date or its time value is NaN.
@@ -6183,40 +5932,6 @@ extern "C" int JSC__JSValue__toISOString(EncodedJSValue dateValue, JSC::JSGlobal
     auto& vm = JSC::getVM(globalObject);
 
     return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buf));
-}
-
-extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject, char* buf)
-{
-    char buffer[29];
-    JSC::DateInstance* thisDateObj = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), globalObject->jsDateNow());
-
-    if (!std::isfinite(thisDateObj->internalNumber()))
-        return -1;
-
-    auto& vm = JSC::getVM(globalObject);
-
-    auto gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
-    if (!gregorianDateTime)
-        return -1;
-
-    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
-    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
-    if (ms < 0)
-        ms += msPerSecond;
-
-    int charactersWritten;
-    if (gregorianDateTime.year() > 9999 || gregorianDateTime.year() < 0)
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
-    else
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
-
-    memcpy(buf, buffer, charactersWritten);
-
-    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
-    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
-        return -1;
-
-    return charactersWritten;
 }
 
 #pragma mark - WebCore::DOMFormData
@@ -6247,16 +5962,6 @@ CPP_DECL bool WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::
 CPP_DECL size_t WebCore__DOMFormData__count(WebCore::DOMFormData* arg0)
 {
     return arg0->count();
-}
-
-extern "C" void DOMFormData__toQueryString(
-    DOMFormData* formData,
-    void* ctx,
-    void (*callback)(void* ctx, EncodedSlice* encoded))
-{
-    auto str = formData->toURLEncodedString();
-    EncodedSlice encoded = toEncodedSlice(str);
-    callback(ctx, &encoded);
 }
 
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1)
@@ -6491,15 +6196,6 @@ CPP_DECL size_t Bun__JSValue__getArrayBufferViewByteOffset(JSC::EncodedJSValue e
 CPP_DECL [[ZIG_EXPORT(nothrow)]] void JSC__SourceProvider__deref(JSC::SourceProvider* provider)
 {
     provider->deref();
-}
-
-CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* vm)
-{
-    auto source = callFrame->callerSourceOrigin(*vm);
-
-    if (source.isNull())
-        return false;
-    return source.string() == "builtin://bun/main"_s;
 }
 
 CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
@@ -6878,47 +6574,6 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
     return JSC::JSValue::encode(result ? result : JSC::jsUndefined());
-}
-
-// Format a value for REPL output using util.inspect style
-extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
-    JSC::JSGlobalObject* globalObject,
-    JSC::EncodedJSValue valueEncoded,
-    int32_t depth,
-    bool colors)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // Get the util.inspect function from the global object
-    auto* bunGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    JSC::JSValue inspectFn = bunGlobal->utilInspectFunction();
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-
-    if (!inspectFn || !inspectFn.isCallable()) {
-        // Fallback to toString if util.inspect is not available
-        JSC::JSValue value = JSC::JSValue::decode(valueEncoded);
-        JSString* str = value.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        return JSC::JSValue::encode(str);
-    }
-
-    // Create options object
-    JSC::JSObject* options = JSC::constructEmptyObject(globalObject);
-    Bun::putDirectNamed(vm, options, "depth"_s, JSC::jsNumber(depth));
-    Bun::putDirectNamed(vm, options, "colors"_s, JSC::jsBoolean(colors));
-    Bun::putDirectNamed(vm, options, "maxArrayLength"_s, JSC::jsNumber(100));
-    Bun::putDirectNamed(vm, options, "maxStringLength"_s, JSC::jsNumber(10000));
-    Bun::putDirectNamed(vm, options, "breakLength"_s, JSC::jsNumber(80));
-
-    JSC::MarkedArgumentBuffer args;
-    args.append(JSC::JSValue::decode(valueEncoded));
-    args.append(options);
-
-    JSC::JSValue result = JSC::call(globalObject, inspectFn, JSC::ArgList(args), "util.inspect"_s);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-
-    return JSC::JSValue::encode(result);
 }
 
 // Collects every ArrayBufferView in a JSArray and the (data, byteLength) span

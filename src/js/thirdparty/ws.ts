@@ -15,8 +15,9 @@ const {
   setRef,
   streamClosed,
 } = $cpp("JSWebSocket.cpp", "createWebSocketBindingForWs") as NativeClientBinding;
-const upgradeWebSocket = $bindgen("node_http_binding.bind.ts", "upgradeNodeHTTPResponseToWebSocket") as (
-  response: unknown,
+const upgradeSocketToWebSocket = $bindgen("node_http_binding.bind.ts", "upgradeSocketToWebSocket") as (
+  server: unknown,
+  socketHandle: unknown,
   websocket: WebSocket,
   handlers: ServerHandlers,
   handshake: string,
@@ -24,6 +25,9 @@ const upgradeWebSocket = $bindgen("node_http_binding.bind.ts", "upgradeNodeHTTPR
   flags: number,
   deflate: NativeStreamOptions["deflate"],
 ) => NativeServer | undefined;
+const closedWithAllDataSent = $bindgen("node_http_binding.bind.ts", "closedWithAllDataSent") as (
+  socketHandle: unknown,
+) => boolean;
 const serverSendFrame = $bindgen("node_http_binding.bind.ts", "sendWebSocketFrame") as (
   handle: NativeServer,
   data: string | Buffer | Blob,
@@ -400,9 +404,10 @@ interface WebSocketDuplex extends Duplex {
 // node:http is almost the entire cost of require("ws"); load it on first use.
 let http: HttpModule | undefined;
 let kHeaderSource: symbol | undefined;
-let kClosedWithUnsentData: symbol | undefined;
-let kHasQueuedReads: symbol | undefined;
-let kRememberPeer: symbol | undefined;
+let kLeaveHttp: symbol | undefined;
+let serverSymbol: symbol | undefined;
+// `_socket._handle` as it was at the upgrade. net.Socket drops it when the connection closes.
+const kSocketHandle = Symbol("kSocketHandle");
 function lazyHttp(): HttpModule {
   return (http ??= require("node:http"));
 }
@@ -1164,20 +1169,13 @@ class WebSocket extends EventEmitter {
   setSocket(socket: ServerSocket, head: Buffer, options: SetSocketOptions): boolean {
     const maxPayload = Math.max(options.maxPayload | 0, 0);
 
-    // node:http does this itself for an 'upgrade' listener, but handleUpgrade() can also be called from a 'request' one.
-    if (this._isServer) socket[(kRememberPeer ??= require("internal/http").kRememberPeer as symbol)]?.();
-
-    // The native server socket only sees data received after it adopts the connection. If handleUpgrade() was called
-    // late, node:http may already have read frames into `head` or `socket`'s buffer, or be about to push them or the
-    // peer's FIN into that buffer, so use the stream transport.
-    if (
-      options[kResponse] &&
-      head.length === 0 &&
-      socket.readableLength === 0 &&
-      !socket[(kHasQueuedReads ??= require("internal/http").kHasQueuedReads as symbol)]
-    ) {
-      const native = upgradeWebSocket(
+    // The native WebSocket only sees what arrives after it adopts the connection. The stream transport takes frames that are in `head` or in the socket's buffer.
+    let native: NativeServer | undefined;
+    if (options[kResponse] && head.length === 0 && socket.readableLength === 0) {
+      this[kSocketHandle] = socket._handle;
+      native = upgradeSocketToWebSocket(
         options[kResponse],
+        this[kSocketHandle],
         this,
         serverHandlers,
         options[kHandshake],
@@ -1185,9 +1183,9 @@ class WebSocket extends EventEmitter {
         (this._autoPong ? 1 : 0) | (options.skipUTF8Validation ? 2 : 0),
         nativeDeflateParams(this),
       );
-
-      if (native === undefined) return false;
-
+      if (native === undefined && socket.destroyed) return false;
+    }
+    if (native !== undefined) {
       this[kNative] = native;
       this[kTransport] = NATIVE_SERVER;
     } else {
@@ -1219,13 +1217,14 @@ class WebSocket extends EventEmitter {
 
     socket.on("close", socketOnClose);
     socket.on("error", socketOnError);
+    // On the native transport it comes once the connection has closed.
+    socket.on("end", socketOnEnd);
 
     if (this[kTransport] === STREAM) {
       if (socket.setNoDelay) socket.setNoDelay();
       if (head.length > 0) socket.unshift(head);
 
       socket.on("data", socketOnData);
-      socket.on("end", socketOnEnd);
     }
 
     this._readyState = OPEN;
@@ -1579,10 +1578,7 @@ function settleCallbacks(websocket: WebSocket, failed: boolean): void {
 // Once the closing handshake is done, uWS keeps writing what is queued but no longer reports a drain. So when the socket
 // closes, callbacks can still be waiting for data that was written.
 function wroteEverything(websocket: WebSocket): boolean {
-  if (websocket[kTransport] !== NATIVE_SERVER) return false;
-
-  kClosedWithUnsentData ??= require("internal/http").kClosedWithUnsentData as symbol;
-  return websocket._socket![kClosedWithUnsentData] === false;
+  return websocket[kTransport] === NATIVE_SERVER && closedWithAllDataSent(websocket[kSocketHandle]);
 }
 
 function runCallbacks(callbacks: WaitingCallback[], start: number, err: Error | null): void {
@@ -1987,6 +1983,7 @@ function socketOnClose(this: ServerSocket): void {
   const websocket = this[kWebSocket]!;
 
   this.removeListener("close", socketOnClose);
+  this.removeListener("end", socketOnEnd);
 
   websocket._readyState = CLOSING;
 
@@ -1994,7 +1991,6 @@ function socketOnClose(this: ServerSocket): void {
     const native = websocket[kNative] as NativeClient;
 
     this.removeListener("data", socketOnData);
-    this.removeListener("end", socketOnEnd);
 
     // The socket closed with unread data in its buffer, which may include the Close frame.
     const { readableLength } = this;
@@ -3348,6 +3344,10 @@ class WebSocketServer extends EventEmitter {
     head: Buffer,
     cb: UpgradeCallback,
   ): ServerSocket | void {
+    // While the body of the request is incomplete, node:http gives 'upgrade' a wrapper that hides what arrives. The WebSocket takes the connection itself.
+    const requestSocket = req.socket;
+    if (wrapsNativeConnection(requestSocket, socket)) socket = requestSocket;
+
     // Destroy the socket if the client has already sent a FIN packet.
     if (!socket.readable || !socket.writable) return socket.destroy();
 
@@ -3425,10 +3425,22 @@ class WebSocketServer extends EventEmitter {
 // Returns the connection's native response if `socket` is the node:http socket itself and `req` arrived on it.
 // Returns undefined for a wrapper around the socket, so the stream transport is used and the wrapper sees every byte.
 // A `req` that node:http didn't create (e.g. a framework's own request object) is assumed to belong to `socket`.
+function wrapsNativeConnection(connection: ServerSocket | undefined, socket: ServerSocket): boolean {
+  if (connection == null || connection === socket) return false;
+  const { kHandle, kUpgradeStream } = require("internal/http");
+  return connection[kUpgradeStream] === socket && connection[kHandle] !== undefined;
+}
+
 function nativeResponse(req: ServerRequest, socket: ServerSocket): unknown {
-  const response = socket[kInternalSocketData];
-  const headerSource = req[(kHeaderSource ??= require("internal/http").kHeaderSource)];
-  return headerSource === undefined || headerSource === response ? response : undefined;
+  const server = socket.server;
+  const leaveHttp = server?.[(kLeaveHttp ??= require("internal/http").kLeaveHttp)];
+  if (leaveHttp === undefined) return undefined;
+  if (req[(kHeaderSource ??= require("internal/http").kHeaderSource)] !== undefined && req.socket !== socket)
+    return undefined;
+  // handleUpgrade() can be called from a 'request' listener, or before the body of the request has ended.
+  leaveHttp.$call(server, socket, req);
+  // undefined once the server has closed: the stream transport takes a connection that outlived it.
+  return server![(serverSymbol ??= require("internal/http").serverSymbol)];
 }
 
 function addListeners(server: HttpServer, map: Dictionary<(...args: any[]) => void>): () => void {

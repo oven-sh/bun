@@ -218,11 +218,6 @@ impl PosixLoop {
     /// process_conns. Early-returns when nothing wrote, so safe to call
     /// from drainMicrotasks without per-iteration cost.
     pub fn drain_quic_if_necessary(&mut self) {
-        if !self.internal_loop_data.nq_head.is_null() {
-            // Full pass with close dispatch deferred to the next loop point.
-            // SAFETY: self is a valid loop pointer
-            unsafe { c::us_nq_loop_drain(self) };
-        }
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
@@ -402,11 +397,6 @@ impl WindowsLoop {
     }
 
     pub fn drain_quic_if_necessary(&mut self) {
-        if !self.internal_loop_data.nq_head.is_null() {
-            // Full pass with close dispatch deferred to the next loop point.
-            // SAFETY: self is a valid loop pointer
-            unsafe { c::us_nq_loop_drain(self) };
-        }
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
@@ -514,7 +504,6 @@ mod c {
         ) -> *mut Loop;
         pub(super) fn us_loop_free(loop_: *mut Loop);
         pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
-        pub(super) fn us_nq_loop_drain(loop_: *mut Loop);
         pub fn us_loop_run(loop_: *mut Loop);
         #[cfg(windows)]
         pub(super) fn us_loop_pump(loop_: *mut Loop);
@@ -526,6 +515,8 @@ mod c {
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        /// One pass of the socket timeout sweep. Must not run recursively.
+        pub fn us_internal_timer_sweep(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
@@ -543,6 +534,9 @@ mod c {
 // `us_wakeup_loop` concurrently; routing either through a `&mut self`
 // receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
+
+/// For `bun:internal-for-testing` only.
+pub use c::us_internal_timer_sweep;
 
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.

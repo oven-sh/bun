@@ -875,14 +875,20 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
   // tick make a single tryEnd() of the whole body. The client is not reading,
   // so most of it stays unsent and end() parks on the drain. The request then
   // waits for that drain, and only for it.
-  describe("end() parked on transport backpressure", () => {
+  //
+  // If pull() is still pending after the handler's microtasks, the server sends
+  // the head with Transfer-Encoding: chunked. A later end() doesn't wait for the
+  // drain: the body is one chunk, uWS buffers what the client hasn't read, and
+  // the request is released right away.
+  describe("end() under transport backpressure", () => {
     const payload = Buffer.alloc(32 * 1024 * 1024, "x");
+    const chunkFraming = `${payload.length.toString(16)}\r\n`.length + "\r\n0\r\n\r\n".length;
 
     // Windows takes the first write of a response whole, whatever its size
     // (250 MB to a client that is not reading), so one tryEnd() never parks.
     test.skipIf(isWindows).each([
-      ["in the first tick of pull()", false],
-      ["from a later task", true],
+      ["waits for the drain when called in the first tick of pull()", false],
+      ["doesn't wait for the drain when called from a later task, after the head was sent", true],
     ] as const)("%s", async (_when, fromLaterTask) => {
       const ended = Promise.withResolvers<boolean>();
       await using server = Bun.serve({
@@ -906,9 +912,11 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
       });
 
       const socket = net.connect(server.port!, "127.0.0.1");
-      const received = Promise.withResolvers<number>();
+      const received = Promise.withResolvers<{ chunked: boolean; bodyBytes: number }>();
       let head = "";
+      let chunked = false;
       let bodyBytes = -1;
+      let tail = "";
       socket.on("error", received.reject);
       socket.on("close", () => received.reject(new Error("closed before the whole body arrived")));
       socket.on("data", chunk => {
@@ -916,11 +924,14 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
           head += chunk.toString("latin1");
           const headEnd = head.indexOf("\r\n\r\n");
           if (headEnd < 0) return;
+          chunked = /^transfer-encoding: chunked$/im.test(head.slice(0, headEnd));
           bodyBytes = Buffer.byteLength(head, "latin1") - (headEnd + 4);
+          tail = head.slice(headEnd + 4).slice(-5);
         } else {
           bodyBytes += chunk.length;
+          tail = (tail + chunk.subarray(-5).toString("latin1")).slice(-5);
         }
-        if (bodyBytes >= payload.length) received.resolve(bodyBytes);
+        if (chunked ? tail === "0\r\n\r\n" : bodyBytes >= payload.length) received.resolve({ chunked, bodyBytes });
       });
       socket.on("connect", () => {
         socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
@@ -931,14 +942,19 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
         const parked = await ended.promise;
         const pendingWhileParked = server.pendingRequests;
         socket.resume();
-        const length = await received.promise;
+        const body = await received.promise;
         // The drain that completed the response and the release of its request share one event loop turn; the client sees the last bytes in a later one.
-        expect({ parked, pendingWhileParked, length, pendingRequests: server.pendingRequests }).toEqual({
-          parked: true,
-          pendingWhileParked: 1,
-          length: payload.length,
-          pendingRequests: 0,
-        });
+        expect({ parked, pendingWhileParked, ...body, pendingRequests: server.pendingRequests }).toEqual(
+          fromLaterTask
+            ? {
+                parked: false,
+                pendingWhileParked: 0,
+                chunked: true,
+                bodyBytes: payload.length + chunkFraming,
+                pendingRequests: 0,
+              }
+            : { parked: true, pendingWhileParked: 1, chunked: false, bodyBytes: payload.length, pendingRequests: 0 },
+        );
       } finally {
         socket.destroy();
       }
@@ -2329,12 +2345,13 @@ describe("direct stream edge cases over Bun.serve", () => {
     const finished = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
-      fetch: () =>
+      fetch: req =>
         new Response(
           (async function* () {
             try {
               yield "first";
-              for (let i = 0; i < 50; i++) {
+              // No turn count is enough. macOS delivers loopback packets from another kernel thread.
+              while (!req.signal.aborted) {
                 await later();
                 yield "more";
               }

@@ -130,9 +130,9 @@ export function getStdinStream(
     // listeners, resume(), ref(), an explicit read()) may take the reader back.
     if (stream_reachedEof) return;
     $debug("ref();", reader ? "already has reader" : "getting reader");
+    // Attaching a reader also undoes the pause that disown() left on the source.
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
-    source?.setFlowing?.(true);
 
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;

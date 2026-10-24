@@ -583,7 +583,6 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         on_writable: Some(Self::raw_on_writable),
         on_close: Some(Self::raw_on_close),
         on_timeout: None,
-        on_long_timeout: None,
         on_end: Some(Self::raw_on_end),
         on_connect_error: None,
         on_connecting_error: None,

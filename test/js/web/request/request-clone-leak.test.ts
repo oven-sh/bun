@@ -1,114 +1,110 @@
 import { expect, test } from "bun:test";
-import { isASAN, rss } from "harness";
+import { isASAN, isDebug, rss } from "harness";
 
-const ASAN_MULTIPLIER = isASAN ? 1 / 10 : 1;
+const MB = 1024 * 1024;
 
-const constructorArgs: [any, RequestInit?][] = [
-  [
-    new Request("http://foo/", {
-      body: "ahoyhoy",
-      method: "POST",
-    }),
-  ],
-  [
-    "http://foo/",
+// `new Request(request)` once leaked the body slot that the constructor allocates before it copies the
+// input (#12387). The slot is a 184 byte `HiveRef<Body.Value>`, which mimalloc serves from its 192 byte class.
+const leakedBytesPerIteration = 192;
+
+// On release that leak grows RSS by 18 MB and a clean run by 0 to 1 MB, so the limit is half the leak.
+//
+// Debug builds construct a Request about 100x slower, and ASAN's quarantine keeps freed blocks resident,
+// so RSS can't see a 192 byte leak there. Those builds run a short loop with a limit that only catches
+// gross leaks. LeakSanitizer catches the small ones on the ASAN lane, but only attributes them to this
+// file when it runs on its own, so the file is listed in test/parallel-denylist.txt.
+const shortLoop = isDebug || isASAN;
+const iterations = shortLoop ? 1_000 : 100_000;
+const gcEvery = shortLoop ? 250 : 5_000;
+const maxGrowth = shortLoop ? 16 * MB : (iterations * leakedBytesPerIteration) / 2;
+
+const url = "http://foo/";
+const method = "POST";
+const body = "ahoyhoy";
+
+const cases: {
+  name: string;
+  testHeader: string | null;
+  // A constructor can carry state, so each check and each measured loop gets its own.
+  makeConstruct: () => () => Request;
+}[] = [];
+
+for (const testHeader of [null, "value"]) {
+  const init: RequestInit = { body, method };
+  if (testHeader !== null) init.headers = { "test-header": testHeader };
+  const urlObject = new URL(url);
+  const suffix = testHeader === null ? "" : " with headers";
+  cases.push(
     {
-      body: "ahoyhoy",
-      method: "POST",
-    },
-  ],
-  [
-    new URL("http://foo/"),
-    {
-      body: "ahoyhoy",
-      method: "POST",
-    },
-  ],
-  [
-    new Request("http://foo/", {
-      body: "ahoyhoy",
-      method: "POST",
-      headers: {
-        "test-header": "value",
-      },
-    }),
-  ],
-  [
-    "http://foo/",
-    {
-      body: "ahoyhoy",
-      method: "POST",
-      headers: {
-        "test-header": "value",
-      },
-    },
-  ],
-  [
-    new URL("http://foo/"),
-    {
-      body: "ahoyhoy",
-      method: "POST",
-      headers: {
-        "test-header": "value",
+      name: `new Request(request)${suffix}`,
+      testHeader,
+      // Build each request from the previous one. That works whether `new Request(request)` tees the
+      // input body or moves it, as the fetch spec says.
+      makeConstruct: () => {
+        let input = new Request(url, init);
+        return () => (input = new Request(input));
       },
     },
-  ],
-];
-for (let i = 0; i < constructorArgs.length; i++) {
-  const args = constructorArgs[i];
-  test("new Request(test #" + i + ")", () => {
-    Bun.gc(true);
+    { name: `new Request(string, init)${suffix}`, testHeader, makeConstruct: () => () => new Request(url, init) },
+    {
+      name: `new Request(URL, init)${suffix}`,
+      testHeader,
+      makeConstruct: () => () => new Request(urlObject as any, init),
+    },
+  );
+}
 
-    for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
-      new Request(...args);
-    }
+function churn(construct: () => unknown, count: number) {
+  for (let i = 0; i < count; i++) construct();
+}
 
-    Bun.gc(true);
-    const baseline = (rss() / 1024 / 1024) | 0;
-    for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
-      for (let j = 0; j < 500; j++) {
-        new Request(...args);
-      }
-      Bun.gc();
-    }
-    Bun.gc(true);
+// The first hot loop makes the JIT compile `churn` and start its compiler threads, which adds 6 to 11 MB
+// of RSS on a debug build. Pay for it before the first baseline.
+churn(() => {}, 1_000_000);
 
-    const memory = (rss() / 1024 / 1024) | 0;
-    const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
-    console.log("RSS delta: ", delta, "MB");
-    // ASAN's quarantine and redzones retain freed pages so RSS over-reports
-    // even when nothing leaks; CI samples show 30-50 MB delta with ASAN's 1/10
-    // iteration multiplier vs <10 MB native. The unfixed leak presents as
-    // 100+ MB so 64 MB still catches it.
-    expect(delta).toBeLessThan(isASAN ? 64 : 30);
+function rssAfterChurn(construct: () => unknown) {
+  for (let done = 0; done < iterations; done += gcEvery) {
+    churn(construct, gcEvery);
+    Bun.gc(true);
+  }
+  return rss();
+}
+
+// The warm-up runs the same workload as the measured run, and both readings follow a full collection.
+function expectNoRssGrowth(construct: () => unknown) {
+  const before = rssAfterChurn(construct);
+  const growth = rssAfterChurn(construct) - before;
+
+  expect(
+    growth,
+    `RSS grew by ${(growth / MB).toFixed(1)} MB over ${iterations} iterations, the limit is ${(maxGrowth / MB).toFixed(1)} MB`,
+  ).toBeLessThan(maxGrowth);
+}
+
+for (const { name, testHeader, makeConstruct } of cases) {
+  test(`${name}: construction does not leak`, async () => {
+    const request = makeConstruct()();
+    expect({
+      url: request.url,
+      method: request.method,
+      testHeader: request.headers.get("test-header"),
+      body: await request.text(),
+    }).toEqual({ url, method, testHeader, body });
+
+    expectNoRssGrowth(makeConstruct());
   });
 
-  test("request.clone(test #" + i + ")", () => {
-    Bun.gc(true);
+  test(`${name}: request.clone() does not leak`, async () => {
+    const request = makeConstruct()();
+    const clone = request.clone();
+    expect({
+      url: clone.url,
+      method: clone.method,
+      testHeader: clone.headers.get("test-header"),
+      bodies: await Promise.all([request.text(), clone.text()]),
+    }).toEqual({ url, method, testHeader, bodies: [body, body] });
 
-    for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
-      const request = new Request(...args);
-      request.clone();
-    }
-
-    Bun.gc(true);
-    const baseline = (rss() / 1024 / 1024) | 0;
-    for (let i = 0; i < 2000 * ASAN_MULTIPLIER; i++) {
-      for (let j = 0; j < 500 * ASAN_MULTIPLIER; j++) {
-        const request = new Request(...args);
-        request.clone();
-      }
-      Bun.gc();
-    }
-    Bun.gc(true);
-
-    const memory = (rss() / 1024 / 1024) | 0;
-    const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
-    console.log("RSS delta: ", delta, "MB");
-    // ASAN's quarantine and redzones retain freed pages so RSS over-reports
-    // even when nothing leaks; CI samples show 30-50 MB delta with ASAN's 1/10
-    // iteration multiplier vs <10 MB native. The unfixed leak presents as
-    // 100+ MB so 64 MB still catches it.
-    expect(delta).toBeLessThan(isASAN ? 64 : 30);
+    const construct = makeConstruct();
+    expectNoRssGrowth(() => construct().clone());
   });
 }

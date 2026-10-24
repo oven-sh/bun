@@ -961,7 +961,7 @@ impl NetworkTask {
             //
             // Only wire up the one signal we need; `Signals.Store.to()`
             // would also publish `aborted`/`cert_errors`/etc., which makes
-            // the HTTP client allocate an abort-tracker id and changes
+            // the HTTP client watch for an abort and changes
             // keep-alive behaviour we don't want here.
             self.signal_store = http::signals::Store::default();
             self.signal_store

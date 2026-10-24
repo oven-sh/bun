@@ -1787,7 +1787,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     ///
     /// # Safety
     /// `this` must point at the live sink owned by the `RequestContext`.
-    pub(crate) unsafe fn abort(this: *mut Self) {
+    pub(crate) unsafe fn abort(this: *mut Self, reason: CommonAbortReason) {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
         // SAFETY: caller contract — `this` is live, and every access here is scoped
         // so no borrow spans the signal close below, which may free `*this`.
@@ -1803,7 +1803,14 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // no reference into the allocation may be live across the call.
         // SAFETY: as above; `source` is copied out before the close.
         let mut source = unsafe { (*this).source };
-        source.abort(CommonAbortReason::ConnectionClosed);
+        source.abort(reason);
+    }
+
+    /// Returns true if the sink ended the response, parked an `end()` or queued a flush. Each completes the head.
+    pub(crate) fn sends_head_itself(&self) -> bool {
+        self.ended_response
+            || self.requested_end
+            || (self.auto_flusher.registered.get() && !self.readable_slice().is_empty())
     }
 
     fn unregister_auto_flusher(&mut self) {

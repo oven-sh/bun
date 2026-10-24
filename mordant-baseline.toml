@@ -248,7 +248,7 @@
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4
-"unused_pub:src/sys/lib.rs" = 55
+"unused_pub:src/sys/lib.rs" = 34
 "unused_pub:src/sys/windows/mod.rs" = 5
 
 [bun_text_diff]

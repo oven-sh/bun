@@ -9,8 +9,8 @@ use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
+    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
+    MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
 use bun_core::StringView;
@@ -1089,8 +1089,15 @@ impl JSGlobalObject {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
-    pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
-        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
+    /// `blob()` of a body that is a stream. `content_type` is its owner's, or undefined.
+    pub fn readable_stream_to_body_blob(
+        &self,
+        value: JSValue,
+        content_type: JSValue,
+    ) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToBodyBlob(self, value, content_type)
+        })
     }
 
     pub fn readable_stream_to_form_data(
@@ -1109,6 +1116,12 @@ impl JSGlobalObject {
     /// callers in `bun_runtime` cast to `*mut NapiEnv`.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         ZigGlobalObject__makeNapiEnvForFFI(self)
+    }
+
+    /// Returns the `process.env` object, or `None` if JavaScript hasn't read `process.env` yet.
+    pub fn process_env_if_created(&self) -> Option<JSValue> {
+        let env = Bun__Process__getEnvObjectIfCreated(self);
+        (!env.is_empty()).then_some(env)
     }
 
     // returns false if it throws
@@ -1324,16 +1337,6 @@ extern "C" fn Zig__GlobalObject__resolve(
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
-    global: *const JSGlobalObject,
-    exception: *mut Exception,
-) -> JSValue {
-    crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
-}
-
-#[unsafe(no_mangle)]
 extern "C" fn Zig__GlobalObject__onCrash() {
     crate::mark_binding();
     Output::flush();
@@ -1398,6 +1401,7 @@ unsafe extern "C" {
         path: &BunString,
     ) -> bool;
 
+    safe fn Bun__Process__getEnvObjectIfCreated(global_object: &JSGlobalObject) -> JSValue;
     safe fn Bun__Process__emitWarning(
         global_object: &JSGlobalObject,
         warning: JSValue,
@@ -1446,8 +1450,11 @@ unsafe extern "C" {
         value: JSValue,
         content_type: JSValue,
     ) -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue)
-    -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToBodyBlob(
+        this: &JSGlobalObject,
+        value: JSValue,
+        content_type: JSValue,
+    ) -> JSValue;
 
     safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
 

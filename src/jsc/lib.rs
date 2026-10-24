@@ -7,7 +7,7 @@
 //! Those targets live in `bun_runtime`, which depends on this crate —
 //! re-exporting them here would create a cycle. Callers reference
 //! `bun_runtime::{webcore,api,node}` directly; lower-tier consumers that
-//! constructed those types (e.g. `output_file_jsc`, `BlobArrayBuffer_deallocator`)
+//! constructed those types (e.g. `output_file_jsc`)
 //! have been moved up into `bun_runtime`, and the few that only need an opaque
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
@@ -855,6 +855,8 @@ pub enum BuiltinName {
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
     sharedFd,
+    /// Private name (`$defaultTimeout` in builtins); user code cannot set it.
+    defaultTimeout,
 }
 
 #[allow(non_upper_case_globals)]

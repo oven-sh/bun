@@ -9,7 +9,6 @@ type TODO = any;
 declare module "bun" {
   interface Socket {
     $write(data: string | BufferSource, encoding?: string): boolean | number;
-    $end(data?: string | BufferSource, encoding?: string): boolean;
   }
 }
 
@@ -477,6 +476,8 @@ declare function $ERR_HTTP2_STREAM_ERROR(code): Error;
 declare function $ERR_HTTP2_SESSION_ERROR(code): Error;
 declare function $ERR_HTTP2_PAYLOAD_FORBIDDEN(status): Error;
 declare function $ERR_HTTP2_INVALID_INFO_STATUS(code): RangeError;
+declare function $ERR_HTTP2_UNSUPPORTED_PROTOCOL(protocol: string): Error;
+declare function $ERR_HTTP2_TOO_MANY_ORIGINS(maxOriginSetSize: number): Error;
 declare function $ERR_INVALID_URL(input, base?): TypeError;
 declare function $ERR_INVALID_CHAR(name, field?): TypeError;
 declare function $ERR_HTTP_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
@@ -565,6 +566,7 @@ declare function $ERR_HTTP2_OUT_OF_STREAMS(): Error;
 declare function $ERR_HTTP_BODY_NOT_ALLOWED(): Error;
 declare function $ERR_HTTP_TRAILER_INVALID(): Error;
 declare function $ERR_HTTP_SOCKET_ASSIGNED(): Error;
+declare function $ERR_HTTP_SOCKET_ENCODING(): Error;
 declare function $ERR_DIR_CLOSED(): Error;
 declare function $ERR_SOCKET_CONNECTION_TIMEOUT(): Error;
 declare function $ERR_TLS_HANDSHAKE_TIMEOUT(): Error;

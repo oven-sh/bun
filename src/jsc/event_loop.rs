@@ -440,6 +440,11 @@ impl EventLoop {
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
 
+        // Drain again, or the microtasks that JS queued wait for the next event and are lost if the loop exits first.
+        if vm.deferred_task_called_js.take() {
+            global_object.drain_microtasks_and_next_ticks()?;
+        }
+
         // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
         // `event_loop_handle` (which is the libuv loop).
@@ -1405,6 +1410,21 @@ pub(crate) fn get_active_tasks(
         num_polls,
         // SAFETY: usockets_loop() returns the live process-global loop.
         iteration: unsafe { (*event_loop.usockets_loop()).iteration_number() },
+        // SAFETY: as above.
+        sweep_timer_count: unsafe {
+            (*event_loop.usockets_loop())
+                .internal_loop_data
+                .sweep_timer_count
+        },
+        #[cfg(windows)]
+        sweep_deadline: None,
+        #[cfg(not(windows))]
+        // SAFETY: as above.
+        sweep_deadline: Some(unsafe {
+            (*event_loop.usockets_loop())
+                .internal_loop_data
+                .sweep_next_tick_ns
+        } as f64),
     }
 }
 

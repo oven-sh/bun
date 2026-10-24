@@ -8,11 +8,7 @@ const ArrayIsArray = Array.isArray;
 // Matches Node's sensitiveHeaders marker used by node:http2.
 const kSensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 
-// Verbatim from Node lib/internal/http.js (checkIsHttpToken).
-const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
-function checkIsHttpToken(val) {
-  return tokenRegExp.test(val);
-}
+const { checkIsHttpToken } = require("internal/validators");
 
 const kValidPseudoHeaders = new Set([":status", ":method", ":authority", ":scheme", ":path", ":protocol"]);
 
@@ -191,6 +187,8 @@ function buildNgHeaderString(arrayOrMap, validatePseudoHeaderValue, strictSingle
 }
 
 export default {
+  kValidPseudoHeaders,
+  kSingleValueFields,
   assertValidPseudoHeader,
   assertValidPseudoHeaderTrailer,
   buildNgHeaderString,

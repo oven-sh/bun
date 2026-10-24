@@ -76,6 +76,140 @@ test("clone() does not lock original body when body was accessed before clone", 
   expect(clonedText).toBe("Hello, world!");
 });
 
+test.each([
+  ["no arguments", [], "expected non-empty string or object, got undefined"],
+  ["undefined", [undefined], "expected non-empty string or object, got undefined"],
+  ["null", [null], "expected non-empty string or object, got null"],
+  ["a number", [5], "expected non-empty string or object, got number"],
+  ["a boolean", [true], "expected non-empty string or object, got boolean"],
+  ["a symbol", [Symbol()], "expected non-empty string or object"],
+  ["an empty string", [""], "url is required."],
+  ["an object without a url", [{}], "url is required."],
+])("new Request() throws a TypeError for %s", (_, args, message) => {
+  let error: unknown;
+  try {
+    // @ts-expect-error
+    new Request(...args);
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toBeInstanceOf(TypeError);
+  expect((error as TypeError).message).toBe(`Failed to construct 'Request': ${message}`);
+});
+
+describe("RequestInit method presence", () => {
+  const put = () => new Request("http://h.example/x", { method: "PUT", body: "a", headers: { "x-k": "1" } });
+  const xHeaders = (r: Request) => Object.fromEntries([...r.headers].filter(([name]) => name.startsWith("x-")));
+
+  // https://github.com/oven-sh/bun/issues/42759
+  test("a Request look-alike keeps its method when init has none", async () => {
+    function requestLike() {
+      const backing = put();
+      class RequestLike {}
+      for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(Request.prototype))) {
+        if (key === "constructor") continue;
+        Object.defineProperty(
+          RequestLike.prototype,
+          key,
+          desc.get
+            ? { get: () => Reflect.get(backing, key) }
+            : { value: (...args: unknown[]) => Reflect.apply(Reflect.get(backing, key), backing, args) },
+        );
+      }
+      Object.setPrototypeOf(RequestLike.prototype, Request.prototype);
+      return new RequestLike() as unknown as Request;
+    }
+    expect(new Request(requestLike()).method).toBe("PUT");
+    expect(new Request(requestLike(), {}).method).toBe("PUT");
+    expect(new Request(requestLike(), { method: "POST" }).method).toBe("POST");
+
+    const replaced = new Request(requestLike(), { headers: { "x-o": "3" } });
+    expect(replaced.method).toBe("PUT");
+    expect(replaced.url).toBe("http://h.example/x");
+    expect(xHeaders(replaced)).toEqual({ "x-o": "3" });
+    expect(await replaced.text()).toBe("a");
+  });
+
+  test("a plain object input keeps its method when init has none", async () => {
+    const input = () =>
+      ({ url: "http://h.example/x", method: "PUT", body: "a", headers: { "x-k": "1" } }) as unknown as Request;
+    expect(new Request(input(), { method: "POST" }).method).toBe("POST");
+    const kept = new Request(input(), {});
+    expect(kept.method).toBe("PUT");
+    expect(xHeaders(kept)).toEqual({ "x-k": "1" });
+    expect(await kept.text()).toBe("a");
+  });
+
+  test.each([
+    ["a Proxy", () => new Proxy({}, {})],
+    ["an array", () => []],
+    ["a function", () => function () {}],
+    ["a Headers", () => new Headers({ "x-o": "3" })],
+    ["a URL", () => new URL("http://other.example/")],
+    ["a Blob", () => new Blob(["zz"])],
+  ])("keeps the input Request's method when init is %s", async (_, makeInit) => {
+    const r = new Request(put(), makeInit() as any);
+    expect(r.method).toBe("PUT");
+    expect(r.url).toBe("http://h.example/x");
+    expect(xHeaders(r)).toEqual({ "x-k": "1" });
+    expect(await r.text()).toBe("a");
+  });
+
+  test("a Response passed as init sets headers and body, not the method", async () => {
+    const r = new Request(put(), new Response("b", { headers: { "x-r": "2" } }) as any);
+    expect(r.method).toBe("PUT");
+    expect(xHeaders(r)).toEqual({ "x-r": "2" });
+    expect(await r.text()).toBe("b");
+    expect(new Request(put(), new Response(null, { status: 204 }) as any).method).toBe("PUT");
+  });
+
+  test("reads init.method once and never reads status or statusText", () => {
+    let reads = 0;
+    const init = {
+      get method() {
+        reads++;
+        return "OPTIONS";
+      },
+      get status() {
+        throw new Error("status must not be read");
+      },
+      get statusText() {
+        throw new Error("statusText must not be read");
+      },
+    };
+    expect(new Request(put(), init).method).toBe("OPTIONS");
+    expect(reads).toBe(1);
+    expect(new Request("http://h.example/x", { status: 0 } as any).method).toBe("GET");
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/42497
+describe("a method outside the method table", () => {
+  test.each([
+    ["LIST", "LIST"],
+    ["custom", "custom"],
+    ["PatCh", "PatCh"],
+    ["Put", "PUT"],
+    ["pOsT", "POST"],
+    ["patch", "PATCH"],
+    ["GET POST", "GET"],
+    [false, "GET"],
+  ])("new Request(url, { method: %j }).method is %j", (method, expected) => {
+    expect(new Request("http://h.example/", { method } as RequestInit).method).toBe(expected);
+  });
+
+  test("survives clone(), new Request(request) and Bun.inspect()", async () => {
+    const request = new Request("http://h.example/", { method: "LIST", body: "a" });
+    expect(request.clone().method).toBe("LIST");
+    expect(new Request(request.clone()).method).toBe("LIST");
+    expect(new Request(request.clone(), { headers: { "x-k": "1" } }).method).toBe("LIST");
+    expect(new Request(request.clone(), { method: "BREW" }).method).toBe("BREW");
+    expect(new Request(request.clone(), { method: "PUT" }).method).toBe("PUT");
+    expect(Bun.inspect(request)).toContain('method: "LIST"');
+    expect(await request.text()).toBe("a");
+  });
+});
+
 describe("RequestInit signal presence", () => {
   // Fetch spec step 27: "If init['signal'] exists, then set signal to it."
   // A present `signal: null` must replace (detach from) the input Request's signal.

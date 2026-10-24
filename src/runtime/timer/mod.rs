@@ -896,8 +896,7 @@ impl All {
     /// took, if any, for the caller to share with the tick (see `NOW_NS_UNKNOWN`).
     ///
     /// Note (b2): `vm` is erased per §Dispatch (the caller is in
-    /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
-    /// it needs — `event_loop.immediate_tasks.len()` and the QUIC tick — are
+    /// `bun_jsc::event_loop` which can't name `bun_runtime`), so `has_pending_immediate` is
     /// passed in pre-computed until the cycle is broken.
     ///
     /// # Safety
@@ -907,7 +906,6 @@ impl All {
         &mut self,
         spec: &mut Timespec,
         has_pending_immediate: bool,
-        quic_next_tick_us: Option<i64>,
         vm: *mut (), /* erased *mut VirtualMachine, forwarded to fire() */
         now_out: &mut Option<Timespec>,
     ) -> bool {
@@ -936,15 +934,6 @@ impl All {
         });
 
         let Some(next) = Self::soonest(wtf_next, reg_next) else {
-            if let Some(us) = quic_next_tick_us {
-                if us >= 0 {
-                    *spec = Timespec {
-                        sec: us / US_PER_S,
-                        nsec: (us % US_PER_S) * NS_PER_US,
-                    };
-                    return true;
-                }
-            }
             return false;
         };
 
@@ -953,25 +942,10 @@ impl All {
         let now = *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
         if next.greater(&now) {
             *spec = next.duration(&now);
-            if let Some(us) = quic_next_tick_us {
-                if us >= 0 {
-                    Self::clamp_to_quic(spec, us);
-                }
-            }
         } else {
             *spec = Timespec { sec: 0, nsec: 0 };
         }
         true
-    }
-
-    fn clamp_to_quic(spec: &mut Timespec, us: i64) {
-        let cur_us = spec.sec * US_PER_S + spec.nsec / NS_PER_US;
-        if us < cur_us {
-            *spec = Timespec {
-                sec: us / US_PER_S,
-                nsec: (us % US_PER_S) * NS_PER_US,
-            };
-        }
     }
 
     /// Pop the next due timer. `now` is filled lazily on first call so we
@@ -1319,9 +1293,6 @@ impl ID {
         (self.id << 2) | self.kind as u64
     }
 }
-
-const US_PER_S: i64 = bun_core::time::US_PER_S as i64;
-const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
 
 /// The timer drain's fold: report what a fired timer's handler left pending
 /// as uncaught, or — if it is the VM's termination — tell the drain to stop.

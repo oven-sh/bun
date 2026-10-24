@@ -33,7 +33,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
-🟢 Fully implemented. Missing `resolveTlsa`. Bun ignores the `Resolver` `maxTimeout` option.
+🟢 Fully implemented. Missing `resolveTlsa`. Bun ignores the `Resolver` `maxTimeout` option. On the main thread, `setDefaultResultOrder()` also sets which address family `fetch()` and `Bun.connect()` dial first. That part applies to the whole process, including worker threads, because they share one DNS cache. In a worker thread, it only changes that thread's `dns.lookup()` default.
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
@@ -45,11 +45,11 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
+🟢 Fully implemented. `http.Server` does not extend `net.Server`. `listen({ fd })` is not supported on Windows. Bun ignores `listen(handle)` and the `ipv6Only` option of `listen()`.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. Client sockets are `tls.TLSSocket`s. `https.Server` is `http.Server` with TLS options rather than a `tls.Server`. Its request sockets (`req.socket`) are not `tls.TLSSocket`s: `encrypted`, `authorized` and `servername` work, but `getPeerCertificate()` and `getCipher()` are missing. `setSecureContext()`, `addContext()`, `SNICallback` and `handshakeTimeout` are not supported.
+🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. `https.Server` extends `http.Server` rather than `tls.Server`, and has `setSecureContext()`, `addContext()`, `getTicketKeys()`, `setTicketKeys()` and `SNICallback`. Client sockets and request sockets (`req.socket`) are `tls.TLSSocket`s. The server negotiates ALPN (`ALPNProtocols`, `ALPNCallback`) and emits `'secureConnection'`, `'tlsClientError'` and `'keylog'` like a `tls.Server`. What `node:tls` is missing is missing here too.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 
@@ -105,7 +105,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
-🟡 `net` and `dgram` servers in workers are shared through the primary as in Node.js (`SCHED_RR` and `SCHED_NONE`), and handles can be passed with `worker.send()`. `node:http`/`node:https` servers in workers each bind their own socket instead, so load-balancing HTTP requests across processes is only supported on Linux (through `SO_REUSEPORT`). Otherwise, implemented but not battle-tested.
+🟡 `net` and `dgram` servers in workers are shared through the primary as in Node.js (`SCHED_RR` and `SCHED_NONE`), and handles can be passed with `worker.send()`. `node:http`/`node:https` servers in workers that listen on a fixed port each bind their own socket instead, so load-balancing HTTP requests across processes is only supported on Linux (through `SO_REUSEPORT`). A Unix socket path, port `0` and `listen({ fd })` are shared through the primary (not on Windows): every worker accepts on the one socket, as under `SCHED_NONE`. Otherwise, implemented but not battle-tested.
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
@@ -141,7 +141,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:tls`](https://nodejs.org/api/tls.html)
 
-🟡 Missing `pskCallback`, OCSP stapling (`requestOCSP`), the server `'newSession'`/`'resumeSession'` events and session ticket keys (`ticketKeys` is ignored). As a result, session resumption does not work across processes. Bun uses BoringSSL, so `tlsSocket.renegotiate()` always fails and `getEphemeralKeyInfo()`/`getSharedSigalgs()` return no information.
+🟡 Missing `pskCallback`, OCSP stapling (`requestOCSP`) and the server `'newSession'`/`'resumeSession'` events. Bun uses BoringSSL, so `tlsSocket.renegotiate()` always fails and `getSharedSigalgs()` returns no information.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 

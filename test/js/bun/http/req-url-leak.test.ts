@@ -1,57 +1,51 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "path";
+
 test(
   "req.url doesn't leak memory",
   async () => {
-    const { promise, resolve } = Promise.withResolvers<string>();
-    await using process = Bun.spawn({
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "req-url-leak-fixture.js")],
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // Free eagerly under ASAN so RSS tracks live memory.
+        ASAN_OPTIONS: [
+          bunEnv.ASAN_OPTIONS,
+          "quarantine_size_mb=0",
+          "thread_local_quarantine_size_kb=0",
+          "allocator_release_to_os_interval_ms=0",
+        ]
+          .filter(Boolean)
+          .join(":"),
+      },
       stdout: "inherit",
       stderr: "inherit",
-      stdin: "inherit",
-      ipc(message, child) {
-        if (message.url) {
-          resolve(message.url);
-        }
+      stdin: "ignore",
+      ipc(message) {
+        if (message.url) resolve(message.url);
       },
     });
+    proc.exited.then(code => reject(new Error(`fixture exited (${code}) before sending its URL`)));
 
     const baseURL = await promise;
-
     const url = new URL(Buffer.alloc(1024 * 15, "Z").toString(), baseURL);
+    const sampleRSS = async () => Number(await (await fetch(baseURL, { method: "POST" })).text());
 
-    let maxRSS = 0;
-
-    for (let i = 0; i < 256; i++) {
-      const batchSize = 64;
-      const promises: Promise<void>[] = [];
-      for (let j = 0; j < batchSize; j++) {
-        promises.push(
-          fetch(url)
-            .then(r => r.text())
-            .then(rssText => {
-              const rss = parseFloat(rssText);
-              if (Number.isSafeInteger(rss)) {
-                maxRSS = Math.max(maxRSS, rss);
-              }
-            }),
-        );
+    // 6 samples, 512 requests apart. Growth is measured from the second sample, once the allocator has
+    // warmed up. A leaked 15 KB url per request grows RSS by 30 MB over those 2048 requests.
+    const samples: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      for (let batch = 0; batch < 8; batch++) {
+        await Promise.all(Array.from({ length: 64 }, () => fetch(url).then(res => res.text())));
       }
-      await Promise.all(promises);
+      samples.push(await sampleRSS());
     }
 
-    console.log("Max RSS", (maxRSS / 1024 / 1024) | 0, "MB");
-
-    // 297 MB on Bun 1.2
-    //  44 MB on Bun 1.3
-    // ASAN's quarantine + shadow memory raise the absolute RSS floor; widen there.
-    expect(maxRSS).toBeLessThan(1024 * 1024 * (isASAN ? 450 : 150));
-    // Same calibration for the deadline: the 16K fetches that finish in ~3s on a
-    // release build run ~10x slower under ASAN's instrumentation (observed
-    // ~12-13s), and the run used to die on this timeout with the RSS assertion
-    // itself passing.
+    const growthMB = (samples.at(-1)! - samples[1]) / 1024 / 1024;
+    console.log("RSS samples (MB)", samples.map(sample => (sample / 1024 / 1024) | 0).join(" "));
+    expect(growthMB).toBeLessThan(10);
   },
-  isASAN ? 90_000 : 10_000,
+  isASAN || isDebug ? 90_000 : 10_000,
 );

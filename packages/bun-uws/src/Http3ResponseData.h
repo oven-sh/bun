@@ -29,6 +29,7 @@ struct Http3ResponseData {
         HTTP_CONNECTION_CLOSE = 16,
         HTTP_WROTE_CONTENT_LENGTH_HEADER = 32,
         HTTP_WROTE_DATE_HEADER = 64,
+        HTTP_REQUEST_BODY_TOO_LARGE = 128,
     };
 
     void *userData = nullptr;
@@ -40,7 +41,6 @@ struct Http3ResponseData {
      * peer stalls or aborts mid-stream. Keep the onWritable context
      * pointer in its own slot, same as HttpResponseData<SSL>. */
     void *writableUserData = nullptr;
-    void *socketData = nullptr;
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;
     OnDataCallback inStream = nullptr;
@@ -58,8 +58,13 @@ struct Http3ResponseData {
     /* Body bytes the QUIC stream couldn't accept yet. */
     BackPressure backpressure;
     bool endAfterDrain = false;
+    /* lsquic refused the block in hdrBuf/hdrs because the 100 Continue block is
+     * still unsent. drain() sends it, and body bytes wait behind it. */
+    bool headersDeferred = false;
 
     uint64_t offset = 0;
+    /* See HttpResponseData::requestBodyBudget. */
+    uint64_t requestBodyBudget = UINT64_MAX;
     uint8_t state = 0;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {
@@ -86,6 +91,7 @@ struct Http3ResponseData {
         hdrs.shrink(0);
         backpressure.clear();
         endAfterDrain = false;
+        headersDeferred = false;
         offset = 0;
         state = HTTP_RESPONSE_PENDING;
     }

@@ -4,8 +4,9 @@ export default b.module({ rustPath: "crate::server::node_http_response" });
 
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 const head = {
-  statusCode: b.i32.validateInteger(100, 999).default(200),
-  statusMessage: b.string.loose.utf8.nullable,
+  /** `ServerResponse` has checked the range. */
+  statusCode: b.u16.default(200),
+  statusMessage: b.string.loose.nullable,
   /** The flat `[name, value, ...]` array, which C++ reads in place. */
   headers: b.any,
 };
@@ -31,14 +32,11 @@ export const NodeHTTPResponse = b.class({
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },
-    aborted: { getter: b.bool },
     bufferedAmount: { getter: b.u64 },
-    cork: { ...method, args: { callback: b.callable } },
     end: { ...method, ...body, passThis: true, length: 2 },
     finished: { getter: b.bool },
     flags: { getter: b.i32 },
     flushHeaders: {},
-    getBytesWritten: { returns: b.usize },
     hasBody: { getter: b.i32 },
     headersObject: { returns: b.any, capability: "js" },
     notifyWhenReadParsed: { returns: b.bool },
@@ -46,13 +44,9 @@ export const NodeHTTPResponse = b.class({
     ondata: eventHandler,
     onwritable: eventHandler,
     pause: { returns: b.bool },
-    pauseReads: {},
-    ref: { rustName: "js_ref" },
     resume: { returns: b.bool },
     takeRawHeaders: { ...method, args: { headers: b.any } },
     takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.bool.default(false) }, length: 0 },
-    unref: { rustName: "js_unref" },
-    upgraded: { getter: b.bool },
     write: { ...method, ...body, length: 3 },
     writeContinue: { capability: "js", throws: true },
     writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },
@@ -62,6 +56,12 @@ export const NodeHTTPResponse = b.class({
       expected,
       passThis: true,
       length: 8,
+    },
+    writeHeadAndWrite: {
+      ...method,
+      args: { ...head, ...chunk, callback: b.callable.optional, strictContentLength, ...autoHeaders },
+      expected: body.expected,
+      length: 9,
     },
     writeInformational: {
       args: chunk,

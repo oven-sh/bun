@@ -44,6 +44,7 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
+use crate::api::SSLContextCache::SSLContextCache;
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
@@ -71,7 +72,7 @@ pub(crate) struct RuntimeState {
     pub(crate) sql_rare: bun_sql_jsc::jsc::RareData,
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
-    pub(crate) ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
+    pub(crate) ssl_ctx_cache: SSLContextCache,
     /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
@@ -96,6 +97,8 @@ pub(crate) struct RuntimeState {
     /// has not been proven safe; keep the prior behavior of leaking any
     /// still-occupied slot while still freeing the pool allocation itself.
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
+    /// `Bun.serve`'s `RequestContext` pools.
+    pub(crate) request_pools: crate::server::RequestPools,
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
@@ -196,6 +199,17 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     unsafe { &(*state).global_dns_data }
 }
 
+/// [`RuntimeState::request_pools`] of this thread's VM.
+#[inline]
+pub(crate) fn request_pools() -> &'static crate::server::RequestPools {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "request_pools before init_runtime_state");
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
+    // address is stable for the VM's lifetime and only read (interior
+    // mutability via `OnceCell`).
+    unsafe { &(*state).request_pools }
+}
+
 /// [`RuntimeState::lint`] of this thread's VM.
 #[inline]
 pub(crate) fn lint_vm() -> &'static core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>> {
@@ -245,14 +259,6 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
     if vm.as_mut().rare_data().default_client_ssl_ctx.is_none() {
         let mut err = bun_uws::create_bun_socket_error_t::none;
-        let state = runtime_state();
-        debug_assert!(
-            !state.is_null(),
-            "default_client_ssl_ctx before init_runtime_state"
-        );
-        // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
-        // address for the VM's lifetime and is only touched from the JS thread.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
         // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
         // each client SSL to VERIFY_PEER + the shared bundled-root store, so
         // `new WebSocket("wss://…")` (which shares this CTX and defaults to
@@ -260,12 +266,8 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         // weak cache so a `tls.connect()` with default options later resolves
         // to the same CTX rather than building a second one with the same
         // digest. The +1 ref returned here is held, so the entry never tombstones.
-        let ctx = if vm.tls_default_ciphers().is_some() {
-            cache.get_or_create(&crate::socket::tls_true_defaults(vm, false), &mut err)
-        } else {
-            cache.get_or_create_opts(&Default::default(), &mut err)
-        };
-        match ctx {
+        let config = vm.tls_config(Default::default(), false);
+        match SSLContextCache::get_or_create(&config, &mut err) {
             Some(ctx) => vm.as_mut().rare_data().default_client_ssl_ctx = Some(ctx),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
@@ -291,15 +293,7 @@ fn ssl_ctx_cache_get_or_create(
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
 ) -> Option<bun_boringssl::c::OwnedSslCtx> {
-    let state = runtime_state();
-    debug_assert!(
-        !state.is_null(),
-        "ssl_ctx_cache_get_or_create before init_runtime_state"
-    );
-    // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
-    // address for the VM's lifetime and is only touched from the JS thread.
-    let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache.get_or_create_opts(opts, err)
+    SSLContextCache::get_or_create_opts(opts, err)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -376,6 +370,7 @@ unsafe fn init_runtime_state(
                 )
             }
         },
+        request_pools: crate::server::RequestPools::default(),
         wake_ctx: None,
         cron_jobs: Vec::new(),
         lint: core::cell::OnceCell::new(),
@@ -1030,16 +1025,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
-        // Fold the QUIC deadline into the poll timeout.
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        let quic_next_tick_us = unsafe {
-            let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
-                None
-            } else {
-                Some(ild.quic_next_tick_us)
-            }
-        };
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
@@ -1067,7 +1052,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     &mut (*state).timer,
                     &mut timespec,
                     has_pending_immediate,
-                    quic_next_tick_us,
                     vm.cast(),
                     &mut now,
                 )
@@ -1175,15 +1159,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        let quic_next_tick_us = unsafe {
-            let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
-                None
-            } else {
-                Some(ild.quic_next_tick_us)
-            }
-        };
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
@@ -1201,7 +1176,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     &mut (*state).timer,
                     &mut timespec,
                     has_pending_immediate,
-                    quic_next_tick_us,
                     vm.cast(),
                     &mut now,
                 )
@@ -1344,8 +1318,7 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
-/// `Response::get_blob_without_call_frame` /
-/// `Request::get_blob_without_call_frame`. Downcasts
+/// `blob()` of a `Response` or `Request`. Downcasts
 /// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
 /// in this crate, above `bun_jsc` / `bun_js_parser_jsc`) and returns its body
 /// Blob wrapped in a resolved Promise; `Ok(None)` to fall through to the
@@ -1354,19 +1327,13 @@ fn body_mixin_get_blob(
     value: JSValue,
     global: &JSGlobalObject,
 ) -> bun_jsc::JsResult<Option<JSValue>> {
-    use crate::webcore::body::BodyMixin as _;
-    if let Some(resp) = value.as_::<crate::webcore::Response>() {
-        // SAFETY: `as_` returned the live payload of a JS-heap
-        // `Response` cell pinned by `value` for the duration of this call.
-        return Ok(Some(
-            unsafe { &mut *resp }.get_blob_without_call_frame(global)?,
-        ));
+    use crate::webcore::body::{Action, BodyMixin as _};
+    let cx = global.js_thread_of_caller();
+    if let Some(resp) = value.as_class_ref::<crate::webcore::Response>() {
+        return Ok(Some(resp.read_body(&cx, Action::GetBlob)?));
     }
-    if let Some(req) = value.as_::<crate::webcore::Request>() {
-        // SAFETY: see above.
-        return Ok(Some(
-            unsafe { &mut *req }.get_blob_without_call_frame(global)?,
-        ));
+    if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
+        return Ok(Some(req.read_body(&cx, Action::GetBlob)?));
     }
     Ok(None)
 }

@@ -254,10 +254,10 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     return loop;
 }
 
-/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick */
-static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
+/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick. Dispatches ready_polls[first..]. */
+static void us_internal_dispatch_ready_polls(struct us_loop_t *loop, int first) {
 #ifdef LIBUS_USE_EPOLL
-    for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+    for (loop->current_ready_poll = first; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (LIKELY(poll)) {
             if (CLEAR_POINTER_TAG(poll) != poll) {
@@ -298,7 +298,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     struct kevent_flags coalesced[LIBUS_MAX_READY_POLLS]; /* no zeroing needed — every index is written in the first pass */
 
     /* First pass: decode kevents and coalesce same-poll entries */
-    for (int i = 0; i < loop->num_ready_polls; i++) {
+    for (int i = first; i < loop->num_ready_polls; i++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, i);
         if (!poll || CLEAR_POINTER_TAG(poll) != poll) {
             coalesced[i] = (struct kevent_flags){ .skip = 1 };
@@ -329,7 +329,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         /* Look backward for a prior entry with the same poll to coalesce into.
          * Kqueue returns at most 2 kevents per fd (READ + WRITE). */
         int merged = 0;
-        for (int j = i - 1; j >= 0; j--) {
+        for (int j = i - 1; j >= first; j--) {
             if (!coalesced[j].skip && GET_READY_POLL(loop, j) == poll) {
                 coalesced[j].readable |= bits.readable;
                 coalesced[j].writable |= bits.writable;
@@ -343,13 +343,20 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 break;
             }
         }
+        /* A nested tick resumes an outer pass's batch, and that pass dispatched this entry's bits with its earlier entry. */
+        for (int j = first - 1; !merged && j >= 0; j--) {
+            if (GET_READY_POLL(loop, j) == poll) {
+                coalesced[i] = (struct kevent_flags){ .skip = 1 };
+                merged = 1;
+            }
+        }
         if (!merged) {
             coalesced[i] = bits;
         }
     }
 
     /* Second pass: dispatch everything in order — tagged pointers and coalesced events */
-    for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+    for (loop->current_ready_poll = first; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (!poll) continue;
 
@@ -424,12 +431,18 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
             loop->num_ready_polls = 0;
             break;
         }
-        us_internal_dispatch_ready_polls(loop);
+        us_internal_dispatch_ready_polls(loop, 0);
     }
 }
 
-/* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
-static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
+/* Bound `timeout` (NULL == forever) by the loop's own pending work: parked TLS handshakes and the socket-timeout sweep deadline. */
+static const struct timespec *us_internal_clamp_timeout(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
+    /* Only a loop iteration releases a parked socket (us_internal_handle_low_priority_sockets). */
+    if (loop->data.low_prio_head) {
+        storage->tv_sec = 0;
+        storage->tv_nsec = 0;
+        return storage;
+    }
     long long ns = us_internal_sweep_timeout_ns(loop);
     if (ns < 0) {
         return timeout;
@@ -453,7 +466,7 @@ void us_loop_run(struct us_loop_t *loop) {
         us_internal_loop_pre(loop);
 
         struct timespec sweep_ts;
-        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
+        const struct timespec *timeout = us_internal_clamp_timeout(loop, NULL, &sweep_ts);
 
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -462,7 +475,7 @@ void us_loop_run(struct us_loop_t *loop) {
         loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
 #endif
 
-        us_internal_dispatch_ready_polls(loop);
+        us_internal_dispatch_ready_polls(loop, 0);
         us_internal_drain_ready_polls(loop);
         us_internal_sweep_if_due(loop);
 
@@ -484,10 +497,18 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
-    /* loop_pre runs lsquic_engine_process_conns and stores the soonest
-     * earliest_adv_tick. The JS event loop folds this in via src/runtime/timer/mod.rs; other
-     * callers of us_loop_run_bun_tick (HTTP thread) pass NULL, so fold it
-     * here so QUIC retransmit/idle timers fire without other I/O waking us. */
+    /* A poll callback re-entered the loop (expect().rejects -> waitForPromise) before the outer tick
+     * dispatched its whole batch. Polling now would overwrite the rest of that batch, and a one-shot
+     * poll in it would never fire again, so dispatch it as this tick's batch instead. */
+    const int undispatched = loop->current_ready_poll + 1;
+    if (UNLIKELY(undispatched < loop->num_ready_polls)) {
+        us_internal_dispatch_ready_polls(loop, undispatched);
+        us_internal_loop_post(loop);
+        loop->data.tick_depth--;
+        return;
+    }
+
+    /* loop_pre ran the QUIC drivers and stored the soonest tick they want, so their timers fire without other I/O. */
     struct timespec quic_ts;
     if (loop->data.quic_head && loop->data.quic_next_tick_us >= 0) {
         long long us = loop->data.quic_next_tick_us;
@@ -500,7 +521,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     }
 
     struct timespec sweep_ts;
-    timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
+    timeout = us_internal_clamp_timeout(loop, timeout, &sweep_ts);
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
@@ -533,7 +554,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
      * it sets timed_out=1 (line 1952) and returns before any scheduler
      * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
-    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
+    static const struct timespec no_wait = { 0, 0 };
+    /* A counted wakeup whose eventfd signal an earlier poll already returned leaves nothing ready, and nothing above prepared this tick to park. */
+    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, will_idle_inside_event_loop ? timeout : &no_wait);
 #else
     loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
         /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
@@ -555,7 +578,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (released_heap_access)
         Bun__JSC_acquireHeapAccessAfterWait(loop->data.jsc_vm);
 
-    us_internal_dispatch_ready_polls(loop);
+    us_internal_dispatch_ready_polls(loop, 0);
     us_internal_drain_ready_polls(loop);
     us_internal_sweep_if_due(loop);
 
@@ -924,16 +947,19 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 void us_internal_async_close(struct us_internal_async *a) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) a;
 
+    /* us_internal_async_set registered the knote with the port as its ident. */
     struct kevent64_s event;
-    uint64_t ptr = (uint64_t)(void*)internal_cb;
-    EV_SET64(&event, ptr, EVFILT_MACHPORT, EV_DELETE, 0, 0, (uint64_t)(void*)internal_cb, 0,0);
+    EV_SET64(&event, internal_cb->port, EVFILT_MACHPORT, EV_DELETE, 0, 0, (uint64_t)(void*)internal_cb, 0,0);
 
     int ret;
     do {
         ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
     } while (IS_EINTR(ret));
 
-    mach_port_deallocate(mach_task_self(), internal_cb->port);
+    /* mach_port_deallocate only drops the send right. The port lives until its receive right is released too. */
+    mach_port_t self = mach_task_self();
+    mach_port_deallocate(self, internal_cb->port);
+    mach_port_mod_refs(self, internal_cb->port, MACH_PORT_RIGHT_RECEIVE, -1);
     us_free(internal_cb->machport_buf);
 
     /* (regular) sockets are the only polls which are not freed immediately */

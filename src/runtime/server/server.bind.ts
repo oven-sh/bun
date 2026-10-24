@@ -1,6 +1,22 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { Request } from "../webcore/response.bind.ts";
 
 export const ServerProtocol = b.enumeration(["http", "https"]);
+
+/** The options of `Bun.serve` that are `ToBoolean` of a property. `ServerConfig::from_js` reads them between `app` and `maxRequestBodySize`. */
+export const ServeSwitches = b.dictionary(
+  {
+    reusePort: b.bool.loose.optional,
+    ipv6Only: b.bool.loose.default(false),
+    http3: b.bool.loose.default(false),
+    http2: b.bool.loose.default(false),
+    http1: b.bool.loose.default(true),
+  },
+  { fromJS: true, allowArray: true },
+);
+
+/** What only `node:http` passes, next to `onNodeHTTPRequest`. */
+export const NodeHTTPServeOptions = b.dictionary({ fd: b.i32.optional }, { fromJS: true, allowArray: true });
 
 /** What `Bun.serve` returns. There is one class for each `NewServer<SSL, DEBUG>`. */
 function server(name: string) {
@@ -16,7 +32,8 @@ function server(name: string) {
       "onError",
       "onNodeHTTPRequest",
       "onClientError",
-      "onConnection",
+      "socketHandlers",
+      "socketData",
       "wsOnOpen",
       "wsOnMessage",
       "wsOnClose",
@@ -61,7 +78,8 @@ function server(name: string) {
         length: 2,
       },
       requestIP: {
-        args: { request: b.any },
+        args: { request: Request },
+        expected: { request: "Expected Request object" },
         returns: b.any,
         capability: "js",
         throws: true,
@@ -80,7 +98,6 @@ function server(name: string) {
       },
       timeout: {
         args: { request: b.any, seconds: b.any },
-        returns: b.any,
         capability: "heap",
         throws: true,
       },

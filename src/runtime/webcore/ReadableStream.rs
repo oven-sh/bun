@@ -12,6 +12,7 @@ use crate::webcore::jsc as bun_jsc;
 use bun_collections::VecExt;
 use bun_sys as syscall;
 
+use crate::webcore::blob::BodyFacts;
 use crate::webcore::streams;
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
 
@@ -125,6 +126,8 @@ unsafe extern "C" {
     ) -> bool;
     /// A held `JSReadableStream`'s tag and native source (`Invalid` if `value` is anything else). Pure.
     safe fn ReadableStreamTag__taggedStream(value: JSValue, ptr: &mut *mut c_void) -> Tag;
+    /// The same, but `JavaScript` for a stream that something has started or locked. Pure.
+    safe fn ReadableStreamTag__unstarted(value: JSValue, ptr: &mut *mut c_void) -> Tag;
     /// `possible_readable_stream` is read+overwritten in place; `ptr` is a
     /// stack out-param. Reference params discharge the only preconditions.
     safe fn ReadableStreamTag__tagged(
@@ -141,6 +144,8 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
+    safe fn ReadableStream__bodyFacts(possible_readable_stream: JSValue) -> u8;
+    safe fn ReadableStream__setBodyFacts(possible_readable_stream: JSValue, facts: u8);
     safe fn ReadableStream__isClosedUnread(
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
@@ -152,7 +157,6 @@ unsafe extern "C" {
     safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
     safe fn ReadableStream__markConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__closeConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
-    safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__tryLockNative(stream: JSValue, global: &JSGlobalObject) -> bool;
     /// BunStreamSource.cpp: queue the adapter's close on the microtask queue.
     safe fn Bun__NativeStreamSourceAdapter__onClose(global: &JSGlobalObject, adapter: JSValue);
@@ -189,23 +193,17 @@ impl ReadableStream {
         Ok(Some((out_stream1, out_stream2)))
     }
 
-    /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_js_direct`.
-    pub fn reload_tag(&mut self) {
-        *self = ReadableStream::from_js_direct(self.value).unwrap_or(ReadableStream {
-            ptr: Source::Invalid,
-            value: JSValue::ZERO,
-        });
+    /// The native source, for a consumer that reads it instead of the stream. `JavaScript` if the stream was started or locked: its queue may hold chunks.
+    fn unstarted_source(&self) -> Source {
+        let mut ptr: *mut c_void = core::ptr::null_mut();
+        let tag = ReadableStreamTag__unstarted(self.value, &mut ptr);
+        Self::from_tag(tag, self.value, ptr).map_or(Source::Invalid, |stream| stream.ptr)
     }
 
     /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
-        if self.is_disturbed(global_this) || self.is_locked(global_this) {
-            return None;
-        }
-
-        self.reload_tag();
-
-        let blob = match self.ptr {
+        let source = self.unstarted_source();
+        let mut blob = match source {
             Source::Blob(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &*blobby };
@@ -214,7 +212,7 @@ impl ReadableStream {
             Source::File(_) => {
                 // BACKREF: see `Source::file()` — payload valid while stream alive.
                 // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
-                let blobby = self.ptr.file().expect("matched File");
+                let blobby = source.file().expect("matched File");
                 let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() else {
                     return None;
                 };
@@ -232,7 +230,7 @@ impl ReadableStream {
             }
             Source::Bytes(_) => {
                 // BACKREF: see `Source::bytes()` — payload valid while stream alive.
-                let bytes = self.ptr.bytes().expect("matched Bytes");
+                let bytes = source.bytes().expect("matched Bytes");
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
                 bytes.to_any_blob()?
@@ -243,6 +241,7 @@ impl ReadableStream {
             }
             Source::JavaScript | Source::Invalid => return None,
         };
+        blob.set_facts(self.body_facts());
 
         self.done();
         ReadableStream__closeConsumedAsBody(self.value, global_this);
@@ -303,22 +302,22 @@ impl ReadableStream {
         result
     }
 
+    /// What the body this stream was made from knew about its bytes.
+    pub(crate) fn body_facts(&self) -> BodyFacts {
+        BodyFacts::from_bits_truncate(ReadableStream__bodyFacts(self.value))
+    }
+
+    /// For a stream that Bun just made out of a body or a Blob.
+    pub(crate) fn set_body_facts(stream: JSValue, facts: BodyFacts) {
+        ReadableStream__setBodyFacts(stream, (facts | BodyFacts::NATIVE_STREAM).bits());
+    }
+
     /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
     pub(crate) fn mark_consumed_as_body(&self, global_object: &JSGlobalObject) {
         ReadableStream__markConsumedAsBody(self.value, global_object);
     }
 
-    /// Mark the stream disturbed + locked-without-reader. Called by native
-    /// fast-paths after wiring a `SinkHandle` directly so `.locked`,
-    /// `.getReader()`, and body-mixin disturbed checks behave as they would
-    /// after `readStreamIntoSink` acquires a reader. It doesn't check the
-    /// stream's state, so callers must do that first.
-    pub fn lock_native(&self, global_object: &JSGlobalObject) {
-        ReadableStream__lockNative(self.value, global_object);
-    }
-
-    /// Calls [`Self::lock_native`] if the stream hasn't been started or locked.
-    /// Otherwise returns `false` without touching the stream.
+    /// Locks the stream for a native consumer about to attach to its source. Returns `false`, changing nothing, if it was started or locked.
     pub(crate) fn try_lock_native(&self, global_object: &JSGlobalObject) -> bool {
         ReadableStream__tryLockNative(self.value, global_object)
     }
@@ -419,17 +418,12 @@ impl ReadableStream {
     }
 
     pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
-        is_disturbed_value(self.value, global_object)
+        ReadableStream__isDisturbed(self.value, global_object)
     }
 
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
-    }
-
-    /// Fetch's "body is unusable" (<https://fetch.spec.whatwg.org/#body-unusable>).
-    pub fn is_disturbed_or_locked(&self, global_object: &JSGlobalObject) -> bool {
-        self.is_disturbed(global_object) || self.is_locked(global_object)
     }
 
     /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
@@ -540,7 +534,7 @@ impl ReadableStream {
         let Some(store) = blob.store.get() else {
             return ReadableStream::empty(cx.global());
         };
-        match &store.data {
+        let stream = match &store.data {
             webcore::blob::store::Data::Bytes(_) => {
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
                     global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
@@ -586,7 +580,9 @@ impl ReadableStream {
                     cx,
                 )
             }
-        }
+        }?;
+        Self::set_body_facts(stream, blob.body_facts.get());
+        Ok(stream)
     }
 
     pub fn from_pipe<P>(
@@ -676,9 +672,9 @@ impl ReadableStream {
     }
 }
 
-pub(crate) fn is_disturbed_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
-    // SAFETY: FFI call; value may be any JSValue (C++ side checks).
-    ReadableStream__isDisturbed(value, global_object)
+pub(crate) fn is_decoded_body(stream: JsLocal<'_>) -> bool {
+    BodyFacts::from_bits_truncate(ReadableStream__bodyFacts(stream.to_js()))
+        .contains(BodyFacts::DECODED)
 }
 
 pub(crate) fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
@@ -1112,7 +1108,7 @@ impl<C: SourceContext> NewSource<C> {
         Bun__NativeStreamSourceAdapter__onClose(global_this, adapter);
     }
 
-    /// A stream that [`ReadableStream::lock_native`] locked has no reader or controller, so its source ends it: errored with `err`, else closed.
+    /// A stream that [`ReadableStream::try_lock_native`] locked has no reader or controller, so its source ends it: errored with `err`, else closed.
     pub fn end_locked_stream(&self, err: Option<&streams::StreamError>) {
         if !self.is_reader_live() {
             return;

@@ -2,7 +2,6 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::socket::udp_socket" });
 
-export const dgramIsFdAdopted = b.fn({ args: { fd: b.i32 }, returns: b.bool });
 export const dgramNewSocketFd = b.fn({ args: { isIPv6: b.bool, isStream: b.bool }, returns: b.i32, throws: true });
 export const dgramAdoptFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramBindFd = b.fn({

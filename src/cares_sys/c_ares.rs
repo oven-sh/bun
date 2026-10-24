@@ -1656,6 +1656,8 @@ pub enum Error {
 
 /// libuv's `UV_EAI_AGAIN`, the `errno` Node reports for getaddrinfo `EAI_AGAIN`.
 const UV_EAI_AGAIN: i32 = -3001;
+/// libuv's `UV_EAI_NONAME`, the `errno` Node reports with getaddrinfo's `ENOTFOUND`.
+pub const UV_EAI_NONAME: i32 = -3008;
 
 impl Error {
     // Deferred / toDeferred / toJSWithSyscall / toJSWithSyscallAndHostname
@@ -1730,6 +1732,32 @@ impl Error {
                 EAI::SYSTEM => Some(Error::ESERVFAIL),
                 // Any EAI code not mapped above is reported as "not implemented".
                 _ => Some(Error::ENOTIMP),
+            }
+        }
+    }
+
+    /// The `errno` Node reports for libc's getaddrinfo(3) status `rc`, libuv's `UV_EAI_*`: https://github.com/libuv/libuv/blob/v1.51.0/include/uv/errno.h#L33-L46
+    pub fn uv_eai(rc: i32) -> Option<i32> {
+        #[cfg(windows)]
+        {
+            // `init_eai` turns every Winsock status into ENOTFOUND.
+            (rc != 0).then_some(UV_EAI_NONAME)
+        }
+        #[cfg(not(windows))]
+        {
+            match EAI::from_raw(rc) {
+                EAI::ADDRFAMILY => Some(-3000),
+                EAI::AGAIN => Some(UV_EAI_AGAIN),
+                EAI::BADFLAGS => Some(-3002),
+                EAI::FAIL => Some(-3004),
+                EAI::FAMILY => Some(-3005),
+                EAI::MEMORY => Some(-3006),
+                EAI::NODATA => Some(-3007),
+                EAI::NONAME => Some(UV_EAI_NONAME),
+                EAI::SERVICE => Some(-3010),
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                EAI::SOCKTYPE => Some(-3011),
+                _ => None,
             }
         }
     }

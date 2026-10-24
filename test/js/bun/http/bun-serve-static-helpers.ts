@@ -47,77 +47,91 @@ for (const [path, response] of Object.entries(routes)) {
 export const stressPaths = ["/foo", "/big", "/foo/bar"] as const;
 export const stressMethods = ["arrayBuffer", "blob", "bytes", "text"] as const;
 
+const checkedHeaders = ["content-type", "content-length", "transfer-encoding", "x-foo", "etag"];
+
+function pickHeaders(headers: Headers): Record<string, string | null> {
+  return Object.fromEntries(checkedHeaders.map(name => [name, headers.get(name)] as const));
+}
+
+// toEqual doesn't read Blob contents, so expand a Blob into its size and bytes. Blob.type is left out
+// because the buffered and the streamed body paths derive it differently.
+async function comparable(body: ArrayBuffer | Blob | Uint8Array | string) {
+  if (body instanceof Blob) {
+    return { size: body.size, bytes: await body.bytes() };
+  }
+  return body;
+}
+
+// macOS limits the listen backlog to 128, so one batch is 64 concurrent requests.
+const batchSize = isWindows ? 8 : 64;
+// One leaked body per request on /big adds 64 * 4MB = 256MB of RSS per measured batch: 1GB on release,
+// 512MB on ASAN/debug. The 8-wide Windows batches leak less than either bound, so the RSS check can't
+// catch a leak there.
+const measuredBatches = isASAN || isDebug ? 2 : 4;
+const rssDeltaBoundMB = isASAN || isDebug ? 192 : 512;
+
 export async function runStress(
   server: Server<undefined>,
   path: (typeof stressPaths)[number],
   accessBody: boolean,
   method: (typeof stressMethods)[number],
 ) {
-  const bytes = method === "blob" ? static_responses[path] : await static_responses[path][method]();
-  const expectedLength = String(static_responses[path].size);
+  const route = routes[path];
+  const blob = static_responses[path];
+  const url = new URL(path, server.url).href;
+  const expectedResponse = {
+    status: 200,
+    url,
+    headers: {
+      "content-type": route.headers.get("Content-Type"),
+      "content-length": String(blob.size),
+      "transfer-encoding": null,
+      "x-foo": route.headers.get("X-Foo"),
+      "etag": expect.stringMatching(/^"[0-9a-f]+"$/),
+    },
+    bodyUsed: true,
+    body: await comparable(method === "blob" ? blob : await blob[method]()),
+  };
 
-  // macOS limits backlog to 128.
-  const batchSize = Math.ceil(64 / (isWindows ? 8 : 1));
-  // Debug/ASAN builds run the fetch loop ~10x slower than release; one warmup +
-  // measurement round at 64-wide still exercises the backpressure path on every
-  // /big request, and the delta assertion below catches a per-request body leak
-  // in a single measurement pass (64 * 4MB = 256MB >> threshold).
-  const iterations = Math.ceil((isASAN || isDebug ? 4 : 12) / (isWindows ? 8 : 1));
+  // A batch reports its first failure after all its requests finish. The other responses skip the
+  // comparison: a failing toEqual on a 4MB body takes 16s under ASAN, so 63 more would time out.
+  let failure: { error: unknown } | undefined;
 
-  async function iterate() {
-    let array = new Array(batchSize);
-    const route = `${server.url}${path.substring(1)}`;
-    for (let i = 0; i < batchSize; i++) {
-      array[i] = fetch(route)
-        .then<unknown>(res => {
-          expect(res.status).toBe(200);
-          expect(res.url).toBe(route);
-          expect(res.headers.get("Content-Length")).toBe(expectedLength);
-          if (accessBody) {
-            res.body;
-          }
-          return res[method]();
-        })
-        .then(output => {
-          expect(output).toStrictEqual(bytes);
-        });
+  async function request() {
+    try {
+      const res = await fetch(url);
+      if (accessBody) {
+        // Creates the ReadableStream, so res[method]() drains it instead of taking the buffered fast path.
+        expect(res.body).toBeInstanceOf(ReadableStream);
+      }
+      const body = await comparable(await res[method]());
+      if (failure) return;
+      expect({
+        status: res.status,
+        url: res.url,
+        headers: pickHeaders(res.headers),
+        bodyUsed: res.bodyUsed,
+        body,
+      }).toEqual(expectedResponse);
+    } catch (error) {
+      failure ??= { error };
     }
-
-    await Promise.all(array);
-
-    Bun.gc();
   }
 
-  for (let i = 0; i < iterations; i++) {
-    await iterate();
+  async function batch() {
+    await Promise.all(Array.from({ length: batchSize }, request));
+    if (failure) throw failure.error;
+    // A static route releases its request before the last bytes reach the client.
+    expect(server.pendingRequests).toBe(0);
+    Bun.gc(true);
   }
 
-  Bun.gc(true);
-  const baseline = (rss() / 1024 / 1024) | 0;
-  let lastRSS = baseline;
-  console.log("Start RSS", baseline);
-  for (let i = 0; i < iterations; i++) {
-    await iterate();
-    const rssMB = (rss() / 1024 / 1024) | 0;
-    if (lastRSS + 50 < rssMB) {
-      console.log("RSS Growth", rssMB - lastRSS);
-    }
-    lastRSS = rssMB;
+  await batch();
+  const baselineMB = rss() / 1024 / 1024;
+  for (let i = 0; i < measuredBatches; i++) {
+    await batch();
   }
-  Bun.gc(true);
-
-  const finalRSS = (rss() / 1024 / 1024) | 0;
-  const delta = finalRSS - baseline;
-  console.log("Final RSS", finalRSS);
-  console.log("Delta RSS", delta);
-  // ASAN's shadow memory + quarantine raise the absolute RSS floor.
-  expect(finalRSS).toBeLessThan(isASAN ? 6144 : 4092);
-  if (isASAN || isDebug) {
-    // With the reduced iteration count the absolute ceiling alone would miss a
-    // per-request body leak on the first /big case (4 iter * 64 * 4MB = 1GB is
-    // well under 6GB). Under ASAN the post-gc delta is stable within tens of
-    // MB, so bound it directly; release keeps 12 iterations where the ceiling
-    // is sufficient and mimalloc jitter on /big makes a tight delta flaky.
-    expect(delta).toBeLessThan(192);
-  }
+  const deltaMB = Math.round(rss() / 1024 / 1024 - baselineMB);
+  console.log(`${path} ${method} RSS delta: ${deltaMB}MB`);
+  expect(deltaMB).toBeLessThan(rssDeltaBoundMB);
 }

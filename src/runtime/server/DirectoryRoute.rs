@@ -13,9 +13,9 @@ use bun_sys::{self, Fd, File};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
-use crate::server::file_route::{status_for_preconditions, write_any_status, write_content_range};
+use crate::server::file_route::{status_for_preconditions, write_alt_svc, write_content_range};
 use crate::server::jsc::{JSGlobalObject, JsResult};
-use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
+use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest, write_status};
 
 bun_output::declare_scope!(DirectoryRoute, hidden);
 
@@ -118,7 +118,6 @@ impl DirectoryRoute {
         };
         if let Some(server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -141,8 +140,7 @@ impl DirectoryRoute {
                     return;
                 }
                 req.set_yield(false);
-                write_any_status(resp, 301);
-                resp.write_mark();
+                write_status(resp, 301);
                 resp.write_header(b"location", &loc.0[..n]);
                 resp.end(b"", resp.should_close_connection());
                 return;
@@ -170,11 +168,10 @@ impl DirectoryRoute {
         };
 
         let status_code =
-            status_for_preconditions(&req, method, 200, Some(etag), last_modified_ms, range);
+            status_for_preconditions(&req, method, 200, Some(etag), || last_modified_ms, range);
 
         req.set_yield(false);
-        write_any_status(resp, status_code);
-        resp.write_mark();
+        write_status(resp, status_code);
 
         let ext: &[u8] = if is_index {
             b"html"
@@ -189,13 +186,7 @@ impl DirectoryRoute {
             resp.write_header(b"last-modified", lm);
         }
         resp.write_header(b"etag", etag);
-        if !matches!(resp, AnyResponse::H3(_)) {
-            if let Some(srv) = this.server.get() {
-                if let Some(alt) = srv.h3_alt_svc() {
-                    resp.write_header(b"alt-svc", alt);
-                }
-            }
-        }
+        write_alt_svc(this.server.get(), resp);
 
         if HTTPStatusText::is_null_body(status_code) {
             resp.end_without_body(resp.should_close_connection());
@@ -221,10 +212,7 @@ impl DirectoryRoute {
             }
         };
 
-        if !resp.state().has_written_content_length_header() {
-            resp.write_header_int(b"content-length", body_len);
-            resp.mark_wrote_content_length_header();
-        }
+        resp.write_header_int(b"content-length", body_len);
 
         if method == Method::HEAD {
             resp.end_without_body(resp.should_close_connection());
@@ -248,7 +236,6 @@ impl DirectoryRoute {
             pollable: false,
             offset: body_offset,
             length: Some(body_len),
-            idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(guard.into_route()),
         });
     }
@@ -355,7 +342,7 @@ impl DirectoryRoute {
         resp.clear_on_writable();
         resp.clear_timeout();
         if let Some(server) = self.server.get() {
-            server.on_static_request_complete();
+            server.on_request_complete();
         }
     }
 }
@@ -397,8 +384,7 @@ enum Subpath {
 
 fn write_miss(req: &mut AnyRequest, resp: AnyResponse) {
     req.set_yield(false);
-    write_any_status(resp, 404);
-    resp.write_mark();
+    write_status(resp, 404);
     resp.end(b"", resp.should_close_connection());
 }
 

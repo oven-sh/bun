@@ -153,6 +153,99 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
+    // lsquic_engine_packet_in() queues a connection even while the current pass
+    // is ticking it, or already has. The pass then ticked it again and linked
+    // it on its ticked list twice: an endless loop, or a failed assert in debug
+    // builds. It takes a handler that runs the event loop mid-pass (Bun.build()
+    // with an async plugin setup). The connection now waits for the next pass.
+    "patches/lsquic/tick-once-per-pass.patch",
+    // lsquic dropped every request to make a connection tickable while the
+    // engine was processing (ENPUB_PROC), no matter which connection it was
+    // for. When one connection's handler wrote to another connection's stream,
+    // the data waited for that connection's next alarm or packet, and was lost
+    // if the idle timeout came first. Only drop the request for a connection
+    // the engine looks at again anyway. Applies on top of tick-once-per-pass.
+    // On an lsquic bump, check that ci_tick() still has one call site and that
+    // every insert into conns_tickable still tests LSCONN_TICKABLE first.
+    "patches/lsquic/tickable-per-connection.patch",
+    // lsquic_stream_hold_window(): receive backpressure that keeps reading the
+    // stream and stops raising its receive limit. Data that
+    // lsquic_stream_wantread(s, 0) leaves in a stream also uses up the
+    // connection's window, and is dropped when the connection goes away.
+    "patches/lsquic/hold-stream-window.patch",
+    // ci_going_away() skips the GOAWAY write for a server connection that never
+    // carried a request, and with it the call that makes the connection
+    // tickable. Its CONNECTION_CLOSE then waited for the next alarm or packet,
+    // and so did a graceful server.stop().
+    "patches/lsquic/going-away-tickable.patch",
+    // Cubic keeps its windows in unsigned long, which is 32 bits on Windows, and
+    // multiplies them without widening. The pacing rate (cwnd * 10^6 / srtt)
+    // wrapped for every window (litespeedtech/lsquic#391).
+    "patches/lsquic/cubic-llp64-overflow.patch",
+    // immediate_close() and ci_abort_error() took "error code != 0" to mean
+    // that an error is recorded. A close with code 0 from
+    // lsquic_conn_abort_error() (an application close, or a transport close
+    // with a reason) went out as transport INTERNAL_ERROR.
+    "patches/lsquic/abort-error-code-zero.patch",
+    // lsquic_stream_is_finished(): inside on_close(), tells a stream that
+    // completed on its own from one that was torn down with its connection.
+    "patches/lsquic/stream-is-finished.patch",
+    // lsquic_conn_make_uni_stream() dropped a request made before the handshake
+    // finished. It now counts it, as it does for one that waits for stream
+    // credit. lsquic_conn_cancel_pending_uni_streams() takes a request back.
+    // Applies on top of node-quic-accessors.
+    "patches/lsquic/delayed-uni-streams.patch",
+    // on_datagram_status() reports each DATAGRAM frame as acknowledged, lost, or
+    // dropped before the send, under the id that on_dg_write gave it with
+    // lsquic_conn_set_datagram_id(). Applies on top of node-quic-accessors.
+    "patches/lsquic/datagram-ids.patch",
+    // lsquic_merge_acks() merges the ACK frames of one batch of packets. When one
+    // frame's range lay inside the other's, it cut the outer range short: [16-8]
+    // merged with [15-12][10-9] gave [16-12][10-9]. A late packet that only the
+    // newer frame acknowledged was then declared lost.
+    "patches/lsquic/merge-acks-contained-range.patch",
+    // A read shutdown queued STOP_SENDING without making the connection
+    // tickable. On a stream whose send side was done, the frame waited for the
+    // connection's next alarm or packet.
+    "patches/lsquic/stop-sending-tickable.patch",
+    // A resumed client seals the application packets it builds before its
+    // handshake is done with the 0-RTT keys. lsquic typed them Handshake, and
+    // fixed that up only where it wrote a STREAM frame. The server couldn't open
+    // a packet with only RESET_STREAM, STOP_SENDING or a BLOCKED frame, and the
+    // client kept resending it that way.
+    "patches/lsquic/zero-rtt-header-type.patch",
+    // A bidirectional stream's initial send limit was picked by the connection's
+    // role, not by who opened the stream (RFC 9000 section 18.2). The two agree
+    // only for a stream the client opens, the one kind HTTP/3 has. On a stream a
+    // node:quic server opens, each side sent up to the wrong window, and the
+    // receiver closed the connection with FLOW_CONTROL_ERROR. Also gives a
+    // unidirectional stream opened in 0-RTT the unidirectional limit when the
+    // handshake completes. litespeedtech/lsquic#629 (a draft) has both changes.
+    "patches/lsquic/stream-send-limit-by-initiator.patch",
+    // A client enforced a limit of es_max_streams_in (gQUIC's setting, 100) on the
+    // streams its server opens, and sized MAX_STREAMS credit from it, whatever
+    // limit it advertised. Below 50 it never returned credit. Above 100 it closed
+    // the connection on a stream it had allowed. Both roles also computed the
+    // limit in 32 bits, so 2^30 streams wrapped to 0.
+    "patches/lsquic/peer-stream-limits.patch",
+    // A server handshake runs in a mini conn, which had no context, so node:quic
+    // had to find a handshake's session again by peer address or by SSL address.
+    // on_new_mini_conn gives the mini conn its context before its first packet,
+    // promotion moves it to the full conn, and on_mini_conn_failed hands it back.
+    // es_handshake_to_strict makes es_handshake_to bound the whole handshake.
+    // Applies on top of node-quic-accessors and connection-close-pns.
+    "patches/lsquic/mini-conn-ctx.patch",
+    // lsquic_conn_local_transport_error(): lsquic_conn_status() has no error
+    // code, and it reports an error that fails the handshake, such as a TLS
+    // alert, as a version negotiation failure. Applies on top of
+    // abort-error-code-zero.
+    "patches/lsquic/local-transport-error.patch",
+    // lsquic_stream_force_reset_ext() resets the send side only, but it dropped a
+    // MAX_STREAM_DATA that was queued for the read side. The receive limit had
+    // already moved, so no later read queued the frame again and the peer stayed
+    // blocked. It takes a reset between lsquic_stream_hold_window(s, 0) and the
+    // next tick. Applies on top of node-quic-accessors.
+    "patches/lsquic/reset-keeps-window-update.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

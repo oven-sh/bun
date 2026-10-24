@@ -393,3 +393,30 @@ describe("TLS listener: stop(true) from inside a selection callback", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("runs the event loop between batches of a long accept queue", async () => {
+  const count = 100;
+  let accepted = 0;
+  const acceptedBeforeImmediate = Promise.withResolvers<number>();
+  const allAccepted = Promise.withResolvers<void>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open() {
+        if (++accepted === 1) setImmediate(() => acceptedBeforeImmediate.resolve(accepted));
+        if (accepted === count) allAccepted.resolve();
+      },
+      data() {},
+    },
+  });
+  // Each call runs connect(2) before it returns, so every connection is queued before the listener's first poll event.
+  const clients = await Promise.all(
+    Array.from({ length: count }, () =>
+      Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } }),
+    ),
+  );
+  await allAccepted.promise;
+  for (const client of clients) client.terminate();
+  expect(await acceptedBeforeImmediate.promise).toBeLessThan(count);
+});

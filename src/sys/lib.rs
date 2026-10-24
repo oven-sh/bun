@@ -2142,7 +2142,10 @@ mod posix_impl {
         // Linux ABI.
         #[cfg(any(target_env = "musl", target_os = "android"))]
         mod raw {
-            use core::ffi::{c_char, c_int, c_uint};
+            use core::ffi::c_uint;
+            // Only the (non-Android) raw `statx()` wrapper below uses these.
+            #[cfg(not(target_os = "android"))]
+            use core::ffi::{c_char, c_int};
 
             // Kernel UAPI `<linux/stat.h>` — same on every arch/libc.
             pub(crate) const STATX_TYPE: c_uint = 0x0001;
@@ -2200,9 +2203,14 @@ mod posix_impl {
             /// `errno` set, matching the libc wrapper's contract so callers
             /// don't need to know which path they got.
             ///
+            /// Android never calls this (see the Android `statx_impl` further
+            /// down, which skips the syscall entirely), so exclude it there
+            /// too or it trips `-D dead-code`.
+            ///
             /// # Safety
             /// `path` must be NUL-terminated and live for the call; `buf` must
             /// be a valid out-pointer to a `statx`.
+            #[cfg(not(target_os = "android"))]
             pub(crate) unsafe fn statx(
                 dirfd: c_int,
                 path: *const c_char,
@@ -2242,7 +2250,9 @@ mod posix_impl {
         | lx::STATX_BLOCKS;
 
     /// Linux kernel makedev encoding (glibc sys/sysmacros.h / <linux/kdev_t.h>).
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    /// Only the Linux `statx_impl` below still calls this - the Android one
+    /// skips the syscall (and this) entirely.
+    #[cfg(target_os = "linux")]
     #[inline]
     const fn statx_makedev(major: u32, minor: u32) -> u64 {
         let maj: u64 = (major & 0xFFF) as u64;
@@ -2267,7 +2277,25 @@ mod posix_impl {
     // `syscall` is the JS-facing `err.syscall` tag (`stat`/`lstat`/`fstat`):
     // node reports the operation name, never the `statx(2)` implementation
     // detail, and the non-statx fallback below already uses those same tags.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    //
+    // Android: many devices seccomp-kill (SIGSYS) instead of returning
+    // ENOSYS/EPERM for `statx`, so the errno-based fallback further down
+    // never gets a chance to run - the process is dead before `statx()`
+    // returns. Skip the syscall entirely here and always use the
+    // stat/lstat/fstat fallback on Android.
+    #[cfg(target_os = "android")]
+    fn statx_impl(
+        fd: Fd,
+        path: Option<&ZStr>,
+        flags: c_int,
+        mask: u32,
+        _syscall: Tag,
+    ) -> Maybe<PosixStat> {
+        let _ = mask;
+        statx_fallback(fd, path, flags)
+    }
+
+    #[cfg(target_os = "linux")]
     fn statx_impl(
         fd: Fd,
         path: Option<&ZStr>,

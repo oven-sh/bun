@@ -310,7 +310,8 @@ impl Decoder {
                 self.state = State::Fixed;
                 self.header_len = 0;
                 self.header_spilled = false;
-                Ok(None)
+                // What follows a member is not looked at for a block that is already full.
+                Ok((out.len() >= limit).then_some(Progress::OutputFull))
             }
         }
     }

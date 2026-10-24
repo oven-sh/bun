@@ -2,6 +2,7 @@
 // made of each one when it was recorded. See record.ts.
 import { describe, expect, test } from "bun:test";
 import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadCases, observeExtract, observeFiles, observeTar, tarHeader, tarPadded, type Case } from "./observe";
 
@@ -258,5 +259,16 @@ describe("gzip inside gzip", () => {
     expect(await names(gzip(inner, { badCrc: true }))).toEqual(["a"]);
     expect(await names(gzip(inner).subarray(0, 150_000))).toEqual(["a"]);
     await expect(names(gzip(gzip(tar), { badCrc: true }))).rejects.toThrow("gzip trailer mismatch");
+  });
+
+  test("what follows a member that ends with a 64 KiB block does not spoil that block", async () => {
+    const block = Buffer.concat([file("a", Buffer.alloc(64000, "x").toString()), end]);
+    expect(block.length).toBe(65536);
+    // A header that announces nine bytes of extra field and ends after one.
+    const cutHeader = Buffer.from([0x1f, 0x8b, 8, 4, 0, 0, 0, 0, 0, 255, 9, 0, 0]);
+    using dir = tempDir("archive-golden-member", {});
+    const archive = new Bun.Archive(gzip(Buffer.concat([gzip(block), cutHeader])));
+    await expect(archive.extract(String(dir))).rejects.toThrow();
+    expect(readdirSync(String(dir))).toEqual(["a"]);
   });
 });

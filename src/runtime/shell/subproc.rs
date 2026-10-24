@@ -632,6 +632,9 @@ impl ShellSubprocess {
             true
         };
 
+        // `${Bun.file(path)}` is a path word, and `Cmd` opens a `Response` over a file itself.
+        debug_assert!(!stdio_guard.iter().any(|s| matches!(s, Stdio::Path(_))));
+
         // Hoist asSpawnOption results so a later one failing doesn't strand an earlier
         // Windows *uv.Pipe in an unbound temporary inside the struct initializer.
         // `mut` only for the Windows-only `.deinit()` rollback below.

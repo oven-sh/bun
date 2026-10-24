@@ -75,6 +75,22 @@ unsafe extern "C" {
     safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
 }
 
+/// Whether a `Path` stdio opens a regular file at `path`. `O_TRUNC` changes nothing in a device or a FIFO.
+fn path_stdio_opens_regular_file(path: &[u8], has_cwd: bool) -> bool {
+    // A POSIX child can open a relative path under `cwd`, where a stat from this process finds another file.
+    if cfg!(unix) && has_cwd && !bun_paths::is_absolute_posix(path) {
+        return true;
+    }
+    let Ok(path) = sys::to_posix_path(path) else {
+        return false;
+    };
+    match sys::stat(ZStr::from_cstr(&path)) {
+        Ok(stat) => sys::is_regular_file(stat.st_mode as _),
+        // `O_CREAT` makes a regular file, or the open fails.
+        Err(err) => err.get_errno() == sys::Errno::ENOENT,
+    }
+}
+
 struct Argv0Result {
     /// Was arena-owned `[:0]const u8`; caller stashes in its `Vec<ZBox>` backing
     /// store so the pointer outlives `spawn_process`.
@@ -915,6 +931,27 @@ fn spawn_maybe_sync(
                 &mut argv,
                 &mut cstr_storage,
             )?;
+        }
+    }
+
+    // The open of stdout or stderr empties the file before the child reads stdin.
+    if let Stdio::Path(input) = &stdio[0] {
+        let is_input = |output: &Stdio| match output {
+            Stdio::Path(path) => path.slice() == input.slice(),
+            _ => false,
+        };
+        if (is_input(&stdio[1]) || is_input(&stdio[2]))
+            && path_stdio_opens_regular_file(input.slice(), user_specified_cwd)
+        {
+            // `WindowsStdio` has no `Drop`.
+            #[cfg(windows)]
+            for e in &mut extra_fds {
+                e.deinit();
+            }
+            return Err(cx.global().throw_invalid_arguments(format_args!(
+                "stdin cannot be the same file as stdout or stderr: the command would read an empty {}. To filter the file in place, pass stdin: await Bun.file(path).bytes(). If the command does not read stdin, pass stdin: \"ignore\".",
+                bun_fmt::quote(input.slice())
+            )));
         }
     }
 

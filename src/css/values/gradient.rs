@@ -235,16 +235,10 @@ impl Gradient {
     /// Returns a copy of the gradient with the given vendor prefix.
     pub(crate) fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> Gradient {
         match self {
-            Gradient::Linear(linear) => Gradient::Linear({
-                let mut x = linear.deep_clone(bump);
-                x.vendor_prefix = prefix;
-                x
-            }),
-            Gradient::RepeatingLinear(linear) => Gradient::RepeatingLinear({
-                let mut x = linear.deep_clone(bump);
-                x.vendor_prefix = prefix;
-                x
-            }),
+            Gradient::Linear(linear) => Gradient::Linear(linear.with_prefix(bump, prefix)),
+            Gradient::RepeatingLinear(linear) => {
+                Gradient::RepeatingLinear(linear.with_prefix(bump, prefix))
+            }
             Gradient::Radial(radial) => Gradient::Radial({
                 let mut x = radial.deep_clone(bump);
                 x.vendor_prefix = prefix;
@@ -305,7 +299,7 @@ impl Gradient {
 pub struct LinearGradient {
     /// The vendor prefixes for the gradient.
     pub(crate) vendor_prefix: VendorPrefix,
-    /// The direction of the gradient.
+    /// The direction as written. With a prefix, it is in the css3-images-20110217 syntax.
     pub(crate) direction: LineDirection,
     /// The color stops and transition hints for the gradient.
     pub(crate) items: Vec<GradientItem<LengthPercentage>>,
@@ -319,7 +313,7 @@ impl LinearGradient {
             input.expect_comma()?;
             dir
         } else {
-            LineDirection::Vertical(VerticalPositionKeyword::Bottom)
+            LineDirection::default(vendor_prefix != VendorPrefix::NONE)
         };
         let items = parse_items::<LengthPercentage>(input)?;
         Ok(LinearGradient {
@@ -329,24 +323,37 @@ impl LinearGradient {
         })
     }
 
-    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
-        let angle: f32 = match &self.direction {
-            LineDirection::Vertical(v) => match v {
-                VerticalPositionKeyword::Bottom => 180.0,
-                VerticalPositionKeyword::Top => 0.0,
-            },
-            LineDirection::Angle(a) => a.to_degrees(),
-            _ => -1.0,
-        };
+    /// Returns a copy under `prefix`, with the direction in the syntax of that prefix.
+    fn with_prefix(&self, bump: &Arena, prefix: VendorPrefix) -> LinearGradient {
+        let mut copy = self.deep_clone(bump);
+        let was_prefixed = self.vendor_prefix != VendorPrefix::NONE;
+        let is_prefixed = prefix != VendorPrefix::NONE;
+        if was_prefixed != is_prefixed {
+            copy.direction = if self.direction.is_default(was_prefixed) {
+                LineDirection::default(is_prefixed)
+            } else {
+                self.direction.to_other_syntax()
+            };
+        }
+        copy.vendor_prefix = prefix;
+        copy
+    }
 
-        // We can omit `to bottom` or `180deg` because it is the default.
-        if angle == 180.0 {
+    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
+        // We can omit the default direction: `to bottom` or `180deg`, or `top` with a prefix.
+        if self.direction.is_default(is_prefixed) {
             // todo_stuff.depth
             serialize_items::<LengthPercentage>(&self.items, dest)?;
         }
         // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
         // we can flip the gradient the other direction and omit the direction.
-        else if angle == 0.0
+        // A prefixed gradient keeps its direction as written.
+        else if !is_prefixed
+            && match &self.direction {
+                LineDirection::Vertical(v) => *v == VerticalPositionKeyword::Top,
+                LineDirection::Angle(a) => a.to_degrees() == 0.0,
+                _ => false,
+            }
             && dest.minify
             && 'brk: {
                 for item in self.items.iter() {
@@ -406,12 +413,8 @@ impl LinearGradient {
                 return Err(dest.add_fmt_error());
             }
         } else {
-            if self.direction != LineDirection::Vertical(VerticalPositionKeyword::Bottom)
-                && self.direction != LineDirection::Angle(Angle::Deg(180.0))
-            {
-                self.direction.to_css(dest, is_prefixed)?;
-                dest.delim(b',', false)?;
-            }
+            self.direction.to_css(dest, is_prefixed)?;
+            dest.delim(b',', false)?;
 
             if serialize_items::<LengthPercentage>(&self.items, dest).is_err() {
                 return Err(dest.add_fmt_error());
@@ -817,8 +820,15 @@ impl WebKitGradient {
     fn from_standard(gradient: &Gradient, bump: &Arena) -> Option<WebKitGradient> {
         match gradient {
             Gradient::Linear(linear) => {
+                let standard;
+                let direction = if linear.vendor_prefix == VendorPrefix::NONE {
+                    &linear.direction
+                } else {
+                    standard = linear.direction.to_other_syntax();
+                    &standard
+                };
                 // Convert from line direction to a from and to point, if possible.
-                let (from, to): ((f32, f32), (f32, f32)) = match &linear.direction {
+                let (from, to): ((f32, f32), (f32, f32)) = match direction {
                     LineDirection::Horizontal(horizontal) => match horizontal {
                         HorizontalPositionKeyword::Left => ((1.0, 0.0), (0.0, 0.0)),
                         HorizontalPositionKeyword::Right => ((0.0, 0.0), (1.0, 0.0)),
@@ -963,11 +973,60 @@ impl LineDirection {
         Ok(LineDirection::Vertical(y))
     }
 
+    /// The direction of a gradient that writes none.
+    fn default(is_prefixed: bool) -> LineDirection {
+        LineDirection::Vertical(if is_prefixed {
+            VerticalPositionKeyword::Top
+        } else {
+            VerticalPositionKeyword::Bottom
+        })
+    }
+
+    /// Whether a gradient can leave this direction out. A prefixed angle stays as written.
+    fn is_default(&self, is_prefixed: bool) -> bool {
+        match self {
+            LineDirection::Angle(angle) => !is_prefixed && angle.to_degrees() == 180.0,
+            _ => *self == Self::default(is_prefixed),
+        }
+    }
+
+    /// Converts between the standard and the prefixed syntax: the opposite side, or `90deg - a`.
+    fn to_other_syntax(&self) -> LineDirection {
+        fn opposite_horizontal(side: HorizontalPositionKeyword) -> HorizontalPositionKeyword {
+            match side {
+                HorizontalPositionKeyword::Left => HorizontalPositionKeyword::Right,
+                HorizontalPositionKeyword::Right => HorizontalPositionKeyword::Left,
+            }
+        }
+        fn opposite_vertical(side: VerticalPositionKeyword) -> VerticalPositionKeyword {
+            match side {
+                VerticalPositionKeyword::Top => VerticalPositionKeyword::Bottom,
+                VerticalPositionKeyword::Bottom => VerticalPositionKeyword::Top,
+            }
+        }
+        match self {
+            LineDirection::Angle(angle) => {
+                // Reduce the angle first: `90 - a` is not exact in an f32 when `a` is large.
+                let degrees = (90.0 - angle.to_degrees().rem_euclid(360.0)).rem_euclid(360.0);
+                // Three decimals hide float noise: `89.9deg` would print as `.0999985deg`.
+                let degrees = (degrees * 1000.0).round() / 1000.0;
+                // The standard `90.0004deg` is `359.9996deg` here, which rounds to `360deg`.
+                LineDirection::Angle(Angle::Deg(if degrees == 360.0 { 0.0 } else { degrees }))
+            }
+            LineDirection::Horizontal(h) => LineDirection::Horizontal(opposite_horizontal(*h)),
+            LineDirection::Vertical(v) => LineDirection::Vertical(opposite_vertical(*v)),
+            LineDirection::Corner(c) => LineDirection::Corner(LineDirectionCorner {
+                horizontal: opposite_horizontal(c.horizontal),
+                vertical: opposite_vertical(c.vertical),
+            }),
+        }
+    }
+
     fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
         match self {
             LineDirection::Angle(angle) => angle.to_css(dest),
             LineDirection::Horizontal(k) => {
-                if dest.minify {
+                if dest.minify && !is_prefixed {
                     dest.write_str(match k {
                         HorizontalPositionKeyword::Left => &b"270deg"[..],
                         HorizontalPositionKeyword::Right => &b"90deg"[..],
@@ -980,7 +1039,7 @@ impl LineDirection {
                 }
             }
             LineDirection::Vertical(k) => {
-                if dest.minify {
+                if dest.minify && !is_prefixed {
                     dest.write_str(match k {
                         VerticalPositionKeyword::Top => &b"0deg"[..],
                         VerticalPositionKeyword::Bottom => &b"180deg"[..],

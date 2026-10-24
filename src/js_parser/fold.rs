@@ -654,6 +654,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::ERequireCallTarget => {
                     if name == b"main" {
+                        p.reads_require_main = true;
                         return Some(Expr {
                             loc,
                             data: js_ast::ExprData::ERequireMain,

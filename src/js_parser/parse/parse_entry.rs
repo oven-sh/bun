@@ -142,6 +142,8 @@ pub struct Parser<'a> {
     pub(crate) bump: &'a Arena,
     /// `log.errors` before the priming `lexer.next()` in `init`.
     pub(crate) orig_error_count: u32,
+    /// See `P::own_require_specifiers`. Only `_parse` sets it, for its second parse of a file.
+    pub(crate) own_require_specifiers: &'a [crate::OwnRequireSpecifier<'a>],
 }
 
 pub struct Options<'a> {
@@ -434,6 +436,7 @@ impl<'a> Parser<'a> {
             source,
             log: log_ptr,
             orig_error_count,
+            own_require_specifiers: &[],
         })
     }
 }
@@ -867,6 +870,28 @@ fn lower_one_date_time_literal<'a>(
 }
 
 impl<'a> Parser<'a> {
+    /// Parses a file with `P::stores_opaque_require` again, with `P::own_require_specifiers` set.
+    #[cold]
+    fn parse_again_with_own_require<const TS: bool>(
+        p: &mut P<'a, TS, false>,
+        part_lists: [&[js_ast::Part]; 3],
+        log_len: usize,
+        errors: u32,
+    ) -> Result<Option<crate::Result<'a>>, Error> {
+        let Some(specifiers) = p.own_require_specifiers_for_second_parse(part_lists, errors)?
+        else {
+            return Ok(None);
+        };
+        let options = core::mem::take(&mut p.options);
+        let log = p.log();
+        log.truncate(log_len);
+        let mut parser = Parser::init(options, log, p.source, p.define, p.arena)?;
+        // The first token logged again what the log still has from the first `init`.
+        p.log().truncate(log_len);
+        parser.own_require_specifiers = specifiers;
+        parser._parse::<TS>().map(Some)
+    }
+
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
@@ -886,6 +911,7 @@ impl<'a> Parser<'a> {
             define,
             bump,
             orig_error_count,
+            own_require_specifiers,
         } = self;
 
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
@@ -895,6 +921,9 @@ impl<'a> Parser<'a> {
             bump, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+        p.own_require_specifiers = own_require_specifiers;
+        // `parse_again_with_own_require` drops what this parse logs.
+        let log_len = p.log().msgs.len();
 
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);
@@ -1255,6 +1284,18 @@ impl<'a> Parser<'a> {
 
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
+            // With `--reject-unresolved` the errors can be for calls of the stored function.
+            let errors = p.log().errors - orig_error_count;
+            if p.stores_opaque_require
+                && let Some(result) = Self::parse_again_with_own_require(
+                    p,
+                    [&before, &parts, &after],
+                    log_len,
+                    errors,
+                )?
+            {
+                return Ok(result);
+            }
             return Err(crate::Error::SyntaxError);
         }
 
@@ -1354,6 +1395,12 @@ impl<'a> Parser<'a> {
 
         // Node gives each CommonJS module its own `require`: an assignment is for that file alone.
         let own_require_ref = if p.assigns_free_require && p.options.features.per_file_require {
+            if p.stores_opaque_require
+                && let Some(result) =
+                    Self::parse_again_with_own_require(p, [&before, &parts, &after], log_len, 0)?
+            {
+                return Ok(result);
+            }
             let (ref_, part) = p.declare_own_require()?;
             // Ahead of the imports: in an import cycle another file can call into this one first.
             before.insert(js_ast::OWN_REQUIRE_PART_INDEX as usize, part);
@@ -1982,6 +2029,10 @@ impl<'a> Parser<'a> {
                             // SAFETY: `module_scope` is non-null after `prepare_for_visit_pass`.
                             && p.module_scope().strict_mode
                                 == bun_ast::StrictModeKind::ExplicitStrictMode)
+                        // With `P::own_require_specifiers` the name is this variable.
+                        || own_require_ref.is_some_and(|own| {
+                            p.symbols.as_slice()[own.inner_index() as usize].use_count_estimate > 0
+                        })
                     {
                         exports_kind = js_ast::ExportsKind::Cjs;
                     } else {

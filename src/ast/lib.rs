@@ -1597,6 +1597,18 @@ impl Log {
         self.line_column_tracker = None;
     }
 
+    /// Drops every message after the first `len`, and takes them out of the counts.
+    pub fn truncate(&mut self, len: usize) {
+        for msg in self.msgs.drain(len.min(self.msgs.len())..) {
+            match msg.kind {
+                Kind::Err => self.errors = self.errors.saturating_sub(1),
+                Kind::Warn => self.warnings = self.warnings.saturating_sub(1),
+                _ => {}
+            }
+        }
+        self.line_column_tracker = None;
+    }
+
     pub fn has_any(&self) -> bool {
         (self.warnings + self.errors) > 0
     }

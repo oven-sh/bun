@@ -107,6 +107,9 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// An entry of a file's own `require` table (`P::own_require_with_table`): never a call of that variable.
+        const OWN_REQUIRE_TABLE_ENTRY = 1 << 19;
     }
 }
 

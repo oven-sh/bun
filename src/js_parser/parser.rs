@@ -467,6 +467,13 @@ pub struct DeferredImportNamespace {
     pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 
+/// A specifier that a file names in a `require` call, as written. See `P::own_require_specifiers`.
+#[derive(Clone, Copy)]
+pub(crate) struct OwnRequireSpecifier<'a> {
+    pub(crate) range: bun_ast::Range,
+    pub(crate) text: &'a [u8],
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SkipTypeParameterResult {
     DidNotSkipAnything,
@@ -1743,6 +1750,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         source,
         log: log_ptr,
         orig_error_count: 0,
+        own_require_specifiers: &[],
     };
     let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,

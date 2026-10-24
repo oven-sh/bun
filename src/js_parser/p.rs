@@ -23,10 +23,11 @@ use crate::{
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
-    LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
-    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
-    ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, OwnRequireSpecifier,
+    ParseStatementOptions, ParsedPath, PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap,
+    RuntimeImports, ScopeOrder, ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution,
+    TempRef, ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -308,6 +309,15 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// A store into the free `require` that can run: not dead code, a `with` body, or a `define`.
     pub(crate) assigns_free_require: bool,
+
+    /// Such a store of a value that is not a `require` for this file (`stores_require_for_this_file`).
+    pub(crate) stores_opaque_require: bool,
+
+    /// Set in the second parse of such a file: `require` is its variable, with a table of these.
+    pub(crate) own_require_specifiers: &'a [OwnRequireSpecifier<'a>],
+
+    /// The file reads `require.main`, which `require.main === module` folds from.
+    pub(crate) reads_require_main: bool,
 
     /// The current part's symbol uses, built from `part_uses` when the part
     /// is done (`take_symbol_uses`); empty while visiting.
@@ -3347,6 +3357,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.module_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"module")?;
 
+        if !self.own_require_specifiers.is_empty() {
+            // The name binds to this variable: the visit pass leaves each `require` as written.
+            self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"require")?;
+            self.assigns_free_require = true;
+        }
         self.require_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"require")?;
         self.dirname_ref =
@@ -6072,7 +6087,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             options::Format::Iife => unreachable!("`per_file_require` is off for iife output"),
         };
 
-        let ref_ = self.declare_generated_symbol(js_ast::symbol::Kind::Hoisted, b"require");
+        let (ref_, value, import_record_indices) = if self.own_require_specifiers.is_empty() {
+            let ref_ = self.declare_generated_symbol(js_ast::symbol::Kind::Hoisted, b"require");
+            (ref_, bundle_require, bun_alloc::AstAlloc::vec())
+        } else {
+            let name: &[u8] = b"require";
+            let member = self
+                .module_scope()
+                .get_member_with_hash(name, Scope::get_member_hash(name))
+                .expect("`prepare_for_visit_pass` declared it");
+            let (value, import_record_indices) = self.own_require_with_table(bundle_require)?;
+            (member.ref_, value, import_record_indices)
+        };
         let mut declared_symbols = bun_ast::DeclaredSymbolList::init_capacity(1)?;
         declared_symbols.append_assume_capacity(DeclaredSymbol {
             ref_,
@@ -6085,7 +6111,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 kind: js_ast::s::Kind::KVar,
                 decls: G::DeclList::from_slice(&[Decl {
                     binding,
-                    value: Some(bundle_require),
+                    value: Some(value),
                 }]),
                 ..Default::default()
             },
@@ -6099,9 +6125,285 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts: stmts.into(),
                 declared_symbols,
                 symbol_uses: self.take_symbol_uses()?,
+                import_record_indices,
                 ..Default::default()
             },
         ))
+    }
+
+    /// `(host, table) => own`: `own(id)` is `table[id]()` for a specifier of the file, else `host(id)`.
+    fn own_require_with_table(
+        &mut self,
+        bundle_require: Expr,
+    ) -> Result<(Expr, js_ast::PartImportRecordIndices), crate::Error> {
+        let loc = bun_ast::Loc::EMPTY;
+        let names: [&'static [u8]; 4] = [b"host", b"table", b"own", b"id"];
+        let [host, table, own, id] =
+            names.map(|name| self.declare_generated_symbol(js_ast::symbol::Kind::Hoisted, name));
+        // Not a member of the scope: a declaration of that name in the file cannot capture it.
+        let object = self.new_symbol(js_ast::symbol::Kind::Unbound, b"Object");
+        VecExt::append(&mut self.module_scope_mut().generated, object);
+
+        let mut import_record_indices: js_ast::PartImportRecordIndices = bun_alloc::AstAlloc::vec();
+        let mut properties: G::PropertyList = bun_alloc::AstAlloc::vec();
+        properties.push(G::Property {
+            key: Some(self.new_expr(E::String::from_static(b"__proto__"), loc)),
+            value: Some(self.new_expr(E::Null {}, loc)),
+            ..Default::default()
+        });
+        for specifier in self.own_require_specifiers {
+            let import_record_index = self.add_import_record_by_range(
+                ImportKind::Require,
+                specifier.range,
+                specifier.text,
+            );
+            let mut flags = bun_ast::ImportRecordFlags::OWN_REQUIRE_TABLE_ENTRY;
+            // Node resolves a name when the module asks for it, so one that is not found is no error here.
+            flags.set(
+                bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
+                self.options.allow_unresolved.allows(specifier.text),
+            );
+            self.import_records.items_mut()[import_record_index as usize]
+                .flags
+                .insert(flags);
+            import_record_indices.push(import_record_index);
+
+            let load = self.new_expr(
+                E::RequireString {
+                    import_record_index,
+                    ..Default::default()
+                },
+                loc,
+            );
+            properties.push(G::Property {
+                key: Some(self.new_expr(E::String::init(specifier.text), loc)),
+                value: Some(self.arrow_returning(bun_ast::StoreSlice::EMPTY, load)?),
+                // A second plain `__proto__` key is a syntax error.
+                flags: if specifier.text == b"__proto__" {
+                    js_ast::flags::Property::IsComputed.into()
+                } else {
+                    js_ast::flags::PROPERTY_NONE
+                },
+                ..Default::default()
+            });
+        }
+        let table_value = self.new_expr(
+            E::Object {
+                properties,
+                ..Default::default()
+            },
+            loc,
+        );
+
+        let identifier = |p: &mut Self, ref_: Ref| {
+            p.record_usage(ref_);
+            Expr::init_identifier(ref_, loc)
+        };
+        let arg = |p: &mut Self, ref_: Ref, default: Option<Expr>| Arg {
+            binding: p.b(B::Identifier { r#ref: ref_ }, loc),
+            default,
+            ..Default::default()
+        };
+
+        // (id) => id in table ? table[id]() : host(id)
+        let test = Expr::init(
+            E::Binary {
+                op: js_ast::OpCode::BinIn,
+                left: identifier(self, id),
+                right: identifier(self, table),
+            },
+            loc,
+        );
+        let entry = Expr::init(
+            E::Index {
+                target: identifier(self, table),
+                index: identifier(self, id),
+                optional_chain: None,
+                is_import_property_use: false,
+            },
+            loc,
+        );
+        let yes = Expr::init(
+            E::Call {
+                target: entry,
+                ..Default::default()
+            },
+            loc,
+        );
+        let no = Expr::init(
+            E::Call {
+                target: identifier(self, host),
+                args: ExprNodeList::init_one(identifier(self, id)),
+                ..Default::default()
+            },
+            loc,
+        );
+        let lookup = Expr::init(E::If { test, yes, no }, loc);
+        let id_arg = arg(self, id, None);
+        let own_value = self.arrow_returning(
+            bun_ast::StoreSlice::new_mut(self.arena.alloc_slice_fill_iter([id_arg])),
+            lookup,
+        )?;
+
+        // host ? Object.setPrototypeOf(own, host) : own, for `resolve`, `cache`, `main` and `extensions`
+        let set_prototype_of = Expr::init(
+            E::Dot {
+                target: identifier(self, object),
+                name: b"setPrototypeOf".into(),
+                name_loc: loc,
+                ..Default::default()
+            },
+            loc,
+        );
+        let with_prototype = Expr::init(
+            E::Call {
+                target: set_prototype_of,
+                args: ExprNodeList::from_slice(&[identifier(self, own), identifier(self, host)]),
+                ..Default::default()
+            },
+            loc,
+        );
+        let body = Expr::init(
+            E::If {
+                test: identifier(self, host),
+                yes: with_prototype,
+                no: identifier(self, own),
+            },
+            loc,
+        );
+        let args = [
+            arg(self, host, None),
+            arg(self, table, None),
+            arg(self, own, Some(own_value)),
+        ];
+        let make = self.arrow_returning(
+            bun_ast::StoreSlice::new_mut(self.arena.alloc_slice_fill_iter(args)),
+            body,
+        )?;
+
+        let value = Expr::init(
+            E::Call {
+                target: make,
+                args: ExprNodeList::from_slice(&[bundle_require, table_value]),
+                ..Default::default()
+            },
+            loc,
+        );
+        Ok((value, import_record_indices))
+    }
+
+    fn arrow_returning(
+        &mut self,
+        args: bun_ast::StoreSlice<Arg>,
+        value: Expr,
+    ) -> Result<Expr, crate::Error> {
+        Ok(self.new_expr(
+            E::Arrow {
+                args,
+                body: G::FnBody::init_return_expr(self.arena, value)?,
+                prefer_expr: true,
+                ..Default::default()
+            },
+            value.loc,
+        ))
+    }
+
+    /// For a store into the free `require` that can run. `target` is the name it writes to.
+    #[cold]
+    pub(crate) fn classify_store_into_free_require(&mut self, target: &Expr) {
+        if !self.stores_require_for_this_file(target) {
+            self.stores_opaque_require = true;
+        }
+    }
+
+    /// The statement `require = f(__filename)`, `f(module)` or `f(import.meta.url)`, as in a NAPI-RS loader.
+    fn stores_require_for_this_file(&self, target: &Expr) -> bool {
+        let js_ast::ExprData::EBinary(stmt) = self.stmt_expr_value else {
+            return false;
+        };
+        if stmt.op != js_ast::OpCode::BinAssign || !core::ptr::eq(&raw const stmt.left, target) {
+            return false;
+        }
+        let js_ast::ExprData::ECall(call) = stmt.right.data else {
+            return false;
+        };
+        // The visit pass has not reached the value yet: a name is still its spelling.
+        match call.args.slice().first().map(|arg| arg.data) {
+            Some(js_ast::ExprData::EIdentifier(id)) => {
+                matches!(self.load_name_from_ref(id.ref_), b"__filename" | b"module")
+            }
+            Some(js_ast::ExprData::EDot(dot)) => {
+                dot.name == b"url" && matches!(dot.target.data, js_ast::ExprData::EImportMeta(_))
+            }
+            _ => false,
+        }
+    }
+
+    /// The specifiers that the `require` calls of the file name, or `None` to keep the file as it is.
+    #[cold]
+    pub(crate) fn own_require_specifiers_for_second_parse(
+        &mut self,
+        part_lists: [&[js_ast::Part]; 3],
+        errors: u32,
+    ) -> Result<Option<&'a [OwnRequireSpecifier<'a>]>, crate::Error> {
+        debug_assert!(self.stores_opaque_require && self.own_require_specifiers.is_empty());
+        // In cjs output the entry point shares the `require` of the output file.
+        let entry_point_keeps_require = self.options.is_entry_point
+            && (self.options.output_format == options::Format::Cjs || self.reads_require_main);
+        // A direct `eval` or a `with` pins the names of the file, and a macro must not run twice.
+        if entry_point_keeps_require
+            || self.options.output_format == options::Format::InternalBakeDev
+            || self.module_scope().contains_direct_eval
+            || self.module_scope().contains_with
+            || self.macro_call_count != 0
+        {
+            return Ok(None);
+        }
+
+        let mut specifiers = BumpVec::<OwnRequireSpecifier<'a>>::new_in(self.arena);
+        let mut add = |range: bun_ast::Range, text: &'a [u8]| {
+            if !specifiers.iter().any(|known| known.text == text) {
+                specifiers.push(OwnRequireSpecifier { range, text });
+            }
+        };
+        for record in self.import_records.items() {
+            match record.kind {
+                // `require.resolve("literal")` gives a path in the bundle only at build time.
+                ImportKind::RequireResolve => return Ok(None),
+                ImportKind::Require => add(record.range, record.path.text),
+                _ => {}
+            }
+        }
+        for unwrapped in self.imports_to_convert_from_require.iter() {
+            let record = &self.import_records.items()[unwrapped.import_record_id as usize];
+            add(record.range, record.path.text);
+        }
+        // `require("literal", alias);` registers a name with the stored function, and has no record.
+        let mut rejected_registrations = 0;
+        for part in part_lists.into_iter().flatten() {
+            for stmt in part.stmts.slice() {
+                if let js_ast::StmtData::SExpr(expr) = stmt.data
+                    && let js_ast::ExprData::ECall(call) = expr.value.data
+                    && matches!(call.target.data, js_ast::ExprData::ERequireCallTarget)
+                    && let Some(first) = call.args.slice().first()
+                    && let js_ast::ExprData::EString(mut text) = first.data
+                {
+                    text.resolve_rope_if_needed(self.arena);
+                    add(
+                        self.source.range_of_string(first.loc),
+                        text.string(self.arena)?,
+                    );
+                    // `check_dynamic_specifier` logged one error for it with `--reject-unresolved`.
+                    rejected_registrations += u32::from(!self.options.allow_unresolved.allows(b""));
+                }
+            }
+        }
+
+        // Any other error of the first parse stays an error.
+        if errors != rejected_registrations {
+            return Ok(None);
+        }
+        Ok((!specifiers.is_empty()).then(|| specifiers.into_bump_slice()))
     }
 
     #[inline]
@@ -9834,6 +10136,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             assigns_free_require: false,
+            stores_opaque_require: false,
+            own_require_specifiers: &[],
+            reads_require_main: false,
             symbol_uses,
             part_uses: Vec::new(),
             part_use_slot: Vec::new(),

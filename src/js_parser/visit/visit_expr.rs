@@ -332,6 +332,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if in_.assign_target != js_ast::AssignTarget::None && !p.is_control_flow_dead {
                     p.assigns_free_require = true;
+                    if p.options.features.per_file_require {
+                        p.classify_store_into_free_require(e);
+                    }
                 }
 
                 *e = p.value_for_require(expr.loc);

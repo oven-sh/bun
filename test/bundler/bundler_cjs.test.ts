@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -1687,6 +1688,32 @@ describe("bundler", () => {
     forIn: `for (require in { forIn: 1 });`,
   };
 
+  // The lazy-cache package in short: `proxy(name, alias)` registers a property that loads
+  // `name` with `fn` on its first read.
+  const lazyCache = /* js */ `
+    module.exports = fn => {
+      const cache = {};
+      const proxy = (name, alias) => {
+        const key = alias || name.slice(2, -4).replace(/-(.)/g, (_, letter) => letter.toUpperCase());
+        Object.defineProperty(proxy, key, {
+          enumerable: true,
+          get: () => (key in cache ? cache[key] : (cache[key] = fn(name))),
+        });
+      };
+      return proxy;
+    };
+  `;
+  // `utils.js` of clone-deep 0.2.4, the idiom of #11754: it puts the proxy in `require`, so that
+  // a bundler sees the names that it registers, and puts the old value back.
+  const lazyCacheUtils = (registrations: string, lazyCachePath = "./lazy-cache.cjs") => /* js */ `
+    var utils = require("${lazyCachePath}")(require);
+    var fn = require;
+    require = utils;
+    ${registrations}
+    require = fn;
+    module.exports = utils;
+  `;
+
   // Each program prints the same from its source and from its bundle. With
   // `node`, Node.js runs the source and a bundle for node too. `bun: false`
   // leaves Bun out. `todo` says why a bundle prints something else.
@@ -1931,8 +1958,8 @@ describe("bundler", () => {
         "other.cjs": readsPath,
       },
     },
+    // A literal of a bundled file is a call of the assigned function too.
     "restored after a call with the literal of a bundled file": {
-      todo: 'the bundler resolves `require("./dep.cjs")` at build time, so the assigned function is not called',
       node: true,
       files: {
         "entry.cjs": /* js */ `
@@ -1945,6 +1972,254 @@ describe("bundler", () => {
           require("./dep.cjs");
           require = old;
           module.exports = registered;
+        `,
+        "dep.cjs": /* js */ `
+          module.exports = "dep";
+        `,
+      },
+    },
+    // lazy-cache loads a registered module on the first read of its property, with the
+    // `require` that the file gave it before the assignment. The bundle is in `out/`, where
+    // a lookup of `./for-own.cjs` by name at run time finds nothing.
+    "the lazy-cache idiom": {
+      node: true,
+      files: {
+        "entry.cjs": /* js */ `
+          globalThis.evaluated = [];
+          const utils = require("./utils.cjs");
+          const atRegistration = [...evaluated];
+          const forOwn = utils.forOwn;
+          console.log(
+            JSON.stringify({
+              atRegistration,
+              keys: Object.keys(utils),
+              types: [typeof forOwn, typeof utils.isObject],
+              evaluated,
+              once: utils.forOwn === forOwn,
+              sameInstance: forOwn === require("./for-own.cjs"),
+            }),
+          );
+        `,
+        "utils.cjs": lazyCacheUtils(`
+          require("./is-plain-object.cjs", "isObject");
+          require("./for-own.cjs");
+        `),
+        "lazy-cache.cjs": lazyCache,
+        "for-own.cjs": /* js */ `
+          evaluated.push("for-own");
+          module.exports = function forOwn() {};
+        `,
+        "is-plain-object.cjs": /* js */ `
+          evaluated.push("is-plain-object");
+          module.exports = function isPlainObject() {};
+        `,
+      },
+    },
+    // Each file has its own table: `./dep.cjs` is another file for each of the two.
+    "the same specifier in two files": {
+      node: true,
+      files: {
+        "entry.cjs": /* js */ `
+          console.log(JSON.stringify([require("./a/utils.cjs").dep, require("./b/utils.cjs").dep]));
+        `,
+        "a/utils.cjs": lazyCacheUtils(`require("./dep.cjs");`, "../lazy-cache.cjs"),
+        "b/utils.cjs": lazyCacheUtils(`require("./dep.cjs");`, "../lazy-cache.cjs"),
+        "a/dep.cjs": /* js */ `module.exports = "dep of a";`,
+        "b/dep.cjs": /* js */ `module.exports = "dep of b";`,
+        "lazy-cache.cjs": lazyCache,
+      },
+    },
+    // Which function a call reaches is only known at run time: `load` is declared above the
+    // assignment, and the assignment runs after the first `read()`.
+    "a literal in a function above an assignment that runs later": {
+      node: true,
+      files: {
+        "entry.cjs": /* js */ `
+          const writer = require("./writer.cjs");
+          console.log(
+            JSON.stringify({ before: writer.before, first: writer.read(), second: (writer.assign(), writer.read()) }),
+          );
+        `,
+        "writer.cjs": /* js */ `
+          function load() {
+            return require("./dep.cjs");
+          }
+          exports.before = load();
+          exports.assign = () => {
+            require = name => "stub " + name;
+          };
+          exports.read = () => [load(), require("./dep.cjs")];
+        `,
+        "dep.cjs": /* js */ `
+          module.exports = "dep";
+        `,
+      },
+    },
+    // The assigned function hands the name to the `require` that the file had first, and
+    // that one answers from the bundle.
+    "the assigned function forwards to the first require": {
+      node: true,
+      files: {
+        "entry.cjs": /* js */ `
+          console.log(JSON.stringify(require("./writer.cjs")));
+        `,
+        "writer.cjs": /* js */ `
+          const first = require;
+          const seen = [];
+          require = name => {
+            seen.push(name);
+            return first(name);
+          };
+          module.exports = { dep: require("./dep.cjs"), same: require("./dep.cjs") === first("./dep.cjs"), seen };
+        `,
+        "dep.cjs": /* js */ `
+          module.exports = { name: "dep" };
+        `,
+      },
+    },
+    // A registered name is only a string until something asks for it. One that does not
+    // resolve does not fail the build.
+    "a registered name that does not resolve is never read": {
+      node: true,
+      files: {
+        "entry.cjs": /* js */ `
+          console.log(JSON.stringify(require("./utils.cjs")));
+        `,
+        "utils.cjs": /* js */ `
+          const names = [];
+          const old = require;
+          require = name => names.push(name);
+          require("./absent.cjs");
+          require("absent-package", "alias");
+          require = old;
+          module.exports = names;
+        `,
+      },
+    },
+    // `module.require` is not the variable: it loads the module. Bun calls the assigned
+    // function there when it runs the source.
+    "module.require after the assignment": {
+      node: true,
+      bun: false,
+      files: {
+        "entry.cjs": /* js */ `
+          console.log(JSON.stringify(require("./writer.cjs")));
+        `,
+        "writer.cjs": /* js */ `
+          require = name => "stub " + name;
+          module.exports = [require("./dep.cjs"), module.require("./dep.cjs")];
+        `,
+        "dep.cjs": /* js */ `
+          module.exports = "dep";
+        `,
+      },
+    },
+    // `?.` calls the variable, both names of a conditional go to it, and nothing is read off
+    // the module that a name stands for.
+    "other forms of a call with a literal": {
+      node: true,
+      files: {
+        "entry.cjs": /* js */ `
+          console.log(JSON.stringify(require("./writer.cjs")));
+        `,
+        "writer.cjs": /* js */ `
+          const first = require;
+          const { name } = require("./dep.cjs");
+          require = name => ({ name: "stub " + name });
+          const stubbed = [
+            require?.("./dep.cjs").name,
+            require(name ? "./dep.cjs" : "./other.cjs").name,
+            (({ name }) => name)(require("./other.cjs")),
+          ];
+          module.exports = { name, stubbed, first: first("./other.cjs").name };
+        `,
+        "dep.cjs": /* js */ `
+          exports.name = "dep";
+        `,
+        "other.cjs": /* js */ `
+          exports.name = "other";
+        `,
+      },
+    },
+    // The first value of the variable has what a `require` function has.
+    "resolve and cache of the first value": {
+      node: true,
+      files: {
+        "entry.cjs": /* js */ `
+          console.log(JSON.stringify(require("./writer.cjs")));
+        `,
+        "writer.cjs": /* js */ `
+          const id = x => x;
+          const first = require;
+          require = name => "stub " + name;
+          module.exports = {
+            dep: first("./dep.cjs"),
+            resolve: first.resolve(id("node:path")),
+            cache: typeof first.cache,
+            builtin: typeof first(id("node:path")).join,
+            stubbed: require("./dep.cjs"),
+          };
+        `,
+        "dep.cjs": /* js */ `
+          module.exports = "dep";
+        `,
+      },
+    },
+    // A direct eval pins every name of the file, so its `require` stays as it was: the name
+    // `require` in the output is still the one of the output file.
+    "a direct eval in a file that names a module": {
+      node: true,
+      files: {
+        "entry.cjs": /* js */ `
+          console.log(JSON.stringify(require("./writer.cjs")));
+        `,
+        "writer.cjs": /* js */ `
+          const id = x => x;
+          const dep = require("./dep.cjs");
+          const first = require;
+          require = name => "stub " + name;
+          module.exports = [dep, eval("typeof first"), typeof first(id("node:path")).join, require(id("a"))];
+        `,
+        "dep.cjs": /* js */ `
+          module.exports = "dep";
+        `,
+      },
+    },
+    // The same for a name in a `with` statement.
+    "a with statement in a file that names a module": {
+      node: true,
+      formats: ["cjs"],
+      files: {
+        "entry.cjs": /* js */ `
+          console.log(JSON.stringify(require("./writer.cjs")));
+        `,
+        "writer.cjs": /* js */ `
+          const id = x => x;
+          const dep = require("./dep.cjs");
+          const first = require;
+          with ({}) {
+            var same = first === require;
+          }
+          require = name => "stub " + name;
+          module.exports = [dep, same, typeof first(id("node:path")).join, require(id("a"))];
+        `,
+        "dep.cjs": /* js */ `
+          module.exports = "dep";
+        `,
+      },
+    },
+    // Bun folds `typeof require` when it runs the source too.
+    "typeof after the assignment in a file that names a module": {
+      node: true,
+      bun: false,
+      files: {
+        "entry.cjs": /* js */ `
+          require("./writer.cjs");
+        `,
+        "writer.cjs": /* js */ `
+          const dep = require("./dep.cjs");
+          require = 1;
+          console.log(typeof require, dep);
         `,
         "dep.cjs": /* js */ `
           module.exports = "dep";
@@ -2143,4 +2418,250 @@ describe("bundler", () => {
       exitCode: 0,
     });
   });
+
+  // The lazy-cache idiom in the builds that the table above does not make. The output is in
+  // another folder than the source, so nothing that it prints comes from a lookup by name.
+  const lazyCacheProgram = {
+    "/src/entry.js": /* js */ `
+      const utils = require("./utils.cjs");
+      console.log(typeof utils.forOwn, typeof utils.isObject, utils.esm.name);
+    `,
+    "/src/utils.cjs": lazyCacheUtils(`
+      require("./is-plain-object.cjs", "isObject");
+      require("./for-own.cjs");
+      require("./esm.mjs");
+    `),
+    "/src/lazy-cache.cjs": lazyCache,
+    "/src/for-own.cjs": /* js */ `module.exports = function forOwn() {};`,
+    "/src/is-plain-object.cjs": /* js */ `module.exports = function isPlainObject() {};`,
+    "/src/esm.mjs": /* js */ `export const name = "esm";`,
+  };
+  const lazyCacheProgramOutput = "function function esm";
+
+  itBundled("cjs/require_assignment_table_cli", {
+    files: lazyCacheProgram,
+    target: "node",
+    format: "cjs",
+    backend: "cli",
+    outdir: "/out",
+    run: { file: "/out/entry.js", runtime: "node", stdout: lazyCacheProgramOutput },
+  });
+
+  itBundled("cjs/require_assignment_table_compile", {
+    compile: true,
+    backend: "cli",
+    files: lazyCacheProgram,
+    run: { stdout: lazyCacheProgramOutput },
+  });
+
+  itBundled("cjs/require_assignment_table_minify", {
+    files: lazyCacheProgram,
+    target: "node",
+    format: "esm",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", runtime: "node", stdout: lazyCacheProgramOutput },
+  });
+
+  // `/src/esm.mjs` is a chunk of its own: the entry of the table loads that chunk.
+  itBundled("cjs/require_assignment_table_splitting", {
+    files: {
+      ...lazyCacheProgram,
+      "/src/other.js": /* js */ `
+        console.log(typeof require("./utils.cjs").isObject);
+      `,
+    },
+    entryPoints: ["/src/entry.js", "/src/other.js"],
+    target: "bun",
+    format: "esm",
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry.js", stdout: lazyCacheProgramOutput },
+      { file: "/out/other.js", stdout: "function" },
+    ],
+  });
+
+  // `--reject-unresolved` takes no `require` call that is left for run time. The calls of
+  // the file are calls of its variable, and each name in its table resolves.
+  itBundled("cjs/require_assignment_table_reject_unresolved", {
+    files: lazyCacheProgram,
+    target: "node",
+    format: "cjs",
+    allowUnresolved: [],
+    outdir: "/out",
+    run: { file: "/out/entry.js", runtime: "node", stdout: lazyCacheProgramOutput },
+  });
+
+  // A name that is not a literal can be one for the module system at run time, so that error
+  // stays. Each of the two calls logs it in the first parse.
+  itBundled("cjs/require_assignment_table_reject_unresolved_keeps_other_errors", {
+    files: {
+      "/entry.js": /* js */ `
+        const name = "./dep.cjs";
+        const old = require;
+        require = name => "stub " + name;
+        require("./dep.cjs", "dep");
+        console.log(require(name));
+        require = old;
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports = "dep";
+      `,
+    },
+    target: "node",
+    format: "esm",
+    allowUnresolved: [],
+    bundleErrors: {
+      "/entry.js": [
+        "This require() expression will not be bundled because the argument is not a string literal",
+        "This require() expression will not be bundled because the argument is not a string literal",
+      ],
+    },
+  });
+
+  // As `cjs/require_assignment_import_cycle_wrapper_*`, with a name that the bundler
+  // resolves: the table of `/a.mjs` is there before `/b.mjs` calls in.
+  for (const wrapper of ["none", "esm"] as const) {
+    for (const format of ["esm", "cjs"] as const) {
+      itBundled(`cjs/require_assignment_table_import_cycle_wrapper_${wrapper}_${format}`, {
+        files: {
+          "/entry.mjs": /* js */ `
+            import { late } from "./a.mjs";
+            import { early } from "./b.mjs";
+            ${wrapper === "esm" ? `import "./requires-a.cjs";` : ""}
+            console.log(JSON.stringify({ early, late: late() }));
+          `,
+          "/a.mjs": /* js */ `
+            import "./b.mjs";
+            export function readDep() {
+              return require("./dep.cjs");
+            }
+            export function late() {
+              return require("./dep.cjs");
+            }
+            if (globalThis.never) require = () => "stub";
+          `,
+          "/b.mjs": /* js */ `
+            import { readDep } from "./a.mjs";
+            export const early = readDep();
+          `,
+          "/requires-a.cjs": /* js */ `
+            exports.a = require("./a.mjs");
+          `,
+          "/dep.cjs": /* js */ `
+            module.exports = "dep";
+          `,
+        },
+        target: "bun",
+        format,
+        run: { stdout: '{"early":"dep","late":"dep"}' },
+      });
+    }
+  }
+
+  // The file is parsed twice. What the first parse logs is not in the output.
+  itBundled("cjs/require_assignment_table_reports_a_warning_once", {
+    files: {
+      "/entry.jsx": /* js */ `
+        // @jsx .
+        const old = require;
+        require = name => "stub " + name;
+        const dep = require("./dep.cjs");
+        require = old;
+        console.log(dep);
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports = "dep";
+      `,
+    },
+    target: "bun",
+    format: "esm",
+    backend: "cli",
+    jsx: { runtime: "classic" },
+    bundleWarnings: {
+      "/entry.jsx": ['Invalid JSX factory: "."'],
+    },
+    run: { stdout: "stub ./dep.cjs" },
+  });
+
+  // A macro runs when the file is visited, so a file that calls one is parsed once and
+  // stays as it was: the name that the bundler resolved is the bundled module.
+  itBundled("cjs/require_assignment_with_a_macro_is_parsed_once", {
+    files: {
+      "/entry.js": /* js */ `
+        import { count } from "./macro.ts" with { type: "macro" };
+        const old = require;
+        require = name => "stub " + name;
+        const dep = require("./dep.cjs");
+        require = old;
+        console.log(count(), dep);
+      `,
+      "/macro.ts": /* ts */ `
+        let calls = 0;
+        export const count = () => ++calls;
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports = "dep";
+      `,
+    },
+    target: "bun",
+    format: "esm",
+    run: { stdout: "1 dep" },
+  });
+
+  // `require.main === module` is `import.meta.main` while `require` is the name of the
+  // module system's function. The entry point keeps that, and stays as it was.
+  itBundled("cjs/require_assignment_table_entry_point_keeps_require_main", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const old = require;
+        require = name => "stub " + name;
+        require("./dep.cjs");
+        require = old;
+        console.log(require.main === module);
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports = "dep";
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: { runtime: "node", stdout: "true" },
+  });
+
+  // A function of what names the file gives a `require` for that same file: NAPI-RS
+  // loaders assign `createRequire(__filename)`, also inside the wrapper of another bundler,
+  // and the esm package is used as `require("esm")(module)`. `__filename` is a path of the
+  // build machine, so a name that the bundler resolved stays the bundled module. The source
+  // folder is gone when the bundle runs.
+  for (const [name, assignment] of [
+    ["filename", `require = createRequire(__filename);`],
+    ["filename_in_function", `(() => { require = createRequire(__filename); })();`],
+    ["module", `require = (({ filename = __filename }) => createRequire(filename))(module);`],
+    ["import_meta_url", `require = createRequire(import.meta.url);`],
+  ] as const) {
+    itBundled(`cjs/require_assignment_of_a_require_for_the_same_file_${name}`, {
+      files: {
+        "/src/entry.js": /* js */ `
+          const { createRequire } = require("node:module");
+          ${assignment}
+          console.log(require("./dep.cjs"));
+        `,
+        "/src/dep.cjs": /* js */ `
+          module.exports = "dep";
+        `,
+      },
+      target: "node",
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        rmSync(api.join("src"), { recursive: true });
+      },
+      run: { file: "/out/entry.js", runtime: "node", stdout: "dep" },
+    });
+  }
 });

@@ -2933,7 +2933,14 @@ pub(crate) mod __gated_printer {
             if record.kind != ImportKind::Dynamic {
                 self.print_space_before_identifier();
 
-                if self.options.inline_require_and_import_errors {
+                if self.options.inline_require_and_import_errors
+                    && record.path.is_disabled
+                    // An unresolved entry of a file's own `require` table is a lookup by name at run time.
+                    && !record.flags.contains(
+                        ImportRecordFlags::OWN_REQUIRE_TABLE_ENTRY
+                            .union(ImportRecordFlags::WAS_UNRESOLVED),
+                    )
+                {
                     if record.path.is_disabled
                         && record.flags.contains(
                             ImportRecordFlags::HANDLES_IMPORT_ERRORS
@@ -2979,10 +2986,30 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                 }
 
-                if record
-                    .flags
-                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
-                {
+                if record.flags.intersects(
+                    ImportRecordFlags::CROSS_CHUNK_REQUIRE
+                        .union(ImportRecordFlags::OWN_REQUIRE_TABLE_ENTRY),
+                ) {
+                    if !record
+                        .flags
+                        .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+                    {
+                        // The file's own `require` calls this entry of its table, so it is not the callee.
+                        match self.options.bundle_require_ref() {
+                            Some(ref_) => self.print_symbol(ref_),
+                            None => self.print(b"require"),
+                        }
+                        self.print(b"(");
+                        self.print_import_record_path(record);
+                        self.print(b")");
+                        if wrap_with_to_esm {
+                            self.print_to_esm_suffix();
+                        }
+                        if wrap {
+                            self.print(b")");
+                        }
+                        return;
+                    }
                     // A split `require()`: the path is a sibling chunk, resolved
                     // relative to this chunk — not through the runtime's
                     // `__require`, which would resolve it relative to the

@@ -653,7 +653,7 @@ impl Execution {
             0
         } else {
             let ended_at = ended_at.unwrap_or_else(Timespec::now_force_real_time);
-            // A retried test can be ended by a completion its earlier attempt queued, before `started_at`; `duration` wraps then.
+            // Under `retry`, a completion queued by an earlier attempt can predate `started_at`; `duration` wraps then.
             if ended_at.greater(&sequence.started_at) {
                 ended_at.duration(&sequence.started_at).ns()
             } else {

@@ -4,7 +4,7 @@
 import type { BunFile } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { closeSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const OLD = "OLD-CONTENT-0123456789ABCDEF";
@@ -97,21 +97,121 @@ describe("Bun.file(path) as stdout or stderr replaces the file", () => {
     expect({ code, file: readFileSync(out, "utf8") }).toEqual({ code: "ENOENT", file });
   });
 
-  // stdout and stderr empty the file before the child reads stdin, so the same file at both is an error.
-  describe.each(["stdout", "stderr"] as const)("the same Bun.file(path) as stdin and %s", output => {
-    test.each(["spawn", "spawnSync"] as const)("Bun.%s throws and keeps the file", method => {
+  // stdout and stderr empty the file before the child reads stdin, so one regular file at both is an error.
+  describe("the same Bun.file(path) as stdin and as stdout or stderr", () => {
+    type Spawned = { exitCode: number | null; exited?: Promise<number> };
+    const slots: { name: string; stdio: (file: BunFile) => object }[] = [
+      { name: "stdin and stdout", stdio: file => ({ stdin: file, stdout: file }) },
+      { name: "stdin and stderr", stdio: file => ({ stdin: file, stderr: file }) },
+      { name: "stdio[0] and stdio[1]", stdio: file => ({ stdio: [file, file, "inherit"] }) },
+      { name: "stdio[0] and stdio[2]", stdio: file => ({ stdio: [file, "ignore", file] }) },
+    ];
+    const sameFile = "stdin cannot be the same file as stdout or stderr";
+
+    describe.each(["spawn", "spawnSync"] as const)("Bun.%s", method => {
+      const run = (path: string, stdio = slots[0].stdio, script = echoStdin) =>
+        (Bun[method] as (options: object) => Spawned)({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          ...stdio(Bun.file(path)),
+        });
+
+      test.each(slots)("$name: throws and keeps the file", ({ stdio }) => {
+        using dir = tempDir("spawn-stdio-file", { "both.txt": OLD });
+        const both = join(String(dir), "both.txt");
+        expect(() => run(both, stdio)).toThrow(
+          /stdin cannot be the same file as stdout or stderr: the command would read an empty ".*both\.txt"/,
+        );
+        expect(readFileSync(both, "utf8")).toBe(OLD);
+      });
+
+      test("throws for an empty file", () => {
+        using dir = tempDir("spawn-stdio-file", { "empty.txt": "" });
+        expect(() => run(join(String(dir), "empty.txt"))).toThrow(sameFile);
+      });
+
+      test("throws for a file that does not exist, and does not create it", () => {
+        using dir = tempDir("spawn-stdio-file", {});
+        const missing = join(String(dir), "missing.txt");
+        expect(() => run(missing)).toThrow(sameFile);
+        expect(existsSync(missing)).toBe(false);
+      });
+
+      test.skipIf(isWindows)("throws for a symlink to a file, and keeps the file", () => {
+        using dir = tempDir("spawn-stdio-file", { "target.txt": OLD });
+        const link = join(String(dir), "link.txt");
+        symlinkSync(join(String(dir), "target.txt"), link);
+        expect(() => run(link)).toThrow(sameFile);
+        expect(readFileSync(link, "utf8")).toBe(OLD);
+      });
+
+      // The open cannot empty a device, so the command loses no input.
+      test("runs the command when the path is a device", async () => {
+        const proc = run("/dev/null", slots[0].stdio, "process.exit(42)");
+        expect(await (proc.exited ?? proc.exitCode)).toBe(42);
+      });
+
+      // Only a regular file and a missing file throw. Every other path goes to the open.
+      test.skipIf(isWindows)("a path below a file fails in the open, with ENOTDIR", () => {
+        using dir = tempDir("spawn-stdio-file", { "file.txt": OLD });
+        let code: unknown;
+        try {
+          run(join(String(dir), "file.txt", "below"));
+        } catch (error) {
+          code = (error as NodeJS.ErrnoException).code;
+        }
+        expect(code).toBe("ENOTDIR");
+      });
+    });
+
+    // On POSIX the child can open a relative path under `cwd`, where a stat from the parent finds another file.
+    // Here `data` is a directory for the parent and a regular file in `sub`.
+    test.skipIf(isWindows).each(["spawn", "spawnSync"] as const)(
+      "Bun.%s throws for a relative path with cwd, and keeps the file",
+      async method => {
+        using dir = tempDir("spawn-stdio-file", { "data/placeholder.txt": "", "sub/data": OLD });
+        const script = `
+          const options = {
+            cmd: [process.execPath, "-e", ${JSON.stringify(echoStdin)}],
+            cwd: "sub",
+            stdin: Bun.file("data"),
+            stdout: Bun.file("data"),
+          };
+          let message = "";
+          try {
+            await Bun.${method}(options).exited;
+          } catch (error) {
+            message = error.message;
+          }
+          console.log(JSON.stringify({ message, file: require("fs").readFileSync("sub/data", "utf8") }));
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(JSON.parse(stdout)).toEqual({ message: expect.stringContaining(sameFile), file: OLD });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // `terminal` takes stdin, stdout and stderr, so Bun opens neither file.
+    test("with terminal, the command runs and the file is kept", async () => {
       using dir = tempDir("spawn-stdio-file", { "both.txt": OLD });
       const both = join(String(dir), "both.txt");
-      const options = {
-        cmd: [bunExe(), "-e", echoStdin],
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "process.exit(42)"],
         env: bunEnv,
+        terminal: { data() {} },
         stdin: Bun.file(both),
-        [output]: Bun.file(both),
-      };
-      expect(() => (Bun[method] as (options: object) => unknown)(options)).toThrow(
-        "stdin cannot be the same file as stdout or stderr",
-      );
-      expect(readFileSync(both, "utf8")).toBe(OLD);
+        stdout: Bun.file(both),
+      });
+      const exitCode = await proc.exited;
+      proc.terminal?.close();
+      expect({ exitCode, file: readFileSync(both, "utf8") }).toEqual({ exitCode: 42, file: OLD });
     });
   });
 

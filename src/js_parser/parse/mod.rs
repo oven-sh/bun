@@ -1470,21 +1470,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
-    /// A Use Strict Directive is the token `"use strict"` or `'use strict'`. An escape or a line
-    /// continuation gives the same string value but no directive.
-    fn is_use_strict_token(&self, loc: bun_ast::Loc) -> bool {
-        const RAW: &[u8] = b"use strict";
-        let contents = self.source.contents();
-        let start = loc.i() + 1;
-        let end = start + RAW.len();
-        contents.get(start..end) == Some(RAW) && contents.get(end) == contents.get(loc.i())
-    }
-
     /// What the string literal statement at `loc`, a member of a directive prologue, becomes:
     /// an `S::Directive`, or an `S::Empty` when it is dropped. `None` leaves it as it is.
     /// `is_prologue` is false for the string that `keep_directives` keeps at the start of a
     /// list that has no prologue: it does not make the code strict.
     #[cold]
+    #[inline(never)]
     fn directive_data(
         &mut self,
         loc: bun_ast::Loc,
@@ -1492,33 +1483,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_prologue: bool,
     ) -> Option<js_ast::stmt::Data> {
         let p = self;
+        let source: &'a bun_ast::Source = p.source;
         let dropped = Some(js_ast::stmt::Data::SEmpty(S::Empty {}));
-        let is_use_strict = is_prologue && p.is_use_strict_token(loc);
+        let is_use_strict = is_prologue && is_use_strict_token(source.contents(), loc);
 
         if is_use_strict {
-            // Track "use strict" directives
-            let mut scope = p.current_scope;
-            scope.strict_mode = StrictModeKind::ExplicitStrictMode;
-            // The directive of a function body also makes its parameters strict:
-            // `function f(arguments) { "use strict" }` is a syntax error.
-            if scope.kind == js_ast::scope::Kind::FunctionBody
-                && let Some(mut parent) = scope.parent
-                && parent.kind == js_ast::scope::Kind::FunctionArgs
-                && parent.strict_mode == StrictModeKind::SloppyMode
-            {
-                parent.strict_mode = StrictModeKind::ExplicitStrictMode;
-            }
+            mark_use_strict(p.current_scope);
         }
 
         let value: &'a [u8] = if p.options.keep_directives {
             // The text is kept as written because an escape makes it a different directive.
-            let source: &'a bun_ast::Source = p.source;
-            let text = &source.contents()[loc.start as usize..];
-            let mut end = 1;
-            while text.get(end).is_some_and(|c| *c != text[0]) {
-                end += 1 + usize::from(text[end] == b'\\');
-            }
-            &text[1..end.min(text.len())]
+            string_token_text(source.contents(), loc)
         } else if !is_use_strict && string.eql_comptime(b"use strict") {
             // `"use\x20strict"` has the value of a Use Strict Directive but is not one, and
             // the printer writes the value. As the last statement of a REPL line it stays a
@@ -1802,4 +1777,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             async_range.loc,
         ))
     }
+}
+
+/// A Use Strict Directive is the token `"use strict"` or `'use strict'`. An escape or a line
+/// continuation gives the same string value but no directive.
+fn is_use_strict_token(contents: &[u8], loc: bun_ast::Loc) -> bool {
+    const RAW: &[u8] = b"use strict";
+    let start = loc.i() + 1;
+    let end = start + RAW.len();
+    contents.get(start..end) == Some(RAW) && contents.get(end) == contents.get(loc.i())
+}
+
+/// What a Use Strict Directive does to the scope of the body it starts.
+fn mark_use_strict(mut scope: js_ast::StoreRef<js_ast::Scope>) {
+    scope.strict_mode = StrictModeKind::ExplicitStrictMode;
+    // The directive of a function body also makes its parameters strict:
+    // `function f(arguments) { "use strict" }` is a syntax error.
+    if scope.kind == js_ast::scope::Kind::FunctionBody
+        && let Some(mut parent) = scope.parent
+        && parent.kind == js_ast::scope::Kind::FunctionArgs
+        && parent.strict_mode == StrictModeKind::SloppyMode
+    {
+        parent.strict_mode = StrictModeKind::ExplicitStrictMode;
+    }
+}
+
+/// The text between the quotes of the string literal token at `loc`, as it is written.
+fn string_token_text(contents: &[u8], loc: bun_ast::Loc) -> &[u8] {
+    let text = &contents[loc.i()..];
+    let mut end = 1;
+    while text.get(end).is_some_and(|c| *c != text[0]) {
+        end += 1 + usize::from(text[end] == b'\\');
+    }
+    &text[1..end.min(text.len())]
 }

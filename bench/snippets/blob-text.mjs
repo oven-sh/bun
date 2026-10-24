@@ -41,7 +41,7 @@ for (const [label, size] of [
     const blob = new Blob([ascii(size)]);
     await measure(`new Response(blob).text() (${label}, ASCII)`, () => new Response(blob).text());
   }
-  {
+  if (size > 64) {
     const blob = new Blob([ascii(size)]);
     await measure(`slice(0, 64).text() (${label}, ASCII, Blob never read whole)`, () => blob.slice(0, 64).text());
   }

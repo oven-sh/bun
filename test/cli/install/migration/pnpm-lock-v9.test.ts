@@ -3428,14 +3428,14 @@ snapshots:
       "cli.js": "#!/usr/bin/env node\n",
       "bin/tool-with-a-long-name.js": "#!/usr/bin/env node\n",
     };
-    const lockfile = (version: string, resolution: string) => `lockfileVersion: '9.0'
+    const lockfile = (version: string, resolution: string, specifier = version.split("#")[0]) => `lockfileVersion: '9.0'
 
 importers:
 
   .:
     dependencies:
       tool:
-        specifier: ${version.split("#")[0]}
+        specifier: ${specifier}
         version: ${version}
 
 packages:
@@ -3449,14 +3449,20 @@ snapshots:
 
   tool@${version}: {}
 `;
+    // `env` can name the cache of the whole test run. Each linker has a repository of its own at the same URL, so
+    // each install needs a cache of its own.
     async function installed(dir: string, env: Record<string, string>) {
-      const { stdout, stderr, exitCode } = await runWithEnv(dir, env, "install", "--linker", linker);
-      const names = readdirSync(join(dir, "node_modules", ".bin")).map(name => name.replace(/\.(exe|bunx)$/, ""));
+      const ownCache = { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
+      const { stdout, stderr, exitCode } = await runWithEnv(dir, ownCache, "install", "--linker", linker);
+      const binDir = join(dir, "node_modules", ".bin");
+      const names = existsSync(binDir) ? readdirSync(binDir).map(name => name.replace(/\.(exe|bunx)$/, "")) : [];
       return {
         errors: stderr.split("\n").filter(line => line.startsWith("error")),
         bins: [...new Set(names)].sort(),
         blocked: stdout.includes("Blocked 1 postinstall"),
-        row: (Bun.JSONC.parse(await bunLockOf(dir)) as { packages: Record<string, unknown[]> }).packages.tool[1],
+        row: existsSync(join(dir, "bun.lock"))
+          ? (Bun.JSONC.parse(await bunLockOf(dir)) as { packages: Record<string, unknown[]> }).packages.tool[1]
+          : null,
         exitCode,
       };
     }
@@ -3498,7 +3504,82 @@ snapshots:
 
       expect(await installed(String(dir), repo.env)).toEqual(complete);
     });
+
+    // What pnpm writes for a dependency on a GitHub repository.
+    test.concurrent("a GitHub tarball resolution", async () => {
+      const commit = "0123456789abcdef0123456789abcdef01234567";
+      const tarball = await githubTarball(`me-tool-${commit.slice(0, 7)}`, files);
+      const requests: string[] = [];
+      await using github = Bun.serve({
+        port: 0,
+        fetch(req) {
+          requests.push(new URL(req.url).pathname);
+          return new Response(tarball);
+        },
+      });
+      const url = `https://codeload.github.com/me/tool/tar.gz/${commit}`;
+      using dir = tempDir("pnpm-v9-github-bin", {
+        "package.json": JSON.stringify({ name: "github-bin", dependencies: { tool: "github:me/tool" } }),
+        "pnpm-lock.yaml": lockfile(url, `{tarball: ${url}}`, "github:me/tool"),
+      });
+
+      expect(await installed(String(dir), { GITHUB_API_URL: github.url.origin })).toEqual(complete);
+      expect(requests).toEqual([`/repos/me/tool/tarball/${commit}`]);
+    });
   });
+
+  // A pnpm workspace gets the isolated linker when no flag names one.
+  test.concurrent(
+    "bun install of a workspace reads the package.json of a tarball that a member depends on",
+    async () => {
+      const bin = { tool: "cli.js", "tool-with-a-long-name": "bin/tool-with-a-long-name.js" };
+      const tarball = await githubTarball("package", {
+        "package.json": JSON.stringify({ name: "tool", version: "1.0.0", bin }),
+        "cli.js": "#!/usr/bin/env node\n",
+        "bin/tool-with-a-long-name.js": "#!/usr/bin/env node\n",
+      });
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(tarball) });
+      const url = `${server.url.origin}/tool.tgz`;
+      using dir = tempDir("pnpm-v9-workspace-tarball-bin", {
+        "package.json": JSON.stringify({ name: "workspace-tarball-bin", private: true }),
+        "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+        "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { tool: url } }),
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+  packages/a:
+    dependencies:
+      tool:
+        specifier: ${url}
+        version: ${url}
+
+packages:
+
+  tool@${url}:
+    resolution: {tarball: ${url}}
+    version: 1.0.0
+    hasBin: true
+
+snapshots:
+
+  tool@${url}: {}
+`,
+      });
+
+      const { stderr, exitCode } = await run(String(dir), "install");
+      expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+      const names = readdirSync(join(String(dir), "packages", "a", "node_modules", ".bin"));
+      expect([...new Set(names.map(name => name.replace(/\.(exe|bunx)$/, "")))].sort()).toEqual(Object.keys(bin));
+      expect(existsSync(join(String(dir), "node_modules", ".bun"))).toBe(true);
+      expect(
+        (Bun.JSONC.parse(await bunLockOf(String(dir))) as { packages: Record<string, unknown[]> }).packages.tool[1],
+      ).toEqual({ bin });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // [`repo` as pnpm writes it, the version of the importer, the URL in bun.lock]; LOCAL is the repository's file: URL.
   test.concurrent.each([

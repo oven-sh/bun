@@ -59,7 +59,7 @@ struct Claim<'p, T> {
     /// Bun writes `output` to `path` in the output directory.
     written: bool,
     /// How many paths were claimed before this one.
-    order: usize,
+    order: u32,
 }
 
 /// Two outputs that bun writes to paths that differ only in ASCII case. `first` claimed its path before `second`.
@@ -122,9 +122,9 @@ impl<'p, 'd, T: Copy> OutputPaths<'p, 'd, T> {
     ) -> Result<(), AllocError> {
         let destination = self.destination;
         let key = output_path_key(destination, path);
-        let order = self.claims.len();
+        let order = self.claims.len() as u32;
         // The first written output at this path in another letter case.
-        let mut other_case: Option<(usize, T, &'p [u8])> = None;
+        let mut other_case: Option<(u32, T, &'p [u8])> = None;
         let entry = self.claims.entry(
             hash(destination, &key),
             |claim| {

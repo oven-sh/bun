@@ -12,6 +12,8 @@ const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kOnConstructed,
+  kWriteOperation,
+  kWriteOperationEncoding,
   kState,
   kObjectMode,
   kErrorEmitted,
@@ -454,6 +456,25 @@ function _write(stream, chunk, encoding, cb?) {
   return writeOrBuffer(stream, state, chunk, encoding, cb);
 }
 
+// Internal byte-counted operations share the byte stream's queue and lifecycle.
+Writable.prototype[kWriteOperation] = function (operation, callback) {
+  const state = this._writableState;
+  const cb = callback ?? nop;
+  let err;
+  if ((state[kState] & kEnding) !== 0) {
+    err = $ERR_STREAM_WRITE_AFTER_END();
+  } else if ((state[kState] & kDestroyed) !== 0) {
+    err = $ERR_STREAM_DESTROYED("write");
+  }
+  if (err) {
+    process.nextTick(cb, err);
+    errorOrDestroy(this, err, true);
+    return false;
+  }
+  state.pendingcb++;
+  return writeOrBuffer(this, state, operation, kWriteOperationEncoding, cb, operation.length);
+};
+
 Writable.prototype.write = function (chunk, encoding, cb) {
   if (encoding != null && typeof encoding === "function") {
     cb = encoding;
@@ -495,9 +516,14 @@ Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
 // If we're already writing something, then just put this
 // in the queue, and wait our turn.  Otherwise, call _write
 // If we return false, then we need a drain event, so set that flag.
-function writeOrBuffer(stream, state, chunk, encoding, callback) {
-  const len = (state[kState] & kObjectMode) !== 0 ? 1 : chunk.length;
-
+function writeOrBuffer(
+  stream,
+  state,
+  chunk,
+  encoding,
+  callback,
+  len = (state[kState] & kObjectMode) !== 0 ? 1 : chunk.length,
+) {
   state.length += len;
 
   if ((state[kState] & (kWriting | kErrored | kCorked | kConstructed)) !== kConstructed) {

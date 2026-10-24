@@ -260,27 +260,19 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
 
   test.each([
     ["a fresh caller cork", "fresh"],
-    ["a caller cork below the dispatcher cork", "below-dispatcher"],
+    ["a caller cork on a reused socket", "reused"],
     ["nested caller corks after a partial release", "partial-nested"],
-    ["a caller cork that replaced the dispatcher cork", "replaced-dispatcher"],
-    ["a caller cork when dispatcher corking is suppressed", "suppressed-dispatcher"],
+    ["a caller cork after uncorking and corking again", "recorked"],
   ] as const)("preserves %s and its pending writes", async (_name, mode) => {
     let serverSocket!: Socket;
-    let suppressedCork: Socket["cork"] | undefined;
     const server = http.createServer((_req, res) => res.end("ok"));
     server.on("connection", socket => {
       serverSocket = socket;
-      if (mode !== "replaced-dispatcher") socket.cork();
-      if (mode === "partial-nested") socket.cork();
-      if (mode === "suppressed-dispatcher") {
-        suppressedCork = socket.cork;
-        socket.cork = () => {};
-      }
+      if (mode === "fresh") socket.cork();
     });
     const wss = new NpmWebSocketServer({ noServer: true });
     const upgraded = Promise.withResolvers<void>();
     server.on("upgrade", (req, socket, head) => {
-      if (suppressedCork) socket.cork = suppressedCork;
       try {
         wss.handleUpgrade(req, socket, head, ws => {
           ws.send("pending");
@@ -297,12 +289,16 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
     try {
       if (mode !== "fresh") {
         await finishKeepAliveRequest(port, agent);
+        serverSocket.cork();
       }
-      if (mode === "replaced-dispatcher") {
+      if (mode === "recorked") {
         serverSocket.uncork();
         serverSocket.cork();
       }
-      if (mode === "partial-nested") serverSocket.uncork();
+      if (mode === "partial-nested") {
+        serverSocket.cork();
+        serverSocket.uncork();
+      }
       client = new NpmWebSocket(`ws://127.0.0.1:${port}/upgrade`, { agent });
       const opened = waitForWebSocketOpen(client);
       const message = waitForWebSocketMessage(client);

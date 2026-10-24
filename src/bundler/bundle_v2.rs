@@ -3817,7 +3817,7 @@ pub mod bv2_impl {
                     bake::Side::Server => self.transpiler.options.target,
                 };
 
-                if self.enqueue_bake_entry_point_on_resolve_plugin_if_needed(
+                if self.enqueue_entry_point_on_resolve_plugin_if_needed_impl(
                     abs_path,
                     target,
                     None,
@@ -6489,7 +6489,7 @@ pub mod bv2_impl {
             target: options::Target,
             loader: Option<Loader>,
         ) -> bool {
-            self.enqueue_bake_entry_point_on_resolve_plugin_if_needed(
+            self.enqueue_entry_point_on_resolve_plugin_if_needed_impl(
                 entry_point,
                 target,
                 loader,
@@ -6499,7 +6499,7 @@ pub mod bv2_impl {
 
         /// `bake_entry_point`: see `MiniImportRecord::bake_entry_point`.
         #[inline(always)]
-        fn enqueue_bake_entry_point_on_resolve_plugin_if_needed(
+        fn enqueue_entry_point_on_resolve_plugin_if_needed_impl(
             &mut self,
             entry_point: &[u8],
             target: options::Target,

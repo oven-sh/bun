@@ -537,7 +537,10 @@ export default function () {
       ...Object.fromEntries(pages.map(name => [`/${name}`, `page-${name}`])),
     });
 
-    /** Builds the app in `dir`. `asked` is the sorted calls of the plugin, `scripts` says for each client script of a page whether the build wrote it. */
+    /**
+     * Builds the app in `dir`. `asked` is the sorted calls of the plugin. `scripts` says for each
+     * client script of a page whether the build wrote it.
+     */
     async function prerender(dir: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--app", "./app.ts"],

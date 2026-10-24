@@ -3662,10 +3662,13 @@ impl<'f, 's> Binder<'f, 's> {
             returns: IdList::new(rs, rl),
             end,
             contains_this: self.seen_this,
+            is_context_sensitive: false,
         };
         if yl != 0 {
             self.b.yields.push((id, IdList::new(ys, yl)));
         }
+        self.b.fns[id.idx()].is_context_sensitive = (self.b)
+            .is_context_sensitive_function_like_declaration(self.f, id, IdList::new(ys, yl));
         if exit.is_some() {
             self.b.exits.push((id, exit));
         }

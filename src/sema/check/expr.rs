@@ -2597,6 +2597,11 @@ impl<'p, 's> Checker<'p, 's> {
         container: Node,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
+        if let Some((of, member, known)) = self.last_this_type
+            && (of, member) == (file, container)
+        {
+            return Some(known);
+        }
         if hir.kind(container).is_function_like() {
             let func = hir.function_of(container);
             let f = &hir[func];
@@ -2634,11 +2639,20 @@ impl<'p, 's> Checker<'p, 's> {
         let class = hir.class_of(hir.parent(container));
         if class.is_some() {
             let sym = self.class_sym(file, class);
-            return Some(if hir.is_static(container) {
-                self.type_of_symbol(sym)
-            } else {
-                self.intern(TypeData::ThisParam(sym))
-            });
+            if hir.is_static(container) {
+                return Some(self.type_of_symbol(sym));
+            }
+            let this = self.intern(TypeData::ThisParam(sym));
+            // Nothing above depends on where `node` is in such a member.
+            if !hir.is_js
+                && matches!(
+                    hir.kind(container),
+                    Kind::MethodDeclaration | Kind::Constructor
+                )
+            {
+                self.last_this_type = Some((file, container, this));
+            }
+            return Some(this);
         }
         if container != Node::FILE {
             return None;

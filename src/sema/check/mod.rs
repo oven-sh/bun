@@ -940,6 +940,9 @@ impl<'s> Program<'s> {
             recent_unions: Default::default(),
             recent_unreduced_unions: Default::default(),
             unions_of_union_types: Default::default(),
+            first_unit_properties: Default::default(),
+            last_this_type: None,
+            any_function_type: Default::default(),
             union_calls: Default::default(),
             constraint_stack: Vec::new(),
             constraints_marked_circular: Vec::new(),
@@ -1049,8 +1052,6 @@ impl<'s> Program<'s> {
             work_trap: WORK_TRAP_DISARMED,
             rejected_expressions: Vec::new(),
             side_effect_free: Default::default(),
-            context_sensitive_functions: Default::default(),
-            context_sensitivity_visits: Default::default(),
             unwind_to: usize::MAX,
             unwind_work: 0,
             restart_with: None,
@@ -1769,6 +1770,12 @@ pub struct Checker<'p, 's> {
     recent_unreduced_unions: instantiate::Recent,
     /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.
     unions_of_union_types: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// The results of `first_unit_property`. A class without such a property has all its properties read each time.
+    first_unit_properties: FxHashMap<TypeId, Option<(Atom, TypeId)>>,
+    /// The method or constructor of a class that contained the last `this`, and the type of `this` in it.
+    last_this_type: Option<(FileId, crate::node::Node, TypeId)>,
+    /// See `any_function_type`.
+    any_function_type: std::cell::OnceCell<TypeId>,
     union_calls: unions::UnionCalls,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.
@@ -2060,10 +2067,6 @@ pub struct Checker<'p, 's> {
     rejected_expressions: Vec<(FileId, u32, u32)>,
     /// `is_side_effect_free` of the binary expressions with a long chain of binary expressions on their left.
     side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
-    /// `isContextSensitive` of the functions in a long chain where each function returns nothing but the next one.
-    context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
-    /// How many functions it has visited.
-    context_sensitivity_visits: std::cell::Cell<u64>,
     /// Set when a query was rejected for lack of stack. `enter` rejects every query while `stack` is
     /// higher than this. `usize::MAX` if no query was rejected. See `starts_over_from_lower`.
     unwind_to: usize,

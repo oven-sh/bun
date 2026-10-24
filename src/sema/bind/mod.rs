@@ -1411,6 +1411,8 @@ pub struct FnInfo {
     /// `NodeFlagsContainsThis`: it contains a `this` expression or type, possibly inside arrow
     /// functions, function types or signatures.
     pub contains_this: bool,
+    /// `isContextSensitiveFunctionLikeDeclaration`
+    pub is_context_sensitive: bool,
 }
 
 /// The syntactic position of an `infer T`, for the positions `getInferredTypeParameterConstraint`
@@ -1745,6 +1747,86 @@ impl<S: Storage> BoundIn<S> {
     pub fn symbol(&self, id: SymbolId) -> Symbol<'_> {
         let symbol = self.symbols.get(id.idx());
         symbol.expect("the symbol belongs to this file")
+    }
+
+    #[inline]
+    pub fn ids<T: From<u32>>(
+        &self,
+        list: IdList<T>,
+    ) -> impl ExactSizeIterator<Item = T> + Clone + '_ {
+        self.ids[list.range()].iter().map(|&i| T::from(i))
+    }
+
+    /// `isContextSensitive`. For `JsxAttributes`, see `Checker::is_jsx_attributes_context_sensitive`.
+    pub fn is_context_sensitive(&self, hir: &File, e: ExprId) -> bool {
+        match hir[e].kind {
+            // There is no case for an accessor.
+            ExprKind::Fn(f) => {
+                !matches!(hir[f].kind, FnKind::Getter | FnKind::Setter)
+                    && self.fns[f.idx()].is_context_sensitive
+            }
+            ExprKind::Yield { value, .. } => {
+                value.is_some() && self.is_context_sensitive(hir, value)
+            }
+            // There is no case for a `SpreadAssignment` or a `ShorthandPropertyAssignment`.
+            ExprKind::Object(props) => props.iter().any(|p| {
+                matches!(hir[p].kind, PropKind::Init | PropKind::Method)
+                    && hir[p].value.is_some()
+                    && self.is_context_sensitive(hir, hir[p].value)
+            }),
+            ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(hir, i)),
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
+                self.is_context_sensitive(hir, yes) || self.is_context_sensitive(hir, no)
+            }
+            ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => self.is_context_sensitive(hir, left) || self.is_context_sensitive(hir, right),
+            _ => false,
+        }
+    }
+
+    /// `HasContextSensitiveParameters`
+    pub fn has_context_sensitive_parameters(&self, hir: &File, f: FnId) -> bool {
+        let func = &hir[f];
+        if !func.type_params.is_empty() {
+            return false;
+        }
+        // `node.Parameters()`, of which the `this` parameter is the first.
+        if func.this_param.is_some() && func.this_ty(hir).is_none()
+            || func.params.iter().any(|p| hir[p].ty.is_none())
+        {
+            return true;
+        }
+        func.kind != FnKind::Arrow && func.this_param.is_none() && self.fns[f.idx()].contains_this
+    }
+
+    /// `isContextSensitiveFunctionLikeDeclaration`, for the binder. `yields` is what `yields_of(f)` returns once the
+    /// file is bound. Everything else about `f`, and about the functions in it, is in place.
+    fn is_context_sensitive_function_like_declaration(
+        &self,
+        hir: &File,
+        f: FnId,
+        yields: IdList<ExprId>,
+    ) -> bool {
+        let func = &hir[f];
+        // `hasContextSensitiveReturnExpression`
+        let returns_one = || match func.body {
+            _ if !func.type_params.is_empty() || func.ret.is_some() => false,
+            FnBody::None => false,
+            FnBody::Expr(body) => self.is_context_sensitive(hir, body),
+            FnBody::Block(_) => self.ids(self.fns[f.idx()].returns).any(|s| {
+                matches!(hir[s].kind, StmtKind::Return(value)
+                    if value.is_some() && self.is_context_sensitive(hir, value))
+            }),
+        };
+        self.has_context_sensitive_parameters(hir, f)
+            || returns_one()
+            // `hasContextSensitiveYieldExpression`
+            || func.flags.contains(Flags::GENERATOR)
+                && self.ids(yields).any(|y| self.is_context_sensitive(hir, y))
     }
 
     /// Returns the entry of `yields` for `f`, or an empty list.
@@ -2417,14 +2499,6 @@ impl Bound<'_> {
             }
             at = (at + 1) & (self.name_slots.len() - 1);
         }
-    }
-
-    #[inline]
-    pub fn ids<T: From<u32>>(
-        &self,
-        list: IdList<T>,
-    ) -> impl ExactSizeIterator<Item = T> + Clone + '_ {
-        self.ids[list.range()].iter().map(|&i| T::from(i))
     }
 
     pub fn is_shared(&self, flow: FlowId) -> bool {

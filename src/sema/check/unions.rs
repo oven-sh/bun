@@ -1172,6 +1172,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `removeSubtypes`, keyProperty: returns the first property of `ty` whose type is a unit type, and that type.
     /// Resolves the types of the preceding properties on the way, like `removeSubtypes`.
     fn first_unit_property(&mut self, ty: TypeId) -> Option<(Atom, TypeId)> {
+        if let Some(&known) = self.first_unit_properties.get(&ty) {
+            return known;
+        }
+        let before = self.non_cacheable_mark();
+        let found = self.first_unit_property_uncached(ty);
+        if before == self.non_cacheable_mark() {
+            self.first_unit_properties.insert(ty, found);
+        }
+        found
+    }
+
+    fn first_unit_property_uncached(&mut self, ty: TypeId) -> Option<(Atom, TypeId)> {
         // `getPropertiesOfType`
         let apparent = self.reduced_apparent_type(ty);
         let apparent = match self.is_union(apparent) {

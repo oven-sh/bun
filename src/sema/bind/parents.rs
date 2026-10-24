@@ -15,6 +15,7 @@ pub(super) const NO_FUNCTION: FnInfo = FnInfo {
     returns: IdList::EMPTY,
     end: UNREACHABLE,
     contains_this: false,
+    is_context_sensitive: false,
 };
 
 /// The lists to fill in. Each is as long as the file's matching list and starts out with empty

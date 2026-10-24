@@ -731,9 +731,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `anyFunctionType`: the type of a context sensitive function under `CheckModeSkipContextSensitive`.
     pub(super) fn any_function_type(&self) -> TypeId {
-        self.synth(Shape {
-            literal: Literalness::Partial,
-            ..Shape::new_in(self.arena)
+        *self.any_function_type.get_or_init(|| {
+            self.synth(Shape {
+                literal: Literalness::Partial,
+                ..Shape::new_in(self.arena)
+            })
         })
     }
 

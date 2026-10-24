@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -26,8 +26,41 @@ describe.concurrent("node-module-module", () => {
     expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
   });
 
+  test("_stat() says what is at a path", () => {
+    expect(Module._stat(import.meta.path)).toBe(0);
+    expect(Module._stat(import.meta.dir)).toBe(1);
+    expect(Module._stat(path.join(import.meta.dir, "does-not-exist"))).toBe(-1);
+    // The path is converted to a string, an argument that was not passed included.
+    expect(Module._stat()).toBe(-1);
+    expect(Module._stat(undefined)).toBe(-1);
+  });
+
   test("module.globalPaths exists", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
+  });
+
+  test("Object.entries(Module) passes exception check validation", async () => {
+    // jest-runtime copies Module's statics this way. Release builds ignore the option, so they only check that
+    // the copy is complete.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const Module = require("node:module");
+         const copy = Object.fromEntries(Object.entries(Module));
+         const missing = Object.keys(Module).filter(key => !(key in copy));
+         console.log(JSON.stringify({ missing, builtinModules: copy.builtinModules.length, globalPaths: Array.isArray(copy.globalPaths) }));`,
+      ],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ missing: [], builtinModules: 76, globalPaths: true }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("Module._findPath propagates an error thrown by an onResolve plugin", async () => {
@@ -270,6 +303,29 @@ console.log("survived", require("./late.js"));`,
     }
   });
 
+  test("compile cache writes do not run the bytecode optimizer", async () => {
+    // The optimizer is for `bun build --bytecode`, where it runs once. A compile cache
+    // write runs on every cold start, after `exit`, so it must skip the optimizer.
+    // `BUN_JSC_reportBytecodeOptimizer=1` prints one line per code block the optimizer touches.
+    using dir = tempDir("compile-cache-no-optimizer", {
+      "main.mjs": `import { f } from "./dep.mjs"; console.log(f(1));`,
+      "dep.mjs": `export function f(a) { let x = a + 1; return x; }`,
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    const env = {
+      ...bunEnv,
+      NODE_COMPILE_CACHE: cacheDir,
+      NODE_DEBUG_NATIVE: "COMPILE_CACHE",
+      BUN_JSC_reportBytecodeOptimizer: "1",
+    };
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], env, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("2");
+    expect(stderr).toMatch(/writing cache for ESM .*dep\.mjs.*success/);
+    expect(stderr).not.toContain("BytecodeOptimizer:");
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(isWindows)("compile cache entries are created 0600 like Node", async () => {
     // Entries hold the module's post-transpile source, and the default cache
     // location is a world-readable tmpdir; Node creates entry files 0600.
@@ -406,15 +462,15 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveFilename("fs")).toBe("fs");
   });
 
-  test("Module.runMain rejects a non-string argument without stringifying it", () => {
-    // Node validates typeof before any coercion, so the toString never runs.
+  test("Module.runMain propagates an error from stringifying its argument", () => {
+    const boom = new Error("boom");
     expect(() =>
       Module.runMain({
         toString() {
-          throw new Error("boom");
+          throw boom;
         },
       }),
-    ).toThrow('The "paths[0]" argument must be of type string');
+    ).toThrow(boom);
   });
 
   test("module.filename/id/path setters propagate a failed string conversion", () => {
@@ -435,11 +491,90 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveFilename("fs", null, false, { paths: null })).toBe("fs");
   });
 
+  // Hitting the real limit needs 5 GB, so the child runs with a 64 KiB synthetic allocation limit (2730 entries).
+  test("options.paths with too many entries for the native list throws a RangeError", async () => {
+    const LIMIT_BYTES = 64 * 1024;
+    const MAX_PATHS = Math.floor(LIMIT_BYTES / 24);
+    using dir = tempDir("resolve-paths-limit", {
+      "lib/node_modules/limit-pkg/package.json": JSON.stringify({ name: "limit-pkg", main: "index.js" }),
+      "lib/node_modules/limit-pkg/index.js": "module.exports = 1;",
+      "main.cjs": `
+        const path = require("node:path");
+        const Module = require("node:module");
+        const resolvers = {
+          "require.resolve": paths => require.resolve("limit-pkg", { paths }),
+          "Module._resolveFilename": paths => Module._resolveFilename("limit-pkg", module, false, { paths }),
+        };
+        // Only the last entry contains the package, so resolving it proves the whole list reached the resolver.
+        const resolveWith = (resolve, count) => {
+          const paths = new Array(count).fill(path.join(__dirname, "missing"));
+          paths[count - 1] = path.join(__dirname, "lib");
+          try {
+            return path.relative(__dirname, resolve(paths));
+          } catch (e) {
+            return e.name + ": " + e.message;
+          }
+        };
+        const result = {};
+        for (const [name, resolve] of Object.entries(resolvers)) {
+          result[name] = { atLimit: resolveWith(resolve, ${MAX_PATHS}), onePast: resolveWith(resolve, ${MAX_PATHS + 1}) };
+        }
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT_BYTES) },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const resolved = path.join("lib", "node_modules", "limit-pkg", "index.js");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout || "null")).toEqual({
+      "require.resolve": { atLimit: resolved, onePast: "RangeError: Out of memory" },
+      "Module._resolveFilename": { atLimit: resolved, onePast: "RangeError: Out of memory" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("createRequire trailing slash", () => {
     const req = createRequire(import.meta.dir + "/");
     expect(req.resolve("./node-module-module.test.js")).toBe(
       ospath(path.resolve(import.meta.dir, "./node-module-module.test.js")),
     );
+  });
+
+  // Runs in a child because a failure here crashes the process.
+  test("module APIs don't crash on paths longer than a path buffer", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = require("node:module");
+         const long = Buffer.alloc(100_000, "a").toString();
+         // createRequire() joins "noop.js" onto a directory path.
+         const req = m.createRequire("/" + Buffer.alloc(100_000, "d/").toString());
+         let code;
+         try { req.resolve("./x"); } catch (e) { code = e.code; }
+         console.log(JSON.stringify({
+           createRequire: code,
+           nodeModulePaths: m._nodeModulePaths("/" + long).map(p => p.length),
+           enableCompileCache: m.enableCompileCache(long).message,
+         }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const root = path.resolve("/").length;
+    expect(JSON.parse(stdout)).toEqual({
+      createRequire: "MODULE_NOT_FOUND",
+      nodeModulePaths: [root + 100_000 + "/node_modules".length, root + "node_modules".length],
+      enableCompileCache: "Cannot create cache directory: path too long",
+    });
+    expect(exitCode).toBe(0);
   });
 
   test("createRequire trailing slash file url", () => {
@@ -526,7 +661,7 @@ console.log("survived", require("./late.js"));`,
     // dominates RSS noise within a few thousand iterations.
     const code = /* js */ `
         const m = require("module");
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
         const comp = Buffer.alloc(30, "a").toString();
         const base = "/" + Array(20).fill(comp).join("/");
         for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);
@@ -555,6 +690,33 @@ console.log("survived", require("./late.js"));`,
     expect(growthMB).toBeLessThan(25);
     expect(exitCode).toBe(0);
   }, 20_000);
+
+  test("Module._stat truncates the path at the first null byte", async () => {
+    using dir = tempDir("module-stat-null-byte", { "file.js": "", "directory": { "x": "" } });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { _stat } = require("node:module");
+         const path = require("node:path");
+         const file = path.join(process.cwd(), "file.js");
+         const directory = path.join(process.cwd(), "directory");
+         console.log(JSON.stringify({
+           file: _stat(file + "\\0ignored"),
+           directory: _stat(directory + "\\0ignored"),
+           missing: _stat(path.join(process.cwd(), "missing\\0file.js")) < 0,
+         }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // node v26.3.0 prints the same line. It passes the path to uv_fs_stat as a C string.
+    expect(stdout).toBe('{"file":0,"directory":1,"missing":true}\n');
+    expect(exitCode).toBe(0);
+  });
 
   test("Module.wrap", () => {
     var mod = { exports: {} };
@@ -655,6 +817,46 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  test("require() throws when an overridden _resolveFilename returns a path with a null byte", async () => {
+    using dir = tempDir("resolve-filename-null-byte", {
+      "x.js": `module.exports = "loaded:" + __filename;`,
+      "main.cjs": `
+        const path = require("node:path");
+        const { Module } = require("node:module");
+        const real = path.join(__dirname, "x.js");
+        Module._resolveFilename = () => real + "\\u0000IGNORED";
+        const out = {};
+        try {
+          out.require = "loaded " + require("anything");
+        } catch (e) {
+          out.require = e.code;
+          out.requireMessageMentionsNullBytes = e.message.includes("without null bytes");
+        }
+        // Node returns the override's value from require.resolve() unchanged.
+        try {
+          out.resolveKeepsNullByte = require.resolve("anything").endsWith("\\u0000IGNORED");
+        } catch (e) {
+          out.resolveKeepsNullByte = e.code;
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Node v26.3.0 prints this exact object.
+    expect(JSON.parse(stdout)).toEqual({
+      require: "ERR_INVALID_ARG_VALUE",
+      requireMessageMentionsNullBytes: true,
+      resolveKeepsNullByte: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Overridden _resolveFilename receives a parent Module for createRequire from ESM", async () => {
     using dir = tempDir("resolve-filename-args-esm", {
       "real.cjs": "module.exports = 'REAL';",
@@ -747,6 +949,112 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  test("Overwriting _resolveFilename with a non-callable makes require() throw like Node", async () => {
+    // Node keeps _resolveFilename as a plain data property: any value can be
+    // assigned and reads back, and require() throws when it goes to call it.
+    using dir = tempDir("resolve-filename-non-callable", {
+      "dep.cjs": `module.exports = "dep";`,
+      "main.cjs": `
+        const Module = require("module");
+        const original = Module._resolveFilename;
+        const attempt = fn => {
+          try {
+            return "returned " + String(fn());
+          } catch (e) {
+            return e.constructor.name + ": " + e.message;
+          }
+        };
+        const results = {};
+        for (const [label, value] of [
+          ["object", {}],
+          ["string", "not a function"],
+          ["undefined", undefined],
+          ["null", null],
+          ["number", 42],
+          ["symbol", Symbol("s")],
+        ]) {
+          Module._resolveFilename = value;
+          results[label] = {
+            readsBack: Object.is(Module._resolveFilename, value),
+            require: attempt(() => require("./dep.cjs")),
+            requireResolve: attempt(() => require.resolve("./dep.cjs")),
+            createRequire: attempt(() => Module.createRequire(__filename)("./dep.cjs")),
+          };
+        }
+        // Callable objects other than plain functions are still honored.
+        Module._resolveFilename = new Proxy(original, {});
+        results.callableProxy = attempt(() => require("./dep.cjs"));
+        Module._resolveFilename = original;
+        results.restored = {
+          readsBack: Module._resolveFilename === original,
+          require: attempt(() => require("./dep.cjs")),
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const notAFunction = {
+      readsBack: true,
+      require: "TypeError: Module._resolveFilename is not a function",
+      requireResolve: "TypeError: Module._resolveFilename is not a function",
+      createRequire: "TypeError: Module._resolveFilename is not a function",
+    };
+    expect(JSON.parse(stdout)).toEqual({
+      object: notAFunction,
+      string: notAFunction,
+      undefined: notAFunction,
+      null: notAFunction,
+      number: notAFunction,
+      symbol: notAFunction,
+      callableProxy: "returned dep",
+      restored: { readsBack: true, require: "returned dep" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  describe.concurrent(
+    "Module._resolveFilename gives an ES module by a path the resolver would spell differently",
+    () => {
+      test.each([
+        ["a . segment", `__dirname + "/./esm.mjs"`],
+        ["a .. segment", `__dirname + "/sub/../esm.mjs"`],
+        ["a doubled separator", `__dirname + "//esm.mjs"`],
+        ["relative to the working directory", `"./esm.mjs"`],
+        ["a symlink to the file", `__dirname + "/link.mjs"`],
+        ["a symlink to its directory", `__dirname + "/linked/esm.mjs"`],
+      ])("%s", async (_, filename) => {
+        using dir = tempDir("resolve-filename-other-spelling", {
+          "esm.mjs": `import { dep } from "./dep.mjs"; export const who = "esm, " + dep;`,
+          "dep.mjs": `export const dep = "dep";`,
+          "sub/empty.txt": "",
+          "main.cjs": `
+          const Module = require("node:module");
+          Module._resolveFilename = () => ${filename};
+          console.log(require("anything").who, require("anything") === require("something else"));
+        `,
+        });
+        fs.symlinkSync("esm.mjs", path.join(String(dir), "link.mjs"), "file");
+        fs.symlinkSync(".", path.join(String(dir), "linked"), "dir");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "main.cjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "esm, dep true\n", stderr: "", exitCode: 0 });
+      });
+    },
+  );
+
   test("Overwriting Module.prototype.require", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "modulePrototypeOverwrite.cjs")],
@@ -758,6 +1066,66 @@ console.log("survived", require("./late.js"));`,
     const stdout = await proc.stdout.text();
     expect(stdout.trim().endsWith("--pass--")).toBe(true);
     expect(await proc.exited).toBe(0);
+  });
+
+  // Node's Module.prototype.require is `Module._load(id, this, false)`, so `this` is only used as the parent.
+  test("Module.prototype.require accepts a `this` that isn't a module", async () => {
+    using dir = tempDir("module-prototype-require-this", {
+      "dep.cjs": `module.exports = { name: "dep" };`,
+      "bad.cjs": `module.exports = ;`,
+      "main.cjs": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const dep = path.join(__dirname, "dep.cjs");
+        const bad = path.join(__dirname, "bad.cjs");
+
+        function load(parent, request) {
+          try {
+            return Module.prototype.require.call(parent, request);
+          } catch (e) {
+            return "threw " + e.name;
+          }
+        }
+
+        const plain = { id: __filename, filename: __filename };
+        const result = {};
+        result.plainObject = load(plain, dep);
+        result.parentIsThis = require.cache[dep].parent === plain;
+        result.requireAgain = require(dep) === result.plainObject;
+        delete require.cache[dep];
+        result.number = load(5, dep);
+        delete require.cache[dep];
+        result.nullThis = load(null, dep);
+        delete require.cache[dep];
+        result.relative = load(plain, "./dep.cjs");
+        result.builtin = load({}, "path") === path;
+        // A failed load must remove its placeholder module from require.cache.
+        result.failedLoad = load(plain, bad);
+        result.leftInCache = bad in require.cache;
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      plainObject: { name: "dep" },
+      parentIsThis: true,
+      requireAgain: true,
+      number: { name: "dep" },
+      nullThis: { name: "dep" },
+      relative: { name: "dep" },
+      builtin: true,
+      failedLoad: "threw BuildMessage",
+      leftInCache: false,
+    });
+    expect(exitCode).toBe(0);
   });
 
   test.each([
@@ -856,6 +1224,52 @@ console.log("survived", require("./late.js"));`,
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });
 
+  test("require.cache throws if it's first accessed near the stack limit, and the next access creates it", async () => {
+    const code = `
+      const Module = require("node:module");
+      // Only the deepest frame catches the overflow, and any call into the builtin from there overflows again.
+      function probe(useModuleCache) {
+        let outcome;
+        function recurse() {
+          try {
+            recurse();
+          } catch {
+            try {
+              outcome = typeof (useModuleCache ? Module._cache : require.cache);
+            } catch (err) {
+              outcome = err.constructor.name;
+            }
+          }
+        }
+        recurse();
+        return outcome;
+      }
+      const probes = [probe(false), probe(true)];
+      const cache = require.cache;
+      const hasEvalEntry = Object.keys(cache).some(key => key.endsWith("[eval]"));
+      const marker = {};
+      cache.fs = { exports: marker };
+      console.log(
+        JSON.stringify([
+          probes,
+          Object.getPrototypeOf(cache),
+          Module._cache === cache,
+          hasEvalEntry,
+          require("fs") === marker,
+        ]),
+      );
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify([["RangeError", "RangeError"], null, true, true, true]));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("Module.runMain", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -890,111 +1304,124 @@ console.log("survived", require("./late.js"));`,
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
   });
-
-  // https://github.com/oven-sh/bun/issues/31773
-  // runMain() with no argument must default to process.argv[1] (the current
-  // main entry) like Node, instead of coercing `undefined` to the string
-  // "undefined" and failing to resolve it as a module.
-  describe.each([
-    ["esm", "entry.mjs", `import { runMain } from "node:module";\nrunMain();\nconsole.log("ran");\n`],
-    ["cjs", "entry.cjs", `const { runMain } = require("node:module");\nrunMain();\nconsole.log("ran");\n`],
-  ])("runMain() with no argument (%s)", (_name, filename, source) => {
-    test("defaults to the main entry", async () => {
-      using dir = tempDir("run-main-no-arg", { [filename]: source });
-
+  describe.concurrent("Module.runMain resolves its argument from the working directory", () => {
+    test.each([
+      ["a relative path", "./server.js", "server.js"],
+      ["no extension", "./server", "server.js"],
+      ["a directory", "./dir", "dir/index.js"],
+      ["a . segment", "./dir/./index.js", "dir/index.js"],
+      ["a symlink", "./link.js", "server.js"],
+      ["a file that is missing", "./missing", "ResolveMessage"],
+    ])("%s", async (_, argument, expected) => {
+      const file = `console.log(require("node:path").relative(process.cwd(), __filename).replaceAll("\\\\", "/"));`;
+      using dir = tempDir("run-main-argument", {
+        "server.js": file,
+        "dir/index.js": file,
+        "main.cjs": `
+          try {
+            require("node:module").runMain(${JSON.stringify(argument)});
+          } catch (error) {
+            console.log(error.name);
+          }
+        `,
+      });
+      fs.symlinkSync("server.js", path.join(String(dir), "link.js"), "file");
       await using proc = Bun.spawn({
-        cmd: [bunExe(), filename],
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+    });
+  });
+
+  describe.concurrent("Module.runMain set by a preload", () => {
+    const handlers = `
+      process.on("uncaughtException", error => console.log("uncaughtException: " + error.message));
+      process.on("unhandledRejection", error => console.log("unhandledRejection: " + error.message));
+    `;
+    async function run(preload, inWorker = false, main = `console.log("main ran");`) {
+      using dir = tempDir("module-run-main", {
+        "preload.cjs": preload,
+        "main.cjs": main,
+        "worker.mjs": `new Worker(import.meta.dir + "/main.cjs", { preload: [import.meta.dir + "/preload.cjs"] });`,
+      });
+      await using proc = Bun.spawn({
+        cmd: inWorker ? [bunExe(), "./worker.mjs"] : [bunExe(), "--require", "./preload.cjs", "./main.cjs"],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
         stdout: "pipe",
       });
-
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+    }
 
-      expect(stderr).not.toContain("Cannot find package");
-      expect(stdout.trim()).toBe("ran");
-      expect(exitCode).toBe(0);
-    });
-  });
-
-  // With `-e` there is no process.argv[1]. Node throws ERR_INVALID_ARG_TYPE
-  // from path.resolve(undefined) instead of resolving a module named
-  // "undefined". Non-string arguments take the same path: Node's default
-  // parameter only substitutes `undefined`, so `runMain(null)` reaches
-  // path.resolve(null) and throws the same error.
-  describe.each([
-    ["no argument, no main entry", `require("node:module").runMain()`],
-    ["null argument", `require("node:module").runMain(null)`],
-    ["number argument", `require("node:module").runMain(42)`],
-  ])("runMain() with an invalid main (%s)", (_name, source) => {
-    test("throws ERR_INVALID_ARG_TYPE", async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", source],
-        env: bunEnv,
-        stderr: "pipe",
-        stdout: "pipe",
+    test.each([
+      ["{}", "Object"],
+      ["[]", "Array"],
+      [`"a string"`, `"a string"`],
+      [`Symbol("s")`, "Symbol(s)"],
+      ["10n", "10"],
+    ])("to %s, which is not a function", async (value, described) => {
+      expect(await run(`require("module").runMain = ${value};`)).toEqual({
+        stdout: "",
+        stderr: `TypeError: ${described} is not a function\n\nBun v<bun-version>`,
+        exitCode: 1,
       });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr).not.toContain("Cannot find package");
-      expect(stderr).toContain('The "paths[0]" argument must be of type string');
-      expect(stdout).toBe("");
-      expect(exitCode).toBe(1);
     });
-  });
 
-  // Node reads the default through a plain property get (`process.argv[1]`),
-  // so any replacement of process.argv behaves like JS property access: an
-  // array-like object works, a string indexes, and null throws a TypeError.
-  describe.each([
-    [
-      "array-like object works",
-      `process.argv = { 1: process.argv[1] };\nrequire("node:module").runMain();\nconsole.log("ran");\n`,
-      proc => {
-        expect(proc.stderr).not.toContain("Cannot find package");
-        expect(proc.stdout.trim()).toBe("ran");
-        expect(proc.exitCode).toBe(0);
-      },
-    ],
-    [
-      "string indexes like Node",
-      // "x/"[1] is "/": resolution fails on module "/", not on "undefined"
-      // and not with the paths[0] TypeError. An absolute path never triggers
-      // auto-install, so the failure is deterministic and offline.
-      `process.argv = "x/";\ntry { require("node:module").runMain(); console.log("bad: no throw"); } catch (e) { console.log(e.message.includes("undefined") || e.message.includes("paths[0]") ? "bad" : "indexed"); }\n`,
-      proc => {
-        expect(proc.stdout.trim()).toBe("indexed");
-        expect(proc.exitCode).toBe(0);
-      },
-    ],
-    [
-      "null throws a property-access TypeError",
-      `process.argv = null;\ntry { require("node:module").runMain(); console.log("bad: no throw"); } catch (e) { console.log(e instanceof TypeError && !e.message.includes("paths[0]") ? "typeerror" : "bad"); }\n`,
-      proc => {
-        expect(proc.stdout.trim()).toBe("typeerror");
-        expect(proc.exitCode).toBe(0);
-      },
-    ],
-  ])("runMain() with a replaced process.argv (%s)", (_name, source, check) => {
-    test("matches Node property access", async () => {
-      using dir = tempDir("run-main-argv-replaced", { "entry.cjs": source });
+    test("to a function that throws", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        `require("module").runMain = () => {\n  throw new RangeError("from the override");\n};`,
+      );
+      expect(stderr).toMatchInlineSnapshot(`
+        "1 | require("module").runMain = () => {
+        2 |   throw new RangeError("from the override");
+                        ^
+        RangeError: from the override
+            at <anonymous> (file:NN:NN)
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "entry.cjs"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-        stdout: "pipe",
+        Bun v<bun-version>"
+      `);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    });
+
+    test("to a function that calls the original and throws", async () => {
+      const preload = `
+        const Module = require("module");
+        const runMain = Module.runMain;
+        Module.runMain = (...args) => {
+          runMain(...args);
+          throw new Error("after the original");
+        };
+      `;
+      expect(await run(preload)).toMatchObject({ stdout: "main ran\n", exitCode: 1 });
+      expect(await run(handlers + preload)).toEqual({
+        stdout: "main ran\nunhandledRejection: after the original\n",
+        stderr: "",
+        exitCode: 0,
       });
+      // What the main file throws is not lost for it.
+      expect(await run(handlers + preload, false, `throw new Error("from main");`)).toEqual({
+        stdout: "unhandledRejection: after the original\nuncaughtException: from main\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      check({ stdout, stderr, exitCode });
+    test.each([
+      ["is not a function", "{}", "Object is not a function"],
+      ["throws", `() => { throw new Error("thrown"); }`, "thrown"],
+    ])("one that %s is reported once", async (_, value, message) => {
+      const expected = { stdout: `uncaughtException: ${message}\n`, stderr: "", exitCode: 0 };
+      expect(await run(`${handlers} require("module").runMain = ${value};`)).toEqual(expected);
+      expect(await run(`${handlers} require("module").runMain = ${value};`, true)).toEqual(expected);
     });
   });
-
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],

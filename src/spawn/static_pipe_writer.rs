@@ -180,9 +180,14 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
         #[cfg(not(windows))]
         {
+            use bun_sys::FdExt as _;
             // On POSIX `StdioResult` is an `Option<Fd>`.
-            match self.writer.start(self.stdio_result.unwrap(), true) {
+            let fd = self.stdio_result.unwrap();
+            match self.writer.start(fd, true) {
                 bun_sys::Result::Err(err) => {
+                    // The writer did not take `fd`; nothing else closes it.
+                    self.stdio_result = None;
+                    fd.close();
                     // start() failed: `started` stays false so no release
                     // site fires — release start()'s `+1` here.
                     // SAFETY: `self` is the live `Self` we ref'd at the top
@@ -275,9 +280,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // for the lifetime of this writer (the process owns/outlives its stdio writers).
         unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
         if release_start_ref {
-            // SAFETY: token taken above. On POSIX this frees `self`: it is the
-            // last use here, and the writer's `close()` frames below do nothing
-            // after this callback. On Windows the in-flight write's ref outlives it.
+            // SAFETY: token taken above; last use of `self`. After a failed write the
+            // writer holds a ref of its own until its `close()` returns (`_on_error`
+            // on POSIX, the in-flight write on Windows).
             unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
         }
     }

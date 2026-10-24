@@ -55,8 +55,9 @@ fn env_string_store_put(
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Allocate from `bump` (the
     // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. Value bytes alias the long-lived
-    // env-map storage.
+    // instead of leaking a `Box` per env var. Copy the value because
+    // `Bun__setEnvValue` frees the env-map entry it points into.
+    let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
     ));
@@ -140,6 +141,7 @@ impl DefineExt for Define {
     ) -> Result<(), bun_alloc::AllocError> {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
+        self.dots_filter.insert(key);
         if let Some(existing) = self.dots.get_mut(key) {
             existing.push(DotDefine {
                 parts,
@@ -166,6 +168,7 @@ impl DefineExt for Define {
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),
+            dots_filter: Default::default(),
             drop_debugger,
             user_hash: None,
         });
@@ -282,6 +285,29 @@ pub trait DefineDataExt: Sized {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, crate::Error>;
+}
+
+/// The positions are in the text of the define, and the printer takes them for ones in the file.
+fn clear_locs(expr: &mut bun_ast::Expr) {
+    expr.loc = bun_ast::Loc::EMPTY;
+    match expr.data {
+        ExprData::EObject(mut object) => {
+            object.close_brace_loc = bun_ast::Loc::EMPTY;
+            for property in object.properties.iter_mut() {
+                if let Some(key) = &mut property.key {
+                    clear_locs(key);
+                }
+                if let Some(value) = &mut property.value {
+                    clear_locs(value);
+                }
+            }
+        }
+        ExprData::EArray(mut array) => {
+            array.close_bracket_loc = bun_ast::Loc::EMPTY;
+            array.items.iter_mut().for_each(clear_locs);
+        }
+        _ => {}
+    }
 }
 
 impl DefineDataExt for DefineData {
@@ -441,7 +467,9 @@ impl DefineDataExt for DefineData {
         // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
         // is identity, so without `deep_clone` the `DefineData.value` dangles
         // into a freed slab and `process.env.NODE_ENV` reads garbage.
-        let data: ExprData = expr.data.deep_clone(bump)?;
+        let mut expr = bun_parsers::json_parser::clone_out_of_store(&expr, &source, log, bump)?;
+        clear_locs(&mut expr);
+        let data: ExprData = expr.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,

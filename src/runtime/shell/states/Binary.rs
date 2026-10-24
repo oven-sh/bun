@@ -5,7 +5,7 @@ use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
-pub struct Binary {
+pub(crate) struct Binary {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Binary>,
     pub(crate) io: IO,
@@ -77,10 +77,11 @@ impl Binary {
         exit_code: ExitCode,
     ) -> Yield {
         interp.deinit_node(child);
+        let stop = interp.interrupted(this);
         {
             let me = interp.as_binary_mut(this);
             me.currently_executing = None;
-            if me.left.is_none() && !me.base.interrupted {
+            if me.left.is_none() && !stop {
                 me.left = Some(exit_code);
             } else {
                 me.right = Some(exit_code);

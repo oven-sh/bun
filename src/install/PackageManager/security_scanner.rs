@@ -1,22 +1,22 @@
 use crate::lockfile::package::PackageColumns as _;
+use core::ffi::CStr;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
 use bstr::BStr;
 
-// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
-// uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
-// on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
 use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
+use crate::repository_real::RepositoryExt as _;
+use crate::resolution::{append_without_url_credentials, append_without_url_userinfo};
 use bun_collections::ArrayHashMap;
+use bun_core::fmt::{escape_control_chars, escape_control_chars_multiline};
 use bun_core::strings;
 use bun_core::{self, Output};
 use bun_event_loop::EventLoopHandle;
+use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
@@ -29,7 +29,7 @@ use bun_ptr::{RefCount, RefPtr};
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnEnv,
     SpawnOptions, Status, Stdio,
 };
 use bun_sys::{self, Fd, FdExt as _};
@@ -38,9 +38,6 @@ use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
 use crate::package_manager_real::package_manager_options::Do;
 
-/// Signal name for a raw signal byte.
-/// `Status::Signaled` carries the raw byte; named range 1..=31 maps via
-/// `SignalCode::name()`, RT/out-of-range values fall back to "UNKNOWN".
 #[inline]
 fn signal_name(raw: u8) -> &'static str {
     bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")
@@ -101,38 +98,39 @@ fn do_partial_install_of_security_scanner(
 
     let packages_to_install: Option<&[PackageID]> = Some(&[security_scanner_pkg_id]);
 
-    let summary = match manager.options.node_linker {
-        bun_install_types::NodeLinker::NodeLinker::Hoisted
-        // TODO
-        | bun_install_types::NodeLinker::NodeLinker::Auto => {
-            HoistedInstall::install_hoisted_packages(
-                manager,
-                ctx,
-                &[],
-                true,
-                log_level,
-                packages_to_install,
-            )?
-        }
-        bun_install_types::NodeLinker::NodeLinker::Isolated => {
-            IsolatedInstall::install_isolated_packages(
-                manager,
-                ctx,
-                true,
-                &[],
-                packages_to_install,
-            )?
-        }
+    // The linker of the install that follows. `bun pm scan` has not chosen a configVersion.
+    let linker = crate::lockfile_real::resolve_node_linker(
+        manager.options.node_linker,
+        (manager.options.config_version)
+            .or(manager.lockfile.saved_config_version)
+            .unwrap_or(crate::config_version::ConfigVersion::V0),
+        manager.lockfile.workspace_paths.len() > 0,
+    );
+    let isolated = linker == bun_install_types::NodeLinker::NodeLinker::Isolated;
+    let mut summary = if isolated {
+        IsolatedInstall::install_isolated_packages(
+            manager,
+            ctx,
+            /* install_root_dependencies */ true,
+            &[],
+            packages_to_install,
+            /* warn_incorrect_peers */ false,
+        )?
+    } else {
+        HoistedInstall::install_hoisted_packages(
+            manager,
+            ctx,
+            &[],
+            true,
+            log_level,
+            packages_to_install,
+        )?
     };
-
-    if cfg!(debug_assertions) {
-        bun_core::debug_warn!(
-            "Partial install summary - success: {}, fail: {}, skipped: {}",
-            summary.success,
-            summary.fail,
-            summary.skipped
-        );
-    }
+    summary.fail += manager.report_offline_misses(
+        &summary.offline_misses,
+        &[security_scanner_pkg_id],
+        isolated,
+    )?;
 
     if summary.fail > 0 {
         return Err(crate::Error::PartialInstallFailed);
@@ -158,23 +156,15 @@ struct ScannerFinder<'a> {
 impl<'a> ScannerFinder<'a> {
     fn find_in_root_dependencies(&self) -> Option<PackageID> {
         let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_dependencies = pkgs.items_dependencies();
-        let pkg_resolutions = pkgs.items_resolution();
         let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
+        let root_deps = pkgs.items_dependencies()[0];
 
-        let root_pkg_id: PackageID = 0;
-        let root_deps = pkg_dependencies[root_pkg_id as usize];
-
-        for _dep_id in root_deps.begin()..root_deps.end() {
-            let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
+        for dep_id in root_deps.begin()..root_deps.end() {
             let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
-            if dep_pkg_id == invalid_package_id {
-                continue;
-            }
-
-            let dep_res = &pkg_resolutions[dep_pkg_id as usize];
-            if dep_res.tag != bun_install::resolution::Tag::Npm {
+            if dep_pkg_id == invalid_package_id
+                || pkgs.items_resolution()[dep_pkg_id as usize].tag != ResolutionTag::Npm
+            {
                 continue;
             }
 
@@ -194,15 +184,11 @@ impl<'a> ScannerFinder<'a> {
         let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
 
         for pkg_idx in 0..pkgs.len() {
-            if pkg_res[pkg_idx].tag != bun_install::resolution::Tag::Workspace {
+            if pkg_res[pkg_idx].tag != ResolutionTag::Workspace {
                 continue;
             }
 
-            let deps = pkg_deps[pkg_idx];
-            for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-                let dep = &self.manager.lockfile.buffers.dependencies[dep_id as usize];
-
+            for dep in pkg_deps[pkg_idx].get(&self.manager.lockfile.buffers.dependencies) {
                 if dep.name.slice(string_buf) == self.scanner_name {
                     return Err(crate::Error::SecurityScannerInWorkspace);
                 }
@@ -218,17 +204,32 @@ pub(crate) fn perform_security_scan_after_resolution(
     command_ctx: CommandContext,
     original_cwd: &[u8],
     seeds: &[PackageID],
+    loaded_lockfile: bool,
 ) -> Result<Option<SecurityScanResults>, Error> {
     let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
     };
 
+    // No command skips a configured scanner unless the run installs nothing into `node_modules`.
     if manager.options.dry_run || !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
         return Ok(None);
     }
 
-    let scan_all =
-        manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
+    let has_node_modules = {
+        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+        manager.root_dir.has_comptime_query(b"node_modules")
+    };
+    // A command that names the packages it adds or updates scans only those packages and `seeds`.
+    // The install that wrote the lockfile and `node_modules` already scanned everything else.
+    let scan_all = manager.update_requests.is_empty()
+        || !loaded_lockfile
+        || !has_node_modules
+        || !matches!(
+            manager.subcommand,
+            bun_install::Subcommand::Add
+                | bun_install::Subcommand::Install
+                | bun_install::Subcommand::Update
+        );
     scan_installing_scanner_if_needed(
         manager,
         security_scanner,
@@ -266,16 +267,14 @@ fn scan_installing_scanner_if_needed(
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
-    let result = attempt_security_scan(
+    match attempt_security_scan(
         manager,
         security_scanner,
         scan_all,
         seeds,
-        command_ctx,
         original_cwd,
-    )?;
-
-    match result {
+        false,
+    )? {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
@@ -283,16 +282,14 @@ fn scan_installing_scanner_if_needed(
             do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
             bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
 
-            let retry_result = attempt_security_scan_with_retry(
+            match attempt_security_scan(
                 manager,
                 security_scanner,
                 scan_all,
                 seeds,
-                command_ctx,
                 original_cwd,
                 true,
-            )?;
-            match retry_result {
+            )? {
                 ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
                 ScanAttemptResult::NeedsInstall(_) => Err(crate::Error::SecurityScannerRetryFailed),
             }
@@ -312,12 +309,13 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
     for advisory in results.advisories.iter() {
         Output::print(format_args!("\n"));
 
+        let package = escape_control_chars(&advisory.package);
         match advisory.level {
             SecurityAdvisoryLevel::Fatal => {
-                bun_core::pretty!("  <red>FATAL<r>: {}\n", BStr::new(&advisory.package));
+                bun_core::pretty!("  <red>FATAL<r>: {}\n", package);
             }
             SecurityAdvisoryLevel::Warn => {
-                bun_core::pretty!("  <yellow>WARNING<r>: {}\n", BStr::new(&advisory.package));
+                bun_core::pretty!("  <yellow>WARNING<r>: {}\n", package);
             }
         }
 
@@ -329,9 +327,9 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
                         bun_core::pretty!(" › ");
                     }
                     let ancestor_name = pkg_names[*ancestor_id as usize].slice(string_buf);
-                    bun_core::pretty!("{}", BStr::new(ancestor_name));
+                    bun_core::pretty!("{}", escape_control_chars(ancestor_name));
                 }
-                bun_core::pretty!(" › <red>{}<r>\n", BStr::new(&advisory.package));
+                bun_core::pretty!(" › <red>{}<r>\n", package);
             } else {
                 bun_core::pretty!("    <d>(direct dependency)<r>\n");
             }
@@ -339,12 +337,12 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
 
         if let Some(desc) = &advisory.description {
             if !desc.is_empty() {
-                bun_core::pretty!("    {}\n", BStr::new(desc));
+                bun_core::pretty!("    {}\n", escape_control_chars_multiline(desc));
             }
         }
         if let Some(url) = &advisory.url {
             if !url.is_empty() {
-                bun_core::pretty!("    <cyan>{}<r>\n", BStr::new(url));
+                bun_core::pretty!("    <cyan>{}<r>\n", escape_control_chars(url));
             }
         }
     }
@@ -406,33 +404,18 @@ pub(crate) fn prompt_for_warnings() -> bool {
 
     let should_continue = match first_byte {
         b'\n' => false,
-        b'\r' => 'blk: {
-            let Ok(next_byte) = reader.take_byte() else {
-                break 'blk false;
-            };
-            break 'blk next_byte == b'\n' && false;
+        b'\r' => {
+            let _ = reader.take_byte();
+            false
         }
-        b'y' | b'Y' => 'blk: {
-            let Ok(next_byte) = reader.take_byte() else {
-                break 'blk false;
-            };
-            if next_byte == b'\n' {
-                break 'blk true;
-            } else if next_byte == b'\r' {
-                let Ok(second_byte) = reader.take_byte() else {
-                    break 'blk false;
-                };
-                break 'blk second_byte == b'\n';
-            }
-            break 'blk false;
-        }
-        _ => 'blk: {
-            while let Ok(b) = reader.take_byte() {
-                if b == b'\n' || b == b'\r' {
-                    break;
-                }
-            }
-            break 'blk false;
+        b'y' | b'Y' => match reader.take_byte() {
+            Ok(b'\n') => true,
+            Ok(b'\r') => matches!(reader.take_byte(), Ok(b'\n')),
+            _ => false,
+        },
+        _ => {
+            while !matches!(reader.take_byte(), Err(_) | Ok(b'\n' | b'\r')) {}
+            false
         }
     };
 
@@ -445,6 +428,14 @@ pub(crate) fn prompt_for_warnings() -> bool {
     true
 }
 
+/// Everything that is not the project itself, so that a kind added later is scanned too.
+fn is_scannable_resolution(tag: ResolutionTag) -> bool {
+    !matches!(
+        tag,
+        ResolutionTag::Uninitialized | ResolutionTag::Root | ResolutionTag::Workspace
+    )
+}
+
 struct PackageCollector<'a> {
     manager: &'a PackageManager,
     dedupe: ArrayHashMap<PackageID, ()>,
@@ -454,7 +445,6 @@ struct PackageCollector<'a> {
 
 struct QueueItem {
     pkg_id: PackageID,
-    dep_id: DependencyID,
     pkg_path: Vec<PackageID>,
     dep_path: Vec<DependencyID>,
 }
@@ -469,142 +459,64 @@ impl<'a> PackageCollector<'a> {
         }
     }
 
+    /// Queues the package `dep_id` resolves to, unless it was queued before.
+    fn enqueue(
+        &mut self,
+        pkg_path: &[PackageID],
+        dep_path: &[DependencyID],
+        dep_id: DependencyID,
+    ) -> Result<(), Error> {
+        let pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
+        if pkg_id == invalid_package_id || self.dedupe.get_or_put(pkg_id)?.found_existing {
+            return Ok(());
+        }
+        self.queue.push_back(QueueItem {
+            pkg_id,
+            pkg_path: [pkg_path, &[pkg_id]].concat(),
+            dep_path: [dep_path, &[dep_id]].concat(),
+        });
+        Ok(())
+    }
+
+    /// The dependencies of the root package, then those of the workspace packages.
     fn collect_all_packages(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_dependencies = pkgs.items_dependencies();
-        let pkg_resolutions = pkgs.items_resolution();
-
-        let root_pkg_id: PackageID = 0;
-        let root_deps = pkg_dependencies[root_pkg_id as usize];
-
-        // collect all npm deps from the root package
-        for _dep_id in root_deps.begin()..root_deps.end() {
-            let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-            let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
-
-            if dep_pkg_id == invalid_package_id {
+        for (pkg_id, deps) in pkgs.items_dependencies().iter().enumerate() {
+            if pkg_id != 0 && pkgs.items_resolution()[pkg_id].tag != ResolutionTag::Workspace {
                 continue;
             }
-
-            if self.dedupe.get_or_put(dep_pkg_id)?.found_existing {
-                continue;
-            }
-
-            let pkg_path_buf: Vec<PackageID> = vec![root_pkg_id, dep_pkg_id];
-
-            let dep_path_buf: Vec<DependencyID> = vec![dep_id];
-
-            self.queue.push_back(QueueItem {
-                pkg_id: dep_pkg_id,
-                dep_id,
-                pkg_path: pkg_path_buf,
-                dep_path: dep_path_buf,
-            });
-        }
-
-        // and collect npm deps from workspace packages
-        for pkg_idx in 0..pkgs.len() {
-            let pkg_id: PackageID = PackageID::try_from(pkg_idx).expect("int cast");
-            if pkg_resolutions[pkg_id as usize].tag != bun_install::resolution::Tag::Workspace {
-                continue;
-            }
-
-            let workspace_deps = pkg_dependencies[pkg_id as usize];
-            for _dep_id in workspace_deps.begin()..workspace_deps.end() {
-                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-                let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
-
-                if dep_pkg_id == invalid_package_id {
-                    continue;
-                }
-
-                if self.dedupe.get_or_put(dep_pkg_id)?.found_existing {
-                    continue;
-                }
-
-                let pkg_path_buf: Vec<PackageID> = vec![pkg_id, dep_pkg_id];
-
-                let dep_path_buf: Vec<DependencyID> = vec![dep_id];
-
-                self.queue.push_back(QueueItem {
-                    pkg_id: dep_pkg_id,
-                    dep_id,
-                    pkg_path: pkg_path_buf,
-                    dep_path: dep_path_buf,
-                });
+            for dep_id in deps.begin()..deps.end() {
+                self.enqueue(&[pkg_id as PackageID], &[], dep_id)?;
             }
         }
-
         Ok(())
     }
 
     fn collect_update_packages(&mut self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_resolutions = pkgs.items_resolution();
-        let pkg_dependencies = pkgs.items_dependencies();
+        let manager = self.manager;
+        let pkgs = manager.lockfile.packages.slice();
+        let resolutions = manager.lockfile.buffers.resolutions.as_slice();
 
-        for req in self.manager.update_requests.iter() {
-            for _update_pkg_id in 0..pkgs.len() {
-                let update_pkg_id: PackageID =
-                    PackageID::try_from(_update_pkg_id).expect("int cast");
-                if update_pkg_id != req.package_id {
-                    continue;
+        for req in manager.update_requests.iter() {
+            if req.package_id as usize >= pkgs.len() {
+                continue;
+            }
+            let importers = (0..pkgs.len()).filter(|&pkg_id| {
+                matches!(
+                    pkgs.items_resolution()[pkg_id].tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                )
+            });
+            for pkg_id in importers {
+                let deps = pkgs.items_dependencies()[pkg_id];
+                if let Some(dep_id) = (deps.begin()..deps.end())
+                    .find(|&dep_id| resolutions[dep_id as usize] == req.package_id)
+                {
+                    self.enqueue(&[pkg_id as PackageID], &[], dep_id)?;
+                    break;
                 }
-
-                let mut update_dep_id: DependencyID = invalid_dependency_id;
-                let mut parent_pkg_id: PackageID = invalid_package_id;
-
-                'update_dep_id: for _pkg_id in 0..pkgs.len() {
-                    let pkg_id: PackageID = PackageID::try_from(_pkg_id).expect("int cast");
-                    let pkg_res = &pkg_resolutions[pkg_id as usize];
-                    if pkg_res.tag != bun_install::resolution::Tag::Root
-                        && pkg_res.tag != bun_install::resolution::Tag::Workspace
-                    {
-                        continue;
-                    }
-
-                    let pkg_deps = pkg_dependencies[pkg_id as usize];
-                    for _dep_id in pkg_deps.begin()..pkg_deps.end() {
-                        let dep_id: DependencyID =
-                            DependencyID::try_from(_dep_id).expect("int cast");
-                        let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
-                        if dep_pkg_id == invalid_package_id {
-                            continue;
-                        }
-                        if dep_pkg_id != update_pkg_id {
-                            continue;
-                        }
-
-                        update_dep_id = dep_id;
-                        parent_pkg_id = pkg_id;
-                        break 'update_dep_id;
-                    }
-                }
-
-                if update_dep_id == invalid_dependency_id {
-                    continue;
-                }
-                if self.dedupe.get_or_put(update_pkg_id)?.found_existing {
-                    continue;
-                }
-
-                let mut initial_pkg_path: Vec<PackageID> = Vec::new();
-                if parent_pkg_id != invalid_package_id {
-                    initial_pkg_path.push(parent_pkg_id);
-                }
-                initial_pkg_path.push(update_pkg_id);
-
-                let initial_dep_path: Vec<DependencyID> = vec![update_dep_id];
-
-                self.queue.push_back(QueueItem {
-                    pkg_id: update_pkg_id,
-                    dep_id: update_dep_id,
-                    pkg_path: initial_pkg_path,
-                    dep_path: initial_dep_path,
-                });
             }
         }
-
         Ok(())
     }
 
@@ -614,7 +526,6 @@ impl<'a> PackageCollector<'a> {
         }
 
         let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_dependencies = pkgs.items_dependencies();
         let resolutions = self.manager.lockfile.buffers.resolutions.as_slice();
 
         let mut wanted = bun_collections::DynamicBitSet::init_empty(pkgs.len())?;
@@ -624,164 +535,138 @@ impl<'a> PackageCollector<'a> {
             }
         }
 
-        for (parent_idx, deps) in pkg_dependencies.iter().enumerate() {
-            let parent: PackageID = PackageID::try_from(parent_idx).expect("int cast");
-            for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
+        for (parent, deps) in pkgs.items_dependencies().iter().enumerate() {
+            for dep_id in deps.begin()..deps.end() {
                 let target = resolutions[dep_id as usize];
-                if target == invalid_package_id || !wanted.is_set(target as usize) {
-                    continue;
+                if target != invalid_package_id && wanted.is_set(target as usize) {
+                    self.enqueue(&[parent as PackageID], &[], dep_id)?;
                 }
-                if self.dedupe.get_or_put(target)?.found_existing {
-                    continue;
-                }
-
-                self.queue.push_back(QueueItem {
-                    pkg_id: target,
-                    dep_id,
-                    pkg_path: vec![parent, target],
-                    dep_path: vec![dep_id],
-                });
             }
         }
-
         Ok(())
     }
 
     fn process_queue(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_resolutions = pkgs.items_resolution();
-        let pkg_dependencies = pkgs.items_dependencies();
 
         while let Some(item) = self.queue.pop_front() {
-            // `defer mutable_item.{pkg,dep}_path.deinit(...)` — Vec drops at end of loop body.
+            let pkg_deps = pkgs.items_dependencies()[item.pkg_id as usize];
+            for dep_id in pkg_deps.begin()..pkg_deps.end() {
+                self.enqueue(&item.pkg_path, &item.dep_path, dep_id)?;
+            }
 
-            let pkg_id = item.pkg_id;
-            let _ = item.dep_id; // Could be useful in the future for dependency-specific processing
-
-            if pkg_resolutions[pkg_id as usize].tag == bun_install::resolution::Tag::Npm {
-                let pkg_path_copy: Box<[PackageID]> = item.pkg_path.clone().into_boxed_slice();
-                let dep_path_copy: Box<[DependencyID]> = item.dep_path.clone().into_boxed_slice();
-
+            if is_scannable_resolution(pkgs.items_resolution()[item.pkg_id as usize].tag) {
                 self.package_paths.put(
-                    pkg_id,
+                    item.pkg_id,
                     PackagePath {
-                        pkg_path: pkg_path_copy,
-                        dep_path: dep_path_copy,
+                        pkg_path: item.pkg_path.into_boxed_slice(),
+                        dep_path: item.dep_path.into_boxed_slice(),
                     },
                 )?;
             }
-
-            let pkg_deps = pkg_dependencies[pkg_id as usize];
-            for _next_dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let next_dep_id: DependencyID =
-                    DependencyID::try_from(_next_dep_id).expect("int cast");
-                let next_pkg_id = self.manager.lockfile.buffers.resolutions[next_dep_id as usize];
-
-                if next_pkg_id == invalid_package_id {
-                    continue;
-                }
-
-                if self.dedupe.get_or_put(next_pkg_id)?.found_existing {
-                    continue;
-                }
-
-                let mut extended_pkg_path: Vec<PackageID> = Vec::new();
-                extended_pkg_path.extend_from_slice(&item.pkg_path);
-                extended_pkg_path.push(next_pkg_id);
-
-                let mut extended_dep_path: Vec<DependencyID> = Vec::new();
-                extended_dep_path.extend_from_slice(&item.dep_path);
-                extended_dep_path.push(next_dep_id);
-
-                self.queue.push_back(QueueItem {
-                    pkg_id: next_pkg_id,
-                    dep_id: next_dep_id,
-                    pkg_path: extended_pkg_path,
-                    dep_path: extended_dep_path,
-                });
-            }
         }
-
         Ok(())
     }
 }
 
-struct JSONBuilder<'a> {
-    manager: &'a PackageManager,
-    collector: &'a PackageCollector<'a>,
-}
+fn build_package_json(
+    manager: &PackageManager,
+    package_paths: &ArrayHashMap<PackageID, PackagePath>,
+) -> Result<Box<[u8]>, Error> {
+    let mut json_buf: Vec<u8> = Vec::new();
 
-impl<'a> JSONBuilder<'a> {
-    fn build_package_json(&self) -> Result<Box<[u8]>, Error> {
-        let mut json_buf: Vec<u8> = Vec::new();
+    let pkgs = manager.lockfile.packages.slice();
+    let pkg_names = pkgs.items_name();
+    let pkg_resolutions = pkgs.items_resolution();
+    let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+    let json_opts = bun_core::fmt::JSONFormatterUTF8Options::default();
 
-        let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_names = pkgs.items_name();
-        let pkg_resolutions = pkgs.items_resolution();
-        let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
-        let json_opts = bun_core::fmt::JSONFormatterUTF8Options::default();
+    json_buf.extend_from_slice(b"[\n");
 
-        json_buf.extend_from_slice(b"[\n");
+    let mut resolved: Vec<u8> = Vec::new();
+    let mut version: Vec<u8> = Vec::new();
+    let mut tarball: Vec<u8> = Vec::new();
+    let mut requested_range: Vec<u8> = Vec::new();
+    let mut first = true;
+    for (&pkg_id, paths) in package_paths.keys().iter().zip(package_paths.values()) {
+        let dep_id = paths
+            .dep_path
+            .last()
+            .copied()
+            .unwrap_or(invalid_dependency_id);
 
-        let mut first = true;
-        // `ArrayHashMap::iterator()` takes `&mut self`, but we only
-        // need shared access. Iterate by index over the parallel key/value
-        // slices instead (insertion-ordered).
-        let path_keys = self.collector.package_paths.keys();
-        let path_values = self.collector.package_paths.values();
-        for (i, pkg_id) in path_keys.iter().enumerate() {
-            let pkg_id = *pkg_id;
-            let paths = &path_values[i];
+        let pkg_name = pkg_names[pkg_id as usize];
+        let pkg_res = &pkg_resolutions[pkg_id as usize];
 
-            let dep_id = if !paths.dep_path.is_empty() {
-                paths.dep_path[paths.dep_path.len() - 1]
-            } else {
-                invalid_dependency_id
-            };
-
-            let pkg_name = pkg_names[pkg_id as usize];
-            let pkg_res = &pkg_resolutions[pkg_id as usize];
-
-            if !first {
-                json_buf.extend_from_slice(b",\n");
-            }
-
-            // SAFETY: `PackageCollector::process_queue` only inserts packages
-            // whose resolution tag is `Tag::Npm` into `package_paths`, so the
-            // `npm` union variant is the active field here.
-            let npm = pkg_res.npm();
-            if dep_id == invalid_dependency_id {
-                write!(
-                    &mut json_buf,
-                    "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": \"{}\",\n    \"tarball\": {}\n  }}",
-                    bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
-                    npm.version.fmt(string_buf),
-                    npm.version.fmt(string_buf),
-                    bun_core::fmt::format_json_string_utf8(npm.url.slice(string_buf), json_opts),
-                )?;
-            } else {
-                let dep_version =
-                    &self.manager.lockfile.buffers.dependencies[dep_id as usize].version;
-                write!(
-                    &mut json_buf,
-                    "  {{\n    \"name\": {},\n    \"version\": \"{}\",\n    \"requestedRange\": {},\n    \"tarball\": {}\n  }}",
-                    bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
-                    npm.version.fmt(string_buf),
-                    bun_core::fmt::format_json_string_utf8(
-                        dep_version.literal.slice(string_buf),
-                        json_opts
-                    ),
-                    bun_core::fmt::format_json_string_utf8(npm.url.slice(string_buf), json_opts),
-                )?;
-            }
-
-            first = false;
+        if !first {
+            json_buf.extend_from_slice(b",\n");
         }
 
-        json_buf.extend_from_slice(b"\n]");
-        Ok(json_buf.into_boxed_slice())
+        resolved.clear();
+        version.clear();
+        tarball.clear();
+        requested_range.clear();
+        match pkg_res.tag {
+            ResolutionTag::Npm => {
+                let npm = pkg_res.npm();
+                write!(&mut version, "{}", npm.version.fmt(string_buf))?;
+                append_without_url_userinfo(&mut tarball, npm.url.slice(string_buf));
+            }
+            tag => {
+                if tag == ResolutionTag::Folder {
+                    resolved.extend_from_slice(b"file:");
+                }
+                write!(&mut resolved, "{}", pkg_res.fmt_url(string_buf))?;
+                append_without_url_credentials(&mut version, &resolved);
+                match tag {
+                    ResolutionTag::Github => {
+                        let repository = pkg_res.github();
+                        let commit = if repository.resolved.is_empty() {
+                            repository.committish.slice(string_buf)
+                        } else {
+                            repository.resolved_commit(string_buf)
+                        };
+                        append_without_url_credentials(
+                            &mut tarball,
+                            &crate::package_manager_real::run_tasks::alloc_github_url_for_ref(
+                                manager, repository, commit,
+                            ),
+                        );
+                    }
+                    ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                        tarball.extend_from_slice(&version);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if dep_id == invalid_dependency_id {
+            requested_range.extend_from_slice(&version);
+        } else {
+            append_without_url_credentials(
+                &mut requested_range,
+                manager.lockfile.buffers.dependencies[dep_id as usize]
+                    .version
+                    .literal
+                    .slice(string_buf),
+            );
+        }
+
+        write!(
+            &mut json_buf,
+            "  {{\n    \"name\": {},\n    \"version\": {},\n    \"requestedRange\": {},\n    \"tarball\": {}\n  }}",
+            bun_core::fmt::format_json_string_utf8(pkg_name.slice(string_buf), json_opts),
+            bun_core::fmt::format_json_string_utf8(&version, json_opts),
+            bun_core::fmt::format_json_string_utf8(&requested_range, json_opts),
+            bun_core::fmt::format_json_string_utf8(&tarball, json_opts),
+        )?;
+
+        first = false;
     }
+
+    json_buf.extend_from_slice(b"\n]");
+    Ok(json_buf.into_boxed_slice())
 }
 
 // Security scanner subprocess entry point - uses IPC protocol for communication
@@ -789,31 +674,16 @@ impl<'a> JSONBuilder<'a> {
 // scanner-entry.d.ts is NOT included in the build (type definitions only)
 const SCANNER_ENTRY_SOURCE: &[u8] = include_bytes!("./scanner-entry.ts");
 
+fn replace_first(source: &[u8], placeholder: &[u8], with: &[u8]) -> Vec<u8> {
+    let index = strings::index_of(source, placeholder).expect("placeholder in scanner-entry.ts");
+    [&source[..index], with, &source[index + placeholder.len()..]].concat()
+}
+
 fn attempt_security_scan(
     manager: &mut PackageManager,
     security_scanner: &[u8],
     scan_all: bool,
     seeds: &[PackageID],
-    command_ctx: CommandContext,
-    original_cwd: &[u8],
-) -> Result<ScanAttemptResult, Error> {
-    attempt_security_scan_with_retry(
-        manager,
-        security_scanner,
-        scan_all,
-        seeds,
-        command_ctx,
-        original_cwd,
-        false,
-    )
-}
-
-fn attempt_security_scan_with_retry(
-    manager: &mut PackageManager,
-    security_scanner: &[u8],
-    scan_all: bool,
-    seeds: &[PackageID],
-    command_ctx: CommandContext,
     original_cwd: &[u8],
     is_retry: bool,
 ) -> Result<ScanAttemptResult, Error> {
@@ -857,56 +727,35 @@ fn attempt_security_scan_with_retry(
 
     collector.process_queue()?;
 
-    let json_builder = JSONBuilder {
-        manager,
-        collector: &collector,
-    };
-    let json_data = json_builder.build_package_json()?;
-    // `defer manager.allocator.free(json_data)` — Box<[u8]> drops at scope exit.
-
-    // destructure `collector` here to release its `&PackageManager`
-    // borrow before constructing `SecurityScanSubprocess` (which needs `&mut`).
-    // Only `package_paths` is read past this point.
+    // Releases the collector's `&PackageManager` before `SecurityScanSubprocess` takes `&mut`.
     let PackageCollector { package_paths, .. } = collector;
-    let mut package_paths = package_paths;
+    let json_data = build_package_json(manager, &package_paths)?;
     let packages_scanned = package_paths.count();
 
-    let mut code: Vec<u8> = Vec::new();
-
-    let mut temp_source: &[u8] = SCANNER_ENTRY_SOURCE;
-
-    let scanner_placeholder: &[u8] = b"__SCANNER_MODULE__";
-    if let Some(index) = strings::index_of(temp_source, scanner_placeholder) {
-        code.extend_from_slice(&temp_source[0..index]);
-        code.extend_from_slice(security_scanner);
-        code.extend_from_slice(&temp_source[index + scanner_placeholder.len()..]);
-        temp_source = code.as_slice();
-    }
-
-    let suppress_placeholder: &[u8] = b"__SUPPRESS_ERROR__";
-    if let Some(index) = strings::index_of(temp_source, suppress_placeholder) {
-        let mut new_code: Vec<u8> = Vec::new();
-        new_code.extend_from_slice(&temp_source[0..index]);
-        new_code.extend_from_slice(if suppress_error_output {
-            b"true"
-        } else {
-            b"false"
-        });
-        new_code.extend_from_slice(&temp_source[index + suppress_placeholder.len()..]);
-        // reshaped for borrowck — drop borrow of `code` (via `temp_source`) before reassigning.
-        code = new_code;
-    }
+    let suppress: &[u8] = if suppress_error_output {
+        b"true"
+    } else {
+        b"false"
+    };
+    let code = replace_first(SCANNER_ENTRY_SOURCE, b"__SUPPRESS_ERROR__", suppress);
+    // The scanner's name is substituted last, so a placeholder inside the name is never replaced.
+    let mut quoted: Vec<u8> = Vec::new();
+    write!(
+        &mut quoted,
+        "{}",
+        bun_core::fmt::format_json_string_utf8(security_scanner, Default::default())
+    )?;
+    let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
     let event_loop_handle = EventLoopHandle::from_any(&mut manager.event_loop);
     let mut scanner = Box::new(SecurityScanSubprocess {
         manager,
         event_loop_handle,
-        code: Box::<[u8]>::from(code.as_slice()),
-        json_data: Box::<[u8]>::from(&*json_data),
+        code: code.into_boxed_slice(),
+        json_data,
         process: None,
         ipc_reader: BufferedReader::init::<SecurityScanSubprocess>(),
         ipc_data: Vec::new(),
-        stderr_data: Vec::new(),
         has_received_ipc: false,
         exit_status: None,
         remaining_fds: 0,
@@ -928,13 +777,11 @@ fn attempt_security_scan_with_retry(
     unsafe { PackageManager::sleep_until(mgr, &mut scanner, scanner_is_done) };
 
     scanner.handle_results(
-        &mut package_paths,
+        &package_paths,
         start_time,
         packages_scanned,
         security_scanner,
         security_scanner_pkg_id,
-        command_ctx,
-        original_cwd,
         is_retry,
     )
 }
@@ -951,7 +798,6 @@ pub struct SecurityScanSubprocess<'a> {
     process: Option<ProcessHandle>,
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
-    stderr_data: Vec<u8>,
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
@@ -1011,7 +857,6 @@ bun_io::impl_buffered_reader_parent! {
 impl<'a> SecurityScanSubprocess<'a> {
     pub(crate) fn spawn(&mut self) -> Result<(), Error> {
         self.ipc_data = Vec::new();
-        self.stderr_data = Vec::new();
         let parent: *mut Self = self;
         self.ipc_reader.set_parent(parent.cast());
 
@@ -1031,36 +876,28 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let exec_path = bun_core::self_exe_path()?;
 
-        // Build
-        // owned NUL-terminated buffers so the pointers stay valid across the
-        // `spawn_process` FFI boundary.
-        let mut argv0_buf: Vec<u8> = exec_path.as_bytes().to_vec();
-        argv0_buf.push(0);
-        let mut argv3_buf: Vec<u8> = self.code.to_vec();
-        argv3_buf.push(0);
-        // Element type MUST be bare `*const c_char` (null sentinel), never
-        // `Option<*const c_char>`: raw pointers are already nullable, and
-        // `Option<*const T>` is a 2-word (tag, ptr) pair — casting that to
-        // `Argv` interleaves discriminant words and EFAULTs in the kernel.
-        let mut argv: [*const core::ffi::c_char; 5] = [
-            argv0_buf.as_ptr().cast(),
-            c"--no-install".as_ptr(),
-            c"-e".as_ptr(),
-            argv3_buf.as_ptr().cast(),
-            core::ptr::null(),
-        ];
-        const _: () = assert!(
-            core::mem::size_of::<[*const core::ffi::c_char; 5]>()
-                == 5 * core::mem::size_of::<usize>()
-        );
+        // Like a lifecycle script, it gets the environment that the install resolved, with no
+        // `.env` file on top.
+        let code =
+            std::ffi::CString::new(&*self.code).map_err(|_| crate::Error::InvalidCharacter)?;
+        let mut argv = vec![exec_path.as_cstr(), c"--no-install", c"--no-env-file"];
+        argv.extend(bun_core::Global::ca_store_flag().map(bun_core::ZStr::as_cstr));
+        argv.extend([c"-e", code.as_c_str()]);
+        let env = self.manager.env_mut();
+        // Set in the process environment after the loader copied it.
+        if bun_io::parent_death_watchdog::is_enabled() {
+            env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")?;
+        }
+        let envp = env.map.create_null_delimited_env_map()?;
+        let envp: Vec<&CStr> = envp.iter().collect();
 
         #[cfg(windows)]
         {
-            self.spawn_windows(&mut argv, ipc_output_fds)?;
+            self.spawn_windows(&argv, &envp, ipc_output_fds)?;
         }
         #[cfg(not(windows))]
         {
-            self.spawn_posix(&mut argv, ipc_output_fds)?;
+            self.spawn_posix(&argv, &envp, ipc_output_fds)?;
         }
 
         Ok(())
@@ -1073,7 +910,8 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(unix)]
     fn spawn_posix(
         &mut self,
-        argv: &mut [*const core::ffi::c_char; 5],
+        argv: &[&CStr],
+        envp: &[&CStr],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -1090,16 +928,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+            .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
@@ -1123,7 +953,8 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(windows)]
     fn spawn_windows(
         &mut self,
-        argv: &mut [*const core::ffi::c_char; 5],
+        argv: &[&CStr],
+        envp: &[&CStr],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         use bun_sys::ReturnCodeExt as _;
@@ -1202,16 +1033,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+            .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
@@ -1387,34 +1210,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // Do not tear
-            // down `ipc_reader` here unconditionally: that races process-exit
-            // against fd-3-readable: `ipc_reader.start()` only registers a
-            // poll on POSIX (no sync read), and `MiniEventLoop::tick_once`
-            // skips the uws tick whenever a concurrent task (the WaiterThread
-            // exit notification) is already queued. So a fast-exiting scanner
-            // under CI load reaches this branch with the JSON still sitting in
-            // the kernel pipe buffer, and `deinit()` drops it on the floor —
-            // `handle_results` then reports "exited without sending data".
-            //
-            // Two earlier band-aids (fcbbb52f0b2b sync drain; 230c8ef7f7df
-            // EINTR/EAGAIN retry) caught the common case but left a window:
-            // the bounded EAGAIN spin can give up before the kernel makes the
-            // write-end close visible, and tearing down at that point still
-            // discards the payload (or truncates it mid-JSON).
-            //
-            // Fix: try a best-effort sync drain (waitpid has returned, so the
-            // write end is closed and a blocking-ish drain is bounded), but
-            // ONLY tear down the reader if the drain actually reached EOF.
-            // If it bailed early (EAGAIN limit / unexpected errno / fd already
-            // invalid) leave the FilePoll registered: the next `tick_once`
-            // has no pending task, so it ticks uws, the poll delivers
-            // readable+HUP, `read_with_fn` drains to `Ok(0)`, and
-            // `on_reader_done` decrements `remaining_fds` exactly once.
-            //
-            // Windows reads via libuv (async) and the fd here is a uv-owned
-            // pipe handle — skip the sync drain there and keep the spec's
-            // teardown (the libuv exit/read ordering is not the failing path).
+            // The JSON may still be in the pipe, so drain it. Only EOF tears down the reader's
+            // poll.
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();
@@ -1433,10 +1230,6 @@ impl<'a> SecurityScanSubprocess<'a> {
                                 spins = 0;
                             }
                             Err(e) => match e.get_errno() {
-                                // macOS `bun_sys::read` is single-shot
-                                // (`read$NOCANCEL`); WaiterThread
-                                // + PTY matrix arms can land signals mid-drain.
-                                bun_sys::E::EINTR => continue,
                                 bun_sys::E::EAGAIN => {
                                     // Bounded spin only — if we don't converge
                                     // to EOF here, fall through to the poll
@@ -1453,13 +1246,6 @@ impl<'a> SecurityScanSubprocess<'a> {
                     }
                     self.has_received_ipc = !self.ipc_data.is_empty();
                     if !saw_eof {
-                        // Drain bailed before EOF — payload may be incomplete
-                        // and the write-end close not yet visible. Leave the
-                        // reader's poll in place; `on_reader_done` fires once
-                        // the event loop sees readable+HUP and performs the
-                        // single `remaining_fds -= 1` for fd 3. (`is_done()`
-                        // stays false until then; `tick_once` has no pending
-                        // task so it ticks uws on the next round.)
                         return;
                     }
                 }
@@ -1478,17 +1264,13 @@ impl<'a> SecurityScanSubprocess<'a> {
 
     pub(crate) fn handle_results(
         &mut self,
-        package_paths: &mut ArrayHashMap<PackageID, PackagePath>,
+        package_paths: &ArrayHashMap<PackageID, PackagePath>,
         start_time: i64,
         packages_scanned: usize,
         security_scanner: &[u8],
         security_scanner_pkg_id: Option<PackageID>,
-        _command_ctx: CommandContext, // Reserved for future use
-        _original_cwd: &[u8],         // Reserved for future use
         is_retry: bool,
     ) -> Result<ScanAttemptResult, Error> {
-        // `defer { ipc_data.deinit(); stderr_data.deinit(); }` — Vec fields drop with self.
-
         let Some(status) = self.exit_status.clone() else {
             Output::err_generic(
                 "Security scanner terminated without an exit status. This is a bug in Bun.",
@@ -1564,97 +1346,51 @@ impl<'a> SecurityScanSubprocess<'a> {
                 return Err(crate::Error::InvalidErrorCode);
             };
 
-            #[derive(PartialEq, Eq)]
-            enum ErrorCode {
-                ModuleNotFound,
-                InvalidVersion,
-                ScanFailed,
-            }
-            let error_code = match code_str {
-                b"MODULE_NOT_FOUND" => Some(ErrorCode::ModuleNotFound),
-                b"INVALID_VERSION" => Some(ErrorCode::InvalidVersion),
-                b"SCAN_FAILED" => Some(ErrorCode::ScanFailed),
-                _ => None,
-            };
-
-            let Some(error_code) = error_code else {
-                Output::err_generic(
-                    "Unknown security scanner error code: {}",
-                    (BStr::new(code_str),),
-                );
-                return Err(crate::Error::UnknownErrorCode);
-            };
-
-            match error_code {
-                ErrorCode::ModuleNotFound => {
-                    // If this is a retry after partial install, we need to handle it differently
-                    // The scanner might have been installed but the lockfile wasn't updated
-                    if is_retry {
-                        // Check if the scanner is an npm package name (not a file path)
-                        let is_package_name = bun_paths::is_package_path(security_scanner);
-
-                        if is_package_name {
-                            // For npm packages, after install they should be resolvable
-                            // If not, there was a real problem with the installation
-                            Output::err_generic(
-                                "Security scanner '{}' could not be found after installation attempt.\n  <d>If this is a local file, please check that the file exists and the path is correct.<r>",
-                                (BStr::new(security_scanner),),
-                            );
-                            return Err(crate::Error::SecurityScannerNotFound);
-                        } else {
-                            // For local files, the error is expected - they can't be installed
-                            Output::err_generic(
-                                "Security scanner '{}' is configured in bunfig.toml but the file could not be found.\n  <d>Please check that the file exists and the path is correct.<r>",
-                                (BStr::new(security_scanner),),
-                            );
-                            return Err(crate::Error::SecurityScannerNotFound);
-                        }
-                    }
-
-                    // First attempt - only try to install if we have a package ID
-                    if let Some(pkg_id) = security_scanner_pkg_id {
+            let (what, err) = match code_str {
+                b"MODULE_NOT_FOUND" => {
+                    // Only the first attempt installs it, and only a dependency of the root.
+                    if let (false, Some(pkg_id)) = (is_retry, security_scanner_pkg_id) {
                         return Ok(ScanAttemptResult::NeedsInstall(pkg_id));
+                    }
+                    let name = BStr::new(security_scanner);
+                    if !bun_paths::is_package_path(security_scanner) {
+                        Output::err_generic(
+                            "Security scanner '{}' is configured in bunfig.toml but the file could not be found.\n  <d>Please check that the file exists and the path is correct.<r>",
+                            (name,),
+                        );
+                    } else if is_retry {
+                        Output::err_generic(
+                            "Security scanner '{}' could not be found after installation attempt.\n  <d>If this is a local file, please check that the file exists and the path is correct.<r>",
+                            (name,),
+                        );
                     } else {
-                        // No package ID means it's not in dependencies
-                        let is_package_name = bun_paths::is_package_path(security_scanner);
-
-                        if is_package_name {
-                            Output::err_generic(
-                                "Security scanner '{}' is configured in bunfig.toml but is not installed.\n  <d>To install it, run: bun add --dev {}<r>",
-                                (BStr::new(security_scanner), BStr::new(security_scanner)),
-                            );
-                        } else {
-                            Output::err_generic(
-                                "Security scanner '{}' is configured in bunfig.toml but the file could not be found.\n  <d>Please check that the file exists and the path is correct.<r>",
-                                (BStr::new(security_scanner),),
-                            );
-                        }
-                        return Err(crate::Error::SecurityScannerNotInDependencies);
+                        Output::err_generic(
+                            "Security scanner '{}' is configured in bunfig.toml but is not installed.\n  <d>To install it, run: bun add --dev {}<r>",
+                            (name, name),
+                        );
                     }
+                    return Err(if is_retry {
+                        crate::Error::SecurityScannerNotFound
+                    } else {
+                        crate::Error::SecurityScannerNotInDependencies
+                    });
                 }
-                ErrorCode::InvalidVersion => {
-                    if let Some(msg) = json_expr.get(b"message") {
-                        if let Some(msg_str) = msg.as_utf8_string_literal() {
-                            Output::err_generic(
-                                "Security scanner error: {}",
-                                (BStr::new(msg_str),),
-                            );
-                        }
-                    }
-                    return Err(crate::Error::InvalidScannerVersion);
+                b"INVALID_VERSION" => ("error", crate::Error::InvalidScannerVersion),
+                b"SCAN_FAILED" => ("failed", crate::Error::ScannerFailed),
+                _ => {
+                    Output::err_generic(
+                        "Unknown security scanner error code: {}",
+                        (BStr::new(code_str),),
+                    );
+                    return Err(crate::Error::UnknownErrorCode);
                 }
-                ErrorCode::ScanFailed => {
-                    if let Some(msg) = json_expr.get(b"message") {
-                        if let Some(msg_str) = msg.as_utf8_string_literal() {
-                            Output::err_generic(
-                                "Security scanner failed: {}",
-                                (BStr::new(msg_str),),
-                            );
-                        }
-                    }
-                    return Err(crate::Error::ScannerFailed);
+            };
+            if let Some(msg) = json_expr.get(b"message") {
+                if let Some(msg_str) = msg.as_utf8_string_literal() {
+                    Output::err_generic("Security scanner {}: {}", (what, BStr::new(msg_str)));
                 }
             }
+            return Err(err);
         } else if type_str != b"result" {
             Output::err_generic(
                 "Unknown security scanner message type: {}",
@@ -1669,19 +1405,12 @@ impl<'a> SecurityScanSubprocess<'a> {
         if self.manager.options.log_level == crate::package_manager::Options::LogLevel::Verbose {
             match &status {
                 Status::Exited(Exited { code, .. }) => {
-                    if *code == 0 {
-                        bun_core::pretty_errorln!(
-                            "<d>[SecurityProvider]<r> Completed with exit code {} [{}ms]",
-                            code,
-                            duration
-                        );
-                    } else {
-                        bun_core::pretty_errorln!(
-                            "<d>[SecurityProvider]<r> Failed with exit code {} [{}ms]",
-                            code,
-                            duration
-                        );
-                    }
+                    bun_core::pretty_errorln!(
+                        "<d>[SecurityProvider]<r> {} with exit code {} [{}ms]",
+                        if *code == 0 { "Completed" } else { "Failed" },
+                        code,
+                        duration
+                    );
                 }
                 Status::Signaled(sig) => {
                     bun_core::pretty_errorln!(
@@ -1706,22 +1435,14 @@ impl<'a> SecurityScanSubprocess<'a> {
             } else {
                 ""
             };
-            if packages_scanned == 1 {
-                bun_core::pretty_errorln!(
-                    "<d>{}[{}] Scanning 1 package took {}ms<r>",
-                    maybe_hourglass,
-                    BStr::new(security_scanner),
-                    duration
-                );
-            } else {
-                bun_core::pretty_errorln!(
-                    "<d>{}[{}] Scanning {} packages took {}ms<r>",
-                    maybe_hourglass,
-                    BStr::new(security_scanner),
-                    packages_scanned,
-                    duration
-                );
-            }
+            bun_core::pretty_errorln!(
+                "<d>{}[{}] Scanning {} package{} took {}ms<r>",
+                maybe_hourglass,
+                BStr::new(security_scanner),
+                packages_scanned,
+                if packages_scanned == 1 { "" } else { "s" },
+                duration
+            );
         }
 
         let Some(advisories_expr) = json_expr.get(b"advisories") else {
@@ -1774,7 +1495,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 fn parse_security_advisories_from_expr(
     manager: &PackageManager,
     advisories_expr: Expr,
-    package_paths: &mut ArrayHashMap<PackageID, PackagePath>,
+    package_paths: &ArrayHashMap<PackageID, PackagePath>,
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
     let mut advisories_list: Vec<SecurityAdvisory> = Vec::new();
 
@@ -1819,41 +1540,24 @@ fn parse_security_advisories_from_expr(
         }
         let name_str: Box<[u8]> = Box::from(name_str_temp);
 
-        let desc_str: Option<Box<[u8]>> = if let Some(desc_expr) = item.get(b"description") {
-            'blk: {
-                if let Some(str) = desc_expr.as_utf8_string_literal() {
-                    break 'blk Some(Box::from(str));
-                }
-                if matches!(desc_expr.data, ExprData::ENull(_)) {
-                    break 'blk None;
-                }
-                Output::err_generic(
-                    "Security advisory at index {} 'description' field must be a string or null",
-                    (i,),
-                );
-                return Err(crate::Error::InvalidDescriptionField);
+        let string_or_null = |field: &str, err: Error| -> Result<Option<Box<[u8]>>, Error> {
+            let Some(expr) = item.get(field.as_bytes()) else {
+                return Ok(None);
+            };
+            if let Some(str) = expr.as_utf8_string_literal() {
+                return Ok(Some(Box::from(str)));
             }
-        } else {
-            None
-        };
-
-        let url_str: Option<Box<[u8]>> = if let Some(url_expr) = item.get(b"url") {
-            'blk: {
-                if let Some(str) = url_expr.as_utf8_string_literal() {
-                    break 'blk Some(Box::from(str));
-                }
-                if matches!(url_expr.data, ExprData::ENull(_)) {
-                    break 'blk None;
-                }
-                Output::err_generic(
-                    "Security advisory at index {} 'url' field must be a string or null",
-                    (i,),
-                );
-                return Err(crate::Error::InvalidUrlField);
+            if matches!(expr.data, ExprData::ENull(_)) {
+                return Ok(None);
             }
-        } else {
-            None
+            Output::err_generic(
+                "Security advisory at index {} '{}' field must be a string or null",
+                (i, field),
+            );
+            Err(err)
         };
+        let desc_str = string_or_null("description", crate::Error::InvalidDescriptionField)?;
+        let url_str = string_or_null("url", crate::Error::InvalidUrlField)?;
 
         let Some(level_expr) = item.get(b"level") else {
             Output::err_generic(
@@ -1898,15 +1602,13 @@ fn parse_security_advisories_from_expr(
             }
         }
 
-        let advisory = SecurityAdvisory {
+        advisories_list.push(SecurityAdvisory {
             level,
             package: name_str,
             url: url_str,
             description: desc_str,
             pkg_path,
-        };
-
-        advisories_list.push(advisory);
+        });
     }
 
     Ok(advisories_list.into_boxed_slice())

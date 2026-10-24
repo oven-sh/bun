@@ -62,16 +62,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn record_declared_symbol(&mut self, r#ref: Ref) {
+        self.record_declared_symbol_in(r#ref, false);
+    }
+
+    /// `own_scope`: the name of a function or class expression, bound in the
+    /// expression's own scope rather than the one being visited.
+    pub(crate) fn record_declared_symbol_in(&mut self, r#ref: Ref, own_scope: bool) {
         debug_assert!(r#ref.is_symbol());
         self.declared_symbols
             .append(bun_ast::DeclaredSymbol {
                 ref_: r#ref,
-                is_top_level: self.current_scope == self.module_scope,
+                is_top_level: !own_scope && self.current_scope == self.module_scope,
             })
             .expect("oom");
     }
 
-    pub(crate) fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
+    pub(crate) fn visit_func(
+        &mut self,
+        mut func: G::Fn,
+        open_parens_loc: bun_ast::Loc,
+        is_expr: bool,
+    ) -> G::Fn {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -89,7 +100,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
-                self.record_declared_symbol(name_ref);
+                self.record_declared_symbol_in(name_ref, is_expr);
                 let symbol_name = self.load_name_from_ref(name_ref);
                 if is_eval_or_arguments(symbol_name) {
                     self.mark_strict_mode_feature(
@@ -104,6 +115,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
+        let prev_may_replace_body = self.enter_react_compiler_candidate(
+            func.name.map(|n| n.ref_),
+            func.flags
+                .contains(flags::Function::HasReactHooksSuppression),
+            body_stmts,
+        );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
@@ -157,11 +174,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ReactRefresh::hook_ctx_mut` centralises the raw-pointer deref and returns a
             // borrow detached from `self` (the storage is on the caller's stack frame), so
             // it can be held across the `&mut self` method call below.
-            let hook_ctx = self
+            // There is no storage for a method, which takes no signature.
+            if let Some(hook) = self
                 .react_refresh
                 .hook_ctx_mut()
-                .expect("caller did not init hook storage. any function can have react hooks!");
-            if let Some(hook) = hook_ctx.as_ref() {
+                .and_then(|hook_ctx| hook_ctx.as_ref())
+            {
                 // `handle_react_refresh_post_visit_function_body` does not re-enter
                 // `hook_ctx_storage` (it only touches `stmts` and unrelated `P` fields).
                 self.handle_react_refresh_post_visit_function_body(&mut stmts, hook);
@@ -193,6 +211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
+        self.react_compiler_may_replace_body = prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 
@@ -261,6 +280,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_export: bool,
     ) -> usize {
         let was_const = kind == LocalKind::KConst;
+        // A namespace member isn't a module export.
+        let can_replace_exports =
+            IS_POSSIBLY_DECL_TO_REMOVE && self.enclosing_namespace_arg_ref.is_none();
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -280,6 +302,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
+                let orig_in_deleted = self.in_deleted_export;
                 // `replacement` is a `BackRef` so the
                 // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
                 // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
@@ -287,7 +310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut replacement: Option<
                     bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>,
                 > = None;
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if can_replace_exports {
                     if let BData::BIdentifier(id) = decl.binding.data {
                         let id_ref = id.r#ref;
                         let name = self.load_name_from_ref(id_ref);
@@ -301,6 +324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             replacement = Some(ptr);
                             if self.options.features.dead_code_elimination && !is_replace {
                                 self.is_control_flow_dead = true;
+                                self.in_deleted_export = true;
                             }
                         }
                     }
@@ -338,6 +362,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut val,
                     ExprIn {
                         is_immediately_assigned_to_decl: true,
+                        // `const { a } = x` reads `x.a` and drops `x`.
+                        is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
                         ..Default::default()
                     },
                 );
@@ -427,6 +453,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .is_some()
                             {
                                 self.note_tracked_namespace_use(namespace_ref);
+                                // Another `var` declaration is the same variable.
+                                if kind != LocalKind::KVar && !is_export {
+                                    self.note_destructured_locals(obj.properties());
+                                }
                             }
                         }
                         // `var ns` redeclaration resolves to the same ref;
@@ -468,6 +498,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.dynamic_import_escaped_records.insert(r, ());
                         }
                         break 'conditional;
+                    }
+                    // `ns.a` can't become `a`: `ns` may be null.
+                    for &r in &records {
+                        self.dynamic_import_needs_object.insert(r, ());
                     }
                     if !records.is_empty()
                         && !self.import_items_for_namespace.contains_key(&id.r#ref)
@@ -521,6 +555,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 self.dynamic_import_escaped_records
                                     .insert(req.import_record_index, ());
+                            } else if kind != LocalKind::KVar && !is_export {
+                                self.note_destructured_locals(obj.properties());
                             }
                         }
                         BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {
@@ -541,8 +577,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if can_replace_exports {
                     self.is_control_flow_dead = orig_dead;
+                    self.in_deleted_export = orig_in_deleted;
                     if let BData::BIdentifier(_) = decl.binding.data {
                         if let Some(_ptr) = replacement {
                             // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
@@ -568,7 +605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                     },
                 );
-            } else if IS_POSSIBLY_DECL_TO_REMOVE {
+            } else if can_replace_exports {
                 if let BData::BIdentifier(id) = decl.binding.data {
                     let id_ref = id.r#ref;
                     let name = self.load_name_from_ref(id_ref);
@@ -583,18 +620,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // which is not mutated during the visit pass.
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                            let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(
-                                decl,
-                                VisitDeclOpts {
-                                    was_anonymous_named_expr: false,
-                                    could_be_const_value: was_const && !is_after,
-                                    could_be_macro: false,
-                                },
-                            );
-                        } else {
                             continue 'outer;
                         }
+                        let is_after = self.vis_scope().is_after_const_local_prefix;
+                        self.visit_decl(
+                            decl,
+                            VisitDeclOpts {
+                                was_anonymous_named_expr: false,
+                                could_be_const_value: was_const && !is_after,
+                                could_be_macro: false,
+                            },
+                        );
                     }
                 }
             }
@@ -779,6 +815,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BIdentifier(bind) => {
                 let bind = bind.get();
                 self.record_declared_symbol(bind.r#ref);
+                // Bindings the renamer must see outside the scope that owns
+                // them (`ScopeUses::sees`): a hoisted `var`, a parameter, a
+                // catch binding.
+                let scope_kind = self.current_scope.kind;
+                if scope_kind == js_ast::scope::Kind::FunctionArgs
+                    || scope_kind == js_ast::scope::Kind::CatchBinding
+                    || (self.symbols[bind.r#ref.inner_index() as usize].is_hoisted()
+                        && !self.current_scope.kind_stops_hoisting())
+                {
+                    self.record_scope_use(bind.r#ref);
+                }
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 let name: &'a [u8] = self.symbols[bind.r#ref.inner_index() as usize]
                     .original_name
@@ -952,6 +999,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name_scope_loc: bun_ast::Loc,
         class: &mut G::Class,
         default_name_ref: Ref,
+        is_expr: bool,
     ) -> Ref {
         debug_assert!(
             !SCAN_ONLY,
@@ -961,7 +1009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
-            self.record_declared_symbol(name.ref_);
+            self.record_declared_symbol_in(name.ref_, is_expr);
         }
 
         self.push_scope_for_visit_pass(ScopeKind::ClassName, name_scope_loc)
@@ -978,21 +1026,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // must be the original value of the name, not the re-assigned value.
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
+        //
+        // With lowered class decorators the body reads the class through
+        // `inner_class_ref`, which the lowering sets to what the decorators
+        // return (the spec initializes the inner binding with that class).
         let mut shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
-            self.vis_scope()
-                .members
-                .put(
+            let body_ref = if class.should_lower_standard_decorators
+                && class.ts_decorators.len_u32() > 0
+            {
+                let inner_ref = self.generate_temp_var(self.bump_name3(b"_", original_name, b""));
+                class.inner_class_ref = inner_ref;
+                self.decorated_class_names.push((inner_ref, name_ref));
+                // The name of a class expression is declared nowhere else:
+                // the renamer still has to number it around its neighbors.
+                if is_expr {
+                    VecExt::append(&mut self.vis_scope().generated, name_ref);
+                }
+                inner_ref
+            } else {
+                name_ref
+            };
+            // SAFETY: `original_name` is an AST-arena slice.
+            unsafe {
+                self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
-                        ref_: name.ref_,
+                        ref_: body_ref,
                         loc: name.loc,
                     },
                 )
-                .expect("oom");
+            };
             name_ref
         } else {
             let name_str: &'a [u8] = if default_name_ref.is_empty() {
@@ -1062,7 +1129,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     self.record_declared_symbol(priv_ref);
                 } else if let Some(key) = property.key.as_mut() {
+                    // Lowering may move a field's computed key into the
+                    // constructor along with its initializer.
+                    let is_field = !property.flags.contains(flags::Property::IsMethod);
+                    if is_field {
+                        let class_body = self.current_scope;
+                        self.field_init_class_bodies.push(class_body);
+                    }
                     self.visit_expr(key);
+                    if is_field {
+                        self.field_init_class_bodies.pop();
+                    }
                 }
 
                 // Make it an error to use "arguments" in a class body
@@ -1141,7 +1218,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.initializer {
-                    // if (property.flags.is_static and )
+                    let class_body = self.current_scope;
+                    self.field_init_class_bodies.push(class_body);
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -1160,6 +1238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
                     }
+                    self.field_init_class_bodies.pop();
                 }
 
                 // manual restore for the two `defer`s above
@@ -1168,7 +1247,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                // `lower_standard_decorators_stmt` owns field placement for such classes.
+                // Standard decorator lowering wraps field initializers where they are.
                 let use_define = self.options.use_define_for_class_fields
                     || class.should_lower_standard_decorators;
 
@@ -1425,6 +1504,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // class name scope
         self.pop_scope();
+        if class.inner_class_ref.is_symbol() {
+            self.decorated_class_names.pop();
+        }
 
         shadow_ref
     }
@@ -1719,12 +1801,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(p.current_scope == initial_scope);
 
         if let Some(pending) = rc_pending
+            && p.react_compiler_may_replace_body
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending
                 .binding
                 .filter(|r| *r != js_ast::Ref::NONE)
                 .map(|r| p.load_name_from_ref(r));
+            // `Host::new_local` appends the locals of the compiled function here.
+            let generated_len = p.current_scope().generated.len();
             let compiled = {
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
@@ -1740,6 +1825,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts.clear();
                 stmts.extend(new_body);
                 p.react_compiler_result = Some(result);
+                p.drop_symbols_of_replaced_function(pending.binding);
+            } else {
+                p.current_scope_mut().generated.truncate(generated_len);
             }
         }
 
@@ -1941,7 +2029,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtData::SEmpty(_) => continue,
 
                 // skip directives for now
-                StmtData::SDirective(_) => continue,
+                StmtData::SDirective(_) if !p.options.keep_directives => continue,
 
                 StmtData::SLocal(local) => {
                     // Merge adjacent local statements

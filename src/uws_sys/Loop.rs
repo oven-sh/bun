@@ -1,4 +1,5 @@
 use core::ffi::{c_int, c_uint, c_void};
+use core::ptr::NonNull;
 
 use crate::InternalLoopData;
 use crate::Timespec;
@@ -229,13 +230,13 @@ impl PosixLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    pub fn create<H: LoopHandler>() -> *mut Loop {
+    /// `None` if epoll/kqueue cannot be created (EMFILE).
+    pub fn create<H: LoopHandler>() -> Option<NonNull<Loop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
-        assert!(!p.is_null(), "us_create_loop returned null");
-        p
+        NonNull::new(p)
     }
 
     pub fn wakeup(&mut self) {
@@ -278,6 +279,12 @@ impl PosixLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
+    /// Runs the uWS pre handler, which flushes queued `publish()` batches and leftover corks.
+    pub fn flush_pending_writes(&mut self) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::uws_loop_flush_pending_writes(self) };
+    }
+
     /// `us_socket_group_close_all()` on every group currently linked to this
     /// loop — covers Listener/App-owned groups that `RareData`'s static field
     /// list doesn't enumerate. Returns whether any group was linked.
@@ -314,6 +321,7 @@ pub struct WindowsLoop {
     pub is_default: c_int,
     pub pre: *mut uv::uv_prepare_t,
     pub check: *mut uv::uv_check_t,
+    pub idle_sweep_timer: *mut crate::Timer,
 }
 
 #[cfg(windows)]
@@ -406,13 +414,13 @@ impl WindowsLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    pub fn create<H: LoopHandler>() -> *mut WindowsLoop {
+    /// `None` if `uv_loop_init` fails (handle exhaustion).
+    pub fn create<H: LoopHandler>() -> Option<NonNull<WindowsLoop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
-        assert!(!p.is_null(), "us_create_loop returned null");
-        p
+        NonNull::new(p)
     }
 
     pub fn run(&mut self) {
@@ -452,6 +460,11 @@ impl WindowsLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
+    pub fn flush_pending_writes(&mut self) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::uws_loop_flush_pending_writes(self) };
+    }
+
     pub fn close_all_groups(&mut self) -> bool {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_close_all_groups(self) != 0 }
@@ -482,7 +495,6 @@ pub type Loop = PosixLoop;
 
 type LoopCb = unsafe extern "C" fn(*mut Loop);
 
-#[allow(non_snake_case)]
 mod c {
     use super::*;
 
@@ -520,6 +532,7 @@ mod c {
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
+        pub(super) fn uws_loop_flush_pending_writes(loop_: *mut Loop);
     }
 }
 // Re-exported raw externs for cross-thread callers (e.g. bun_http's

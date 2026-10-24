@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } 
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
-describe.concurrent(
+(describe.concurrent as any)(
   "bun build",
   () => {
     test("warnings dont return exit code 1", async () => {
@@ -466,6 +466,25 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+// macOS and Windows read files on the IO pool by default.
+test("exits with the build error when a build fails while the IO pool is still reading entry points", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 50; i++) {
+    files[`f${i}.ts`] = `export const v${i} = ${i};\n`;
+  }
+  using dir = tempDir("build-missing-entry-io-pool", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./missing.ts", ...Object.keys(files).map(name => `./${name}`), "--outdir", "out"],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stderr, dir)).toBe('error: ModuleNotFound resolving "./missing.ts" (entry point)');
+  expect(exitCode).toBe(1);
+});
+
 // https://github.com/oven-sh/bun/issues/9859
 describe.concurrent("--no-bundle with --outdir", () => {
   test("writes a single entry point", async () => {
@@ -488,6 +507,27 @@ describe.concurrent("--no-bundle with --outdir", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
     expect(out).toContain("jsx");
     expect(out).toContain("app");
+  });
+
+  test("reports the size of the written file", async () => {
+    using dir = tempDir("no-bundle-outdir-size", {
+      "src/app.js": `console.log(1);\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/app.js", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/app\.js\s+16 bytes/);
+    expect(exitCode).toBe(0);
+
+    const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
+    expect(out).toBe("console.log(1);\n");
   });
 
   test("writes multiple entry points", async () => {
@@ -750,6 +790,21 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stdout).not.toMatch(/\.css\s+0 /);
   });
 
+  test.each(["base64", "dataurl"])("the %s loader is an error", async loader => {
+    using dir = tempDir("no-bundle-" + loader, { "entry.bin": "ABC" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--loader", ".bin:" + loader, "./entry.bin"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: loader "${loader}" is not supported with --no-bundle`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   test("does not escape --outdir when an entry point is outside --root", async () => {
     using dir = tempDir("no-bundle-outdir-escape", {
       "src/a.ts": `export const a = 1;\n`,
@@ -797,6 +852,98 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(await Bun.file(path.join(String(dir), "a.js")).text()).toContain('console.log("hello world!")');
     expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('console.log("foo bar baz")');
   });
+});
+
+test.concurrent("bun build names every input that maps to a shared output path", async () => {
+  using dir = tempDir("bundle-outdir-collision", {
+    "a.ts": `export const a = 1;\n`,
+    "b.ts": `export const b = 2;\n`,
+    "c.ts": `export const c = 3;\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./a.ts", "./b.ts", "./c.ts", "--outdir=dist", "--entry-naming=same.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+    "error: Multiple files share the same output path
+      ./same.js:
+        from input a.ts
+        from input b.ts
+        from input c.ts
+
+
+    note: entry naming is './same.js', consider adding '[hash]' to make filenames unique"
+  `);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("bun build widens [hash] names that would otherwise collide", async () => {
+  // 40 entry points under `[hash1]` naming cannot all differ in one character
+  // (the alphabet has 32), so some names widen to 2+; none collide. The
+  // chunks use a different width so that their names sort between the
+  // entries' without hiding the entries' collisions from each other.
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 40; i++) files[`e${i}.ts`] = `import("./s${i % 20}.js"); export const v = ${i};\n`;
+  for (let i = 0; i < 20; i++) files[`s${i}.js`] = `export const s = ${i};\n`;
+  using dir = tempDir("bundle-hash-widen", files);
+  const entries = Object.keys(files).filter(f => f.startsWith("e"));
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      ...entries,
+      "--splitting",
+      "--outdir=dist",
+      "--entry-naming=[hash1].[ext]",
+      "--chunk-naming=c[hash3].[ext]",
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const names = fs.readdirSync(path.join(String(dir), "dist")).sort();
+  // Entries print 1–3 characters, chunks `c` + 3 or more.
+  const entryNames = names.filter(n => /^[0-9a-z]{1,3}\.js$/.test(n));
+  expect(entryNames.length).toBe(40);
+  expect(names.length - entryNames.length).toBeGreaterThanOrEqual(20);
+  expect(names.every(n => /^c?[0-9a-z]{1,13}\.js$/.test(n))).toBe(true);
+  expect(entryNames.some(n => n.length > "x.js".length)).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
+test("reports an empty entry point the same way with more than 8 entry points", async () => {
+  // The message differs by platform, so compare with the output of a run with 2 entry points.
+  const entries = Array.from({ length: 8 }, (_, i) => `e${i}.ts`);
+  using dir = tempDir(
+    "build-many-entries-empty-entry",
+    Object.fromEntries(entries.map((name, i) => [name, `console.log(${i});`])),
+  );
+
+  async function build(entryPoints: string[], outdir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", `--outdir=${outdir}`, ...entryPoints, ""],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { firstStderrLine: stderr.split("\n")[0], exitCode };
+  }
+
+  const [two, nine] = await Promise.all([build(entries.slice(0, 1), "dist-2"), build(entries, "dist-9")]);
+  expect(two.firstStderrLine).not.toBe("");
+  expect(nine).toEqual(two);
 });
 
 describe("CLI argument error messages", () => {
@@ -848,6 +995,44 @@ describe("CLI argument error messages", () => {
     expect(stderr).toContain('"FOO"');
     expect(stderr).toContain("key=value");
     expect(exitCode).toBe(1);
+  });
+
+  // Where "too deep" starts depends on the stack frames of the build, so this walks the depths around it.
+  test("--define with a value nested deeper than the stack has room for is an error", async () => {
+    using dir = tempDir("build-define-deep", { "in.js": "console.log(typeof FOO)" });
+    // A Windows command line holds 32,767 characters.
+    const depths = [250, 1000, 2000, 4000, 8000, 11_000, 12_000, 15_000, ...(isWindows ? [] : [30_000, 60_000])];
+    const outcomes: string[] = [];
+    for (const depth of depths) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--define",
+          `FOO=${Buffer.alloc(depth, "[")}1${Buffer.alloc(depth, "]")}`,
+          "in.js",
+          "--outfile=out.js",
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      outcomes.push(
+        exitCode === 0
+          ? "built"
+          : exitCode === 1 && stderr.includes("error: Maximum call stack size exceeded while generating code")
+            ? "too deep to print"
+            : exitCode === 1 && stderr.includes("error: JSON document is too deeply nested")
+              ? "too deep to define"
+              : `depth ${depth}: exit ${exitCode}\n${stderr.slice(-600)}`,
+      );
+    }
+
+    const inOrder = ["built", "too deep to print", "too deep to define"];
+    expect(outcomes.filter(outcome => !inOrder.includes(outcome))).toEqual([]);
+    expect(outcomes).toEqual(outcomes.toSorted((a, b) => inOrder.indexOf(a) - inOrder.indexOf(b)));
   });
 });
 

@@ -1,15 +1,14 @@
 //! JSC bridges for c-ares reply structs. Keeps `src/cares_sys/` free of
-//! `JSValue`/`JSGlobalObject`/`CallFrame` types — the original methods on
+//! `JSValue`/`JSGlobalObject` types — the original methods on
 //! each `struct_ares_*_reply` are aliased to the free fns here.
 
 use core::ffi::c_int;
 
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{self as bstr, strings};
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
-};
+use bun_core as bstr;
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc};
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 
@@ -679,7 +678,7 @@ impl ErrorDeferred {
             ))
         };
         let system_error = SystemError {
-            errno: self.errno as i32,
+            errno: self.errno.errno(),
             code: bstr::String::static_(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
@@ -700,47 +699,66 @@ impl ErrorDeferred {
         self.promise.reject(global_this, Ok(instance))
     }
 
-    pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
-        struct Context {
-            deferred: Box<ErrorDeferred>,
-            // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
-            // enqueued task (VM-owned), so a `BackRef` captures the invariant.
-            global_this: bun_ptr::BackRef<JSGlobalObject>,
-        }
-        impl Context {
-            // `bun_event_loop::ManagedTask::new` expects
-            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (tier-0 `bun_core::JsError`).
-            fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
-                // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
-                // below; ManagedTask::run calls us exactly once with that pointer.
-                let this = unsafe { bun_core::heap::take(this) };
-                let global = this.global_this.get();
-                this.deferred.reject(global)
-            }
-        }
-
+    /// `context` is the context of the script that asked. Once it has stopped the
+    /// error is not reported: closing a resolver's channel fails every pending
+    /// query with `ARES_EDESTRUCTION`, and that is how a `Bun.ModuleGraph`'s
+    /// resolver goes when the graph is disposed.
+    pub(crate) fn reject_later(
+        self: Box<Self>,
+        global_this: &JSGlobalObject,
+        context: bun_jsc::ContextId,
+    ) {
         let vm = global_this.bun_vm();
         // Worker terminate's `stop_dns_for_vm_teardown` fires EDESTRUCTION with
-        // `is_shutting_down` already set; the task queue is about to be
-        // drained-without-run and ManagedTask has no cleanup here, so enqueuing
-        // would leak the `Context` and its `JSPromiseStrong` box. Drop now while
-        // JSC is still live so the Strong handle releases cleanly.
+        // `is_shutting_down` already set: there is nobody to reject for.
         if vm.is_shutting_down() {
             return;
         }
-
-        let context = bun_core::heap::into_raw(Box::new(Context {
-            deferred: self,
-            global_this: bun_ptr::BackRef::new(global_this),
-        }));
-        // TODO(@heimskr): new custom Task type
-        // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
-        // the JSGlobalObject).
         vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
-                context,
-                Context::callback,
-            ));
+            .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
+                ErrorDeferredTask {
+                    asking: context,
+                    deferred: self,
+                    global_this: bun_ptr::BackRef::new(global_this),
+                },
+            )));
+    }
+}
+
+/// [`ErrorDeferred::reject_later`]'s hop to the next turn of the loop.
+pub(crate) struct ErrorDeferredTask {
+    /// The context of the script that asked; it may stop before the task runs.
+    asking: bun_jsc::ContextId,
+    deferred: Box<ErrorDeferred>,
+    // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
+    // enqueued task (VM-owned), so a `BackRef` captures the invariant.
+    global_this: bun_ptr::BackRef<JSGlobalObject>,
+}
+
+impl ErrorDeferredTask {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run(self: Box<Self>) -> JsResult<()> {
+        let Self {
+            asking,
+            deferred,
+            global_this,
+        } = *self;
+        let global = global_this.get();
+        // For the script that asked: once its context has stopped the error goes to nobody.
+        let _context = global.bun_vm().enter_context(asking);
+        deferred.reject(global)
+    }
+}
+
+impl bun_event_loop::Taskable for ErrorDeferredTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DnsErrorDeferred;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `reject_later`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// `run` enters the asking script's context itself.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -765,7 +783,7 @@ pub(crate) fn error_to_js_with_syscall(
 ) -> JsResult<JSValue> {
     let code = this.code();
     let instance = SystemError {
-        errno: this as i32,
+        errno: this.errno(),
         code: bstr::String::static_(&code[4..]),
         syscall: bstr::String::static_(syscall),
         message: bstr::String::create_format(format_args!(
@@ -796,7 +814,7 @@ pub(crate) fn system_error_with_syscall_and_hostname(
 ) -> SystemError {
     let code = this.code();
     SystemError {
-        errno: this as i32,
+        errno: this.errno(),
         code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",
@@ -832,34 +850,19 @@ pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]
         .to_error_instance(global_this)
 }
 
-// ── canonicalizeIP host fn ─────────────────────────────────────────────────
-// `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
-#[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]
-fn bun_canonicalize_ip(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn canonicalize_ip<'a>(
+    cx: &mut JsScope<'a>,
+    (address, address_value): (&[u8], JsLocal<'a>),
+) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-
-    let arguments = callframe.arguments();
-
-    if arguments.is_empty() {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "canonicalizeIP() expects a string but received no arguments."
-        )));
-    }
-
-    let addr_arg = arguments[0].to_utf8(global_this)?;
-    let addr_str = addr_arg.slice();
-
-    // CIDR not allowed
-    if strings::index_of_char(addr_str, b'/').is_some() {
-        return Ok(JSValue::UNDEFINED);
-    }
+    let global_this = cx.global();
 
     let mut ip_addr = [0u8; bun_boringssl::INET6_ADDRSTRLEN + 1];
-    let Some(slice) = bun_boringssl::canonicalize_ip(addr_str, &mut ip_addr) else {
+    let Some(slice) = bun_boringssl::canonicalize_ip(address, &mut ip_addr) else {
         return Ok(JSValue::UNDEFINED);
     };
-    if addr_str == slice {
-        return Ok(arguments[0]);
+    if address == slice {
+        return Ok(address_value.to_js());
     }
 
     bun_string_jsc::create_utf8_for_js(global_this, slice)

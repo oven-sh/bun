@@ -15,7 +15,7 @@ const NO_NODEJS_MODULES: Message = Message::new("", "Do not import Node.js built
 const OXLINT: Message = Message::new("", "Do not import Node.js builtin module `{{module_name}}`");
 
 pub struct State<'a> {
-    /// `None`: oxlint goes by the name alone.
+    /// `None` for oxlint, which only checks the name.
     types: Option<ImportTypes<'a>>,
 }
 
@@ -34,7 +34,7 @@ impl Rule for NoNodejsModules {
         let mut on = On::new()
             .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar])
             .exprs(&[ExprTag::ImportCall]);
-        // oxlint looks at `import a = require("a")` too.
+        // oxlint also checks `import a = require("a")`.
         if file.language().is_oxlint {
             on = on.stmts(&[StmtTag::ImportEquals]);
         }
@@ -72,12 +72,12 @@ impl Rule for NoNodejsModules {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.state.types.is_none();
         let module_name = match e.kind() {
-            // oxlint reads a template too, and nothing that is in parentheses.
+            // oxlint also accepts a template literal, and rejects anything parenthesized.
             ExprKind::ImportCall { args } if is_oxlint => {
                 args.first().filter(|it| !it.is_parenthesized()).and_then(static_string)
             }
             ExprKind::ImportCall { args } => args.first().and_then(Expr::as_string),
-            // oxlint passes over `require?.("a")`, and over what is in parentheses.
+            // oxlint skips `require?.("a")` and anything parenthesized.
             ExprKind::Call(call) if is_oxlint => {
                 common_js_require(call).filter(|_| !call.is_optional()).and_then(Expr::as_string)
             }

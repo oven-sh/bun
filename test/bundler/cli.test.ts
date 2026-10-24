@@ -777,6 +777,25 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+// macOS and Windows read files on the IO pool by default.
+test("exits with the build error when a build fails while the IO pool is still reading entry points", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 50; i++) {
+    files[`f${i}.ts`] = `export const v${i} = ${i};\n`;
+  }
+  using dir = tempDir("build-missing-entry-io-pool", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./missing.ts", ...Object.keys(files).map(name => `./${name}`), "--outdir", "out"],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stderr, dir)).toBe('error: ModuleNotFound resolving "./missing.ts" (entry point)');
+  expect(exitCode).toBe(1);
+});
+
 // https://github.com/oven-sh/bun/issues/9859
 describe.concurrent("--no-bundle with --outdir", () => {
   test("writes a single entry point", async () => {
@@ -1082,6 +1101,21 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stdout).not.toMatch(/\.css\s+0 /);
   });
 
+  test.each(["base64", "dataurl"])("the %s loader is an error", async loader => {
+    using dir = tempDir("no-bundle-" + loader, { "entry.bin": "ABC" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--loader", ".bin:" + loader, "./entry.bin"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: loader "${loader}" is not supported with --no-bundle`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   test("does not escape --outdir when an entry point is outside --root", async () => {
     using dir = tempDir("no-bundle-outdir-escape", {
       "src/a.ts": `export const a = 1;\n`,
@@ -1198,6 +1232,31 @@ test.concurrent("bun build widens [hash] names that would otherwise collide", as
   expect(exitCode).toBe(0);
 });
 
+test("reports an empty entry point the same way with more than 8 entry points", async () => {
+  // The message differs by platform, so compare with the output of a run with 2 entry points.
+  const entries = Array.from({ length: 8 }, (_, i) => `e${i}.ts`);
+  using dir = tempDir(
+    "build-many-entries-empty-entry",
+    Object.fromEntries(entries.map((name, i) => [name, `console.log(${i});`])),
+  );
+
+  async function build(entryPoints: string[], outdir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", `--outdir=${outdir}`, ...entryPoints, ""],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { firstStderrLine: stderr.split("\n")[0], exitCode };
+  }
+
+  const [two, nine] = await Promise.all([build(entries.slice(0, 1), "dist-2"), build(entries, "dist-9")]);
+  expect(two.firstStderrLine).not.toBe("");
+  expect(nine).toEqual(two);
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });
@@ -1247,6 +1306,44 @@ describe("CLI argument error messages", () => {
     expect(stderr).toContain('"FOO"');
     expect(stderr).toContain("key=value");
     expect(exitCode).toBe(1);
+  });
+
+  // Where "too deep" starts depends on the stack frames of the build, so this walks the depths around it.
+  test("--define with a value nested deeper than the stack has room for is an error", async () => {
+    using dir = tempDir("build-define-deep", { "in.js": "console.log(typeof FOO)" });
+    // A Windows command line holds 32,767 characters.
+    const depths = [250, 1000, 2000, 4000, 8000, 11_000, 12_000, 15_000, ...(isWindows ? [] : [30_000, 60_000])];
+    const outcomes: string[] = [];
+    for (const depth of depths) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--define",
+          `FOO=${Buffer.alloc(depth, "[")}1${Buffer.alloc(depth, "]")}`,
+          "in.js",
+          "--outfile=out.js",
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      outcomes.push(
+        exitCode === 0
+          ? "built"
+          : exitCode === 1 && stderr.includes("error: Maximum call stack size exceeded while generating code")
+            ? "too deep to print"
+            : exitCode === 1 && stderr.includes("error: JSON document is too deeply nested")
+              ? "too deep to define"
+              : `depth ${depth}: exit ${exitCode}\n${stderr.slice(-600)}`,
+      );
+    }
+
+    const inOrder = ["built", "too deep to print", "too deep to define"];
+    expect(outcomes.filter(outcome => !inOrder.includes(outcome))).toEqual([]);
+    expect(outcomes).toEqual(outcomes.toSorted((a, b) => inOrder.indexOf(a) - inOrder.indexOf(b)));
   });
 });
 

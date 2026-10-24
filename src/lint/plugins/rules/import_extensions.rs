@@ -17,7 +17,7 @@ use std::borrow::Cow;
 
 /// Ensure consistent use of file extension within the import path.
 pub struct Extensions {
-    /// The options as the original reads them. What follows: as oxlint does.
+    /// The options as the plugin parses them. The remaining fields are the options as oxlint parses them.
     props: Props,
     ignore_packages: bool,
     require_extension: Option<ExtensionRule>,
@@ -63,17 +63,17 @@ impl ExtensionRule {
 
 struct PathGroupOverride {
     pattern: Box<[u8]>,
-    /// `action: "enforce"`, not `"ignore"`.
+    /// True for `action: "enforce"`, false for `"ignore"`.
     enforces: bool,
 }
 
-/// What `buildProperties` returns.
+/// The result of upstream's `buildProperties`.
 struct Props {
     default_config: ExtensionRule,
     pattern: FxHashMap<Box<[u8]>, ExtensionRule>,
     ignore_packages: bool,
     check_type_imports: bool,
-    /// Each with whether its `action` is "enforce", not "ignore".
+    /// Each glob, with true if its `action` is "enforce" and false if it's "ignore".
     path_group_overrides: Vec<(Glob, bool)>,
 }
 
@@ -83,8 +83,8 @@ const SYSTEMS: Systems = Systems {
     amd: false,
 };
 
-/// For oxlint: the extension of the file that each specifier of an `import` or an `export .. from` stands for, in lower
-/// case.
+/// oxlint only: maps each `import` or `export .. from` specifier to the lowercased extension of the file it resolves
+/// to.
 pub struct State<'a>(FxHashMap<Name<'a>, Option<Vec<u8>>>);
 
 impl Rule for Extensions {
@@ -100,7 +100,7 @@ impl Rule for Extensions {
         if first.as_str().is_none() {
             return Extensions::from_json_value(props, Some(first), None);
         }
-        // What is beside a `pattern` is not read.
+        // If there's a `pattern`, its sibling keys are ignored.
         let root = options.get(1).map(|it| it.get(b"pattern").unwrap_or(it));
         Extensions::from_json_value(props, root, ExtensionRule::from_json(first))
     }
@@ -123,7 +123,7 @@ impl Rule for Extensions {
             && self.extensions.is_empty()
             && self.path_group_overrides.is_empty();
         if !enforces_nothing && !is_waiting_for_modules(file) {
-            // Before the calls are looked at.
+            // Resolved up front because `check_call` needs these before `finish` runs.
             let mut resolved = FxHashMap::default();
             for (module_name, _) in requested_modules(file) {
                 resolved.insert(
@@ -142,7 +142,7 @@ impl Rule for Extensions {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // oxlint asks its record of the modules, which is of the files that are linted. The original asks the resolver.
+        // oxlint uses its module records, which only cover the linted files. The plugin uses the resolver.
         if cx.language().is_oxlint {
             if !cx.state.0.is_empty() {
                 self.check_module_record(cx);
@@ -163,7 +163,7 @@ fn is_external_root_module(file: &[u8]) -> bool {
     }
 }
 
-/// `path.replace(/\?(.*)$/, "")`, where a `.` is no line break.
+/// `path.replace(/\?(.*)$/, "")`. `.` doesn't match a line break, so only the last line counts.
 fn without_query_string(path: &[u8]) -> &[u8] {
     let last_line = strings::js_lines(path).last().unwrap_or(path);
     match strings::index_of_char_usize(last_line, b'?') {
@@ -210,8 +210,12 @@ impl Props {
             result.ignore_packages = obj.bool_or("ignorePackages", result.ignore_packages);
             result.check_type_imports = obj.bool_or("checkTypeImports", result.check_type_imports);
             if obj.has("pathGroupOverrides") {
-                let read =
-                    |it: Object| (Glob::of_path_group(it), it.str("action") == Some("enforce"));
+                let read = |it: Object| {
+                    (
+                        Glob::for_path_group(it),
+                        it.str("action") == Some("enforce"),
+                    )
+                };
                 let overrides = obj.array("pathGroupOverrides").iter();
                 result.path_group_overrides =
                     overrides.map(|it| read(Object::of(Some(it)))).collect();
@@ -226,7 +230,7 @@ impl Props {
     /// `Object.assign(result.pattern, obj)`
     fn assign(&mut self, obj: Object) {
         for (extension, value) in obj.entries() {
-            // What is neither "always" nor "never" asks for nothing. What is falsy gives way to the default.
+            // A value other than "always" or "never" enforces nothing. A falsy value falls back to the default.
             let other = || value.is_truthy().then_some(ExtensionRule::IgnorePackages);
             match ExtensionRule::from_json(value).or_else(other) {
                 Some(rule) => self.pattern.insert(extension.as_slice().into(), rule),
@@ -316,7 +320,7 @@ impl Props {
     }
 }
 
-/// `Path::extension`, in lower case.
+/// `Path::extension`, lowercased.
 fn extension_of_path(path: &[u8]) -> Option<Vec<u8>> {
     file_extension(path).map(<[u8]>::to_ascii_lowercase)
 }
@@ -437,7 +441,7 @@ impl Extensions {
         }
     }
 
-    /// `at`: what is reported, and the call of `require` if it is one, with which oxlint calls its rule.
+    /// `at`: the span to report, plus the `require()` call if there is one, which is the node oxlint runs the rule on.
     fn process_import<'a>(
         &self,
         name: Name<'a>,
@@ -456,7 +460,7 @@ impl Extensions {
         {
             return;
         }
-        // `ignorePackages` is about "always" only.
+        // `ignorePackages` only applies to "always".
         if self.ignore_packages
             && self.require_extension == Some(ExtensionRule::Always)
             && is_package_import(module_name)
@@ -464,7 +468,7 @@ impl Extensions {
             return;
         }
         let resolved_extension = cx.state.0.get(&name).and_then(|it| it.as_deref());
-        // In the name of a package a dot is part of the name.
+        // A dot in a bare package name is part of the name, not an extension.
         let written_extension =
             match is_root_package_import(module_name) && path_group_action.is_none() {
                 true => None,
@@ -492,8 +496,8 @@ impl Extensions {
             Some(call) => cx.report(span, message).called_with(call),
             None => cx.report(span, message),
         };
-        // `./a.js` can stand for `./a.ts`: what is written counts. Not the `stories` of `./a.stories`, which stands for
-        // `./a.stories.tsx`.
+        // `./a.js` can resolve to `./a.ts`, and then the written extension counts. The `stories` in `./a.stories`,
+        // which resolves to `./a.stories.tsx`, doesn't.
         let written_is_genuine_extension = written_extension.is_some_and(|written| {
             resolved_extension != Some(written)
                 && (is_standard_extension(written) || self.has_rule(written))
@@ -546,7 +550,7 @@ fn is_root_package_import(module_name: &[u8]) -> bool {
 fn is_package_import(module_name: &[u8]) -> bool {
     match module_name {
         [b'.' | b'/', ..] => false,
-        // `@/a` is an alias of a path, `@a/b` a package with a scope.
+        // `@/a` is a path alias, `@a/b` is a scoped package.
         [b'@', b'/', ..] => false,
         [b'@', rest @ ..] => strings::contains_char(rest, b'/'),
         // `~/a`, `#/a`

@@ -15,9 +15,13 @@ import {
 import {
   chmodSync,
   chownSync,
+  closeSync,
+  constants,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -26,6 +30,7 @@ import {
   symlinkSync,
   truncateSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { basename, dirname, join, parse, posix, sep, win32 } from "node:path";
 import { endChildren, spawn } from "../children";
@@ -36,6 +41,8 @@ import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
 import whatOxlintMarks from "./oracle/plugins/oxlint/labels.json";
 import { filesOf as filesOfMessages, helpsOf, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
+import parenthesesExpected from "./oracle/plugins/oxlint/parentheses.expected.json";
+import parentheses from "./oracle/plugins/oxlint/parentheses.json";
 import { labelsOf, projects } from "./oracle/plugins/oxlint/projects";
 
 afterAll(endChildren);
@@ -68,11 +75,11 @@ type Options = {
   cwd?: string;
   stdin?: string;
   env?: Record<string, string | undefined>;
-  /** Files to read when the command has run. */
+  /** Files to read after the command has run. */
   reads?: string[];
   /** Called with the directory before the command runs. */
   before?: (dir: string) => void;
-  /** The run is meant to end with an error. */
+  /** The run is expected to fail, so its stderr isn't printed. */
   mayFail?: boolean;
 };
 
@@ -88,7 +95,7 @@ async function lint(files: Record<string, string>, args: string[], options: Opti
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Where a run ends with an error, or dies, the assertion that fails is often about something else.
+  // If a run fails or crashes, the assertion that fails is often about something else, so print the real cause.
   if (exitCode !== 0 && exitCode !== 1 && !options.mayFail)
     console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
   const read = (name: string) =>
@@ -102,7 +109,7 @@ async function lint(files: Record<string, string>, args: string[], options: Opti
   };
 }
 
-/** The same in a directory that is there, with nothing in the output replaced. */
+/** Like `lint`, but runs in an existing directory and doesn't normalize the output. */
 async function run(cwd: string, args: string[]) {
   const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
   await using proc = spawn({ cmd: [...command, ...args], env, cwd, ...stdio });
@@ -140,7 +147,7 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("warnings alone do not fail, unless --max-warnings says so", async () => {
+  test("exits 0 with only warnings unless --max-warnings is exceeded", async () => {
     const files = { "eslint.config.js": basic, "a.js": "let unused = 1;\n" };
     const [plain, limited] = await Promise.all([lint(files, []), lint(files, ["--max-warnings", "0"])]);
     expect(plain.stdout).toMatchInlineSnapshot(`
@@ -154,7 +161,7 @@ describe.concurrent("bun lint", () => {
     expect({ plain: plain.exitCode, limited: limited.exitCode }).toEqual({ plain: 0, limited: 1 });
   });
 
-  test("--color", async () => {
+  test("--color colors the stylish output", async () => {
     const { raw, exitCode } = await lint({ "eslint.config.js": basic, "a.js": "debugger;\n" }, ["--color", "a.js"]);
     expect(raw.slice(raw.indexOf("a.js"))).toBe(
       "a.js\x1b[24m\n  \x1b[2m1:1\x1b[22m  \x1b[31merror\x1b[39m  Unexpected 'debugger' statement  \x1b[2mno-debugger\x1b[22m\n\n" +
@@ -163,26 +170,26 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("without a configuration file: what `bun test` has without an import is defined in the files that it takes", async () => {
+  test("without a config file, `bun test` globals are defined only in files that `bun test` would run", async () => {
     const names =
       "test it describe expect expectTypeOf beforeAll beforeEach afterEach afterAll jest vi xit xtest xdescribe";
     const code = `[${names.split(" ").join(", ")}];\n`;
-    const taken = ["a.test.js", "src/b_test.mjs", "c.spec.jsx", "d_spec.cjs"];
+    const testFiles = ["a.test.js", "src/b_test.mjs", "c.spec.jsx", "d_spec.cjs"];
     const others = ["test.js", "e.tests.js", "atest.js"];
-    const files = Object.fromEntries([...taken, ...others].map(name => [name, code]));
+    const files = Object.fromEntries([...testFiles, ...others].map(name => [name, code]));
     const { stdout } = await lint(files, ["-f", "unix"]);
     const undefinedIn = (name: string) =>
       stdout.split("\n").filter(line => line.startsWith(`<dir>/${name}:`) && line.endsWith("[Error/no-undef]")).length;
-    expect([taken.map(undefinedIn), others.map(undefinedIn)]).toEqual([
+    expect([testFiles.map(undefinedIn), others.map(undefinedIn)]).toEqual([
       [0, 0, 0, 0],
       [14, 14, 14],
     ]);
   });
 
-  describe("the globals of a file are what the types of its project declare", () => {
+  describe("a file's globals come from its project's type declarations", () => {
     const options = (lib: string[], more: object) => JSON.stringify({ compilerOptions: { lib, types: [], ...more } });
     const files = {
-      // In no project.
+      // Not in any project.
       "a/a.js": "console.log(window, process, Bun, nothing);\n",
       "b/jsconfig.json": options(["es2022"], { checkJs: true }),
       "b/a.js": "console.log(window, process, Bun, nothing, Promise, Map);\n",
@@ -192,7 +199,7 @@ describe.concurrent("bun lint", () => {
       "c/a.js":
         "console.log(window, process, MY_GLOBAL, MY_CONST, OnlyAType, nothing);\nMY_CONST = 1;\nMY_GLOBAL = 'a';\n" +
         "/* global process, window: off */\n",
-      // The project does not take it in.
+      // This project doesn't include build.js.
       "d/tsconfig.json": options(["es2022"], {}),
       "d/build.js": "console.log(window, process, require, nothing);\n",
       "d/x.ts": "export const a = 1;\n",
@@ -203,7 +210,7 @@ describe.concurrent("bun lint", () => {
         .flatMap(line => /^<dir>\/(\S+?:\d+:\d+): .*?'(\w+)'.* \[\w+\/(.*)\]$/.exec(line)?.slice(1).join(" ") ?? []);
     const union = ["a/a.js:1:35 nothing no-undef", "d/build.js:1:39 nothing no-undef"];
 
-    test("without a configuration file, with --infer-globals", async () => {
+    test("without a config file, only with --infer-globals", async () => {
       const [inferred, not] = await Promise.all([
         lint(files, ["-f", "unix", "--infer-globals"]),
         lint(files, ["-f", "unix"]),
@@ -237,8 +244,8 @@ describe.concurrent("bun lint", () => {
       );
     });
 
-    // TypeScript knows the three in JavaScript without a declaration.
-    test("`require`, `module` and `exports` are defined in a JavaScript file that is no ES module", async () => {
+    // TypeScript defines these three in JavaScript files without a declaration.
+    test("`require`, `module` and `exports` are defined in a JavaScript file that isn't an ES module", async () => {
       const { stdout } = await lint(
         {
           "tsconfig.json": options(["es2022"], { checkJs: true }),
@@ -254,7 +261,7 @@ describe.concurrent("bun lint", () => {
       ]);
     });
 
-    test("beside a configuration file only with --infer-globals, and besides what it has", async () => {
+    test("with a config file, only with --infer-globals, and the config's own globals still apply", async () => {
       const config = `export default [{
         languageOptions: { globals: { nothing: "readonly", MY_CONST: "off" } },
         rules: { "no-undef": "error", "no-global-assign": "error" },
@@ -286,7 +293,7 @@ describe.concurrent("bun lint", () => {
     });
   });
 
-  test("--stdin: what only the parser of the configuration can read is named, as for a file", async () => {
+  test("--stdin reports input that only the config's parser can read, like it does for a file", async () => {
     const files = {
       "eslint.config.mjs": `export default [{
         languageOptions: { parser: { meta: { name: "@babel/eslint-parser" }, parseForESLint() { throw new Error("called"); } } },
@@ -307,9 +314,9 @@ describe.concurrent("bun lint", () => {
     expect([read.exitCode, unread.exitCode]).toEqual([1, 2]);
   });
 
-  // As ESLint 10.12 and oxlint 1.87.
+  // Same as ESLint 10.12 and oxlint 1.87.
   test.each(["eslint.config.mjs", "oxlint.config.ts"])(
-    "`process.cwd()` in %s is where the command runs, not where the file is",
+    "`process.cwd()` in %s is the directory the command runs in, not the config file's directory",
     async name => {
       const rules = `{ "no-debugger": basename(process.cwd()) === "sub" ? "error" : "off" }`;
       const config = name.startsWith("eslint") ? `[{ rules: ${rules} }]` : `{ rules: ${rules} }`;
@@ -317,12 +324,12 @@ describe.concurrent("bun lint", () => {
         [name]: `import { basename } from "node:path";\nexport default ${config};\n`,
         "sub/a.js": "debugger;\n",
       };
-      const [below, beside] = await Promise.all([lint(files, ["a.js"], { cwd: "sub" }), lint(files, ["sub/a.js"])]);
-      expect([below.exitCode, beside.exitCode]).toEqual([1, 0]);
+      const [fromSub, fromRoot] = await Promise.all([lint(files, ["a.js"], { cwd: "sub" }), lint(files, ["sub/a.js"])]);
+      expect([fromSub.exitCode, fromRoot.exitCode]).toEqual([1, 0]);
     },
   );
 
-  test("without a configuration file: eslint:recommended, and typescript-eslint/recommended for TypeScript", async () => {
+  test("without a config file, uses eslint:recommended, plus typescript-eslint/recommended for TypeScript", async () => {
     const { stdout, exitCode } = await lint(
       {
         "a.js": "console.log(Bun.version, process.argv, window);\nlet unused;\nundefinedName();\n",
@@ -348,11 +355,12 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
-  // What a file is like while it is being written. TypeScript's parser goes on and leaves these to its checker.
+  // This is what a file looks like while it's being typed. TypeScript's parser recovers and leaves these errors to its
+  // checker.
   test.each([
     ["eslint.config.js", config({})],
     [".oxlintrc.json", "{}"],
-  ])("JavaScript in which a name is missing is a parsing error, with %s", async (name, text) => {
+  ])("JavaScript with a missing name is a parsing error, with %s", async (name, text) => {
     const codes = [
       "let x = 1;\nconst",
       "export var",
@@ -379,14 +387,15 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
-  // oxc reads these. espree, typescript-estree and tsc do not.
-  test("what only oxc parses is linted with .oxlintrc.json, and a parsing error with eslint.config.js", async () => {
+  // oxc parses these. espree, typescript-estree and tsc don't.
+  test("syntax that only oxc parses is linted with .oxlintrc.json, and is a parsing error with eslint.config.js", async () => {
     const files = {
       "a.js": 'import source x from "m";\ndebugger;\n',
       "b.ts": 'import source x from "m";\ndebugger;\n',
       "c.js": 'import.source("m");\ndebugger;\n',
       "d.tsx": "<>\n<\n/>;\ndebugger;\n",
-      // The attributes of a re-export on the next line, where TypeScript reads a `with` statement. In JavaScript espree reads these.
+      // A re-export's attributes on the next line, which TypeScript parses as a `with` statement. In JavaScript, espree
+      // parses these.
       "e.ts": 'export * from "m"\nwith { type: "json" }\ndebugger;\n',
       "f.ts": 'export * as ns from "m"\nwith { type: "json" }\ndebugger;\n',
       "g.ts": 'export { a } from "m"\nwith { type: "json" }\ndebugger;\n',
@@ -395,25 +404,26 @@ describe.concurrent("bun lint", () => {
     const names = Object.keys(files);
     const lines = (stdout: string) => stdout.split("\n").filter(line => /^\S*[a-h]\.\w+:\d/.test(line));
     const rules = { "no-debugger": "error" };
-    const ofOxlint = JSON.stringify({ categories: { correctness: "off" }, rules });
-    const ofEslint = `export default [{ files: ["**/*.{js,ts,tsx}"], rules: ${JSON.stringify(rules)} }];\n`;
+    const oxlintConfig = JSON.stringify({ categories: { correctness: "off" }, rules });
+    const eslintConfig = `export default [{ files: ["**/*.{js,ts,tsx}"], rules: ${JSON.stringify(rules)} }];\n`;
     const [oxlint, eslint] = await Promise.all([
-      lint({ ".oxlintrc.json": ofOxlint, ...files }, ["-f", "unix", ...names]),
-      lint({ "eslint.config.js": ofEslint, ...files }, ["-f", "unix", ...names]),
+      lint({ ".oxlintrc.json": oxlintConfig, ...files }, ["-f", "unix", ...names]),
+      lint({ "eslint.config.js": eslintConfig, ...files }, ["-f", "unix", ...names]),
     ]);
     expect(lines(oxlint.stdout).map(line => /no-debugger/.test(line))).toEqual(names.map(() => true));
     expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual(names.map(() => true));
   });
 
-  // Each row is what oxlint 1.87 prints, in its order. tsc, typescript-estree, espree and Babel reject an escape in a name of JSX.
-  test("with .oxlintrc.json a name of JSX with a unicode escape is the text as written", async () => {
+  // Each row is what oxlint 1.87 prints, in the same order. tsc, typescript-estree, espree and Babel reject an escape
+  // in a JSX name.
+  test("with .oxlintrc.json, a unicode escape in a JSX name isn't decoded", async () => {
     const rows: [extension: string, code: string, found: string[]][] = [
       ["tsx", 'const X = () => null;\nexport const a = <X d\\u0065nsity="comfortable" />;', []],
       ["jsx", "export const a = <d\\u0069v></d\\u0069v>;", []],
       ["jsx", 'export const a = <a:\\u0059 b:\\u0059="1" />;', []],
       ["tsx", 'export const a = <\\u0061-b c-\\u0064="1" />;', []],
       ["tsx", "const X = { Y: () => null };\nexport const a = <X.\\u0059 />;", []],
-      // It isn't the variable `Xe`.
+      // This doesn't refer to the variable `Xe`.
       [
         "tsx",
         "const Xe = () => null;\nexport const a = <X\\u0065 />;",
@@ -422,7 +432,7 @@ describe.concurrent("bun lint", () => {
           "eslint(no-unused-vars): Variable 'Xe' is declared but never used. Unused variables should start with a '_'. @6+2",
         ],
       ],
-      // A rule gets the whole name.
+      // Rules see the whole name, including the escape.
       [
         "jsx",
         'export const a = <div d\\u{65}nsity="x" />;',
@@ -451,7 +461,7 @@ describe.concurrent("bun lint", () => {
     );
   });
 
-  // tsc reports TS17021 and ESLint 10.12 "Unexpected token \\u0059".
+  // tsc reports TS17021, and ESLint 10.12 reports "Unexpected token \\u0059".
   test("an escape in a member of a JSX tag name is a parsing error with eslint.config.js", async () => {
     const config = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
     const code = "const X = { Y: () => null };\nexport const a = <X.\\u0059 />;\n";
@@ -460,9 +470,9 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
-  // oxlint 1.87 lints all of these, and ESLint 10.12 with espree lints the .jsx files. tsc 6 and typescript-estree scan a
-  // JavaScript string, with escapes, as soon as something is between the `=` and the quote.
-  test("a JSX attribute string has no escapes, whatever is between the `=` and the quote", async () => {
+  // oxlint 1.87 lints all of these, and ESLint 10.12 with espree lints the .jsx files. tsc 6 and typescript-estree scan
+  // a JavaScript string, with escapes, as soon as anything comes between the `=` and the quote.
+  test("a JSX attribute string has no escapes, no matter what's between the `=` and the quote", async () => {
     const attributes = [
       'id = "x\\" density = "comfortable"',
       "id = 'x\\' density = 'comfortable'",
@@ -480,11 +490,11 @@ describe.concurrent("bun lint", () => {
     const jsx = Object.fromEntries(code.map((it, i) => [`a${i}.jsx`, it]));
     const tsx = Object.fromEntries(code.map((it, i) => [`a${i}.tsx`, it]));
     const rules = { "no-debugger": "error" };
-    const ofOxlint = JSON.stringify({ categories: { correctness: "off" }, rules });
-    const ofEslint = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } }, rules: ${JSON.stringify(rules)} }];\n`;
+    const oxlintConfig = JSON.stringify({ categories: { correctness: "off" }, rules });
+    const eslintConfig = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } }, rules: ${JSON.stringify(rules)} }];\n`;
     const [oxlint, eslint] = await Promise.all([
-      lint({ ".oxlintrc.json": ofOxlint, ...jsx, ...tsx }, ["-f", "unix"]),
-      lint({ "eslint.config.js": ofEslint, ...jsx }, ["-f", "unix"]),
+      lint({ ".oxlintrc.json": oxlintConfig, ...jsx, ...tsx }, ["-f", "unix"]),
+      lint({ "eslint.config.js": eslintConfig, ...jsx }, ["-f", "unix"]),
     ]);
     const reported = (stdout: string) =>
       stdout
@@ -495,9 +505,9 @@ describe.concurrent("bun lint", () => {
     expect(reported(eslint.stdout).sort()).toEqual(expected(jsx).sort());
   });
 
-  // Each row is what oxlint 1.87 prints. tsc, typescript-estree and Babel leave the await and yield context inside a type, so
-  // there `await (k)` is a call of `await`.
-  test("with .oxlintrc.json an expression in a type is in the await and yield context around the type", async () => {
+  // Each row is what oxlint 1.87 prints. tsc, typescript-estree and Babel exit the await and yield context inside a
+  // type, so for them `await (k)` in a type calls a function named `await`.
+  test("with .oxlintrc.json, an expression in a type inherits the surrounding await and yield context", async () => {
     const rows: [extension: string, code: string, found: string[]][] = [
       ["ts", 'const k = "a"; export let x: { [await (k)]: number };', []],
       [
@@ -563,7 +573,7 @@ describe.concurrent("bun lint", () => {
         'const k = "a"; const f = async (a = await k) => {}; f(); export {};',
         ["error: await expression not allowed in formal parameter @36+7"],
       ],
-      // A declaration of TypeScript that is a statement by itself is outside the await context.
+      // A TypeScript declaration that is itself a statement is outside the await context.
       [
         "ts",
         'const k = "a"; type T = { [await (k)]: number }; export {};',
@@ -594,12 +604,12 @@ describe.concurrent("bun lint", () => {
         'const k = "a"; declare class C { [await (k)]: number } export {};',
         ["eslint(no-undef): 'await' is not defined. @34+5"],
       ],
-      // Nothing says that these are modules, so `await (k)` is a call.
+      // Nothing marks these as modules, so `await (k)` is a call.
       ["ts", 'const k = "a"; let x: { [await (k)]: number };', ["eslint(no-undef): 'await' is not defined. @25+5"]],
       ["ts", "const k = 1; await (k);", ["eslint(no-undef): 'await' is not defined. @13+5"]],
       ["js", "const k = 1; await (k);", ["eslint(no-undef): 'await' is not defined. @13+5"]],
       ["ts", "const k = [1]; await [k];", ["eslint(no-undef): 'await' is not defined. @15+5"]],
-      // `await k` says so.
+      // `await k` makes the file a module.
       ["ts", "const k = 1; await (k); await k;", []],
       ["ts", "const k = 1; await k; let x: { [await (k)]: number };", []],
       ["mts", 'const k = "a"; let x: { [await (k)]: number };', []],
@@ -621,11 +631,9 @@ describe.concurrent("bun lint", () => {
     );
   });
 
-  // Each row is what oxlint 1.87 prints. oxc's parser reports these, so the file isn't linted. tsc leaves them to its checker
-  // (TS1308, TS1163), and typescript-estree says nothing.
   // Every row was run on oxlint 1.87.
-  test("with .oxlintrc.json an `await` that is put up with outside every body makes the file a module", async () => {
-    // What the `await` of `await (z);` in the next line is. In a script it is the name of a function.
+  test("with .oxlintrc.json, an `await` that's accepted outside every function body makes the file a module", async () => {
+    // `found` is how the `await` of `await (z);` on the next line is parsed. In a script it's the name of a function.
     const rows: [extensions: string, code: string, found: "the operator" | "a name"][] = [
       ["ts tsx", "function f(): { [await g()]: 1 } { return null!; }", "the operator"],
       ["ts", "const f = function (): { [await g()]: 1 } { return null!; };", "the operator"],
@@ -666,10 +674,13 @@ describe.concurrent("bun lint", () => {
     expect(found).toEqual(Object.fromEntries(cases.map(({ name, found }) => [name, found])));
   });
 
-  test("with .oxlintrc.json `await` outside an async function and `yield` outside a generator are errors", async () => {
+  // Each row is what oxlint 1.87 prints. oxc's parser reports these, so the file isn't linted. tsc leaves them to its
+  // checker (TS1308, TS1163), and typescript-estree doesn't report them.
+  test("with .oxlintrc.json, `await` outside an async function and `yield` outside a generator are errors", async () => {
     const all = "ts tsx mts cts js jsx mjs cjs";
     const typescript = "ts tsx mts cts";
-    // "await@15": the error about `await`, at offset 15. "linted": no error, and the `debugger` in the last line is reported.
+    // "await@15": the error about `await`, at offset 15. "linted": no error, and the `debugger` on the last line is
+    // reported.
     const rows: [extensions: string, code: string, found: string][] = [
       [all, "function f() { await g(); }", "await@15"],
       [all, "function f() { return await g; }", "await@22"],
@@ -691,7 +702,7 @@ describe.concurrent("bun lint", () => {
       [all, "function f() { class A { [await g()]() {} } }", "await@26"],
       [all, "function f() { function h(a = await g()) {} }", "await@30"],
       [all, "function f(a = () => await g()) {}", "await@21"],
-      // One error: what follows the first `await` is read as if it were in an async function.
+      // Only one error, because whatever follows the first `await` is parsed as if it were in an async function.
       [all, "function f() { await await g; }", "await@15"],
       [all, "function f() { await x(await y); }", "await@15"],
       // In an async function, or not a keyword.
@@ -711,7 +722,7 @@ describe.concurrent("bun lint", () => {
       ["ts tsx cts js jsx cjs", "function f() { for (await of x) ; }", "linted"],
       ["mts mjs", "function f() { for (await of x) ; }", "The keyword 'await' is reserved @20+5"],
       ["ts tsx cts js jsx cjs", "var await; await = 1;", "linted"],
-      // Outside every function: by the name of the file.
+      // Outside every function, it depends on the file extension.
       ["ts tsx mts js jsx mjs", "await g();", "linted"],
       ["cts cjs", "await g();", "await@0"],
       ["ts tsx js jsx", "class A { x = await g(); }", "linted"],
@@ -766,7 +777,7 @@ describe.concurrent("bun lint", () => {
       [typescript, "function f() { type T = { [await g]: 1 }; }", "await@27"],
       ["ts tsx", "function f(): { [await g]: 1 } { return null!; }", "linted"],
       ["mts cts", "function f(): { [await g]: 1 } { return null!; }", "await@17"],
-      // A signature in a type starts nothing: it is in the block.
+      // A signature in a type doesn't start a new context, so it's still in the static block.
       [
         "ts tsx",
         "class A { static { type F = { (): { [await g()]: 1 } }; } }",
@@ -779,13 +790,13 @@ describe.concurrent("bun lint", () => {
         "Cannot use await in class static initialization block @48+5",
       ],
       ["mts cts", "class A { static { interface I { m<T extends { [await g()]: 1 }>(): void } } }", "await@48"],
-      // The type of a variable is read in the context of the block, where `await` is the operator.
+      // A variable's type is parsed in the block's context, where `await` is the operator.
       [
         typescript,
         "class A { static { let v: { get x(): { [await g()]: 1 } }; } }",
         "Cannot use await in class static initialization block @40+5",
       ],
-      // A function does, with or without a body.
+      // A function does start a new context, with or without a body.
       ["ts tsx", "class A { static { abstract class B { abstract m(): { [await g()]: 1 }; } } }", "linted"],
       ["ts tsx", "class A { static { function f(): { [await g()]: 1 } { return null!; } } }", "linted"],
       [typescript, "function o() { @dec(await g()) class A {} }", "await@20"],
@@ -793,7 +804,7 @@ describe.concurrent("bun lint", () => {
       ["ts tsx", "declare const x = await g;", "linted"],
       ["mts cts", "declare const x = await g;", "await@18"],
       [typescript, "function f() { let x: { [yield g]: 1 }; }", "yield@25"],
-      // Arrow parameters are read in the context around the arrow function.
+      // Arrow parameters are parsed in the context surrounding the arrow function.
       [
         all,
         "async function f() { const h = (a = await g()) => a; }",
@@ -806,7 +817,7 @@ describe.concurrent("bun lint", () => {
         "function* f() { const h = (a = yield g) => a; }",
         "yield expression not allowed in formal parameter @31+7",
       ],
-      // `await` and `using` on two lines are no declaration.
+      // `await` and `using` on separate lines aren't a declaration.
       ["ts tsx cts js jsx cjs", "function f() { await\nusing x = g(); }", "linted"],
       ["mts mjs", "function f() { await\nusing x = g(); }", "The keyword 'await' is reserved @15+5"],
       [
@@ -863,10 +874,11 @@ describe.concurrent("bun lint", () => {
     expect(found).toEqual(Object.fromEntries(cases.map(({ name, found }) => [name, [found]])));
   });
 
-  // Each row is what oxlint 1.87 does. oxc can't parse Flow. Where it fails on a JavaScript file whose first comment has `@flow`,
-  // oxlint prints nothing about the file.
-  test("with .oxlintrc.json a file that doesn't parse is skipped silently if its first comment has @flow", async () => {
-    // "silent": nothing is printed. "error": only a syntax error. "linted": the `debugger` in the last line is reported.
+  // Each row is what oxlint 1.87 does. oxc can't parse Flow. If it fails on a JavaScript file whose first comment has
+  // `@flow`, oxlint prints nothing about the file.
+  test("with .oxlintrc.json, a file that doesn't parse is skipped silently if its first comment has @flow", async () => {
+    // "silent": nothing is printed. "error": only a syntax error. "linted": the `debugger` on the last line is
+    // reported.
     const rows: [extension: string, code: string, outcome: "silent" | "error" | "linted"][] = [
       ["js", "// @flow\ntype A = number;", "silent"],
       ["js", "// @flow\nimport typeof X from 'x';", "silent"],
@@ -883,20 +895,20 @@ describe.concurrent("bun lint", () => {
       ["js", "import /* @flow */ typeof X from 'x';", "silent"],
       ["js", "type /* @flow */ A = number;", "silent"],
       ["js", "foo( // @flow\n;", "silent"],
-      // Oxc's lexer hasn't come to the comment yet.
+      // Oxc's lexer hasn't reached the comment yet.
       ["js", "import typeof /* @flow */ X from 'x';", "error"],
       ["js", "import typeof X from 'x';\n// @flow", "error"],
       ["js", "type A /* @flow */ = number;", "error"],
       ["js", "type A = number; // @flow", "error"],
       ["js", "type A = number;\n// @flow", "error"],
       ["js", "foo(; // @flow", "error"],
-      // Only the first comment counts, and only in JavaScript.
+      // Only the first comment is checked, and only in JavaScript.
       ["js", "// first\n// @flow\nimport typeof X from 'x';", "error"],
       ["js", "// @noflow\nimport typeof X from 'x';", "error"],
       ["js", "import typeof X from 'x';", "error"],
       ["ts", "// @flow\nimport typeof X from 'x';", "error"],
       ["js", "// @flow\nfoo();", "linted"],
-      // Oxc goes on after these errors, to the end of the file, so it comes to the comment.
+      // Oxc recovers from these errors and continues to the end of the file, so it reaches the comment.
       ["js", "function f() { await g(); }\n// @flow", "silent"],
       ["js", "function f() { yield 1; }\n// @flow", "silent"],
       ["js", "function f() { await g(); } // @flow\nlet = ;", "silent"],
@@ -927,8 +939,9 @@ describe.concurrent("bun lint", () => {
     );
   });
 
-  // Each text is what oxlint 1.87 prints with --threads 1. It prints the files in no particular order in two of the formats.
-  test("with .oxlintrc.json every format has the code, the help and every occurrence of a syntax error", async () => {
+  // Each expected output is what oxlint 1.87 prints with --threads 1. In two of the formats it prints the files in no
+  // particular order.
+  test("with .oxlintrc.json, every format includes a syntax error's code and help, and reports each occurrence", async () => {
     const files = {
       ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-debugger": "error" } }),
       "f1.ts": "class A { constructor(); }\n",
@@ -941,7 +954,7 @@ describe.concurrent("bun lint", () => {
     const print = async (format: string) => {
       const { raw, stdout, exitCode } = await lint(files, ["--threads", "1", "-f", format, ...names]);
       expect(exitCode).toBe(1);
-      // Only this one has the directory in it.
+      // Only stylish prints absolute paths.
       return (format === "stylish" ? stdout : raw)
         .replace(/\x1b\[[0-9;]*m/g, "")
         .replace(/Finished in [\d.]+ms/, "Finished in Nms");
@@ -1117,7 +1130,7 @@ describe.concurrent("bun lint", () => {
   });
 
   // Each row is what oxlint 1.87 does.
-  test("with .oxlintrc.json a file is a script if nothing in it says that it is a module", async () => {
+  test("with .oxlintrc.json, a file is a script unless its extension or its code makes it a module", async () => {
     const name = "var await = 1; f(await);\n";
     const comments = "var a; <!-- c\n--> d\n";
     const linted = {
@@ -1130,7 +1143,7 @@ describe.concurrent("bun lint", () => {
       "b.ts": comments,
       "b.cts": comments,
     };
-    const refused = {
+    const rejected = {
       "c.mjs": name,
       "c.mts": name,
       "d.mjs": comments,
@@ -1138,25 +1151,26 @@ describe.concurrent("bun lint", () => {
       "e.js": `export {};\nf(await);\n`,
       "e.ts": `export {};\nf(await);\n`,
       "f.js": `export {};\n${comments}`,
-      // A module by its `await`, and no script with it.
+      // This is a module because of its `await`, which doesn't parse in a script.
       "g.js": `await f();\n${comments}`,
       "g.ts": `await f();\n${comments}`,
       "h.js": "var await = 1; let x = ;\n",
     };
     const settings = JSON.stringify({ categories: { correctness: "off" }, rules: {} });
-    const files = { ...linted, ...refused };
+    const files = { ...linted, ...rejected };
     const { stdout, exitCode } = await lint({ ".oxlintrc.json": settings, ...files }, [
       "-f",
       "unix",
       ...Object.keys(files),
     ]);
     const reported = stdout.split("\n").flatMap(line => line.match(/^([a-h]\.\w+):\d+:\d+: .* \[Error\]$/)?.[1] ?? []);
-    expect([...new Set(reported)].sort()).toEqual(Object.keys(refused).sort());
+    expect([...new Set(reported)].sort()).toEqual(Object.keys(rejected).sort());
     expect(exitCode).toBe(1);
   });
 
-  // Each is what ESLint says with espree. At the `<` of the first two the parser went round until its stack was used up.
-  test("which error of broken JavaScript is reported, and where", async () => {
+  // Each error is what ESLint reports with espree. At the `<` of the first two, the parser used to recurse until it
+  // overflowed the stack.
+  test("reports the same error at the same position as espree for broken JavaScript", async () => {
     const cases: Record<string, [code: string, error?: string]> = {
       "a0.js": ["{} while (a)< {}", "1:13: Parsing error: Unexpected token <"],
       "a1.js": ["var arr =< [, ,];", "1:10: Parsing error: Unexpected token <"],
@@ -1170,10 +1184,10 @@ describe.concurrent("bun lint", () => {
         'import { a } om "foo"',
         "1:1: Parsing error: 'import' and 'export' may appear only with 'sourceType: module'",
       ],
-      // acorn skips a comment before the string of an attribute, which can have a line break.
+      // acorn skips a comment before an attribute's string, and the string can contain a line break.
       "a6.jsx": ['<a b=/* c */"x\ny" />;'],
       "a7.js": ["a = => 1;", "1:5: Parsing error: Unexpected token =>"],
-      // What is in parentheses is no mix with `??`, however many parentheses follow it.
+      // A parenthesized `||` or `&&` isn't mixed with `??`, no matter how many parentheses follow it.
       "a8.js": ["(a || b) ?? ((c)); (a && b) ?? [((c))]; f((a || b) ?? !((c)));"],
     };
     const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
@@ -1195,9 +1209,9 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
-  // Each place is what ESLint 10.12.0 reports.
-  describe("no-useless-assignment as ESLint has it", () => {
-    const places = async (lines: string[]) => {
+  // Each position is what ESLint 10.12.0 reports.
+  describe("no-useless-assignment matches ESLint", () => {
+    const positions = async (lines: string[]) => {
       const files = {
         "eslint.config.js": config({ "no-useless-assignment": "error" }),
         "a.cjs": lines.join("\n") + "\n",
@@ -1206,9 +1220,9 @@ describe.concurrent("bun lint", () => {
       return [...raw.matchAll(/\ba\.cjs:(\d+:\d+):/g)].map(it => it[1]);
     };
 
-    test("the `arguments` of a function is a variable", async () => {
+    test("a function's `arguments` is treated as a variable", async () => {
       expect(
-        await places([
+        await positions([
           `function a() { arguments = arguments + 1; }`,
           `function b() { arguments = 1; }`,
           `function c() { arguments = 1; d(arguments); arguments = 2; }`,
@@ -1221,9 +1235,9 @@ describe.concurrent("bun lint", () => {
       ).toEqual(["1:16", "3:45", "4:16", "5:30", "6:20", "6:40"]);
     });
 
-    test("a `var` in the block of a `catch` writes the parameter of that name", async () => {
+    test("a `var` in a `catch` block writes to the catch parameter with the same name", async () => {
       expect(
-        await places([
+        await positions([
           `function a() { try { g(); } catch (e) { h(e); var e = 1; } }`,
           `function b() { try { g(); } catch (e) { h(e); e = 1; } }`,
           `function c() { try { g(); } catch (e) { var e = 1; h(e); } }`,
@@ -1238,9 +1252,9 @@ describe.concurrent("bun lint", () => {
       ).toEqual(["1:51", "2:47", "4:51", "5:58", "6:45", "7:53", "8:56", "9:66", "10:51"]);
     });
 
-    test("two of them, and the variable of the function beside the parameter", async () => {
+    test("two `var`s in a `catch` block, and a function-level variable with the same name as the catch parameter", async () => {
       expect(
-        await places([
+        await positions([
           `try {`,
           `\tthrow new Error();`,
           `} catch (e) {`,
@@ -1254,7 +1268,7 @@ describe.concurrent("bun lint", () => {
         ]),
       ).toEqual(["4:6"]);
       expect(
-        await places([
+        await positions([
           `var e = 0; try { throw x.e; } catch (e) { var e = 7; } assertEquals(0, e);`,
           `let c = 1; c = 2; assertEquals(c);`,
         ]),
@@ -1262,7 +1276,7 @@ describe.concurrent("bun lint", () => {
     });
   });
 
-  describe("which files", () => {
+  describe("which files are linted", () => {
     const files = {
       "eslint.config.js": config({ "no-debugger": "error" }),
       "a.js": "debugger;\n",
@@ -1293,7 +1307,7 @@ describe.concurrent("bun lint", () => {
       });
     });
 
-    test("files, directories and patterns", async () => {
+    test("files, directories and patterns passed as arguments", async () => {
       expect(
         await Promise.all([listed(["a.js", "src/deep"]), listed(["src/*.{mjs,cjs}"]), listed(["**/f.js"])]),
       ).toEqual([
@@ -1303,25 +1317,109 @@ describe.concurrent("bun lint", () => {
       ]);
     });
 
-    test("--ext", async () => {
+    test("--ext also lints files with that extension", async () => {
       expect(await listed(["--ext", ".ts", "src/d.ts", "src/deep"])).toEqual({
         files: ["<dir>/src/d.ts", "<dir>/src/deep/f.js"],
         exitCode: 0,
       });
     });
 
-    test("--ignore-pattern", async () => {
+    test("--ignore-pattern excludes directories and files", async () => {
       expect(await listed(["--ignore-pattern", "src/deep/", "--ignore-pattern", "**/*.mjs", "src"])).toEqual({
         files: ["<dir>/src/.hidden/e.js", "<dir>/src/c.cjs"],
         exitCode: 0,
       });
     });
 
-    test("from a subdirectory, with the configuration above", async () => {
+    test("only the subdirectory when run from one, with the config in a parent directory", async () => {
       expect(await listed([], { cwd: "src/deep" })).toEqual({ files: ["<dir>/src/deep/f.js"], exitCode: 0 });
     });
 
-    test.skipIf(isWindows)("a named pipe with the name of a script is passed over", async () => {
+    // Same as `bun fmt` and Prettier. ESLint 10.12.0 exits with code 2 for these arguments. oxlint 1.87.0 ignores them.
+    describe.each([
+      ["no config", {}],
+      ["eslint.config.js", { "eslint.config.js": config({ "no-var": "error" }) }],
+      [".oxlintrc.json", { ".oxlintrc.json": "{}\n" }],
+    ])("an argument that starts with ! excludes files: %s", (name, project) => {
+      const code = "var  a = 1;\n";
+      const files = {
+        ...project,
+        "src/f.js": code,
+        "src/g.js": code,
+        "src/deep/h.js": code,
+        "other/o.js": code,
+        "top.js": code,
+      };
+      const listed = async (...args: string[]) => {
+        const { stdout, stderr, exitCode } = await lint(files, ["--list-files", ...args], { mayFail: true });
+        return { files: stdout.split("\n").filter(Boolean), stderr: stderr.split("\n")[0], exitCode };
+      };
+
+      test.each([
+        [
+          ["src", "!src/f.js"],
+          ["<dir>/src/deep/h.js", "<dir>/src/g.js"],
+        ],
+        [
+          ["!src/f.js", "src"],
+          ["<dir>/src/deep/h.js", "<dir>/src/g.js"],
+        ],
+        [["src/*.js", "!src/f.js"], ["<dir>/src/g.js"]],
+        [
+          ["src", "!src/deep"],
+          ["<dir>/src/f.js", "<dir>/src/g.js"],
+        ],
+        [["src", "!**/h.js", "!./src/g.js"], ["<dir>/src/f.js"]],
+        [
+          ["src", "top.js", "!nothing.js"],
+          ["<dir>/src/deep/h.js", "<dir>/src/f.js", "<dir>/src/g.js", "<dir>/top.js"],
+        ],
+        // A `!` that isn't at the start of the argument opens an extglob group.
+        [["src/!(f).js"], ["<dir>/src/g.js"]],
+      ])("%j", async (args, expected) => {
+        expect(await listed(...args)).toEqual({ files: expected, stderr: "", exitCode: 0 });
+      });
+
+      test.skipIf(name === ".oxlintrc.json")("exits with code 2 when the arguments don't select any file", async () => {
+        expect(
+          await Promise.all([listed("!top.js"), listed("top.js", "!top.js"), listed("src/*.js", "!src/*")]),
+        ).toEqual([
+          { files: [], stderr: 'error: No files matching the pattern "!top.js" were found.', exitCode: 2 },
+          {
+            files: [],
+            stderr:
+              'error: You are linting "top.js", but all of the files matching the glob pattern "top.js" are ignored.',
+            exitCode: 2,
+          },
+          {
+            files: [],
+            stderr:
+              'error: You are linting "src/*.js", but all of the files matching the glob pattern "src/*.js" are ignored.',
+            exitCode: 2,
+          },
+        ]);
+      });
+
+      // Same as oxfmt.
+      test.skipIf(name !== ".oxlintrc.json")(
+        "with no other argument, lints the rest of the working directory",
+        async () => {
+          expect(await listed("!top.js")).toEqual({
+            files: ["<dir>/other/o.js", "<dir>/src/deep/h.js", "<dir>/src/f.js", "<dir>/src/g.js"],
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+      );
+
+      test("--fix only writes to the selected files", async () => {
+        const reads = ["src/f.js", "src/g.js", "src/deep/h.js", "other/o.js", "top.js"];
+        const result = await lint(files, ["--fix", "--rule", "no-var: error", "src", "!src/f.js"], { reads });
+        expect(reads.filter(name => result.files[name] !== code)).toEqual(["src/g.js", "src/deep/h.js"]);
+      });
+    });
+
+    test.skipIf(isWindows)("a named pipe whose name ends in .js is skipped", async () => {
       const { stdout, exitCode } = await lint({ "eslint.config.js": basic, "a.js": bad }, ["-f", "unix", "."], {
         before: dir => expect(Bun.spawnSync(["mkfifo", join(dir, "pipe.js")]).exitCode).toBe(0),
       });
@@ -1330,11 +1428,125 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(1);
     });
 
-    // git keeps a link to `/dev/zero` as it is.
+    // Opening a pipe like this blocks until a writer opens it.
+    test.skipIf(isWindows).each([".gitignore", ".git/info/exclude", ".eslintignore", "package.json"])(
+      "doesn't hang when %s is a link to a named pipe without a writer",
+      async name => {
+        const { raw } = await lint({ "project/a.js": bad, "project/.git/info/a": "" }, ["-f", "json", "."], {
+          cwd: "project",
+          before: dir => {
+            expect(Bun.spawnSync(["mkfifo", join(dir, "pipe")]).exitCode).toBe(0);
+            symlinkSync(join(dir, "pipe"), join(dir, "project", name));
+          },
+        });
+        expect(raw).toContain("a.js");
+      },
+    );
+
+    describe.skipIf(isWindows)("a named pipe passed to a flag", () => {
+      const makePipes = (dir: string) =>
+        expect(Bun.spawnSync(["mkfifo", join(dir, "pipe"), join(dir, "pipe.json")]).exitCode).toBe(0);
+
+      // Reading the pipe as empty would silently disable the ignore list, so it's an error. `bun lint` doesn't block
+      // waiting for a writer either.
+      describe.each([
+        ["no config", {}],
+        ["eslint.config.js", { "eslint.config.js": basic }],
+        [".oxlintrc.json", { ".oxlintrc.json": "{}\n" }],
+        [".eslintrc.json", { ".eslintrc.json": "{}\n" }],
+      ])("without a writer is an error, with %s", (_, config: Record<string, string>) => {
+        test.each([
+          [["--ignore-path", "pipe"], "pipe"],
+          [["--ignore-path=./pipe"], "./pipe"],
+          [["--config", "pipe.json"], "pipe.json"],
+          [["-c", "pipe.json"], "pipe.json"],
+          [["--config=pipe"], "pipe"],
+        ])("%j", async (flags, name) => {
+          const result = await lint({ ...config, "a.js": bad }, ["--fix", ...flags, "."], {
+            before: makePipes,
+            reads: ["a.js"],
+            mayFail: true,
+          });
+          expect(result.stderr).toBe(`error: cannot read ${name}: nothing is writing to this pipe`);
+          expect(result.raw).toBe("");
+          expect(result.files).toEqual({ "a.js": bad });
+          expect(result.exitCode).toBe(2);
+        });
+      });
+
+      test("a pipe set as ignorePath in bunfig.toml is still read as empty", async () => {
+        const files = { "bunfig.toml": '[lint]\nignorePath = "pipe"\n', "a.js": bad };
+        const { stdout, exitCode } = await lint(files, ["-f", "unix", "."], { before: makePipes });
+        expect(stdout).toContain("<dir>/a.js:2:15: ");
+        expect(exitCode).toBe(1);
+      });
+
+      // `--ignore-path <(true)`
+      test("a pipe whose writer closes it without writing is read as an empty file", async () => {
+        using dir = tempDir("bun-lint", { "a.js": bad });
+        await using proc = spawn({
+          cmd: ["sh", "-c", ': | "$0" "$@"', ...command, "-f", "unix", "--ignore-path", "/dev/stdin", "."],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("cannot read");
+        expect(stdout).toContain("a.js:2:15: ");
+        expect(exitCode).toBe(1);
+      });
+
+      /** Runs `bun lint` with `args` in a directory containing `files` while writing `text` to the pipe `name`. */
+      async function lintWhileWriting(files: Record<string, string>, args: string[], name: string, text: string) {
+        using dir = tempDir("bun-lint", files);
+        makePipes(String(dir));
+        // With a reader open, opening the pipe for writing doesn't block, and written data stays buffered.
+        const reader = openSync(join(String(dir), name), constants.O_RDONLY | constants.O_NONBLOCK);
+        const writer = openSync(join(String(dir), name), constants.O_WRONLY);
+        try {
+          const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
+          await using proc = spawn({ cmd: [...command, ...args], env, cwd: String(dir), ...stdio });
+          writeSync(writer, text);
+          closeSync(writer);
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          return { stdout, exitCode };
+        } finally {
+          closeSync(reader);
+        }
+      }
+
+      // A pipe can only be read once, but the ignore list is needed for every directory that is searched.
+      test.each([
+        ["no config", {}, 1],
+        [".oxlintrc.json", { ".oxlintrc.json": "{}\n" }, 0],
+        [".eslintrc.json", { ".eslintrc.json": '{ "rules": { "no-debugger": "error" } }\n' }, 1],
+      ])("--ignore-path reads patterns written to the pipe, with %s", async (_, config, exitCode) => {
+        const files = { ...config, "src/a.js": bad, "src/b.js": bad, "lib/a.js": bad, "lib/b.js": bad };
+        const args = ["-f", "unix", "--ignore-path", "pipe", "src", "lib"];
+        const result = await lintWhileWriting(files, args, "pipe", "a.js\n");
+        expect(result.stdout.match(/(?:src|lib)\/[ab]\.js:2:15/g)).toEqual(["lib/b.js:2:15", "src/b.js:2:15"]);
+        expect(result.exitCode).toBe(exitCode);
+      });
+
+      // Detecting whether the config is oxlint's or ESLint's also reads the file, and a pipe can only be read once.
+      test.each([
+        ["oxlint", '{ "rules": { "no-debugger": "off", "eqeqeq": "error" } }\n'],
+        ["ESLint 8", '{ "root": true, "rules": { "eqeqeq": "error" } }\n'],
+      ])("--config reads a config written to the pipe, for %s", async (_, text) => {
+        const args = ["-f", "unix", "--config", "pipe.json", "a.js"];
+        const result = await lintWhileWriting({ "a.js": bad }, args, "pipe.json", text);
+        expect(result.stdout.match(/a\.js:\d+:\d+: .+/g)).toEqual([expect.stringContaining("eqeqeq")]);
+        expect(result.exitCode).toBe(1);
+      });
+    });
+
+    // git stores a link to `/dev/zero` as is, so a repository can contain one.
     test.skipIf(isWindows).each([
       ["eslint.config.js", basic],
       [".oxlintrc.json", "{}"],
-    ])("a link to a device with the name of a script is passed over: %s", async (name, text) => {
+    ])("a link to a device whose name ends in .js is skipped: %s", async (name, text) => {
       const { raw } = await lint({ [name]: text, "a.js": bad }, ["-f", "json", "."], {
         before: dir => symlinkSync("/dev/null", join(dir, "device.js")),
       });
@@ -1342,8 +1554,9 @@ describe.concurrent("bun lint", () => {
       expect(raw).not.toContain("device.js");
     });
 
-    // It has holes for all its bytes. Node: "Cannot create a string longer than 0x1fffffe8 characters".
-    test("a file that JavaScript could not hold as a string is not read", async () => {
+    // The file is sparse, so it takes no disk space. Node says "Cannot create a string longer than 0x1fffffe8
+    // characters".
+    test("a file too large for a JavaScript string isn't read, and the run fails with EFBIG", async () => {
       const { stderr, exitCode } = await lint({ "eslint.config.js": basic, "a.js": "", "b.js": bad }, ["."], {
         before: dir => truncateSync(join(dir, "a.js"), 2 ** 29),
         mayFail: true,
@@ -1369,8 +1582,8 @@ describe.concurrent("bun lint", () => {
       });
     });
 
-    // A junction takes no privilege on Windows. Elsewhere it is a link like any other.
-    test("a link to a directory is not followed, on Windows neither", async () => {
+    // Creating a junction doesn't need a privilege on Windows. On other systems it's an ordinary symlink.
+    test("a link to a directory isn't followed on Windows either", async () => {
       const before = (dir: string) => symlinkSync(join(dir, "src", "deep"), join(dir, "src", "linked"), "junction");
       expect(await listed(["src"], { before })).toEqual({
         files: ["<dir>/src/.hidden/e.js", "<dir>/src/b.mjs", "<dir>/src/c.cjs", "<dir>/src/deep/f.js"],
@@ -1378,8 +1591,8 @@ describe.concurrent("bun lint", () => {
       });
     });
 
-    // Every snapshot above has `/` for `\\`, so none of them can tell.
-    test("paths are printed as the system writes them", async () => {
+    // Every snapshot above has `\\` replaced with `/`, so none of them would catch this.
+    test("paths are printed with the platform's separator", async () => {
       const inDirectory = async (args: string[]) => {
         let root = "";
         const { raw } = await lint(files, args, { before: dir => void (root = dir) });
@@ -1399,8 +1612,8 @@ describe.concurrent("bun lint", () => {
       expect(list.raw).toBe(`${list.file}\n`);
     });
 
-    test.skipIf(!hasRunner)("paths are computed as by node:path, those of Windows on every system", async () => {
-      // Not where a `package.json` has a script `lint`.
+    test.skipIf(!hasRunner)("path helpers match node:path, including win32 paths on every platform", async () => {
+      // Don't run in a directory whose `package.json` has a `lint` script.
       using dir = tempDir("bun-lint", {});
       const cases = {
         windows: {
@@ -1494,11 +1707,11 @@ describe.concurrent("bun lint", () => {
         expect(all.map((it, i) => [...it, answers[i]])).toEqual(all.map((it, i) => [...it, expected[i]]));
         expect(exitCode).toBe(0);
       }
-      // A path on another drive that does not start at its root is from the working directory, which is that of the process.
+      // A path on another drive that isn't absolute (`D:a`) is resolved against the process's working directory.
       const script = `console.log(require("node:path").win32.resolve("C:/proj", "D:a").replaceAll("\\\\", "/"))`;
-      const ofNode = Bun.spawnSync({ cmd: [bunExe(), "-e", script], cwd: String(dir), env });
+      const fromNode = Bun.spawnSync({ cmd: [bunExe(), "-e", script], cwd: String(dir), env });
       const onOtherDrive = await run(String(dir), ["--run-path-tests", "windows", "resolve", "C:/proj", "D:a"]);
-      expect(onOtherDrive.stdout).toBe(ofNode.stdout.toString());
+      expect(onOtherDrive.stdout).toBe(fromNode.stdout.toString());
       const inside = ["c:/proj", "C:/PROJ/a.js", "C:/proj", "C:/project/a.js", "C:/", "c:/a.js"].flatMap((it, i) =>
         i % 2 ? [it] : ["inside", it],
       );
@@ -1520,7 +1733,7 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(2);
     });
 
-    test("--no-error-on-unmatched-pattern", async () => {
+    test("--no-error-on-unmatched-pattern exits with 0 if an argument matches nothing", async () => {
       const { exitCode } = await lint(files, ["--no-error-on-unmatched-pattern", "nothing.js", "nothing/**"]);
       expect(exitCode).toBe(0);
     });
@@ -1531,7 +1744,7 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(2);
     });
 
-    test("warns about a named file that is not linted", async () => {
+    test("warns about a file passed as an argument that isn't linted", async () => {
       const { stdout, exitCode } = await lint(files, ["src/d.ts", "node_modules/pkg/g.js"]);
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/node_modules/pkg/g.js
@@ -1545,15 +1758,15 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("--no-warn-ignored", async () => {
+    test("--no-warn-ignored hides the warning about an ignored file", async () => {
       const { raw, exitCode } = await lint(files, ["--no-warn-ignored", "src/d.ts"]);
       expect(raw).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
-  describe("configuration", () => {
-    test("global ignores, files, and --no-ignore", async () => {
+  describe("config", () => {
+    test("applies global ignores and `files`, and --no-ignore lints ignored files", async () => {
       const files = {
         "eslint.config.js": `export default [{ ignores: ["dist/"] }, { files: ["**/*.ts"], rules: { "no-debugger": "error" } }];`,
         "a.ts": "debugger;\n",
@@ -1574,7 +1787,7 @@ describe.concurrent("bun lint", () => {
       `);
     });
 
-    test("the nearest configuration file counts", async () => {
+    test("the nearest config file is used", async () => {
       const { stdout } = await lint(
         {
           "eslint.config.js": config({ "no-debugger": "error" }),
@@ -1594,7 +1807,7 @@ describe.concurrent("bun lint", () => {
       `);
     });
 
-    test("-c replaces every other configuration file", async () => {
+    test("-c replaces every other config file", async () => {
       const { stdout } = await lint(
         {
           "eslint.config.js": config({ "no-debugger": "error" }),
@@ -1613,7 +1826,7 @@ describe.concurrent("bun lint", () => {
       `);
     });
 
-    test("a configuration file in TypeScript, CommonJS, or that exports a promise", async () => {
+    test("loads a config file written in TypeScript or CommonJS, or one that exports a promise", async () => {
       const results = await Promise.all([
         lint(
           {
@@ -1640,7 +1853,7 @@ describe.concurrent("bun lint", () => {
       }
     });
 
-    test("a configuration file that throws fails with 2", async () => {
+    test("a config file that throws fails with 2", async () => {
       const { raw, stderr, exitCode } = await lint(
         { "eslint.config.js": `throw new Error("not today");`, "a.js": "" },
         [],
@@ -1662,7 +1875,7 @@ describe.concurrent("bun lint", () => {
     });
 
     test(
-      "the rules of a plugin run, and their fixes are applied",
+      "a plugin's rules run, and their fixes are applied",
       async () => {
         const files = {
           "eslint.config.js": `
@@ -1695,7 +1908,7 @@ describe.concurrent("bun lint", () => {
       isDebug || isASAN ? 120_000 : 30_000,
     );
 
-    test("--rule, --global, --no-config-lookup", async () => {
+    test("--rule and --global apply, and --no-config-lookup ignores the config file", async () => {
       const { stdout } = await lint(
         { "eslint.config.js": config({ "no-debugger": "error" }), "a.js": "debugger; a = b; c = a == 1;\n" },
         [
@@ -1718,7 +1931,7 @@ describe.concurrent("bun lint", () => {
       `);
     });
 
-    test("--print-config", async () => {
+    test("--print-config prints a file's resolved config, or `undefined` if no config applies to it", async () => {
       const files = { "eslint.config.js": config({ eqeqeq: ["error", "smart"], "no-debugger": "off" }), "a.js": "" };
       const [known, unknown] = await Promise.all([
         lint(files, ["--print-config", "a.js"]),
@@ -1732,7 +1945,7 @@ describe.concurrent("bun lint", () => {
       expect(unknown.raw).toBe("undefined\n");
     });
 
-    test.each([[["--print-config"]], [["--print-config", "--fix"]]])("%j names no file", async flags => {
+    test.each([[["--print-config"]], [["--print-config", "--fix"]]])("%j without a file is an error", async flags => {
       const files = { "eslint.config.js": config({ eqeqeq: "error" }), "a.js": "" };
       const { raw, stderr, exitCode } = await lint(files, flags, { mayFail: true });
       expect({ raw, stderr: stderr.split("\n")[0], exitCode }).toEqual({
@@ -1742,7 +1955,7 @@ describe.concurrent("bun lint", () => {
       });
     });
 
-    test(".oxlintrc.json: categories, overrides, ignorePatterns, .gitignore, -D", async () => {
+    test("applies categories, overrides and ignorePatterns from .oxlintrc.json, plus .gitignore and -D", async () => {
       const { stdout, exitCode } = await lint(
         {
           ".oxlintrc.json": `{
@@ -1771,7 +1984,8 @@ describe.concurrent("bun lint", () => {
     });
 
     describe("like oxlint, with an .oxlintrc.json", () => {
-      // What oxlint 1.87.0 does with each. TypeScript's parser, which reads the file here, takes them all.
+      // This is what oxlint 1.87.0 does with each row. `bun lint` parses the file with TypeScript's parser, which
+      // accepts them all.
       const quiet = JSON.stringify({ categories: { correctness: "off" }, rules: {} });
       test.each([
         ["a.ts", "const a: string;"],
@@ -1789,24 +2003,24 @@ describe.concurrent("bun lint", () => {
         ["a.js", "export {};\nstatic = 1;"],
         ["a.js", "[a()] = b;"],
         ["a.js", "a = /a/gg;"],
-      ])("what OXC refuses is a parsing error: %s: %j", async (name, code) => {
+      ])("code that OXC rejects is a parsing error: %s: %j", async (name, code) => {
         const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
         expect(stdout).toMatch(/^a\.[jt]s:\d+:\d+: (?!Parsing error).* \[Error\]$/m);
         expect(exitCode).toBe(1);
       });
 
       // The message, and the offset and length of the first label, are what oxlint 1.87 prints.
-      test("the label of a parsing error is as long as oxlint's", async () => {
-        const waits = "only allowed within async functions and at the top levels of modules";
+      test("a parsing error's label has the same offset and length as oxlint's", async () => {
+        const onlyInAsync = "only allowed within async functions and at the top levels of modules";
         const rows: [extension: string, code: string, message: string, offset: number, length: number][] = [
           ["cjs", 'import a from "a";', "Cannot use import statement outside a module", 0, 6],
           ["cjs", "export const a = 1;", "Cannot use export statement outside a module", 0, 6],
           ["cjs", "x = import.meta.url;", "Unexpected import.meta expression", 4, 11],
           ["cts", "x = import.meta.url;", "Unexpected import.meta expression", 4, 11],
-          ["cjs", "await 1;", `\`await\` is ${waits}`, 0, 5],
-          ["cts", "await 1;", `\`await\` is ${waits}`, 0, 5],
-          ["cjs", "for await (const a of b) {}", `\`for await\` loops are ${waits}`, 4, 5],
-          ["js", "function f() { for await (const a of b) {} }", `\`for await\` loops are ${waits}`, 19, 5],
+          ["cjs", "await 1;", `\`await\` is ${onlyInAsync}`, 0, 5],
+          ["cts", "await 1;", `\`await\` is ${onlyInAsync}`, 0, 5],
+          ["cjs", "for await (const a of b) {}", `\`for await\` loops are ${onlyInAsync}`, 4, 5],
+          ["js", "function f() { for await (const a of b) {} }", `\`for await\` loops are ${onlyInAsync}`, 19, 5],
           ["ts", "export {}; function yield() {}", "The keyword 'yield' is reserved", 20, 5],
           ["ts", "export {}; class let {}", "The keyword 'let' is reserved", 17, 3],
           ["ts", "export {}; static: for(;;){}", "The keyword 'static' is reserved", 11, 6],
@@ -1859,8 +2073,9 @@ describe.concurrent("bun lint", () => {
         labels: { label?: string; span: { offset: number; length: number } }[];
       };
       /**
-       * Lints each row as a file of its own and returns the rows with what was printed: every error of the file in order, as
-       * its message (or the short word for it in `words`) and the offset and length of each label.
+       * Lints each row as its own file and returns the rows with the errors that were printed. A file's errors are
+       * listed in order, each as its message (or the message's short form in `words`) plus the offset and length of
+       * each label.
        */
       const withErrorsFound = async (
         rows: ErrorRow[],
@@ -1875,14 +2090,14 @@ describe.concurrent("bun lint", () => {
         const print = ({ message, labels }: OxlintDiagnostic) =>
           `${short(message)} ${labels.map(({ span }) => `${span.offset}+${span.length}`).join(",")}`;
         const found = rows.map(([extension, code], i): ErrorRow => {
-          const ofFile = diagnostics.filter(it => it.filename === `a${i}.${extension}`);
-          return [extension, code, ofFile.map(print).join(", ")];
+          const fileDiagnostics = diagnostics.filter(it => it.filename === `a${i}.${extension}`);
+          return [extension, code, fileDiagnostics.map(print).join(", ")];
         });
         return { found, diagnostics };
       };
 
-      // Each row is what oxlint 1.87 prints. "" means that it lints the file. tsc and typescript-estree reject `<T>a = 1`,
-      // `a as T = 1` and `++<T>a`: to them a type assertion is no left-hand side.
+      // Each row is what oxlint 1.87 prints. "" means that it lints the file. tsc and typescript-estree reject
+      // `<T>a = 1`, `a as T = 1` and `++<T>a`, because to them a type assertion isn't a left-hand-side expression.
       test("assignment targets are checked like oxc's parser checks them", async () => {
         const words: Record<string, string> = {
           "Cannot assign to this expression": "cannot",
@@ -2238,12 +2453,13 @@ describe.concurrent("bun lint", () => {
         for (const { message, help } of diagnostics) expect([message, help]).toEqual([message, helps[words[message]]]);
       });
 
-      // The parser gives up on these in the middle of a module. Like oxlint 1.87, one error on line 2 and nothing about exports.
+      // The parser gives up on these in the middle of a module. Like oxlint 1.87, `bun lint` prints one error on line 2
+      // and nothing about exports.
       test.each([
         "export const b = 1;\nx y;",
         'import { a } from "b";\nwidget W() {\n  a();\n}',
         "export { nope };\nf() {}",
-      ])("a JavaScript module that doesn't parse gets the parser's error alone: %j", async code => {
+      ])("a JavaScript module that doesn't parse gets only the parser's error: %j", async code => {
         const { stdout, exitCode } = await lint({ ".oxlintrc.json": "{}", "a.js": code + "\n" }, ["-f", "unix"]);
         expect(stdout.split("\n").filter(line => line.startsWith("a.js:"))).toEqual([
           expect.stringMatching(/^a\.js:2:/),
@@ -2251,17 +2467,17 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
-      // Which names are declared twice is found in two ways. With no-unused-vars on, the variables of every file are there to be
-      // asked. Without it the parser looks out for a file that may have such a name.
+      // There are two ways to find names that are declared twice. With no-unused-vars on, every file's variables are
+      // already collected and can be looked up. Without it, the parser detects files that might have such a name.
       const waysToFindNames: [string, string][] = [
-        ["no rule needs the variables", quiet],
+        ["no rule needs scope analysis", quiet],
         [
           "no-unused-vars is on",
           JSON.stringify({ categories: { correctness: "off" }, rules: { "no-unused-vars": "warn" } }),
         ],
       ];
 
-      describe.each(waysToFindNames)("a name that is declared twice, when %s", (_, config) => {
+      describe.each(waysToFindNames)("a name declared twice, when %s", (_, config) => {
         const declarations: Record<string, string> = {
           var: "var a;",
           let: "let a;",
@@ -2296,23 +2512,27 @@ describe.concurrent("bun lint", () => {
           impalias: "import a = b.c;",
         };
         const redeclared = /^Identifier `a` has already been declared$/;
-        /** How many redeclarations are printed for each file. "-": something else is printed too. */
+        /**
+         * Lints `files`. The returned function gives a file's number of redeclaration errors, or "-" if it has any
+         * other error.
+         */
         const count = async (files: Record<string, string>) => {
           const { raw } = await lint({ ".oxlintrc.json": config, ...files }, ["-f", "json"]);
           const errors = (JSON.parse(raw).diagnostics as OxlintDiagnostic[]).filter(it => it.severity === "error");
           return (name: string) => {
-            const ofFile = errors.filter(it => it.filename === name);
-            return ofFile.every(it => redeclared.test(it.message)) ? String(ofFile.length) : "-";
+            const fileErrors = errors.filter(it => it.filename === name);
+            return fileErrors.every(it => redeclared.test(it.message)) ? String(fileErrors.length) : "-";
           };
         };
-        /** Where oxlint has another error, what is printed here is not compared. */
+        /** Puts "-" in the cells where oxlint has a different error, so that they aren't compared. */
         const like = (expected: string[], found: string[]) =>
           found.map((line, i) => [...line].map((cell, j) => (expected[i][j] === "-" ? "-" : cell)).join(""));
 
-        // One table for each place and kind of file. A line is the first declaration, a column the second, both in the order of
-        // `names`. A cell is how many "Identifier `a` has already been declared" oxlint 1.87 prints, or "-" if it has another error.
-        test("by two declarations: every pair, in many places", async () => {
-          const places: Record<string, string> = {
+        // One table per position and file extension. Rows are the first declaration and columns the second, both in the
+        // order of `names`. A cell is how many "Identifier `a` has already been declared" errors oxlint 1.87 prints, or
+        // "-" if it prints a different error.
+        test("every pair of declarations, in many scopes, is reported like oxlint", async () => {
+          const contexts: Record<string, string> = {
             same: "1 2",
             block: "{ 1 2 }",
             nsbody: "namespace W { 1 2 }",
@@ -2329,7 +2549,7 @@ describe.concurrent("bun lint", () => {
             modblock: "export {}; { 1 2 }",
             modouter: "export {}; { 1 } 2",
           };
-          const tables: [extension: string, place: string, names: string, cells: string[]][] = [
+          const tables: [extension: string, context: string, names: string, cells: string[]][] = [
             [
               "ts",
               "same",
@@ -2564,29 +2784,30 @@ describe.concurrent("bun lint", () => {
             ],
           ];
           const files: Record<string, string> = {};
-          const nameOf = (extension: string, place: string, first: string, second: string) =>
-            `${place}-${first}-${second}.${extension}`;
-          for (const [extension, place, names] of tables) {
+          const nameOf = (extension: string, context: string, first: string, second: string) =>
+            `${context}-${first}-${second}.${extension}`;
+          for (const [extension, context, names] of tables) {
             for (const first of names.split(" ")) {
               for (const second of names.split(" ")) {
-                files[nameOf(extension, place, first, second)] =
-                  places[place].replace("1", () => declarations[first]).replace("2", () => declarations[second]) + "\n";
+                files[nameOf(extension, context, first, second)] =
+                  contexts[context].replace("1", () => declarations[first]).replace("2", () => declarations[second]) +
+                  "\n";
               }
             }
           }
           const counted = await count(files);
-          for (const [extension, place, names, cells] of tables) {
+          for (const [extension, context, names, cells] of tables) {
             const all = names.split(" ");
             const found = all.map(first =>
-              all.map(second => counted(nameOf(extension, place, first, second))).join(""),
+              all.map(second => counted(nameOf(extension, context, first, second))).join(""),
             );
-            expect([extension, place, ...like(cells, found)]).toEqual([extension, place, ...cells]);
+            expect([extension, context, ...like(cells, found)]).toEqual([extension, context, ...cells]);
           }
         });
 
-        // A line is a place that has declared `a` already, a column the declaration that is put there.
-        test("by a declaration and a parameter, a catch parameter, the head of a loop, a type parameter", async () => {
-          const places: Record<string, string> = {
+        // Rows are code that already declares `a`, and columns are the declaration inserted into it.
+        test("a declaration that collides with a parameter, catch parameter, loop variable or type parameter is reported like oxlint", async () => {
+          const contexts: Record<string, string> = {
             param: "function w(a) { 2 }",
             paramblock: "function w(a) { { 2 } }",
             parampat: "function w({ a }) { 2 }",
@@ -2615,7 +2836,7 @@ describe.concurrent("bun lint", () => {
             tparamcls: "class W<a> { w() { 2 } }",
             pprop: "class W { constructor(public a: any) { 2 } }",
           };
-          const tables: [extension: string, places: string, names: string, cells: string[]][] = [
+          const tables: [extension: string, contexts: string, names: string, cells: string[]][] = [
             [
               "js",
               "param paramblock parampat paramdef rest arrowparam arrow1 methodparam ctorparam setter catch catchblock catchpat catchpatblock forlet forletbody forvar forafter fnexprname clsexprname modparam modcatch",
@@ -2682,27 +2903,28 @@ describe.concurrent("bun lint", () => {
           ];
           const files: Record<string, string> = {};
           for (const [extension, lines, names] of tables) {
-            for (const place of lines.split(" ")) {
+            for (const context of lines.split(" ")) {
               for (const name of names.split(" ")) {
-                files[`${place}-${name}.${extension}`] = places[place].replace("2", () => declarations[name]) + "\n";
+                files[`${context}-${name}.${extension}`] =
+                  contexts[context].replace("2", () => declarations[name]) + "\n";
               }
             }
           }
           const counted = await count(files);
           for (const [extension, lines, names, cells] of tables) {
-            const found = lines.split(" ").map(place =>
+            const found = lines.split(" ").map(context =>
               names
                 .split(" ")
-                .map(name => counted(`${place}-${name}.${extension}`))
+                .map(name => counted(`${context}-${name}.${extension}`))
                 .join(""),
             );
             expect([extension, ...like(cells, found)]).toEqual([extension, ...cells]);
           }
         });
 
-        // Each row is what oxlint 1.87 prints: the name, then where it is declared first and where again. "" means that it lints
-        // the file.
-        test("has oxlint's labels", async () => {
+        // Each row is what oxlint 1.87 prints: the name, then the spans of the first declaration and of the
+        // redeclaration. "" means that it lints the file.
+        test("the error has oxlint's labels", async () => {
           const rows: ErrorRow[] = [
             ["ts", "function f<T>() { type T = 1; }", "T 11+1,23+1"],
             ["ts", "function f<T>() { interface T {} }", "T 11+1,28+1"],
@@ -3145,10 +3367,10 @@ describe.concurrent("bun lint", () => {
           }
         });
 
-        // "twice": "Duplicated export 'a'". "defaults": TS(2528), "A module cannot have multiple default exports.". "undefined":
-        // "Export 'a' is not defined", with the name of its help, "Did you mean 'b'?", in parentheses. TypeScript files have none
-        // of the three.
-        test("and what a JavaScript module exports twice, or doesn't declare", async () => {
+        // "twice" is "Duplicated export 'a'". "defaults" is TS(2528), "A module cannot have multiple default exports.".
+        // "undefined" is "Export 'a' is not defined", followed in parentheses by the name from its help, "Did you mean
+        // 'b'?". TypeScript files get none of the three.
+        test("a JavaScript module's duplicate exports and undeclared exports are errors too", async () => {
           const rows: ErrorRow[] = [
             ["js", "export const a = 1; export const a = 2;", "twice a 13+1,33+1"],
             ["ts", "export const a = 1; export const a = 2;", "declared a 13+1,33+1"],
@@ -3340,8 +3562,8 @@ describe.concurrent("bun lint", () => {
         });
       });
 
-      // oxlint 1.87.0: "Identifier `a` has already been declared", at the first of the two. The parser, which has the names in
-      // hand, says that a file may have such a list: no other file is looked at.
+      // oxlint 1.87.0 prints "Identifier `a` has already been declared" at the first of the two. The parser sees the
+      // names anyway, so it flags the files that may have such a parameter list, and only those files are checked.
       test.each([
         ["a.ts", "export class A {\n  foo(a, a) {}\n}", "a.ts:2:7"],
         ["a.ts", "export {};\nfunction f(b, b) {}", "a.ts:2:12"],
@@ -3353,18 +3575,21 @@ describe.concurrent("bun lint", () => {
         ["a.js", "class A { b = function (a, a) {} }", "a.js:1:25"],
         ["a.ts", "type A = (a: number, a: number) => void;", "a.ts:1:11"],
         ["a.ts", "declare function f(a: number, a: number): void;\nexport {};", "a.ts:1:20"],
-      ])("what OXC refuses is a parsing error: a name that two parameters bind: %s: %j", async (name, code, place) => {
-        const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
-        expect(stdout).toContain(`${place}: Identifier`);
-        expect(exitCode).toBe(1);
-      });
+      ])(
+        "code that OXC rejects is a parsing error: two parameters with the same name: %s: %j",
+        async (name, code, position) => {
+          const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
+          expect(stdout).toContain(`${position}: Identifier`);
+          expect(exitCode).toBe(1);
+        },
+      );
 
       test.each([
-        // Only declared.
+        // Ambient declarations.
         ["a.ts", "declare const a: string;"],
         ["a.d.ts", "export const a: string;"],
         ["a.ts", "declare function f(package: string): void;\nexport {};"],
-        // A file without `import` and `export` is a script, which is not strict.
+        // A file without `import` or `export` is a script, which isn't strict.
         ["a.ts", "type A = (...arguments: any[]) => void;"],
         ["a.ts", "let = 1;"],
         ["a.js", "function f() { await (1); }"],
@@ -3373,20 +3598,20 @@ describe.concurrent("bun lint", () => {
         ["a.cjs", "(function (a, a) {});"],
         ["a.ts", "declare function f(a: number, a: number): void;"],
         ["a.ts", "function f(a: (a: number) => void, b = (a: number) => a) {}\nexport {};"],
-        // What acorn does not know, or typescript-estree throws.
+        // Syntax that acorn doesn't support, or that typescript-estree throws on.
         ["a.ts", "class A { accessor b = 1 }"],
         ["a.js", "class A { accessor b = 1 }"],
         ["a.js", "@d class A {}"],
         ["a.ts", "let a!: string;"],
         ["a.ts", "for (const a in b);"],
         ["a.js", "for (const a of b);"],
-      ])("what OXC takes is linted: %s: %j", async (name, code) => {
+      ])("code that OXC accepts is linted: %s: %j", async (name, code) => {
         const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
         expect(stdout).not.toContain("[Error]");
         expect(exitCode).toBe(0);
       });
 
-      test("--fix makes one pass, and what is left is reported where it was", async () => {
+      test("--fix makes one pass, and reports the remaining problems at their positions before the fix", async () => {
         const result = await lint(
           {
             ".oxlintrc.json": JSON.stringify({
@@ -3422,7 +3647,7 @@ describe.concurrent("bun lint", () => {
         expect(result.exitCode).toBe(1);
       });
 
-      test("--fix applies the fixes of a rule that is about several files", async () => {
+      test("--fix applies the fixes of a rule that looks at several files", async () => {
         const result = await lint(
           {
             ".oxlintrc.json": JSON.stringify({
@@ -3441,7 +3666,7 @@ describe.concurrent("bun lint", () => {
       });
 
       test(
-        "--fix, --fix-suggestions, --fix-dangerously and --quiet change what oxlint's change",
+        "--fix, --fix-suggestions, --fix-dangerously and --quiet apply the same fixes as oxlint's flags",
         async () => {
           const files = {
             ".oxlintrc.json": JSON.stringify({
@@ -3478,8 +3703,24 @@ describe.concurrent("bun lint", () => {
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // What oxlint 1.87 writes.
-      describe("a comment that disables nothing is removed from the scripts of a .vue file only, there by every flag", () => {
+      // oxlint 1.87 removes it with --fix, but then the function no longer yields to its caller.
+      test("only --fix-dangerously removes an await that unicorn/no-unnecessary-await reports", async () => {
+        const code = "async function worker() {\n  await null;\n  const retries = await 3;\n  return retries;\n}\n";
+        const files = { ".oxlintrc.json": "{}", "a.js": code };
+        for (const flags of [["--fix"], ["--fix-suggestions"], ["--fix", "--fix-suggestions"]]) {
+          const result = await lint(files, [...flags, "a.js"], { reads: ["a.js"] });
+          expect(result.files["a.js"]).toBe(code);
+          expect(result.stdout).toContain("no-unnecessary-await");
+        }
+        const result = await lint(files, ["--fix-dangerously", "a.js"], { reads: ["a.js"] });
+        expect(result.files["a.js"]).toBe(
+          "async function worker() {\n  null;\n  const retries = 3;\n  return retries;\n}\n",
+        );
+        expect(result.stdout).not.toContain("no-unnecessary-await");
+      });
+
+      // This is what oxlint 1.87 writes.
+      describe("an unused disable comment is removed only from a .vue file's scripts, and there by every fix flag", () => {
         const rules = { "no-debugger": "error", "no-console": "error", "no-var": "error", "no-alert": "error" };
         const options = { reportUnusedDisableDirectives: "error" };
         const files = {
@@ -3525,8 +3766,8 @@ describe.concurrent("bun lint", () => {
         });
       });
 
-      // What oxlint 1.87 writes, in whichever order the file has the rules.
-      test("of two fixes with the same range, that of the rule that oxlint has first", async () => {
+      // This is what oxlint 1.87 writes, whatever order the config lists the rules in.
+      test("of two fixes with the same range, --fix applies the one from the rule that oxlint runs first", async () => {
         const rules = { "unicorn/numeric-separators-style": "error", "unicorn/number-literal-case": "error" };
         const oxlintrc = JSON.stringify({ plugins: ["unicorn"], categories: { correctness: "off" }, rules });
         const files = { ".oxlintrc.json": oxlintrc, "a.js": "a = 0xabcdef12;\n" };
@@ -3535,8 +3776,9 @@ describe.concurrent("bun lint", () => {
         });
       });
 
-      // What oxlint 1.87 writes. The one rule replaces the declaration and prints it anew (`'a';`), the other the keyword.
-      test("of two fixes that start at the same place, the shorter one", async () => {
+      // This is what oxlint 1.87 writes. One rule replaces the whole declaration and reprints it (`'a';`). The other
+      // only replaces the keyword.
+      test("of two fixes that start at the same position, --fix applies the shorter one", async () => {
         const rules = {
           "import/consistent-type-specifier-style": "error",
           "typescript/no-import-type-side-effects": "error",
@@ -3553,7 +3795,7 @@ describe.concurrent("bun lint", () => {
       });
 
       // oxlint 1.87 with tsgolint 7.0 changes nothing.
-      test("rules that have suggestions for typescript-eslint and none for oxlint", async () => {
+      test("no fix flag applies a suggestion that typescript-eslint's rule has and oxlint's doesn't", async () => {
         const rules = { "typescript/strict-boolean-expressions": "error", "typescript/strict-void-return": "error" };
         const text =
           "declare const a: string | null;\nif (a) {}\ndeclare function f(cb: () => void): void;\nf(async () => {});\nexport {};\n";
@@ -3569,8 +3811,8 @@ describe.concurrent("bun lint", () => {
         }
       });
 
-      // What oxlint 1.87 writes.
-      test('a fix that is a dangerous one for oxlint: operator-assignment with "never"', async () => {
+      // This is what oxlint 1.87 writes.
+      test('only --fix-dangerously applies a fix that oxlint marks as dangerous: operator-assignment with "never"', async () => {
         const after = async (mode: string, ...flags: string[]) => {
           const rules = { "operator-assignment": ["error", mode] };
           const oxlintrc = JSON.stringify({ plugins: [], categories: { correctness: "off" }, rules });
@@ -3595,7 +3837,7 @@ describe.concurrent("bun lint", () => {
         "src/b.ts": "export const b = 1;\n",
       };
 
-      test("-f json is oxlint's: offsets and columns in bytes, plugin(rule)", async () => {
+      test("-f json prints oxlint's format: offsets and columns in bytes, rules as plugin(rule)", async () => {
         const { raw, exitCode } = await lint(files, ["-f", "json", "--threads", "2"]);
         const { start_time, ...report } = JSON.parse(raw);
         expect(report).toEqual({
@@ -3627,8 +3869,9 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
-      // What oxlint says besides a message is made when the message is shown with its code: its text is linted once more.
-      describe("the help of a problem that is shown", () => {
+      // The help that oxlint prints with a message is only computed when the message is printed with its code, by
+      // linting the file's text again.
+      describe("a problem's help", () => {
         const rules = { "no-underscore-dangle": "error", "no-var": "error" };
         const help = "note: Remove the dangling '_' or add `_a` to the 'allow' configuration.\n";
         const print = async (text: string, flags: string[], stdin?: string) => {
@@ -3637,31 +3880,31 @@ describe.concurrent("bun lint", () => {
         };
         const times = (raw: string) => raw.split(help).length - 1;
 
-        test("is there, however many problems there are", async () => {
+        test("is printed however many problems there are", async () => {
           const [few, many, all] = await Promise.all([
             print("{ let _a; }\n".repeat(3), ["a.js"]),
             print("{ let _a; }\n".repeat(60), ["a.js"]),
             print("{ let _a; }\n".repeat(60), ["--all", "a.js"]),
           ]);
           expect([few, many, all].map(it => times(it.raw))).toEqual([3, 1, 60]);
-          // The one that stands for all is printed like the first of all.
+          // The one problem that's printed for the whole group looks like the first one with --all.
           const first = (raw: string) => raw.slice(0, raw.indexOf(help) + help.length);
           expect(first(many.raw)).toBe(first(all.raw));
         });
 
-        test("is about the text that the message is about, which --fix has changed since", async () => {
+        test("is computed from the text that was linted, even though --fix has changed the file since", async () => {
           const { raw, files } = await print("var _a;\n", ["--fix", "a.js"]);
           expect(files["a.js"]).toBe("let _a;\n");
           expect(times(raw)).toBe(1);
         });
 
-        test("is there for a text from standard input", async () => {
+        test("is printed for text from standard input", async () => {
           const { raw } = await print("", ["--stdin", "--stdin-filename", "b.js"], "let _a;\n");
           expect(times(raw)).toBe(1);
         });
       });
 
-      test("unix, stylish, github and agent are oxlint's: the path from the working directory, columns in bytes, plugin(rule)", async () => {
+      test("unix, stylish, github and agent print oxlint's formats: paths relative to the working directory, columns in bytes, rules as plugin(rule)", async () => {
         const [json, unix, stylish, github, agent] = await Promise.all(
           ["json", "unix", "stylish", "github", "agent"].map(format =>
             lint(files, ["-f", format, "--threads", "2"], { env: { NO_COLOR: "1" } }),
@@ -3695,7 +3938,7 @@ describe.concurrent("bun lint", () => {
         );
       });
 
-      test("what has no place has its text and its severity", async () => {
+      test("a problem without a location is printed with its message and severity", async () => {
         const stale = { "oxlint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } }) };
         const text = "There are suppressions that do not occur anymore.";
         const print = async (format: string) => (await lint({ ...files, ...stale }, ["--quiet", "-f", format])).raw;
@@ -3704,14 +3947,14 @@ describe.concurrent("bun lint", () => {
           `<error line="0" column="0" severity="error" message="${text}" source="" />`,
         );
         expect(await print("junit")).toContain(`<error message="${text}">line 0, column 0, ${text}</error>`);
-        // As oxlint 1.87: it is in a file without a name.
+        // Same as oxlint 1.87: the filename is empty.
         expect(await print("json")).toContain(
           `{"message": "${text}","severity": "error","help": "Run \`oxlint --prune-suppressions\` to remove unused suppressions.","filename": "","labels": []}`,
         );
       });
 
-      // As oxlint 1.87. For ESLint the mark is in no column.
-      test("what a rule says about the file is before a byte order mark, all else after it", async () => {
+      // Same as oxlint 1.87. ESLint doesn't count the mark as a column.
+      test("a report about the whole file is at offset 0, before a byte order mark, and every other report is after it", async () => {
         const project = {
           ".oxlintrc.json": rc({
             plugins: ["unicorn", "import", "react"],
@@ -3737,7 +3980,7 @@ describe.concurrent("bun lint", () => {
         });
       });
 
-      test("number_of_rules has what an override turns on, not what needs types, and is null with a nested configuration", async () => {
+      test("number_of_rules counts rules that an override turns on but not type-aware rules, and is null with a nested config", async () => {
         const count = async (more: Record<string, string>, ...flags: string[]) =>
           JSON.parse((await lint({ ...files, ...more }, ["-f", "json", ...flags])).raw).number_of_rules;
         const overrides = [
@@ -3753,7 +3996,7 @@ describe.concurrent("bun lint", () => {
         }).toEqual({ overrides: 4, typed: 1, nested: null, notNested: 2 });
       });
 
-      test("all that is said is on stdout", async () => {
+      test("prints everything to stdout and nothing to stderr", async () => {
         const warns = { ".oxlintrc.json": rc(), "a.js": "if (a == b) {}\n" };
         const stale = { "oxlint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } }) };
         const runs = {
@@ -3765,7 +4008,7 @@ describe.concurrent("bun lint", () => {
           denied: lint(warns, ["--quiet", "--deny-warnings"]),
           none: lint(files, ["nothing.js"]),
           tolerated: lint(files, ["--no-error-on-unmatched-pattern", "nothing.js"]),
-          refused: lint({ ...files, ".oxlintrc.json": "{" }, []),
+          badConfig: lint({ ...files, ".oxlintrc.json": "{" }, []),
           unpruned: lint({ ...files, ...stale }, ["--quiet"]),
           unprunedForGitlab: lint({ ...files, ...stale }, ["--quiet", "-f", "gitlab"]),
         };
@@ -3781,12 +4024,13 @@ describe.concurrent("bun lint", () => {
         expect(results.denied.stdout).toBe("Linted 1 file");
         expect(results.none.stdout).toBe("error: No files found to lint. Please check your paths and ignore patterns.");
         expect(results.tolerated.stdout).toBe("✓ No problems in 0 files");
-        expect(results.refused.stdout).toStartWith("error: ");
+        expect(results.badConfig.stdout).toStartWith("error: ");
         expect(results.unpruned.stdout).toBe(
           "error: There are suppressions that do not occur anymore.\n\n" +
             "note: Run `oxlint --prune-suppressions` to remove unused suppressions.\n\nLinted 2 files",
         );
-        // oxlint has neither the text nor the severity of what has no place. The fingerprint is Rust's `DefaultHasher` of all of it.
+        // oxlint prints neither the message nor the severity of a problem without a location. The fingerprint is Rust's
+        // `DefaultHasher` of the lines, the path, the message and the severity.
         expect(JSON.parse(results.unprunedForGitlab.raw)).toEqual([
           {
             description: "There are suppressions that do not occur anymore.",
@@ -3805,15 +4049,15 @@ describe.concurrent("bun lint", () => {
           denied: 1,
           none: 1,
           tolerated: 0,
-          refused: 1,
+          badConfig: 1,
           unpruned: 1,
           unprunedForGitlab: 1,
         });
       });
 
-      test("without --format: what tells oxlint that an agent runs it makes `agent` the format, before GITHUB_ACTIONS", async () => {
+      test("without --format, the variables that tell oxlint an agent is running it select the `agent` format, ahead of GITHUB_ACTIONS", async () => {
         const run = (env: Record<string, string | undefined>) => lint(files, [], { env: { AGENT: undefined, ...env } });
-        const [agent, named, both, off, github] = await Promise.all([
+        const [agent, detected, both, off, github] = await Promise.all([
           lint(files, ["-f", "agent"]),
           run({ AI_AGENT: "something" }),
           run({ CURSOR_AGENT: "0", GITHUB_ACTIONS: "true" }),
@@ -3821,11 +4065,11 @@ describe.concurrent("bun lint", () => {
           lint(files, ["-f", "github"]),
         ]);
         const first = (it: { raw: string }) => it.raw.split("\n")[0];
-        expect([named.raw, both.raw]).toEqual([agent.raw, agent.raw]);
+        expect([detected.raw, both.raw]).toEqual([agent.raw, agent.raw]);
         expect(first(off)).toBe(first(github));
       });
 
-      test("oxlint-suppressions.json has oxlint's names of the rules", async () => {
+      test("oxlint-suppressions.json uses oxlint's rule names", async () => {
         const project = {
           ".oxlintrc.json": JSON.stringify({
             categories: { correctness: "off" },
@@ -3839,7 +4083,7 @@ describe.concurrent("bun lint", () => {
           }),
           "a.tsx": 'console.log(1 as any);\nnew require("x");\n<img src="a" />;\n',
         };
-        // What oxlint 1.87 writes with --suppress-all.
+        // This is what oxlint 1.87 writes with --suppress-all.
         const names = ["next/no-img-element", "no-console", "node/no-new-require", "typescript/no-explicit-any"];
         const written = Object.fromEntries(names.map(name => [name, { count: 1 }]));
         const suppressed = await lint(
@@ -3860,7 +4104,7 @@ describe.concurrent("bun lint", () => {
         expect(await Bun.file(join(String(dir), "oxlint-suppressions.json")).json()).toEqual({ "a.tsx": written });
       });
 
-      test("--silent and no file to lint: a format prints what oxlint's prints", async () => {
+      test("with --silent, or with no file to lint, each format prints what oxlint's prints", async () => {
         const formats = ["unix", "checkstyle", "junit", "gitlab", "sarif", "json"];
         const [silent, none] = await Promise.all(
           [["--silent"], ["nothing.js"]].map(flags =>
@@ -3884,7 +4128,7 @@ describe.concurrent("bun lint", () => {
         );
       });
 
-      test("--rules -f json", async () => {
+      test("--rules -f json lists every rule once, with oxlint's fields", async () => {
         const { raw, exitCode } = await lint(files, ["--rules", "-f", "json"]);
         const rules = JSON.parse(raw);
         const find = (scope: string, value: string) =>
@@ -3899,17 +4143,18 @@ describe.concurrent("bun lint", () => {
           docs_url: "https://bun.com/docs/lint/rules/eslint/no-debugger",
         });
         expect(find("typescript", "no-floating-promises").type_aware).toBe(true);
-        // Each once. A rule of the React Compiler is `react-hooks/purity` too, which has suggestions: oxlint's has none.
+        // Each rule is listed once. The React Compiler also has a `react-hooks/purity` rule, which has suggestions.
+        // oxlint's has none.
         expect(new Set(rules.map((it: any) => `${it.scope}/${it.value}`)).size).toBe(rules.length);
         expect(rules.filter((it: any) => it.value === "purity").map((it: any) => [it.scope, it.fix])).toEqual([
           ["react", "none"],
         ]);
-        // The deprecated rules about layout are not built in.
+        // The deprecated formatting rules aren't built in.
         expect([find("eslint", "semi"), find("react", "jsx-space-before-closing")]).toEqual([undefined, undefined]);
         expect(exitCode).toBe(0);
       });
 
-      test("checkstyle, junit, gitlab, sarif", async () => {
+      test("checkstyle, junit, gitlab and sarif print oxlint's formats", async () => {
         const [checkstyle, junit, gitlab, sarif] = await Promise.all(
           ["checkstyle", "junit", "gitlab", "sarif"].map(format => lint(files, ["-f", format, "a.js"])),
         );
@@ -3976,7 +4221,7 @@ describe.concurrent("bun lint", () => {
         ]);
       });
 
-      test("an argument that matches nothing is no error, no file at all is, with 1", async () => {
+      test("an argument that matches nothing isn't an error, but finding no file at all exits with 1", async () => {
         const [some, none, tolerated] = await Promise.all([
           lint(files, ["-f", "unix", "nothing.js", "src/b.ts"]),
           lint(files, ["nothing.js"]),
@@ -3990,7 +4235,7 @@ describe.concurrent("bun lint", () => {
         expect(none.stdout).toContain("No files found to lint. Please check your paths and ignore patterns.");
       });
 
-      test("options in the file: denyWarnings, maxWarnings", async () => {
+      test("the config's `options` can set denyWarnings and maxWarnings", async () => {
         const warns = { "a.js": "if (a == b) {}\n" };
         const [plain, denied, limited] = await Promise.all([
           lint({ ...warns, ".oxlintrc.json": rc() }, []),
@@ -4004,7 +4249,7 @@ describe.concurrent("bun lint", () => {
         });
       });
 
-      test("a file that is named is left out if --ignore-path has it", async () => {
+      test("a file passed as an argument is skipped if the --ignore-path file lists it", async () => {
         const { stdout, exitCode } = await lint({ ...files, "my.ignore": "a.js\n" }, [
           "-f",
           "unix",
@@ -4017,7 +4262,7 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(0);
       });
 
-      test("-c: the patterns are from the directory of the file", async () => {
+      test("-c: the config's patterns are relative to the config file's directory", async () => {
         const { stdout } = await lint(
           {
             "configs/x.json": rc({ overrides: [{ files: ["src/*.js"], rules: { "no-debugger": "off" } }] }),
@@ -4033,9 +4278,9 @@ describe.concurrent("bun lint", () => {
         `);
       });
 
-      test("no-unused-private-class-members is about #names, not about `private`", async () => {
+      test("no-unused-private-class-members reports #names, not `private` members", async () => {
         const unused = "  private a = 1;\n  private b() {}\n  constructor(private c: number) {}\n";
-        const [named, byDefault] = await Promise.all([
+        const [explicit, byDefault] = await Promise.all([
           lint(
             {
               ".oxlintrc.json": rc({ rules: { "no-unused-private-class-members": "error" } }),
@@ -4045,28 +4290,28 @@ describe.concurrent("bun lint", () => {
           ),
           lint({ ".oxlintrc.json": "{}", "a.ts": `export class A {\n${unused}}\n` }, ["-f", "unix"]),
         ]);
-        expect(named.stdout).toMatchInlineSnapshot(`
+        expect(explicit.stdout).toMatchInlineSnapshot(`
           "a.ts:5:3: 'd' is defined but never used. [Error/eslint(no-unused-private-class-members)]
 
           1 problem"
         `);
-        expect(named.exitCode).toBe(1);
+        expect(explicit.exitCode).toBe(1);
         expect(byDefault.stdout).toBe("");
         expect(byDefault.exitCode).toBe(0);
       });
 
-      // What is expected in the next two tests is what oxlint 1.87.0 prints for the same files and arguments.
-      const places = (raw: string) =>
+      // The next two tests expect what oxlint 1.87.0 prints for the same files and arguments.
+      const reportsIn = (raw: string) =>
         JSON.parse(raw)
           .diagnostics.map((it: any) => `${it.filename}:${it.labels[0].span.line} ${it.code} ${it.severity}`)
           .sort();
       const unused = { "a.ts": "const u = 1;\nexport {};\n" };
       const any = { "a.ts": "export let a: any;\n" };
 
-      test("all names of a rule are one rule, and what is said last about it counts", async () => {
+      test("all names of a rule are the same rule, and its last entry wins", async () => {
         const hooks = { "a.jsx": "function C(a) {\n  if (a) useState();\n}\n" };
         const spread = { "a.js": "x.reduce((acc, it) => [...acc, it], []);\n" };
-        // The directory, what its .oxlintrc.json says, its files.
+        // The directory, its .oxlintrc.json, and its files.
         const rows: [string, object, Record<string, string>][] = [
           [
             "off-then-typescript",
@@ -4109,7 +4354,7 @@ describe.concurrent("bun lint", () => {
             any,
           ],
           ["bare-without-its-plugin", { plugins: ["react"], rules: { "no-explicit-any": "error" } }, any],
-          // `import/no-namespace`, and that plugin is not on.
+          // This means `import/no-namespace`, and that plugin isn't on.
           ["bare-of-the-first-plugin", { rules: { "no-namespace": "error" } }, { "a.ts": "namespace N {}\n" }],
           ["bare-hooks", { plugins: ["react"], rules: { "rules-of-hooks": "warn" } }, hooks],
           [
@@ -4132,7 +4377,7 @@ describe.concurrent("bun lint", () => {
             { plugins: ["import"], rules: { "no-cycle": "warn" } },
             { "a.js": 'import "./b";\n', "b.js": 'import "./a";\n' },
           ],
-          // oxlint has one in `eslint`, which needs no types, and one in `typescript`.
+          // oxlint has one rule in `eslint`, which doesn't need types, and another in `typescript`.
           [
             "two-rules",
             { rules: { "require-await": "warn", "typescript/require-await": "off" } },
@@ -4145,7 +4390,7 @@ describe.concurrent("bun lint", () => {
           for (const [name, text] of Object.entries(texts)) files[`${directory}/${name}`] = text;
         }
         const { raw, exitCode } = await lint(files, ["-f", "json"]);
-        expect(places(raw)).toEqual([
+        expect(reportsIn(raw)).toEqual([
           "bare-cycle/a.js:1 import(no-cycle) warning",
           "bare-cycle/b.js:1 import(no-cycle) warning",
           "bare-hooks/a.jsx:2 react-hooks(rules-of-hooks) warning",
@@ -4163,9 +4408,9 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
-      test("-A, -W and -D come after `rules`, a category too, and know a rule by the plugin that oxlint has it in", async () => {
+      test("-A, -W and -D override `rules`, by category too, and only match a rule under the plugin that oxlint has it in", async () => {
         const debug = { "a.js": "debugger;\n" };
-        // The arguments, `rules`, the files, what is reported.
+        // The arguments, `rules`, the files, and the expected reports.
         const rows: [string[], object, Record<string, string>, string[]][] = [
           [["-D", "correctness"], { "no-debugger": "off" }, debug, ["a.js:1 eslint(no-debugger) error"]],
           [["-W", "correctness"], { "no-debugger": "error" }, debug, ["a.js:1 eslint(no-debugger) warning"]],
@@ -4185,7 +4430,7 @@ describe.concurrent("bun lint", () => {
             ["a.ts:1 eslint(no-unused-vars) warning"],
           ],
           [["-A", "no-unused-vars"], { "typescript/no-unused-vars": "warn" }, unused, []],
-          // The options stay.
+          // The rule keeps its options.
           [
             ["-D", "eslint/no-unused-vars"],
             { "typescript/no-unused-vars": ["warn", { varsIgnorePattern: "^u" }] },
@@ -4204,7 +4449,7 @@ describe.concurrent("bun lint", () => {
             lint({ ".oxlintrc.json": rc({ rules }), ...texts }, [...args, "-f", "json"]),
           ),
         );
-        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[3]));
+        expect(results.map(it => reportsIn(it.raw))).toEqual(rows.map(it => it[3]));
         expect(results.map(it => it.exitCode)).toEqual(
           rows.map(it => (it[3].some(it => it.endsWith("error")) ? 1 : 0)),
         );
@@ -4260,7 +4505,7 @@ describe.concurrent("bun lint", () => {
               eqeqeq,
             ],
           ],
-          // "smart" stays, so line 5 is still fine.
+          // The rule keeps "smart", so line 5 still isn't reported.
           [
             ["-D", "pedantic"],
             [noVar, noDebugger, ...local, noAlert, noConsole, "a.js:6 eslint(eqeqeq) error"],
@@ -4269,7 +4514,7 @@ describe.concurrent("bun lint", () => {
             ["-D", "eqeqeq"],
             [noVar, noDebugger, ...local, noAlert, noConsole, "a.js:6 eslint(eqeqeq) error"],
           ],
-          // -A forgets the rule, so "smart" is gone when -D or -W turns it on again.
+          // -A drops the rule with its options, so "smart" is gone when -D or -W turns it back on.
           [
             ["-A", "eqeqeq", "-D", "eqeqeq"],
             [
@@ -4290,12 +4535,12 @@ describe.concurrent("bun lint", () => {
           [["-W", "local/own", "-D", "local/inherited"], unchanged],
         ];
         const results = await Promise.all(rows.map(([args]) => lint(files, [...args, "-f", "json", "a.js"])));
-        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+        expect(results.map(it => reportsIn(it.raw))).toEqual(rows.map(it => it[1]));
         expect(results.map(it => it.exitCode)).toEqual(rows.map(() => 1));
       });
 
-      // Recorded from oxlint 1.87.0 with tsgolint. typescript-eslint passes over `finally`, which waits for the Promise.
-      test("no-misused-promises reports an async function that is handed to finally()", async () => {
+      // Recorded from oxlint 1.87.0 with tsgolint. typescript-eslint skips `finally`, which waits for the Promise.
+      test("no-misused-promises reports an async function passed to finally()", async () => {
         const texts = {
           "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
           "a.ts": `declare const p: Promise<number>;
@@ -4315,22 +4560,22 @@ void p.finally(() => {});
           rules: { "typescript/no-misused-promises": rule["no-misused-promises"] },
         };
         const flags = ["--type-aware", "--report-unused-disable-directives", "-f", "json", "a.ts"];
-        const [forOxlint, alone] = await Promise.all([
+        const [forOxlint, withBunfig] = await Promise.all([
           lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
           lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
         ]);
-        expect(places(forOxlint.raw)).toEqual([
+        expect(reportsIn(forOxlint.raw)).toEqual([
           "a.ts:3 typescript(no-misused-promises) error",
           "a.ts:4 typescript(no-misused-promises) error",
         ]);
-        const found = JSON.parse(alone.raw)[0].messages as { line: number; message: string }[];
+        const found = JSON.parse(withBunfig.raw)[0].messages as { line: number; message: string }[];
         expect(found.map(it => `${it.line} ${it.message}`)).toEqual([
           "7 Unused oxlint-disable directive (no problems were reported from 'typescript/no-misused-promises').",
         ]);
       });
 
       // Recorded from oxlint 1.87.0 with tsgolint.
-      test("no-misused-promises on what a function returns: a type in parentheses, and the type that a callback is given", async () => {
+      test("no-misused-promises matches tsgolint on returned functions: a return type in parentheses, and a callback's contextual return type", async () => {
         const texts = {
           "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
           "a.ts": `declare function f(): Promise<void>;
@@ -4344,7 +4589,7 @@ maybe(() => { return f; });
         };
         const oxlint = { categories: { correctness: "off" }, rules: { "typescript/no-misused-promises": "error" } };
         const flags = ["--type-aware", "-f", "json", "a.ts"];
-        const [forOxlint, alone] = await Promise.all([
+        const [forOxlint, withBunfig] = await Promise.all([
           lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
           lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
         ]);
@@ -4359,7 +4604,7 @@ maybe(() => { return f; });
           [`6:19+1 ${value}`, `2:37+10 ${context}`, "6:19+1"],
           [`7:22+1 ${value}`, "7:22+1"],
         ]);
-        const lines = (JSON.parse(alone.raw)[0].messages as { line: number }[]).map(it => it.line);
+        const lines = (JSON.parse(withBunfig.raw)[0].messages as { line: number }[]).map(it => it.line);
         expect(lines).toEqual([4, 5, 6, 7]);
       });
 
@@ -4382,11 +4627,11 @@ maybe(() => { return f; });
           ],
           [
             { rules: { "eslint/require-await": "warn", "typescript/require-await": "error" } },
-            ["a.ts:2 eslint(require-await) warning", "a.ts:2 typescript(require-await) warning"],
+            ["a.ts:2 typescript(require-await) warning"],
           ],
           [
             { rules: { "typescript/require-await": "warn", "eslint/require-await": "error" } },
-            ["a.ts:2 eslint(require-await) error", "a.ts:2 typescript(require-await) error"],
+            ["a.ts:2 typescript(require-await) error"],
           ],
         ];
         const results = await Promise.all(
@@ -4394,11 +4639,515 @@ maybe(() => { return f; });
             lint({ ".oxlintrc.json": rc({ rules: {}, ...config }), ...texts }, ["--type-aware", "-f", "json", "a.ts"]),
           ),
         );
-        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+        expect(results.map(it => reportsIn(it.raw))).toEqual(rows.map(it => it[1]));
+      });
+
+      describe("a type-aware rule and an untyped rule that look for the same problem", () => {
+        const tsconfig = JSON.stringify({
+          compilerOptions: { strict: true, target: "esnext", lib: ["esnext", "dom"] },
+        });
+        const config = (rules: Record<string, string>, more: object = {}) =>
+          rc({ plugins: ["unicorn", "typescript"], env: { browser: true }, rules, ...more });
+        const on = (rules: string[]) => config(Object.fromEntries(rules.map(it => [it, "error"])));
+        /** Lints each row in its own directory, and returns each row's reports, in row order. */
+        const lintRows = async (rows: [config: string, text: string][], args: string[]) => {
+          const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+          rows.forEach(([config, text], index) => {
+            files[`${index}/.oxlintrc.json`] = config;
+            files[`${index}/tsconfig.json`] = tsconfig;
+            files[`${index}/a.ts`] = text;
+          });
+          const all = reportsIn((await lint(files, ["-f", "json", ...args])).raw);
+          return rows.map((_, index) =>
+            all.filter(it => it.startsWith(`${index}/`)).map(it => it.slice(`${index}/`.length)),
+          );
+        };
+        // The untyped rule, the type-aware rule, and code with one problem per line.
+        const pairs: [untyped: string, typed: string, lines: string[]][] = [
+          [
+            "require-await",
+            "typescript/require-await",
+            [
+              "declare const p: Promise<number>;",
+              "export async function a() { return 1; }",
+              "export const b = async () => 1;",
+              "export const c = { async m() { return 1; } };",
+              "export class D { async m() { return 1; } }",
+              "export async function e() { return p; }",
+              "export async function f() { await p; }",
+              "export async function* g() { yield 1; }",
+            ],
+          ],
+          [
+            "no-implied-eval",
+            "typescript/no-implied-eval",
+            [
+              'setTimeout("alert(1)", 1);',
+              'window.setTimeout("alert(1)", 1);',
+              'self.setTimeout("alert(1)", 1);',
+              'window[`setTimeout`]("alert(1)", 1);',
+              '(window?.setTimeout)("alert(1)", 1);',
+              "declare const s: string;",
+              "setTimeout(s, 1);",
+              "setTimeout(() => {}, 1);",
+              "export {};",
+            ],
+          ],
+          [
+            "no-throw-literal",
+            "typescript/only-throw-error",
+            [
+              "declare const e: Error;",
+              "declare const x: any;",
+              'export function a() { throw "a"; }',
+              "export function b() { throw 1; }",
+              'export function c() { throw "a" as any; }',
+              "export function d() { throw class extends Error {}; }",
+              'export function f() { throw x && "a"; }',
+              "export function g(s: string) { throw s; }",
+              "export function h() { throw e; }",
+            ],
+          ],
+          [
+            "prefer-promise-reject-errors",
+            "typescript/prefer-promise-reject-errors",
+            [
+              "declare const s: string;",
+              "void Promise.reject(5);",
+              'void Promise[("reject")](5);',
+              "void new Promise((_, reject) => reject(5));",
+              "void new Promise((...a) => a[1](5));",
+              "void Promise.reject(s);",
+              'void Promise.reject(new Error("a"));',
+            ],
+          ],
+          [
+            "prefer-destructuring",
+            "typescript/prefer-destructuring",
+            [
+              "declare const o: { a: number; b: number[] };",
+              "export const a = o.a;",
+              "export const b: number[] = o.b;",
+              "export const { b: c } = o;",
+            ],
+          ],
+          [
+            "unicorn/prefer-string-starts-ends-with",
+            "typescript/prefer-string-starts-ends-with",
+            [
+              "declare const s: string;",
+              "export const a = /^abc/.test(s);",
+              "export const b = /abc$/.test(s);",
+              "export const c = /^abc/g.test(s);",
+              "export const d = /^123/i.test(s);",
+              "export const e = /^abc/.test!(s);",
+              "export const f = /^{{/.test(s);",
+              'export const g = s.slice(0, 3) === "abc";',
+              "export const h = /^a|b/.test(s);",
+            ],
+          ],
+          [
+            "unicorn/prefer-includes",
+            "typescript/prefer-includes",
+            [
+              "declare const a: string[];",
+              "declare const x: any;",
+              "declare const o: { indexOf(a: string): number };",
+              'export const b = a.indexOf("b") !== -1;',
+              'export const c = a.indexOf!("b") !== -1;',
+              'export const d = (a.indexOf)("b") !== -1;',
+              'export const e = a["indexOf"]("b") !== -1;',
+              'export const f = a.indexOf("b") !== (-1);',
+              'export const g = x.indexOf("b") !== -1;',
+              'export const h = o.indexOf("b") !== -1;',
+              'export const i = a.indexOf("b") <= -1;',
+              'export const j = a.includes("b");',
+            ],
+          ],
+          [
+            "unicorn/prefer-array-find",
+            "typescript/prefer-find",
+            [
+              "declare const a: string[];",
+              "declare const aa: string[][];",
+              "declare const x: any;",
+              "export const b = a.filter(Boolean)[0];",
+              "export const c = a.filter(Boolean).at(0);",
+              "export const d = a.filter(Boolean)![0];",
+              "export const e = (a.filter(Boolean) as string[])[0];",
+              "export const f = a.filter?.(Boolean)[0];",
+              "export const g = a.filter(Boolean)?.at(0);",
+              "export const h = a.filter(Boolean).at!(0);",
+              "export const i = a.filter(Boolean).shift();",
+              "export const [j] = a.filter(Boolean);",
+              "export const k = x.filter(Boolean)[0];",
+              // Two calls that start at the same position. Both rules report only the first.
+              "export const l = aa.filter(Boolean)[0]",
+              "  .filter(Boolean).pop();",
+              "export const m = a.find(Boolean);",
+            ],
+          ],
+        ];
+        const text = (lines: string[]) => lines.join("\n") + "\n";
+        const lineOf = (report: string) => report.slice(0, report.indexOf(" "));
+
+        test("with both on, a problem that either rule finds is reported once", async () => {
+          const rowsOf = (rules: (pair: (typeof pairs)[number]) => string[]) =>
+            pairs.map((pair): [string, string] => [on(rules(pair)), text(pair[2])]);
+          const [untyped, typed, both] = await Promise.all([
+            lintRows(
+              rowsOf(it => [it[0]]),
+              ["--type-aware"],
+            ),
+            lintRows(
+              rowsOf(it => [it[1]]),
+              ["--type-aware"],
+            ),
+            lintRows(
+              rowsOf(it => [it[0], it[1]]),
+              ["--type-aware"],
+            ),
+          ]);
+          for (const [index, [name]] of pairs.entries()) {
+            const withTypes = new Set(typed[index].map(lineOf));
+            const rest = untyped[index].filter(it => !withTypes.has(lineOf(it)));
+            expect([name, both[index]]).toEqual([name, [...typed[index], ...rest].sort()]);
+            // Every pair has code that both rules report, and all but one pair has code that only the untyped rule
+            // reports.
+            const hasBoth = untyped[index].length > rest.length;
+            const hasRest = rest.length > 0 || name === "prefer-destructuring";
+            expect([name, hasBoth, hasRest]).toEqual([name, true, true]);
+          }
+          expect(Object.fromEntries(pairs.map(([name], index) => [name, both[index]]))).toMatchInlineSnapshot(`
+            {
+              "no-implied-eval": [
+                "a.ts:1 typescript(no-implied-eval) error",
+                "a.ts:2 typescript(no-implied-eval) error",
+                "a.ts:3 eslint(no-implied-eval) error",
+                "a.ts:4 eslint(no-implied-eval) error",
+                "a.ts:5 eslint(no-implied-eval) error",
+                "a.ts:7 typescript(no-implied-eval) error",
+              ],
+              "no-throw-literal": [
+                "a.ts:3 typescript(only-throw-error) error",
+                "a.ts:4 typescript(only-throw-error) error",
+                "a.ts:5 eslint(no-throw-literal) error",
+                "a.ts:6 eslint(no-throw-literal) error",
+                "a.ts:7 eslint(no-throw-literal) error",
+                "a.ts:8 typescript(only-throw-error) error",
+              ],
+              "prefer-destructuring": [
+                "a.ts:2 eslint(prefer-destructuring) error",
+              ],
+              "prefer-promise-reject-errors": [
+                "a.ts:2 typescript(prefer-promise-reject-errors) error",
+                "a.ts:3 eslint(prefer-promise-reject-errors) error",
+                "a.ts:4 typescript(prefer-promise-reject-errors) error",
+                "a.ts:5 eslint(prefer-promise-reject-errors) error",
+                "a.ts:6 typescript(prefer-promise-reject-errors) error",
+              ],
+              "require-await": [
+                "a.ts:2 typescript(require-await) error",
+                "a.ts:3 typescript(require-await) error",
+                "a.ts:4 typescript(require-await) error",
+                "a.ts:5 typescript(require-await) error",
+                "a.ts:6 eslint(require-await) error",
+                "a.ts:8 typescript(require-await) error",
+              ],
+              "unicorn/prefer-array-find": [
+                "a.ts:10 unicorn(prefer-array-find) error",
+                "a.ts:11 unicorn(prefer-array-find) error",
+                "a.ts:12 unicorn(prefer-array-find) error",
+                "a.ts:13 unicorn(prefer-array-find) error",
+                "a.ts:14 typescript(prefer-find) error",
+                "a.ts:15 unicorn(prefer-array-find) error",
+                "a.ts:4 typescript(prefer-find) error",
+                "a.ts:5 typescript(prefer-find) error",
+                "a.ts:6 unicorn(prefer-array-find) error",
+                "a.ts:7 unicorn(prefer-array-find) error",
+                "a.ts:8 unicorn(prefer-array-find) error",
+                "a.ts:9 typescript(prefer-find) error",
+              ],
+              "unicorn/prefer-includes": [
+                "a.ts:10 unicorn(prefer-includes) error",
+                "a.ts:11 typescript(prefer-includes) error",
+                "a.ts:4 typescript(prefer-includes) error",
+                "a.ts:5 unicorn(prefer-includes) error",
+                "a.ts:6 unicorn(prefer-includes) error",
+                "a.ts:7 unicorn(prefer-includes) error",
+                "a.ts:8 unicorn(prefer-includes) error",
+                "a.ts:9 unicorn(prefer-includes) error",
+              ],
+              "unicorn/prefer-string-starts-ends-with": [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:4 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:5 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:6 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:7 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:8 typescript(prefer-string-starts-ends-with) error",
+              ],
+            }
+          `);
+        });
+
+        const await_ = ["require-await", "typescript/require-await"];
+        const throw_ = ["no-throw-literal", "typescript/only-throw-error"];
+        const f = "export async function f() {\n  return 1;\n}\n";
+
+        test("without types for the file, the untyped rule reports", async () => {
+          const rows = pairs
+            .slice(0, 4)
+            .map(([untyped, typed, lines]): [string, string] => [on([untyped, typed]), text(lines)]);
+          const untypedOnly = pairs
+            .slice(0, 4)
+            .map(([untyped, , lines]): [string, string] => [on([untyped]), text(lines)]);
+          expect(await lintRows(rows, [])).toEqual(await lintRows(untypedOnly, []));
+        });
+
+        test("both report if the untyped rule has the higher severity", async () => {
+          const starts = (untyped: string, typed: string) =>
+            config({
+              "unicorn/prefer-string-starts-ends-with": untyped,
+              "typescript/prefer-string-starts-ends-with": typed,
+            });
+          const code =
+            'declare const s: string;\nexport const a = /^a/.test(s);\nexport const b = s.slice(0, 1) === "a";\n';
+          const rows: [string, string][] = [
+            [starts("error", "warn"), code],
+            [starts("warn", "error"), code],
+            [starts("warn", "warn"), code],
+          ];
+          expect(await lintRows(rows, ["--type-aware"])).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) warning",
+                "a.ts:2 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) warning",
+              ],
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) error",
+              ],
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) warning",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) warning",
+              ],
+            ]
+          `);
+        });
+
+        test("disable comments work as if both rules had reported", async () => {
+          const find = ["unicorn/prefer-array-find", "typescript/prefer-find"];
+          const first = "declare const a: string[];\n";
+          const rows: [string, string][] = [
+            // A name matches the rule whichever plugin prefix it's written with.
+            [on(await_), `// oxlint-disable-next-line require-await\n${f}`],
+            [on(await_), `// oxlint-disable-next-line typescript/require-await\n${f}`],
+            [on(await_), `// oxlint-disable-next-line require-await, typescript/require-await\n${f}`],
+            // Nothing to disable.
+            [on(await_), "// oxlint-disable-next-line require-await\nexport function f() {\n  return 1;\n}\n"],
+            [on(throw_), "// oxlint-disable-next-line\nexport const a = 1;\n"],
+            // The two rules have different names. A comment for one doesn't hide the other's report, and isn't reported
+            // as unused.
+            [on(throw_), '// oxlint-disable-next-line no-throw-literal\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line typescript/only-throw-error\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line\nthrow "a";\n'],
+            [
+              on(find),
+              `${first}// oxlint-disable-next-line typescript/prefer-find\nexport const b = a.filter(Boolean)[0];\n`,
+            ],
+            [
+              on(find),
+              `${first}// oxlint-disable-next-line unicorn/prefer-array-find\nexport const b = a.filter(Boolean)[0];\n`,
+            ],
+            // The two rules report on different lines.
+            [
+              on(await_),
+              "export const g = async (\n  a: number,\n  // oxlint-disable-next-line require-await\n) => a;\n",
+            ],
+          ];
+          const reported = await lintRows(rows, ["--type-aware", "--report-unused-disable-directives"]);
+          expect(Object.fromEntries(rows.map(([, code], index) => [code, reported[index]]))).toMatchInlineSnapshot(`
+            {
+              "// oxlint-disable-next-line\\nexport const a = 1;\\n": [
+                "a.ts:1 undefined warning",
+              ],
+              "// oxlint-disable-next-line\\nthrow \\"a\\";\\n": [],
+              "// oxlint-disable-next-line no-throw-literal\\nthrow \\"a\\";\\n": [
+                "a.ts:2 typescript(only-throw-error) error",
+              ],
+              "// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\\nthrow \\"a\\";\\n": [],
+              "// oxlint-disable-next-line require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "// oxlint-disable-next-line require-await\\nexport function f() {\\n  return 1;\\n}\\n": [
+                "a.ts:1 undefined warning",
+              ],
+              "// oxlint-disable-next-line require-await, typescript/require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "// oxlint-disable-next-line typescript/only-throw-error\\nthrow \\"a\\";\\n": [
+                "a.ts:2 eslint(no-throw-literal) error",
+              ],
+              "// oxlint-disable-next-line typescript/require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "declare const a: string[];\\n// oxlint-disable-next-line typescript/prefer-find\\nexport const b = a.filter(Boolean)[0];\\n": [
+                "a.ts:3 unicorn(prefer-array-find) error",
+              ],
+              "declare const a: string[];\\n// oxlint-disable-next-line unicorn/prefer-array-find\\nexport const b = a.filter(Boolean)[0];\\n": [
+                "a.ts:3 typescript(prefer-find) error",
+              ],
+              "export const g = async (\\n  a: number,\\n  // oxlint-disable-next-line require-await\\n) => a;\\n": [
+                "a.ts:1 eslint(require-await) error",
+              ],
+            }
+          `);
+        });
+
+        test("a problem is still reported once in a file that's linted again for a rule that looks at several files", async () => {
+          const files = {
+            ".oxlintrc.json": config(
+              { "no-throw-literal": "error", "typescript/only-throw-error": "error", "import/named": "error" },
+              { plugins: ["unicorn", "typescript", "import"] },
+            ),
+            "tsconfig.json": tsconfig,
+            "a.ts": 'import { b } from "./b";\n// oxlint-disable-next-line no-throw-literal\nthrow `${b}`;\n',
+            "b.ts": 'export const b = 1;\nthrow "b";\n',
+          };
+          const { raw } = await lint(files, ["-f", "json", "--type-aware", "--report-unused-disable-directives"]);
+          expect(reportsIn(raw)).toMatchInlineSnapshot(`
+            [
+              "a.ts:3 typescript(only-throw-error) error",
+              "b.ts:2 typescript(only-throw-error) error",
+            ]
+          `);
+        });
+
+        test("a hidden report's fix or suggestion is still applied", async () => {
+          const includes = ["unicorn/prefer-includes", "typescript/prefer-includes"];
+          const destructuring = ["prefer-destructuring", "typescript/prefer-destructuring"];
+          const rows: [rules: string[], flag: string, code: string][] = [
+            [throw_, "--fix-suggestions", 'throw "a";\n'],
+            [includes, "--fix-suggestions", 'declare const a: string[];\nexport const b = a.indexOf("b") !== -1;\n'],
+            [destructuring, "--fix", 'declare const o: { a: number };\nexport const a = o["a"];\n'],
+            // The comment disables the report that has the suggestion.
+            [throw_, "--fix-suggestions", '// oxlint-disable-next-line no-throw-literal\nthrow "a";\n'],
+          ];
+          const fixed = await Promise.all(
+            rows.map(async ([rules, flag, code]) => {
+              const project = { ".oxlintrc.json": on(rules), "tsconfig.json": tsconfig, "a.ts": code };
+              return (await lint(project, ["--type-aware", flag, "a.ts"], { reads: ["a.ts"] })).files["a.ts"];
+            }),
+          );
+          expect(fixed).toMatchInlineSnapshot(`
+            [
+              
+            "throw new Error("a");
+            "
+            ,
+              
+            "declare const a: string[];
+            export const b = a.includes("b");
+            "
+            ,
+              
+            "declare const o: { a: number };
+            export const {a} = o;
+            "
+            ,
+              
+            "// oxlint-disable-next-line no-throw-literal
+            throw "a";
+            "
+            ,
+            ]
+          `);
+        });
+
+        test("a report hidden by a suppressions file doesn't hide the other rule's report", async () => {
+          const project = { ".oxlintrc.json": on(throw_), "tsconfig.json": tsconfig, "a.ts": 'throw "a";\n' };
+          const suppress = (rule: string) => lint(project, ["--type-aware", "-f", "json", "--suppress-rule", rule]);
+          const [typed, untyped] = await Promise.all([
+            suppress("typescript/only-throw-error"),
+            suppress("no-throw-literal"),
+          ]);
+          expect([reportsIn(typed.raw), reportsIn(untyped.raw)]).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:1 eslint(no-throw-literal) error",
+              ],
+              [
+                "a.ts:1 typescript(only-throw-error) error",
+              ],
+            ]
+          `);
+        });
+
+        // Without a config in the working directory the formats are ESLint's, and ESLint's JSON includes the
+        // suggestions.
+        test("the file's config applies, not the working directory's", async () => {
+          const project = {
+            "throw/.oxlintrc.json": on(throw_),
+            "throw/tsconfig.json": tsconfig,
+            "throw/a.ts": 'throw "a";\n',
+            // Both rules make the same suggestion.
+            "await/.oxlintrc.json": on(await_),
+            "await/tsconfig.json": tsconfig,
+            "await/a.ts": f,
+          };
+          const results: { messages: { ruleId: string; suggestions?: { desc: string }[] }[] }[] = JSON.parse(
+            (await lint(project, ["--type-aware", "-f", "json"])).raw,
+          );
+          const reported = results.flatMap(it =>
+            it.messages.map(it => [it.ruleId, it.suggestions?.map(it => it.desc)]),
+          );
+          expect(reported).toMatchInlineSnapshot(`
+            [
+              [
+                "@typescript-eslint/require-await",
+                [
+                  "Remove 'async'.",
+                ],
+              ],
+              [
+                "@typescript-eslint/only-throw-error",
+                [
+                  "Expected an error object to be thrown",
+                ],
+              ],
+            ]
+          `);
+        });
+
+        test("dot-notation and consistent-return have no untyped version", async () => {
+          const code =
+            'declare const o: { a: number };\nexport const a = o["a"];\nexport function f(x: boolean) {\n  if (x) return 1;\n  return;\n}\n';
+          const names = ["dot-notation", "consistent-return"];
+          const rows: [string, string][] = [
+            [on(names), code],
+            [on([...names, ...names.map(it => `typescript/${it}`)]), code],
+          ];
+          const [withTypes, without] = await Promise.all([lintRows(rows, ["--type-aware"]), lintRows(rows, [])]);
+          expect({ withTypes, without }).toMatchInlineSnapshot(`
+            {
+              "withTypes": [
+                [
+                  "a.ts:2 typescript(dot-notation) error",
+                  "a.ts:5 typescript(consistent-return) error",
+                ],
+                [
+                  "a.ts:2 typescript(dot-notation) error",
+                  "a.ts:5 typescript(consistent-return) error",
+                ],
+              ],
+              "without": [
+                [],
+                [],
+              ],
+            }
+          `);
+        });
       });
 
       // Recorded from oxlint 1.87.0.
-      test("--fix-suggestions alone applies the fixes of JS plugins, but not those of built-in rules", async () => {
+      test("--fix-suggestions without --fix applies JS plugin fixes but not built-in rule fixes", async () => {
         const report = (more: string) => `node => context.report({ node, message: "no", ${more} })`;
         const project = {
           ".oxlintrc.json": rc({
@@ -4449,10 +5198,10 @@ maybe(() => { return f; });
         const results = await Promise.all(
           rows.map(([config]) => lint({ ".oxlintrc.json": rc({ rules, ...config }), ...text }, ["-f", "json", "a.js"])),
         );
-        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+        expect(results.map(it => reportsIn(it.raw))).toEqual(rows.map(it => it[1]));
       });
 
-      // Recorded from oxlint 1.87.0. The two fixes overlap, so --fix leaves the second report.
+      // Recorded from oxlint 1.87.0. The two fixes overlap, so the second report remains after --fix.
       test("use-isnan reports both sides of NaN == NaN", async () => {
         const files = {
           ".oxlintrc.json": rc({ rules: { "use-isnan": "error" } }),
@@ -4468,7 +5217,7 @@ maybe(() => { return f; });
         expect(exitCode).toBe(1);
       });
 
-      test("the rules that ESLint has given up and oxlint has in `node` run if that plugin is on", async () => {
+      test("rules that ESLint deprecated and oxlint has in `node` run only if that plugin is on", async () => {
         const texts: Record<string, string> = {
           "callback-return": "function f(err, callback) {\n  if (err) {\n    callback(err);\n  }\n  callback();\n}\n",
           "global-require": 'function f() {\n  require("a");\n}\n',
@@ -4492,7 +5241,7 @@ maybe(() => { return f; });
         }
         const { raw, exitCode } = await lint(files, ["-f", "json"]);
         // oxlint 1.87.0 calls them node(no-sync) and so on.
-        const found = places(raw).map((it: string) => it.replace(/ \w+\((.*)\) /, " $1 "));
+        const found = reportsIn(raw).map((it: string) => it.replace(/ \w+\((.*)\) /, " $1 "));
         const lines = { "callback-return": 3, "global-require": 2 };
         expect(found).toEqual(
           ["bare-on", "node-on"].flatMap(directory =>
@@ -4502,11 +5251,12 @@ maybe(() => { return f; });
         expect(exitCode).toBe(0);
       });
 
-      // The projects of oracle/plugins/oxlint. expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 reports for them.
+      // The next tests lint the projects in oracle/plugins/oxlint. expected.json is what oxlint 1.87.0 with tsgolint
+      // 7.0.2003 reports for them.
       const found = (raw: string, names: string[]) => {
         const byProject = Object.fromEntries(names.map((it): [string, Set<string>] => [it, new Set()]));
         for (const it of JSON.parse(raw).diagnostics) {
-          // A syntax error.
+          // A syntax error has no code.
           if (!it.code) continue;
           const name = names.find(name => it.filename.startsWith(name + "/"))!;
           const { line, column } = it.labels[0].span;
@@ -4514,11 +5264,12 @@ maybe(() => { return f; });
         }
         return Object.fromEntries(names.map(it => [it, [...byProject[it]].sort()]));
       };
-      // With the length of what is pointed at, and each report as often as it is made: two can begin at one place.
+      // Like `found`, but with the length of each span, and with duplicates, because two reports can start at the same
+      // position.
       const foundExactly = (raw: string, names: string[]) => {
         const byProject = Object.fromEntries(names.map((it): [string, string[]] => [it, []]));
         for (const it of JSON.parse(raw).diagnostics) {
-          // A syntax error.
+          // A syntax error has no code.
           if (!it.code) continue;
           const name = names.find(name => it.filename.startsWith(name + "/"))!;
           const { line, column, length } = it.labels[0].span;
@@ -4528,8 +5279,8 @@ maybe(() => { return f; });
       };
       const expected = (names: string[]) =>
         Object.fromEntries(names.map(it => [it, whatOxlintReports[it as keyof typeof whatOxlintReports]]));
-      // All that is marked for a report, and what is said there, where that is more than one place without a text. labels.json has
-      // only the projects in which there is such a report.
+      // Returns all the labels of each report, with their text, unless the report only has one label without text.
+      // labels.json has only the projects with such a report.
       const marked = (raw: string, names: string[]) => {
         const byProject = Object.fromEntries(names.map((it): [string, string[]] => [it, []]));
         for (const it of JSON.parse(raw).diagnostics) {
@@ -4542,10 +5293,11 @@ maybe(() => { return f; });
       const expectedMarks = (names: string[]) =>
         Object.fromEntries(names.map(it => [it, (whatOxlintMarks as Record<string, string[]>)[it] ?? []]));
 
-      // The tests that lint hundreds of directories are serial: beside them the others do not get the processor in time.
+      // The tests that lint hundreds of directories are serial. If they ran concurrently, the other tests wouldn't get
+      // enough CPU time and would time out.
 
       test.serial(
-        "the rules report what oxlint's report, where they report it",
+        "the rules report the same problems as oxlint's, at the same positions",
         async () => {
           const some = projects.filter(it => !it.typed && it.name !== "no-cycle/many-files");
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
@@ -4569,9 +5321,10 @@ maybe(() => { return f; });
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // Each project is a program of its own. In twelve runs: one takes seconds in a debug build.
+      // Each project is its own program. They're split into twelve runs because one program takes seconds in a debug
+      // build.
       test.serial.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
-        "the rules that need types report what tsgolint's report: part %d",
+        "type-aware rules report the same problems as tsgolint's: part %d",
         async part => {
           const some = projects.filter(it => it.typed).filter((_, index) => index % 12 === part);
           const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
@@ -4589,22 +5342,38 @@ maybe(() => { return f; });
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // messages.json has what oxlint 1.87.0 with tsgolint 7.0.2003 says.
-      test("the rules that oxlint shares with ESLint and typescript-eslint say what oxlint's say", async () => {
-        const { raw } = await lint(filesOfMessages(messages), ["-f", "json", "--type-aware"]);
-        const said = messagesOf(raw, messages).map((it, index) => `${messages[index].rule} ${it.join(" | ")}`);
-        // Of several the last is the one that is asked about.
-        const before = (index: number) => messagesOf(raw, messages)[index].slice(0, messages[index].index ?? 0);
-        expect(said).toEqual(messages.map((it, index) => `${it.rule} ${[...before(index), it.message].join(" | ")}`));
-        // A help that is printed is oxlint's, and none is lacking.
-        const helps = helpsOf(raw, messages).map((it, index) => ({ ...messages[index], said: it }));
-        const wrong = helps.filter(it => it.said !== undefined && it.said !== it.help);
-        expect(wrong.map(it => [it.rule, it.id])).toEqual([]);
-        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(0);
+      // parentheses.json has code in parentheses that aren't needed, for the type-aware rules that used to treat it
+      // differently from the same code without them. parentheses.expected.json is what `bun lint` reports for it.
+      test("type-aware rules see through redundant parentheses", async () => {
+        const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const { name, config, files: texts } of parentheses) {
+          files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+          files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
+          for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+        }
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        expect(foundExactly(raw, Object.keys(parenthesesExpected))).toEqual(parenthesesExpected);
       });
 
-      // The table has no texts of messages, only numbers that are made of them: a message that is reworded would lose its help.
-      test("every help of oxlint belongs to a message that a rule has", () => {
+      // messages.json has the messages of oxlint 1.87.0 with tsgolint 7.0.2003.
+      test("rules that oxlint shares with ESLint and typescript-eslint print oxlint's messages", async () => {
+        const { raw } = await lint(filesOfMessages(messages), ["-f", "json", "--type-aware"]);
+        const printed = messagesOf(raw, messages).map((it, index) => `${messages[index].rule} ${it.join(" | ")}`);
+        // If the code gets several reports, the entry is about the last one.
+        const before = (index: number) => messagesOf(raw, messages)[index].slice(0, messages[index].index ?? 0);
+        expect(printed).toEqual(
+          messages.map((it, index) => `${it.rule} ${[...before(index), it.message].join(" | ")}`),
+        );
+        // Every help that's printed is oxlint's, and none is missing.
+        const helps = helpsOf(raw, messages).map((it, index) => ({ ...messages[index], printed: it }));
+        const wrong = helps.filter(it => it.printed !== undefined && it.printed !== it.help);
+        expect(wrong.map(it => [it.rule, it.id])).toEqual([]);
+        expect(helps.filter(it => it.printed === undefined && it.help !== undefined).length).toBeLessThanOrEqual(0);
+      });
+
+      // The table has hashes of the messages, not their text, so a reworded message would lose its help.
+      test("every entry of oxlint's help table belongs to a message that a rule has", () => {
         const root = join(import.meta.dir, "../../../src/lint");
         const unescaped = (text: string) =>
           text.replace(/\\\n\s*/g, "").replace(/\\(.)/g, (_, it) => ({ n: "\n", t: "\t" })[it as "n"] ?? it);
@@ -4637,14 +5406,16 @@ maybe(() => { return f; });
         const lines = readFileSync(join(root, "oxlint_help.txt"), "utf8").split("\n");
         const table = readFileSync(join(root, "oxlint_help.rs"), "utf8");
         const entries = [
-          ...table.matchAll(/^ {4}\(0x[0-9A-F]{8}, (One|Three|of_the_fix)\((?:\w+, \w+, )?(\d+)\), (\d)\), \/\//gm),
+          ...table.matchAll(
+            /^ {4}\(0x[0-9A-F]{8}, (One|Three|fix_description)\((?:\w+, \w+, )?(\d+)\), (\d)\), \/\//gm,
+          ),
         ];
         expect(entries.length).toBe(table.match(/^ {4}\(0x/gm)!.length);
         const wrong = entries.filter(([, kind, line, withValues]) => {
-          // Lines count from 1. A fix's note is optional, and 0 stands for none.
+          // Line numbers start at 1. A fix's note is optional, and 0 means there's none.
           const at = Number(line) - 1;
-          if (kind === "of_the_fix" && at < 0) return withValues !== "0";
-          // By part: the help, the label, the note.
+          if (kind === "fix_description" && at < 0) return withValues !== "0";
+          // The parts are the help, the label and the note.
           const texts = kind === "Three" ? lines.slice(at, at + 3) : kind === "One" ? [lines[at]] : ["", "", lines[at]];
           const bits = texts.reduce((bits, text, part) => bits | (Number(text?.includes("{{")) << part), 0);
           return !texts.some(Boolean) || bits !== Number(withValues);
@@ -4652,8 +5423,8 @@ maybe(() => { return f; });
         expect(wrong.map(it => it[0])).toEqual([]);
       });
 
-      // What oxlint 1.87.0 with tsgolint 7.0.2003 reports.
-      test("JavaScript is linted with types without allowJs, and is `any` to the TypeScript that imports it", async () => {
+      // This is what oxlint 1.87.0 with tsgolint 7.0.2003 reports.
+      test("JavaScript is linted with types even without allowJs, and is `any` to TypeScript that imports it", async () => {
         const { raw } = await lint(
           {
             ".oxlintrc.json": rc({
@@ -4680,9 +5451,10 @@ maybe(() => { return f; });
         });
       });
 
-      // What oxlint 1.87.0 with tsgolint 7.0.2003 does: there is no program for such a tsconfig.json, so no rule that needs types
-      // runs on its files, and nothing is fixed on types that do not resolve. Each error of TypeScript is one of oxlint.
-      test("a tsconfig.json that TypeScript refuses is an error, and its files are linted without types", async () => {
+      // This is what oxlint 1.87.0 with tsgolint 7.0.2003 does. There's no program for such a tsconfig.json, so no
+      // type-aware rule runs on its files, and nothing is fixed based on types that don't resolve. Each TypeScript
+      // error becomes one oxlint error.
+      test("a tsconfig.json that TypeScript rejects is an error, and its files are linted without types", async () => {
         const options = `"strict":true,"lib":["esnext"]`;
         const code = "declare const s: string;\nexport const g = s as string;\ndebugger;\n";
         const { raw, exitCode, files } = await lint(
@@ -4722,16 +5494,16 @@ maybe(() => { return f; });
           `unfinished/tsconfig.json 1 52 0 ${invalid} '}' expected.`,
           `unknown/tsconfig.json 1 52 6 ${invalid} Unknown compiler option 'nope'.`,
         ]);
-        // The rules that need no types run everywhere.
+        // Rules that don't need types run everywhere.
         expect(found.filter((it: string) => it.includes("no-debugger")).length).toBe(5);
         const fixed = code.replace(" as string", "");
         expect(files).toEqual({ "good/a.ts": fixed, "removed/a.ts": code, "in-no-project.ts": fixed });
         expect(exitCode).toBe(1);
       });
 
-      // The order is oxlint 1.87.0's, with --fix and without types.
+      // This is oxlint 1.87.0's order with --fix and without types.
       test.each([[["--fix"]], [["--fix", "--type-aware"]]])(
-        "what %j leaves is printed in the order in which the rules ran",
+        "the problems that remain after %j are printed in the order the rules ran",
         async flags => {
           const names = ["eqeqeq", "no-empty", "no-unused-vars", "no-var", "no-debugger", "prefer-const"];
           const { stdout, exitCode, files } = await lint(
@@ -4759,9 +5531,9 @@ maybe(() => { return f; });
         },
       );
 
-      // What oxlint 1.87.0 with tsgolint 7.0.2003 does. Added to the project as root files, the two .mjs would be errors of the
-      // program (6504), and the tsconfig.json would be refused for them.
-      test("--tsconfig is the project of the files that it includes, the others are in no project", async () => {
+      // This is what oxlint 1.87.0 with tsgolint 7.0.2003 does. If the two .mjs files were added to the project as root
+      // files, each would be an error in the program (6504), and the tsconfig.json would be rejected because of them.
+      test("--tsconfig doesn't add files to a project: a file that no project includes stays outside every project", async () => {
         const code = "async function f() { return 1; }\nf();\n";
         const { stdout, exitCode } = await lint(
           {
@@ -4777,8 +5549,8 @@ maybe(() => { return f; });
           },
           ["-f", "unix", "--type-aware", "--tsconfig", "./tsconfig.json", "src", "other"],
         );
-        const places = stdout.split("\n").filter(it => it.includes("[Error/"));
-        expect(places.map(it => it.replace(/: .* \[/, " [")).sort()).toEqual(
+        const errorLines = stdout.split("\n").filter(it => it.includes("[Error/"));
+        expect(errorLines.map(it => it.replace(/: .* \[/, " [")).sort()).toEqual(
           ["other/c.ts", "other/d.mjs", "src/a.ts", "src/b.mjs"].map(
             it => `${it}:2:1 [Error/typescript(no-floating-promises)]`,
           ),
@@ -4786,8 +5558,396 @@ maybe(() => { return f; });
         expect(exitCode).toBe(1);
       });
 
-      // A file is parsed once for all projects of a run that read it alike. Each of these pairs reads it in two ways.
-      describe("a file of two projects is to each what the options of the project make of it", () => {
+      // This is what oxlint 1.87.0 with tsgolint 7.0.2003 does. tsgolint finds each file's project itself, and never
+      // sees the flag.
+      describe("--tsconfig doesn't choose the project that a file is checked in", () => {
+        const compilerOptions = {
+          strict: true,
+          target: "es2023",
+          module: "esnext",
+          moduleResolution: "bundler",
+          noEmit: true,
+          types: [],
+        };
+        const on = (...rules: string[]) =>
+          rc({ plugins: ["typescript"], rules: Object.fromEntries(rules.map(it => [`typescript/${it}`, "error"])) });
+        const above = (more: object = {}) =>
+          JSON.stringify({ compilerOptions: { ...compilerOptions, ...more }, include: ["src/**/*"] });
+        const nearer = (compilerOptions: object, include: string[]) =>
+          JSON.stringify({ extends: "../tsconfig.json", compilerOptions, include });
+
+        // Each row ends with what's reported if the file is checked with `tsconfig.json`. With `src/tsconfig.json`
+        // nothing is reported.
+        test.each<[string, Record<string, string>, string[]]>([
+          [
+            "jsx, for a type imported from a .tsx file",
+            {
+              ".oxlintrc.json": on("no-redundant-type-constituents"),
+              "package.json": `{"type":"module"}`,
+              "tsconfig.json": above({
+                module: "nodenext",
+                moduleResolution: undefined,
+                allowImportingTsExtensions: true,
+                rootDir: ".",
+              }),
+              "src/tsconfig.json": nearer({ jsx: "preserve" }, ["*.ts", "*.tsx"]),
+              "src/view.ts": `export type { Item } from "./view.tsx";\n`,
+              "src/view.tsx": `export interface Item { label: string }\ndeclare global { interface WidgetMap { control: Item } }\n`,
+              "src/consumer.ts":
+                `import type { Item } from "./view.ts";\nexport type MaybeItem = Item | null;\n` +
+                `type Properties<T> = {[K in keyof T]: T[K]};\n` +
+                `export type Control = Properties<WidgetMap["control"]> & {optional?: boolean};\n`,
+            },
+            [
+              "consumer.ts:2:25 typescript(no-redundant-type-constituents)",
+              "consumer.ts:4:23 typescript(no-redundant-type-constituents)",
+            ],
+          ],
+          [
+            "allowJs, for a function imported from a .mjs file",
+            {
+              ".oxlintrc.json": on("no-unsafe-call", "no-unsafe-assignment"),
+              "tsconfig.json": above(),
+              "src/tsconfig.json": nearer({ allowJs: true }, ["*.ts", "*.mjs"]),
+              "src/lib.mjs": `export function make() { return "text"; }\n`,
+              "src/use.ts": `import { make } from "./lib.mjs";\nexport const value = make();\n`,
+            },
+            ["use.ts:2:22 typescript(no-unsafe-assignment)", "use.ts:2:22 typescript(no-unsafe-call)"],
+          ],
+          [
+            "jsx and jsxImportSource, for a type inferred from an element's children",
+            {
+              ".oxlintrc.json": on("restrict-template-expressions"),
+              "tsconfig.json": above(),
+              "src/tsconfig.json": nearer({ jsx: "react-jsx", jsxImportSource: "mini" }, ["*.tsx"]),
+              "node_modules/mini/package.json": `{"name":"mini","version":"1.0.0","exports":{"./jsx-runtime":{"types":"./jsx-runtime.d.ts"}}}`,
+              "node_modules/mini/jsx-runtime.d.ts":
+                `export declare namespace JSX {\n  type Element = string;\n  interface ElementChildrenAttribute { children: {} }\n` +
+                `  interface IntrinsicElements {}\n}\nexport declare function jsx(type: unknown, props: unknown): string;\n`,
+              "src/view.tsx":
+                `declare function Memo<T>(props: { children: () => T; then: (value: T) => string }): string;\n` +
+                'export const view = <Memo then={value => `${value}`}>{() => "text"}</Memo>;\n',
+            },
+            ["view.tsx:2:45 typescript(restrict-template-expressions)"],
+          ],
+          [
+            "paths, to a declaration file instead of its source",
+            {
+              ".oxlintrc.json": on("unbound-method"),
+              "tsconfig.json": above({ paths: { lib: ["./lib/source.ts"] } }),
+              "src/tsconfig.json": nearer({ paths: { lib: ["../lib/emitted.d.ts"] } }, ["*.ts"]),
+              "lib/source.ts": `export function make() { return { release() {} } as const; }\n`,
+              "lib/emitted.d.ts": `export declare function make(): { readonly release: () => void };\n`,
+              "src/use.ts": `import { make } from "lib";\nexport const release = make().release;\n`,
+            },
+            ["use.ts:2:31 typescript(unbound-method)"],
+          ],
+        ])("the nearest tsconfig.json is used when it sets %s", async (_, files, withParentTsconfig) => {
+          const { "src/tsconfig.json": _nearer, ...withoutTheNearer } = files;
+          const run = async (files: Record<string, string>, ...flags: string[]) =>
+            found((await lint(files, ["-f", "json", "--type-aware", ...flags, "src"])).raw, ["src"]).src;
+          expect(
+            await Promise.all([
+              run(files),
+              run(files, "--tsconfig=tsconfig.json"),
+              run(files, "--tsconfig=src/tsconfig.json"),
+              run(withoutTheNearer),
+            ]),
+          ).toEqual([[], [], [], withParentTsconfig]);
+        });
+
+        // Each project includes its own declaration of `which`, so the type of `which` shows which project a file was
+        // checked in.
+        const project = (marker: string, include: string[], more: object = {}) =>
+          JSON.stringify({ compilerOptions: { strict: true, types: [], ...more }, include: [marker, ...include] });
+        const solution = (path: string) => JSON.stringify({ files: [], references: [{ path }] });
+        const names = ["top", "everything", "nearer", "leavesOut", "referenced", "ofFlag"];
+        const directories = ["src/included", "src/left-out", "src/none", "src/solution", "outside"];
+        const marked = {
+          ...Object.fromEntries(names.map(it => [`markers/${it}.d.ts`, `declare const which: { ${it}: 1 };\n`])),
+          ...Object.fromEntries(directories.map(it => [`${it}/a.ts`, "export const text = `${which}`;\n"])),
+          "tsconfig.json": project("markers/top.d.ts", ["src/**/*"]),
+          "everything.json": project("markers/everything.d.ts", ["src/**/*", "outside/**/*"]),
+          "src/included/tsconfig.json": project("../../markers/nearer.d.ts", ["*.ts"]),
+          "src/left-out/tsconfig.json": project("../../markers/leavesOut.d.ts", ["other.ts"]),
+          "src/left-out/other.ts": "export {};\n",
+          "src/solution/tsconfig.json": solution("./app.json"),
+          "src/solution/app.json": project("../../markers/referenced.d.ts", ["*.ts"], {
+            composite: true,
+            outDir: "out",
+          }),
+          "references.json": solution("./src/none/lib.json"),
+          "src/none/lib.json": project("../../markers/ofFlag.d.ts", ["*.ts"], { composite: true, outDir: "out" }),
+        };
+
+        test("the project is the nearest tsconfig.json that includes the file, or one that it references, whatever --tsconfig points to", async () => {
+          const files = { ".oxlintrc.json": on("restrict-template-expressions"), ...marked };
+          const flags = [
+            [],
+            ["--tsconfig", "tsconfig.json"],
+            ["--tsconfig", "everything.json"],
+            ["--tsconfig", "references.json"],
+            ["--tsconfig", "src/included/tsconfig.json"],
+            ["--tsconfig", "src/left-out/tsconfig.json"],
+            ["--tsconfig", "src/solution/tsconfig.json"],
+            ["-p", "everything.json"],
+          ];
+          const runs = await Promise.all(
+            flags.map(it => lint(files, ["-f", "json", "--type-aware", ...it, ...directories])),
+          );
+          const types = (raw: string) =>
+            Object.fromEntries(
+              (JSON.parse(raw).diagnostics as { filename: string; labels: { label: string }[] }[])
+                .map((it): [string, string] => [it.filename, it.labels[0].label])
+                .sort(),
+            );
+          // outside/a.ts isn't in any project, so `which` isn't declared there.
+          const expected = {
+            "src/included/a.ts": "Type: { nearer: 1; }",
+            "src/left-out/a.ts": "Type: { top: 1; }",
+            "src/none/a.ts": "Type: { top: 1; }",
+            "src/solution/a.ts": "Type: { referenced: 1; }",
+          };
+          expect(runs.map(it => types(it.raw))).toEqual(flags.map(() => expected));
+        });
+
+        test("without an oxlint config, every file is checked in the --tsconfig project, even a file that it doesn't include", async () => {
+          const types = async (...flags: string[]) => {
+            const rule = ["--rule", "@typescript-eslint/restrict-template-expressions: error"];
+            const { stdout } = await lint(marked, ["-f", "unix", ...rule, ...flags, ...directories]);
+            return [...stdout.matchAll(/^<dir>\/(.*):1:24: Invalid type "\{ (\w+): 1; \}"/gm)].map(
+              it => `${it[1]} ${it[2]}`,
+            );
+          };
+          const all = (name: string) => directories.map(it => `${it}/a.ts ${name}`).sort();
+          expect(
+            await Promise.all([
+              types(),
+              types("--tsconfig", "everything.json"),
+              types("--tsconfig", "src/included/tsconfig.json"),
+            ]),
+          ).toEqual([
+            [
+              "outside/a.ts top",
+              "src/included/a.ts nearer",
+              "src/left-out/a.ts leavesOut",
+              "src/none/a.ts top",
+              "src/solution/a.ts referenced",
+            ],
+            all("everything"),
+            all("nearer"),
+          ]);
+        });
+
+        // This is what oxlint 1.87.0 uses the flag for instead.
+        test("every file's imports are resolved with the --tsconfig file, or with the first project it references that includes the file", async () => {
+          const aliases = (to: string, more: object) =>
+            JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`${to}/*`] } }, ...more });
+          const code = `import * as lib from "@lib/x";\nexport const all = [lib.one, lib.two, lib.three];\n`;
+          const files = {
+            ".oxlintrc.json": rc({ plugins: ["import"], rules: { "import/namespace": "error" } }),
+            "one/x.ts": "export const one = 1;\n",
+            "two/x.ts": "export const two = 2;\n",
+            "three/x.ts": "export const three = 3;\n",
+            "tsconfig.json": JSON.stringify({ include: ["src/**/*"] }),
+            "aliases.json": aliases("./one", {
+              include: ["src/**/*"],
+              references: [{ path: "./src/sub/referenced.json" }],
+            }),
+            "src/a.ts": code,
+            "src/own/tsconfig.json": aliases("../../two", {}),
+            "src/own/b.ts": code,
+            "src/sub/referenced.json": aliases("../../three", { include: ["*.ts"] }),
+            "src/sub/c.ts": code,
+            "src/sub/deep/d.ts": code,
+            "outside/e.ts": code,
+            // A package's own imports aren't resolved with it.
+            "node_modules/dep/package.json": `{"name":"dep","version":"1.0.0","main":"index.js","type":"module"}`,
+            "node_modules/dep/index.js": `export * from "@lib/x";\nexport const own = 1;\n`,
+            "src/f.js": `import * as dep from "dep";\nexport const all = [dep.own, dep.one];\n`,
+          };
+          const missing = async (...flags: string[]) => {
+            const { raw } = await lint(files, ["-f", "json", ...flags, "src", "outside"]);
+            const byFile: Record<string, string[]> = {};
+            for (const it of JSON.parse(raw).diagnostics as { filename: string; message: string }[])
+              (byFile[it.filename] ??= []).push(it.message.slice(1, it.message.indexOf('"', 1)));
+            return Object.fromEntries(Object.entries(byFile).map(([name, names]) => [name, names.sort().join(" ")]));
+          };
+          expect(
+            await Promise.all([
+              missing(),
+              missing("--tsconfig", "tsconfig.json"),
+              missing("--tsconfig", "aliases.json"),
+              missing("--tsconfig", join("src", "own", "tsconfig.json")),
+            ]),
+          ).toEqual([
+            { "src/f.js": "one", "src/own/b.ts": "one three" },
+            { "src/f.js": "one" },
+            {
+              "outside/e.ts": "three two",
+              "src/a.ts": "three two",
+              "src/f.js": "one",
+              "src/own/b.ts": "three two",
+              "src/sub/c.ts": "one two",
+              "src/sub/deep/d.ts": "three two",
+            },
+            {
+              "outside/e.ts": "one three",
+              "src/a.ts": "one three",
+              "src/f.js": "one",
+              "src/own/b.ts": "one three",
+              "src/sub/c.ts": "one three",
+              "src/sub/deep/d.ts": "one three",
+            },
+          ]);
+        });
+      });
+
+      describe("a file that the nearest tsconfig.json doesn't include", () => {
+        const compilerOptions = { strict: true, lib: ["es2022"], types: [] };
+        // A promise declared in a project is only a promise in that project's program, so the lines reported in
+        // `config.ts` show which program it was checked in. `src/b.ts` is always reported.
+        const files = {
+          ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+          // Without `include` it includes everything.
+          "tsconfig.json": JSON.stringify({ compilerOptions, exclude: ["dist"] }),
+          "other/top.d.ts": "declare const ofTheTop: Promise<void>;\n",
+          "packages/tsconfig.json": JSON.stringify({ compilerOptions, include: ["between"] }),
+          "packages/between/between.d.ts": "declare const ofTheOneBetween: Promise<void>;\n",
+          "packages/a/tsconfig.json": JSON.stringify({ compilerOptions, include: ["src"] }),
+          "packages/a/all.json": JSON.stringify({ extends: "./tsconfig.json", include: ["**/*"] }),
+          "packages/a/src.json": JSON.stringify({ extends: "./tsconfig.json", include: ["src"] }),
+          "packages/a/src/a.d.ts": "declare const ofThePackage: Promise<void>;\n",
+          "packages/a/src/b.ts": "ofThePackage;\nexport {};\n",
+          "packages/a/config.ts": "ofTheTop;\nofTheOneBetween;\nofThePackage;\nexport {};\n",
+        };
+        const between = JSON.stringify({ compilerOptions, include: ["between", "a/config.ts"] });
+
+        // This is what oxlint 1.87.0 with tsgolint 7.0.2003 does.
+        test.each([
+          ["is checked in the nearest parent project that includes it", {}, [], [1, 2, 3]],
+          ["isn't checked in a project above that one", { "packages/tsconfig.json": between }, [], [2]],
+          [
+            "isn't checked in the --tsconfig project, even though it includes the file",
+            {},
+            ["--tsconfig", "all.json"],
+            [1, 2, 3],
+          ],
+          [
+            "is still checked in a project if the --tsconfig project doesn't include it",
+            {},
+            ["--tsconfig", "src.json"],
+            [1, 2, 3],
+          ],
+        ])("%s", async (_, others, flags, lines) => {
+          const args = ["-f", "unix", "--type-aware", ...flags, "."];
+          const { stdout, stderr, exitCode } = await lint({ ...files, ...others }, args, { cwd: "packages/a" });
+          const errorLines = stdout.split("\n").filter(it => it.includes("[Error/"));
+          expect({ errors: errorLines.map(it => it.replace(/: .* \[/, " [")), stderr, exitCode }).toEqual({
+            errors: [...lines.map(line => `config.ts:${line}:1`), "src/b.ts:1:1"].map(
+              it => `${it} [Error/typescript(no-floating-promises)]`,
+            ),
+            stderr: "",
+            exitCode: 1,
+          });
+        });
+
+        const many = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`other/${i}.ts`, "export {};\n"]));
+        const withInclude = JSON.stringify({ compilerOptions, include: ["**/*"] });
+        const warning = `warn: Loaded 1,005 files in <time> to lint config.ts
+  ../../tsconfig.json has no "include", so it covers every file under it.
+  To speed this up, add "include" to it.`;
+        test.each([
+          ["warns that a thousand files were loaded to lint it", {}, [], "packages/a", warning],
+          ["doesn't warn if that tsconfig.json has an include", { "tsconfig.json": withInclude }, [], "packages/a", ""],
+          ["also warns with --tsconfig", {}, ["--tsconfig", "all.json"], "packages/a", warning],
+          ["doesn't warn with --silent", {}, ["--silent"], "packages/a", ""],
+          ["doesn't warn if all the loaded files are linted", {}, [], ".", ""],
+          ["also warns if the file is passed as an argument", {}, ["config.ts", "src/b.ts"], "packages/a", warning],
+        ])("%s", async (_, others, flags, cwd, expected) => {
+          const paths = flags.some(it => it.endsWith(".ts")) ? [] : ["."];
+          const args = ["-f", "unix", "--type-aware", ...flags, ...paths];
+          const { stderr, exitCode } = await lint({ ...files, ...many, ...others }, args, { cwd });
+          expect({ stderr: stderr.replace(/ in [\d.]+m?s /, " in <time> "), exitCode }).toEqual({
+            stderr: expected,
+            exitCode: 1,
+          });
+        });
+
+        // Without an oxlint config, --tsconfig sets the project of every file, so passing it helps.
+        const forEslint = `export default [{
+          files: ["**/*.ts"],
+          plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+          languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+          rules: { "@typescript-eslint/no-floating-promises": "error" },
+        }];`;
+        describe.each([
+          ["no config", {}],
+          ["an ESLint config", { "eslint.config.js": forEslint }],
+        ])("with %s, the warning", (_, configured) => {
+          const loaded = `warn: Loaded 1,001 files in <time> to lint sub/a.ts
+  tsconfig.json has no "include", so it covers every file under it.
+  To speed this up, add "include" to it`;
+          test.each([
+            ["suggests --tsconfig", [], `${loaded} or pass --tsconfig.`],
+            ["isn't printed with --tsconfig", ["--tsconfig", "sub.json"], ""],
+            [
+              "doesn't suggest --tsconfig if that file has no include either",
+              ["--tsconfig", "tsconfig.json"],
+              `${loaded}.`,
+            ],
+          ])("%s", async (_, flags, expected) => {
+            const { stderr, exitCode } = await lint(
+              {
+                ...configured,
+                ...many,
+                "tsconfig.json": JSON.stringify({ compilerOptions }),
+                "sub.json": JSON.stringify({ compilerOptions, include: ["sub"] }),
+                "sub/a.ts": "debugger;\nexport {};\n",
+              },
+              ["--type-aware", "--rule", "no-debugger: error", ...flags, "sub"],
+            );
+            const warning = /^warn: .*(\n  .*)*/m.exec(stderr)?.[0] ?? "";
+            expect({ warning: warning.replace(/ in [\d.]+m?s /, " in <time> "), exitCode }).toEqual({
+              warning: expected,
+              exitCode: 1,
+            });
+          });
+        });
+
+        // The warning needs at least a thousand loaded files, and at least a hundred per linted file.
+        test.each([
+          [1000, 1, [], true],
+          [999, 1, [], false],
+          [1000, 10, [], true],
+          [1000, 11, [], false],
+          // The second pass only lints the one file that was fixed, and that file is counted once. There's no second
+          // pass with an oxlint config.
+          [1000, 10, ["--fix"], true],
+          [1000, 11, ["--fix"], false],
+        ])("%d files loaded, %d of them linted, flags %j: warns %p", async (all, linted, flags, warns) => {
+          const names = Array.from({ length: all }, (_, i) => (i < linted ? `sub/${i}.ts` : `other/${i}.ts`));
+          const { stderr, exitCode } = await lint(
+            {
+              "tsconfig.json": JSON.stringify({ compilerOptions }),
+              ...Object.fromEntries(names.map(name => [name, "export {};\n"])),
+              "sub/0.ts": "debugger;\nvar b = 1;\nexport { b };\n",
+            },
+            ["--type-aware", "--rule", "no-var: error", "--rule", "no-debugger: error", ...flags, "sub"],
+          );
+          const warnings = stderr.split("\n").filter(it => it.startsWith("warn: "));
+          const what = linted === 1 ? "sub/0.ts" : `${linted} files (sub/0.ts, ..)`;
+          const expected = `warn: Loaded ${all.toLocaleString("en-US")} files in <time> to lint ${what}`;
+          expect({
+            warnings: warnings.map(it => it.replace(/ in [\d.]+m?s /, " in <time> ")),
+            exitCode,
+          }).toEqual({ warnings: warns ? [expected] : [], exitCode: 1 });
+        });
+      });
+
+      // A file is parsed once for all the projects in a run that parse it the same way. Each of these pairs of projects
+      // parses it differently.
+      describe("a file in two projects is checked with each project's own options", () => {
         const project = (more: object, include: string[]) =>
           JSON.stringify({
             compilerOptions: {
@@ -4803,12 +5963,13 @@ maybe(() => { return f; });
             include,
           });
 
-        // It has no `import` and no `export`: a script, whose variable `use.ts` sees, or a module all the same.
+        // The shared file has no `import` or `export`. One project treats it as a script, so `use.ts` sees its
+        // variable, and the other treats it as a module.
         test.each([
           ["moduleDetection", { moduleDetection: "force" }, { moduleDetection: "legacy" }, "p.ts", "1"],
           ["jsx", { jsx: "react-jsx" }, { jsx: "preserve" }, "p.tsx", "<a />"],
-          ["the type of its package", { module: "nodenext", moduleResolution: "nodenext" }, {}, "p.ts", "1"],
-        ])("%s", async (_, asModule, asScript, name, value) => {
+          ["the type in its package.json", { module: "nodenext", moduleResolution: "nodenext" }, {}, "p.ts", "1"],
+        ])("it's a script or a module depending on %s", async (_, asModule, asScript, name, value) => {
           const run = async (a: object, b: object) => {
             const { raw } = await lint(
               {
@@ -4831,9 +5992,9 @@ maybe(() => { return f; });
           ]);
         });
 
-        // Two copies of one version of a package are one file to a program, and a private name is of one class. Both projects
-        // have both copies.
-        test("the files of a package", async () => {
+        // A program treats two copies of the same version of a package as one file, and a private name belongs to one
+        // class. Both projects have both copies.
+        test("two copies of a package are one file in both projects", async () => {
           const pkg = {
             "package.json": `{ "name": "pkg", "version": "1.0.0", "types": "index.d.ts" }`,
             "index.d.ts": `export declare class C {\n  #secret;\n  later(): Promise<void>;\n}\n`,
@@ -4859,7 +6020,8 @@ maybe(() => { return f; });
           expect(found(raw, ["a", "b"])).toEqual({ a: reported, b: reported });
         });
 
-        // Each project imports the file of the other, which has the same text, before or after that project reads it itself.
+        // Each project imports the other's `own.ts`, which has the same text as its own, before or after the other
+        // project reads it.
         test.each([
           [
             "experimentalDecorators",
@@ -4895,7 +6057,7 @@ maybe(() => { return f; });
               b: ["own.ts:2:24 typescript(TS2700)", "own.ts:2:30 typescript(TS2373)", "own.ts:2:30 typescript(TS2454)"],
             },
           ],
-        ])("%s", async (_, a, b, text, errors) => {
+        ])("only one of the projects has %s", async (_, a, b, text, errors) => {
           const { raw } = await lint(
             {
               ".oxlintrc.json": rc({ rules: {} }),
@@ -4912,13 +6074,93 @@ maybe(() => { return f; });
         });
       });
 
-      const kindsOfFixes = (Object.keys(flagSets) as (keyof typeof flagSets)[]).flatMap(flags =>
+      // A run's projects are loaded and checked in parallel.
+      test("with many projects, every thread count reports the same, and each file is checked in its own project", async () => {
+        const compilerOptions = { strict: true, lib: ["es2022"], types: [] };
+        const project = JSON.stringify({ compilerOptions, include: ["src"] });
+        const files: Record<string, string> = {
+          ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+          "broken/tsconfig.json": JSON.stringify({ compilerOptions: { ...compilerOptions, lib: ["es1"] } }),
+          "broken/a.ts": "Promise.resolve();\n",
+          // These two aren't in any project, so they form one program.
+          "outside/global.ts": "const ofNoProject = Promise.resolve();\n",
+          "outside/a.ts": "ofNoProject;\nof0;\n",
+          // It has most of the files, so it gets several threads.
+          "large/tsconfig.json": project,
+          "large/src/own.d.ts": "declare const ofLarge: Promise<void>;\n",
+        };
+        const expected = ["broken/tsconfig.json:1:42 tsconfig-error", "outside/a.ts:1:1 no-floating-promises"];
+        for (let i = 0; i < 40; i++) {
+          files[`large/src/${i}.ts`] = "ofLarge;\nof0;\nexport {};\n";
+          expected.push(`large/src/${i}.ts:1:1 no-floating-promises`);
+        }
+        // A promise that a project declares is only a promise in that project's program.
+        for (let i = 0; i < 12; i++) {
+          files[`small/${i}/tsconfig.json`] = project;
+          files[`small/${i}/src/own.d.ts`] = `declare const of${i}: Promise<void>;\n`;
+          files[`small/${i}/src/a.ts`] = `of${i};\nof${(i + 1) % 12};\nofLarge;\nofNoProject;\nexport {};\n`;
+          expected.push(`small/${i}/src/a.ts:1:1 no-floating-promises`);
+        }
+        const runs = await Promise.all(
+          [1, 2, 3, 8, 32].map(threads => lint(files, ["-f", "unix", "--type-aware", "--threads", `${threads}`])),
+        );
+        const reports = [...runs[0].stdout.matchAll(/^(\S+:\d+:\d+): .*\((.*)\)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
+        expect(reports.sort()).toEqual(expected.sort());
+        expect(runs.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(runs.map(() => [runs[0].stdout, "", 1]));
+      });
+
+      // TypeScript's parser reports `assert`, but oxc accepts it. The expected output is from oxlint 1.87.0 with
+      // tsgolint 7.0.2003.
+      const cycle = 'import { y } from "./b.js";\nString(y);\n';
+      const twice = "let r = 1;\nlet r = 2;\n";
+      test.each([
+        ["nothing else in it", "", ["b.js:1:10 named", "b.js:2:8 default", "b.js:4:38 namespace"]],
+        [
+          "an import cycle",
+          cycle,
+          ["a.js:1:19 no-cycle", "b.js:1:10 named", "b.js:1:25 no-cycle", "b.js:2:8 default", "b.js:4:38 namespace"],
+        ],
+        // oxc rejects the file, so oxlint doesn't know what it imports or exports.
+        ["a name declared twice", twice, ["a.js:1:5"]],
+        ["a name declared twice and an import cycle", cycle + twice, ["a.js:3:5"]],
+      ])(
+        "with --type-aware, imports from a file with `assert {}` are checked the same at every thread count: %s",
+        async (_, before, expected) => {
+          const compilerOptions = { strict: true, noEmit: true, lib: ["es2015"], types: [], allowJs: true };
+          const rules = ["import/named", "import/default", "import/namespace", "import/no-cycle"];
+          const files = {
+            ".oxlintrc.json": rc({
+              plugins: ["import", "typescript"],
+              rules: Object.fromEntries([...rules, "typescript/no-floating-promises"].map(it => [it, "error"])),
+            }),
+            "tsconfig.json": JSON.stringify({
+              compilerOptions: { ...compilerOptions, resolveJsonModule: true, moduleResolution: "bundler" },
+            }),
+            "d.json": "{}\n",
+            "a.js": `${before}import json from "./d.json" assert { type: "json" };\nexport const x = json;\n`,
+            "b.js":
+              'import { missing } from "./a.js";\nimport none from "./a.js";\nimport * as all from "./a.js";\n' +
+              "export const y = [missing, none, all.nope];\n",
+          };
+          const runs = await Promise.all(
+            [1, 2, 2, 8, 8].map(threads => lint(files, ["-f", "unix", "--type-aware", "--threads", `${threads}`])),
+          );
+          const reportsIn = (stdout: string) =>
+            [...stdout.matchAll(/^(\S+:\d+:\d+): .*?(?:\((.*)\))?\]$/gm)]
+              .map(it => it.slice(1).join(" ").trim())
+              .sort();
+          expect(runs.map(it => reportsIn(it.stdout))).toEqual(runs.map(() => expected));
+          expect(runs.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(runs.map(() => [runs[0].stdout, "", 1]));
+        },
+      );
+
+      const fixKinds = (Object.keys(flagSets) as (keyof typeof flagSets)[]).flatMap(flags =>
         [false, true].map((typed): [keyof typeof flagSets, boolean] => [flags, typed]),
       );
-      test.serial.each(kindsOfFixes)(
-        "the flags of %s change what they change with oxlint (rules that need types: %p)",
+      test.serial.each(fixKinds)(
+        "the `%s` flags make the same changes as oxlint (type-aware rules: %p)",
         async (flags, typed) => {
-          // fixes.expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 makes of the files.
+          // fixes.expected.json has the files as fixed by oxlint 1.87.0 with tsgolint 7.0.2003.
           const some = fixCases
             .map((it, index) => ({ it, directory: directoryOf(index) }))
             .filter(({ it }) => !!it.typed === typed);
@@ -4941,18 +6183,18 @@ maybe(() => { return f; });
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // tsgolint's fix writes code that does not parse, or that does something else. `bun lint` makes the same report and
-      // leaves the code, or writes the code that does the same.
-      test("a fix of tsgolint that changes what the code does is not copied", async () => {
+      // tsgolint's fix writes code that doesn't parse or that behaves differently. `bun lint` reports the same problem,
+      // and either doesn't fix it or writes code that behaves the same.
+      test("doesn't copy tsgolint's fixes that change what the code does", async () => {
         const shapes: [rule: string, file: string, text: string, fixed?: string, options?: object][] = [
-          // One match where `match` gave all of them.
+          // `exec` returns one match where `match` returned all of them.
           ["prefer-regexp-exec", "a.ts", "declare const s: string;\nexport const a = s.match(new RegExp(/x/g));\n"],
           [
             "prefer-regexp-exec",
             "a.ts",
             "declare const s: string;\nexport const a = s.match(new RegExp(/x/g, undefined));\n",
           ],
-          // `p` is `/b+/` there, and tsgolint writes `s.includes('abc')`.
+          // `p` is `/b+/` at that point, but tsgolint writes `s.includes('abc')`.
           [
             "prefer-includes",
             "a.ts",
@@ -4963,7 +6205,7 @@ maybe(() => { return f; });
             "a.ts",
             "declare const s: string;\nlet p = /^a/;\np = /b/;\nexport const a = p.test(s);\n",
           ],
-          // `<Icons["default"] />` does not parse.
+          // `<Icons["default"] />` doesn't parse.
           [
             "dot-notation",
             "a.tsx",
@@ -4971,7 +6213,7 @@ maybe(() => { return f; });
             undefined,
             { allowKeywords: false },
           ],
-          // An `await` in a parameter does not parse.
+          // An `await` in a parameter doesn't parse.
           [
             "no-misused-spread",
             "a.ts",
@@ -5004,7 +6246,93 @@ maybe(() => { return f; });
         );
       });
 
-      test("what is left after the fixes is reported once, where it was", async () => {
+      test("redundant parentheses don't change what a type-aware rule reports", async () => {
+        const pairs: [rule: string, plain: string, parenthesized: string, reports: number][] = [
+          [
+            "require-array-sort-compare",
+            "declare const a: number[];\na.sort();\n",
+            "declare const a: number[];\n(a.sort)();\n",
+            1,
+          ],
+          [
+            "dot-notation",
+            'declare const a: { b: number };\nexport const c = a["b"];\n',
+            'declare const a: { b: number };\nexport const c = a[("b")];\n',
+            1,
+          ],
+          [
+            "use-unknown-in-catch-callback-variable",
+            "declare const p: Promise<number>;\nvoid p.catch((e) => e);\n",
+            "declare const p: Promise<number>;\nvoid (p.catch)((e) => e);\n",
+            1,
+          ],
+          [
+            "prefer-reduce-type-parameter",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), [] as number[]);\n",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), ([] as number[]));\n",
+            1,
+          ],
+          ["no-implied-eval", 'setTimeout("alert(1)", 1);\n', '(setTimeout)("alert(1)", 1);\n', 1],
+          [
+            "no-duplicate-type-constituents",
+            "export function f(a?: string | undefined) {\n  return a;\n}\n",
+            "export function f(a?: (string | undefined)) {\n  return a;\n}\n",
+            1,
+          ],
+          [
+            "prefer-regexp-exec",
+            "declare const s: string;\nexport const m = s.match(/x/);\n",
+            "declare const s: string;\nexport const m = (s.match)(/x/);\n",
+            1,
+          ],
+          [
+            "prefer-regexp-exec",
+            'declare const s: string;\nconst r = RegExp("a");\nexport const m = s.match(r);\n',
+            'declare const s: string;\nconst r = (RegExp)("a");\nexport const m = s.match(r);\n',
+            1,
+          ],
+          [
+            "await-thenable",
+            "export async function f() {\n  await Promise.all([1, 2]);\n}\n",
+            "export async function f() {\n  await Promise.all(([1, 2]));\n}\n",
+            2,
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        pairs.forEach(([rule, plain, parenthesized], index) => {
+          for (const [name, text] of [
+            ["plain", plain],
+            ["parenthesized", parenthesized],
+          ]) {
+            const it = { rule: `typescript/${rule}`, file: "a.ts", text, typed: true };
+            for (const [path, text] of Object.entries(filesOf(it))) files[`${index}-${name}/${path}`] = text;
+          }
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = (directory: string) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${directory}/`))
+            .map((it: { code: string }) => it.code);
+        const expected = pairs.map(([rule, , , reports]) =>
+          Array.from({ length: reports }, () => `typescript(${rule})`),
+        );
+        expect(pairs.map((_, index) => reported(`${index}-plain`))).toEqual(expected);
+        expect(pairs.map((_, index) => reported(`${index}-parenthesized`))).toEqual(expected);
+      });
+
+      test("unbound-method doesn't report RegExp.escape and the other newer built-ins that are bound", async () => {
+        const it = {
+          rule: "typescript/unbound-method",
+          file: "a.ts",
+          text: "export const all = [RegExp.escape, Atomics.pause, Math.f16round, Intl.DurationFormat];\n",
+          typed: true,
+          compilerOptions: { lib: ["esnext"] },
+        };
+        const { raw } = await lint(filesOf(it), ["-f", "json", "--type-aware"]);
+        expect(JSON.parse(raw).diagnostics.map((it: { code: string }) => it.code)).toEqual([]);
+      });
+
+      test("problems that remain after --fix are reported once, at their original positions", async () => {
         const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
         const { files, raw } = await lint(
           {
@@ -5014,7 +6342,7 @@ maybe(() => { return f; });
               rules: { "no-var": "error", "no-debugger": "error", "typescript/await-thenable": "error" },
             }),
             "tsconfig.json": tsconfig,
-            // `var` becomes `const` twice: a name that is declared twice, which is not said about the text that is written.
+            // Both `var`s become `const`, so the written text declares `a` twice, which isn't reported.
             "a.ts": "var a = 1; debugger;\nvar a = 2;\nexport async function f() {\n  await a;\n}\n",
           },
           ["--fix", "--type-aware", "-f", "json"],
@@ -5023,14 +6351,14 @@ maybe(() => { return f; });
         expect(files).toEqual({
           "a.ts": "const a = 1; debugger;\nconst a = 2;\nexport async function f() {\n  await a;\n}\n",
         });
-        const places = JSON.parse(raw).diagnostics.map(
+        const reports = JSON.parse(raw).diagnostics.map(
           (it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
         );
-        expect(places.sort()).toEqual(["a.ts:1:12 eslint(no-debugger)", "a.ts:4:9 typescript(await-thenable)"]);
+        expect(reports.sort()).toEqual(["a.ts:1:12 eslint(no-debugger)", "a.ts:4:9 typescript(await-thenable)"]);
       });
 
-      test("the options that oxlint accepts are accepted", async () => {
-        // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has
+      test("accepts the rule options that oxlint accepts", async () => {
+        // A rejected config ends the run. options.json has the options that oxlint 1.87.0 accepts. Each config here has
         // options for many rules.
         const configs = configurations(optionsOfOxlint);
         expect(configs.length).toBeGreaterThan(100);
@@ -5040,12 +6368,12 @@ maybe(() => { return f; });
           files[`${index}/a.ts`] = "export {};\n";
         });
         const { raw } = await lint(files, ["-f", "json"]);
-        // What is refused is said instead.
+        // If a config is rejected, the output is the error instead of JSON, so the failure shows it.
         expect(raw.startsWith("{") ? JSON.parse(raw).number_of_files : raw).toBe(configs.length);
       });
     });
 
-    test(".eslintrc.json", async () => {
+    test("reads .eslintrc.json, with its env and overrides", async () => {
       const { stdout } = await lint(
         {
           ".eslintrc.json": `{ "root": true, "env": { "node": true }, "rules": { "no-undef": "error" }, "overrides": [{ "files": ["*.test.js"], "globals": { "test": "readonly" } }] }`,
@@ -5062,8 +6390,8 @@ maybe(() => { return f; });
     });
   });
 
-  test("no-useless-assignment: the name of a class declaration is one variable around the class and another in it", async () => {
-    // What is expected is what ESLint 10.12.0 reports.
+  test("no-useless-assignment: a class declaration's name is one variable outside the class and another inside it", async () => {
+    // The expected reports are from ESLint 10.12.0.
     const cases: [string, string[]][] = [
       ["(v0 = v0); class v0 extends (function () { return v0; }) { }", ["1:2"]],
       ["const v1 = (() => (v3)); class v3 extends [({ k: [(v3 = v3)] })] { }", ["1:52"]],
@@ -5089,7 +6417,7 @@ maybe(() => { return f; });
         it.messages.map((it: any) => `${it.line}:${it.column}`),
       ]),
     );
-    expect(reported).toEqual(Object.fromEntries(cases.map(([, places], i) => [`c${i}.cjs`, places])));
+    expect(reported).toEqual(Object.fromEntries(cases.map(([, positions], i) => [`c${i}.cjs`, positions])));
   });
 
   describe("comments", () => {
@@ -5099,7 +6427,7 @@ maybe(() => { return f; });
         "// eslint-disable-next-line no-debugger -- on purpose\ndebugger;\n// eslint-disable-next-line no-debugger\nexport {};\n",
     };
 
-    test("eslint-disable, and a warning for one that disables nothing", async () => {
+    test("eslint-disable works, and an unused disable comment gets a warning", async () => {
       const { stdout, exitCode } = await lint(files, ["-f", "unix"]);
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/a.js:3:1: Unused eslint-disable directive (no problems were reported from 'no-debugger'). [Warning]
@@ -5109,7 +6437,7 @@ maybe(() => { return f; });
       expect(exitCode).toBe(0);
     });
 
-    test("--no-inline-config", async () => {
+    test("--no-inline-config ignores disable comments", async () => {
       const { stdout, exitCode } = await lint(files, ["-f", "unix", "--no-inline-config"]);
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/a.js:2:1: Unexpected 'debugger' statement. [Error/no-debugger]
@@ -5119,7 +6447,7 @@ maybe(() => { return f; });
       expect(exitCode).toBe(1);
     });
 
-    test("--report-unused-disable-directives-severity", async () => {
+    test("--report-unused-disable-directives-severity sets the severity of an unused disable comment", async () => {
       const [off, error] = await Promise.all([
         lint(files, ["--report-unused-disable-directives-severity", "off"]),
         lint(files, ["--report-unused-disable-directives-severity", "error"]),
@@ -5128,9 +6456,9 @@ maybe(() => { return f; });
       expect(off.raw).toBe("");
     });
 
-    // What reads the comment stops where the stack ends: how deep that is depends on the build and on the system. A
-    // little before that depth, the rest of the value was given up at the bottom of the stack, which overflowed.
-    test("an `eslint` comment that is nested about as deep as the stack holds", async () => {
+    // The parser for the comment stops when the stack runs out, and how deep that is depends on the build and the OS,
+    // so this tries many depths. A value nested a little less deeply than that limit used to overflow the stack.
+    test("an `eslint` comment nested about as deep as the stack allows is reported as one error", async () => {
       const files: Record<string, string> = { ".eslintrc.json": '{ "root": true }' };
       for (let depth = 1_000; depth < 30_000; depth = Math.ceil(depth * 1.025)) {
         const arrays = "[".repeat(depth) + "]".repeat(depth);
@@ -5145,9 +6473,9 @@ maybe(() => { return f; });
     });
   });
 
-  // The parser stops where the stack ends. What makes the suggestion of no-unused-vars went out through the pattern with a call
-  // for each level, and larger frames: a little before that depth the stack overflowed.
-  test("a pattern that is nested about as deep as the stack holds", async () => {
+  // The parser stops when the stack runs out. The code that builds the no-unused-vars suggestion used to walk out
+  // through the pattern with one call per level and larger frames, so the stack overflowed a little before that depth.
+  test("a pattern nested about as deep as the stack allows is either rejected or reported by no-unused-vars", async () => {
     const config = { root: true, parserOptions: { ecmaVersion: 2018 }, rules: { "no-unused-vars": "error" } };
     const files: Record<string, string> = { ".eslintrc.json": JSON.stringify(config) };
     for (let depth = 1_000; depth < 45_000; depth = Math.ceil(depth * 1.04)) {
@@ -5166,29 +6494,30 @@ maybe(() => { return f; });
     expect(rules).toHaveLength(Object.keys(files).length - 1);
   });
 
-  // A fix often has the text of its node, so the fixes of nodes that are in each other have the square of the depth in bytes:
-  // a gigabyte here. A format that only counts what can be fixed keeps none of it.
-  test("the fixes of 45,000 nodes in each other, which are only counted", async () => {
+  // A fix often contains its node's text, so the size of nested nodes' fixes is quadratic in the depth, which is a
+  // gigabyte here. A format that only counts the fixable problems doesn't keep any of that text.
+  test("the fixes of 45,000 nested nodes are only counted, not kept in memory", async () => {
     using dir = tempDir("bun-lint-nested-fixes", {
       ".eslintrc.json": JSON.stringify({ root: true, rules: { "no-extra-boolean-cast": "error" } }),
       "a.js": `x = ${"!".repeat(45_000)}a;\n`,
     });
     await using proc = spawn({ cmd: [...command, "--threads", "1", "a.js"], env, cwd: String(dir), stderr: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    // Where the stack is smaller or the frames are larger.
+    // Where the stack is smaller or the frames are larger, the file is rejected instead.
     if (!stdout.includes("The code is nested too deeply")) {
       expect(stdout).toContain(" errors and 0 warnings potentially fixable with the `--fix` option.");
     }
     expect(exitCode).toBe(1);
-    expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 700 : 300) * 1024 * 1024);
+    // On Linux a child's peak RSS starts at its parent's peak, which is about 300 MB for this test file.
+    expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 800 : 600) * 1024 * 1024);
   });
 
-  // What matches a path with a pattern of `include` called itself for each `**`, and tried every number of directories for each
-  // of them in turn: the stack, and time that grows like a power of their number.
+  // The matcher for `include` patterns used to recurse for each `**`, and to try every number of directories for each
+  // of them in turn. That overflowed the stack, and took time exponential in the number of `**`.
   test.each([
     ["200,000 in a row", [`${"**/".repeat(200_000)}*.ts`], "a.ts"],
     ["16 that match nothing, 34 directories", [`${"**/a/".repeat(16)}b.ts`, "**/*.ts"], `${"a/".repeat(34)}a.ts`],
-  ])("`**` in `include` of a tsconfig.json: %s", async (_, include, file) => {
+  ])("handles many `**` in a tsconfig.json's `include`: %s", async (_, include, file) => {
     const rules = { "typescript/no-floating-promises": "error" };
     const files = {
       ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules }),
@@ -5200,12 +6529,12 @@ maybe(() => { return f; });
     expect(exitCode).toBe(1);
   });
 
-  // Whether a function is sensitive to its context was asked of each from every one around it, each time down to the last: the
-  // cube of their number: 25 s.
+  // Every enclosing function used to ask whether each function inside it is context-sensitive, and each time that
+  // walked down to the innermost one. That's cubic in the number of functions, and took 25 s.
   test.skipIf(isDebug || isASAN).each([
     ["arrows", "(a: number) => ", ""],
     ["functions", "function (a: number) { return ", " }"],
-  ])("2,000 %s in each other, with types", async (_, open, close) => {
+  ])("handles 2,000 nested %s with --type-aware", async (_, open, close) => {
     const rules = { "typescript/no-floating-promises": "error" };
     const files = {
       ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules }),
@@ -5217,8 +6546,8 @@ maybe(() => { return f; });
     expect(exitCode).toBe(1);
   });
 
-  // What reads a tsconfig.json called itself for each file that is extended, on the main thread.
-  test("a tsconfig.json at the end of a chain of 5,000 that extend each other", async () => {
+  // The tsconfig.json reader used to recurse for each extended file, on the main thread.
+  test("follows a chain of 5,000 `extends` from a tsconfig.json", async () => {
     const rules = { "typescript/no-floating-promises": "error" };
     const files: Record<string, string> = {
       ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules }),
@@ -5232,8 +6561,9 @@ maybe(() => { return f; });
     expect(exitCode).toBe(1);
   });
 
-  // A file to which links give several names, and rules that look at several files. It must be the same in every run.
-  describe("a file that has several names by links", () => {
+  // Symlinks give one file several paths, and these rules look at several files. Every run must report the same
+  // problems.
+  describe("a file with several paths through symlinks", () => {
     const project = (configuration: Record<string, string>) => {
       const dir = tempDir("bun-lint-links", {
         ...configuration,
@@ -5242,11 +6572,11 @@ maybe(() => { return f; });
         "other/keep.txt": "",
       });
       symlinkSync(join(String(dir), "real/skills"), join(String(dir), "other/skills"), "junction");
-      // Not everybody may make one on Windows.
+      // On Windows, not every user is allowed to create a symlink to a file.
       if (!isWindows) symlinkSync("a.js", join(String(dir), "real/skills/c.js"));
       return dir;
     };
-    /** The files that have a report, for each outcome that there is among twenty runs. */
+    /** Lints twenty times and returns each distinct outcome, as the list of files that have a report. */
     const outcomes = async (cwd: string) => {
       const runs = Array.from({ length: 20 }, async () => {
         await using proc = spawn({
@@ -5262,8 +6592,8 @@ maybe(() => { return f; });
       return [...new Set((await Promise.all(runs)).map(it => it.join(" ")))];
     };
 
-    // oxlint 1.87 follows links, and lints a file under each of its names.
-    test("with an .oxlintrc.json it is reported under each", async () => {
+    // oxlint 1.87 follows symlinks, and lints a file under each of its paths.
+    test("with an .oxlintrc.json, it's reported under each path", async () => {
       using dir = project({
         ".oxlintrc.json": JSON.stringify({
           plugins: ["import"],
@@ -5276,9 +6606,9 @@ maybe(() => { return f; });
       expect(await outcomes(String(dir))).toEqual([expected.join(" ")]);
     });
 
-    // ESLint 10.12 enters no directory that is a link. eslint-plugin-import 2.32.0 knows the file that is linted by its name, and
-    // what it imports without links: nothing imports c.js, so it is in no cycle.
-    test("with an eslint.config.js the link to a file is a module of its own", async () => {
+    // ESLint 10.12 doesn't enter a symlinked directory. eslint-plugin-import 2.32.0 identifies the linted file by the
+    // path it was given, and the files it imports by their real paths. Nothing imports c.js, so it isn't in a cycle.
+    test("with an eslint.config.js, a symlink to a file is a separate module", async () => {
       using dir = project({
         "eslint.config.mjs": `export default [{
           plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
@@ -5289,9 +6619,9 @@ maybe(() => { return f; });
     });
   });
 
-  // The defaults, the places and the texts of ESLint's rules are those of the major version of `eslint` that is installed for the
-  // configuration file. What ESLint 9.39.5 and ESLint 10.12.0 report.
-  describe("the rules of ESLint are those of the eslint that is installed", () => {
+  // The defaults, report locations and messages of ESLint's rules follow the major version of the `eslint` package
+  // installed for the config file. The expected reports are from ESLint 9.39.5 and ESLint 10.12.0.
+  describe("ESLint's rules behave like the installed version of eslint", () => {
     const files = {
       "eslint.config.mjs":
         'export default [{ linterOptions: { reportUnusedDisableDirectives: "error" }, rules: {\n  "max-depth": ["error", 1], "max-statements": ["error", 2], "max-lines-per-function": ["error", 3], "max-nested-callbacks": ["error", 1],\n  "require-yield": "error", "no-useless-constructor": "error", "no-shadow-restricted-names": "error", "new-cap": ["error", { properties: false }],\n  radix: ["error", "as-needed"], "use-isnan": "error", "no-extra-boolean-cast": "error", "prefer-promise-reject-errors": "error",\n  "no-async-promise-executor": "error",\n} }];\n',
@@ -5341,22 +6671,23 @@ maybe(() => { return f; });
     ];
     test.each([
       ["9.39.5", nine],
-      // With such a configuration file it is nearer to 9 than to 10.
+      // With an eslint.config.mjs, ESLint 8 is closer to 9 than to 10.
       ["8.57.1", nine],
       ["10.12.0", ten],
       [undefined, ten],
-    ])("%s", async (version, expected) => {
+    ])("installed eslint: %s", async (version, expected) => {
       const installed = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }) };
       const { raw } = await lint({ ...files, ...(version && installed) }, ["-f", "json", "a.js"]);
-      const said = (JSON.parse(raw)[0].messages as any[]).map(
+      const reports = (JSON.parse(raw)[0].messages as any[]).map(
         it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
       );
-      expect(said).toEqual(expected);
+      expect(reports).toEqual(expected);
     });
 
-    // `eslint-scope` takes the name of a JSX element for a reference since ESLint 10. Before that a rule of a plugin marks what an
-    // element uses, as `react/jsx-uses-vars` does: here `local/uses-vars`, which MARKS=off turns off.
-    describe("the names of JSX elements", () => {
+    // Since ESLint 10, `eslint-scope` treats a JSX element's name as a reference. Before that, a plugin's rule has to
+    // mark the variables that an element uses, like `react/jsx-uses-vars`. Here that rule is `local/uses-vars`, and
+    // MARKS=off turns it off.
+    describe("JSX element names are references since ESLint 10", () => {
       const files = {
         "eslint.config.mjs":
           '// What eslint-plugin-react\'s jsx-uses-vars does, in short.\nconst usesVars = { create(context) { return {\n  Program(node) { context.sourceCode.markVariableAsUsed("marked", node); },\n  JSXOpeningElement(node) {\n    let name = node.name;\n    while (name.type === "JSXMemberExpression") name = name.object;\n    if (name.type === "JSXIdentifier") context.sourceCode.markVariableAsUsed(name.name, node);\n  },\n}; } };\nexport default [{ files: ["**/*.jsx"], plugins: { local: { rules: { "uses-vars": usesVars } } }, languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },\n  rules: { "local/uses-vars": process.env.MARKS === "off" ? "off" : "error", "no-unused-vars": "error", "no-undef": "error", "no-use-before-define": "error" } }];\n',
@@ -5404,20 +6735,21 @@ maybe(() => { return f; });
             "no-use-before-define 6:29-6:35 'Widget' was used before it was defined.",
           ],
         ],
-      ])("%s, the rule that marks them is %s", async (version, MARKS, expected) => {
+      ])("eslint %s, the rule that marks them as used is %s", async (version, MARKS, expected) => {
         const installed = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }) };
         const { raw } = await lint({ ...files, ...installed }, ["-f", "json", "a.jsx"], { env: { MARKS } });
-        const said = (JSON.parse(raw)[0].messages as any[]).map(
+        const reports = (JSON.parse(raw)[0].messages as any[]).map(
           it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
         );
-        expect(said).toEqual(expected);
+        expect(reports).toEqual(expected);
       });
     });
   });
 
-  // The decorators of a parameter are evaluated in the scope around the function. So a function in one is in that scope, though
-  // it is written between the parentheses, and what is written after it is in the scope of the function all the same.
-  describe("the scope of what follows a function in the decorator of a parameter", () => {
+  // A parameter's decorators are evaluated in the scope around the function. So a function in a decorator is in that
+  // outer scope even though it's written between the parentheses, but the code after it is still in the function's
+  // scope.
+  describe("code after a function in a parameter's decorator is in the function's scope", () => {
     const code = (decorator: string) =>
       `class S {\n  constructor(${decorator}private d: D, private readonly repo: Repo) {\n    this.repo = repo;\n  }\n}\n`;
     const sources = {
@@ -5446,23 +6778,29 @@ maybe(() => { return f; });
           rules: { "@typescript-eslint/no-unnecessary-parameter-property-assignment": "error" },
         }];`,
       ],
-    ])("as %s", async (_, name, configuration) => {
+    ])("with an %s config", async (_, name, configuration) => {
       const { stdout, exitCode } = await lint({ [name]: configuration, ...sources }, [
         "-f",
         "unix",
         ...Object.keys(sources),
       ]);
-      const places = [...stdout.matchAll(/([\w-]+\.ts):(\d+):(\d+): /g)].map(it => `${it[1]}:${it[2]}:${it[3]}`);
-      expect(places.sort()).toEqual(["arrow.ts:3:5", "function.ts:3:5", "no-decorator.ts:3:5", "no-function.ts:3:5"]);
+      const positions = [...stdout.matchAll(/([\w-]+\.ts):(\d+):(\d+): /g)].map(it => `${it[1]}:${it[2]}:${it[3]}`);
+      expect(positions.sort()).toEqual([
+        "arrow.ts:3:5",
+        "function.ts:3:5",
+        "no-decorator.ts:3:5",
+        "no-function.ts:3:5",
+      ]);
       expect(exitCode).toBe(1);
     });
   });
 
-  // A rule for ESLint that takes the first reference to a name in a scope gets the one the scope manager makes first. That isn't
-  // always the one that is written first: it visits a type after the value, type arguments after the arguments, type parameters
-  // after the parameters, decorators after the member, and the `b` of `[a[b]] = c` before `a`. The two rules here take the first
-  // reference. What they report is what ESLint 10.12.0 reports with typescript-eslint 8.71.1 and eslint-plugin-react 7.37.5.
-  describe("the references of a scope are in the order in which the scope manager makes them", () => {
+  // An ESLint rule that takes the first reference to a name in a scope gets the one the scope manager creates first.
+  // That isn't always the first one in the source: the scope manager visits a type after the value, type arguments
+  // after the arguments, type parameters after the parameters, decorators after the member, and the `b` of `[a[b]] = c`
+  // before `a`. The two rules here take the first reference. The expected reports are from ESLint 10.12.0 with
+  // typescript-eslint 8.71.1 and eslint-plugin-react 7.37.5.
+  describe("a scope's references are in the order the scope manager creates them", () => {
     const reported = async (plugin: string, name: string, rule: string, sources: Record<string, string>) => {
       const configuration = `export default [{
         files: ["**/*.ts"],
@@ -5482,7 +6820,7 @@ maybe(() => { return f; });
 
     // `size` is a type outside the class and a parameter property in it. The last line of the constructor is reported if the
     // first reference to `size` in the constructor is to the parameter.
-    test("types", async () => {
+    test("with types", async () => {
       const box = (parameters: string, body: string, typeParameters = "") =>
         `type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor${typeParameters}(public size: number${parameters}) {\n    ${body}\n    this.size = size;\n  }\n}\n`;
       const theParameterIsFirst = {
@@ -5527,7 +6865,7 @@ maybe(() => { return f; });
 
     // `useState` is a parameter of the function, and `useMemo` is React's. The call of `useState` is reported if the first reference
     // in its scope to one of the two is to `useMemo`.
-    test("members in patterns, decorators, and what a class extends", async () => {
+    test("with members in patterns, decorators, and a class's `extends` clause", async () => {
       const panel = (body: string) =>
         `import { useMemo, useState } from "react";\nexport function Panel(useState: any, rows: any) {\n  ${body}\n}\n`;
       const call = "const a = useState(0);";
@@ -5566,9 +6904,10 @@ maybe(() => { return f; });
     });
   });
 
-  // typescript-eslint's scope manager doesn't visit the type of a `catch` parameter or the options of an import type: for it there
-  // are no scopes, no variables and no references in them. oxc visits both. For both, `["a"]` in an enum declares `a`.
-  describe("what only one of the two scope analyses visits", () => {
+  // typescript-eslint's scope manager doesn't visit the type of a `catch` parameter or the options of an import type,
+  // so it has no scopes, variables or references for them. oxc visits both. In both analyses, `["a"]` in an enum
+  // declares `a`.
+  describe("syntax that only one of the two scope analyses visits", () => {
     const sources = {
       "catch-type.ts": `type Shape = unknown;\nconst width = 1;\ntry {} catch (e: Shape) { e; }\ntry {} catch (e: typeof width) { e; }\ntry {} catch (e: typeof missing) { e; }\ntry {} catch (e: (width: number) => void) { e; }\nexport {};\n`,
       "import-type.ts": `const kind = "a";\nexport type A = import("./m", { with: { k: kind } });\nexport type B = import("./m", { with: { k: function (left: unknown) { const right = 1; return missing; } } });\nexport type C = import("./m", { with: { k: function (kind: unknown) { return kind; } } });\nexport type D = import("./m", { with: { k: class kind {} } });\n`,
@@ -5585,7 +6924,7 @@ maybe(() => { return f; });
       return found.map(it => `${it[1]} ${it[2]}`).sort();
     };
 
-    test("as ESLint 10.12.0 with typescript-eslint 8.71.1", async () => {
+    test("matches ESLint 10.12.0 with typescript-eslint 8.71.1", async () => {
       const configuration = `export default [{
         files: ["**/*.ts"],
         plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
@@ -5598,7 +6937,7 @@ maybe(() => { return f; });
       ]);
     });
 
-    test("as oxlint 1.87", async () => {
+    test("matches oxlint 1.87", async () => {
       const configuration = JSON.stringify({ categories: { correctness: "off" }, rules: rules("") });
       const enums = {
         "enum-shadows.ts": `const size = 1;\nenum E { ["size"] = 1, other = size as any }\nexport { E };\n`,
@@ -5618,11 +6957,11 @@ maybe(() => { return f; });
     });
   });
 
-  // oxlint analyses a file twice. Its own rules see the scopes of oxc, a rule of a plugin in JavaScript those of typescript-eslint. They
-  // differ about `namespace A.B {}`, about a function in a block of sloppy JavaScript, and about what is in the type of a `catch`
-  // parameter and in the options of an import type. A rule that is built in here and that oxlint lacks, as `no-catch-shadow`, is
-  // one that oxlint could only run from a plugin. What is expected is what oxlint 1.87 reports, and for `no-catch-shadow` what
-  // it reports for the plugin's copy of that rule.
+  // oxlint analyzes a file twice. Its own rules see oxc's scopes, and a JavaScript plugin's rules see
+  // typescript-eslint's. The two differ on `namespace A.B {}`, on a function in a block in sloppy-mode JavaScript, and
+  // on what's in the type of a `catch` parameter and in the options of an import type. A rule that's built in here but
+  // that oxlint lacks, like `no-catch-shadow`, is one that oxlint could only run from a plugin. The expected reports
+  // are from oxlint 1.87, and for `no-catch-shadow` they're what it reports for the plugin's copy of that rule.
   describe("with an oxlint config, which scopes a rule sees doesn't depend on the other rules", () => {
     const sources = {
       "namespace.ts": `let Inner = 0;\nnamespace Outer.Inner { Inner = 1; export const x = Inner; try {} catch (Inner) {} }\nconsole.log(Inner, Outer);\n`,
@@ -5644,7 +6983,7 @@ const scopes = { create(context) { return { Program(node) {
 } }; } };
 export default { meta: { name: "q" }, rules: { shadow, scopes } };\n`,
     };
-    const ofOxlint = {
+    const oxlintRules = {
       "no-undef": "error",
       "no-unused-vars": "error",
       "no-shadow": "error",
@@ -5659,13 +6998,13 @@ export default { meta: { name: "q" }, rules: { shadow, scopes } };\n`,
         globals: { kind: "readonly" },
         ignorePatterns: ["*.mjs"],
         ...more,
-        rules: { ...ofOxlint, ...rules },
+        rules: { ...oxlintRules, ...rules },
       };
       const { stdout } = await lint({ ".oxlintrc.json": JSON.stringify(configuration), ...sources }, ["-f", "unix"]);
       const found = [...stdout.matchAll(/^([\w-]+\.\w+:\d+:\d+): (.*) \[Error\/(\w+)\(([\w-]+)\)\]$/gm)];
       const all = found.map(it => `${it[1]} ${it[4]}` + (it[3] === "q" ? ` ${it[2]}` : "")).sort();
-      const isOfOxlint = (it: string) => it.split(" ")[1] in ofOxlint;
-      return { ofOxlint: all.filter(isOfOxlint), others: all.filter(it => !isOfOxlint(it)) };
+      const isOxlintRule = (it: string) => it.split(" ")[1] in oxlintRules;
+      return { fromOxlintRules: all.filter(isOxlintRule), others: all.filter(it => !isOxlintRule(it)) };
     };
     const expected = [
       "block.cjs:3:15 no-shadow",
@@ -5683,18 +7022,18 @@ export default { meta: { name: "q" }, rules: { shadow, scopes } };\n`,
       "switch.cjs:3:67 no-unused-vars",
     ];
 
-    test("only oxlint's rules", async () => {
-      expect(await reported({}, {})).toEqual({ ofOxlint: expected, others: [] });
+    test("with only oxlint's rules", async () => {
+      expect(await reported({}, {})).toEqual({ fromOxlintRules: expected, others: [] });
     });
 
-    test("beside a plugin without rules", async () => {
-      expect(await reported({ jsPlugins: ["./empty.mjs"] }, {})).toEqual({ ofOxlint: expected, others: [] });
+    test("with a plugin that has no rules", async () => {
+      expect(await reported({ jsPlugins: ["./empty.mjs"] }, {})).toEqual({ fromOxlintRules: expected, others: [] });
     });
 
-    test("beside a plugin that asks the scopes", async () => {
+    test("with a plugin that reads the scopes", async () => {
       const rules = { "q/shadow": "error", "q/scopes": "error" };
       expect(await reported({ jsPlugins: ["./plugin.mjs"] }, rules)).toEqual({
-        ofOxlint: expected,
+        fromOxlintRules: expected,
         others: [
           "block.cjs:1:1 scopes global[] function[] block[helper] function[] block[] catch[helper] block[]",
           "block.js:1:1 scopes global[] block[helper] function[] block[] catch[helper] block[]",
@@ -5708,7 +7047,7 @@ export default { meta: { name: "q" }, rules: { shadow, scopes } };\n`,
       });
     });
 
-    // The mark is on the plugin's variable.
+    // The mark is set on the variable that the plugin sees, not on oxlint's.
     test("`markVariableAsUsed` in a plugin doesn't silence oxlint's no-unused-vars", async () => {
       const files = {
         ".oxlintrc.json": JSON.stringify({
@@ -5738,17 +7077,18 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       ]);
     });
 
-    test("beside a built-in rule that oxlint lacks", async () => {
+    test("with a built-in rule that oxlint lacks", async () => {
       expect(await reported({}, { "no-catch-shadow": "error" })).toEqual({
-        ofOxlint: expected,
+        fromOxlintRules: expected,
         others: ["namespace.ts:2:67 no-catch-shadow"],
       });
     });
   });
 
-  // `namespace A.B { .. }` is one node, and what is between the braces is its body: a rule that looks at the statements beside a
-  // statement says there what it says in `namespace B { .. }` and in `namespace A { export namespace B { .. } }`.
-  describe("the statements of a namespace with dots in its name", () => {
+  // `namespace A.B { .. }` is one node, and its body is the code between the braces. So a rule that looks at a
+  // statement's siblings reports the same there as in `namespace B { .. }` and in
+  // `namespace A { export namespace B { .. } }`.
+  describe("statements in a namespace with a dotted name are linted like those in a plain namespace", () => {
     const bodies = {
       "one-var": ["let a = 1;", "let b = 2;", "var c = 3;", "var d = 4;"],
       "vars-on-top": ["export var x = 1;", "foo();", "export var y = 2;"],
@@ -5777,7 +7117,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     });
     test.each([
       [
-        // What oxlint 1.87 reports for each of the four.
+        // This is what oxlint 1.87 reports for each of the four forms.
         "oxlint",
         ".oxlintrc.json",
         JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules: rules("typescript") }),
@@ -5808,7 +7148,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           "void": ["4:25 no-invalid-void-type"],
         },
       ],
-    ])("as %s", async (_, name, configuration, inEach) => {
+    ])("with an %s config", async (_, name, configuration, expectedByBody) => {
       const sources: Record<string, string> = {};
       for (const [body, lines] of Object.entries(bodies))
         forms.forEach(
@@ -5819,13 +7159,17 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       for (const it of stdout.matchAll(/([\w.-]+\.ts):(\d+:\d+): .*[/(]([\w-]+)\)?\]/g))
         found[it[1]].push(`${it[2]} ${it[3]}`);
       for (const it of Object.values(found)) it.sort();
-      const expected = Object.keys(sources).map(it => [it, inEach[it.split(".")[0] as keyof typeof inEach]]);
+      const expected = Object.keys(sources).map(it => [
+        it,
+        expectedByBody[it.split(".")[0] as keyof typeof expectedByBody],
+      ]);
       expect(found).toEqual(Object.fromEntries(expected));
     });
   });
 
-  // In a script `<!--` and, at the start of a line, `-->` start a comment, whose value is what follows: as ESLint 10.12 has it.
-  test("a directive in a comment that starts with <!-- or -->", async () => {
+  // In a script, `<!--` starts a comment, and so does `-->` at the start of a line. The comment's value is the text
+  // after it, same as in ESLint 10.12.
+  test("disable directives work in a comment that starts with <!-- or -->", async () => {
     const files = {
       "eslint.config.mjs": `export default [{
         files: ["**/*.js"],
@@ -5842,12 +7186,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       "unused-line.js": "foo; <!-- eslint-disable-line no-console, no-debugger\n",
     };
     const { raw } = await lint(files, ["-f", "json", "."]);
-    const said = (JSON.parse(raw) as any[]).flatMap(({ filePath, messages }) =>
+    const reports = (JSON.parse(raw) as any[]).flatMap(({ filePath, messages }) =>
       messages.map(
         (it: any) => `${basename(filePath)}:${it.line}:${it.column} ${it.ruleId} ${JSON.stringify(it.fix?.range)}`,
       ),
     );
-    expect(said.sort()).toEqual([
+    expect(reports.sort()).toEqual([
       "all.js:2:1 no-debugger undefined",
       "unused-line.js:1:6 null [5,53]",
       "unused.js:1:1 null [0,41]",
@@ -5855,10 +7199,10 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
   });
 
   describe("--fix", () => {
-    // The file is fixed, and linted again when all files are known, for the rule about several files. There the fix that breaks it
-    // is tried once more and taken back.
+    // The file is fixed, then linted again once all files are known, for the rule that looks at several files. In that
+    // second pass, the fix that breaks the file is tried again and rolled back.
     test.each(["stylish", "unix", "json", "pretty"])(
-      "what the first fixes made of a file is written if later ones are taken back: -f %s",
+      "a file's earlier fixes are still written if later ones are rolled back: -f %s",
       async format => {
         const breaks = `{
           meta: { fixable: "code", messages: { bad: "bad" } },
@@ -5885,8 +7229,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       },
     );
 
-    // What ESLint 10.12 does.
-    test("a file of which the fixes leave nothing is written empty", async () => {
+    // This is what ESLint 10.12 does.
+    test("a file whose fixes remove everything is written empty", async () => {
       const removes = `{
         meta: { fixable: "code" },
         create: context => ({
@@ -5911,9 +7255,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(result.exitCode).toBe(1);
     });
 
-    // ESLint prints no report then.
+    // ESLint doesn't print a report in that case.
     test.skipIf(process.getuid?.() === 0 || isWindows)(
-      "a file that cannot be written does not take the report with it",
+      "still prints the report if a file can't be written",
       async () => {
         const files = { "eslint.config.js": basic, "a.js": "var a = 1;\nexport { a };\n", "b.js": "debugger;\n" };
         const before = (dir: string) => chmodSync(join(dir, "a.js"), 0o444);
@@ -5961,14 +7305,14 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(result.exitCode).toBe(0);
     });
 
-    test("--fix-dry-run writes nothing, and the json format has the output", async () => {
+    test("--fix-dry-run doesn't write files, and the json format has the output", async () => {
       const result = await lint(files, ["--fix-dry-run", "-f", "json", "a.js"], { reads: ["a.js"] });
       expect(result.files).toEqual({ "a.js": bad });
       expect(JSON.parse(result.raw)[0].output).toBe("let a = 1\nif (2 == a) { debugger; }\n");
     });
 
     test.each(["--fix", "--fix-dry-run"])(
-      "%s beside an .oxlintrc.json: ESLint's json formats have the fixed text",
+      "%s with an .oxlintrc.json: ESLint's json formats include the fixed text",
       async flag => {
         const files = {
           ".oxlintrc.json": `{ "rules": { "no-var": "error" } }`,
@@ -5979,9 +7323,10 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       },
     );
 
-    // What oxlint 1.87.0 reports and writes. Its rule is no port of ESLint's: a `bigint`, which `Number()` would change, a unary `+` or `-`
-    // and `*`, `/`, `%`, `-`, `**` are numbers already, `a * 1` in such an operation is left, and parentheses are a node.
-    test("no-implicit-coercion beside an .oxlintrc.json: what is a number already", async () => {
+    // This is what oxlint 1.87.0 reports and writes. Its rule isn't a port of ESLint's. It treats a `bigint` (which
+    // `Number()` would change), a unary `+` or `-`, and `*`, `/`, `%`, `-`, `**` as numbers already. It doesn't report
+    // `a * 1` inside such an operation, and it treats parentheses as a node.
+    test("no-implicit-coercion with an .oxlintrc.json: doesn't report what's already a number", async () => {
       const rows: [code: string, written: string, reports: [column: number, length: number][]][] = [
         ["typeof -(-1n)", "typeof -(-1n)", []],
         ["-(-1n)", "-(-1n)", []],
@@ -6035,18 +7380,18 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         lint(files, ["-f", "json", "a.mjs"]),
         lint(files, ["--fix", "a.mjs"], { reads: ["a.mjs"] }),
       ]);
-      const places: [number, number][][] = rows.map(() => []);
+      const spans: [number, number][][] = rows.map(() => []);
       for (const { labels } of JSON.parse(reported.raw).diagnostics) {
         const { line, column, length } = labels[0].span;
-        places[line - 1].push([column, length]);
+        spans[line - 1].push([column, length]);
       }
       const written = fixed.files["a.mjs"].split("\n");
-      expect(rows.map(([code], at) => [code, written[at].slice("x = ".length, -1), places[at]])).toEqual(rows);
+      expect(rows.map(([code], at) => [code, written[at].slice("x = ".length, -1), spans[at]])).toEqual(rows);
     });
 
-    // The same. For it a parameter and a `var` of its name are one variable, and what the declaration is in is the body of the function.
-    // In the last three it writes what cannot be parsed.
-    test("no-var beside an .oxlintrc.json: a variable that the default value of a parameter refers to", async () => {
+    // This also matches oxlint 1.87.0. oxlint treats a parameter and a `var` with the same name as one variable, and
+    // the function body as the scope of the declaration. In the last three rows it writes code that doesn't parse.
+    test("no-var with an .oxlintrc.json: doesn't fix a `var` that a parameter's default value refers to", async () => {
       const rows: [code: string, written: string | null][] = [
         ["function f(a = 1, g = () => a) { var a; return [a, g()]; }", null],
         ["function f(a = 1, g = function () { return a; }) { var a; a = 2; return [a, g()]; }", null],
@@ -6078,11 +7423,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(names.map(name => fixed.files[name])).toEqual(rows.map(([code, written]) => (written ?? code) + "\n"));
     });
 
-    // As ESLint 9.39.5 with eslint-plugin-react 7.37.5. ESLint sorts by line and column alone, so what starts at one place stays in the
-    // order in which the listeners were called, and of two fixes that overlap only the first is applied. A node is entered before what
-    // is in it and left after it, whatever its listener reports; on one node a selector that says more than a kind comes later. The
-    // place of a rule in the configuration counts after all that.
-    test("rules of eslint-plugin-react that report at one place", async () => {
+    // Same as ESLint 9.39.5 with eslint-plugin-react 7.37.5. ESLint sorts only by line and column, so reports at the
+    // same position stay in the order their listeners were called, and of two overlapping fixes only the first is
+    // applied. A node is entered before its children and left after them, whatever its listener reports. On the same
+    // node, a selector that's more specific than a node type runs later. A rule's position in the config only matters
+    // after all that.
+    test("orders reports and fixes of eslint-plugin-react rules at the same position like ESLint", async () => {
       const rows: [rules: Record<string, unknown>, code: string, reports: string[], written: string][] = [
         [
           {
@@ -6282,15 +7628,15 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       type Result = { filePath: string; messages: { line: number; column: number; ruleId: string }[] };
       const results: Result[] = JSON.parse((await lint(files, ["-f", "json", ...names])).raw);
       const reports = (name: string) => results.find(it => basename(it.filePath) === name)?.messages;
-      const places = names.map(name => reports(name)?.map(it => `${it.line}:${it.column} ${it.ruleId}`));
-      expect(places).toEqual(rows.map(row => row[2]));
+      const positions = names.map(name => reports(name)?.map(it => `${it.line}:${it.column} ${it.ruleId}`));
+      expect(positions).toEqual(rows.map(row => row[2]));
       const fixed = await lint(files, ["--fix", ...names], { reads: names });
       expect(names.map(name => fixed.files[name])).toEqual(rows.map(row => row[3]));
     });
 
-    // As ESLint 10.12.0 and 9.39.5 with eslint-plugin-react-hooks 7.1.1, whose rules of the React Compiler have no listeners: they
-    // report from `create`, which ESLint calls for every rule, in the order of the configuration, before it visits a node.
-    test("rules of the React Compiler and others that report at one place", async () => {
+    // Same as ESLint 10.12.0 and 9.39.5 with eslint-plugin-react-hooks 7.1.1. Its React Compiler rules have no
+    // listeners. They report from `create`, which ESLint calls for every rule in config order before visiting any node.
+    test("React Compiler rules report in config order, before other rules at the same position", async () => {
       const code =
         'import React from "react";\nexport function C(props) {\n  const m = React.useMemo(() => [props.a()], [props.a()]);\n  return <p>{m}</p>;\n}\n';
       const rows: [rules: Record<string, unknown>, reports: string[]][] = [
@@ -6378,11 +7724,11 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       type Result = { filePath: string; messages: { line: number; column: number; ruleId: string }[] };
       const results: Result[] = JSON.parse((await lint(files, ["-f", "json", ...names])).raw);
       const reports = (name: string) => results.find(it => basename(it.filePath) === name)?.messages;
-      const places = names.map(name => reports(name)?.map(it => `${it.line}:${it.column} ${it.ruleId}`));
-      expect(places).toEqual(rows.map(row => row[1]));
+      const positions = names.map(name => reports(name)?.map(it => `${it.line}:${it.column} ${it.ruleId}`));
+      expect(positions).toEqual(rows.map(row => row[1]));
     });
 
-    describe("fixes after which the text cannot be parsed are not written", () => {
+    describe("doesn't write fixes that cause a syntax error", () => {
       const warning = (rules: string, file: string) =>
         `warn: Fixes from ${rules} were not applied to ${file} because they would cause a syntax error`;
 
@@ -6426,7 +7772,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           rules: { "p/fine": "error", "p/breaks": "error", "no-var": "error" },
         }];`;
 
-      test("of a plugin in JavaScript: none of the fixes of that pass", async () => {
+      test("a JavaScript plugin's bad fix discards every fix of that pass", async () => {
         const all = { "eslint.config.mjs": plugin, "a.js": "var a = 1;\nexport { a };\ntwo;\n" };
         const result = await lint(all, ["--fix", "-f", "unix", "a.js"], { reads: ["a.js"] });
         expect(result.files).toEqual({ "a.js": all["a.js"] });
@@ -6442,7 +7788,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         ]);
       });
 
-      test("a comment that cannot be read is not a text that cannot be parsed", async () => {
+      test("a malformed `/* eslint */` comment isn't a syntax error", async () => {
         const all = {
           "eslint.config.mjs": `export default [{ linterOptions: { reportUnusedDisableDirectives: "error" } }];`,
           "a.js": "/* eslint no-var: [ */\nfoo(); // eslint-disable-line no-var\n",
@@ -6452,7 +7798,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(result.stderr).not.toContain("syntax error");
       });
 
-      test("the fixes of the passes before it stay", async () => {
+      test("keeps the fixes of earlier passes", async () => {
         const all = { "eslint.config.mjs": plugin, "a.js": "var a = one;\nexport { a };\n" };
         const result = await lint(all, ["--fix", "-f", "unix", "a.js"], { reads: ["a.js"] });
         expect(result.files).toEqual({ "a.js": "let a = two;\nexport { a };\n" });
@@ -6462,9 +7808,179 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.js"]);
         expect(JSON.parse(dry.raw)[0].output).toBe("let a = two;\nexport { a };\n");
       });
+
+      // TypeScript's parser accepts `var a,` at the end of a line. Only its checker reports the comma.
+      test("also rejects a fix whose syntax error the parser accepts, and doesn't count it as fixed", async () => {
+        const comma = `{
+          meta: { fixable: "code" },
+          create: context => ({
+            VariableDeclaration(node) {
+              const end = node.range[1];
+              if (context.sourceCode.text[end - 1] === ";")
+                context.report({ node, message: "comma", fix: fixer => fixer.replaceTextRange([end - 1, end], ",") });
+            },
+          }),
+        }`;
+        const all = {
+          "eslint.config.mjs": `export default [
+            { files: ["*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+            { files: ["a.ts"], plugins: { p: { rules: { comma: ${comma} } } }, rules: { "p/comma": "error" } },
+            { files: ["b.ts"], rules: { "no-var": "error" } },
+          ];`,
+          "a.ts": "var a: number;\nexport { a };\n",
+          "b.ts": "var b = 1;\nexport { b };\n",
+        };
+        const result = await lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] });
+        expect(result.files).toEqual({ "a.ts": all["a.ts"], "b.ts": "let b = 1;\nexport { b };\n" });
+        expect(result.stderr).toContain(warning("p/comma", "a.ts"));
+        expect(result.stderr).toContain("Fixed 1 problem in 1 file");
+        expect(result.stdout).toContain("[Error/p/comma]");
+        expect(result.exitCode).toBe(1);
+        const dry = await lint(all, ["--fix-dry-run", "-f", "json", "a.ts"]);
+        expect(JSON.parse(dry.raw)[0].output).toBeUndefined();
+      });
+
+      // In JavaScript the parser rejects these. In TypeScript only the type checker does.
+      describe("a fix that redeclares a name in TypeScript", () => {
+        /** Returns a config with `no-var` for `b.ts` and `p/adds`, whose fix appends the line `added`, for `a.ts`. */
+        const config = (added: string) => `
+          const adds = {
+            meta: { fixable: "code" },
+            create: context => ({
+              Program(node) {
+                const added = ${JSON.stringify(added)};
+                if (!context.sourceCode.text.includes(added))
+                  context.report({ node, message: "adds", fix: fixer => fixer.insertTextAfter(node.body.at(-1), "\\n" + added) });
+              },
+            }),
+          };
+          export default [
+            { files: ["*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+            { files: ["a.ts"], plugins: { p: { rules: { adds } } }, rules: { "p/adds": "error" } },
+            { files: ["b.ts"], rules: { "no-var": "error" } },
+          ];`;
+
+        test.each([
+          [`import { a } from "./a";\nexport const b = a;\n`, `import { a } from "./b";`],
+          [`import { a } from "./a";\nexport const b = a;\n`, `const a = 1;`],
+          [`import a from "./a";\nexport const b = a;\n`, `class a {}`],
+          [`let a = 1;\nexport { a };\n`, `let a = 2;`],
+          [`class A {}\nexport { A };\n`, `const A = 1;`],
+        ])("%j and %j conflict, so the fix is rejected and isn't counted", async (text, added) => {
+          const all = { "eslint.config.mjs": config(added), "a.ts": text, "b.ts": "var b = 1;\nexport { b };\n" };
+          const result = await lint(all, ["--fix", "-f", "unix", "a.ts", "b.ts"], { reads: ["a.ts", "b.ts"] });
+          expect(result.files).toEqual({ "a.ts": text, "b.ts": "let b = 1;\nexport { b };\n" });
+          expect(result.stderr).toContain(warning("p/adds", "a.ts"));
+          expect(result.stderr).toContain("Fixed 1 problem in 1 file");
+          expect(result.stdout).toContain("[Error/p/adds]");
+          expect(result.exitCode).toBe(1);
+        });
+
+        test.each([
+          [`class A {}\nexport { A };\n`, `interface A {}`],
+          [`function f() {}\nexport { f };\n`, `namespace f { export const a = 1; }`],
+          [`const A = 1;\nexport { A };\n`, `type A = number;`],
+          [`import type { a } from "./a";\nexport type B = a;\n`, `const a = 1;`],
+          [`declare function f(a: string): void;\nexport { f };\n`, `declare function f(a: number): void;`],
+          [`var a = 1;\nexport { a };\n`, `var a = 2;`],
+        ])("%j and %j merge, so the fix is applied", async (text, added) => {
+          const all = { "eslint.config.mjs": config(added), "a.ts": text };
+          const result = await lint(all, ["--fix", "-f", "unix", "a.ts"], { reads: ["a.ts"] });
+          expect(result.files).toEqual({ "a.ts": `${text.trimEnd()}\n${added}\n` });
+          expect(result.stderr).not.toContain("syntax error");
+          expect(result.exitCode).toBe(0);
+        });
+
+        test("a file that already redeclares a name still gets its fixes", async () => {
+          const all = {
+            "eslint.config.mjs": config("unused"),
+            "b.ts": `import { a } from "./a";\nimport { a } from "./b";\nvar b = a;\nexport { b };\n`,
+          };
+          const result = await lint(all, ["--fix", "-f", "unix", "b.ts"], { reads: ["b.ts"] });
+          expect(result.files).toEqual({ "b.ts": all["b.ts"].replace("var", "let") });
+          expect(result.stderr).not.toContain("syntax error");
+          expect(result.stderr).toContain("Fixed 1 problem in 1 file");
+          expect(result.exitCode).toBe(0);
+        });
+      });
     });
 
-    test("--fix-type", async () => {
+    describe("import/no-namespace picks unused names", () => {
+      const config = `export default [{
+        files: ["*.ts"],
+        languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+        plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+        rules: { "import/no-namespace": "error" },
+      }];`;
+      const twoDeep = (call: string) => `run(() => {\n  run(() => {\n    ${call};\n  });\n});\n`;
+
+      test.each([
+        [
+          "two namespaces have a member with the same name, used two functions deep",
+          `import * as dns from "./dns";\nimport * as ip from "./ip";\n${twoDeep("log(dns.setup(), ip.setup())")}`,
+          `import { setup } from "./dns";\nimport { setup as ip_setup } from "./ip";\n${twoDeep("log(setup(), ip_setup())")}`,
+        ],
+        [
+          "the name is already imported, and the member is used two functions deep",
+          `import * as dns from "./dns";\nimport { setup } from "./ip";\n${twoDeep("log(setup() === dns.setup())")}`,
+          `import { setup as dns_setup } from "./dns";\nimport { setup } from "./ip";\n${twoDeep("log(setup() === dns_setup())")}`,
+        ],
+        [
+          "both namespaces are fixed in one pass",
+          `import * as dns from "./dns";\ndns.setup();\nimport * as ip from "./ip";\nip.setup();\n`,
+          `import { setup } from "./dns";\nsetup();\nimport { setup as ip_setup } from "./ip";\nip_setup();\n`,
+        ],
+        [
+          "the name refers to a global elsewhere in the file",
+          `import * as dns from "./dns";\n${twoDeep("dns.setup()")}setup();\n`,
+          `import { setup as dns_setup } from "./dns";\n${twoDeep("dns_setup()")}setup();\n`,
+        ],
+        [
+          "the name is unused",
+          `import * as dns from "./dns";\n${twoDeep("dns.setup()")}`,
+          `import { setup } from "./dns";\n${twoDeep("setup()")}`,
+        ],
+      ])("%s", async (_, text, fixed) => {
+        const all = { "eslint.config.mjs": config, "a.ts": text };
+        const result = await lint(all, ["--fix", "a.ts"], { reads: ["a.ts"] });
+        expect(result.files).toEqual({ "a.ts": fixed });
+        expect(result.stderr).not.toContain("syntax error");
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("one-var and `declare`", () => {
+      const bunfig = (option: string) => `[lint.rules]\n"one-var" = ["error", "${option}"]\n`;
+
+      test.each([
+        ["a.d.ts", "declare var a: number;\ndeclare var b: number;\n"],
+        ["a.ts", "declare const a: number;\nconst b = 1;\nexport { a, b };\n"],
+        ["a.ts", "const a = 1;\ndeclare const b: number;\nexport { a, b };\n"],
+      ])("%s: %j is reported but not combined", async (name, text) => {
+        const all = { "bunfig.toml": bunfig("always"), [name]: text };
+        const result = await lint(all, ["--fix", "-f", "unix", name], { reads: [name] });
+        expect(result.files).toEqual({ [name]: text });
+        expect(result.stdout).toContain("[Error/one-var]");
+        expect(result.stderr).not.toContain("syntax error");
+        expect(result.stderr).not.toContain("Fixed");
+        expect(result.exitCode).toBe(1);
+      });
+
+      test("splitting a declaration repeats `declare` on every statement", async () => {
+        const all = {
+          "bunfig.toml": bunfig("never"),
+          "a.d.ts": "declare var a: number, b: number;\nexport declare const c: 1,\n  d: 2;\n",
+        };
+        const result = await lint(all, ["--fix", "-f", "unix", "a.d.ts"], { reads: ["a.d.ts"] });
+        expect(result.files).toEqual({
+          "a.d.ts":
+            "declare var a: number; declare var b: number;\nexport declare const c: 1;\n  export declare const d: 2;\n",
+        });
+        expect(result.stdout).not.toContain("one-var");
+      });
+    });
+
+    test("--fix-type layout applies only layout fixes", async () => {
       const files = {
         "eslint.config.js": config({ "unicode-bom": ["error", "always"], "no-var": "error" }),
         "a.js": bad,
@@ -6473,7 +7989,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(result.files).toEqual({ "a.js": `\uFEFF${bad}` });
     });
 
-    test.skipIf(isWindows)("keeps a link to the file", async () => {
+    test.skipIf(isWindows)("writes through a symlink instead of replacing it", async () => {
       const result = await lint(files, ["--fix", "link.js"], {
         reads: ["a.js", "link.js"],
         before: dir => symlinkSync("a.js", join(dir, "link.js")),
@@ -6482,11 +7998,11 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(result.files["link.js"]).toBe(result.files["a.js"]);
     });
 
-    // ESLint and oxlint write into the file (`fs.writeFile`, `fs::write`): all but its text stays as it is.
-    describe("the file that is written", () => {
+    // ESLint and oxlint write to the file in place (`fs.writeFile`, `fs::write`), so only its contents change.
+    describe("writing the fixed file", () => {
       const fixed = "let a = 1\nif (2 == a) { debugger; }\n";
       const isRoot = process.getuid?.() === 0;
-      /** `--fix` in `dir`, which is still there afterwards. `before`: what starts the command. */
+      /** Runs `bun lint --fix` in `dir` without deleting it. `before` is a command prefix, like `sh -c ...`. */
       async function fix(dir: string, args: string[], before: string[] = []) {
         await using proc = spawn({
           cmd: [...before, ...command, "--fix", ...args],
@@ -6501,7 +8017,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       }
       const read = (dir: string, name: string) => readFileSync(join(dir, name), "utf8");
 
-      test("is still the file that its other names stand for", async () => {
+      test("keeps the file's hard links", async () => {
         using dir = tempDir("bun-lint", files);
         linkSync(join(String(dir), "a.js"), join(String(dir), "other-name.txt"));
         await fix(String(dir), ["a.js"]);
@@ -6510,8 +8026,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(readdirSync(String(dir)).sort()).toEqual(["a.js", "b.js", "eslint.config.js", "other-name.txt"]);
       });
 
-      // What a new file gets is less, unless the mask of the process is 0.
-      test.skipIf(isWindows)("keeps its mode, whatever the mask of the process", async () => {
+      // A new file would get fewer permission bits, unless the umask is 0.
+      test.skipIf(isWindows)("keeps the file's mode regardless of the umask", async () => {
         using dir = tempDir("bun-lint", { ...files, "b.js": files["a.js"] });
         chmodSync(join(String(dir), "a.js"), 0o664);
         chmodSync(join(String(dir), "b.js"), 0o777);
@@ -6520,14 +8036,14 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(["a.js", "b.js"].map(name => statSync(join(String(dir), name)).mode & 0o7777)).toEqual([0o664, 0o777]);
       });
 
-      // ESLint and oxlint write there. Nobody reads the links of a project that he has checked out.
-      test("is not one that a link leads to out of the repository", async () => {
+      // ESLint and oxlint write to the link's target. But people don't review the symlinks of a project they check out.
+      test("refuses to write through a link that points outside the repository", async () => {
         const outside = { "outside/c/d.js": bad };
         const git = "ref: refs/heads/main\n";
         const oxlintrc = JSON.stringify({ categories: { correctness: "off" }, rules: { "no-var": "error" } });
         const link = (dir: string) => symlinkSync(join(dir, "outside", "c"), join(dir, "project", "c"), "junction");
         const options = { cwd: "project", before: link, reads: ["outside/c/d.js"] };
-        const [named, found, withoutRepository] = await Promise.all([
+        const [explicit, found, withoutRepository] = await Promise.all([
           lint(
             { ...outside, "project/.git/HEAD": git, "project/eslint.config.js": basic },
             ["--fix", "c/d.js"],
@@ -6536,17 +8052,17 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           lint({ ...outside, "project/.git/HEAD": git, "project/.oxlintrc.json": oxlintrc }, ["--fix"], options),
           lint({ ...outside, "project/eslint.config.js": basic }, ["--fix", "c/d.js"], options),
         ]);
-        expect([named.files, found.files, withoutRepository.files]).toEqual([outside, outside, outside]);
-        for (const { stdout, stderr } of [named, found, withoutRepository]) {
+        expect([explicit.files, found.files, withoutRepository.files]).toEqual([outside, outside, outside]);
+        for (const { stdout, stderr } of [explicit, found, withoutRepository]) {
           expect(stdout + stderr).toContain(
             "Cannot write <dir>/project/c/d.js: it is a symlink to a file outside the repository",
           );
         }
-        // Beside an .oxlintrc.json what fails ends the run as it ends oxlint's.
-        expect([named.exitCode, found.exitCode, withoutRepository.exitCode]).toEqual([2, 1, 2]);
+        // With an .oxlintrc.json a failure exits with 1, like oxlint.
+        expect([explicit.exitCode, found.exitCode, withoutRepository.exitCode]).toEqual([2, 1, 2]);
       });
 
-      test("can be one that a link leads to in the repository, or that is named outside of the working directory", async () => {
+      test("writes through a link that points inside the repository, and to a path outside the working directory", async () => {
         const files = {
           ".git/HEAD": "ref: refs/heads/main\n",
           "shared/d.js": bad,
@@ -6556,24 +8072,24 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         const link = (dir: string) =>
           symlinkSync(join(dir, "shared"), join(dir, "packages", "a", "shared"), "junction");
         const options = { cwd: "packages/a", before: link, reads: ["shared/d.js"] };
-        // Jujutsu has one without a `.git`.
+        // A Jujutsu repository doesn't need a `.git`.
         const { ".git/HEAD": _, ...rest } = files;
-        const [linked, named, ofJujutsu] = await Promise.all([
+        const [linked, outsideCwd, jujutsu] = await Promise.all([
           lint(files, ["--fix", "shared/d.js"], options),
           lint(files, ["--fix", "../../shared/d.js"], options),
           lint({ ...rest, ".jj/working_copy/type": "local" }, ["--fix", "shared/d.js"], options),
         ]);
         const written = { "shared/d.js": fixed };
-        expect([linked.files, named.files, ofJujutsu.files]).toEqual([written, written, written]);
+        expect([linked.files, outsideCwd.files, jujutsu.files]).toEqual([written, written, written]);
       });
 
-      // In a container, say, with the project of a user mounted into it.
-      test.skipIf(!isRoot)("keeps its owner if root fixes it", async () => {
+      // For example, in a container that has a user's project mounted.
+      test.skipIf(!isRoot)("keeps the file's owner when root runs --fix", async () => {
         using dir = tempDir("bun-lint", files);
         try {
           chownSync(join(String(dir), "a.js"), 12345, 12345);
         } catch {
-          // The root of a container that does not have these.
+          // Root in a container that can't chown to these ids.
           return;
         }
         await fix(String(dir), ["a.js"]);
@@ -6581,8 +8097,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect([read(String(dir), "a.js"), uid, gid]).toEqual([fixed, 12345, 12345]);
       });
 
-      // ESLint needs nothing of the directory.
-      test.skipIf(isWindows || isRoot)("can be in a directory that nothing can be added to", async () => {
+      // ESLint doesn't need write access to the directory.
+      test.skipIf(isWindows || isRoot)("fixes a file in a read-only directory", async () => {
         using dir = tempDir("bun-lint", { "eslint.config.js": files["eslint.config.js"], "src/a.js": files["a.js"] });
         chmodSync(join(String(dir), "src"), 0o555);
         try {
@@ -6594,9 +8110,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         }
       });
 
-      // `fs.writeFile` fails with EACCES, on Windows with EPERM. A version control system that hands out files read-only until
-      // they are checked out means it.
-      test.skipIf(isRoot)("is not replaced if it is read-only, and that is an error", async () => {
+      // `fs.writeFile` fails with EACCES, or EPERM on Windows. A version control system that keeps files read-only
+      // until they're checked out does that on purpose.
+      test.skipIf(isRoot)("fails on a read-only file instead of replacing it", async () => {
         using dir = tempDir("bun-lint", files);
         chmodSync(join(String(dir), "a.js"), 0o444);
         try {
@@ -6611,19 +8127,19 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       });
     });
 
-    // Windows takes no more than that, unless it is asked in a special way.
-    test("a file whose path has more than 260 characters", async () => {
+    // Windows rejects longer paths unless the caller opts in to long paths.
+    test("fixes a file whose path is longer than 260 characters", async () => {
       const name = `${Array(14).fill("d".repeat(20)).join("/")}/c.js`;
       const fixed = "let a = 1\nif (2 == a) { debugger; }\n";
-      const [named, found] = await Promise.all([
+      const [explicit, found] = await Promise.all([
         lint({ ...files, [name]: bad }, ["--fix", name], { reads: [name] }),
         lint({ ...files, [name]: bad }, ["--fix", "."], { reads: [name] }),
       ]);
-      expect([named.stderr, found.stderr].join("\n")).not.toContain("error: ");
-      expect([named.files, found.files]).toEqual([{ [name]: fixed }, { [name]: fixed }]);
+      expect([explicit.stderr, found.stderr].join("\n")).not.toContain("error: ");
+      expect([explicit.files, found.files]).toEqual([{ [name]: fixed }, { [name]: fixed }]);
     });
 
-    test("flags that contradict each other fail with 2", async () => {
+    test("conflicting flags exit with code 2", async () => {
       const results = await Promise.all([
         lint(files, ["--fix", "--fix-dry-run"]),
         lint(files, ["--fix-type", "layout"]),
@@ -6637,10 +8153,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     });
   });
 
-  // What ESLint 10.12 does with these `rules`, given two lines more: a plugin `no-restricted-syntax` that hands out ESLint's own rule
-  // under the names.
-  // What ESLint 10.12 says: it gives `languageOptions.ecmaVersion` to espree. Each row: the edition that has brought it, the code, and
-  // what the edition before makes of it.
+  // These are ESLint 10.12's messages. It passes `languageOptions.ecmaVersion` to espree. Each row has the edition that
+  // introduced the syntax, the code, and the error under the edition before it.
   test("syntax that is newer than ecmaVersion is a parsing error", async () => {
     const rows: [number, string, string, string?][] = [
       [2015, "const a = 1;", "1:1 The keyword 'const' is reserved"],
@@ -6731,17 +8245,19 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     });
     const { raw, exitCode } = await lint(files, ["-f", "json", "."]);
     const results = JSON.parse(raw) as { filePath: string; messages: any[] }[];
-    const said = results
+    const entries = results
       .filter(it => it.filePath.endsWith(".js"))
       .map(it => [
         it.filePath.replaceAll("\\", "/").split("/").slice(-2).join("/"),
         it.messages.map(it => `${it.line}:${it.column} ${it.message}`),
       ]);
-    expect(Object.fromEntries(said)).toEqual(expected);
+    expect(Object.fromEntries(entries)).toEqual(expected);
     expect(exitCode).toBe(1);
   });
 
-  describe("no-restricted-syntax/<name> is one more instance of the rule", () => {
+  // Same as ESLint 10.12 with these `rules` and two more lines of config: a plugin named `no-restricted-syntax` that
+  // exposes ESLint's own rule under these names.
+  describe("no-restricted-syntax/<name> is a separate instance of the rule", () => {
     const moment = { selector: 'ImportDeclaration[source.value="moment"]', message: "Use date-fns." };
     const environment = {
       selector: 'MemberExpression[object.name="process"][property.name="env"]',
@@ -6760,7 +8276,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
 
     test.each([
       [
-        "plain",
+        "each instance reports under its own name, with its own severity",
         'import moment from "moment";\nconst e = process.env.X;\nexport { moment, e };\n',
         [
           {
@@ -6787,7 +8303,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         1,
       ],
       [
-        "directives",
+        "a disable comment applies only to the instance it names",
         'import moment from "moment"; // eslint-disable-line no-restricted-syntax/no-moment\nconst e = process.env.X; // eslint-disable-line no-restricted-syntax\nconst f = process.env.Y; // eslint-disable-line no-restricted-syntax/no-env\n// eslint-disable-next-line no-restricted-syntax/no-such\nexport { moment, e, f };\n',
         [
           {
@@ -6820,7 +8336,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         1,
       ],
       [
-        "comments",
+        "an `/* eslint */` comment changes the severity of one instance",
         '/* eslint no-restricted-syntax/no-env: "off", no-restricted-syntax/no-moment: "warn" */\nimport moment from "moment";\nconst e = process.env.X;\nexport { moment, e };\n',
         [
           {
@@ -6837,7 +8353,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         0,
       ],
       [
-        "options",
+        "an `/* eslint */` comment replaces the options of one instance",
         '/* eslint no-restricted-syntax/no-env: ["error", "ExportNamedDeclaration"] */\nconst e = process.env.X;\nexport { e };\n',
         [
           {
@@ -6860,14 +8376,14 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(result.exitCode).toBe(exitCode);
     });
 
-    test("an object for some files, --rule, --print-config, rulesMeta, suppressions", async () => {
+    test("the name works in a config object with `files`, --rule, --print-config, rulesMeta and suppressions", async () => {
       const off = `, { files: ["a.js"], rules: { "no-restricted-syntax/no-env": "off" } }`;
       expect((await json({ "eslint.config.js": flat(off), "a.js": code })).map((it: any) => it.ruleId)).toEqual([
         "no-restricted-syntax/no-moment",
       ]);
       const files = { "eslint.config.js": flat(), "a.js": code };
       const changed = await json(files, "--rule", 'no-restricted-syntax/no-env: ["error", "ImportDeclaration"]');
-      // Both are at 1:1.
+      // Both are at 1:1, so their order isn't checked.
       expect(changed.map((it: any) => `${it.line} ${it.severity} ${it.ruleId} ${it.message}`).sort()).toEqual([
         "1 2 no-restricted-syntax/no-env Using 'ImportDeclaration' is not allowed.",
         "1 2 no-restricted-syntax/no-moment Use date-fns.",
@@ -6901,7 +8417,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       });
     });
 
-    test("options that the schema refuses are refused under the name", async () => {
+    test("rejects options that the schema doesn't allow, and the error has the instance's name", async () => {
       const all = { "no-restricted-syntax/no-env": ["error", { nonsense: 1 }] };
       const { stderr, exitCode } = await lint({ "eslint.config.js": flat("", all), "a.js": code }, ["a.js"]);
       expect(stderr).toContain(
@@ -6910,7 +8426,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(2);
     });
 
-    // No suite sees this: they turn a rule on by its entry and validate nothing.
+    // The rules' own test suites don't cover this. They enable a rule directly and don't validate its options.
     test.each([
       ["import/no-absolute-path", { amd: true }],
       ["import/max-dependencies", { max: 10 }],
@@ -6919,7 +8435,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       ["import/no-dynamic-require", { esmodule: true }],
       ["import/no-nodejs-modules", { allow: ["fs"] }],
       ["import/no-unassigned-import", { allow: ["**/*.css"] }],
-    ] as const)("the options of %s are taken beside an .oxlintrc.json", async (rule, options) => {
+    ] as const)("accepts the options of %s with an .oxlintrc.json", async (rule, options) => {
       const config = { plugins: ["import"], categories: { correctness: "off" }, rules: { [rule]: ["error", options] } };
       const files = { ".oxlintrc.json": JSON.stringify(config), "a.js": "export const a = 1;\n" };
       const { stderr, exitCode } = await lint(files, ["a.js"]);
@@ -6927,14 +8443,14 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(0);
     });
 
-    test("a plugin of the configuration that has the prefix answers for it", async () => {
+    test("a plugin named no-restricted-syntax in the config wins", async () => {
       const plugin = `{ rules: { "no-env": { create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) } } }`;
       const theirs = `export default [{ plugins: { "no-restricted-syntax": ${plugin} }, rules: { "no-restricted-syntax/no-env": "error" } }];`;
       const messages = await json({ "eslint.config.js": theirs, "a.js": code });
       expect(messages.map((it: any) => `${it.ruleId} ${it.message}`)).toEqual(["no-restricted-syntax/no-env theirs"]);
     });
 
-    test("with an .oxlintrc.json: the code, the comments, the suppressions", async () => {
+    test("with an .oxlintrc.json, the name works in the output, in disable comments and in suppressions", async () => {
       const files = {
         ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules }),
         "a.js":
@@ -6963,14 +8479,14 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     const suppressions = (a: number, b: number) =>
       JSON.stringify({ "a.js": { "no-debugger": { count: a } }, "b.js": { "no-debugger": { count: b } } });
 
-    test("--suppress-all records the errors that there are, and tolerates them", async () => {
+    test("--suppress-all records the existing errors and exits with 0", async () => {
       const result = await lint(files, ["--suppress-all"], { reads: ["eslint-suppressions.json"] });
       expect(JSON.parse(result.files["eslint-suppressions.json"]!)).toEqual(JSON.parse(suppressions(2, 1)));
       expect(result.raw).toBe("");
       expect(result.exitCode).toBe(0);
     });
 
-    test("eslint-suppressions.json is applied, and more errors than it has are all reported", async () => {
+    test("applies eslint-suppressions.json, and reports every error of a rule that has more than the suppressed count", async () => {
       const result = await lint({ ...files, "eslint-suppressions.json": suppressions(1, 1) }, ["-f", "unix"]);
       expect(result.stdout).toMatchInlineSnapshot(`
         "<dir>/a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]
@@ -6981,15 +8497,15 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(result.exitCode).toBe(1);
     });
 
-    // As ESLint 10.12.0. To `stat` it is a file, and nobody can read it from its start.
-    test.skipIf(!isLinux)("a file that cannot be read ends the run, as one that cannot be parsed", async () => {
+    // Same as ESLint 10.12.0. `stat` says /proc/self/mem is a regular file, but reading it from the start fails.
+    test.skipIf(!isLinux)("an unreadable suppressions file fails the run like one that can't be parsed", async () => {
       const result = await lint(files, ["--suppressions-location", "/proc/self/mem"]);
       expect(result.stderr).toContain("Failed to parse suppressions file at /proc/self/mem");
       expect(result.raw).toBe("");
       expect(result.exitCode).toBe(2);
     });
 
-    test("fewer errors than it has fail with 2, until --prune-suppressions", async () => {
+    test("unused suppressions exit with code 2 until --prune-suppressions removes them", async () => {
       const stale = { ...files, "eslint-suppressions.json": suppressions(2, 3) };
       const [plain, passed, pruned] = await Promise.all([
         lint(stale, []),
@@ -7003,6 +8519,243 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         pruned: 0,
       });
       expect(JSON.parse(pruned.files["eslint-suppressions.json"]!)).toEqual(JSON.parse(suppressions(2, 1)));
+    });
+
+    test("--suppress-all keeps other files' entries", async () => {
+      const others = {
+        "gone.js": { "no-var": { count: 4 } },
+        "b.js": { "no-debugger": { count: 7 }, "eqeqeq": { count: 1 } },
+      };
+      const existing = JSON.stringify({ ...others, "a.js": { "no-debugger": { count: 1 } } });
+      const result = await lint({ ...files, "eslint-suppressions.json": existing }, ["--suppress-all", "a.js"], {
+        reads: ["eslint-suppressions.json"],
+      });
+      expect(JSON.parse(result.files["eslint-suppressions.json"]!)).toEqual({
+        ...others,
+        "a.js": { "no-debugger": { count: 2 } },
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // ESLint 10.12.0 accepts any object and writes it back without the values it doesn't understand.
+    test.each<[string[]]>([[["--suppress-all"]], [["--prune-suppressions"]], [[]]])(
+      "rejects a JSON file that isn't a suppressions file and doesn't modify it: %j",
+      async flags => {
+        const text = '{ "name": "mine", "version": "1.0.0", "scripts": { "build": "make" } }\n';
+        const result = await lint(
+          { ...files, "package.json": text },
+          [...flags, "--suppressions-location", "package.json"],
+          {
+            reads: ["package.json"],
+            mayFail: true,
+          },
+        );
+        expect(result.files).toEqual({ "package.json": text });
+        expect(result.stderr).toContain("Not a suppressions file: <dir>/package.json");
+        expect(result.exitCode).toBe(2);
+      },
+    );
+  });
+
+  // Same rule that --fix follows for source files.
+  describe("writing the suppressions file and --output-file", () => {
+    const inProject = {
+      ".git/HEAD": "ref: refs/heads/main\n",
+      "eslint.config.js": config({ "no-debugger": "error" }),
+      "a.js": "debugger;\n",
+    };
+    const tree = Object.fromEntries(Object.entries(inProject).map(([name, text]) => [`project/${name}`, text]));
+    // One more error than the file has, so --prune-suppressions has something to write.
+    const before = JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } });
+    /** Flags that write the file at `name`, and the exit code when the write succeeds. */
+    const writers: [string, (name: string) => string[], number][] = [
+      ["--suppress-all", name => ["--suppress-all", "--suppressions-location", name], 0],
+      ["--prune-suppressions", name => ["--prune-suppressions", "--suppressions-location", name], 0],
+      ["--output-file", name => ["-f", "unix", "-o", name], 1],
+    ];
+    const symlinkError = "it is a symlink to a file outside the repository";
+    const link = (from: string, to: string, type?: "junction") => (dir: string) =>
+      symlinkSync(join(dir, to), join(dir, from), type);
+
+    describe.each(writers)("%s", (flag, flags, exitCode) => {
+      // A missing file has nothing to prune, so this flag never creates the file.
+      const prunes = flag === "--prune-suppressions";
+      const missingFileError = prunes ? "The suppressions file does not exist" : symlinkError;
+
+      test.skipIf(isWindows)("refuses to write through a symlink that points outside the repository", async () => {
+        const options = { cwd: "project", before: link("project/f", "outside/f"), reads: ["outside/f"], mayFail: true };
+        const [toFile, toNothing] = await Promise.all([
+          lint({ ...tree, "outside/f": before }, flags("f"), options),
+          lint({ ...tree, "outside/other": "" }, flags("f"), options),
+        ]);
+        expect([toFile.files, toNothing.files]).toEqual([{ "outside/f": before }, { "outside/f": null }]);
+        expect(toFile.stderr).toContain(symlinkError);
+        expect(toNothing.stderr).toContain(missingFileError);
+        expect([toFile.exitCode, toNothing.exitCode]).toEqual([2, 2]);
+      });
+
+      test("refuses to write in a linked directory that points outside the repository", async () => {
+        const reads = ["outside/f", "outside/new/f"];
+        const options = { cwd: "project", before: link("project/linked", "outside", "junction"), reads, mayFail: true };
+        const [existing, missing, inNewDirectory] = await Promise.all([
+          lint({ ...tree, "outside/f": before }, flags("linked/f"), options),
+          lint({ ...tree, "outside/other": "" }, flags("linked/f"), options),
+          lint({ ...tree, "outside/other": "" }, flags("linked/new/f"), options),
+        ]);
+        expect([existing.files, missing.files, inNewDirectory.files]).toEqual([
+          { "outside/f": before, "outside/new/f": null },
+          { "outside/f": null, "outside/new/f": null },
+          { "outside/f": null, "outside/new/f": null },
+        ]);
+        expect(existing.stderr).toContain(symlinkError);
+        expect(missing.stderr).toContain(missingFileError);
+        expect(inNewDirectory.stderr).toContain(missingFileError);
+        expect([existing.exitCode, missing.exitCode, inNewDirectory.exitCode]).toEqual([2, 2, 2]);
+      });
+
+      test("writes to a path outside the repository if it doesn't contain a link", async () => {
+        const result = await lint({ ...tree, "outside/f": before }, flags("../outside/f"), {
+          cwd: "project",
+          reads: ["outside/f"],
+        });
+        expect(result.files["outside/f"]).not.toBe(before);
+        expect(result.exitCode).toBe(exitCode);
+      });
+
+      test("writes in a linked directory that points inside the repository", async () => {
+        const result = await lint({ ...tree, "project/real/f": before }, flags("linked/f"), {
+          cwd: "project",
+          before: link("project/linked", "project/real", "junction"),
+          reads: ["project/real/f"],
+        });
+        expect(result.files["project/real/f"]).not.toBe(before);
+        expect(result.exitCode).toBe(exitCode);
+      });
+
+      test.skipIf(isWindows)("writes through a symlink that points inside the repository and keeps it", async () => {
+        using dir = tempDir("bun-lint", { ...tree, [prunes ? "project/real/f" : "project/real/other"]: before });
+        link("project/f", "project/real/f")(String(dir));
+        const result = await run(join(String(dir), "project"), flags("f"));
+        expect(readFileSync(join(String(dir), "project/real/f"), "utf8")).not.toBe(before);
+        expect(lstatSync(join(String(dir), "project/f")).isSymbolicLink()).toBe(true);
+        expect(result.exitCode).toBe(exitCode);
+      });
+    });
+
+    test.skipIf(isWindows)("refuses the default suppressions file if it links outside the repository", async () => {
+      const name = "eslint-suppressions.json";
+      const options = {
+        cwd: "project",
+        before: link(`project/${name}`, "outside/f"),
+        reads: ["outside/f"],
+        mayFail: true,
+      };
+      const results = await Promise.all([
+        lint({ ...tree, "outside/f": before }, ["--suppress-all"], options),
+        lint({ ...tree, "outside/f": before }, ["--prune-suppressions"], options),
+        lint({ ...tree, "outside/other": "" }, ["--suppress-all"], options),
+        lint({ ...tree, "outside/other": "" }, ["--prune-suppressions"], options),
+      ]);
+      expect(results.map(it => it.files["outside/f"])).toEqual([before, before, null, null]);
+      for (const result of results) {
+        expect(result.stderr).toContain(symlinkError);
+        expect(result.exitCode).toBe(2);
+      }
+    });
+
+    describe.skipIf(isWindows)("--output-file is a pipe or a device", () => {
+      const withOutside = { ...tree, "outside/other": "" };
+
+      /** Runs `bun lint -f unix -o <name>` in `dir`'s project through `sh`. `"$@"` in `script` is the command. */
+      async function throughShell(dir: string, script: string, name: string) {
+        await using proc = spawn({
+          cmd: ["sh", "-c", script, "sh", ...command, "-f", "unix", "-o", name],
+          env,
+          cwd: join(dir, "project"),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr };
+      }
+
+      /** Creates a named pipe with a reader open, so opening it for writing doesn't block and writes stay buffered. */
+      function pipeAt(path: string) {
+        expect(Bun.spawnSync(["mkfifo", path]).exitCode).toBe(0);
+        const reader = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+        return { read: () => readFileSync(reader, "utf8"), [Symbol.dispose]: () => closeSync(reader) };
+      }
+
+      /** Returns the report printed without the flag, and the exit code. A report file has no trailing newline. */
+      async function withoutFlag(dir: string) {
+        const { stdout, exitCode } = await run(join(dir, "project"), ["-f", "unix"]);
+        expect(stdout).toContain("[Error/no-debugger]");
+        return { report: stdout.trimEnd(), exitCode };
+      }
+
+      test.each([
+        ["/dev/stdout", '{ "$@" 2> /dev/null; echo "exit code $?"; } | cat'],
+        ["/dev/stderr", '{ "$@" 2>&1 > /dev/null; echo "exit code $?"; } | cat'],
+      ])("writes the report to %s when it's a pipe", async (name, script) => {
+        using dir = tempDir("bun-lint", tree);
+        const { report, exitCode } = await withoutFlag(String(dir));
+        const { stdout } = await throughShell(String(dir), script, name);
+        expect(stdout).toStartWith(report);
+        expect(stdout).toEndWith(`exit code ${exitCode}\n`);
+      });
+
+      // From these directories, /dev/stdout is a link below the working directory, like a link in a checkout.
+      test.skipIf(["/.git", "/.jj", "/dev/.git", "/dev/.jj"].some(it => existsSync(it))).each([
+        ["/", "/dev/stdout"],
+        ["/dev", "stdout"],
+      ])("in %s, outside any repository, writes the report to %s when it's a pipe", async (cwd, name) => {
+        using dir = tempDir("bun-lint", tree);
+        const script = `cd ${cwd}; { "$@" "$OLDPWD/a.js" 2> /dev/null; echo "exit code $?"; } | cat`;
+        const { stdout } = await throughShell(String(dir), script, name);
+        expect(stdout).toContain("a.js:1:1: Unexpected 'debugger' statement.");
+        expect(stdout).toEndWith("exit code 1\n");
+      });
+
+      test("-o /dev/null discards the report", async () => {
+        const result = await lint(tree, ["-f", "unix", "-o", "/dev/null"], { cwd: "project" });
+        expect(result.raw).toBe("");
+        expect(result.exitCode).toBe(1);
+      });
+
+      test.each([
+        ["in the project", "project/pipe", "pipe"],
+        ["in the project, through a link in the project", "project/pipe", "link"],
+        ["outside the repository, through a path without links", "outside/pipe", "../outside/pipe"],
+      ])("writes the report to a named pipe %s", async (_, at, name) => {
+        using dir = tempDir("bun-lint", withOutside);
+        const expected = await withoutFlag(String(dir));
+        using pipe = pipeAt(join(String(dir), at));
+        symlinkSync(join(String(dir), at), join(String(dir), "project/link"));
+        const { exitCode } = await run(join(String(dir), "project"), ["-f", "unix", "-o", name]);
+        expect({ report: pipe.read(), exitCode }).toEqual(expected);
+      });
+
+      test("refuses a link in the project to a named pipe outside the repository", async () => {
+        using dir = tempDir("bun-lint", withOutside);
+        using pipe = pipeAt(join(String(dir), "outside/pipe"));
+        link("project/link", "outside/pipe")(String(dir));
+        const { stderr, exitCode } = await run(join(String(dir), "project"), ["-f", "unix", "-o", "link"]);
+        expect(stderr).toContain(symlinkError);
+        expect({ written: pipe.read(), exitCode }).toEqual({ written: "", exitCode: 2 });
+      });
+
+      test.each([
+        ["/dev/stdout, which is a pipe", "/dev/stdout", '{ "$@"; echo "exit code $?"; } | cat'],
+        ["/dev/stdout, which is a device", "/dev/stdout", '"$@" > /dev/null; echo "exit code $?"'],
+        ["/dev/null", "/dev/null", '"$@"; echo "exit code $?"'],
+      ])("refuses a link in the project to %s", async (_, to, script) => {
+        using dir = tempDir("bun-lint", tree);
+        symlinkSync(to, join(String(dir), "project/link"));
+        const { stdout, stderr } = await throughShell(String(dir), script, "link");
+        expect(stderr).toContain(symlinkError);
+        expect(stdout).toBe("exit code 2\n");
+      });
     });
   });
 
@@ -7025,7 +8778,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(1);
     });
 
-    test("--stdin-filename decides the configuration", async () => {
+    test("--stdin-filename determines which config applies", async () => {
       const { stdout } = await lint(files, ["--stdin", "--stdin-filename", "src/new.js", "-f", "unix"], { stdin: bad });
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/src/new.js:1:1: Unexpected var, use let or const instead. [Error/no-var]
@@ -7038,8 +8791,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
   describe("formats", () => {
     const files = { "eslint.config.js": basic, "src/a.js": bad };
 
-    // Rows times the widest: 800 MB. ESLint 10.12 ends with "RangeError: Invalid string length".
-    test("stylish does not make every row as wide as the widest where that is more than ESLint can print", async () => {
+    // Padding every row to the widest would take 800 MB. ESLint 10.12 throws "RangeError: Invalid string length".
+    test("stylish doesn't pad every row to the widest one if the output would be too long for ESLint to print", async () => {
       const names = [Buffer.alloc(200_000, "a").toString(), ...Array.from({ length: 4_000 }, (_, i) => "b" + i)];
       const { raw, exitCode } = await lint(
         {
@@ -7054,7 +8807,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(1);
     });
 
-    test("json", async () => {
+    test("json prints ESLint's result object for each file", async () => {
       const { raw, exitCode } = await lint(files, ["-f", "json", "--rule", "yoda: off", "--rule", "eqeqeq: off"]);
       const results = JSON.parse(raw);
       expect(
@@ -7110,7 +8863,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(1);
     });
 
-    test("pretty", async () => {
+    test("pretty prints a code frame for each problem", async () => {
       const { stdout } = await lint(files, ["-f", "pretty"]);
       expect(stdout).toMatchInlineSnapshot(`
         "1 | var a = 1
@@ -7138,12 +8891,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       `);
     });
 
-    test("agent, which is the default for an agent", async () => {
-      const [named, detected] = await Promise.all([
+    test("agent is the default when AGENT=1 is set", async () => {
+      const [explicit, detected] = await Promise.all([
         lint(files, ["-f", "agent"]),
         lint(files, [], { env: { AGENT: "1" } }),
       ]);
-      expect(named.stdout).toMatchInlineSnapshot(`
+      expect(explicit.stdout).toMatchInlineSnapshot(`
         "<warning file="src/a.js" line="1" column="1" rule="no-var" fixable="true">
         Unexpected var, use let or const instead.
         <source>
@@ -7178,28 +8931,28 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         </source>
         </error>"
       `);
-      expect(detected.stdout).toBe(named.stdout);
+      expect(detected.stdout).toBe(explicit.stdout);
     });
 
-    test("github, which GitHub Actions gets besides the report", async () => {
-      const [named, detected] = await Promise.all([
+    test("github is also printed after the report in GitHub Actions", async () => {
+      const [explicit, detected] = await Promise.all([
         lint(files, ["-f", "github", "--quiet"]),
         lint(files, ["--quiet"], { env: { GITHUB_ACTIONS: "true" } }),
       ]);
-      expect(named.stdout).toMatchInlineSnapshot(`
+      expect(explicit.stdout).toMatchInlineSnapshot(`
         "::error file=src/a.js,line=2,col=5,endLine=2,endColumn=11,title=yoda::Expected literal to be on the left side of ==.
         ::error file=src/a.js,line=2,col=7,endLine=2,endColumn=9,title=eqeqeq::Expected '===' and instead saw '=='.
         ::error file=src/a.js,line=2,col=15,endLine=2,endColumn=24,title=no-debugger::Unexpected 'debugger' statement."
       `);
       expect(detected.stdout).toContain("✖ 3 problems (3 errors, 0 warnings)");
-      expect(detected.stdout).toEndWith(named.stdout);
+      expect(detected.stdout).toEndWith(explicit.stdout);
     });
 
     test.each(["stylish", "unix", "json"])(
-      "what GitHub Actions gets is not in the file of --output-file, nor among the lines of unix: %s",
+      "GitHub Actions annotations aren't written to --output-file or mixed into unix or json output: %s",
       async format => {
         const inActions = { env: { GITHUB_ACTIONS: "true" }, reads: ["report.txt"] };
-        const [named, plain, toFile, toStdout] = await Promise.all([
+        const [explicit, plain, toFile, toStdout] = await Promise.all([
           lint(files, ["-f", "github", "--quiet"]),
           lint(files, ["-f", format, "--quiet", "-o", "report.txt"], { reads: ["report.txt"] }),
           lint(files, ["-f", format, "--quiet", "-o", "report.txt"], inActions),
@@ -7209,12 +8962,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           plain.files["report.txt"].replaceAll(/bun-lint_\w+/g, ""),
         );
         expect(toFile.files["report.txt"]).not.toContain("::error");
-        expect(toFile.stdout).toBe(named.stdout);
+        expect(toFile.stdout).toBe(explicit.stdout);
         expect(toStdout.stdout.includes("::error")).toBe(format === "stylish");
       },
     );
 
-    test("checkstyle, junit, gitlab and sarif are those of oxlint", async () => {
+    test("checkstyle, junit, gitlab and sarif match oxlint's output", async () => {
       const [checkstyle, junit, gitlab, sarif] = await Promise.all(
         ["checkstyle", "junit", "gitlab", "sarif"].map(format => lint(files, ["-f", format, "--rule", "yoda: off"])),
       );
@@ -7243,7 +8996,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect([checkstyle, junit, gitlab, sarif].map(it => it.exitCode)).toEqual([1, 1, 1, 1]);
     });
 
-    test("identical problems are grouped above 50, unless --all", async () => {
+    test("pretty groups identical problems when there are more than 50, unless --all is passed", async () => {
       const many = { "eslint.config.js": basic, "a.js": Buffer.alloc(10 * 60, "debugger;\n").toString() };
       const [grouped, all] = await Promise.all([lint(many, ["-f", "pretty"]), lint(many, ["-f", "pretty", "--all"])]);
       expect(grouped.stdout).toMatchInlineSnapshot(`
@@ -7259,7 +9012,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(all.stdout.match(/Unexpected 'debugger' statement/g)).toHaveLength(60);
     });
 
-    test("--output-file", async () => {
+    test("--output-file writes the report to the file instead of stdout", async () => {
       const result = await lint(files, ["-f", "unix", "-o", "reports/lint.txt", "--quiet"], {
         reads: ["reports/lint.txt"],
       });
@@ -7268,13 +9021,34 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(result.exitCode).toBe(1);
     });
 
-    test("an unknown format fails with 2", async () => {
+    // Every write to /dev/full fails with ENOSPC, as on a full disk.
+    test
+      .skipIf(!isLinux)
+      .each([[["-f", "json"]], [["--fix-dry-run", "-f", "json"]], [["--print-config", "a.js"]], [["--rules"]]])(
+      "exits with code 2 when writing to standard output fails: %j",
+      async args => {
+        using dir = tempDir("bun-lint", { "eslint.config.js": basic, "a.js": "export {};\n" });
+        await using proc = spawn({
+          cmd: ["sh", "-c", 'exec "$0" "$@" > /dev/full', ...command, ...args],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("error: Cannot write standard output: ENOSPC: ");
+        expect(exitCode).toBe(2);
+      },
+    );
+
+    test("an unknown format exits with code 2", async () => {
       const { stderr, exitCode } = await lint(files, ["-f", "nothing"]);
       expect(stderr).toContain('Unknown format "nothing"\n');
       expect(exitCode).toBe(2);
     });
 
-    test("a syntax error is a fatal problem of the file", async () => {
+    test("a syntax error is a fatal problem, and --exit-on-fatal-error exits with code 2", async () => {
       const broken = { "eslint.config.js": basic, "a.js": "const = 1;\n", "b.js": "debugger;\n" };
       const [plain, strict] = await Promise.all([
         lint(broken, ["-f", "json"]),
@@ -7291,10 +9065,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     });
   });
 
-  // What oxlint 1.87 does with tsgolint 7.0.2003. tsgolint reads the file on its own; oxlint has not seen the comments.
-  // Each is what oxlint 1.87 says. Where it says nothing it lints the file.
-  test("`using` at the top level of a script is refused as oxc refuses it", async () => {
-    const refused = "'using' declarations are not allowed at the top level of a script";
+  // These are oxlint 1.87's errors. It lints the files that have no error here.
+  test("rejects `using` at the top level of a script like oxc", async () => {
+    const message = "'using' declarations are not allowed at the top level of a script";
     const cases: Record<string, [code: string, at?: string]> = {
       "a0.js": ["using a = 1;", "1:1"],
       "a1.ts": ["using a = 1;", "1:1"],
@@ -7322,11 +9095,11 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         .split("\n")
         .filter(line => line.endsWith("]"))
         .sort(),
-    ).toEqual(Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${refused} [Error]`] : [])));
+    ).toEqual(Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${message} [Error]`] : [])));
   });
 
-  // The same.
-  test("`export =` beside another export is refused as oxc refuses it", async () => {
+  // Same as oxlint 1.87.
+  test("rejects `export =` in a module with other exports like oxc", async () => {
     const cases: Record<string, [code: string, at?: string]> = {
       "a0.ts": ["export const a = 1;\nexport = a;", "2:1"],
       "a1.ts": ["const a = 1;\nexport = a;\nexport const b = 2;", "2:1"],
@@ -7349,30 +9122,30 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
     const oxlintrc = JSON.stringify({ categories: { correctness: "off" } });
     const { stdout } = await lint({ ".oxlintrc.json": oxlintrc, ...files }, ["-f", "unix"]);
-    const refused = "An export assignment cannot be used in a module with other exported elements";
+    const message = "An export assignment cannot be used in a module with other exported elements";
     expect(
       stdout
         .split("\n")
         .filter(line => line.endsWith("]"))
         .sort(),
     ).toEqual(
-      Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${refused} [Error/TS(2309)]`] : [])),
+      Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${message} [Error/TS(2309)]`] : [])),
     );
   });
 
-  // The same.
-  test("only a namespace can be deferred, as for oxc", async () => {
-    const [ofDefault, ofNamed] = [
+  // Same as oxlint 1.87.
+  test("rejects `import defer` of anything but a namespace like oxc", async () => {
+    const [defaultImports, namedImports] = [
       ["Default imports", 18058],
       ["Named imports", 18059],
     ].map(([it, code]) => `1:8: ${it} are not allowed in a deferred import. [Error/TS(${code})]`);
     const cases: Record<string, [code: string, refusal?: string]> = {
-      "a0.ts": ['import defer x from "m";', ofDefault],
-      "a1.ts": ['import defer { a } from "m";', ofNamed],
-      "a2.js": ['import defer x from "m";', ofDefault],
-      "a3.js": ['import defer { a } from "m";', ofNamed],
-      "a4.ts": ['import defer x, { a } from "m";', ofDefault],
-      "a5.ts": ['import defer x, * as n from "m";', ofDefault],
+      "a0.ts": ['import defer x from "m";', defaultImports],
+      "a1.ts": ['import defer { a } from "m";', namedImports],
+      "a2.js": ['import defer x from "m";', defaultImports],
+      "a3.js": ['import defer { a } from "m";', namedImports],
+      "a4.ts": ['import defer x, { a } from "m";', defaultImports],
+      "a5.ts": ['import defer x, * as n from "m";', defaultImports],
       "b0.ts": ['import defer * as n from "m";'],
       "b1.js": ['import defer * as n from "m";'],
       "b2.ts": ['import defer from "m";'],
@@ -7388,13 +9161,14 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         .split("\n")
         .filter(line => line.endsWith("]"))
         .sort(),
-    ).toEqual(Object.entries(cases).flatMap(([name, [, refusal]]) => (refusal ? [`${name}:${refusal}`] : [])));
+    ).toEqual(Object.entries(cases).flatMap(([name, [, error]]) => (error ? [`${name}:${error}`] : [])));
   });
 
-  // The same.
-  test("`declare` in what is ambient already, and `for await` where nothing waits, are refused as oxc refuses them", async () => {
+  // Same as oxlint 1.87.
+  test("rejects `declare` in an ambient context and `for await` outside async code like oxc", async () => {
     const declared = "A 'declare' modifier cannot be used in an already ambient context. [Error/TS(1038)]";
-    const waits = "`for await` loops are only allowed within async functions and at the top levels of modules [Error]";
+    const forAwaitError =
+      "`for await` loops are only allowed within async functions and at the top levels of modules [Error]";
     const cases: Record<string, [code: string, refusal?: string]> = {
       "a0.ts": ["declare namespace A { declare const b: 1; }", `1:23: ${declared}`],
       "a1.ts": ['declare module "m" { declare function f(): void; }', `1:22: ${declared}`],
@@ -7412,12 +9186,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       "b3.ts": ["declare class A { declare x: 1; }"],
       "b4.d.ts": ["export declare const a: 1;"],
       "b5.d.ts": ['declare module "m" { export declare const a: 1; }'],
-      "c0.ts": ["for await (const x of y) {}", `1:5: ${waits}`],
-      "c1.js": ["for await (const x of y) {}", `1:5: ${waits}`],
-      "c2.cjs": ["for await (const x of y) {}", `1:5: ${waits}`],
-      "c3.ts": ["function f() { for await (const x of y) {} }", `1:20: ${waits}`],
-      "c4.ts": ["{ for await (const x of y) {} }", `1:7: ${waits}`],
-      "c5.js": ["const f = () => { for await (const x of y) {} };", `1:23: ${waits}`],
+      "c0.ts": ["for await (const x of y) {}", `1:5: ${forAwaitError}`],
+      "c1.js": ["for await (const x of y) {}", `1:5: ${forAwaitError}`],
+      "c2.cjs": ["for await (const x of y) {}", `1:5: ${forAwaitError}`],
+      "c3.ts": ["function f() { for await (const x of y) {} }", `1:20: ${forAwaitError}`],
+      "c4.ts": ["{ for await (const x of y) {} }", `1:7: ${forAwaitError}`],
+      "c5.js": ["const f = () => { for await (const x of y) {} };", `1:23: ${forAwaitError}`],
       "d0.ts": ["for await (const x of y) {}\nexport {};"],
       "d1.mjs": ["for await (const x of y) {}"],
       "d2.ts": ["async function f() { for await (const x of y) {} }"],
@@ -7431,11 +9205,11 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         .split("\n")
         .filter(line => line.endsWith("]"))
         .sort(),
-    ).toEqual(Object.entries(cases).flatMap(([name, [, refusal]]) => (refusal ? [`${name}:${refusal}`] : [])));
+    ).toEqual(Object.entries(cases).flatMap(([name, [, error]]) => (error ? [`${name}:${error}`] : [])));
   });
 
-  // The same.
-  test("`with` is refused where the code is strict for oxc, and in TypeScript", async () => {
+  // Same as oxlint 1.87.
+  test("rejects `with` in TypeScript and wherever oxc treats the code as strict", async () => {
     const cases: Record<string, [code: string, at?: string]> = {
       "a0.mjs": ["with (a) {}", "1:1"],
       "a1.ts": ["with (a) {}", "1:1"],
@@ -7466,7 +9240,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     );
   });
 
-  test("in a file that oxc refuses for an early error, the rules that need types go on", async () => {
+  // Same as oxlint 1.87 with tsgolint 7.0.2003. tsgolint reads the file itself, and oxlint never saw the comments, so
+  // the disable comments are ignored.
+  test("type-aware rules still run on a file that oxc rejects for an early error", async () => {
     const files = {
       "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, lib: ["es2022"], types: [] } }),
       ".oxlintrc.json": JSON.stringify({
@@ -7484,12 +9260,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         "export { f, y };\n",
     };
     const flags = ["--type-aware", "--report-unused-disable-directives", "-f", "unix", "a.ts"];
-    const places = (stdout: string) =>
+    const reportsIn = (stdout: string) =>
       stdout
         .split("\n")
         .flatMap(it => /^a\.ts:(\d+:\d+): .* \[Error(\/.*)?\]$/.exec(it)?.slice(1, 3).join(" ").trim() ?? []);
     const { stdout, exitCode } = await lint(files, flags);
-    expect(places(stdout).sort()).toEqual([
+    expect(reportsIn(stdout).sort()).toEqual([
       "2:12",
       "2:43 /typescript(no-unnecessary-type-assertion)",
       "4:1 /typescript(no-floating-promises)",
@@ -7522,7 +9298,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       "b.ts": `export async function later() {}\nexport const text: string = "";\n`,
     };
 
-    test("a note says that the typescript of the project is older than the one as which types are checked", async () => {
+    test("a run that fails prints a note if the installed typescript is older than the version bun lint emulates", async () => {
       const notes = async (version: string, more: Record<string, string> = {}, ...flags: string[]) => {
         const installed = { "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }) };
         const { stderr } = await lint({ ...files, ...installed, ...more }, ["-f", "stylish", ...flags]);
@@ -7533,14 +9309,17 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       ]);
       expect(await notes("7.0.2")).toEqual([]);
       expect(await notes("5.8.3", {}, "--quiet")).toEqual([]);
+      // The run passes, because there are only warnings.
+      const warns = files["eslint.config.js"].replaceAll(`"error"`, `"warn"`);
+      expect(await notes("5.8.3", { "eslint.config.js": warns })).toEqual([]);
       // No rule needs types.
       const untyped = files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { "no-debugger": "error" }`);
-      expect(await notes("5.8.3", { "eslint.config.js": untyped })).toEqual([]);
+      expect(await notes("5.8.3", { "eslint.config.js": untyped, "a.ts": "debugger;\n" })).toEqual([]);
     });
 
-    // `textContent` of an `Element` is `string | null` up to TypeScript 5.8 and `string` since: a `!` that is removed for the
-    // library that is built in is an error to the compiler that the project has.
-    test("the library is that of the typescript that is installed for the project", async () => {
+    // `Element.textContent` is `string | null` up to TypeScript 5.8 and `string` after that. Removing a `!` that's
+    // unnecessary with the built-in library would be an error for the project's own compiler.
+    test("uses the lib files of the typescript installed in the project", async () => {
       const names = ["Boolean", "CallableFunction", "Function", "IArguments", "NewableFunction", "Number", "Object"];
       const library = (marker: string) =>
         [
@@ -7560,7 +9339,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           "b/tsconfig.json": config("es5"),
           "b/node_modules/typescript/lib/lib.es5.d.ts": library("string"),
           "b/b.ts": "export const b = marker!;\n",
-          // It has no lib.es2022.d.ts, so the library is the one that is built in, which has no `marker`.
+          // This typescript has no lib.es2022.d.ts, so the built-in library is used, which has no `marker`.
           "c/tsconfig.json": config("es2022"),
           "c/node_modules/typescript/lib/lib.es5.d.ts": library("string"),
           "c/c.ts": "export const c = marker!;\n",
@@ -7576,7 +9355,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(1);
     });
 
-    describe("the globals of a file are those that the types of its program declare", () => {
+    describe("a file's globals are the ones that its program's types declare", () => {
       const tsconfig = (options: object, rest: object = {}) =>
         JSON.stringify({
           compilerOptions: { allowJs: true, checkJs: true, noEmit: true, strict: true, ...options },
@@ -7594,7 +9373,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         rules: { "no-undef": "error" },
         languageOptions: { globals: { window: "readonly", mine: "off" } },
       }];`;
-      /** The names that `rule` reports, in the order of the report. */
+      /** Returns `<file> <name>` for each problem that `rule` reports, in output order. */
       const reported = (stdout: string, rule: string) =>
         stdout
           .split("\n")
@@ -7602,19 +9381,20 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           .map(it => `${it.split(":")[0].replace("<dir>/", "")} ${/'([^']+)'/.exec(it)![1]}`);
 
       test.concurrent.each([
-        // In the place of the environments: the project has neither the DOM's library nor the types of Node. `Bun` stays.
-        ["--infer-globals", {}, ["--infer-globals"], ["console", "window", "typo", "OnlyAType"]],
-        ["without it", {}, [], ["fromTypes", "alsoFromTypes", "mine", "typo", "OnlyAType"]],
-        // As ESLint.
+        // The types replace the default environments, and this project has neither the DOM library nor Node's types.
+        // `Bun` is still defined.
+        ["with --infer-globals", {}, ["--infer-globals"], ["console", "window", "typo", "OnlyAType"]],
+        ["without --infer-globals", {}, [], ["fromTypes", "alsoFromTypes", "mine", "typo", "OnlyAType"]],
+        // Same as ESLint.
         [
-          "with a configuration file",
+          "with a config file",
           { "eslint.config.js": config },
           [],
           ["console", "fromTypes", "alsoFromTypes", "mine", "typo", "OnlyAType", "Bun"],
         ],
-        // Besides what it says, and what it turns off stays off.
+        // The types add to the config's globals, and a global that the config turns off stays off.
         [
-          "with a configuration file and --infer-globals",
+          "with a config file and --infer-globals",
           { "eslint.config.js": config },
           ["--infer-globals"],
           ["console", "mine", "typo", "OnlyAType", "Bun"],
@@ -7625,7 +9405,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(exitCode).toBe(1);
       });
 
-      test("what a library or a package declares is readonly, and so is all but a `var` or a `let` of the project", async () => {
+      test("globals from a library or a package are readonly, and so are the project's own except `var` and `let`", async () => {
         const { stdout, exitCode } = await lint(
           {
             ...tree,
@@ -7642,7 +9422,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(exitCode).toBe(0);
       });
 
-      test("a project in which no file can declare a global has its libraries and its types", async () => {
+      test("a project in which no file can declare a global still gets the globals of its `lib` and `types`", async () => {
         const { "globals.d.ts": _, ...rest } = tree;
         const text = "export {};\nvoid [Array, fromTypes, typo];\n";
         const { stdout, exitCode } = await lint({ ...rest, "a.js": text }, ["-f", "unix", "--infer-globals"]);
@@ -7650,8 +9430,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(exitCode).toBe(1);
       });
 
-      // TypeScript reports nothing in such a file, so nobody has seen to it that what it uses is declared.
-      test("where the project does not check its JavaScript, its types only add to the environments", async () => {
+      // TypeScript doesn't report anything in such a file, so nothing guarantees that the globals it uses are declared.
+      test("without checkJs, the project's types add to the default environments instead of replacing them", async () => {
         const { stdout, exitCode } = await lint(
           {
             ...tree,
@@ -7664,8 +9444,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(exitCode).toBe(1);
       });
 
-      // The program is loaded for the rules that need types, so what it declares costs nothing more.
-      test("a file that is linted with types has them without --infer-globals", async () => {
+      // The program is already loaded for the type-aware rules, so reading its globals costs nothing extra.
+      test("a file linted with --type-aware gets these globals without --infer-globals", async () => {
         const all = { ...tree, "a.ts": "fromTypes = mine = '';\nexport {};\n" };
         const [typed, untyped] = await Promise.all([
           lint(all, ["-f", "unix", "--type-aware", "a.ts"]),
@@ -7675,47 +9455,47 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         expect(reported(untyped.stdout, "no-global-assign")).toEqual([]);
       });
 
-      // No file of the project is read before a name is about to be reported.
-      describe("--infer-globals=fast: the options of the project choose the environments, and its types have the last word", () => {
+      // None of the project's files are read until a name is about to be reported.
+      describe("--infer-globals=fast picks environments from the compiler options and checks the types before it reports a name", () => {
         const node = {
           "node_modules/@types/node/package.json": `{ "name": "@types/node", "version": "1.0.0", "types": "index.d.ts" }`,
           "node_modules/@types/node/index.d.ts": "declare var process: object;\n",
         };
         test.concurrent.each([
           [
-            "as --infer-globals",
+            "reports the same names as --infer-globals",
             { lib: ["es2022"], types: ["a"] },
             "console.log(fromTypes, alsoFromTypes, mine, window, typo, OnlyAType, Bun);\n",
             ["console", "window", "typo", "OnlyAType"],
           ],
           [
-            "the edition is that of `lib`",
+            "`lib` sets the ECMAScript edition",
             { lib: ["es5"], types: [] },
             "void [Array, Promise, Map];\n",
             ["Promise", "Map"],
           ],
           [
-            "a part of an edition",
+            "`lib` can add part of an edition",
             { lib: ["es5", "es2015.promise"], types: [] },
             "void [Array, Promise, Map];\n",
             ["Map"],
           ],
           [
-            "`target` without `lib` stands for its edition and a browser",
+            "`target` without `lib` means its edition plus the browser globals",
             { target: "es2020", types: [] },
             "void [window, BigInt, process, WeakRef];\n",
             ["process", "WeakRef"],
           ],
-          ["a package of types", { lib: ["es2022"], types: ["node"] }, "void [process, window];\n", ["window"]],
-          // Nothing is known then.
+          ["`types` adds Node globals", { lib: ["es2022"], types: ["node"] }, "void [process, window];\n", ["window"]],
+          // The project's globals are unknown then, so the default environments apply.
           [
-            "a package of types that is not installed",
+            "`types` lists a package that isn't installed",
             { lib: ["es2022"], types: ["no"] },
             "void [window, typo];\n",
             ["typo"],
           ],
           [
-            "a project that does not check its JavaScript",
+            "a project without checkJs",
             { lib: ["es2022"], types: ["a"], checkJs: false },
             "void [fromTypes, mine, process, window, typo];\n",
             ["typo"],
@@ -7727,8 +9507,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           expect(exitCode).toBe(1);
         });
 
-        // The search for files has seen the configuration files below where it began. The system is asked for the others.
-        test("the project is the same, however the file is come by", async () => {
+        // The file search has already seen the tsconfig files under the directories it started from. The others are
+        // looked up on disk.
+        test("finds the same project whether a file is found in a directory or passed as an argument", async () => {
           const all = {
             "tsconfig.json": tsconfig({ lib: ["es2022"], types: [] }),
             "sub/deep/a.js": "void [document, typo];\n",
@@ -7743,7 +9524,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           }
         });
 
-        test("which project has a file is asked of `files`, `include`, `exclude` and `references`", async () => {
+        test("`files`, `include`, `exclude` and `references` decide which project a file belongs to", async () => {
           const text = "void [document, typo];\n";
           const bare = { lib: ["es2022"], types: [] };
           const { stdout, exitCode } = await lint(
@@ -7757,7 +9538,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
               "one/src/deep/er/in.js": text,
               "one/src/not/out.js": text,
               "one/out.js": text,
-              // `taken.ts` is in its place.
+              // The project includes `taken.ts` instead.
               "one/src/taken.js": text,
               "one/src/taken.ts": "export {};\n",
               "two/other.json": tsconfig({ ...bare, composite: true }, { files: ["named.js"] }),
@@ -7783,7 +9564,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       });
 
       test.concurrent.each(["--infer-globals", "--infer-globals=fast"])(
-        "a NUL in a path of the configuration file: %s",
+        "a project with a NUL in a `references` path still works: %s",
         async flag => {
           const { stdout, exitCode } = await lint(
             {
@@ -7800,9 +9581,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         },
       );
 
-      // The request is made by a thread of the pool, for which the others wait. With references it has threads of its own.
+      // A pool thread makes the request while the others wait. With references, the request starts its own threads.
       test.concurrent.each(["--infer-globals", "--infer-globals=fast"])(
-        "as many threads as the pool has, and a project with references: %s",
+        "doesn't hang when every pool thread asks for a project with references: %s",
         async flag => {
           const names = Array.from({ length: 24 }, (_, i) => `r${i}`);
           const long = Array.from({ length: 4000 }, (_, i) => `const x${i} = ${i};\nvoid x${i};\n`).join("");
@@ -7831,18 +9612,18 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         },
       );
 
-      test("each project has its own, and a file that no project includes has the environments", async () => {
+      test("each project has its own globals, and a file that no project includes gets the default environments", async () => {
         const text = "void [document, process, typo];\n";
         const { stdout, exitCode } = await lint(
           {
             "web/tsconfig.json": tsconfig({ lib: ["es2022", "dom"], types: [] }, { include: ["src"] }),
             "web/src/a.js": text,
-            // Beside the project, not of it.
+            // In the project's directory, but not included by it.
             "web/build.js": text,
             "cli/tsconfig.json": tsconfig({ lib: ["es2022"], types: [] }),
             "cli/a.js": text,
             "cli/global.ts": "export {};\ndeclare global {\n  var process: object;\n}\n",
-            // A script: what it declares at the top is in every file of the project.
+            // A script's top-level declarations are visible in every file of the project.
             "old/jsconfig.json": tsconfig({ lib: ["es5"], types: [] }),
             "old/first.js": "var process = {};\nfunction document() {}\n",
             "old/second.js": text,
@@ -7863,9 +9644,10 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       });
     });
 
-    // Which project a file is checked in is seen from `strictNullChecks`: without it the rule reports, and says at 0:1 that it
-    // needs it. As ESLint 10.12 with typescript-eslint 8.71.1 under `--fix` or in an editor.
-    describe("parserOptions.project names the projects", () => {
+    // `strictNullChecks` shows which project a file was checked in. Without it, no-unnecessary-condition reports the
+    // condition, and also reports at 0:1 that it needs `strictNullChecks`. Same as ESLint 10.12 with typescript-eslint
+    // 8.71.1 under `--fix` or in an editor.
+    describe("parserOptions.project picks each file's project", () => {
       const tsconfig = (strict: boolean, include?: string[]) =>
         JSON.stringify({ compilerOptions: { ...JSON.parse(files["tsconfig.json"]).compilerOptions, strict }, include });
       const text = "declare const o: { b: number } | null;\nexport const x = o ? 1 : 2;\n";
@@ -7881,13 +9663,13 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       test.concurrent.each([
         [`{ projectService: true }`, []],
         [`{ project: true }`, []],
-        // Not the nearest. What it does not include is checked with the nearest.
+        // It overrides the nearest tsconfig.json. Files that it doesn't include are still checked with the nearest one.
         [`{ project: "./tsconfig.loose.json" }`, ["a.ts", "sub/s.ts"]],
-        // The first that includes the file.
+        // The first project that includes the file wins.
         [`{ project: ["./tsconfig.loose.json", "./tsconfig.strict.json"] }`, ["a.ts", "sub/s.ts"]],
         [`{ project: ["./tsconfig.strict.json", "./tsconfig.loose.json"] }`, ["sub/s.ts"]],
         [`{ project: ["./g/*/tsconfig.json"] }`, ["g/x.ts"]],
-        // A name comes before what a pattern finds, wherever it stands.
+        // An exact path takes priority over a glob's matches, wherever it is in the list.
         [`{ project: ["./g/*/tsconfig.json", "./g/b/tsconfig.json"] }`, []],
         [`{ project: ["./g/**/tsconfig.json"] }`, ["g/x.ts"]],
         [`{ project: ["./g/**/tsconfig.json"], projectFolderIgnoreList: [] }`, ["g/x.ts", "g/y.ts"]],
@@ -7898,23 +9680,24 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           .replace("{ projectService: true }", parserOptions)
           .replace(/rules: \{.*\}/, `rules: { "@typescript-eslint/no-unnecessary-condition": "error" }`);
         const { stdout, exitCode } = await lint({ ...tree, "eslint.config.js": config }, ["-f", "unix"]);
-        const places = stdout.split("\n").filter(it => it.includes("[Error/"));
-        expect(places.map(it => it.split(": ")[0])).toEqual(
+        const errorLines = stdout.split("\n").filter(it => it.includes("[Error/"));
+        expect(errorLines.map(it => it.split(": ")[0])).toEqual(
           loose.flatMap(it => [`<dir>/${it}:0:1`, `<dir>/${it}:2:18`]),
         );
         expect(exitCode).toBe(loose.length > 0 ? 1 : 0);
       });
     });
 
-    // The defaults of compiler options that TypeScript 6.0 has changed and that a rule can see, each in a project of its own.
-    // What is expected is what ESLint 10.12 with typescript-eslint 8.71.1 reports with TypeScript 5.9.3 and with 6.0.3 installed.
-    describe("the defaults of compiler options are those of the typescript that is installed for the project", () => {
+    // Every compiler option whose default changed in TypeScript 6.0 in a way that a rule can observe, each in its own
+    // project. The expected reports are what ESLint 10.12 with typescript-eslint 8.71.1 prints with TypeScript 5.9.3
+    // and with 6.0.3 installed.
+    describe("compiler option defaults match the project's installed typescript version", () => {
       const names = ["assignment", "call", "member-access", "return"].map(it => `no-unsafe-${it}`);
       const rules = [...names, "no-unnecessary-condition"].map(it => `"@typescript-eslint/${it}": "error"`).join(", ");
       const config = files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { ${rules} }`);
       type Probe = { options: object; files: Record<string, string>; with5: string[]; with6: string[] };
       const probes: Record<string, Probe> = {
-        // `strict`, and with it `strictNullChecks`
+        // `strict`, which turns on `strictNullChecks`
         "strict": {
           options: {
             "noEmit": true,
@@ -7928,7 +9711,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["0:1 no-unnecessary-condition", "2:19 no-unnecessary-condition"],
           with6: [],
         },
-        // `useUnknownInCatchVariables` and `noImplicitAny`, which `strict` stands for
+        // `useUnknownInCatchVariables` and `noImplicitAny`, which `strict` also turns on
         "catch-variable": {
           options: {
             "noEmit": true,
@@ -7951,7 +9734,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           ],
           with6: ["1:53 no-unsafe-return", "2:24 no-unsafe-return", "2:33 no-unsafe-member-access"],
         },
-        // `types`: every `@types/*` that is installed, or none
+        // `types`: every installed `@types/*` package, or none
         "types": {
           options: {
             "strict": true,
@@ -7970,14 +9753,14 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: [],
           with6: ["1:14 no-unsafe-assignment", "1:23 no-unsafe-member-access"],
         },
-        // `target`, and with it the library: ES5 has no `includes`
+        // `target`, which also picks the default `lib`. ES5 has no `includes`.
         "target": {
           options: { "strict": true, "noEmit": true, "types": [], "module": "esnext", "moduleResolution": "bundler" },
           files: { "a.ts": "export const x1 = [1].includes(1);\n" },
           with5: ["1:14 no-unsafe-assignment", "1:19 no-unsafe-call"],
           with6: [],
         },
-        // `module`, and with it `moduleResolution`: `classic` does not look into node_modules
+        // `module`, which also picks the default `moduleResolution`. `classic` doesn't look in node_modules.
         "module": {
           options: { "strict": true, "noEmit": true, "types": [], "target": "es2022", "lib": ["es2022"] },
           files: {
@@ -7988,7 +9771,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
           with6: [],
         },
-        // `moduleResolution` beside `module: esnext`
+        // The default `moduleResolution` with `module: esnext`
         "module-resolution": {
           options: {
             "strict": true,
@@ -8006,7 +9789,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
           with6: [],
         },
-        // `exports` of a package, which only the newer ways of resolving read
+        // A package's `exports`, which only the newer `moduleResolution` modes read
         "exports-map": {
           options: { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] },
           files: {
@@ -8057,8 +9840,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["2:14 no-unsafe-assignment", "2:28 no-unsafe-member-access"],
           with6: ["1:14 no-unsafe-assignment", "1:26 no-unsafe-member-access"],
         },
-        // What TypeScript 7.0 has removed means what it meant as long as a TypeScript before it is installed.
-        // `baseUrl`: what is neither relative nor a package
+        // Options that TypeScript 7.0 removed keep their old meaning as long as an older TypeScript is installed.
+        // `baseUrl`: resolves an import that's neither relative nor a package
         "explicit-base-url": {
           options: {
             "strict": true,
@@ -8097,7 +9880,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: [],
           with6: [],
         },
-        // An inherited `baseUrl` counts from the file that has it
+        // An inherited `baseUrl` is relative to the file that sets it
         "explicit-base-url-extends": {
           options: {},
           files: {
@@ -8112,7 +9895,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["4:14 no-unsafe-assignment", "4:21 no-unsafe-member-access"],
           with6: ["4:14 no-unsafe-assignment", "4:21 no-unsafe-member-access"],
         },
-        // `moduleResolution: node10` does not know `exports`
+        // `moduleResolution: node10` ignores `exports`
         "explicit-node10-exports": {
           options: {
             "strict": true,
@@ -8132,7 +9915,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
           with6: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
         },
-        // but for an import that says how it is to be resolved: that one knows all of it, and each way has its own
+        // An import with a `resolution-mode` attribute still reads `exports`, with that mode's conditions
         "explicit-node10-resolution-mode": {
           options: {
             "strict": true,
@@ -8159,7 +9942,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["8:29 no-unsafe-return", "9:29 no-unsafe-return", "9:31 no-unsafe-member-access"],
           with6: ["8:29 no-unsafe-return", "9:29 no-unsafe-return", "9:31 no-unsafe-member-access"],
         },
-        // nor the name of the package itself
+        // `moduleResolution: node` doesn't resolve the package's own name either
         "explicit-node-self-name": {
           options: {
             "strict": true,
@@ -8178,7 +9961,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
           with6: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
         },
-        // `moduleResolution: classic` does not look into node_modules
+        // `moduleResolution: classic` doesn't look in node_modules
         "explicit-classic": {
           options: {
             "strict": true,
@@ -8197,7 +9980,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
           with6: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
         },
-        // `module: amd` stands for it
+        // `module: amd` implies `moduleResolution: classic`
         "explicit-module-amd": {
           options: {
             "strict": true,
@@ -8236,7 +10019,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           with5: ["2:14 no-unsafe-assignment", "2:19 no-unsafe-call"],
           with6: ["2:14 no-unsafe-assignment", "2:19 no-unsafe-call"],
         },
-        // `target: es5`, and with it the library
+        // `target: es5`, which also picks the ES5 `lib`
         "explicit-target-es5": {
           options: {
             "strict": true,
@@ -8259,7 +10042,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         ["5.9.3", "with5"],
         ["6.0.3", "with6"],
       ] as const)(
-        "%s",
+        "typescript %s",
         async (version, expected) => {
           const installed = { "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }) };
           const all = { "eslint.config.js": config, ...installed, ...Object.fromEntries(projects) };
@@ -8275,7 +10058,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       );
     });
 
-    test("run with the types of the project", async () => {
+    test("run with the project's types", async () => {
       const { stdout, exitCode } = await lint(files, ["-f", "unix"]);
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/a.ts:2:1: Promises must be awaited, end with a call to .catch, end with a call to .then with a rejection handler or be explicitly marked as ignored with the \`void\` operator. [Error/@typescript-eslint/no-floating-promises]
@@ -8286,7 +10069,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(1);
     });
 
-    test("--fix", async () => {
+    test("--fix applies their fixes", async () => {
       const result = await lint(files, ["--fix", "-f", "unix"], { reads: ["a.ts"] });
       expect(result.files).toEqual({
         "a.ts": `import { later, text } from "./b";\nlater();\nexport const a = text;\n`,
@@ -8298,8 +10081,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       `);
     });
 
-    // Each pass takes away one assertion of each file, and both projects read both files.
-    test("--fix in two projects that import each other: each pass sees what the one before has made of both", async () => {
+    // Each pass removes one assertion from each file, and both projects read both files.
+    test("--fix in two projects that import each other: each pass sees the previous pass's edits to both", async () => {
       const result = await lint(
         {
           "eslint.config.js": files["eslint.config.js"],
@@ -8327,7 +10110,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(0);
     });
 
-    test("type errors are not reported", async () => {
+    test("type errors aren't reported", async () => {
       const { raw, exitCode } = await lint({ ...files, "a.ts": `export const a: number = "";\n` }, []);
       expect(raw).toBe("");
       expect(exitCode).toBe(0);
@@ -8335,13 +10118,13 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
 
     const slow = isDebug || isASAN ? 120_000 : 30_000;
 
-    // Whether the file system takes `A` for `a`, where the projects of these tests are.
+    // True if the file system that holds these tests' temp directories is case-insensitive.
     const foldsCase = (() => {
       using dir = tempDir("bun-lint", { "probe": "" });
       return existsSync(join(String(dir), "PROBE"));
     })();
 
-    // `name:line rule` of every problem, whatever the directories are called.
+    // Returns `name:line rule` for every problem. `name` is the lowercased base name, so directory names don't matter.
     async function problems(cwd: string, args: string[], stdin?: string) {
       await using proc = spawn({
         cmd: [...command, "-f", "json", ...args],
@@ -8368,11 +10151,11 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       "a.ts:2 @typescript-eslint/no-floating-promises",
       "a.ts:3 @typescript-eslint/no-unnecessary-type-assertion",
     ];
-    // On Windows the working directory is spelled as whoever started the process spelled it.
+    // On Windows, a process's working directory keeps the spelling that its parent passed.
     const inUpperCase = (dir: string) => join(dirname(dir), basename(dir).toUpperCase());
-    const withSmallDrive = (dir: string) => dir[0].toLowerCase() + dir.slice(1);
-    // `src/a.ts` is `Src/A.ts` in tsconfig.json, and so in the program. Where the file system does not fold case, each
-    // spelling is a file of its own, and the type checker folds all the same: it finds `A.TS` where it looks for `a.ts`.
+    const withLowercaseDrive = (dir: string) => dir[0].toLowerCase() + dir.slice(1);
+    // tsconfig.json lists `src/a.ts` as `Src/A.ts`, so that's its name in the program. On a case-sensitive file system
+    // each spelling is a separate file, but the type checker folds case anyway, so a lookup of `a.ts` finds `A.TS`.
     const respelled = (text: string) => ({
       ...inSrc,
       "tsconfig.json": JSON.stringify({ ...JSON.parse(files["tsconfig.json"]), files: ["Src/A.ts"] }),
@@ -8383,7 +10166,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     });
 
     test(
-      "run however an argument or the working directory is spelled",
+      "run no matter how an argument or the working directory is spelled",
       async () => {
         using dir = tempDir("bun-lint", inSrc);
         const root = String(dir);
@@ -8404,7 +10187,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
             [inUpperCase(root), []],
           );
         }
-        if (isWindows) rows.push([withSmallDrive(root), []], [root, ["src\\a.ts"]]);
+        if (isWindows) rows.push([withLowercaseDrive(root), []], [root, ["src\\a.ts"]]);
         const results = [];
         for (const [cwd, args] of rows) {
           const { found, exitCode } = await problems(cwd, args);
@@ -8415,8 +10198,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       slow,
     );
 
-    // As ESLint 10.12.0: "File ignored because no matching configuration was supplied.", whatever the file system takes the name for.
-    test("`files` is compared with the path as it is written: **/*.ts is not for B.TS", async () => {
+    // Same as ESLint 10.12.0, which prints "File ignored because no matching configuration was supplied." even on a
+    // case-insensitive file system.
+    test("`files` patterns are case-sensitive: **/*.ts doesn't match B.TS", async () => {
       using dir = tempDir("bun-lint", { ...inSrc, "src/B.TS": files["a.ts"] });
       expect(await problems(String(dir), [join("src", "B.TS")])).toMatchObject({
         found: ["b.ts:undefined null"],
@@ -8425,7 +10209,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
     });
 
     test(
-      "run on a file that tsconfig.json spells differently",
+      "run on a file whose path is spelled differently in tsconfig.json",
       async () => {
         using dir = tempDir("bun-lint", respelled(files["a.ts"]));
         expect(await problems(String(dir), ["src/a.ts"])).toMatchObject({ found: both, exitCode: 1 });
@@ -8433,9 +10217,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       slow,
     );
 
-    // The text of the second pass, and that of standard input, is in memory under the path as it is spelled here.
+    // The second pass's text and the stdin text are held in memory under the path as spelled on the command line.
     test(
-      "--fix in several passes, and --stdin, however the path is spelled",
+      "multi-pass --fix and --stdin work no matter how the path is spelled",
       async () => {
         const names = foldsCase ? ["src/a.ts", "SRC/A.ts"] : ["src/a.ts"];
         const results = [];
@@ -8465,9 +10249,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       slow,
     );
 
-    // oxlint checks it in a project of its own, whose configuration file is in memory, in the working directory.
+    // oxlint checks it in a separate project, whose in-memory config file is in the working directory.
     test(
-      "a file that no project includes, from any working directory",
+      "run on a file that no project includes, from any working directory",
       async () => {
         using dir = tempDir("bun-lint", {
           ".oxlintrc.json": JSON.stringify({
@@ -8478,7 +10262,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         });
         const root = String(dir);
         const args = ["-c", join(root, ".oxlintrc.json"), "--type-aware", "-f", "unix", join(root, "a.ts")];
-        const from = [root, parse(root).root, ...(isWindows ? [inUpperCase(root), withSmallDrive(root)] : [])];
+        const from = [root, parse(root).root, ...(isWindows ? [inUpperCase(root), withLowercaseDrive(root)] : [])];
         const results = [];
         for (const cwd of from) {
           await using proc = spawn({ cmd: [...command, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
@@ -8491,9 +10275,9 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       slow,
     );
 
-    // `LONG-D~1` is also what NTFS calls `long-directory-name`, unless short names are turned off for the volume.
+    // `LONG-D~1` is also NTFS's short name for `long-directory-name`, unless short names are disabled for the volume.
     test.each(["LONG-D~1", ...(isWindows ? ["long-directory-name"] : [])])(
-      "in a directory that is reached as LONG-D~1 and is called %s",
+      "run in a directory named %s that's reached as LONG-D~1",
       async name => {
         using dir = tempDir(
           "bun-lint",
@@ -8507,7 +10291,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       slow,
     );
 
-    test("--fix of a file with a byte order mark, in several passes", async () => {
+    test("multi-pass --fix keeps a file's byte order mark", async () => {
       const result = await lint(
         { ...files, "a.ts": "\uFEFFdeclare const text: string;\nexport const a = text!!;\n" },
         ["--fix"],
@@ -8547,9 +10331,10 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       slow,
     );
 
-    // For TypeScript, which drops it, it is column 14. In oxlint's formats a column counts bytes, of which the mark has three, as for
-    // every other problem. (oxlint 1.87.0 puts what tsgolint reports three bytes too far to the left in all of such a file.)
-    test("a type error is where it is, with a byte order mark before it, on the disk and on standard input", async () => {
+    // TypeScript strips the mark, so for it the error is at column 14. In oxlint's formats a column counts bytes for
+    // every problem, and the mark is three bytes, so it's column 17. (oxlint 1.87.0 places everything that tsgolint
+    // reports in such a file three bytes too far left.)
+    test("a type error's column counts a leading byte order mark, both from disk and from stdin", async () => {
       const project = {
         "tsconfig.json": files["tsconfig.json"],
         ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" } }),
@@ -8562,7 +10347,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect([where(read.raw), where(piped.raw)]).toEqual(["a.ts:1:17: Type 'string'", "a.ts:1:17: Type 'string'"]);
     });
 
-    test("rules that are about several files run on a file that is linted with types", async () => {
+    test("multi-file rules like import/no-cycle also run on a file that's linted with types", async () => {
       const { raw, exitCode } = await lint(
         {
           "tsconfig.json": files["tsconfig.json"],
@@ -8587,7 +10372,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
 
     // a.ts is linted with types, b.ts without.
     test(
-      "a rule in JavaScript gets the path of the file, with and without types",
+      "a JavaScript rule gets the file's absolute path, with and without types",
       async () => {
         const { raw, exitCode } = await lint(
           {
@@ -8614,8 +10399,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
           },
           ["-f", "json", "a.ts", "b.ts"],
         );
-        const said = JSON.parse(raw).flatMap((it: any) => it.messages.map((m: any) => `${m.ruleId}: ${m.message}`));
-        expect(said.filter((it: string) => it.startsWith("p/"))).toEqual([
+        const messages = JSON.parse(raw).flatMap((it: any) => it.messages.map((m: any) => `${m.ruleId}: ${m.message}`));
+        expect(messages.filter((it: string) => it.startsWith("p/"))).toEqual([
           "p/path: true true a.ts",
           "p/path: true true b.ts",
         ]);
@@ -8624,15 +10409,15 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       slow,
     );
 
-    // As ESLint, whose `readFile` throws. Without types it always was one.
-    test("a file that cannot be read is an error", async () => {
+    // Same as ESLint, whose `readFile` throws. Without types it was already an error.
+    test("an unreadable file is an error", async () => {
       const { "a.ts": _, ...others } = files;
       using dir = tempDir("bun-lint", isLinux ? others : files);
       const path = join(String(dir), "a.ts");
       const everyone = "*S-1-1-0";
-      // It can be opened, and reading it fails, also for root.
+      // Opening the link succeeds but reading it fails, even for root.
       if (isLinux) symlinkSync("/proc/self/mem", path);
-      // Its data only: what it is, and that it can be deleted, is still to be found out.
+      // Denies reading its data only. Its attributes can still be read, and it can still be deleted.
       else if (isWindows) Bun.spawnSync({ cmd: ["icacls", path, "/deny", `${everyone}:(RD)`] });
       else chmodSync(path, 0);
       try {
@@ -8643,7 +10428,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
             return false;
           }
         })();
-        // root on macOS.
+        // root on macOS can read it anyway.
         if (canRead) return;
         const { stderr, exitCode } = await problems(String(dir), []);
         expect(stderr).toContain("Cannot read ");
@@ -8653,7 +10438,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       }
     });
 
-    describe("a project that is referenced is read from its sources", () => {
+    describe("a referenced project is read from its sources", () => {
       const compilerOptions = {
         ...JSON.parse(files["tsconfig.json"]).compilerOptions,
         noEmit: false,
@@ -8661,7 +10446,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         rootDir: "src",
         outDir: "dist",
       };
-      // Nothing is built: it has no `dist`.
+      // Nothing is built, so it has no `dist`.
       const lib = (directory: string) => ({
         [`packages/${directory}/package.json`]: JSON.stringify({
           name: "lib",
@@ -8672,7 +10457,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         [`packages/${directory}/src/index.ts`]: "export async function later() {}\n",
       });
       const app = `import { later } from "lib";\nlater();\n`;
-      // `LIB` and `INDEX.TS`: as in `respelled`.
+      // `LIB` and `INDEX.TS` are there for the same reason as in `respelled`.
       const workspace = (reference: string) => ({
         "eslint.config.js": files["eslint.config.js"],
         ...lib("lib"),
@@ -8685,12 +10470,12 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         "packages/app/src/index.ts": app,
         "packages/app/src/INDEX.TS": app,
       });
-      // The real path of the link has the drive and the directories as the system spells them.
+      // The link's real path spells the drive and the directories the way the system does.
       const rows: [reference: string, cwd: (dir: string) => string][] = [
         ["../lib", dir => dir],
         ["../LIB", dir => dir],
       ];
-      if (isWindows) rows.push(["../lib", withSmallDrive]);
+      if (isWindows) rows.push(["../lib", withLowercaseDrive]);
       test.each(rows)(
         "through a link in node_modules, referenced as %s",
         async (reference, cwd) => {
@@ -8707,9 +10492,96 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       );
     });
 
+    const floatingPromiseConfigs: [config: string, files: Record<string, string>, flags: string[]][] = [
+      ["no config", {}, ["--type-aware"]],
+      ["eslint.config.js", { "eslint.config.js": files["eslint.config.js"] }, []],
+      [
+        ".oxlintrc.json",
+        {
+          ".oxlintrc.json": JSON.stringify({
+            categories: { correctness: "off" },
+            rules: { "typescript/no-floating-promises": "error" },
+          }),
+        },
+        ["--type-aware"],
+      ],
+    ];
+    const floatingPromiseSource = "export async function save() {\n  return 1;\n}\nsave();\n";
+
+    // `tsc -b` rejects these (TS6202). `tsc -p` and editors accept them, and `bun lint` doesn't build anything either.
+    describe("tsconfig.json files with circular references", () => {
+      const compilerOptions = {
+        ...JSON.parse(files["tsconfig.json"]).compilerOptions,
+        noEmit: false,
+        composite: true,
+        rootDir: "src",
+        outDir: "dist",
+      };
+      const project = (name: string, ...references: string[]) => ({
+        [`${name}/tsconfig.json`]: JSON.stringify({
+          compilerOptions,
+          include: ["src"],
+          references: references.map(path => ({ path })),
+        }),
+        [`${name}/src/index.ts`]: floatingPromiseSource,
+      });
+      const shapes: [shape: string, files: Record<string, string>, expected: string[]][] = [
+        [
+          "a cycle of two",
+          {
+            ...project("a", "../b"),
+            ...project("b", "../a"),
+            "a/src/use.ts": `import { save } from "../../b/src/index";\nsave();\n`,
+          },
+          ["a/index.ts:4", "a/use.ts:2", "b/index.ts:4"],
+        ],
+        ["a project that references itself", project("a", "."), ["a/index.ts:4"]],
+        [
+          "a cycle of three, a project that references it and one that doesn't",
+          {
+            ...project("a", "../b"),
+            ...project("b", "../c"),
+            ...project("c", "../a"),
+            ...project("d", "../a"),
+            ...project("e"),
+          },
+          ["a/index.ts:4", "b/index.ts:4", "c/index.ts:4", "d/index.ts:4", "e/index.ts:4"],
+        ],
+      ];
+      describe.each(floatingPromiseConfigs)("%s", (_, config, flags) => {
+        describe.each(["1", "8"])("--threads %s", threads => {
+          test.each(shapes)("%s", async (_, projects, expected) => {
+            const args = ["-f", "unix", "--threads", threads, ...flags];
+            const { raw, stderr, exitCode } = await lint({ ...config, ...projects }, args);
+            const reports = raw.matchAll(/(\w)[\\/]src[\\/](\w+\.ts:\d+):\d+: .*no-floating-promises/g);
+            const found = Array.from(reports, it => `${it[1]}/${it[2]}`);
+            expect(found.sort()).toEqual(expected);
+            expect(stderr).not.toContain("without type information");
+            expect(exitCode).toBe(1);
+          });
+        });
+      });
+    });
+
+    // Opening the link succeeds but reading it fails, even for root.
+    test.skipIf(!isLinux).each(floatingPromiseConfigs.slice(0, 2))(
+      "reports an unreadable tsconfig.json and lints its files without types: %s",
+      async (_, config, flags) => {
+        const { raw, exitCode } = await lint(
+          { ...config, "src/index.ts": "debugger;\n" + floatingPromiseSource },
+          ["-f", "unix", "--rule", "no-debugger: error", ...flags],
+          { before: dir => symlinkSync("/proc/self/mem", join(dir, "tsconfig.json")) },
+        );
+        expect(raw).toMatch(/tsconfig\.json:\d+:\d+: Invalid tsconfig: Cannot read file /);
+        expect(raw).toContain("no-debugger");
+        expect(raw).not.toContain("no-floating-promises");
+        expect(exitCode).toBe(1);
+      },
+    );
+
     // `subst` gives the directory a drive letter, as in test/cli/check/check.test.ts.
     test.skipIf(!isWindows)(
-      "a project at the root of a drive",
+      "run in a project at the root of a drive",
       async () => {
         using dir = tempDir("bun-lint", {
           ...inSrc,
@@ -8727,7 +10599,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         try {
           expect((await problems(`${drive}\\`, ["src"])).found).toEqual(both);
           expect((await problems(String(dir), [`${drive}\\src\\a.ts`])).found).toEqual(both);
-          // The tsconfig.json at the root does not include it, and nothing is above the root.
+          // The root's tsconfig.json doesn't include it, and the root has no parent directory.
           await using proc = spawn({
             cmd: [...command, "--type-aware", "-f", "unix", "c.js"],
             env,
@@ -8743,19 +10615,20 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       slow,
     );
 
-    // What typescript-eslint 8.71 says. `undefined`: nothing. In two of them TypeScript 7, and so tsgolint, differs from
-    // TypeScript 6, on which typescript-eslint runs: they are as in 7.
-    test("no-deprecated finds the tags of a comment where TypeScript does", async () => {
+    // The reasons are what typescript-eslint 8.71 prints, and `undefined` means that it reports nothing. In two rows
+    // TypeScript 7, and so tsgolint, differs from TypeScript 6, which typescript-eslint runs on. Those rows expect
+    // TypeScript 7's result.
+    test("no-deprecated parses a comment's tags the way TypeScript does", async () => {
       const comments: [comment: string, reason: string | undefined][] = [
         ["/** @deprecated a\\@b c */", "a\\@b c"],
         ["/** @deprecated mail a@b.c now */", "mail a@b.c now"],
         ["/** @deprecated x @ y */", "x @ y"],
         ["/** @deprecated x @y z */", "x"],
         ["/** @deprecated `x @y` z */", "`x @y` z"],
-        // 6: "b` c"
+        // TypeScript 6: "b` c"
         ["/** text `a @deprecated b` c */", undefined],
         ["/** @deprecated (@see y) */", "(@see y)"],
-        // 6: "a"
+        // TypeScript 6: "a"
         ["/** @deprecated a @*/", "a @"],
         ["/** text@deprecated no */", undefined],
         ["/** text @deprecated yes */", "yes"],
@@ -8780,23 +10653,353 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         comments.flatMap(([, reason], i) => (reason === undefined ? [] : [`\`f${i}\` is deprecated. ${reason}`])),
       );
     });
+
+    // TypeScript 7 treats `/** @type {T} */ (e)` in JavaScript as `(e as T)`.
+    describe("a JSDoc cast", () => {
+      const project = {
+        "package.json": `{ "type": "module" }`,
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            allowJs: true,
+            checkJs: true,
+            noEmit: true,
+            target: "es2023",
+            module: "nodenext",
+            lib: ["es2023"],
+            types: [],
+          },
+        }),
+      };
+      const oxlintrc = (rules: string[]) =>
+        JSON.stringify({
+          categories: { correctness: "off" },
+          plugins: ["typescript"],
+          rules: Object.fromEntries(rules.map(it => [`typescript/${it}`, "error"])),
+        });
+      /** Returns `line:column rule` for each report. */
+      const reported = (stdout: string) =>
+        stdout
+          .split("\n")
+          .flatMap(it => /:(\d+:\d+): .*[/(]([a-z-]+)\)?\]$/.exec(it)?.slice(1).join(" ") ?? [])
+          .sort();
+      /** Returns the same list, read from the `// column rule, column rule` comments at the ends of `text`'s lines. */
+      const marked = (text: string) =>
+        text
+          .split("\n")
+          .flatMap((line, i) => (line.split(" // ")[1]?.split(", ") ?? []).map(it => `${i + 1}:${it}`))
+          .sort();
+      const rules = [
+        "await-thenable",
+        "dot-notation",
+        "no-base-to-string",
+        "no-confusing-void-expression",
+        "no-floating-promises",
+        "no-for-in-array",
+        "no-misused-promises",
+        "no-misused-spread",
+        "no-unnecessary-condition",
+        "no-unsafe-argument",
+        "no-unsafe-assignment",
+        "no-unsafe-call",
+        "no-unsafe-member-access",
+        "no-unsafe-return",
+        "no-useless-default-assignment",
+        "only-throw-error",
+        "prefer-nullish-coalescing",
+        "prefer-optional-chain",
+        "prefer-promise-reject-errors",
+        "restrict-plus-operands",
+        "restrict-template-expressions",
+        "return-await",
+        "strict-boolean-expressions",
+        "strict-void-return",
+        "switch-exhaustiveness-check",
+        "use-unknown-in-catch-callback-variable",
+      ];
+
+      test("only-throw-error uses the type that a property access is cast to", async () => {
+        const { stdout, exitCode } = await lint(
+          {
+            ...project,
+            ".oxlintrc.json": oxlintrc(["only-throw-error"]),
+            "main.mjs": `/** @param {{error?: Error}} result */
+export function fail(result) {
+  throw /** @type {Error} */ (result.error);
+}
+`,
+            "control.mjs": `/** @param {{error?: Error}} result */
+export function fail(result) {
+  const error = /** @type {Error} */ (result.error);
+  throw error;
+}
+`,
+            "control.ts": `export function fail(result: {error?: Error}) {
+  throw result.error as Error;
+}
+`,
+          },
+          ["--type-aware", "-f", "unix"],
+        );
+        expect(reported(stdout)).toEqual([]);
+        expect(exitCode).toBe(0);
+      });
+
+      // This is what oxlint 1.87 with tsgolint reports.
+      test.each([
+        [
+          "an operand has the type that it's cast to",
+          `/** @returns {Promise<number>} */
+async function later() { return 1; }
+function nothing() {}
+/** @param {() => void} callback */
+function run(callback) { callback(); }
+/**
+ * @param {any} any
+ * @param {string} text
+ * @param {string | undefined} maybe
+ * @param {number[]} list
+ * @param {{ error?: Error, inner?: { name: string } }} result
+ * @param {"a" | "b"} choice
+ */
+export async function f(any, text, maybe, list, result, choice) {
+  await /** @type {number} */ (/** @type {unknown} */ (later())); // 31 await-thenable
+  await /** @type {Promise<number>} */ (/** @type {unknown} */ (text));
+  /** @type {void} */ (/** @type {unknown} */ (later()));
+  /** @type {Promise<void>} */ (/** @type {unknown} */ (text)); // 56 no-floating-promises
+  if (/** @type {boolean} */ (/** @type {unknown} */ (later()))) nothing();
+  if (/** @type {Promise<boolean>} */ (/** @type {unknown} */ (text))) nothing(); // 63 no-misused-promises, 63 no-unnecessary-condition, 63 strict-boolean-expressions
+  if (/** @type {string} */ (maybe)) nothing();
+  if (/** @type {string | undefined} */ (text)) nothing(); // 42 strict-boolean-expressions
+  run(/** @type {() => void} */ (/** @type {unknown} */ (later)));
+  run(/** @type {() => Promise<void>} */ (/** @type {unknown} */ (nothing))); // 42 strict-void-return, 66 no-misused-promises
+  for (const key in /** @type {{}} */ (list)) run(() => void key);
+  for (const key in /** @type {number[]} */ (any)) run(() => void key); // 3 no-for-in-array
+  switch (/** @type {string} */ (choice)) { case "a": break; }
+  switch (/** @type {"a" | "b"} */ (text)) { case "a": break; } // 36 switch-exhaustiveness-check
+  /** @type {{ run(): void }} */ (any).run();
+  /** @type {any} */ (result).run(); // 22 no-unsafe-call, 31 no-unsafe-member-access
+  /** @type {() => void} */ (any)();
+  /** @type {any} */ (nothing)(); // 22 no-unsafe-call
+  run(/** @type {() => void} */ (any));
+  run(/** @type {any} */ (nothing)); // 26 no-unsafe-argument
+  return [
+    /** @type {string} */ (maybe) ?? "", // 28 no-unnecessary-condition
+    /** @type {string | undefined} */ (text) ?? "",
+    /** @type {string} */ (maybe) || "",
+    /** @type {string | undefined} */ (text) || "", // 40 strict-boolean-expressions, 46 prefer-nullish-coalescing
+    /** @type {{ name: string }} */ (result.inner)?.name, // 37 no-unnecessary-condition
+    /** @type {{ name: string } | undefined} */ (result)?.name,
+    \`\${/** @type {string} */ (any)} \${/** @type {{}} */ (text)}\`, // 57 no-base-to-string, 57 restrict-template-expressions
+    /** @type {number} */ (any) + 1,
+    /** @type {{}} */ (text) + "", // 23 no-base-to-string, 23 restrict-plus-operands
+    [.../** @type {string[]} */ (/** @type {unknown} */ (text))],
+    [.../** @type {string} */ (/** @type {unknown} */ (list))], // 6 no-misused-spread
+  ];
+}
+/** @param {any} any @returns {string} */
+export const safe = any => /** @type {string} */ (any);
+/** @param {string} text @returns {string} */
+export const unsafe = text => /** @type {any} */ (text); // 50 no-unsafe-return
+/** @param {{ error?: Error }} result */
+export function fail(result) { throw /** @type {Error} */ (result.error); }
+/** @param {Error} error */
+export function failWithText(error) { throw /** @type {string} */ (/** @type {unknown} */ (error)); } // 67 only-throw-error
+export const rejected = () => Promise.reject(/** @type {Error} */ (/** @type {unknown} */ ("text")));
+export const rejectedWithText = () => Promise.reject(/** @type {string} */ (/** @type {unknown} */ (new Error("text")))); // 39 prefer-promise-reject-errors
+export async function returned() {
+  try { return /** @type {number} */ (/** @type {unknown} */ (later())); } catch { return 1; }
+}
+export async function returnedPromise() {
+  try { return /** @type {Promise<number>} */ (/** @type {unknown} */ (1)); } catch { return 1; } // 71 return-await
+}
+`,
+        ],
+        [
+          "rules don't look through the cast, inward or outward, same as with `as`",
+          `/** @returns {Promise<number>} */
+async function later() { return 1; }
+function nothing() {}
+/**
+ * @param {string | undefined} a
+ * @param {string | undefined} b
+ * @param {boolean} flag
+ * @param {{ inner?: { name?: string }, "key": number }} object
+ */
+export async function f(a, b, flag, object) {
+  if (/** @type {boolean} */ (/** @type {unknown} */ (a && b))) nothing(); // 55 strict-boolean-expressions
+  if (/** @type {boolean} */ (/** @type {unknown} */ (a || b))) nothing(); // 55 strict-boolean-expressions, 57 prefer-nullish-coalescing
+  if (/** @type {boolean} */ (/** @type {unknown} */ (later() && later()))) nothing(); // 55 no-misused-promises, 55 no-unnecessary-condition, 55 strict-boolean-expressions
+  /** @type {void} */ (/** @type {unknown} */ (flag ? later() : later()));
+  /** @type {Promise<void>} */ (/** @type {unknown} */ (void later())); // 56 no-floating-promises
+  /** @type {Promise<void>} */ (/** @type {unknown} */ (await later())); // 56 no-floating-promises
+  /** @type {Promise<void>} */ (later().then(nothing, nothing)); // 33 no-floating-promises
+  /** @type {unknown} */ (nothing()); // 27 no-confusing-void-expression
+  if (!(/** @type {{ name?: string }} */ (object).name)) { // 42 strict-boolean-expressions
+    /** @type {{ name?: string }} */ (object).name = "text";
+  }
+  return [
+    object.inner && /** @type {{ name?: string }} */ (object.inner).name,
+    /** @type {{ name?: string } | undefined} */ (object.inner) && object.inner.name,
+    /** @type {{ name?: string } | undefined} */ (object.inner) && /** @type {{ name?: string } | undefined} */ (object.inner).name, // 50 prefer-optional-chain
+    flag && /** @type {string | undefined} */ (object.inner && object.inner.name), // 48 prefer-optional-chain
+    object[/** @type {"key"} */ ("key")],
+    /** @type {number} */ (/** @type {unknown} */ (nothing())), // 52 no-confusing-void-expression
+  ];
+}
+export async function returned(/** @type {boolean} */ flag) {
+  try { return /** @type {number} */ (/** @type {unknown} */ (flag ? later() : later())); } catch { return 1; }
+}
+export async function awaited() { return /** @type {number} */ (await later()); }
+export const caught = () => later().catch(/** @type {(error: any) => void} */ (error => error)); // 89 no-unsafe-return
+export const made = () => new Promise((_, reject) => /** @type {(reason: string) => void} */ (reject)("text")); // 94 no-confusing-void-expression
+export function optional(value = /** @type {string | undefined} */ (undefined)) { return value; }
+`,
+        ],
+      ])("with an oxlint config, %s", async (_, text) => {
+        const { stdout, exitCode } = await lint({ ...project, ".oxlintrc.json": oxlintrc(rules), "a.mjs": text }, [
+          "--type-aware",
+          "-f",
+          "unix",
+        ]);
+        expect(reported(stdout)).toEqual(marked(text));
+        expect(exitCode).toBe(1);
+      });
+
+      // This is what oxlint 1.87 with tsgolint reports. It doesn't compare the types of the casts.
+      test("with an oxlint config, prefer-optional-chain reports a chain that starts with a cast, in TypeScript too", async () => {
+        const text = `type Inner = { name: string };
+export const f = (object: { inner?: Inner }) => [
+  (object.inner as Inner | undefined) && (object.inner as Inner | undefined).name, // 3 prefer-optional-chain
+  (object.inner as Inner | undefined) && (object.inner as Inner | null).name, // 3 prefer-optional-chain
+  (<Inner | undefined>object.inner) && (<Inner | undefined>object.inner).name, // 3 prefer-optional-chain
+  (object.inner satisfies Inner | undefined) && (object.inner satisfies Inner | undefined).name,
+  object.inner && (object.inner as Inner).name,
+  (object.inner as Inner | undefined) && object.inner.name,
+  (object.inner as Inner | undefined) != null && (object.inner as Inner | undefined).name, // 3 prefer-optional-chain
+  !(object.inner as Inner | undefined) || !(object.inner as Inner | undefined).name, // 3 prefer-optional-chain
+];
+`;
+        const { stdout, exitCode } = await lint(
+          { ...project, ".oxlintrc.json": oxlintrc(["prefer-optional-chain"]), "a.ts": text },
+          ["--type-aware", "-f", "unix"],
+        );
+        expect(reported(stdout)).toEqual(marked(text));
+        expect(exitCode).toBe(1);
+      });
+
+      test("--fix keeps the cast that an optional chain starts with", async () => {
+        const text = (value: string) =>
+          `/** @param {{ inner?: { name: string } }} object */\nexport const f = object => ${value};\n`;
+        const cast = "/** @type {{ name: string } | undefined} */ (object.inner)";
+        const { files } = await lint(
+          {
+            ...project,
+            ".oxlintrc.json": oxlintrc(["prefer-optional-chain"]),
+            "a.mjs": text(`${cast} && ${cast}.name`),
+          },
+          ["--type-aware", "--fix"],
+          { reads: ["a.mjs"] },
+        );
+        expect(files["a.mjs"]).toBe(text(`${cast}?.name`));
+      });
+
+      test("without a config, an operand has the type that it's cast to", async () => {
+        const text = `async function later() {}
+/** @type {void} */ (/** @type {unknown} */ (later()));
+/** @type {Promise<void>} */ (/** @type {unknown} */ (1)); // 30 no-floating-promises
+`;
+        const { stdout, exitCode } = await lint({ ...project, "a.mjs": text }, [
+          "--type-aware",
+          "--rule",
+          "@typescript-eslint/no-floating-promises: error",
+          "-f",
+          "unix",
+        ]);
+        expect(reported(stdout)).toEqual(marked(text));
+        expect(exitCode).toBe(1);
+      });
+
+      // This is what typescript-eslint 8.71 reports. Its tree has no parentheses, and TypeScript 6 keeps the cast on
+      // the parentheses, so the cast only applies where a rule walks from one TypeScript node to the next
+      // (`tsNode.initializer`, `tsNode.expression`).
+      test("with an ESLint config, an operand keeps its own type", async () => {
+        const text = `/** @typedef {() => Promise<void>} Later */
+/** @typedef {() => void} Now */
+/** @returns {Promise<number>} */
+async function later() { return 1; } // 1 require-await
+/** @param {Now} callback */
+function run(callback) { callback(); }
+/**
+ * @param {Later} slow
+ * @param {Now} fast
+ * @param {{ error?: Error, callback: Now }} result
+ */
+export function f(slow, fast, result) {
+  /** @type {void} */ (/** @type {unknown} */ (later())); // 23 no-floating-promises
+  /** @type {Now} */
+  const a = /** @type {Later} */ (/** @type {unknown} */ (fast));
+  /** @type {Now} */
+  const b = /** @type {Now} */ (/** @type {unknown} */ (slow));
+  /** @type {{ callback: Now }} */
+  const c = { callback: /** @type {Later} */ (/** @type {unknown} */ (fast)) }; // 71 no-misused-promises
+  /** @type {{ callback: Now }} */
+  const d = { callback: /** @type {Now} */ (/** @type {unknown} */ (slow)) };
+  const e = { .../** @type {Promise<number>} */ (/** @type {unknown} */ ({})) }; // 74 no-misused-promises
+  const g = { .../** @type {{}} */ (later()) };
+  run(/** @type {Later} */ (/** @type {unknown} */ (fast)));
+  run(/** @type {Now} */ (/** @type {unknown} */ (slow))); // 51 no-misused-promises, 51 strict-void-return
+  /** @type {(callback: Later) => void} */ (/** @type {unknown} */ (run))(slow);
+  /** @type {(callback: Now) => void} */ (/** @type {unknown} */ (fast))(slow); // 74 no-misused-promises, 74 strict-void-return
+  result.callback = /** @type {Later} */ (/** @type {unknown} */ (fast)); // 67 no-misused-promises
+  result.callback = /** @type {Now} */ (/** @type {unknown} */ (slow));
+  if (a === b) throw /** @type {Error} */ (result.error); // 44 only-throw-error
+  return [c, d, e, g];
+}
+/** @param {Now} fast @returns {Now} */
+export function h(fast) { return /** @type {Later} */ (/** @type {unknown} */ (fast)); } // 80 no-misused-promises
+/** @param {Later} slow @returns {Now} */
+export function i(slow) { return /** @type {Now} */ (/** @type {unknown} */ (slow)); }
+export async function j() { return /** @type {Promise<number>} */ (/** @type {unknown} */ (1)); }
+export async function k() { return /** @type {number} */ (/** @type {unknown} */ (later())); } // 8 require-await
+`;
+        const config = `export default [{
+          files: ["**/*.mjs"],
+          plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+          languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+          rules: {
+            "@typescript-eslint/no-floating-promises": "error",
+            "@typescript-eslint/no-misused-promises": "error",
+            "@typescript-eslint/only-throw-error": "error",
+            "@typescript-eslint/require-await": "error",
+            "@typescript-eslint/strict-void-return": "error",
+          },
+        }];`;
+        const { stdout, exitCode } = await lint({ ...project, "eslint.config.js": config, "a.mjs": text }, [
+          "-f",
+          "unix",
+        ]);
+        expect(reported(stdout)).toEqual(marked(text));
+        expect(exitCode).toBe(1);
+      });
+    });
   });
 
   describe("the command line", () => {
-    test("an unknown flag fails with 2 and suggests another", async () => {
+    test("an unknown flag exits with 2 and suggests a similar one", async () => {
       const { raw, stderr, exitCode } = await lint({ "a.js": "" }, ["--fixx"]);
       expect(raw).toBe("");
       expect(stderr).toContain("Invalid option '--fixx' - perhaps you meant '--fix'?");
       expect(exitCode).toBe(2);
     });
 
-    test("a flag without its value fails with 2", async () => {
+    test("a flag that's missing its value exits with 2", async () => {
       const { stderr, exitCode } = await lint({ "a.js": "" }, ["--format"]);
       expect(stderr).toContain("Value for 'format'");
       expect(exitCode).toBe(2);
     });
 
-    test("what follows -- is a path", async () => {
+    test("arguments after -- are paths", async () => {
       const { stdout } = await lint({ "eslint.config.js": basic, "--fix.js": "debugger;\n" }, [
         "-f",
         "unix",
@@ -8810,7 +11013,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       `);
     });
 
-    test("--cwd", async () => {
+    test("--cwd lints that directory", async () => {
       const { stdout } = await lint({ "p/eslint.config.js": basic, "p/a.js": "debugger;\n", "b.js": "debugger;\n" }, [
         "--cwd",
         "p",
@@ -8824,7 +11027,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       `);
     });
 
-    test("rules about a name do not listen in files that do not mention it", async () => {
+    test("rules about a specific name are skipped in files that don't mention it", async () => {
       const files = {
         "eslint.config.js": config({ "no-eval": "error" }),
         "a.js": "a();\n",
@@ -8836,8 +11039,8 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(exitCode).toBe(0);
     });
 
-    // As ESLint 10.12.
-    test("a name that no file mentions is found where it is put together", async () => {
+    // Same as ESLint 10.12.
+    test("a name that's concatenated from pieces is still found, though no file contains it", async () => {
       const files = {
         "eslint.config.js": config({ "prefer-regex-literals": "error" }),
         "a.js": `new globalThis["Reg" + "Exp"]("a");\n`,
@@ -8856,7 +11059,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       `);
     });
 
-    test("--help", async () => {
+    test("--help lists the flags", async () => {
       const { stdout, exitCode } = await lint({}, ["--help"]);
       expect(stdout).toContain("bun lint");
       expect(stdout).toContain("--max-warnings");
@@ -8865,23 +11068,23 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
   });
 });
 
-// What oxlint 1.87.0 reports.
-describe.concurrent("rules as oxlint has them", () => {
+// Matches oxlint 1.87.0.
+describe.concurrent("rule behavior that matches oxlint", () => {
   type Diagnostic = { message: string; filename: string; labels: { span: { line: number; column: number } }[] };
   async function reports(files: Record<string, string>, names: string[]) {
     const { diagnostics }: { diagnostics: Diagnostic[] } = JSON.parse(
       (await lint(files, ["-f", "json", ...names])).raw,
     );
-    const place = ({ labels: [{ span }] }: Diagnostic) => `${span.line}:${span.column}`;
+    const position = ({ labels: [{ span }] }: Diagnostic) => `${span.line}:${span.column}`;
     const of = (name: string) => diagnostics.filter(it => basename(it.filename) === name);
     return names.map(name =>
       of(name)
-        .map(it => `${place(it)} ${it.message}`)
+        .map(it => `${position(it)} ${it.message}`)
         .sort(),
     );
   }
 
-  test("what a variable is, behind forty others", async () => {
+  test("follows a chain of forty aliases to a variable's initializer", async () => {
     const chain = (name: string, first: string) =>
       [first, ...Array(40).keys()].map((it, at) => `const ${name}${at} = ${at ? name : ""}${it};\n`).join("");
     const rows: [code: string, reports: string[]][] = [
@@ -8904,9 +11107,10 @@ describe.concurrent("rules as oxlint has them", () => {
     expect(await reports(files, names)).toEqual(rows.map(row => row[1]));
   });
 
-  // What a callback reads it keeps in a hash table, where a parameter of a function in the callback and a variable of the component
-  // with its name are two. It names what is missing in the order of that table, and reports where the first is.
-  test("react/exhaustive-deps: a name that is another variable further in", async () => {
+  // oxlint keeps what a callback reads in a hash table, where a nested function's parameter and a component variable
+  // with the same name are separate entries. It lists the missing dependencies in that table's order, and reports at
+  // the first one's position.
+  test("react/exhaustive-deps: a dependency that a nested function's parameter shadows", async () => {
     const rows: [code: string, reports: string[]][] = [
       [
         "function C({ x, items }) {\n  useEffect(() => {\n    items.map(x => x.id);\n    use(x.id);\n  }, [items]);\n}\n",
@@ -8954,9 +11158,9 @@ describe.concurrent("rules as oxlint has them", () => {
     expect(await reports(files, names)).toEqual(rows.map(row => row[1]));
   });
 
-  // In its module record `export { a }` of a name that is imported is an indirect export, with the module, the name and the place
-  // of the `import`: what it says of exports, it says of that `import` once more.
-  test("no-restricted-imports: a name that is imported and exported again", async () => {
+  // In oxlint's module record, `export { a }` of an imported name is an indirect export with the `import`'s module,
+  // name and position. So whatever the rule reports for exports, it reports a second time at that `import`.
+  test("no-restricted-imports: reports an import a second time if its name is re-exported", async () => {
     const rows: [options: unknown, code: string, reports: string[]][] = [
       [
         { "paths": [{ "name": "@made/up/slowPart" }] },
@@ -9343,8 +11547,9 @@ describe.concurrent("rules as oxlint has them", () => {
     expect(await reports(files, names)).toEqual(rows.map(row => row[2]));
   });
 
-  // An import without names is one for its side effects, `import type {} from "m"` too. `caseSensitive` is about a `group` alone.
-  test("no-restricted-imports: an import of no names, and the case of a regex", async () => {
+  // An import with no names is a side-effect import, even `import type {} from "m"`.
+  // `caseSensitive` only applies to a `group`.
+  test("no-restricted-imports: `import type {}` is a side-effect import, and a regex ignores caseSensitive", async () => {
     const rows: [options: unknown, code: string, reports: string[]][] = [
       [
         { "patterns": [{ "regex": "^@made/up/", "allowTypeImports": true }] },
@@ -9397,8 +11602,8 @@ describe.concurrent("rules as oxlint has them", () => {
     expect(await reports(files, names)).toEqual(rows.map(row => row[2]));
   });
 
-  // Whether or not another variable makes the code path be analyzed: `z` in the rows that have it.
-  test("no-useless-assignment: `typeof a` in a type is no use of `a`", async () => {
+  // This holds whether or not another variable triggers code path analysis. `z` does that in the rows that have it.
+  test("no-useless-assignment: `typeof a` in a type doesn't count as a use of `a`", async () => {
     const rows: [code: string, reports: string[]][] = [
       [
         "export {};\nlet a = 1;\ntype T = typeof a;\na = 2;\nuse(a);\n",
@@ -9445,8 +11650,8 @@ describe.concurrent("rules as oxlint has them", () => {
     expect(await reports(files, names)).toEqual(rows.map(row => row[1]));
   });
 
-  // ESLint 10.12.0, whose parser reads `&#36;`, reports every row.
-  test("no-script-url, no-template-curly-in-string: the value of a JSX attribute is what is written", async () => {
+  // ESLint 10.12.0, whose parser decodes `&#36;`, reports every row.
+  test("no-script-url, no-template-curly-in-string: entities in a JSX attribute are decoded only with an ESLint config", async () => {
     const rows: [code: string, oxlint: string[], eslint: string[]][] = [
       ['<a href="java&#115;cript:void(0)" />;\n', [], ["1:9 no-script-url"]],
       ['<a href="&#106;avascript:void(0)" />;\n', [], ["1:9 no-script-url"]],
@@ -9490,8 +11695,8 @@ describe.concurrent("rules as oxlint has them", () => {
   });
 });
 
-describe.concurrent("regular expressions in a configuration", () => {
-  test("are JavaScript's on text that is not ASCII", async () => {
+describe.concurrent("regular expressions in a config", () => {
+  test("behave like JavaScript's on non-ASCII text", async () => {
     const { stdout, exitCode } = await lint(
       {
         "eslint.config.js": config({
@@ -9535,7 +11740,7 @@ describe.concurrent("regular expressions in a configuration", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("the rules compile none for the patterns that they have themselves", async () => {
+  test("JavaScriptCore starts only for a pattern from the config, not for a rule's built-in patterns", async () => {
     const files = {
       "a.js": [
         `switch (Math.random()) {`,
@@ -9554,9 +11759,9 @@ describe.concurrent("regular expressions in a configuration", () => {
       ].join("\n"),
       "b.ts": "// @ts-ignore\nexport const a: number = 1;\n",
     };
-    // JavaScriptCore, which has the regular expressions, prints its options when it is started.
+    // JavaScriptCore, which implements the regular expressions, prints its options when it starts.
     const env = { BUN_JSC_dumpOptions: "1", JSC_dumpOptions: "1" };
-    // Without a configuration file: eslint:recommended.
+    // Without a config file, eslint:recommended is on.
     const inComments = "no-irregular-whitespace: [error, { skipComments: false }]";
     const rules = ["--rule", "no-warning-comments: error", "--rule", inComments];
     const { stdout, stderr, exitCode } = await lint(files, ["-f", "stylish", ...rules], { env });
@@ -9581,9 +11786,9 @@ describe.concurrent("regular expressions in a configuration", () => {
     expect(own.stderr).toContain("JSC options");
   });
 
-  test("one is shared by all threads", async () => {
+  test("a compiled pattern is shared by all threads", async () => {
     const files: Record<string, string> = {
-      // A quantified group: what a match of it can go back to is kept with the compiled pattern.
+      // A quantified group, whose backtracking state is stored with the compiled pattern.
       "eslint.config.js": config({ "id-match": ["error", "^(?:[a-z]+[A-Z]?)+\\d*$"] }),
     };
     for (let file = 0; file < 48; file++) {
@@ -9605,20 +11810,20 @@ describe.concurrent("regular expressions in a configuration", () => {
   });
 });
 
-describe.concurrent("a lint script in package.json", () => {
+describe.concurrent("a script, file or executable named lint", () => {
   const files = {
     "package.json": JSON.stringify({ scripts: { lint: "echo the script" } }),
     "eslint.config.js": basic,
     "a.js": "debugger;\n",
   };
 
-  test("wins over the linter", async () => {
+  test("a lint script in package.json wins over the linter", async () => {
     const { stdout, exitCode } = await lint(files, []);
     expect(stdout).toBe("the script");
     expect(exitCode).toBe(0);
   });
 
-  test("in that script, bun lint is the linter", async () => {
+  test("bun lint inside the lint script runs the linter", async () => {
     const { stdout, exitCode } = await lint(
       {
         ...files,
@@ -9630,21 +11835,21 @@ describe.concurrent("a lint script in package.json", () => {
     expect(exitCode).toBe(1);
   });
 
-  // What `bun lint` meant before there was a linter.
+  // This is what `bun lint` did before the linter existed.
   test.each([
-    ["a file", { "lint.ts": `console.log("the file");` }, "the file"],
-    ["a directory with an index", { "lint/index.js": `console.log("the index");` }, "the index"],
-    // An install makes other files for it on Windows.
+    ["a lint.ts file", { "lint.ts": `console.log("the file");` }, "the file"],
+    ["a lint directory with an index file", { "lint/index.js": `console.log("the index");` }, "the index"],
+    // On Windows, an install creates different files for it.
     ...(isWindows
       ? []
       : [
           [
-            "what a package has installed",
+            "a lint executable installed by a package",
             { "node_modules/.bin/lint": `#!/bin/sh\necho the executable\n` },
             "the executable",
           ],
         ]),
-  ] as [string, Record<string, string>, string][])("%s of that name wins over the linter", async (_, more, printed) => {
+  ] as [string, Record<string, string>, string][])("%s wins over the linter", async (_, more, printed) => {
     const { "package.json": __, ...rest } = files;
     using dir = tempDir("bun-lint-name", { ...rest, ...more });
     if ("node_modules/.bin/lint" in more) chmodSync(join(String(dir), "node_modules/.bin/lint"), 0o755);
@@ -9654,9 +11859,9 @@ describe.concurrent("a lint script in package.json", () => {
     expect(exitCode).toBe(0);
   });
 
-  // `bun run` has that directory in PATH.
+  // `bun run` adds that directory to PATH.
   test.skipIf(isWindows)(
-    "an executable of that name beside package.json wins over the linter, further down too",
+    "a lint executable next to package.json wins over the linter, even from a subdirectory",
     async () => {
       using dir = tempDir("bun-lint-name", {
         ...files,
@@ -9673,9 +11878,9 @@ describe.concurrent("a lint script in package.json", () => {
     },
   );
 
-  // git keeps a link to `/dev/zero` as it is. `bun run` stops at such a file, and finds no script in it.
+  // git stores a symlink to `/dev/zero` unchanged. `bun run` stops at such a file and finds no script in it.
   test.skipIf(isWindows)(
-    "a package.json that is a link to a device has no script, and the one above is not asked",
+    "a package.json that's a symlink to a device has no script, and the parent directory's package.json isn't used",
     async () => {
       using dir = tempDir("bun-lint-name", {
         ...files,
@@ -9691,7 +11896,7 @@ describe.concurrent("a lint script in package.json", () => {
     },
   );
 
-  test("--cwd lint lint: the first is a directory", async () => {
+  test("bun --cwd lint lint treats the first lint as the directory", async () => {
     const { "package.json": __, ...rest } = files;
     using dir = tempDir("bun-lint-name", {
       "lint/eslint.config.js": rest["eslint.config.js"],
@@ -9704,15 +11909,15 @@ describe.concurrent("a lint script in package.json", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a directory of that name without an index does not", async () => {
+  test("a lint directory without an index file doesn't win over the linter", async () => {
     const { "package.json": __, ...rest } = files;
     const { stdout, exitCode } = await lint({ ...rest, "lint/notes.txt": "x" }, ["-f", "unix", "a.js"]);
     expect(stdout).toContain("[Error/no-debugger]");
     expect(exitCode).toBe(1);
   });
 
-  // On macOS a directory that can be searched is executable for `which`.
-  test("a directory of that name beside package.json does not, further down either", async () => {
+  // On macOS, `which` treats a searchable directory as executable.
+  test("a lint directory next to package.json doesn't win over the linter, even from a subdirectory", async () => {
     const all = { ...files, "package.json": "{}", "lint/notes.txt": "x", "sub/b.js": "debugger;\n" };
     const [here, below] = await Promise.all([
       lint(all, ["-f", "unix", "a.js"]),
@@ -9724,7 +11929,7 @@ describe.concurrent("a lint script in package.json", () => {
     expect(below.exitCode).toBe(1);
   });
 
-  test.each(["lint.json", "lint/index.json"])("%s, which cannot be run, does not", async name => {
+  test.each(["lint.json", "lint/index.json"])("%s can't be run, so it doesn't win over the linter", async name => {
     const { "package.json": __, ...rest } = files;
     const { stdout, exitCode } = await lint({ ...rest, [name]: "[]" }, ["-f", "unix", "a.js"]);
     expect(stdout).toContain("[Error/no-debugger]");
@@ -9732,9 +11937,9 @@ describe.concurrent("a lint script in package.json", () => {
   });
 });
 
-// What the linter takes from the process that it runs in. Where `bun lint` is developed something else is in Bun's place for each
-// of these. See "what bun fmt takes from Bun" in test/cli/format/format.test.ts.
-describe.concurrent("what bun lint takes from Bun", () => {
+// Tests what the linter gets from the process that it runs in: the `Environment` in src/lint/driver/run.rs, which
+// src/runtime/cli/lint_command.rs fills in. See the matching `bun fmt` tests in test/cli/format/format.test.ts.
+describe.concurrent("what bun lint gets from the Bun process", () => {
   const files = {
     "eslint.config.js": basic,
     "a.js": "debugger;\n",
@@ -9742,7 +11947,7 @@ describe.concurrent("what bun lint takes from Bun", () => {
     "sub/b.js": "debugger;\n",
   };
 
-  /** `bun ...args` in a directory with `files`. */
+  /** Runs `bun ...args` in a directory with `files`. */
   async function bun(files: Record<string, string>, args: string[], variables: Record<string, string> = {}) {
     using dir = tempDir("bun-lint-process", files);
     await using proc = spawn({
@@ -9757,7 +11962,7 @@ describe.concurrent("what bun lint takes from Bun", () => {
     return { stdout: normalizeBunSnapshot(stdout, String(dir)), exitCode };
   }
 
-  test("--cwd before lint, and the flags of BUN_OPTIONS, which are not the linter's", async () => {
+  test("accepts Bun's own flags before lint (--cwd, --silent) and in BUN_OPTIONS", async () => {
     const results = await Promise.all([
       bun(files, ["--cwd=sub", "lint", "-f", "unix"]),
       bun(files, ["--silent", "lint", "-f", "unix", "sub"]),
@@ -9767,30 +11972,31 @@ describe.concurrent("what bun lint takes from Bun", () => {
     expect(results).toEqual(results.map(() => ({ stdout: expected, exitCode: 1 })));
   });
 
-  // The process that runs the configuration file starts in that directory. With BUN_OPTIONS it would look for `sub` in `sub`.
-  test("--cwd in BUN_OPTIONS, with a configuration file that is a program", async () => {
+  // The process that runs the config file starts in that directory. If it inherited BUN_OPTIONS, it would look for
+  // `sub` in `sub`.
+  test("--cwd in BUN_OPTIONS works with a JavaScript config file", async () => {
     const result = await bun(files, ["lint", "-f", "unix"], { BUN_OPTIONS: "--cwd=sub" });
     expect(result.stdout).toStartWith("<dir>/sub/b.js:1:1: Unexpected 'debugger' statement.");
     expect(result.exitCode).toBe(1);
   });
 
   test.each([
-    // It would wait for a client, for ever.
+    // It would wait forever for a client.
     { BUN_INSPECT: "ws://127.0.0.1:0/x?wait=1" },
     { BUN_INSPECT_PRELOAD: "./nowhere.js" },
     { BUN_OPTIONS: "--preload=./nowhere.js" },
-  ])("%j is not for the process that runs the configuration file", async variables => {
+  ])("%j isn't passed to the process that runs the config file", async variables => {
     const result = await bun(files, ["lint", "-f", "unix", "sub"], variables);
     expect(result.stdout).toStartWith("<dir>/sub/b.js:1:1: Unexpected 'debugger' statement.");
     expect(result.exitCode).toBe(1);
   });
 
-  // ESLint prints its report and never ends.
+  // ESLint prints its report and never exits.
   test.each([
     ["a timer", "setInterval(() => {}, 1000);"],
     ["a server", `import { createServer } from "node:http";\ncreateServer().listen(0);`],
-  ])("a configuration file that leaves %s behind", async (_, code) => {
-    // More than a pipe holds.
+  ])("a config file that leaves %s running doesn't hang the run", async (_, code) => {
+    // More than a pipe's buffer holds.
     const config = `${code}\nexport default [{ rules: { "no-debugger": "error" }, settings: { s: "x".repeat(3 << 20) } }];`;
     const all = { "eslint.config.mjs": config, "a.js": "debugger;\n" };
     const result = await bun(all, ["lint", "-f", "unix", "a.js"]);
@@ -9798,36 +12004,36 @@ describe.concurrent("what bun lint takes from Bun", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  test("what else this process was started with is", async () => {
+  test("other environment variables are passed to the process that runs the config file", async () => {
     const config = `export default [{ rules: { [process.env.THE_RULE]: "error" } }];`;
     const all = { "eslint.config.mjs": config, "a.js": "debugger;\n" };
     const result = await bun(all, ["lint", "-f", "unix", "a.js"], { THE_RULE: "no-debugger" });
     expect(result.stdout).toStartWith("<dir>/a.js:1:1: Unexpected 'debugger' statement.");
   });
 
-  test("what the bunfig.toml of the project has for other commands is not read", async () => {
+  test("ignores the project's bunfig.toml settings for other commands", async () => {
     const result = await bun({ ...files, "bunfig.toml": "[install]\nglobalDir = 1\n" }, ["lint", "-f", "unix", "a.js"]);
     expect(result.stdout).toStartWith("<dir>/a.js:1:1: Unexpected 'debugger' statement.");
     expect(result.exitCode).toBe(1);
   });
 
-  test("colors are Bun's to decide: FORCE_COLOR, NO_COLOR, and none in a pipe", async () => {
+  test("colors follow Bun's rules: FORCE_COLOR, NO_COLOR, and no colors in a pipe", async () => {
     const line = (text: string) => text.split("\n").find(it => it.includes("no-debugger"));
-    const [forced, refused, piped] = await Promise.all([
+    const [forced, noColor, piped] = await Promise.all([
       lint(files, ["a.js"], { env: { FORCE_COLOR: "1" } }),
       lint(files, ["a.js"], { env: { NO_COLOR: "1" } }),
       lint(files, ["a.js"]),
     ]);
     expect(line(forced.raw)).toContain("\x1b[");
-    expect(line(refused.raw)).toBe("  1:1  error  Unexpected 'debugger' statement  no-debugger");
-    expect(line(piped.raw)).toBe(line(refused.raw));
+    expect(line(noColor.raw)).toBe("  1:1  error  Unexpected 'debugger' statement  no-debugger");
+    expect(line(piped.raw)).toBe(line(noColor.raw));
   });
 
-  test("more is printed than a pipe holds, and nobody reads it to its end", async () => {
+  test("prints more output than fits in a pipe, and still exits with 1 if the reader closes the pipe early", async () => {
     const many = { "eslint.config.js": basic, "a.js": "debugger;\n".repeat(20_000) };
-    const whole = await lint(many, ["-f", "unix", "a.js"]);
-    expect(whole.raw.split("\n").filter(it => it.endsWith("[Error/no-debugger]")).length).toBe(20_000);
-    expect(whole.exitCode).toBe(1);
+    const full = await lint(many, ["-f", "unix", "a.js"]);
+    expect(full.raw.split("\n").filter(it => it.endsWith("[Error/no-debugger]")).length).toBe(20_000);
+    expect(full.exitCode).toBe(1);
 
     using dir = tempDir("bun-lint-process", many);
     await using proc = spawn({
@@ -9844,7 +12050,7 @@ describe.concurrent("what bun lint takes from Bun", () => {
     expect(await proc.exited).toBe(1);
   });
 
-  test.skipIf(!isLinux)("a name that is not UTF-8, found in a directory and as an argument", async () => {
+  test.skipIf(!isLinux)("lints a file with a non-UTF-8 name, found by the walk or passed as an argument", async () => {
     using dir = tempDir("bun-lint-process", { "eslint.config.js": basic });
     writeFileSync(
       Buffer.concat([Buffer.from(String(dir) + "/n"), Buffer.from([0xff]), Buffer.from(".js")]),
@@ -9867,8 +12073,32 @@ describe.concurrent("what bun lint takes from Bun", () => {
     expect(await run(`"$(printf 'n\\377.js')"`)).toEqual(expected);
   });
 
-  // `String(number)` and the value of a literal are WebKit's.
-  test("numbers are read and written as JavaScript does", async () => {
+  // Sorted the way JavaScript compares strings: U+40000, a lone surrogate, and an invalid byte, which becomes U+FFFD.
+  test.skipIf(!isLinux)("reports files whose names aren't valid UTF-8 in a consistent order", async () => {
+    const kinds = ["\xF1\x80\x80\x80", "\xED\xB0\x80", "\xF0A"];
+    const names = kinds.flatMap(kind =>
+      Array.from({ length: 16 }, (_, i) => `${kind}${String.fromCharCode(97 + i)}.js`),
+    );
+    using dir = tempDir("bun-lint-process", { "eslint.config.js": basic });
+    for (const name of names) writeFileSync(Buffer.from(`${dir}/${name}`, "latin1"), "debugger;\n");
+    await using proc = spawn({
+      // Don't write a core file if it crashes.
+      cmd: ["sh", "-c", 'ulimit -c 0; exec "$0" lint -f unix .', bunExe()],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+    const lines = Buffer.from(stdout).toString("latin1").split("\n");
+    const found = lines.filter(it => it.endsWith("[Error/no-debugger]"));
+    expect(found.map(it => it.slice(String(dir).length + 1, it.indexOf(":")))).toEqual(names);
+    expect(exitCode).toBe(1);
+  });
+
+  // `String(number)` and numeric literal parsing use WebKit's implementation.
+  test("parses numeric literals and converts numbers to strings like JavaScript", async () => {
     const keys = [
       ["1e21", '"1e+21"'],
       ["1e-7", '"1e-7"'],
@@ -9894,8 +12124,9 @@ describe.concurrent("what bun lint takes from Bun", () => {
     expect(exitCode).toBe(1);
   });
 
-  // `a < b` is the order of the UTF-16 code units: "\u{10000}" is "𐀀". The package natural-compare reads digits as `+digits` does.
-  test("strings are ordered as JavaScript does", async () => {
+  // `a < b` compares UTF-16 code units, and "\u{10000}" ("𐀀") is "\uD800\uDC00". The natural-compare package converts
+  // digits like `+digits`.
+  test("sort-keys orders strings like JavaScript", async () => {
     const files = {
       "eslint.config.js": `export default [
   { files: ["units*.js"], rules: { "sort-keys": "error" } },
@@ -9903,7 +12134,7 @@ describe.concurrent("what bun lint takes from Bun", () => {
 ];\n`,
       "units.js": 'export default { "\\uD7FF": 1, "\\u{10000}": 2, "\\uDFFF": 3, "\\uE000": 4 };\n',
       "units-reversed.js": 'export default { "\\uDFFF": 1, "\\u{10000}": 2 };\n',
-      // The two are the same number.
+      // Both numbers round to the same double.
       "natural.js": "export default { a19007199254740993: 1, a19007199254740992: 2 };\n",
       "natural-reversed.js": "export default { a19007199254740996: 1, a19007199254740992: 2 };\n",
     };
@@ -9916,7 +12147,7 @@ describe.concurrent("what bun lint takes from Bun", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("texts are collated as Intl.Collator does, outside of ASCII too", async () => {
+  test("sort-type-constituents collates strings like Intl.Collator, including non-ASCII ones", async () => {
     const files = {
       ".eslintrc.json": JSON.stringify({
         root: true,
@@ -9935,13 +12166,13 @@ describe.concurrent("what bun lint takes from Bun", () => {
   });
 });
 
-// What differs between Windows, macOS and Linux, for `bun lint`: how a path is written, which names are the same file, how a line
-// ends, what a link is, what can be written. Nothing here is passed through `normalizeBunSnapshot`, which makes `/` of every `\`
-// and `\n` of every `\r\n`: what is printed is compared as it is printed.
+// Platform differences that matter to `bun lint`: path syntax, which names refer to the same file, line endings, links,
+// and how files are written. Nothing here goes through `normalizeBunSnapshot`, which turns every `\` into `/` and every
+// `\r\n` into `\n`, so the output is compared verbatim.
 //
-// A test that can only tell something on one system runs on all of them where it can: there it is a test that nothing else breaks.
+// A test that's only interesting on one platform still runs on the others if it can, to check that nothing else breaks.
 describe("bun lint on Windows, macOS and Linux", () => {
-  // What is printed must not depend on what the tests run in: `bun lint` looks at these.
+  // `bun lint` reads these variables, and its output must not depend on where the tests run.
   const env = {
     ...bunEnv,
     AGENT: "0",
@@ -9954,7 +12185,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
     ESLINT_USE_FLAT_CONFIG: undefined,
   };
 
-  // A drive letter that a test has taken would stay, for every process of the session, if the test ran out of time.
+  // If a test timed out, its drive letter would stay mapped for every process in the session, so `afterAll` unmaps it.
   const drives = new Set<string>();
   const subst = (...args: string[]) => Bun.spawnSync({ cmd: ["subst", ...args] }).exitCode === 0;
   afterAll(() => {
@@ -9962,7 +12193,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
     for (const drive of drives) subst(drive, "/D");
   });
 
-  /** `subst` gives `directory` a drive letter, for as long as `use` runs. */
+  /** Maps `directory` to a drive letter with `subst` while `use` runs. */
   async function withDrive(directory: string, use: (drive: string) => Promise<void>) {
     const drive = [..."PONMLKJIHG"]
       .map(letter => `${letter}:`)
@@ -9980,7 +12211,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
 
   type Options = { stdin?: string; env?: Record<string, string | undefined>; before?: string[] };
 
-  /** Runs `bun <args>` in `cwd`. What it prints is returned as it is. */
+  /** Runs `bun <args>` in `cwd` and returns its output verbatim. */
   async function bun(cwd: string | { toString(): string }, args: string[], options: Options = {}) {
     const proc = spawn({
       cmd: [...(options.before ?? []), bunExe(), ...args],
@@ -9997,20 +12228,23 @@ describe("bun lint on Windows, macOS and Linux", () => {
   const lint = (cwd: string | { toString(): string }, args: string[], options?: Options) =>
     bun(cwd, ["lint", "--threads", "2", ...args], options);
 
-  /** As ESLint, without a configuration file: to run one takes a process. */
+  /** Flags for ESLint's behavior without a config file, because running one takes an extra process. */
   const eslint = ["--no-config-lookup", "--rule", "no-debugger: error"];
-  /** As oxlint. */
+  /** Returns an .oxlintrc.json, which makes `bun lint` behave like oxlint. */
   const oxlintrc = (more: object = {}) =>
     JSON.stringify({ categories: { correctness: "off" }, rules: { "no-debugger": "error" }, ...more });
 
-  /** The files that are reported about in ESLint's `json`, from `dir`, with `/`. That they are printed otherwise has a test. */
+  /**
+   * Returns the files with reports in ESLint's `json` output, relative to `dir`, with `/`. Another test checks the
+   * paths as printed.
+   */
   const reported = (stdout: string, dir: { toString(): string }) =>
     (JSON.parse(stdout) as { filePath: string; messages: unknown[] }[])
       .filter(it => it.messages.length > 0)
       .map(it => it.filePath.slice(String(dir).length + 1).replaceAll(sep, "/"))
       .sort();
-  /** The same for oxlint's `json`, which has the path from the working directory. */
-  const reportedToOxlint = (stdout: string) => {
+  /** The same for oxlint's `json` output, whose paths are relative to the working directory. */
+  const reportedInOxlintJson = (stdout: string) => {
     // The message shows the output if it isn't JSON.
     expect(() => JSON.parse(stdout), stdout).not.toThrow();
     return [...new Set((JSON.parse(stdout).diagnostics as { filename: string }[]).map(it => it.filename))].sort();
@@ -10018,16 +12252,16 @@ describe("bun lint on Windows, macOS and Linux", () => {
 
   const swapCase = (text: string) =>
     text.replace(/[a-z]/gi, letter => (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()));
-  /** All names in `dir`, directories too, from `dir`, with `/`. */
+  /** Returns every file and directory in `dir`, relative to `dir`, with `/`. */
   const everythingIn = (dir: { toString(): string }) =>
     (readdirSync(String(dir), { recursive: true }) as string[]).map(it => it.replaceAll(sep, "/")).sort();
 
-  /** Sets and reads an extended attribute of a file, where a file in the temporary directory takes one. */
+  /** Sets and reads a file's extended attributes. Undefined if files in the temporary directory can't have them. */
   const attributes = (() => {
     if (!isLinux && !isMacOS) return undefined;
     const c = (text: string) => Buffer.from(`${text}\0`);
-    // macOS has a position in the attribute before the flags.
-    const ofMacOS = () => {
+    // macOS takes a position within the attribute before the flags.
+    const forMacOS = () => {
       const { symbols } = dlopen("libSystem.B.dylib", {
         setxattr: { args: ["ptr", "ptr", "ptr", "u64", "u32", "i32"], returns: "i32" },
         getxattr: { args: ["ptr", "ptr", "ptr", "u64", "u32", "i32"], returns: "i64" },
@@ -10038,7 +12272,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
         get: (path: string, name: string, into: Buffer) => symbols.getxattr(c(path), c(name), into, into.length, 0, 0),
       };
     };
-    const ofLinux = () => {
+    const forLinux = () => {
       const machine = process.arch === "arm64" ? "aarch64" : "x86_64";
       const { symbols } = dlopen(isMusl ? `libc.musl-${machine}.so.1` : "libc.so.6", {
         setxattr: { args: ["ptr", "ptr", "ptr", "u64", "i32"], returns: "i32" },
@@ -10049,7 +12283,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
         get: (path: string, name: string, into: Buffer) => symbols.getxattr(c(path), c(name), into, into.length),
       };
     };
-    const { set, get } = isMacOS ? ofMacOS() : ofLinux();
+    const { set, get } = isMacOS ? forMacOS() : forLinux();
     const all = {
       set: (path: string, name: string, value: string) => set(path, name, Buffer.from(value)) === 0,
       get(path: string, name: string) {
@@ -10065,9 +12299,9 @@ describe("bun lint on Windows, macOS and Linux", () => {
   const BOM = "\uFEFF";
   const crlf = (text: string) => text.replaceAll("\n", "\r\n");
 
-  describe.concurrent("how a path is written", () => {
-    // `filePath` of a result is `path.resolve(..)`: lib/eslint/eslint-helpers.js, `findFiles`.
-    test("ESLint's formats print a path as the system writes it", async () => {
+  describe.concurrent("path syntax", () => {
+    // A result's `filePath` comes from `path.resolve(..)`. See `findFiles` in lib/eslint/eslint-helpers.js.
+    test("ESLint's formats print absolute paths with the platform's separator", async () => {
       using dir = tempDir("bun-lint-platform", { "src/deep/a.js": "debugger;\n" });
       const path = join(String(dir), "src", "deep", "a.js");
       const [stylish, unix, json, listed] = await Promise.all([
@@ -10090,7 +12324,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
     });
 
     // crates/oxc_diagnostics/src/service.rs: `relative_path.cow_replace('\\', "/")`
-    test("oxlint's formats, and those of Bun, print the path from the working directory with `/`", async () => {
+    test("oxlint's and Bun's formats print paths relative to the working directory, with `/`", async () => {
       using dir = tempDir("bun-lint-platform", { ".oxlintrc.json": oxlintrc(), "src/deep/a.js": "debugger;\n" });
       const formats = ["json", "unix", "checkstyle", "junit", "gitlab", "sarif", "github", "pretty", "agent"];
       const printed = await Promise.all(formats.map(format => lint(dir, ["-f", format])));
@@ -10099,7 +12333,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
       ).toEqual(formats.map(format => [format, true, false]));
     });
 
-    test("a line of what is printed ends with \\n", async () => {
+    test("output lines end with \\n, never \\r\\n", async () => {
       using dir = tempDir("bun-lint-platform", { "a.js": "debugger;\n" });
       const results = await Promise.all([
         lint(dir, [...eslint, "-f", "stylish"]),
@@ -10112,7 +12346,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
       ).toEqual([]);
     });
 
-    test("arguments can be written as the system writes paths", async () => {
+    test("accepts arguments with the platform's separator", async () => {
       using dir = tempDir("bun-lint-platform", {
         "a.js": "debugger;\n",
         "src/b.js": "debugger;\n",
@@ -10134,7 +12368,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
       });
     });
 
-    test("arguments that lead out of the working directory", async () => {
+    test("with an .oxlintrc.json, files outside the working directory are printed with absolute paths", async () => {
       using dir = tempDir("bun-lint-platform", {
         ".oxlintrc.json": oxlintrc(),
         "a.js": "debugger;\n",
@@ -10147,16 +12381,17 @@ describe("bun lint on Windows, macOS and Linux", () => {
         join("..", "..", "lib"),
         `..${sep}..${sep}a.js`,
       ]);
-      // crates/oxc_diagnostics/src/service.rs: `path.strip_prefix(cwd).unwrap_or(path)`. What is not in the working directory keeps
-      // its whole path. (oxlint itself refuses an argument with `..`. It prints this for the same files, named from the root.)
-      const whole = (...names: string[]) => join(String(dir), ...names).replaceAll("\\", "/");
-      expect(reportedToOxlint(stdout)).toEqual([whole("a.js"), whole("lib", "c.js")]);
+      // crates/oxc_diagnostics/src/service.rs: `path.strip_prefix(cwd).unwrap_or(path)`. A file outside the working
+      // directory keeps its absolute path. (oxlint itself rejects an argument with `..`, but prints this for the same
+      // files passed as absolute paths.)
+      const absolute = (...names: string[]) => join(String(dir), ...names).replaceAll("\\", "/");
+      expect(reportedInOxlintJson(stdout)).toEqual([absolute("a.js"), absolute("lib", "c.js")]);
     });
 
-    test("so can the paths that flags take", async () => {
+    test("-c, --ignore-path and --cwd accept paths with the platform's separator", async () => {
       using dir = tempDir("bun-lint-platform", {
         "configs/mine.json": oxlintrc({ overrides: [{ files: ["src/*.js"], rules: { "no-debugger": "off" } }] }),
-        // The patterns of a file that -c names are from its directory.
+        // Patterns in a config file passed with -c are relative to its directory.
         "configs/src/off.js": "debugger;\n",
         "configs/ignored": "skipped.js\n",
         "src/a.js": "debugger;\n",
@@ -10172,7 +12407,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
           lint(dir, ["-c", config, "--ignore-path", join("configs", "ignored"), "-f", "json", "src", "configs"]),
         ),
       );
-      expect(results.map(it => reportedToOxlint(it.stdout))).toEqual(forms.map(() => ["src/a.js"]));
+      expect(results.map(it => reportedInOxlintJson(it.stdout))).toEqual(forms.map(() => ["src/a.js"]));
       const [before, after] = await Promise.all([
         bun(dir, [`--cwd=${join(String(dir), "src")}`, "lint", ...eslint, "-f", "json"]),
         lint(dir, ["--cwd", join("src") + sep, ...eslint, "-f", "json"]),
@@ -10183,7 +12418,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
       ]);
     });
 
-    test("--stdin-filename", async () => {
+    test("--stdin-filename accepts paths with the platform's separator, and selects the config file", async () => {
       using dir = tempDir("bun-lint-platform", {
         ".oxlintrc.json": oxlintrc({ rules: {} }),
         "src/.oxlintrc.json": oxlintrc(),
@@ -10195,17 +12430,18 @@ describe("bun lint on Windows, macOS and Linux", () => {
         ),
       );
       expect(asEslint.map(it => JSON.parse(it.stdout)[0].filePath)).toEqual([path, path]);
-      // The name decides which configuration file counts.
+      // The file name determines which config file applies.
       const asOxlint = await Promise.all(
         [join("src", "new.js"), path, "new.js"].map(name =>
           lint(dir, ["--stdin", "--stdin-filename", name, "-f", "json"], { stdin: "debugger;\n" }),
         ),
       );
-      expect(asOxlint.map(it => reportedToOxlint(it.stdout))).toEqual([["src/new.js"], ["src/new.js"], []]);
+      expect(asOxlint.map(it => reportedInOxlintJson(it.stdout))).toEqual([["src/new.js"], ["src/new.js"], []]);
     });
 
-    // lib/services/suppressions-service.js, `getRelativeFilePath`: `.split(path.sep).join(path.posix.sep)`. The file is checked in.
-    test("eslint-suppressions.json has `/`, whoever writes it", async () => {
+    // lib/services/suppressions-service.js, `getRelativeFilePath`: `.split(path.sep).join(path.posix.sep)`. People
+    // commit this file, so it can't depend on the platform.
+    test("eslint-suppressions.json uses `/` on every platform", async () => {
       using dir = tempDir("bun-lint-platform", { "src/deep/a.js": "debugger;\n", "b.js": "debugger;\n" });
       const written = await lint(dir, [...eslint, "--suppress-all"]);
       expect(JSON.parse(readFileSync(join(String(dir), "eslint-suppressions.json"), "utf8"))).toEqual({
@@ -10220,7 +12456,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
       expect(applied.exitCode).toBe(0);
     });
 
-    test("-f github counts from GITHUB_WORKSPACE, which is written as the system writes paths", async () => {
+    test("-f github prints paths relative to GITHUB_WORKSPACE, which uses the platform's separator", async () => {
       using dir = tempDir("bun-lint-platform", { "packages/a/src/b.js": "debugger;\n" });
       const { stdout } = await lint(join(String(dir), "packages", "a"), [...eslint, "-f", "github"], {
         env: { GITHUB_WORKSPACE: String(dir) },
@@ -10228,9 +12464,9 @@ describe("bun lint on Windows, macOS and Linux", () => {
       expect(stdout).toStartWith("::error file=packages/a/src/b.js,line=1,col=1,");
     });
 
-    // What a URL would take for something else: the file is imported by its URL.
+    // These characters mean something else in a URL, and the config file is imported by its URL.
     test(
-      "a project in a directory with blanks, `#`, `%41` and letters that are not ASCII",
+      "lints a project in a directory with spaces, `#`, `%41` and non-ASCII letters",
       async () => {
         using dir = tempDir("bun lint #1 %41 é 日本", {
           "eslint.config.mjs": `import plugin from "./my plugins/p#1.mjs";
@@ -10247,7 +12483,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
       slow ? 120_000 : undefined,
     );
 
-    test("rules that need types, with a project that is named as the system writes paths", async () => {
+    test("type-aware rules work when arguments and --tsconfig use the platform's separator", async () => {
       const compilerOptions = { strict: true, noEmit: true, types: [], lib: ["esnext"] };
       using dir = tempDir("bun-lint-platform", {
         ".oxlintrc.json": oxlintrc({ rules: { "typescript/no-floating-promises": "error" } }),
@@ -10261,11 +12497,13 @@ describe("bun lint on Windows, macOS and Linux", () => {
         lint(dir, ["--type-aware", "-f", "json", "--tsconfig", join("packages", "a", "tsconfig.json")]),
         lint(dir, ["--type-aware", "-f", "json", "--tsconfig", join(String(dir), "packages", "a", "tsconfig.json")]),
       ]);
-      expect(results.map(it => reportedToOxlint(it.stdout))).toEqual(results.map(() => ["packages/a/src/deep/b.ts"]));
+      expect(results.map(it => reportedInOxlintJson(it.stdout))).toEqual(
+        results.map(() => ["packages/a/src/deep/b.ts"]),
+      );
     });
 
-    // `subst` gives the directory a drive letter.
-    test.skipIf(!isWindows)("a project at the root of a drive", async () => {
+    // `subst` maps the directory to a drive letter.
+    test.skipIf(!isWindows)("lints a project at the root of a drive", async () => {
       using dir = tempDir("bun-lint-platform", {
         ".oxlintrc.json": oxlintrc(),
         "a.js": "debugger;\n",
@@ -10280,10 +12518,10 @@ describe("bun lint on Windows, macOS and Linux", () => {
           lint(`${drive}\\`, [...eslint, "-f", "json"]),
         ]);
         expect({
-          from: reportedToOxlint(from.stdout),
-          root: reportedToOxlint(root.stdout).map(it => it.slice(it.indexOf(":") + 1)),
-          directory: reportedToOxlint(directory.stdout).map(it => it.slice(it.indexOf(":") + 1)),
-          file: reportedToOxlint(file.stdout),
+          from: reportedInOxlintJson(from.stdout),
+          root: reportedInOxlintJson(root.stdout).map(it => it.slice(it.indexOf(":") + 1)),
+          directory: reportedInOxlintJson(directory.stdout).map(it => it.slice(it.indexOf(":") + 1)),
+          file: reportedInOxlintJson(file.stdout),
           asEslint: JSON.parse(asEslint.stdout).map((it: any) => it.filePath),
         }).toEqual({
           from: ["a.js", "sub/b.js"],
@@ -10295,25 +12533,25 @@ describe("bun lint on Windows, macOS and Linux", () => {
       });
     });
 
-    // The administrative share of the drive, as in test/js/node/fs/cp.test.ts. The same for `\\wsl.localhost\..` and the shared
-    // folders of a virtual machine.
-    test.skipIf(!isWindows)("a project on a network share", async () => {
+    // Uses the drive's administrative share, like test/js/node/fs/cp.test.ts. `\\wsl.localhost\..` and a virtual
+    // machine's shared folders are paths of the same kind.
+    test.skipIf(!isWindows)("lints a project on a network share", async () => {
       using dir = tempDir("bun-lint-platform", { ".oxlintrc.json": oxlintrc(), "src/a.js": "debugger;\n" });
       const real = realpathSync(String(dir));
       const share = `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
-      const [from, named, asEslint] = await Promise.all([
+      const [from, byPath, asEslint] = await Promise.all([
         lint(share, ["-f", "json"]),
         lint(dir, ["-f", "json", `${share}\\src`]),
         lint(share, [...eslint, "-f", "json"]),
       ]);
-      expect(reportedToOxlint(from.stdout)).toEqual(["src/a.js"]);
-      expect(reportedToOxlint(named.stdout).map(it => it.slice(-"/src/a.js".length))).toEqual(["/src/a.js"]);
+      expect(reportedInOxlintJson(from.stdout)).toEqual(["src/a.js"]);
+      expect(reportedInOxlintJson(byPath.stdout).map(it => it.slice(-"/src/a.js".length))).toEqual(["/src/a.js"]);
       expect(JSON.parse(asEslint.stdout).map((it: any) => it.filePath)).toEqual([`${share}\\src\\a.js`]);
     });
 
-    // `path.relative()` of Windows takes `c:\A` and `C:\a` for the same. An editor hands out `c:\..`, a shell `C:\..`.
+    // On Windows `path.relative()` treats `c:\A` and `C:\a` as the same path. Editors pass `c:\..`, shells `C:\..`.
     test.skipIf(!isWindows)(
-      "a path whose drive and directories are written in the other case is in the project",
+      "a path whose drive and directories are in a different case is still inside the project",
       async () => {
         using dir = tempDir("bun-lint-platform", {
           "configs/mine.json": oxlintrc(),
@@ -10326,13 +12564,13 @@ describe("bun lint on Windows, macOS and Linux", () => {
           lint(dir, ["-c", join("configs", "mine.json"), "-f", "json", join(other, "src", "a.js")]),
           lint(dir, ["-c", join("configs", "mine.json"), "-f", "json", join(other, "src")]),
         ]);
-        expect(reportedToOxlint(file.stdout)).toEqual(["src/a.js"]);
-        expect(reportedToOxlint(directory.stdout)).toEqual(["src/a.js"]);
+        expect(reportedInOxlintJson(file.stdout)).toEqual(["src/a.js"]);
+        expect(reportedInOxlintJson(directory.stdout)).toEqual(["src/a.js"]);
       },
     );
 
-    // `path.resolve("\\proj\\a.js")` is on the drive of the working directory.
-    test.skipIf(!isWindows)("a path from the root of the drive", async () => {
+    // `path.resolve("\\proj\\a.js")` is on the working directory's drive.
+    test.skipIf(!isWindows)("a rooted path without a drive letter is on the working directory's drive", async () => {
       using dir = tempDir("bun-lint-platform", {
         ".oxlintrc.json": oxlintrc(),
         ".gitignore": "ignored.js\n",
@@ -10344,15 +12582,15 @@ describe("bun lint on Windows, macOS and Linux", () => {
         lint(dir, ["-f", "json", join(rooted, "src")]),
         lint(dir, [...eslint, "-f", "json", join(rooted, "src", "a.js")]),
       ]);
-      expect(reportedToOxlint(asOxlint.stdout)).toEqual(["src/a.js"]);
+      expect(reportedInOxlintJson(asOxlint.stdout)).toEqual(["src/a.js"]);
       expect(JSON.parse(asEslint.stdout).map((it: any) => [it.filePath, it.messages.length])).toEqual([
         [join(realpathSync(String(dir)), "src", "a.js"), 1],
       ]);
     });
   });
 
-  describe.concurrent("which names are the same file", () => {
-    test("a file that is named in the other case is linted if the system finds it, and once for each way it is written", async () => {
+  describe.concurrent("names that refer to the same file", () => {
+    test("a file passed in a different case is linted if the file system finds it, once per spelling", async () => {
       using dir = tempDir("bun-lint-platform", { "src/Button.js": "var a = 1\nexport { a }\n" });
       const foldsCase = existsSync(join(String(dir), "SRC", "bUTTON.JS"));
       const rules = ["--no-config-lookup", "--rule", "no-var: error"];
@@ -10365,7 +12603,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
         join("src", "Button.js"),
         join("SRC", "bUTTON.JS"),
       ]);
-      // As ESLint, to which a path is text.
+      // Same as ESLint, which compares paths as text.
       expect(JSON.parse(stdout).map((it: any) => it.filePath)).toEqual(
         foldsCase
           ? [join(String(dir), "SRC", "bUTTON.JS"), join(String(dir), "src", "Button.js")]
@@ -10376,10 +12614,10 @@ describe("bun lint on Windows, macOS and Linux", () => {
       expect(readFileSync(join(String(dir), "src", "Button.js"), "utf8")).toBe("let a = 1\nexport { a }\n");
     });
 
-    // lib/config/config-loader.js looks with `findUp`, which asks the system for a file of that name. (oxlint lists the directory
-    // and compares the names: `find_unique_config_by_readdir`.)
+    // lib/config/config-loader.js uses `findUp`, which asks the file system for a file with that name. (oxlint lists
+    // the directory and compares the names, in `find_unique_config_by_readdir`.)
     test(
-      "an eslint.config.js whose name is written in other capitals counts where the system finds it",
+      "an eslint.config.js with different capitalization is used if the file system finds it",
       async () => {
         using dir = tempDir("bun-lint-platform", {
           "eslint.config.cjs": `module.exports = [{ rules: {} }];`,
@@ -10388,35 +12626,35 @@ describe("bun lint on Windows, macOS and Linux", () => {
           "packages/p/b.js": "debugger;\n",
         });
         const foldsCase = existsSync(join(String(dir), "packages", "p", "eslint.config.cjs"));
-        // Come to by way of its directory, and asked for.
-        const [walked, named] = await Promise.all([
+        // Found by walking the directory, and passed as an argument.
+        const [walked, explicit] = await Promise.all([
           lint(dir, ["-f", "json"]),
           lint(dir, ["-f", "json", join("packages", "p", "b.js")]),
         ]);
         const expected = foldsCase ? ["packages/p/b.js"] : [];
-        expect([reported(walked.stdout, dir), reported(named.stdout, dir)]).toEqual([expected, expected]);
+        expect([reported(walked.stdout, dir), reported(explicit.stdout, dir)]).toEqual([expected, expected]);
       },
       slow ? 120_000 : undefined,
     );
 
-    // macOS finds `é` whether it is written as one character or as `e` and an accent.
-    test("a file that is named in the other normalization form is linted if the system finds it", async () => {
+    // macOS finds `é` whether it's written as one character or as `e` plus a combining accent.
+    test("a file passed in the other Unicode normalization form is linted if the file system finds it", async () => {
       using dir = tempDir("bun-lint-platform", { ["caf\u00e9.js"]: "debugger;\n" });
       const decomposed = "cafe\u0301.js";
       const isFound = existsSync(join(String(dir), decomposed));
-      const [named, walked] = await Promise.all([
+      const [explicit, walked] = await Promise.all([
         lint(dir, [...eslint, "-f", "json", "--no-error-on-unmatched-pattern", decomposed]),
         lint(dir, [...eslint, "-f", "json"]),
       ]);
-      expect(JSON.parse(named.stdout).map((it: any) => it.messages.length)).toEqual(isFound ? [1] : []);
+      expect(JSON.parse(explicit.stdout).map((it: any) => it.messages.length)).toEqual(isFound ? [1] : []);
       expect(JSON.parse(walked.stdout).map((it: any) => it.filePath.normalize("NFC"))).toEqual([
         join(String(dir), "caf\u00e9.js"),
       ]);
     });
   });
 
-  describe.concurrent("how a line ends, and what a file starts with", () => {
-    // What is expected is what ESLint 10.12.0 reports.
+  describe.concurrent("line endings and byte order marks", () => {
+    // The expected results are what ESLint 10.12.0 reports.
     const source = `var a = 1
 if (a == 2) {
   debugger
@@ -10439,18 +12677,18 @@ foo(b)
       "curly: [error, multi]",
       "max-lines: [error, { max: 10, skipBlankLines: true }]",
     ].flatMap(rule => ["--rule", rule]);
-    const places = (stdout: string) =>
+    const rangesIn = (stdout: string) =>
       JSON.parse(stdout)[0]
         .messages.map((it: any) => `${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.ruleId}`)
         .sort();
 
-    test("\\r\\n: lines, columns, comments that disable rules, and fixes", async () => {
+    test("lines, columns, disable comments and fixes are right in a file with \\r\\n", async () => {
       using dir = tempDir("bun-lint-platform", { "a.js": crlf(source), "b.js": crlf(source) });
       const [found, fixed] = await Promise.all([
         lint(dir, ["--no-config-lookup", ...rules, "-f", "json", "a.js"]),
         lint(dir, ["--no-config-lookup", ...rules, "--fix", "-f", "json", "b.js"]),
       ]);
-      expect(places(found.stdout)).toEqual(
+      expect(rangesIn(found.stdout)).toEqual(
         ["1:1-1:10 no-var", "2:7-2:9 eqeqeq", "2:13-4:2 curly", "3:3-3:11 no-debugger", "14:1-15:1 max-lines"].sort(),
       );
       expect(JSON.parse(found.stdout)[0].suppressedMessages.length).toBe(2);
@@ -10460,19 +12698,19 @@ foo(b)
       expect(fixed.exitCode).toBe(1);
     });
 
-    test("a byte order mark is not a column, and stays where it is", async () => {
+    test("a byte order mark doesn't shift columns, and --fix keeps it unless unicode-bom removes it", async () => {
       using dir = tempDir("bun-lint-platform", { "a.js": `${BOM}debugger\r\nvar a\r\n`, "b.js": `${BOM}debugger\n` });
       const some = ["no-debugger: error", "no-var: error"].flatMap(rule => ["--rule", rule]);
       const { stdout } = await lint(dir, ["--no-config-lookup", ...some, "--fix", "-f", "json", "a.js"]);
-      expect(places(stdout)).toEqual(["1:1-1:9 no-debugger"]);
+      expect(rangesIn(stdout)).toEqual(["1:1-1:9 no-debugger"]);
       expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(`${BOM}debugger\r\nlet a\r\n`);
       const removed = await lint(dir, ["--no-config-lookup", "--rule", "unicode-bom: error", "--fix", "b.js"]);
       expect(readFileSync(join(String(dir), "b.js"), "utf8")).toBe("debugger\n");
       expect(removed.exitCode).toBe(0);
     });
 
-    // What oxlint 1.87.0 prints: its columns are bytes from the start of the line, and the mark is three.
-    test("to oxlint a byte order mark is three columns", async () => {
+    // Matches oxlint 1.87.0. Its columns are byte offsets from the start of the line, and the mark is three bytes.
+    test("with an .oxlintrc.json, a byte order mark takes three columns", async () => {
       using dir = tempDir("bun-lint-platform", {
         ".oxlintrc.json": oxlintrc(),
         "a.js": `${BOM}debugger; debugger;\ndebugger;\n`,
@@ -10490,7 +12728,7 @@ foo(b)
       ]);
     });
 
-    test("\\r\\n and a byte order mark in configuration files", async () => {
+    test("reads config files with \\r\\n or a byte order mark", async () => {
       const legacy = { root: true, rules: { "no-debugger": "error" }, ignorePatterns: ["ignored.js"] };
       const files = { "a.js": "debugger;\n", "ignored.js": "debugger;\n" };
       const configs: Record<string, string>[] = [
@@ -10516,10 +12754,10 @@ foo(b)
   });
 
   describe.concurrent("links", () => {
-    // A junction needs no privilege on Windows. Elsewhere the third argument says nothing, and it is a link to a directory.
+    // A junction needs no privilege on Windows. Other platforms ignore the third argument and create a symlink.
     const link = (target: string, path: string) => symlinkSync(target, path, "junction");
 
-    test("oxlint follows a link to a directory, ESLint does not, and --fix writes a file once that is reached by two paths", async () => {
+    test("a directory link is followed with an .oxlintrc.json, not with ESLint's flags, and --fix writes each real file once", async () => {
       const files: Record<string, string> = {};
       for (let i = 0; i < 16; i++) files[`real/${i}.js`] = "var a = 1;\nexport { a };\ndebugger;\n";
       using forOxlint = tempDir("bun-lint-platform", {
@@ -10532,9 +12770,9 @@ foo(b)
         lint(forOxlint, ["--threads", "8", "--fix", "-f", "json"]),
         lint(forEslint, [...eslint, "-f", "json"]),
       ]);
-      // Like oxlint, it says what went wrong on standard output.
+      // Like oxlint, it prints errors on stdout.
       expect(asOxlint.stdout).not.toContain("Cannot write");
-      expect(reportedToOxlint(asOxlint.stdout).length).toBe(32);
+      expect(reportedInOxlintJson(asOxlint.stdout).length).toBe(32);
       expect(reported(asEslint.stdout, forEslint).length).toBe(16);
       expect(everythingIn(join(String(forOxlint), "real")).length).toBe(16);
       for (let i = 0; i < 16; i++) {
@@ -10542,22 +12780,22 @@ foo(b)
       }
     });
 
-    test("a link that leads nowhere is passed over", async () => {
+    test("skips a dangling link", async () => {
       using dir = tempDir("bun-lint-platform", { ".oxlintrc.json": oxlintrc(), "a.js": "debugger;\n" });
       link(join(String(dir), "nowhere"), join(String(dir), "b.js"));
       link(join(String(dir), "nowhere"), join(String(dir), "c"));
       const { stdout, exitCode } = await lint(dir, ["-f", "json"]);
-      expect(reportedToOxlint(stdout)).toEqual(["a.js"]);
+      expect(reportedInOxlintJson(stdout)).toEqual(["a.js"]);
       expect(exitCode).toBe(1);
     });
   });
 
-  describe.concurrent("what --fix writes", () => {
+  describe.concurrent("how --fix writes files", () => {
     const fixable = "var a = 1\nexport { a }\n";
     const fixed = "let a = 1\nexport { a }\n";
     const noVar = ["--no-config-lookup", "--rule", "no-var: error"];
 
-    test("nothing but the file is left", async () => {
+    test("leaves no temp files", async () => {
       using dir = tempDir("bun-lint-platform", { "a.js": fixable, "src/b.js": fixable, "src/c.js": fixed });
       const before = everythingIn(dir);
       const { exitCode } = await lint(dir, [...noVar, "--fix"]);
@@ -10566,7 +12804,7 @@ foo(b)
       expect(exitCode).toBe(0);
     });
 
-    // A file that takes the name of another has none of its tags, nor its ACL. ESLint writes into every file.
+    // Renaming a new file over the old one would lose the old file's tags and ACL. ESLint writes every file in place.
     test.skipIf(attributes === undefined)("a file keeps its extended attributes", async () => {
       using dir = tempDir("bun-lint-platform", { "tagged.js": fixable, "plain.js": fixable });
       const [tagged, plain] = ["tagged.js", "plain.js"].map(name => join(String(dir), name));
@@ -10576,15 +12814,15 @@ foo(b)
       expect([tagged, plain].map(path => readFileSync(path, "utf8"))).toEqual([fixed, fixed]);
       expect(attributes!.get(tagged, "user.tag")).toBe("hello");
       expect(statSync(tagged).ino).toBe(before[0]);
-      // What the system gives every file, as a label of SELinux, is no reason to write in place.
+      // An attribute that the system sets on every file, like an SELinux label, is no reason to write in place.
       if (isLinux) expect(statSync(plain).ino).not.toBe(before[1]);
       expect(everythingIn(dir)).toEqual(["plain.js", "tagged.js"]);
       expect(exitCode).toBe(0);
     });
 
-    // As `fopen` of the C runtime opens a file, and so Python and many editors: others may read and write it, and not rename or
-    // delete it. ESLint writes into it.
-    test.skipIf(!isWindows)("a file that another program has open", async () => {
+    // This is how the C runtime's `fopen` opens a file, and so do Python and many editors. Other processes can read and
+    // write the file, but can't rename or delete it. ESLint writes it in place.
+    test.skipIf(!isWindows)("fixes a file that another program has open", async () => {
       using dir = tempDir("bun-lint-platform", { "a.js": fixable });
       const { symbols, close } = dlopen("kernel32.dll", {
         CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
@@ -10601,7 +12839,7 @@ foo(b)
         0,
         null,
       );
-      // `INVALID_HANDLE_VALUE`: without the handle the test would pass whatever is done.
+      // `INVALID_HANDLE_VALUE`. Without an open handle the test would pass no matter how the file is written.
       expect(handle).not.toBe(0xffffffffffffffffn);
       try {
         const { stderr, exitCode } = await lint(dir, [...noVar, "--fix", "a.js"]);
@@ -10616,33 +12854,33 @@ foo(b)
     });
   });
 
-  describe.concurrent("a configuration file that is a program", () => {
+  describe.concurrent("a JavaScript config file", () => {
     const timeout = slow ? 240_000 : 30_000;
     const rules = `export default [{ rules: { "no-debugger": "error", "no-var": "warn" } }];`;
     test.each([
-      ["exports a configuration", rules, true, 1],
-      ["prints", `console.log("out"); console.error("err"); process.emitWarning("old"); ${rules}`, true, 1],
-      ["leaves a timer behind", `setInterval(() => {}, 1000); ${rules}`, true, 1],
-      // ESLint goes on, too.
-      ["sets process.exitCode", `process.exitCode = 5; ${rules}`, true, 1],
-      ["exports what no configuration can have", `export default [{ nonsense: 1 }];`, true, 2],
+      ["exports a config", rules, true, 1],
       [
-        "exports options that a rule does not take",
-        `export default [{ rules: { "no-debugger": ["error", 1] } }];`,
+        "prints to stdout and stderr",
+        `console.log("out"); console.error("err"); process.emitWarning("old"); ${rules}`,
         true,
-        2,
+        1,
       ],
+      ["leaves a timer running", `setInterval(() => {}, 1000); ${rules}`, true, 1],
+      // ESLint keeps going too.
+      ["sets process.exitCode", `process.exitCode = 5; ${rules}`, true, 1],
+      ["exports an unknown config key", `export default [{ nonsense: 1 }];`, true, 2],
+      ["exports options that a rule rejects", `export default [{ rules: { "no-debugger": ["error", 1] } }];`, true, 2],
       [
-        "exports a rule that is not built in",
+        "enables a rule that isn't built in",
         `export default [{ rules: { "no-var": 2, "not-built-in": 2 } }];`,
         true,
         2,
       ],
-      ["exports nothing to lint with", `export default [];`, true, 0],
+      ["exports an empty array", `export default [];`, true, 0],
       ["throws", `console.error("before"); throw new Error("boom");`, false, 2],
-      ["exports a promise that is rejected", `export default Promise.reject(new Error("rejected"));`, false, 2],
-      ["leaves", `process.exit(0);`, false, 2],
-      ["leaves with an error, and without a word", `process.exit(3);`, false, 2],
+      ["exports a rejected promise", `export default Promise.reject(new Error("rejected"));`, false, 2],
+      ["calls process.exit(0)", `process.exit(0);`, false, 2],
+      ["calls process.exit(3) without printing anything", `process.exit(3);`, false, 2],
     ])(
       "one that %s",
       async (_, config, isLoaded, exitCode) => {
@@ -10652,7 +12890,7 @@ foo(b)
           "a.js": "debugger;\nvar a;\n",
         });
         const result = await lint(dir, ["a.js"]);
-        // What it prints is seen only if it fails.
+        // The config file's output is shown only if the file fails to load.
         expect(result.stdout + result.stderr).not.toMatch(/\bout\b|\berr\b|\bold\b/);
         if (!isLoaded) expect(result.stderr).toMatch(/eslint\.config\.mjs:\r?\n./);
         expect(everythingIn(dir)).toEqual(["a.js", "eslint.config.mjs", "node_modules", "node_modules/.keep"]);
@@ -10661,13 +12899,13 @@ foo(b)
       timeout,
     );
 
-    // `timeout 10 bun lint`, an editor that ends what it has started, a step of CI that is cancelled.
+    // For example `timeout 10 bun lint`, an editor that kills the process it started, or a canceled CI step.
     test.each([
       ["waits", "await new Promise(() => setInterval(() => {}, 1000));"],
-      // Elsewhere the end of the parent is an event, and a loop that never turns gets none.
+      // On other platforms the parent's exit arrives as an event, and an event loop that never turns doesn't get it.
       ...(isLinux ? [["spins", "for (;;);"]] : []),
     ])(
-      "the process that runs one that %s for ever ends with bun lint, however that ends",
+      "the process running one that %s forever exits when bun lint is killed",
       async (_, forever) => {
         using dir = tempDir("bun-lint-platform", {
           "eslint.config.mjs": `import { writeFileSync } from "node:fs";
@@ -10722,12 +12960,12 @@ foo(b)
   });
 });
 
-// The rules of some plugins are built in, and run in place of those of the package that the configuration loads.
+// Some plugins' rules are built in, and run instead of the rules of the package that the config loads.
 describe.concurrent("nativePluginRules", () => {
-  // A debug build takes seconds to start an engine for JavaScript.
+  // A debug build takes seconds to start a JavaScript engine.
   const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
-  /** A package that is called `name`, whose rules report at the top of every file that they have run. */
+  /** Returns a package named `name` whose rules report "the package ran" at the top of every file. */
   const standIn = (name: string, rules: string[], report = `context.report({ node, message: "the package ran" })`) => ({
     [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "99.0.0", main: "index.js" }),
     [`node_modules/${name}/index.js`]: `module.exports = {
@@ -10760,8 +12998,8 @@ describe.concurrent("nativePluginRules", () => {
     }),
   };
 
-  /** For each rule that reports: whether it is that of the package. */
-  async function who(files: Record<string, string>, args: string[] = []) {
+  /** Returns, for each rule that reports, whether the package's rule or the built-in rule ran. */
+  async function whichRan(files: Record<string, string>, args: string[] = []) {
     const { raw, stderr, exitCode } = await lint(files, ["-f", "json", ...args, "a.js"], { mayFail: true });
     if (exitCode !== 1) return { stderr, exitCode };
     const messages: { ruleId: string; message: string }[] = JSON.parse(raw)[0].messages;
@@ -10773,7 +13011,7 @@ describe.concurrent("nativePluginRules", () => {
   const all = (hooks: string, imports: string) => ({
     "react-hooks/rules-of-hooks": hooks,
     "import/order": imports,
-    // Of no package.
+    // A core rule, which no package has.
     "no-debugger": "built in",
   });
 
@@ -10782,7 +13020,7 @@ describe.concurrent("nativePluginRules", () => {
     [".eslintrc.json", legacy],
   ])("%s", (_, files) => {
     test.each([
-      ["nothing", {}, [], all("built in", "built in")],
+      ["unset", {}, [], all("built in", "built in")],
       ["true", bunfig("true"), [], all("built in", "built in")],
       ["false", bunfig("false"), [], all("package", "package")],
       ["[]", bunfig("[]"), [], all("package", "package")],
@@ -10808,16 +13046,16 @@ describe.concurrent("nativePluginRules", () => {
     ] as const)(
       "%s",
       async (_, more, args, expected) => {
-        expect(await who({ ...files, ...more }, [...args])).toEqual(expected);
+        expect(await whichRan({ ...files, ...more }, [...args])).toEqual(expected);
       },
       timeout,
     );
 
     test(
-      "a comment is about the rule that runs",
+      "a disable comment applies to the package's rule",
       async () => {
         const disabled = { "a.js": `/* eslint-disable react-hooks/rules-of-hooks */\n${source["a.js"]}` };
-        expect(await who({ ...files, ...disabled, ...bunfig("false") })).toEqual({
+        expect(await whichRan({ ...files, ...disabled, ...bunfig("false") })).toEqual({
           "import/order": "package",
           "no-debugger": "built in",
         });
@@ -10826,7 +13064,7 @@ describe.concurrent("nativePluginRules", () => {
     );
   });
 
-  describe.each(["eslint.config.js", ".eslintrc.json"])("react: %s", kind => {
+  describe.each(["eslint.config.js", ".eslintrc.json"])("eslint-plugin-react with %s", kind => {
     const config = (rules: Record<string, string>) =>
       kind === "eslint.config.js"
         ? {
@@ -10853,37 +13091,37 @@ describe.concurrent("nativePluginRules", () => {
     const others = "@typescript-eslint,react-hooks,import,n,prettier";
 
     test.each([
-      ["nothing", {}, [], "built in"],
+      ["unset", {}, [], "built in"],
       ["true", bunfig("true"), [], "built in"],
       ["false", bunfig("false"), [], "package"],
       [`["import"]`, bunfig(`["import"]`), [], "package"],
       [`["react"]`, bunfig(`["react"]`), [], "built in"],
       ["--no-native-plugin-rules", {}, ["--no-native-plugin-rules"], "package"],
-      ["all the others", {}, [`--native-plugin-rules=${others}`], "package"],
-      ["all the others and it", {}, [`--native-plugin-rules=${others},react`], "built in"],
+      ["every other plugin", {}, [`--native-plugin-rules=${others}`], "package"],
+      ["every other plugin and react", {}, [`--native-plugin-rules=${others},react`], "built in"],
     ] as const)(
       "%s",
       async (_, more, args, expected) => {
-        expect(await who({ ...files, ...more }, [...args])).toEqual(by(expected));
+        expect(await whichRan({ ...files, ...more }, [...args])).toEqual(by(expected));
       },
       timeout,
     );
 
     test(
-      "a comment is about the rule that runs",
+      "a disable comment applies to whichever rule runs",
       async () => {
         const disabled = { "a.js": `/* eslint-disable react/jsx-key */\n${files["a.js"]}` };
         const expected = { "no-debugger": "built in" };
-        expect(await who({ ...files, ...disabled })).toEqual(expected);
-        expect(await who({ ...files, ...disabled }, ["--no-native-plugin-rules"])).toEqual(expected);
+        expect(await whichRan({ ...files, ...disabled })).toEqual(expected);
+        expect(await whichRan({ ...files, ...disabled }, ["--no-native-plugin-rules"])).toEqual(expected);
       },
       timeout,
     );
   });
 
-  // oxlint has them in its `react`. eslint-plugin-react does not.
+  // oxlint's `react` plugin has these rules. eslint-plugin-react doesn't.
   test.each(["rules-of-hooks", "only-export-components"])(
-    "react/%s is no rule of eslint-plugin-react",
+    "enabling react/%s is an error, because eslint-plugin-react doesn't have it",
     async rule => {
       const files = {
         ...standIn("eslint-plugin-react", ["jsx-key"]),
@@ -10898,7 +13136,7 @@ describe.concurrent("nativePluginRules", () => {
   );
 
   test(
-    "another plugin that a configuration calls `react` answers for itself",
+    "a different plugin that a config registers as `react` runs its own rules",
     async () => {
       const files = {
         ...standIn("eslint-plugin-react-x", ["jsx-key"]),
@@ -10909,22 +13147,22 @@ describe.concurrent("nativePluginRules", () => {
         }];`,
         "a.js": "export const a = [<b />];\n",
       };
-      expect(await who(files)).toEqual({ "react/jsx-key": "package" });
+      expect(await whichRan(files)).toEqual({ "react/jsx-key": "package" });
     },
     timeout,
   );
 
-  // As ESLint 10.12. No rule of the plugin is on, so nothing of a plugin that is built in has to run in JavaScript: what rules it
-  // has is known all the same.
+  // Same as ESLint 10.12. None of the plugin's rules are on, so a built-in plugin doesn't need to run anything in
+  // JavaScript, but `bun lint` still knows which rules the plugin has.
   test.each([
     ["react/nope", "eslint-plugin-react", false],
-    // oxlint has it in its `react`.
+    // oxlint's `react` plugin has it.
     ["react/only-export-components", "eslint-plugin-react", false],
     ["import/nope", "eslint-plugin-import", false],
     ["n/nope", "eslint-plugin-n", false],
     ["react-hooks/nope", "eslint-plugin-react-hooks", false],
     ["@typescript-eslint/nope", "@typescript-eslint/eslint-plugin", false],
-    // A later version, or a copy with a rule of its own.
+    // A newer version of the package, or a fork with its own rule.
     ["react/other", "eslint-plugin-react", true],
     ["import/other", "eslint-plugin-import", true],
     // Another package.
@@ -10934,7 +13172,7 @@ describe.concurrent("nativePluginRules", () => {
     ["react/other", "@eslint-react/eslint-plugin", true],
     ["react/jsx-key", "@eslint-react/eslint-plugin", false],
   ] as const)(
-    "%s, that only a comment names, with %s",
+    "%s, mentioned only in a comment, with %s",
     async (id, name, exists) => {
       const prefix = id.slice(0, id.lastIndexOf("/"));
       const files = {
@@ -10944,19 +13182,19 @@ describe.concurrent("nativePluginRules", () => {
         "turns-on.js": `/* eslint ${id}: "error" */\nmodule.exports = 1;\n`,
       };
       const { raw } = await lint(files, ["-f", "json", "disables.js", "turns-on.js"], { mayFail: true });
-      const said = (JSON.parse(raw) as { messages: any[] }[]).map(it =>
+      const reports = (JSON.parse(raw) as { messages: any[] }[]).map(it =>
         it.messages.map(it => `${it.line}:${it.column} ${it.ruleId} ${it.message}`),
       );
       const missed = [`1:1 ${id} Definition for rule '${id}' was not found.`];
       const unused = [`1:1 null Unused eslint-disable directive (no problems were reported from '${id}').`];
-      expect(said).toEqual(exists ? [unused, [`1:1 ${id} the package ran`]] : [missed, missed]);
+      expect(reports).toEqual(exists ? [unused, [`1:1 ${id} the package ran`]] : [missed, missed]);
     },
     timeout,
   );
 
-  // As ESLint 10.12 with eslint-plugin-react 7.37.5, 98 of whose rules have no `meta.type`.
+  // Same as ESLint 10.12 with eslint-plugin-react 7.37.5, where 98 rules have no `meta.type`.
   test(
-    "a rule that says no type: --fix-type leaves its fix alone, and the metadata have no type",
+    "--fix-type never applies the fix of a rule without meta.type, and its metadata has no type",
     async () => {
       const files = {
         ...standIn("eslint-plugin-react", ["self-closing-comp", "jsx-key"]),
@@ -10983,9 +13221,10 @@ describe.concurrent("nativePluginRules", () => {
     timeout,
   );
 
-  // eslint-plugin-import-lite, which @antfu/eslint-config has as `import`, has no `meta`. Neither has eslint-plugin-react.
-  describe("a plugin that says no name is the package that it was loaded from", () => {
-    /** As `standIn`, without `meta`. The first rule takes one of two words that the rule of eslint-plugin-import does not know. */
+  // eslint-plugin-import-lite, which @antfu/eslint-config registers as `import`, has no `meta`. Neither does
+  // eslint-plugin-react.
+  describe("a plugin without meta.name is identified by the package it was loaded from", () => {
+    /** Like `standIn` without `meta`. The first rule accepts two words that eslint-plugin-import's rule rejects. */
     const nameless = (name: string, rules: string[]) => ({
       [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "99.0.0", main: "index.js" }),
       [`node_modules/${name}/index.js`]: `module.exports = {
@@ -11011,19 +13250,19 @@ describe.concurrent("nativePluginRules", () => {
       ["import", "eslint-plugin-import-lite", "package"],
       ["import", "eslint-plugin-import", "built in"],
     ] as const)(
-      "%s: %s",
-      async (prefix, name, who_) => {
+      "%s loaded from %s",
+      async (prefix, name, expectedToRun) => {
         const rules = { "import/consistent-type-specifier-style": ["error", "top-level"], "import/first": "error" };
         const files = {
           ...nameless(name, ["consistent-type-specifier-style", "first"]),
           ...config(prefix, name, rules),
           ...code,
         };
-        const answer = await who(files);
+        const answer = await whichRan(files);
         expect(answer).toEqual(
-          who_ === "package"
+          expectedToRun === "package"
             ? { "import/consistent-type-specifier-style": "package", "import/first": "package" }
-            : // The word is not one of eslint-plugin-import's.
+            : // eslint-plugin-import's rule rejects "top-level".
               { stderr: expect.stringContaining(`Key "import/consistent-type-specifier-style"`), exitCode: 2 },
         );
       },
@@ -11031,20 +13270,20 @@ describe.concurrent("nativePluginRules", () => {
     );
 
     test(
-      "react: eslint-plugin-react",
+      "react loaded from eslint-plugin-react",
       async () => {
         const files = {
           ...nameless("eslint-plugin-react", ["other", "jsx-key"]),
           ...config("react", "eslint-plugin-react", { "react/jsx-key": "error" }),
           ...code,
         };
-        expect(await who(files)).toEqual({ "react/jsx-key": "built in" });
+        expect(await whichRan(files)).toEqual({ "react/jsx-key": "built in" });
       },
       timeout,
     );
 
     test(
-      "a comment that names a rule which only the other package has",
+      "a disable comment for a rule that only eslint-plugin-import has reports that the rule wasn't found",
       async () => {
         const files = {
           ...nameless("eslint-plugin-import-lite", ["consistent-type-specifier-style", "first"]),
@@ -11061,11 +13300,11 @@ describe.concurrent("nativePluginRules", () => {
 
     const first = { "import/first": "error" };
     test(
-      "the last node_modules of the path counts: the store of pnpm",
+      "the last node_modules in the path determines the package, as in pnpm's store",
       async () => {
         const inStore = (name: string) => `.pnpm/${name}@1.0.0/node_modules/${name}`;
         const run = (name: string) =>
-          who({
+          whichRan({
             ...nameless(inStore(name), ["other", "first"]),
             ...config("import", `./node_modules/${inStore(name)}`, first),
             ...code,
@@ -11079,10 +13318,10 @@ describe.concurrent("nativePluginRules", () => {
     );
 
     test(
-      "a package that only hands the object on is not what it was loaded from",
+      "a plugin that another package re-exports is identified by the package that defines it",
       async () => {
         const run = (name: string) =>
-          who({
+          whichRan({
             ...nameless(name, ["other", "first"]),
             "node_modules/shared/package.json": `{ "name": "shared", "main": "index.js" }`,
             "node_modules/shared/index.js": `exports.plugin = require("${name}");\n`,
@@ -11102,7 +13341,7 @@ describe.concurrent("nativePluginRules", () => {
     );
 
     test(
-      "an object that is written in the configuration file goes by its prefix",
+      "a plugin object defined in the config file is identified by its prefix",
       async () => {
         const files = {
           "eslint.config.js": `module.exports = [{
@@ -11112,15 +13351,15 @@ describe.concurrent("nativePluginRules", () => {
           "a.js": `foo();\nimport b from "./b.js";\nb;\n`,
           "b.js": code["b.js"],
         };
-        expect(await who(files)).toEqual({ "import/first": "built in" });
+        expect(await whichRan(files)).toEqual({ "import/first": "built in" });
       },
       timeout,
     );
   });
 
-  // `plugins` of an .oxlintrc.json names what is built into oxlint, and what `jsPlugins` names runs in JavaScript anyway.
+  // In an .oxlintrc.json, `plugins` lists oxlint's built-in plugins, and `jsPlugins` always run in JavaScript.
   test(
-    "it changes nothing under the configuration of oxlint",
+    "has no effect with an .oxlintrc.json",
     async () => {
       const files = {
         ...packages,
@@ -11143,7 +13382,7 @@ describe.concurrent("nativePluginRules", () => {
   );
 
   test(
-    "prettier/prettier is a rule of a plugin like any other",
+    "prettier/prettier is treated like any other plugin's rule",
     async () => {
       const files = {
         ...standIn("eslint-plugin-prettier", ["prettier"]),
@@ -11151,8 +13390,8 @@ describe.concurrent("nativePluginRules", () => {
         "a.js": "a  ;\n",
       };
       const [none, others] = await Promise.all([
-        who({ ...files, ...bunfig("false") }),
-        who({ ...files, ...bunfig(`["import"]`) }),
+        whichRan({ ...files, ...bunfig("false") }),
+        whichRan({ ...files, ...bunfig(`["import"]`) }),
       ]);
       expect([none, others]).toEqual([{ "prettier/prettier": "package" }, { "prettier/prettier": "package" }]);
     },
@@ -11160,7 +13399,7 @@ describe.concurrent("nativePluginRules", () => {
   );
 
   test(
-    "--print-config names the rules of the file that run in JavaScript, beside what ESLint prints",
+    "--print-config prints what ESLint prints, plus a note on stderr with the file's rules that run in JavaScript",
     async () => {
       const [builtIn, mixed] = await Promise.all([
         lint(flat, ["--print-config", "a.js"]),
@@ -11175,13 +13414,13 @@ describe.concurrent("nativePluginRules", () => {
     timeout,
   );
 
-  // Only the built-in rules have types.
+  // Only built-in rules have type information.
   test(
-    "a rule of the package that asks for types does not run, and the run says so and fails",
+    "a package's rule that needs type information doesn't run, and the run reports it and exits with 2",
     async () => {
-      const asks = `throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file.")`;
+      const throwsForTypes = `throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file.")`;
       const files = {
-        ...standIn("@typescript-eslint/eslint-plugin", ["no-floating-promises"], asks),
+        ...standIn("@typescript-eslint/eslint-plugin", ["no-floating-promises"], throwsForTypes),
         "eslint.config.js": `const ts = require("@typescript-eslint/eslint-plugin");\nmodule.exports = [{ plugins: { "@typescript-eslint": ts }, rules: { "@typescript-eslint/no-floating-promises": "error" } }];\n`,
         "a.js": "a;\n",
       };
@@ -11194,7 +13433,7 @@ describe.concurrent("nativePluginRules", () => {
     timeout,
   );
 
-  test("without a configuration file no package is loaded, and the built-in rules run", async () => {
+  test("without a config file no package is loaded, and the built-in rules run", async () => {
     const files = { "a.ts": "const a: any = 1;\nexport { a };\n" };
     const [plain, off] = await Promise.all([
       lint(files, ["-f", "unix", "a.ts"]),
@@ -11204,9 +13443,9 @@ describe.concurrent("nativePluginRules", () => {
     expect(off.stdout).toBe(plain.stdout);
   });
 
-  // Of that package only the configurations are loaded, as long as its rules are not asked for.
+  // Only this package's configs are loaded unless its rules are needed, as they are here.
   test(
-    "the rules of @typescript-eslint with an .eslintrc",
+    "`false` runs the @typescript-eslint package's rules with an .eslintrc.json",
     async () => {
       const files = {
         ...standIn("@typescript-eslint/eslint-plugin", ["no-explicit-any"]),
@@ -11217,20 +13456,22 @@ describe.concurrent("nativePluginRules", () => {
         }),
         "a.js": "a;\n",
       };
-      expect(await who({ ...files, ...bunfig("false") })).toEqual({ "@typescript-eslint/no-explicit-any": "package" });
+      expect(await whichRan({ ...files, ...bunfig("false") })).toEqual({
+        "@typescript-eslint/no-explicit-any": "package",
+      });
     },
     timeout,
   );
 
   test(
-    "a package that is not installed",
+    "a plugin package that isn't installed is an error only if its own rules have to run",
     async () => {
       const files = { ...legacy, ...standIn("eslint-plugin-import", ["order"]) };
       const without = Object.fromEntries(Object.entries(files).filter(([name]) => !name.includes("react-hooks/")));
-      expect(await who(without)).toEqual(all("built in", "built in"));
-      const refused = await who({ ...without, ...bunfig("false") });
-      expect(refused.exitCode).toBe(2);
-      expect(refused.stderr).toContain(`ESLint couldn't find the plugin "eslint-plugin-react-hooks".`);
+      expect(await whichRan(without)).toEqual(all("built in", "built in"));
+      const missingPackage = await whichRan({ ...without, ...bunfig("false") });
+      expect(missingPackage.exitCode).toBe(2);
+      expect(missingPackage.stderr).toContain(`ESLint couldn't find the plugin "eslint-plugin-react-hooks".`);
     },
     timeout,
   );
@@ -11238,13 +13479,13 @@ describe.concurrent("nativePluginRules", () => {
   test.each([
     [
       `["imprt"]`,
-      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, react, prettier\n',
+      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, react, prettier, json, markdown\n',
     ],
     [`["unicorn"]`, 'Unknown plugin "unicorn" in --native-plugin-rules'],
     [`["true"]`, 'Unknown plugin "true" in --native-plugin-rules'],
     [`"import"`, "expected boolean or array but received string"],
     ["[1]", "expected string but received number"],
-  ])("nativePluginRules = %s is refused", async (value, message) => {
+  ])("nativePluginRules = %s is rejected", async (value, message) => {
     const result = await lint({ ...flat, ...bunfig(value) }, ["a.js"], { mayFail: true });
     expect(result.stderr).toContain(message);
     expect(result.exitCode).toBe(2);
@@ -11252,7 +13493,7 @@ describe.concurrent("nativePluginRules", () => {
 });
 // tsc reports these errors from its checker (`checkGrammar*`). oxc reports them from its parser or its semantic pass, and oxlint
 // doesn't lint a file that has one. Every row was run on oxlint 1.87 with `-f json`.
-describe("TypeScript grammar errors under .oxlintrc.json", () => {
+describe("TypeScript grammar errors with an .oxlintrc.json", () => {
   type Reported = {
     filename: string;
     code?: string;
@@ -11260,10 +13501,10 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
     help?: string;
     labels: { label?: string; span: { offset: number; length: number } }[];
   };
-  /** `TS(1016) The message. @15+1 "what the label says", 3+2 help: The help.` */
+  /** Formats an error as `TS(1016) The message. @15+1 "the label", 3+2 help: The help.` */
   const print = ({ code, message, help, labels }: Reported) => {
-    const places = labels.map(({ label, span }) => `${span.offset}+${span.length}${label ? ` "${label}"` : ""}`);
-    return `${code ? `${code} ` : ""}${message} @${places.join(", ")}${help ? ` help: ${help}` : ""}`;
+    const spans = labels.map(({ label, span }) => `${span.offset}+${span.length}${label ? ` "${label}"` : ""}`);
+    return `${code ? `${code} ` : ""}${message} @${spans.join(", ")}${help ? ` help: ${help}` : ""}`;
   };
   const run = async (files: Record<string, string>, config: Record<string, string>) => {
     const { raw, exitCode } = await lint({ ...config, ...files }, ["-f", "json"]);
@@ -19933,7 +22174,7 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
     "mjs": ["await !x;", "a <!--b", "for await (const a of b) {} await !x;"],
   };
 
-  test("every error of a file is printed like oxlint's, in its order", async () => {
+  test("prints every error in a file like oxlint, in the same order", async () => {
     const files: Record<string, string> = {};
     const expected: Record<string, string[]> = {};
     for (const [kind, rows] of Object.entries(rejected)) {
@@ -19947,7 +22188,7 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("code that oxlint accepts is accepted", async () => {
+  test("accepts code that oxlint accepts", async () => {
     const files: Record<string, string> = {};
     for (const [kinds, snippets] of Object.entries(accepted)) {
       for (const kind of kinds.split(" ")) {
@@ -19957,9 +22198,9 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
     expect(await run(files, oxlintrc)).toEqual({ errors: {}, exitCode: 0 });
   });
 
-  // What oxlint 1.87 prints and `bun lint` does not yet. Both refuse each of these files.
+  // Errors that oxlint 1.87 prints and `bun lint` doesn't yet. Both reject every one of these files.
   const knownDifferences: [extension: string, code: string, ...errors: string[]][] = [
-    // oxc has given up before the `export`, so the file is no module to it.
+    // oxc gives up before it reaches the `export`, so it doesn't treat the file as a module.
     [
       "js",
       "for await (const a of b) {} await !x; export {};",
@@ -19972,9 +22213,9 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
       "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
     ],
-    // The second `await` is a reference, so oxc reads the statement again once it knows that the file is a module.
+    // The second `await` is a reference, so oxc reparses the statement once it knows that the file is a module.
     ["js", "x = { await, b: await }; import.meta;", 'Expected `:` but found `,` @11+1 "`:` expected"'],
-    // After a name `<` compares. oxc reads the statement again, where an element starts.
+    // After an identifier `<` is a comparison. oxc reparses the statement, and this time `<` starts a JSX element.
     ["js", "await < a > b; import.meta;", "Unexpected token @11+17"],
     // `-->` at the start of a line.
     [
@@ -19984,7 +22225,7 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "HTML comments are not allowed in modules @11+3",
     ],
     ["js", "\n--> b\nimport.meta;", "HTML comments are not allowed in modules @1+3"],
-    // `let` with an escape is a name.
+    // `let` written with an escape is an identifier.
     [
       "js",
       "l\\u0065t a;",
@@ -20003,7 +22244,8 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
       "TS(1036) Statements are not allowed in ambient contexts. @20+11",
     ],
-    // What the lexer says next.
+    // oxc continues after a lexer error, so it prints a second error, or labels the whole word after a number.
+    // `bun lint` stops at the lexer's first error and labels one character.
     ["js", "await (x); 1__0; import.meta;", "Invalid Character `_` @13+0", "Invalid characters after number @13+1"],
     ["js", "await (x); 3in []; import.meta;", "Invalid characters after number @12+2"],
     ["js", "1__0; new.target; let zz; let zz;", "Invalid Character `_` @2+0", "Invalid characters after number @2+1"],
@@ -20020,17 +22262,17 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "Invalid Character `;` @2+0",
       "Unexpected new.target expression @4+10 help: new.target is only allowed in constructors, functions, and class field initializers",
     ],
-    // In a .tsx file `</` is one token here, and a `<` before a regular expression to oxc.
+    // In a .tsx file `</` is one token here, but oxc reads it as a `<` followed by a regular expression.
     ["tsx", "await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
-    // Type parameters that do not start.
+    // A `<` that no type parameter follows.
     ["ts", "declare function <;", "Unexpected token @18+1"],
   ];
-  test.todo.each(knownDifferences)("%s: %j", async (extension, code, ...errors) => {
+  test.todo.each(knownDifferences)("prints oxlint's errors for a .%s file: %j", async (extension, code, ...errors) => {
     const name = `a.${extension}`;
     expect(await run({ [name]: code + "\n" }, oxlintrc)).toEqual({ errors: { [name]: errors }, exitCode: 1 });
   });
 
-  test("without a config file this code is linted, as typescript-eslint's parser takes it", async () => {
+  test("without a config file this code is linted, because typescript-eslint's parser accepts it", async () => {
     const files = {
       "a.ts": "export function f(a?: number, b: number) {}\n",
       "b.ts": "export class A { m(): void; }\n",

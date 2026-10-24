@@ -11,7 +11,7 @@ pub struct RequireArraySortCompare {
 
 const REQUIRE_COMPARE: Message = Message::new("requireCompare", "Require 'compare' argument.");
 
-/// Whether `node` is an array of which all elements are strings.
+/// True if `node` is an array whose elements are all strings.
 fn is_string_array_node(node: Expr) -> bool {
     let ty = get_constrained_type_at_location(node);
     (ty.is_array_type() || ty.is_tuple_type())
@@ -33,14 +33,12 @@ impl RequireArraySortCompare {
         let Some(obj) = callee.object() else {
             return;
         };
-        // `(a?.sort)()` calls a `ChainExpression`, and for tsgolint `(a.sort)()` a `ParenthesizedExpression`.
-        let is_sort = match is_oxlint {
-            true => {
-                !callee.is_parenthesized()
-                    && matches!(callee.file().type_checker().get_accessed_property_name(callee), Some(b"sort" | b"toSorted"))
-            }
-            false => !callee.is_chain_root() && is_static_member_access_of_value(callee, &["sort", "toSorted"]),
-        };
+        // `(a?.sort)()` calls a `ChainExpression`.
+        let is_sort = !callee.is_chain_root()
+            && match is_oxlint {
+                true => matches!(callee.file().type_checker().get_accessed_property_name(callee), Some(b"sort" | b"toSorted")),
+                false => is_static_member_access_of_value(callee, &["sort", "toSorted"]),
+            };
         if !is_sort {
             return;
         }

@@ -17,6 +17,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe));
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsMapIterator,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe));
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSetIterator,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe));
+
 namespace Zig {
 
 // Hardcoded module "node:util/types"

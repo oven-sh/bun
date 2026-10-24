@@ -8,9 +8,9 @@ pub struct NoSelfAssign {
 
 const SELF_ASSIGNMENT: Message = Message::new("selfAssignment", "'{{name}}' is assigned to itself.");
 
-/// ESLint's `eachSelfAssignment`: goes through the target `left` and the value `right` in parallel.
+/// ESLint's `eachSelfAssignment`: walks the target `left` and the value `right` in parallel.
 fn each_self_assignment<'a>(left: Expr<'a>, right: Expr<'a>, props: bool, report: &mut dyn FnMut(Expr<'a>)) {
-    // Nearly all are of two kinds, or two names.
+    // Fast path: nearly every pair has two different kinds, or is two identifiers.
     let is_member = |tag: ExprTag| matches!(tag, ExprTag::Dot | ExprTag::Index);
     if left.tag() != right.tag() && !(is_member(left.tag()) && is_member(right.tag())) {
         return;
@@ -33,13 +33,13 @@ fn each_self_assignment<'a>(left: Expr<'a>, right: Expr<'a>, props: bool, report
                     break;
                 }
                 each_self_assignment(target, value, props, report);
-                // What follows a spread is at an unknown index.
+                // Elements after a spread are at an unknown index.
                 if value.tag() == ExprTag::Spread {
                     break;
                 }
             }
         }
-        // oxlint does not look at what comes after `...`.
+        // oxlint doesn't check the operand of `...`.
         (ExprKind::Spread(l), ExprKind::Spread(r)) if !left.file().language().is_oxlint => {
             each_self_assignment(l, r, props, report);
         }
@@ -97,7 +97,7 @@ impl Rule for NoSelfAssign {
             return;
         }
         each_self_assignment(target, value, self.props, &mut |found| {
-            // A default value in a destructuring assignment is not an assignment.
+            // A default value in a destructuring assignment isn't an assignment.
             if !utils::is_assignment_target(e) {
                 cx.report(found, SELF_ASSIGNMENT).data("name", strings::without_js_whitespace(found.text()));
             }

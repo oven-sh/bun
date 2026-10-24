@@ -1,13 +1,13 @@
-//! What a linter without a checker is told of a file: what each node is part of, the kind of each
-//! expression, and for each function what encloses it and where it returns and yields.
+//! Computes what a linter without a checker needs to know about a file: each node's parent, each
+//! expression's kind, and for each function its enclosing function and where it returns and yields.
 //!
-//! All of it is read off the lists of the file, in which a node comes after its parts and the parts
-//! are in source order. Nothing here calls itself, and nothing is declared or resolved.
+//! All of it comes from the file's node lists, where a node comes after its children and the
+//! children are in source order. Nothing here recurses, and nothing is declared or resolved.
 
 use super::*;
 use crate::util::SharedSort;
 
-/// Makes `b` what [`bind_for_lint_in`] says. `false`: the file takes the binder.
+/// Fills in `b` as [`bind_for_lint_in`] describes. Returns false if the file needs the binder.
 pub(super) fn fill_in<S: Storage>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
     if !parents::fill_in::<S, true>(f, b) || !functions(f, b) {
         return false;
@@ -21,7 +21,7 @@ pub(super) fn fill_in<S: Storage>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
     true
 }
 
-/// Where the function that `owner` owns ends.
+/// The end of the function that `owner` owns.
 #[inline]
 fn end_of<S: Storage>(f: &FileIn<S>, owner: FnOwner) -> u32 {
     match owner {
@@ -33,8 +33,8 @@ fn end_of<S: Storage>(f: &FileIn<S>, owner: FnOwner) -> u32 {
     }
 }
 
-/// From where on what is written is in the function: after its decorators and its name, which can be
-/// computed.
+/// The position from which the source text is inside the function. That's after its decorators and
+/// its name, which can be computed.
 #[inline]
 fn start_of<S: Storage>(f: &FileIn<S>, func: &Func) -> u32 {
     match (
@@ -47,19 +47,20 @@ fn start_of<S: Storage>(f: &FileIn<S>, func: &Func) -> u32 {
     }
 }
 
-/// `FnInfo::enclosing` and `FnInfo::returns`. `b.ids` has the `return` statements of the file.
+/// Fills in `FnInfo::enclosing` and `FnInfo::returns`. On entry, `b.ids` has the file's `return`
+/// statements.
 ///
-/// A function comes after the functions in it, so what is in its range and in no function so far is
-/// directly in it. `false`: the lists are not in that order.
+/// A function comes after the functions nested in it, so anything in its range that no earlier
+/// function has claimed is directly in it. Returns false if the lists aren't in that order.
 fn functions<S: Storage>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
     let (fns, ids) = (&mut b.fns[..], &mut b.ids);
-    // The functions that are in no function so far: the last, and each has the one before as its
-    // `enclosing`.
+    // A linked list of the functions that no function has claimed yet. This is the last one, and
+    // each one's `enclosing` temporarily points to the one before it.
     let mut open = FnId::NONE;
-    // The same for the `return` statements: `ids[..pending]`. Those at `ids[read..found]` end later
-    // than the functions so far.
+    // The unclaimed `return` statements are `ids[..pending]`. Those at `ids[read..found]` end after
+    // every function seen so far.
     let (mut pending, mut read, found) = (0, 0, ids.len());
-    // Where the last of them ends.
+    // The end of the last `return` statement read.
     let mut last_return = 0;
     for (i, func) in f.fns.iter().enumerate() {
         let (start, end) = (start_of(f, func), end_of(f, fns[i].owner));
@@ -113,36 +114,36 @@ fn functions<S: Storage>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
     true
 }
 
-/// A node on the way up from a `yield`.
+/// A node on the path up from a `yield`.
 #[derive(Copy, Clone)]
-enum Place {
+enum Ancestor {
     Expr(ExprId),
     Stmt(StmtId),
     Pat(PatId),
 }
 
 enum Next {
-    At(Place),
-    /// The function that has what is yielded below. `NONE`: none has.
+    At(Ancestor),
+    /// The function that the `yield` belongs to, or `NONE` if there isn't one.
     Is(FnId),
 }
 
-/// `FnInfo::yields`: what `forEachYieldExpression` finds.
+/// Fills in `FnInfo::yields` with what `forEachYieldExpression` finds.
 struct Yields<'l, S: Storage> {
     f: &'l FileIn<S>,
     b: &'l mut BoundBuilder,
-    /// For each node that a way up has passed, where it has led.
-    of_expr: Vec<Option<FnId>>,
-    of_stmt: Vec<Option<FnId>>,
-    of_pat: Vec<Option<FnId>>,
+    /// For each node that a walk has passed through, the function where that walk ended.
+    fn_of_expr: Vec<Option<FnId>>,
+    fn_of_stmt: Vec<Option<FnId>>,
+    fn_of_pat: Vec<Option<FnId>>,
 }
 
 impl<'l, S: Storage> Yields<'l, S> {
     fn new(f: &'l FileIn<S>, b: &'l mut BoundBuilder) -> Self {
         Yields {
-            of_expr: vec![None; f.exprs.len()],
-            of_stmt: vec![None; f.stmts.len()],
-            of_pat: vec![None; f.pats.len()],
+            fn_of_expr: vec![None; f.exprs.len()],
+            fn_of_stmt: vec![None; f.stmts.len()],
+            fn_of_pat: vec![None; f.pats.len()],
             f,
             b,
         }
@@ -151,7 +152,7 @@ impl<'l, S: Storage> Yields<'l, S> {
     fn list(&mut self) {
         let f = self.f;
         let mut found: Vec<(FnId, u32)> = Vec::new();
-        let mut passed: Vec<Place> = Vec::new();
+        let mut passed: Vec<Ancestor> = Vec::new();
         for (i, e) in f.exprs.iter().enumerate() {
             if let ExprKind::Yield { .. } = e.kind {
                 let function = self.function_of(ExprId(i as u32), &mut passed);
@@ -161,27 +162,28 @@ impl<'l, S: Storage> Yields<'l, S> {
             }
         }
         found.shared_sort_unstable_by_key(|it| (it.0.0, it.1));
-        for of_one in found.chunk_by(|a, b| a.0 == b.0) {
-            if let Some(info) = self.b.fns.get_mut(of_one[0].0.idx()) {
-                info.yields = IdList::new(self.b.ids.len() as u32, of_one.len() as u32);
-                self.b.ids.extend(of_one.iter().map(|it| it.1));
+        for yields_of_fn in found.chunk_by(|a, b| a.0 == b.0) {
+            if let Some(info) = self.b.fns.get_mut(yields_of_fn[0].0.idx()) {
+                info.yields = IdList::new(self.b.ids.len() as u32, yields_of_fn.len() as u32);
+                self.b.ids.extend(yields_of_fn.iter().map(|it| it.1));
             }
         }
     }
 
-    /// Every node is passed once: whoever gets to it again takes what was found.
-    fn function_of(&mut self, e: ExprId, passed: &mut Vec<Place>) -> FnId {
-        let mut at = Place::Expr(e);
+    /// Walks up from `e` to its function. Each node is only walked through once, because a later
+    /// walk that reaches it reuses the cached result.
+    fn function_of(&mut self, e: ExprId, passed: &mut Vec<Ancestor>) -> FnId {
+        let mut at = Ancestor::Expr(e);
         let function = loop {
             let known = match at {
-                Place::Expr(it) => self.of_expr.get_mut(it.idx()),
-                Place::Stmt(it) => self.of_stmt.get_mut(it.idx()),
-                Place::Pat(it) => self.of_pat.get_mut(it.idx()),
+                Ancestor::Expr(it) => self.fn_of_expr.get_mut(it.idx()),
+                Ancestor::Stmt(it) => self.fn_of_stmt.get_mut(it.idx()),
+                Ancestor::Pat(it) => self.fn_of_pat.get_mut(it.idx()),
             };
             match known {
                 None => break FnId::NONE,
                 Some(&mut Some(function)) => break function,
-                // Until the way has ended.
+                // A placeholder until the walk ends.
                 Some(unknown) => *unknown = Some(FnId::NONE),
             }
             passed.push(at);
@@ -190,105 +192,102 @@ impl<'l, S: Storage> Yields<'l, S> {
                 Next::Is(function) => break function,
             }
         };
-        for place in passed.drain(..) {
-            match place {
-                Place::Expr(it) => self.of_expr[it.idx()] = Some(function),
-                Place::Stmt(it) => self.of_stmt[it.idx()] = Some(function),
-                Place::Pat(it) => self.of_pat[it.idx()] = Some(function),
+        for ancestor in passed.drain(..) {
+            match ancestor {
+                Ancestor::Expr(it) => self.fn_of_expr[it.idx()] = Some(function),
+                Ancestor::Stmt(it) => self.fn_of_stmt[it.idx()] = Some(function),
+                Ancestor::Pat(it) => self.fn_of_pat[it.idx()] = Some(function),
             }
         }
         function
     }
 
-    fn above(&self, at: Place) -> Next {
+    fn above(&self, at: Ancestor) -> Next {
         const NOWHERE: Next = Next::Is(FnId::NONE);
         let (f, b) = (self.f, &*self.b);
-        let statement = |s: Option<&StmtId>| s.map_or(NOWHERE, |&s| Next::At(Place::Stmt(s)));
+        let statement = |s: Option<&StmtId>| s.map_or(NOWHERE, |&s| Next::At(Ancestor::Stmt(s)));
         let function = |func: Option<&FnId>| func.map_or(NOWHERE, |&func| Next::Is(func));
         let class = |c: ClassId| match b.class_owner.get(c.idx()) {
-            Some(&ClassOwner::Expr(e)) => Next::At(Place::Expr(e)),
-            Some(&ClassOwner::Stmt(s)) => Next::At(Place::Stmt(s)),
+            Some(&ClassOwner::Expr(e)) => Next::At(Ancestor::Expr(e)),
+            Some(&ClassOwner::Stmt(s)) => Next::At(Ancestor::Stmt(s)),
             None => NOWHERE,
         };
-        // It descends into no type.
+        // `forEachYieldExpression` doesn't descend into types.
         let class_of = |m: MemberId| match b.member_owner.get(m.idx()) {
             Some(&MemberOwner::Class(c)) => class(c),
             _ => NOWHERE,
         };
         match at {
-            Place::Expr(e) => match b.expr_parent.get(e.idx()).copied().unwrap_or(Parent::None) {
-                Parent::Expr(above) | Parent::PropKey(above, _) => Next::At(Place::Expr(above)),
-                Parent::Stmt(s) => Next::At(Place::Stmt(s)),
+            Ancestor::Expr(e) => match b.parent_of_expr(e) {
+                Parent::Expr(above) => Next::At(Ancestor::Expr(above)),
+                Parent::Stmt(s) => Next::At(Ancestor::Stmt(s)),
                 Parent::VarInit(d) => statement(b.var_stmt.get(d.idx())),
                 Parent::Case(c) => statement(b.case_stmt.get(c.idx())),
                 Parent::ParamDefault(p) => function(b.param_fn.get(p.idx())),
                 Parent::PatPropDefault(p) | Parent::PatKey(p) => f
                     .pat_props
                     .get(p.idx())
-                    .map_or(NOWHERE, |it| Next::At(Place::Pat(it.value))),
+                    .map_or(NOWHERE, |it| Next::At(Ancestor::Pat(it.value))),
                 Parent::PatElemDefault(p) => f
                     .pat_elems
                     .get(p.idx())
-                    .map_or(NOWHERE, |it| Next::At(Place::Pat(it.pat))),
-                Parent::Prop(p) | Parent::MethodKey(p) => b
+                    .map_or(NOWHERE, |it| Next::At(Ancestor::Pat(it.pat))),
+                Parent::Prop(p) | Parent::PropKey(p) | Parent::MethodKey(p) => b
                     .prop_owner
                     .get(p.idx())
-                    .map_or(NOWHERE, |&it| Next::At(Place::Expr(it))),
+                    .map_or(NOWHERE, |&it| Next::At(Ancestor::Expr(it))),
                 Parent::MemberKey(m) | Parent::MemberInit(m) => class_of(m),
-                Parent::ClassExtends(c) | Parent::Decorator(c, DecoratorOwner::Class(_)) => {
-                    class(c)
-                }
+                Parent::ClassExtends(c) | Parent::ClassDecorator(c) => class(c),
                 // "visits only the computed name of a method, an accessor or a constructor"
-                Parent::Decorator(c, DecoratorOwner::Member(m)) => match f.members.get(m.idx()) {
-                    Some(member) if member.func.is_none() => class(c),
+                Parent::MemberDecorator(m) => match f.members.get(m.idx()) {
+                    Some(member) if member.func.is_none() => class_of(m),
                     _ => NOWHERE,
                 },
-                // Any other is a decorator of a parameter.
+                // Anything but the expression body is a parameter's decorator.
                 Parent::FnBody(func) => match f.fns.get(func.idx()).map(|it| it.body) {
                     Some(FnBody::Expr(body)) if body == e => Next::Is(func),
                     _ => NOWHERE,
                 },
-                Parent::Decorator(_, DecoratorOwner::Param(_))
+                Parent::ParamDecorator(_)
                 | Parent::EnumInit(_)
                 | Parent::Module(_)
                 | Parent::File
                 | Parent::None => NOWHERE,
             },
-            Place::Stmt(s) => match (
-                f.stmts.get(s.idx()).map(|it| it.kind),
-                b.stmt_parent.get(s.idx()),
-            ) {
-                (
-                    None
-                    | Some(
-                        StmtKind::Enum(_)
-                        | StmtKind::Interface(_)
-                        | StmtKind::Module(_)
-                        | StmtKind::TypeAlias(_)
-                        | StmtKind::Fn(_),
-                    ),
-                    _,
-                ) => NOWHERE,
-                (_, Some(&Parent::Stmt(above))) => Next::At(Place::Stmt(above)),
-                // "visits a static block like any statement"
-                (_, Some(&Parent::FnBody(func))) => match (
-                    f.fns.get(func.idx()).map(|it| it.kind),
-                    b.fns.get(func.idx()),
-                ) {
+            Ancestor::Stmt(s) => {
+                match (f.stmts.get(s.idx()).map(|it| it.kind), b.parent_of_stmt(s)) {
                     (
-                        Some(FnKind::StaticBlock),
-                        Some(FnInfo {
-                            owner: FnOwner::Member(m),
-                            ..
-                        }),
-                    ) => class_of(*m),
-                    _ => Next::Is(func),
-                },
-                _ => NOWHERE,
-            },
-            Place::Pat(p) => match b.pat_parent.get(p.idx()) {
+                        None
+                        | Some(
+                            StmtKind::Enum(_)
+                            | StmtKind::Interface(_)
+                            | StmtKind::Module(_)
+                            | StmtKind::TypeAlias(_)
+                            | StmtKind::Fn(_),
+                        ),
+                        _,
+                    ) => NOWHERE,
+                    (_, Parent::Stmt(above)) => Next::At(Ancestor::Stmt(above)),
+                    // "visits a static block like any statement"
+                    (_, Parent::FnBody(func)) => match (
+                        f.fns.get(func.idx()).map(|it| it.kind),
+                        b.fns.get(func.idx()),
+                    ) {
+                        (
+                            Some(FnKind::StaticBlock),
+                            Some(FnInfo {
+                                owner: FnOwner::Member(m),
+                                ..
+                            }),
+                        ) => class_of(*m),
+                        _ => Next::Is(func),
+                    },
+                    _ => NOWHERE,
+                }
+            }
+            Ancestor::Pat(p) => match b.pat_parent.get(p.idx()) {
                 Some(&(PatParent::Prop(above, _) | PatParent::Elem(above, _))) => {
-                    Next::At(Place::Pat(above))
+                    Next::At(Ancestor::Pat(above))
                 }
                 Some(&PatParent::Var(d)) => statement(b.var_stmt.get(d.idx())),
                 Some(&PatParent::Param(param)) => function(b.param_fn.get(param.idx())),

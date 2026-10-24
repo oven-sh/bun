@@ -43,13 +43,13 @@ impl Rule for NoUnusedPropTypes {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let prop_types = declared(&self.custom_validators);
-        // An import declares nothing.
+        // An import doesn't count as a declaration.
         let mut has_declaration = false;
         prop_types.nodes(file, &mut |node, _| has_declaration |= !matches!(node, Node::Stmt(_)));
         if !has_declaration {
             return;
         }
-        // Few files without JSX have a component, which the detection alone finds out at a fourth of the price.
+        // Files without JSX rarely have a component. Running only the detection first costs a quarter of the full pass.
         if !file.has_exprs([ExprTag::Jsx]) {
             let mut detection = Components::new(file);
             detection.finish();
@@ -72,7 +72,7 @@ impl Rule for NoUnusedPropTypes {
 fn is_annotated_with_never(node: Node<'_>) -> bool {
     let annotation = match node {
         Node::Member(signature) => signature.ty(),
-        // The `typeAnnotation` of an assertion is its type. An operator and a mapped type have one in turn.
+        // An assertion's `typeAnnotation` is its type. Type operators and mapped types have a `typeAnnotation` too.
         Node::Expr(e) => match e.kind() {
             ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => match ty.kind() {
                 TypeKind::Keyof(operand) | TypeKind::Readonly(operand) | TypeKind::Unique(operand) => Some(operand),
@@ -86,8 +86,8 @@ fn is_annotated_with_never(node: Node<'_>) -> bool {
     annotation.is_some_and(|it| matches!(it.kind(), TypeKind::Keyword(Keyword::Never)))
 }
 
-/// Whether `getKeyValue` of the key of `node` is no string: `1`, `[1n]`, `[null]`, `[/a/]`.
-fn is_named_by_no_string(node: Node<'_>) -> bool {
+/// True if `getKeyValue` of `node`'s key isn't a string, e.g. `1`, `[1n]`, `[null]` or `[/a/]`.
+fn has_non_string_key(node: Node<'_>) -> bool {
     let Node::Prop(property) = node else {
         return false;
     };
@@ -98,7 +98,7 @@ fn is_named_by_no_string(node: Node<'_>) -> bool {
     }
 }
 
-/// Puts `props` on `pending`, which is taken from at its end: the first of them last.
+/// Pushes `props` onto the `pending` stack in reverse, so the first one is popped first.
 fn push_all<'p, 'a>(
     pending: &mut Vec<&'p DeclaredPropType<'a>>,
     props: &mut dyn Iterator<Item = &'p DeclaredPropType<'a>>,
@@ -111,7 +111,7 @@ fn push_all<'p, 'a>(
 }
 
 impl NoUnusedPropTypes {
-    /// upstream's `reportUnusedPropTypes`, with `reportUnusedPropType` and `isPropUsed`
+    /// Upstream's `reportUnusedPropTypes`, including `reportUnusedPropType` and `isPropUsed`.
     fn report_unused_prop_types<'a>(&self, component: &Component<'a>, cx: &Cx<'a, Self>) {
         let Some(declared_prop_types) = component.declared_prop_types.as_ref().filter(|it| !it.is_empty()) else {
             return;
@@ -126,11 +126,12 @@ impl NoUnusedPropTypes {
                 continue;
             }
             let full_name = prop.full_name.as_deref();
-            // upstream compares with `===` and `indexOf`. In a shape the full name is a string.
-            let is_number = prop.node.is_some_and(is_named_by_no_string);
+            // Upstream compares with `===` and `indexOf`, so a number never equals a string. In a shape the full name
+            // is a string.
+            let is_number = prop.node.is_some_and(has_non_string_key);
             let is_ignored = !(is_number && prop.full_name == prop.name)
                 && full_name.is_some_and(|name| self.ignore.iter().any(|it| name == &**it));
-            // Where nothing at all is used, a shape is not used either.
+            // If no prop is used at all, a shape isn't used either.
             let is_prop_used = !used_names.is_empty()
                 && (is_shape
                     || (prop.name.as_deref())

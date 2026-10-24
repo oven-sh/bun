@@ -84,10 +84,6 @@ const failsInTheTestProgramItself = isMacOS
     ]
   : [];
 
-// TODO: the test of the pinned engine looks for the function behind cc() of bun:ffi under the name that its binding had in src/js
-// before the function had a schema. It leaves the list with the next engine that is pinned.
-const looksForFormerNameOfAnEntry = ["builtin-table/marks"];
-
 // TODO: what these expect of x86-64 was taken where a loop poll is a load that faults, which is Linux alone. On macOS a poll is a
 // comparison with a call there too, and testaot has no word yet by which a test could say so.
 const expectsLoopPollsThatFault =
@@ -115,7 +111,7 @@ function expectEveryTestPassed({ lines, stderr, exitCode }: Awaited<ReturnType<t
   }
   const failed = lines.filter(line => line.startsWith("FAIL "));
   const isOnTheList = (line: string) =>
-    [...failsInTheTestProgramItself, ...looksForFormerNameOfAnEntry].some(name => line.startsWith(`FAIL ${name}: `)) ||
+    failsInTheTestProgramItself.some(name => line.startsWith(`FAIL ${name}: `)) ||
     expectsLoopPollsThatFault.some(file => line.includes(`/${file}:`));
   if (failed.length && failed.every(isOnTheList)) {
     expect(lines.at(-1)).toMatch(/^[1-9][0-9]* passed, [1-9][0-9]* failed, [0-9]+ todo$/);

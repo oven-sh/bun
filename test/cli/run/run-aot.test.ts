@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
 import { chmodSync, readdirSync } from "fs";
-import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import type { Readable } from "stream";
 import { text } from "stream/consumers";
@@ -666,7 +666,8 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("stays one process", async () => {
+  // Windows has no way to replace the program of a process: there the program runs in a child of the process that built it.
+  test.concurrent.skipIf(isWindows)("stays one process", async () => {
     using dir = tempDir("run-aot", { "entry.ts": `console.log(process.pid);` });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "--debug-aot", "entry.ts"],
@@ -1003,6 +1004,37 @@ test.skipIf(!supported).each([false, true])("inherited file descriptors stay ope
     third: "written to 3",
     fourth: "written to 4",
     sixtyFourth: "written to 64",
+    exitCode: 0,
+  });
+});
+
+test.skipIf(!supported).each([false, true])("messages to and from the parent process (--aot: %p)", async aot => {
+  using dir = tempDir("run-aot", {
+    "entry.js": `
+      process.on("message", message => {
+        process.send({ answered: message });
+        process.disconnect();
+      });
+      process.send("ready");
+    `,
+  });
+  const received: unknown[] = [];
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", ...(aot ? ["--debug-aot"] : []), "entry.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    ipc(message, child) {
+      received.push(message);
+      if (message === "ready") child.send("asked");
+    },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, received, exitCode }).toEqual({
+    stdout: "",
+    stderr: "",
+    received: ["ready", { answered: "asked" }],
     exitCode: 0,
   });
 });

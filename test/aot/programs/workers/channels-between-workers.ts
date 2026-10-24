@@ -81,7 +81,8 @@ if (Bun.isMainThread) {
       if (data.role === "left") port.postMessage({ hits: 0, path: [] } satisfies Ball);
     } else if (data.role === "listener") {
       const news = new BroadcastChannel("news");
-      news.onmessage = message => news.postMessage(data.id + " heard " + message.data.say + " " + message.data.list.join("+") + " " + message.data.when?.getTime());
+      // A listener hears what the other listeners answer too, and an answer may reach it ahead of what was answered.
+      news.onmessage = message => void (message.data.say && news.postMessage(data.id + " heard " + message.data.say + " " + message.data.list.join("+") + " " + message.data.when?.getTime()));
       postMessage("listens");
     } else if (data.role === "relay") {
       data.from.onmessage = (message: MessageEvent<number[]>) => data.to.postMessage([...message.data, message.data.length]);

@@ -435,6 +435,51 @@ const HANDLE_FLAG_INHERIT: u32 = 1;
 #[cfg(windows)]
 unsafe extern "system" {
     fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
+    fn GetStartupInfoW(startup_info: *mut bun_sys::windows::STARTUPINFOW);
+}
+
+/// `block` is what a parent process hands to the C runtime of its child: a count, then a byte of flags for each
+/// descriptor, then a handle for each. The answer starts at descriptor 3.
+#[cfg(any(windows, test))]
+fn list_open_extra_descriptors(block: &[u8]) -> Vec<bool> {
+    const IS_OPEN: u8 = 1;
+    const MOST_THAT_LIBUV_HANDS_ON: usize = 255;
+    let Some((count, rest)) = block.split_first_chunk::<4>() else {
+        return Vec::new();
+    };
+    let count = (u32::from_ne_bytes(*count) as usize)
+        .min(rest.len() / (1 + size_of::<usize>()))
+        .min(MOST_THAT_LIBUV_HANDS_ON);
+    let flags = rest[..count].iter().skip(3);
+    flags.map(|flags| flags & IS_OPEN != 0).collect()
+}
+
+#[cfg(windows)]
+fn list_inherited_extra_descriptors() -> Box<[bool]> {
+    // SAFETY: integers and null pointers are a valid STARTUPINFOW.
+    let mut startup_info: bun_sys::windows::STARTUPINFOW =
+        unsafe { bun_core::ffi::zeroed_unchecked() };
+    // SAFETY: the call fills the structure it is given.
+    unsafe { GetStartupInfoW(&mut startup_info) };
+    if startup_info.lpReserved2.is_null() {
+        return Box::default();
+    }
+    // SAFETY: the block is part of the parameters of this process, which are never freed.
+    let block = unsafe {
+        core::slice::from_raw_parts(
+            startup_info.lpReserved2,
+            usize::from(startup_info.cbReserved2),
+        )
+    };
+    let is_still_open = |index: usize| {
+        let handle = Fd::from_uv(3 + index as i32).native() as isize;
+        handle != -1 && handle != -2
+    };
+    list_open_extra_descriptors(block)
+        .into_iter()
+        .enumerate()
+        .map(|(index, was_open)| was_open && is_still_open(index))
+        .collect()
 }
 
 #[cfg(windows)]
@@ -463,8 +508,9 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
             return 1;
         }
     };
+    let own_name = bun_core::argv().get(0).unwrap_or(executable);
     let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(arguments.len() + 1);
-    argv.push(Box::from(executable.as_bytes()));
+    argv.push(Box::from(own_name.as_bytes()));
     argv.extend(arguments.into_iter().map(Vec::into_boxed_slice));
 
     bun_spawn::ctrl_c::install();
@@ -482,6 +528,7 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
             )),
             ..Default::default()
         },
+        inherited_extra_fds: list_inherited_extra_descriptors(),
         ..Default::default()
     });
     match spawned {
@@ -878,6 +925,39 @@ mod tests {
         assert_eq!(
             arguments(&[b"--aot-huge-heap", b"--aot=1", b"a.ts"], 3),
             owned(&[b"--aot-graph-fd=7", b"--aot-huge-heap", b"--aot=1", b"a.ts"]),
+        );
+    }
+
+    fn runtime_block(count: u32, flags: &[u8]) -> Vec<u8> {
+        let handles = vec![0u8; flags.len() * size_of::<usize>()];
+        [&count.to_ne_bytes()[..], flags, &handles].concat()
+    }
+
+    #[test]
+    fn open_descriptors_from_3_up_are_listed() {
+        assert_eq!(
+            list_open_extra_descriptors(&runtime_block(6, &[1, 1, 1, 9, 0, 0x41])),
+            [true, false, true]
+        );
+    }
+
+    #[test]
+    fn no_extra_descriptors() {
+        assert!(list_open_extra_descriptors(&[]).is_empty());
+        assert!(list_open_extra_descriptors(&[3, 0]).is_empty());
+        assert!(list_open_extra_descriptors(&runtime_block(0, &[])).is_empty());
+        assert!(list_open_extra_descriptors(&runtime_block(3, &[1, 1, 1])).is_empty());
+    }
+
+    #[test]
+    fn count_beyond_the_block_is_cut() {
+        assert_eq!(
+            list_open_extra_descriptors(&runtime_block(1000, &[1, 1, 1, 1])),
+            [true]
+        );
+        assert_eq!(
+            list_open_extra_descriptors(&runtime_block(300, &[1; 300])).len(),
+            252
         );
     }
 

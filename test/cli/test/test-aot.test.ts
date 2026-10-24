@@ -13,7 +13,7 @@ function expectToHaveUsedImage(stderr: string) {
 }
 
 const theReportOfAThrownErrorNamesTheSameLineAndAnotherColumnUnderAot =
-  /^ +\^\n(error: thrown in a test\n +at <anonymous> \(<dir>\/a\.test\.ts:\d+):\d+\)/m;
+  /^ +\^\n(error: thrown in a test\n +at <anonymous> \(<dir>[\\/]a\.test\.ts:\d+):\d+\)/m;
 
 async function runTests(cwd: string, aot: boolean, args: string[] = [], builds = true) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...(aot ? ["--debug-aot"] : []), ...args], cwd, {

@@ -45,8 +45,6 @@ export default b.declarations(
 
   b.extend("process.dlopen", { loadsMachineCodeAs: "process.dlopen" }),
   b.extend("%NativeFunctions%.FfiBindTsCc", { loadsMachineCodeAs: "bun:ffi.cc" }),
-  // The engine names the binding behind cc() as src/js spelled it before the function had a schema. It is the only role that has no entry of its own name.
-  b.unfilledHostRoles("native:Bindgen:ffi.bind.ts:cc", "FFI"),
   b.extend("Bun.FFI.dlopen", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
   b.extend("Bun.FFI.linkSymbols", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
   b.extend("Bun.FFI.cfunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),

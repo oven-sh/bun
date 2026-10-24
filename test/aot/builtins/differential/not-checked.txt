@@ -31,6 +31,8 @@ CompilerHelpersRangeOfBytes/0: it is not called: the compiler hands it what anot
 CompilerHelpersViewOrRangeOfBytes/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 ImportMetaResolve/0: it is not called: this realm does not have it
 ImportMetaResolveSync/0: it is not called: this realm does not have it
+NativeBindgenNode_cluster_bindingBindTsClusterRawBind/1: it is not called: it asks the name servers about every string that is no address, and waits for them
+NativeBindgenNode_fs_bindingBindTsBinding/0: it is not called: this realm does not have it
 NativeCppNodeURLCppBunCreateNodeICUBinding/0: it is not called: this realm does not have it
 NativeCppNodeURLCppBunCreateNodeURLBinding/0: it is not called: this realm does not have it
 NativeCppNodeV8CppBunCreateNodeV8Binding/0: it is not called: this realm does not have it
@@ -43,13 +45,10 @@ NativeFunctionsBunProcessCppJsFunction_throwValue/0: it is not called: this real
 NativeFunctionsBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have its holder
 NativeFunctionsErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have its holder
-NativeFunctionsIpc_hostBindTsEmitHandleIPCMessage/0: it is not called: it opens a connection or writes to the channel of a parent process
 NativeFunctionsJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/0: it is not called: this realm does not have its holder
 NativeFunctionsJSEventListenerCppJsFunctionEmitUncaughtException/0: it is not called: this realm does not have its holder
 NativeFunctionsNodeAsyncHooksCppJsSetAsyncHooksEnabled/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsNodeModuleModuleCppJsFunctionSetCJSWrapperItem/0: it is not called: this realm does not have its holder
-NativeFunctionsNode_cluster_bindingBindTsClusterRawBind/0: it is not called: it opens a connection or writes to the channel of a parent process
-NativeFunctionsNode_cluster_bindingBindTsSendHelperPrimary/0: it is not called: it opens a connection or writes to the channel of a parent process
 NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_emitWarning/0: it is not called: this realm does not have it
@@ -68,9 +67,6 @@ NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/0: it is n
 NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/1: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/0: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/1: it is not called: this realm does not have it
-NativeBindgenNode_cluster_bindingBindTsClusterRawBind/0: it is not called: it asks the name servers about every string that is no address, and waits for them
-NativeBindgenNode_crypto_bindingBindTsCrypto/0: it is not called: this realm does not have it
-NativeBindgenNode_fs_bindingBindTsBinding/0: it is not called: this realm does not have it
 PrivateGlobalsInherits/0: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
 PrivateGlobalsMakeErrorWithCode/0: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which
 PrivateGlobalsMakeErrorWithCode/1: it is not called: a call spells out a number, and by it native code takes the other operands on trust: the table does not say which

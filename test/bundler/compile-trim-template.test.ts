@@ -26,7 +26,10 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
     const folder = String(dir);
     const template = join(folder, isWindows ? "template.exe" : "template");
     expect(await build(folder, "empty.ts", "template", "--trim-template")).toMatchObject({ exitCode: 0 });
-    expect(sizeOf(join(folder, "template"))).toBeLessThan(statSync(bunExe()).size * 0.7);
+    // A Bun that carries its debug info keeps all of it, so there the measure is what left the file, not a share of the whole.
+    const whole = statSync(bunExe()).size;
+    const left = whole - sizeOf(join(folder, "template"));
+    expect(Math.max(left / whole, left / 150_000_000)).toBeGreaterThan(0.3);
 
     const found: Record<string, unknown> = {};
     const expected: Record<string, unknown> = {};

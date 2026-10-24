@@ -4097,18 +4097,21 @@ mod windows_impl {
         let dir = dir.as_fd();
         // Open with `op = OnlyCreate`, then close the resulting handle on
         // success.
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
-        let made = super::open_dir_at_windows_nt_path(
-            dir,
-            wpath,
-            super::WindowsOpenDirOptions {
-                iterable: false,
-                can_rename_or_delete: true,
-                op: super::WindowsOpenDirOp::OnlyCreate,
-                ..Default::default()
-            },
-        )?;
+        let options = super::WindowsOpenDirOptions {
+            iterable: false,
+            can_rename_or_delete: true,
+            op: super::WindowsOpenDirOp::OnlyCreate,
+            ..Default::default()
+        };
+        let facts = bun_paths::classify_rel_t(path.as_bytes(), bun_paths::PathFormat::Windows);
+        // `NtCreateFile` does not resolve `..` in a name relative to a directory handle.
+        let made = if facts.climbs_above_start {
+            super::open_dir_at_windows_a(dir, path.as_bytes(), options)?
+        } else {
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
+            let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+            super::open_dir_at_windows_nt_path(dir, wpath, options)?
+        };
         made.close();
         Ok(())
     }

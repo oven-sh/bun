@@ -1,0 +1,1 @@
+In plain Bun too the program ends with a TypeError that nobody catches, where the class is made: Proxy has no prototype property. A reference run that fails proves nothing, so the class has to be made behind a try.

@@ -714,6 +714,37 @@ describe("environmentData", () => {
 });
 
 describe("error event", () => {
+  test.each(["missing-import", "missing-entry"])("%s error fields remain cloneable", async kind => {
+    using dir = tempDir("worker-loader-cause", {
+      "entry.mjs": 'import "./absent-dependency.mjs";',
+    });
+    const worker = new Worker(join(String(dir), kind === "missing-import" ? "entry.mjs" : "absent-entry.mjs"));
+    try {
+      const [error] = await once(worker, "error");
+      expect(error).toBeInstanceOf(Error);
+      function encode(value) {
+        return value instanceof Error
+          ? { name: value.name, message: value.message, code: value.code, cause: encode(value.cause) }
+          : value;
+      }
+      const fields = encode(error);
+      expect(structuredClone(fields)).toEqual(fields);
+      expect(error.code).toBe(kind === "missing-import" ? "ERR_MODULE_NOT_FOUND" : "MODULE_NOT_FOUND");
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const received = once(port2, "message");
+        port1.postMessage(fields);
+        const [message] = await received;
+        expect(message).toEqual(fields);
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    } finally {
+      await worker.terminate();
+    }
+  });
+
   test("is fired with a copy of the error value", async () => {
     const worker = new Worker("throw new TypeError('oh no')", { eval: true });
     const [err] = await once(worker, "error");

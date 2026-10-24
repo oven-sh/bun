@@ -1216,7 +1216,9 @@ class Worker extends EventEmitter {
     // if not the message is the actual error
     const message = event.message;
     if (message !== "") {
-      error = new Error(message, { cause: event });
+      const code = error?.code;
+      error = new Error(message, error === undefined ? undefined : { cause: error });
+      if (typeof code === "string") error.code = code;
     }
     // Reshape the native 'ModuleNotFound ... (entry point)' error into node's
     // "Cannot find module '<path>'" (MODULE_NOT_FOUND).

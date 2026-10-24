@@ -415,8 +415,8 @@ static JSValue handleVirtualModuleResult(
 
         if (res->result.value.isCommonJSModule) {
             ResolvedSource& source = res->result.value;
-            // The overloads that take a ResolvedSource apply a Module.wrapper override. Without one they would
-            // also cache the plugin's text as the file's own source under `bun test --isolate`.
+            // Under a Module.wrapper override the overloads that take a ResolvedSource do what a file gets. Without
+            // one they would also cache the plugin's text as the file's own source under `bun test --isolate`.
             const bool hasOverriddenWrapper = globalObject->hasOverriddenModuleWrapper;
             const bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
             if (commonJSModule) {

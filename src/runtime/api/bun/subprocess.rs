@@ -1023,6 +1023,10 @@ impl Subprocess<'_> {
         // `&mut`-taking methods without tripping borrowck.
         let event_loop = (*jsc_vm).event_loop();
 
+        if let Some(ipc) = self.ipc() {
+            ipc.peer_exited();
+        }
+
         // The exit is reported to the script that spawned the child.
         let _context = (*jsc_vm).enter_context(self.context);
         if !is_sync {
@@ -1334,11 +1338,52 @@ impl Subprocess<'_> {
         }
     }
 
+    /// The `ipc` callback of `node:child_process` answers with a number when no 'message' listener is there:
+    /// 1 with a 'disconnect' listener, and else 0. Its fourth argument only asks, with no message.
+    fn ask_ipc_callback(&self, arguments: &[JSValue]) -> Option<IPC::Listeners> {
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+        let _keep = jsc::EnsureStillAlive(this_jsvalue);
+        if this_jsvalue.is_empty() {
+            return None;
+        }
+        let cb = js::ipc_callback_get_cached(this_jsvalue)?;
+        let global_this = self.global_this();
+        let event_loop = global_this.bun_vm().as_mut().event_loop();
+        // SAFETY: `event_loop` is the live VM's owned event loop,
+        // accessed on the single JS mutator thread.
+        let answer = unsafe {
+            (*event_loop).run_callback_with_result(
+                self.context,
+                cb,
+                global_this,
+                this_jsvalue,
+                arguments,
+            )
+        };
+        answer.is_int32().then(|| IPC::Listeners {
+            message: false,
+            close: answer.as_int32() != 0,
+        })
+    }
+
+    /// What the owner of the channel listens for now. `Bun.spawn({ ipc })` takes every message.
+    pub(crate) fn ipc_listeners(&self) -> IPC::Listeners {
+        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+        let asked = [JSValue::UNDEFINED, this_jsvalue, JSValue::UNDEFINED, JSValue::TRUE];
+        self.ipc()
+            .filter(|ipc| ipc.is_gated())
+            .and_then(|_| self.ask_ipc_callback(&asked))
+            .unwrap_or(IPC::Listeners {
+                message: true,
+                close: false,
+            })
+    }
+
     pub(crate) fn handle_ipc_message(
         &self,
         message: &IPC::DecodedIPCMessage,
         handle: JSValue,
-    ) -> JsResult<()> {
+    ) -> JsResult<IPC::Delivery> {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
         match message {
             // In future versions we can read this in order to detect version mismatches,
@@ -1350,7 +1395,14 @@ impl Subprocess<'_> {
                 bun_output::scoped_log!(IPC, "Received IPC message from child");
                 let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
                 let _keep = jsc::EnsureStillAlive(this_jsvalue);
-                if !this_jsvalue.is_empty() {
+                if self.ipc().is_some_and(|ipc| ipc.is_gated()) {
+                    if self
+                        .ask_ipc_callback(&[*data, this_jsvalue, handle])
+                        .is_some()
+                    {
+                        return Ok(IPC::Delivery::NotTaken);
+                    }
+                } else if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
                         let event_loop = global_this.bun_vm().as_mut().event_loop();
@@ -1371,14 +1423,14 @@ impl Subprocess<'_> {
             IPC::DecodedIPCMessage::Internal(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC internal message from child");
                 let global_this = self.global_this;
-                node_cluster_binding::handle_internal_message_primary(
+                return node_cluster_binding::handle_internal_message_primary(
                     global_this.get(),
                     self,
                     *data,
-                )?;
+                );
             }
         }
-        Ok(())
+        Ok(IPC::Delivery::Taken)
     }
 
     pub(crate) fn handle_ipc_close(&self) {

@@ -1546,7 +1546,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
 extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
 extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
-extern "C" void Bun__setProcessIPCReading(bool reading);
+extern "C" void Bun__requestProcessIPCDrain();
 
 extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
@@ -1609,43 +1609,6 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 
-// The 'message' and 'disconnect' listeners, which also keep the channel referenced.
-static int ipcChannelListenerCount(EventEmitter& eventEmitter, Zig::GlobalObject* global)
-{
-    auto& vm = JSC::getVM(global);
-    auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
-    auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(vm, "disconnect"_s));
-    if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
-        disconnectListenerCount--;
-    }
-    return messageListenerCount + disconnectListenerCount;
-}
-
-// Every listener that a read of the channel serves. 'disconnect' is the read that sees the close.
-static int ipcReaderCount(EventEmitter& eventEmitter, Zig::GlobalObject* global)
-{
-    auto& names = WebCore::builtinNames(JSC::getVM(global));
-    return ipcChannelListenerCount(eventEmitter, global) + eventEmitter.listenerCount(names.internalMessagePublicName());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_readProcessIPC, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
-{
-    auto* global = defaultGlobalObject(lexicalGlobalObject);
-    if (ipcReaderCount(global->processObject()->wrapped(), global) > 0)
-        Bun__setProcessIPCReading(true);
-    return JSValue::encode(jsUndefined());
-}
-
-// On the next tick, like node's flush of kPendingMessages, so each listener added in this tick gets the first message.
-static void readIPCOnNextTick(Zig::GlobalObject* global)
-{
-    auto& vm = JSC::getVM(global);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* read = JSFunction::create(vm, global, 0, ""_s, jsFunction_readProcessIPC, JSC::ImplementationVisibility::Private);
-    global->processObject()->queueNextTick(global, read);
-    RELEASE_AND_RETURN(scope, void());
-}
-
 // The OS handler is per signal number, so count the listeners under every name for that number.
 static int listenerCountForSignal(EventEmitter& eventEmitter, const Identifier& eventName, int signalNumber)
 {
@@ -1677,26 +1640,28 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         }
 
         // IPC handlers
-        bool isChannelEvent = eventName == "message" || eventName == "disconnect";
-        if (isChannelEvent || eventName == "internalMessage") {
+        if (eventName == "message" || eventName == "disconnect") {
             auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
-            if (!Bun__GlobalObject__hasIPC(global))
-                return;
-            if (isChannelEvent) {
-                auto totalListenerCount = ipcChannelListenerCount(eventEmitter, global);
-                if (isAdded && totalListenerCount == 1) {
+            auto& vm = JSC::getVM(global);
+            auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
+            auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(vm, "disconnect"_s));
+            if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
+                disconnectListenerCount--;
+            }
+            auto totalListenerCount = messageListenerCount + disconnectListenerCount;
+            if (isAdded) {
+                if (Bun__GlobalObject__hasIPC(global)
+                    && totalListenerCount == 1) {
                     Bun__ensureProcessIPCInitialized(global);
                     Bun__refChannelUnlessOverridden(global);
-                } else if (!isAdded && totalListenerCount == 0) {
+                }
+                // A 'message' that no listener took waits in the channel. It is offered again on the next tick.
+                Bun__requestProcessIPCDrain();
+            } else {
+                if (Bun__GlobalObject__hasIPC(global)
+                    && totalListenerCount == 0) {
                     Bun__unrefChannelUnlessOverridden(global);
                 }
-            }
-            // With no listener the channel is not read, so a 'message' waits in the kernel buffer and is not emitted to nobody.
-            auto readerCount = ipcReaderCount(eventEmitter, global);
-            if (isAdded && readerCount == 1) {
-                readIPCOnNextTick(global);
-            } else if (!isAdded && readerCount == 0) {
-                Bun__setProcessIPCReading(false);
             }
             return;
         }
@@ -5051,32 +5016,30 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObj
     return JSValue::encode(ret);
 }
 
-static constexpr auto kInternalIpcPrefix = "NODE_"_s;
-
-extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle)
+// Returns false for a 'message' that no listener took: it stays in the channel. An 'internalMessage' never waits, as in node.
+extern "C" bool Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle, bool internal)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
 
-    auto& names = WebCore::builtinNames(vm);
-    auto ident = vm.propertyNames->message;
-    JSValue message = JSValue::decode(value);
-    if (auto* object = message.getObject()) {
-        JSValue cmd = object->getDirect(vm, names.cmdPublicName());
-        if (cmd && cmd.isString()) {
-            auto cmdString = JSC::asString(cmd)->tryGetValue();
-            if (cmdString->length() > kInternalIpcPrefix.length() && cmdString->startsWith(kInternalIpcPrefix)) {
-                ident = names.internalMessagePublicName();
-            }
-        }
-    }
+    auto ident = internal ? WebCore::builtinNames(vm).internalMessagePublicName() : vm.propertyNames->message;
+    if (!process->wrapped().hasEventListeners(ident))
+        return internal;
 
-    if (process->wrapped().hasEventListeners(ident)) {
-        JSC::MarkedArgumentBuffer args;
-        args.append(message);
-        args.append(JSValue::decode(handle));
-        process->wrapped().emit(ident, args);
-    }
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSValue::decode(value));
+    args.append(JSValue::decode(handle));
+    process->wrapped().emit(ident, args);
+    return true;
+}
+
+// Bit 0: a 'message' listener. Bit 1: a 'disconnect' listener.
+extern "C" uint8_t Process__ipcListeners(Zig::GlobalObject* global)
+{
+    auto& vm = JSC::getVM(global);
+    auto& eventEmitter = global->processObject()->wrapped();
+    return (eventEmitter.hasEventListeners(vm.propertyNames->message) ? 1 : 0)
+        | (eventEmitter.hasEventListeners(Identifier::fromString(vm, "disconnect"_s)) ? 2 : 0);
 }
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)

@@ -4,7 +4,7 @@
 //   at all. It should happen in the protocol before it reaches JS.
 // - We should not be creating JSFunction's in process.nextTick.
 
-use crate::ipc::{IsInternal, SerializeAndSendResult};
+use crate::ipc::{Delivery, IsInternal, SerializeAndSendResult};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
@@ -53,14 +53,16 @@ pub(crate) fn on_internal_message_child<'a>(
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(worker.to_js(), global);
     singleton.cb = StrongOptional::create(callback.to_js(), global);
-    singleton.flush(global)
+    singleton.flush(global)?;
+    crate::ipc_host::set_process_cluster_handler();
+    Ok(())
 }
 
 pub(crate) fn handle_internal_message_child(
     global: &JSGlobalObject,
     message: JSValue,
     handle: JSValue,
-) -> JsResult<()> {
+) -> JsResult<Delivery> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
     child_singleton().dispatch(message, handle, global)
@@ -204,19 +206,20 @@ pub(crate) fn on_internal_message_primary<'a>(
         q.worker = StrongOptional::create(worker.to_js(), global);
         q.cb = StrongOptional::create(callback.to_js(), global);
     });
+    ipc_data.request_drain();
 }
 
 pub(crate) fn handle_internal_message_primary(
     global: &JSGlobalObject,
     subprocess: &Subprocess<'_>,
     message: JSValue,
-) -> JsResult<()> {
+) -> JsResult<Delivery> {
     let Some(ipc_data) = subprocess.ipc() else {
-        return Ok(());
+        return Ok(Delivery::Taken);
     };
 
     if !ipc_data.internal_msg_queue.get().is_ready() {
-        return Ok(());
+        return Ok(Delivery::Taken);
     }
 
     let event_loop = global.bun_vm().event_loop_mut();
@@ -243,7 +246,7 @@ pub(crate) fn handle_internal_message_primary(
                         JSValue::NULL, // handle
                     ],
                 );
-                return Ok(());
+                return Ok(Delivery::Taken);
             }
         }
     }
@@ -261,7 +264,7 @@ pub(crate) fn handle_internal_message_primary(
             JSValue::NULL, // handle
         ],
     );
-    Ok(())
+    Ok(Delivery::Taken)
 }
 
 //
@@ -273,6 +276,7 @@ pub(crate) fn set_ref(enabled: bool) {
     vm.channel_ref_overridden = true;
     if enabled {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
+        crate::ipc_host::request_process_ipc_drain();
     } else {
         vm.channel_ref.unref(bun_io::js_vm_ctx());
     }

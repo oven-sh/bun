@@ -1,9 +1,8 @@
 import { $ } from "bun";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { ChildProcess, fork, spawn } from "node:child_process";
-import { once } from "node:events";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { ChildProcess, spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import net from "node:net";
-import path from "node:path";
 import { createInterface } from "node:readline";
 
 test("child_process ipc", async () => {
@@ -19,8 +18,20 @@ test("child_process ipc", async () => {
   `);
 });
 
-// The channel is not read while there is no 'message' listener, so the messages wait in the kernel buffer.
+// A 'message' that no listener takes waits in the channel. The channel holds 256 KiB of them, and then its socket is not read.
 describe.concurrent("a 'message' that arrives while there is no 'message' listener is not lost", () => {
+  // stdin and stdout carry questions and answers, fd 3 a byte when the child is ready, fd 4 the channel.
+  const children = new Set();
+  afterAll(() => children.forEach(child => child.kill("SIGKILL")));
+  function ipcChild(script, options) {
+    const child = spawn(bunExe(), ["-e", script], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "inherit", "pipe", "ipc"],
+      ...options,
+    });
+    children.add(child);
+    return child;
+  }
   // A child that exits before the body is done fails the test at once, with its exit status.
   async function withChild(child, body) {
     const { promise: exited, reject } = Promise.withResolvers();
@@ -32,50 +43,168 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
       child.kill();
     }
   }
-  const stdoutLines = child => createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  // The child writes to fd 3 after it sent its messages, so they are in the channel by then.
+  const ready = child => once(child.stdio[3], "data");
+  // One line to the child's stdin, one line back from its stdout. Each question turns both event loops.
+  function asker(child) {
+    const answers = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    return async question => {
+      child.stdin.write(question + "\n");
+      return (await answers.next()).value;
+    };
+  }
+  const answerLines = `const onLine = answer => require("readline").createInterface({ input: process.stdin }).on("line", answer);`;
 
-  // "pong" answers a message that the parent sends once its listener is added, so it arrives after the three.
-  const burstThenPong = `
-    for (let i = 0; i < 3; i++) process.send({ i });
-    console.log("sent");
-    process.on("message", () => process.send("pong"));
-  `;
-  const untilPong = (child, got = []) => {
+  // "pong" answers a message that is sent once the listener is added, so it arrives behind the messages under test.
+  const untilPong = (target, got = []) => {
     const { promise, resolve } = Promise.withResolvers();
-    child.on("message", m => got.push(m) && m === "pong" && resolve(got));
-    child.send("ping");
+    target.on("message", m => got.push(m) && m === "pong" && resolve(got));
+    target.send("ping");
     return promise;
   };
+  const burst = `for (let i = 0; i < 3; i++) process.send({ i }); require("fs").writeSync(3, "R");`;
+  const three = [{ i: 0 }, { i: 1 }, { i: 2 }];
 
-  test.each(["json", "advanced"])("parent: first listener added late (%s)", async serialization => {
-    using dir = tempDir("ipc-late-parent", { "child.js": burstThenPong });
-    const child = fork(path.join(String(dir), "child.js"), {
-      env: bunEnv,
-      serialization,
-      stdio: ["ignore", "pipe", "inherit", "ipc"],
+  // 2 MiB in all: more than the channel holds for a receiver that does not listen, on every platform.
+  // Each message is sent once the one before it is written, so `onSent` counts what the channel took.
+  const floodCount = 32;
+  function flood(target, onSent, i = 0) {
+    const message = { i, chunk: Buffer.alloc(64 * 1024, "x").toString() };
+    target.send(message, () => (onSent(), i < 31 && flood(target, onSent, i + 1)));
+  }
+  const inOrder = Array.from({ length: floodCount }, (_, i) => i);
+  // The count is the same for four questions in a row: the channel takes no more.
+  async function untilStalled(count) {
+    for (let same = 0, last = 0; same < 3; ) {
+      const now = Number(await count());
+      same = now > 0 && now === last ? same + 1 : 0;
+      last = now;
+    }
+  }
+
+  describe.each(["json", "advanced"])("%s", serialization => {
+    // The messages that waited are emitted on the next tick, as in node: to both listeners, and before anything queued later.
+    test("parent: first listeners added late", async () => {
+      const child = ipcChild(`${burst} process.on("message", () => process.send("pong"));`, { serialization });
+      await withChild(child, async () => {
+        await ready(child);
+        const order = [];
+        child.on("message", m => order.push(["first", m]));
+        child.on("message", m => order.push(["second", m]));
+        process.nextTick(() => order.push("tick"));
+        await new Promise(resolve => setImmediate(resolve));
+        expect(order).toEqual([...three.flatMap(m => [["first", m], ["second", m]]), "tick"]);
+      });
     });
-    await withChild(child, async () => {
-      expect((await stdoutLines(child).next()).value).toBe("sent");
-      expect(await untilPong(child)).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }, "pong"]);
+
+    // node v26.3.0 emits all its held messages at once, so it loses the ones behind the first once() listener.
+    // "pong" answers a message sent after the first one arrived, so it is the last message.
+    async function takeUntilPong(target) {
+      const got = [(await once(target, "message"))[0]];
+      target.send("ping");
+      while (got.at(-1) !== "pong") got.push((await once(target, "message"))[0]);
+      return got;
+    }
+
+    test("parent: once() in a loop gets every message", async () => {
+      const child = ipcChild(`${burst} process.on("message", () => process.send("pong"));`, { serialization });
+      await withChild(child, async () => {
+        expect(await takeUntilPong(child)).toEqual([...three, "pong"]);
+      });
+    });
+
+    // Each next listener is added before the channel reads the close that came with the burst.
+    test("parent: once() in a loop gets every message of a child that exits", async () => {
+      const child = ipcChild(`for (let i = 0; i < 5; i++) process.send(i);`, { serialization });
+      const got = [];
+      while (got.length < 5) got.push((await once(child, "message"))[0]);
+      expect(got).toEqual([0, 1, 2, 3, 4]);
+    });
+
+    test("child: once() in a loop gets every message", async () => {
+      const child = ipcChild(
+        `const { once } = require("events");
+         ${takeUntilPong}
+         takeUntilPong(process).then(got => process.send({ got }));`,
+        { serialization },
+      );
+      await withChild(child, async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        child.on("message", m => (m === "ping" ? child.send("pong") : resolve(m.got)));
+        for (const m of three) child.send(m);
+        expect(await promise).toEqual([...three, "pong"]);
+      });
+    });
+
+    test("parent: a child that sends more than the channel holds waits for a listener", async () => {
+      const child = ipcChild(
+        `${flood}
+         ${answerLines}
+         let sent = 0;
+         flood(process, () => sent++);
+         onLine(() => console.log(sent));`,
+        { serialization },
+      );
+      await withChild(child, async () => {
+        const sent = asker(child);
+        await untilStalled(sent);
+        expect(Number(await sent())).toBeLessThan(floodCount);
+        const got = [];
+        const { promise, resolve } = Promise.withResolvers();
+        child.on("message", m => got.push(m.i) === floodCount && resolve());
+        await promise;
+        expect(got).toEqual(inOrder);
+        while (Number(await sent()) !== floodCount);
+      });
+    });
+
+    test("child: a parent that sends more than the channel holds waits for a listener", async () => {
+      const child = ipcChild(
+        `${answerLines}
+         process.send("ready");
+         const got = [];
+         onLine(line => {
+           if (line === "listen") process.on("message", m => got.push(m.i) === ${floodCount} && process.send(got));
+           console.log(line);
+         });`,
+        { serialization },
+      );
+      await withChild(child, async () => {
+        expect((await once(child, "message"))[0]).toBe("ready");
+        const turn = asker(child);
+        let sent = 0;
+        flood(child, () => sent++);
+        await untilStalled(async () => (await turn("?"), sent));
+        expect(sent).toBeLessThan(floodCount);
+        const got = once(child, "message");
+        await turn("listen");
+        expect((await got)[0]).toEqual(inOrder);
+        expect(sent).toBe(floodCount);
+      });
     });
   });
 
-  test("parent: last listener removed, next one added late", async () => {
-    using dir = tempDir("ipc-readd-parent", {
-      "child.js": `process.once("message", () => { ${burstThenPong} });`,
-    });
-    const child = fork(path.join(String(dir), "child.js"), {
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "inherit", "ipc"],
-    });
+  // Fewer bytes than the channel holds: every send is written, so the child has nothing left to wait for.
+  test.each([279, 20_000])("parent: a child that sends %d messages to no listener exits", async count => {
+    const child = ipcChild(`for (let i = 0; i < ${count}; i++) process.send({ i });`);
+    expect(await once(child, "exit")).toEqual([0, null]);
+  });
+
+  test.each([
+    ["off()", (child, first) => child.off("message", first)],
+    [`removeAllListeners("message")`, child => child.removeAllListeners("message")],
+  ])("parent: last listener removed with %s, next one added late", async (_, remove) => {
+    const child = ipcChild(`process.on("message", m => { if (m === "ping") return process.send("pong"); ${burst} });`);
     await withChild(child, async () => {
       const got = [];
+      const { promise: removed, resolve } = Promise.withResolvers();
       child.on("message", function first(m) {
         got.push(["first", m]);
-        child.off("message", first);
+        remove(child, first);
+        resolve();
       });
       child.send("burst");
-      expect((await stdoutLines(child).next()).value).toBe("sent");
+      await Promise.all([removed, ready(child)]);
       expect(await untilPong(child, got)).toEqual([["first", { i: 0 }], { i: 1 }, { i: 2 }, "pong"]);
     });
   });
@@ -91,126 +220,43 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
     await withChild(child, async () => expect((await message)[0]).toBe("hello"));
   });
 
-  // The child reports that it is ready on an extra pipe, after it sent its messages.
-  test("parent: listener added once the child reports ready on an extra stdio pipe", async () => {
-    const script = `
-      process.send({ early: 1 });
-      process.send({ early: 2 });
-      require("fs").writeSync(3, "R");
-      process.on("message", () => process.send("pong"));
-    `;
-    const child = spawn(bunExe(), ["-e", script], {
-      env: bunEnv,
-      stdio: ["ignore", "inherit", "inherit", "pipe", "ipc"],
-    });
+  // A 'disconnect' listener needs the close of the channel, not its messages.
+  test("parent: a 'disconnect' listener does not take the messages", async () => {
+    const child = ipcChild(`${burst} process.on("message", () => process.send("pong"));`);
+    child.on("disconnect", () => {});
     await withChild(child, async () => {
-      await once(child.stdio[3], "data");
-      expect(await untilPong(child)).toEqual([{ early: 1 }, { early: 2 }, "pong"]);
+      await ready(child);
+      expect(await untilPong(child)).toEqual([...three, "pong"]);
     });
   });
 
-  // The three messages are in the kernel buffer before the child starts, so one read gets them all.
-  test("child: last listener removed, next one added late", async () => {
-    using dir = tempDir("ipc-readd-child", {
-      "child.js": `
-        const got = [];
-        process.on("message", function first(m) {
-          got.push(["first", m]);
-          process.off("message", first);
-          setImmediate(() => {
-            process.on("message", m => (m === "report" ? process.send(got) : got.push(["second", m])));
-            process.send("attached");
-          });
-        });
-      `,
-    });
-    const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
+  // Each of these removes the 'newListener' listener that asks for the messages that wait. The next read asks again.
+  test.each([
+    ["removeAllListeners()", child => child.removeAllListeners()],
+    [`removeAllListeners("newListener")`, child => child.removeAllListeners("newListener")],
+    [`off("newListener")`, child => child.listeners("newListener").forEach(fn => child.off("newListener", fn))],
+    ["EventEmitter.prototype.removeAllListeners", child => EventEmitter.prototype.removeAllListeners.call(child)],
+  ])("parent: a listener added after %s gets the messages", async (_, remove) => {
+    const child = ipcChild(`${burst} process.on("message", () => process.send("pong"));`);
+    remove(child);
     await withChild(child, async () => {
-      for (let i = 0; i < 3; i++) child.send({ i });
-      expect((await once(child, "message"))[0]).toBe("attached");
-      child.send("report");
-      expect((await once(child, "message"))[0]).toEqual([
-        ["first", { i: 0 }],
-        ["second", { i: 1 }],
-        ["second", { i: 2 }],
-      ]);
+      await ready(child);
+      expect(await untilPong(child)).toEqual([...three, "pong"]);
     });
   });
 
-  test("child: process.send() opens the channel before the first listener is added", async () => {
-    using dir = tempDir("ipc-send-first-child", {
-      "child.js": `
-        process.send("ready");
-        process.stdin.once("data", () => {
-          const got = [];
-          process.on("message", m => (m === "report" ? process.send(got) : got.push(m)));
-          process.send("attached");
-        });
-      `,
-    });
-    const child = fork(path.join(String(dir), "child.js"), {
-      env: bunEnv,
-      stdio: ["pipe", "inherit", "inherit", "ipc"],
-    });
-    await withChild(child, async () => {
-      expect((await once(child, "message"))[0]).toBe("ready");
-      for (let i = 0; i < 3; i++) child.send({ i });
-      // Written after the messages, so the child gets them first.
-      child.stdin.write("attach\n");
-      expect((await once(child, "message"))[0]).toBe("attached");
-      child.send("report");
-      expect((await once(child, "message"))[0]).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }]);
-    });
+  test("parent: a listener added after disconnect() gets nothing", async () => {
+    const child = ipcChild(`${burst} process.on("disconnect", () => {});`);
+    await ready(child);
+    const got = [];
+    child.disconnect();
+    child.on("message", m => got.push(m));
+    await once(child, "close");
+    expect({ got, connected: child.connected }).toEqual({ got: [], connected: false });
   });
 
-  // node v26.3.0 emits all its held messages at once, so it loses the ones behind the first once() listener.
-  describe.each(["json", "advanced"])("once() in a loop gets every message (%s)", serialization => {
-    // "pong" answers a message sent after the first one arrived, so it is the last message.
-    async function takeUntilPong(target) {
-      const got = [(await once(target, "message"))[0]];
-      target.send("ping");
-      while (got.at(-1) !== "pong") got.push((await once(target, "message"))[0]);
-      return got;
-    }
-
-    test("parent", async () => {
-      using dir = tempDir("ipc-once-parent", { "child.js": burstThenPong });
-      const child = fork(path.join(String(dir), "child.js"), {
-        env: bunEnv,
-        serialization,
-        stdio: ["ignore", "ignore", "inherit", "ipc"],
-      });
-      await withChild(child, async () => {
-        expect(await takeUntilPong(child)).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }, "pong"]);
-      });
-    });
-
-    test("child", async () => {
-      using dir = tempDir("ipc-once-child", {
-        "child.js": `
-          const { once } = require("events");
-          ${takeUntilPong}
-          takeUntilPong(process).then(got => process.send({ got }));
-        `,
-      });
-      const child = fork(path.join(String(dir), "child.js"), { env: bunEnv, serialization });
-      await withChild(child, async () => {
-        const { promise, resolve } = Promise.withResolvers();
-        child.on("message", m => (m === "ping" ? child.send("pong") : resolve(m.got)));
-        for (let i = 0; i < 3; i++) child.send({ i });
-        expect(await promise).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }, "pong"]);
-      });
-    });
-  });
-
-  test("a message that was not read is dropped when the channel closes", async () => {
-    using dir = tempDir("ipc-closed-unread", {
-      "child.js": `
-        process.send({ i: 0 });
-        process.send({ i: 1 }, () => process.exit(0));
-      `,
-    });
-    const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
+  test("parent: a message that was not read is dropped when the child exits", async () => {
+    const child = ipcChild(`process.send({ i: 0 }); process.send({ i: 1 }, () => process.exit(0));`);
     const got = [];
     child.on("message", function first(m) {
       got.push(["first", m]);
@@ -222,22 +268,272 @@ describe.concurrent("a 'message' that arrives while there is no 'message' listen
     expect(got).toEqual([["first", { i: 0 }]]);
   });
 
-  // The ack arrives on the same stream as the messages, so a sender that waits for one reads.
-  test("a sent handle is acknowledged while the sender has no listener", async () => {
-    using dir = tempDir("ipc-ack-no-listener", {
-      "child.js": `process.on("message", (m, server) => server.close());`,
+  // The channel of the parent holds more than it reads here, so it does not read the close either.
+  test("parent: the channel of an exited child is closed inside 'exit'", async () => {
+    const child = ipcChild(
+      `${flood}
+       ${answerLines}
+       let sent = 0;
+       flood(process, () => sent++);
+       onLine(line => (line === "exit" ? process.exit(0) : console.log(sent)));`,
+    );
+    await untilStalled(asker(child));
+    const { promise, resolve } = Promise.withResolvers();
+    child.on("exit", () => resolve({ connected: child.connected, sent: child.send("late", () => {}) }));
+    child.stdin.write("exit\n");
+    expect(await promise).toEqual({ connected: false, sent: false });
+  });
+
+  // An 'internalMessage' never waits, as in node: it passes the 'message' in front of it, which has no listener yet.
+  test("parent: an 'internalMessage' passes a 'message' that waits", async () => {
+    const child = ipcChild(
+      `process.send("user"); process.send({ cmd: "NODE_TEST" }); process.on("message", () => process.send("pong"));`,
+    );
+    await withChild(child, async () => {
+      expect((await once(child, "internalMessage"))[0]).toEqual({ cmd: "NODE_TEST" });
+      expect(await untilPong(child)).toEqual(["user", "pong"]);
     });
+  });
+
+  // The ack of the handle is behind the three messages, and passes them: they wait for a listener, and the ack does not.
+  test("parent: the ack of a sent handle passes the messages that wait", async () => {
+    const child = ipcChild(
+      `${burst} process.on("message", (m, server) => (m === "ping" ? process.send("pong") : server.close()));`,
+    );
     const server = net.createServer();
     await once(server.listen(0, "127.0.0.1"), "listening");
-    const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
     try {
       await withChild(child, async () => {
-        const { promise, resolve } = Promise.withResolvers();
+        await ready(child);
+        const { promise: acked, resolve } = Promise.withResolvers();
         child.send("server", server, resolve);
-        expect(await promise).toBeNull();
+        expect(await acked).toBeNull();
+        expect(await untilPong(child)).toEqual([...three, "pong"]);
       });
     } finally {
       server.close();
     }
+  });
+
+  // The three messages are in the channel before the child starts, so one read gets them all.
+  test("child: last listener removed, next one added late", async () => {
+    const child = ipcChild(`
+      const got = [];
+      process.on("message", function first(m) {
+        got.push(["first", m]);
+        process.off("message", first);
+        setImmediate(() => {
+          process.on("message", m => (m === "report" ? process.send(got) : got.push(["second", m])));
+          process.send("attached");
+        });
+      });
+    `);
+    await withChild(child, async () => {
+      for (const m of three) child.send(m);
+      expect((await once(child, "message"))[0]).toBe("attached");
+      child.send("report");
+      expect((await once(child, "message"))[0]).toEqual([
+        ["first", { i: 0 }],
+        ["second", { i: 1 }],
+        ["second", { i: 2 }],
+      ]);
+    });
+  });
+
+  // Both listeners are added in one tick, so both get the messages that waited.
+  test.each([
+    ["no other listener", ""],
+    ["a 'disconnect' listener", `process.on("disconnect", () => {});`],
+  ])("child: process.send() opens the channel before the first 'message' listeners are added (%s)", async (_, other) => {
+    const child = ipcChild(`
+      ${other}
+      process.send("ready");
+      process.stdin.once("data", () => {
+        const first = [], second = [];
+        process.on("message", m => first.push(m));
+        process.on("message", m => (m === "report" ? process.send({ first, second }) : second.push(m)));
+        process.send("attached");
+      });
+    `);
+    await withChild(child, async () => {
+      expect((await once(child, "message"))[0]).toBe("ready");
+      for (const m of three) child.send(m);
+      // Written after the messages, so the child gets them first.
+      child.stdin.write("attach\n");
+      expect((await once(child, "message"))[0]).toBe("attached");
+      child.send("report");
+      expect((await once(child, "message"))[0]).toEqual({ first: [...three, "report"], second: three });
+    });
+  });
+
+  // A handle is acked when it is read, as in node, so its sender does not wait for a listener. The message keeps its handle.
+  test.skipIf(isWindows)("child: handles sent before the first 'message' listener is added arrive with their messages", async () => {
+    const child = ipcChild(`
+      process.send("ready");
+      process.stdin.once("data", () => {
+        const got = [];
+        process.on("message", (m, server) => {
+          got.push([m, server?.constructor.name]);
+          server?.close();
+          if (m === "end") process.send(got);
+        });
+      });
+    `);
+    const server = net.createServer();
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      await withChild(child, async () => {
+        expect((await once(child, "message"))[0]).toBe("ready");
+        const sent = [];
+        for (let i = 0; i < 20; i++) sent.push(new Promise(resolve => child.send(i, server, resolve)));
+        sent.push(new Promise(resolve => child.send("end", resolve)));
+        expect(await Promise.all(sent)).toEqual(Array(21).fill(null));
+        child.stdin.write("attach\n");
+        expect((await once(child, "message"))[0]).toEqual([
+          ...Array.from({ length: 20 }, (_, i) => [i, "Server"]),
+          ["end", null],
+        ]);
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("child: an 'internalMessage' passes a 'message' that waits", async () => {
+    const child = ipcChild(`
+      process.on("internalMessage", internal => {
+        process.on("message", m => process.send({ internal, m }));
+      });
+      process.send("ready");
+      process.stdin.resume();
+    `);
+    await withChild(child, async () => {
+      expect((await once(child, "message"))[0]).toBe("ready");
+      child.send("user");
+      child.send({ cmd: "NODE_TEST" });
+      expect((await once(child, "message"))[0]).toEqual({ internal: { cmd: "NODE_TEST" }, m: "user" });
+    });
+  });
+
+  // The poll has a deadline, so a child that never sees the close still answers.
+  const untilClosed = `const untilClosed = then => {
+    const deadline = Date.now() + 10_000;
+    (function poll() { process.connected && Date.now() < deadline ? setImmediate(poll) : then(); })();
+  };`;
+
+  test("child: an end with no listener sees the close of the channel", async () => {
+    const child = ipcChild(`
+      ${untilClosed}
+      ${answerLines}
+      process.send("ready");
+      onLine(() => untilClosed(() => {
+        const sent = process.send("late", error => console.log(JSON.stringify({ sent, code: error?.code })));
+      }));
+    `);
+    await withChild(child, async () => {
+      expect((await once(child, "message"))[0]).toBe("ready");
+      child.disconnect();
+      expect(JSON.parse(await asker(child)("send"))).toEqual({ sent: false, code: "ERR_IPC_CHANNEL_CLOSED" });
+    });
+  });
+
+  // The channel of the child holds more than it reads here, so only the write sees that the parent is gone.
+  test("child: a write to a parent that is gone closes a channel that is not read", async () => {
+    const child = ipcChild(`
+      ${untilClosed}
+      ${answerLines}
+      process.send("ready");
+      onLine(line => {
+        if (line !== "send") return console.log(line);
+        process.send("late");
+        untilClosed(() => console.log(process.connected));
+      });
+    `);
+    await withChild(child, async () => {
+      expect((await once(child, "message"))[0]).toBe("ready");
+      const turn = asker(child);
+      let sent = 0;
+      flood(child, () => sent++);
+      await untilStalled(async () => (await turn("?"), sent));
+      // The write comes after the close, or the unread "late" would reset the channel of the child.
+      child.disconnect();
+      await once(child, "disconnect");
+      expect(await turn("send")).toBe("false");
+    });
+  });
+
+  test("child: a ref() of the channel does not outlive the channel", async () => {
+    const child = ipcChild(
+      `process.send("ready"); process.channel.ref(); setTimeout(() => process.exit(1), 10_000).unref();`,
+    );
+    const exited = once(child, "exit");
+    expect((await once(child, "message"))[0]).toBe("ready");
+    child.disconnect();
+    expect((await exited)[0]).toBe(0);
+  });
+
+  // With a 'disconnect' listener the socket is read on past what the channel holds, and a 'message' that arrives then is dropped.
+  test("child: a 'disconnect' listener sees the close when more than the channel holds is unread", async () => {
+    const child = ipcChild(`
+      ${answerLines}
+      process.on("disconnect", () => console.log("disconnect"));
+      process.send("ready");
+      onLine(() => {
+        const got = [];
+        process.on("message", m => (m === "report" ? process.send(got) : got.push(m.i)));
+        process.send("attached");
+      });
+    `);
+    await withChild(child, async () => {
+      expect((await once(child, "message"))[0]).toBe("ready");
+      const { promise: allSent, resolve } = Promise.withResolvers();
+      let sent = 0;
+      flood(child, () => ++sent === floodCount && resolve());
+      await allSent;
+      child.stdin.write("listen\n");
+      expect((await once(child, "message"))[0]).toBe("attached");
+      child.send("report");
+      const [got] = await once(child, "message");
+      expect(got.slice(0, 2)).toEqual([0, 1]);
+      expect(got.length).toBeLessThan(floodCount);
+      expect(got).toEqual(got.toSorted((a, b) => a - b));
+      const answers = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+      child.disconnect();
+      expect((await answers.next()).value).toBe("disconnect");
+    });
+  });
+
+  // node:cluster gets its control messages from the channel through a native callback, not through a listener.
+  test("child: a cluster worker with no 'message' listener still listens", async () => {
+    using dir = tempDir("ipc-cluster-no-listener", {
+      "cluster.js": `
+        const cluster = require("cluster");
+        const net = require("net");
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          worker.on("listening", ({ port }) =>
+            net.connect(port, "127.0.0.1").on("data", data => {
+              console.log(String(data));
+              worker.process.kill();
+              process.exit(0);
+            }));
+        } else {
+          process.removeAllListeners("message");
+          // Nothing else keeps the worker alive until the primary answers.
+          setTimeout(() => process.exit(1), 10_000);
+          net.createServer(socket => socket.end("served")).listen(0, "127.0.0.1");
+        }`,
+    });
+    await using primary = Bun.spawn({
+      cmd: [bunExe(), "cluster.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    children.add(primary);
+    const [stdout, exitCode] = await Promise.all([primary.stdout.text(), primary.exited]);
+    expect(stdout).toBe("served\n");
+    expect(exitCode).toBe(0);
   });
 });

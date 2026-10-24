@@ -6058,6 +6058,8 @@ impl VirtualMachine {
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
             rare.node_quic_callbacks.deinit();
+            // A function of the outgoing global would keep it alive.
+            rare.ipc_drain_function.deinit();
         }
         let _ = self.event_loop_mut().drain_microtasks();
 

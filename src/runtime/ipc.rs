@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
+use std::collections::VecDeque;
 
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
@@ -76,14 +77,15 @@ impl InternalMsgHolder {
         message: JSValue,
         handle: JSValue,
         global: &JSGlobalObject,
-    ) -> JsResult<()> {
+    ) -> JsResult<Delivery> {
         if !self.is_ready() {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
             self.enqueue(message, global);
-            return Ok(());
+            return Ok(Delivery::Taken);
         }
-        self.dispatch_unsafe(message, handle, global)
+        self.dispatch_unsafe(message, handle, global)?;
+        Ok(Delivery::Taken)
     }
 
     fn dispatch_unsafe(
@@ -142,12 +144,17 @@ bun_core::define_scoped_log!(log, IPC, visible);
 
 /// Union type that switches between simple Vec<u8> (for advanced mode)
 /// and JSONLineBuffer (for JSON mode with optimized newline tracking).
+///
+/// A 'message' that no listener takes stays at the read position, not decoded, and so does each one that arrives
+/// behind it. Every other frame behind them is delivered and removed.
 enum IncomingBuffer {
     /// For advanced mode - uses length-prefix, no scanning needed
     Advanced {
         data: Vec<u8>,
-        /// Read position in `data`. A pause leaves it where it is, so no loop holds a copy.
+        /// Read position in `data`.
         head: usize,
+        /// Length of the frames at `head` that wait for a listener.
+        held: usize,
     },
     /// For JSON mode - tracks newline positions to avoid O(n²) scanning
     Json(JSONLineBuffer),
@@ -159,8 +166,113 @@ impl IncomingBuffer {
             Mode::Advanced => IncomingBuffer::Advanced {
                 data: Vec::<u8>::default(),
                 head: 0,
+                held: 0,
             },
             Mode::Json => IncomingBuffer::Json(JSONLineBuffer::new(json::max_line_len())),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            IncomingBuffer::Advanced { data, .. } => data.is_empty(),
+            IncomingBuffer::Json(buf) => buf.is_empty(),
+        }
+    }
+
+    fn append(&mut self, bytes: &[u8]) {
+        match self {
+            IncomingBuffer::Advanced { data, .. } => {
+                handle_oom(data.write(bytes));
+            }
+            // Scans only the new data for a newline.
+            IncomingBuffer::Json(buf) => buf.append(bytes),
+        }
+    }
+
+    /// Length of the frames that wait for a listener.
+    fn held_len(&self) -> usize {
+        match self {
+            IncomingBuffer::Advanced { held, .. } => *held,
+            IncomingBuffer::Json(buf) => buf.held_len(),
+        }
+    }
+
+    /// The next frame behind the ones that wait, once all of it has arrived.
+    fn next(&self) -> Result<Option<&[u8]>, IPCDecodeError> {
+        match self {
+            IncomingBuffer::Advanced { data, head, held } => {
+                let rest = &data[head + held..];
+                Ok(advanced::frame_len(rest)?.map(|len| &rest[..len]))
+            }
+            IncomingBuffer::Json(buf) => match buf.next() {
+                Some(line) => Ok(Some(line)),
+                // Fail the same way as a complete line that's too long to become a string.
+                None if buf.is_too_long() => Err(IPCDecodeError::Js(JsError::OutOfMemory)),
+                None => Ok(None),
+            },
+        }
+    }
+
+    /// Removes the frame that `next` returned.
+    fn remove(&mut self, len: usize) {
+        match self {
+            IncomingBuffer::Advanced { data, head, held } => {
+                if *held != 0 {
+                    let at = *head + *held;
+                    data.drain(at..at + len);
+                } else if *head + len < data.len() {
+                    *head += len;
+                } else {
+                    data.clear();
+                    *head = 0;
+                }
+            }
+            IncomingBuffer::Json(buf) => buf.remove(len as u32),
+        }
+    }
+
+    /// Keeps the frame that `next` returned. It waits for a listener.
+    fn hold(&mut self, len: usize) {
+        match self {
+            IncomingBuffer::Advanced { held, .. } => *held += len,
+            IncomingBuffer::Json(buf) => buf.hold(len as u32),
+        }
+    }
+
+    /// The first frame that waits.
+    fn first_held(&self) -> Option<&[u8]> {
+        match self {
+            IncomingBuffer::Advanced { data, head, held } => {
+                if *held == 0 {
+                    return None;
+                }
+                let len = advanced::frame_len(&data[*head..]).ok().flatten()?;
+                Some(&data[*head..][..len])
+            }
+            IncomingBuffer::Json(buf) => buf.first_held(),
+        }
+    }
+
+    /// Removes the frame that `first_held` returned.
+    fn release(&mut self, len: usize) {
+        match self {
+            IncomingBuffer::Advanced { data, head, held } => {
+                *head += len;
+                *held -= len;
+                if *head == data.len() {
+                    data.clear();
+                    *head = 0;
+                }
+            }
+            IncomingBuffer::Json(buf) => buf.release(len as u32),
+        }
+    }
+
+    /// Nothing more is complete: copy the remaining bytes to the start of the buffer.
+    fn wait(&mut self) {
+        if let IncomingBuffer::Advanced { data, head, held: 0 } = self {
+            data.drain_front(*head);
+            *head = 0;
         }
     }
 }
@@ -216,9 +328,21 @@ pub(crate) enum DecodedIPCMessage {
     Internal(JSValue),
 }
 
-pub(crate) struct DecodeIPCMessageResult {
-    pub(crate) bytes_consumed: u32,
-    pub(crate) message: DecodedIPCMessage,
+/// What a sink did with a message. A 'message' that no listener took stays in the channel, and waits for one.
+#[must_use]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum Delivery {
+    Taken,
+    NotTaken,
+}
+
+/// What the owner of a channel listens for. Asked when it decides something, not mirrored.
+#[derive(Copy, Clone)]
+pub(crate) struct Listeners {
+    /// A 'message' has a listener.
+    pub(crate) message: bool,
+    /// The owner waits for the close of the channel: a 'disconnect' listener, a ref, the cluster handler.
+    pub(crate) close: bool,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -267,8 +391,6 @@ mod advanced {
     use super::*;
 
     const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
-    // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
-    const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
 
     /// Returns the longest body the deserializer's `WTF::Vector<uint8_t>` can store without crashing.
     fn max_message_len() -> usize {
@@ -311,16 +433,14 @@ mod advanced {
         [IPCMessageType::Version as u8, v[0], v[1], v[2], v[3]]
     };
 
-    pub(super) fn decode_ipc_message(
-        data: &[u8],
-        global: &JSGlobalObject,
-    ) -> Result<DecodeIPCMessageResult, IPCDecodeError> {
+    /// The type and the length field of the frame at the start of `data`, once all of the frame has arrived.
+    fn frame_header(data: &[u8]) -> Result<Option<(u8, u32)>, IPCDecodeError> {
         if data.len() < HEADER_LENGTH {
             log!(
                 "Not enough bytes to decode IPC message header, have {} bytes",
                 data.len()
             );
-            return Err(IPCDecodeError::NotEnoughBytes);
+            return Ok(None);
         }
 
         let message_type_raw: u8 = data[0];
@@ -330,18 +450,8 @@ mod advanced {
                 .expect("infallible: size matches"),
         );
 
-        log!(
-            "Received IPC message type {} ({}) len {}",
-            message_type_raw,
-            IPCMessageType::tag_name(message_type_raw),
-            message_len
-        );
-
         match message_type_raw {
-            x if x == IPCMessageType::Version as u8 => Ok(DecodeIPCMessageResult {
-                bytes_consumed: HEADER_LENGTH_U32,
-                message: DecodedIPCMessage::Version(message_len),
-            }),
+            x if x == IPCMessageType::Version as u8 => {}
             x if x == IPCMessageType::SerializedMessage as u8
                 || x == IPCMessageType::SerializedInternalMessage as u8
                 || x == IPCMessageType::SerializedMessageWithBuffers as u8 =>
@@ -361,25 +471,63 @@ mod advanced {
                         message_len,
                         data.len()
                     );
-                    return Err(IPCDecodeError::NotEnoughBytes);
+                    return Ok(None);
                 }
+            }
+            _ => return Err(IPCDecodeError::InvalidFormat),
+        }
+        Ok(Some((message_type_raw, message_len)))
+    }
 
+    /// The length of the frame at the start of `data`, once all of it has arrived.
+    pub(super) fn frame_len(data: &[u8]) -> Result<Option<usize>, IPCDecodeError> {
+        Ok(frame_header(data)?.map(|(message_type, message_len)| {
+            if message_type == IPCMessageType::Version as u8 {
+                HEADER_LENGTH
+            } else {
+                HEADER_LENGTH + message_len as usize
+            }
+        }))
+    }
+
+    /// Whether the frame is a 'message' for sure, by its bytes: not the version, not a cluster message, and no `NODE_` command.
+    pub(super) fn is_user_frame(frame: &[u8]) -> bool {
+        frame[0] != IPCMessageType::Version as u8
+            && frame[0] != IPCMessageType::SerializedInternalMessage as u8
+            && !strings::contains(frame, super::INTERNAL_CMD_PREFIX)
+    }
+
+    /// Decodes one complete frame.
+    pub(super) fn decode_ipc_message(
+        data: &[u8],
+        global: &JSGlobalObject,
+    ) -> Result<DecodedIPCMessage, IPCDecodeError> {
+        let Some((message_type_raw, message_len)) = frame_header(data)? else {
+            return Err(IPCDecodeError::NotEnoughBytes);
+        };
+
+        log!(
+            "Received IPC message type {} ({}) len {}",
+            message_type_raw,
+            IPCMessageType::tag_name(message_type_raw),
+            message_len
+        );
+
+        match message_type_raw {
+            x if x == IPCMessageType::Version as u8 => Ok(DecodedIPCMessage::Version(message_len)),
+            x => {
                 let message = &data[HEADER_LENGTH..][..message_len as usize];
                 let mut deserialized = JSValue::deserialize(message, global)?;
                 if x == IPCMessageType::SerializedMessageWithBuffers as u8 {
                     deserialized = ipc_restore_advanced_buffers(global, deserialized)?;
                 }
 
-                Ok(DecodeIPCMessageResult {
-                    bytes_consumed: HEADER_LENGTH_U32 + message_len,
-                    message: if x == IPCMessageType::SerializedInternalMessage as u8 {
-                        DecodedIPCMessage::Internal(deserialized)
-                    } else {
-                        DecodedIPCMessage::Data(deserialized)
-                    },
+                Ok(if x == IPCMessageType::SerializedInternalMessage as u8 {
+                    DecodedIPCMessage::Internal(deserialized)
+                } else {
+                    DecodedIPCMessage::Data(deserialized)
                 })
             }
-            _ => Err(IPCDecodeError::InvalidFormat),
         }
     }
 
@@ -466,34 +614,24 @@ mod json {
     // 2 is internal
     // ["[{\d\.] is regular
 
+    /// Whether the line is a 'message' for sure, by its bytes: not a cluster message, and no `NODE_` command.
+    pub(super) fn is_user_frame(line: &[u8]) -> bool {
+        line[0] != 2 && !strings::contains(line, super::INTERNAL_CMD_PREFIX)
+    }
+
     /// Returns the longest line, not counting the newline, that can become a string.
     pub(super) fn max_line_len() -> usize {
         // The longest string in UTF-8 (at most 3 bytes per code unit), plus an internal message's tag byte.
         BunString::max_length().saturating_mul(3).saturating_add(1)
     }
 
+    /// Decodes one complete line, which ends with its newline.
     pub(super) fn decode_ipc_message(
-        data: &[u8],
+        line: &[u8],
         global_this: &JSGlobalObject,
-        known_newline: Option<u32>,
-    ) -> Result<DecodeIPCMessageResult, IPCDecodeError> {
+    ) -> Result<DecodedIPCMessage, IPCDecodeError> {
         // <tag>{ "foo": "bar"} // tag is 1 or 2
-        let idx: u32 = match known_newline {
-            Some(i) => i,
-            None => {
-                // `strings::index_of_char` returns `Option<u32>`; the caller's
-                // 4-GB-message guard is implicit in that return type.
-                let found =
-                    strings::index_of_char(data, b'\n').ok_or(IPCDecodeError::NotEnoughBytes)?;
-                // Individual IPC messages should not exceed 4GB, and idx+1 must not overflow
-                if found == u32::MAX {
-                    return Err(IPCDecodeError::InvalidFormat);
-                }
-                found
-            }
-        };
-
-        let mut json_data = &data[0..idx as usize];
+        let mut json_data = &line[..line.len() - 1];
 
         #[derive(Copy, Clone, Eq, PartialEq)]
         enum Kind {
@@ -555,16 +693,10 @@ mod json {
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
         };
 
-        match kind {
-            Kind::Regular => Ok(DecodeIPCMessageResult {
-                bytes_consumed: idx + 1,
-                message: DecodedIPCMessage::Data(deserialized),
-            }),
-            Kind::Internal => Ok(DecodeIPCMessageResult {
-                bytes_consumed: idx + 1,
-                message: DecodedIPCMessage::Internal(deserialized),
-            }),
-        }
+        Ok(match kind {
+            Kind::Regular => DecodedIPCMessage::Data(deserialized),
+            Kind::Internal => DecodedIPCMessage::Internal(deserialized),
+        })
     }
 
     pub(super) fn serialize(
@@ -606,22 +738,20 @@ mod json {
     }
 }
 
-/// Given potentially unfinished buffer `data`, attempt to decode and process a message from it.
-/// For JSON mode, `known_newline` can be provided to avoid re-scanning for the newline delimiter.
-pub(crate) fn decode_ipc_message(
+/// Decodes one complete frame: in JSON mode a line with its newline.
+fn decode_ipc_message(
     mode: Mode,
-    data: &[u8],
+    frame: &[u8],
     global: &JSGlobalObject,
-    known_newline: Option<u32>,
-) -> Result<DecodeIPCMessageResult, IPCDecodeError> {
+) -> Result<DecodedIPCMessage, IPCDecodeError> {
     // The previous message's JS handler may have taken a worker's termination
     // trap; JSONParse with it pending trips LiteralParser's state assert.
     if global.bun_vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
         return Err(IPCDecodeError::Stopped);
     }
     match mode {
-        Mode::Advanced => advanced::decode_ipc_message(data, global),
-        Mode::Json => json::decode_ipc_message(data, global, known_newline),
+        Mode::Advanced => advanced::decode_ipc_message(frame, global),
+        Mode::Json => json::decode_ipc_message(frame, global),
     }
 }
 
@@ -916,6 +1046,13 @@ enum ContinueSendReason {
 /// The transport returns the number of bytes written as an `i32`.
 const MAX_WRITE_LEN: usize = i32::MAX as usize;
 
+/// Receive backpressure: the socket is paused once this many bytes of frames wait in `incoming` for a listener.
+/// The same mark as the body of a `fetch()` response (`bun_http::signals::BODY_HIGH_WATER_MARK`).
+const RECEIVE_HIGH_WATER_MARK: usize = 256 * 1024;
+
+/// node's prefix for the `cmd` of a message that is not a 'message'.
+const INTERNAL_CMD_PREFIX: &[u8] = b"NODE_";
+
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct SendQueue {
     ref_count: Cell<u32>,
@@ -931,11 +1068,16 @@ pub(crate) struct SendQueue {
     pub internal_msg_queue: JsCell<InternalMsgHolder>,
     incoming: JsCell<IncomingBuffer>,
     pub(crate) incoming_fd: Cell<Option<Fd>>,
-    /// False while the owner has no listener for the messages. The socket is then not read, so they wait in the kernel buffer.
-    reads_wanted: Cell<bool>,
-    /// What the socket was last told. Starts true: a new socket reads.
+    /// The descriptors of the handle frames that wait in `incoming`, in their order. Each was acked when its frame was read.
+    held_fds: JsCell<VecDeque<Fd>>,
+    /// A 'message' that no listener takes waits in `incoming`. Off for `Bun.spawn({ ipc })`, whose callback takes every message.
+    gated: Cell<bool>,
+    /// False while the socket is paused. Starts true: a new socket reads.
     socket_reading: Cell<bool>,
-    dispatching_incoming: Cell<bool>,
+    /// `incoming` is being delivered. A handler that turns the event loop does not get a second delivery of its frame.
+    dispatching: Cell<bool>,
+    /// The next tick offers the frames that wait.
+    drain_requested: Cell<bool>,
 
     pub socket: JsCell<SocketUnion>,
     pub(crate) owner: Cell<Option<SendQueueOwner>>,
@@ -989,12 +1131,28 @@ impl SendQueueOwner {
         }
     }
 
-    fn handle_ipc_message(self, msg: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
+    /// `internal`: a `Data` message is for 'internalMessage', which never waits for a listener.
+    fn handle_ipc_message(
+        self,
+        msg: &DecodedIPCMessage,
+        handle: JSValue,
+        internal: bool,
+    ) -> JsResult<Delivery> {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
             // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { i.as_ref() }.handle_ipc_message(msg, handle),
+            SendQueueOwner::Instance(i) => {
+                unsafe { i.as_ref() }.handle_ipc_message(msg, handle, internal)
+            }
+        }
+    }
+
+    fn listeners(self) -> Listeners {
+        match self {
+            // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
+            SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.ipc_listeners(),
+            SendQueueOwner::Instance(_) => crate::ipc_host::process_ipc_listeners(),
         }
     }
 
@@ -1064,9 +1222,11 @@ impl SendQueue {
             internal_msg_queue: JsCell::new(InternalMsgHolder::default()),
             incoming: JsCell::new(IncomingBuffer::init(mode)),
             incoming_fd: Cell::new(None),
-            reads_wanted: Cell::new(true),
+            held_fds: JsCell::new(VecDeque::new()),
+            gated: Cell::new(false),
             socket_reading: Cell::new(true),
-            dispatching_incoming: Cell::new(false),
+            dispatching: Cell::new(false),
+            drain_requested: Cell::new(false),
             socket: JsCell::new(socket),
             owner: Cell::new(owner),
             deferred_scheduled: Cell::new(false),
@@ -1105,32 +1265,27 @@ impl SendQueue {
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
     }
 
-    /// The ack of a sent handle arrives on this same stream, so a wait for one reads whatever the owner wants.
-    fn is_reading(&self) -> bool {
-        self.reads_wanted.get() || self.waiting_for_ack.get().is_some()
+    /// `node:child_process` owns this channel: a 'message' waits for a 'message' listener.
+    pub(crate) fn gate(&self) {
+        self.gated.set(true);
     }
 
-    pub(crate) fn set_reads_wanted(&self, wanted: bool) {
-        self.reads_wanted.set(wanted);
-        self.update_reading();
+    pub(crate) fn is_gated(&self) -> bool {
+        self.gated.get()
     }
 
-    fn update_reading(&self) {
-        if !self.is_reading() {
-            return self.apply_socket_reading(false);
-        }
-        if self.socket_reading.get() || !self.socket_is_open() {
-            return;
-        }
-        // The pause left these in `incoming`. A handler can pause again.
-        if !self.dispatching_incoming.get() {
-            let global_this = self.get_global_this();
-            let _scope = global_this.bun_vm().enter_event_loop_scope();
-            dispatch_incoming(self, &global_this);
-        }
-        if self.is_reading() {
-            self.apply_socket_reading(true);
-        }
+    /// Past the mark the socket is still read for these, and a 'message' that arrives then is dropped.
+    fn keeps_reading(&self) -> bool {
+        self.waiting_for_ack.get().is_some()
+            || self.internal_msg_queue.get().is_ready()
+            || self.owner.get().is_some_and(|owner| owner.listeners().close)
+    }
+
+    /// Receive backpressure: the socket is paused while `incoming` holds the mark's worth of frames that wait.
+    fn update_socket_reading(&self) {
+        let pause =
+            self.incoming.get().held_len() >= RECEIVE_HIGH_WATER_MARK && !self.keeps_reading();
+        self.apply_socket_reading(!pause);
     }
 
     fn apply_socket_reading(&self, reading: bool) {
@@ -1164,6 +1319,276 @@ impl SendQueue {
                 self.close_socket(CloseReason::Failure, CloseFrom::User);
             }
         }
+    }
+
+    /// The peer process is gone. A paused socket does not read that, so its close is requested before the exit is reported.
+    pub(crate) fn peer_exited(&self) {
+        if !self.socket_reading.get() {
+            self.close_socket_next_tick(true);
+        }
+    }
+
+    /// A listener came, or something else that changes who takes the frames that wait. They are offered again on the next tick, as in node, and not inside the caller.
+    pub(crate) fn request_drain(&self) {
+        if self.incoming.get().held_len() != 0 && !self.drain_requested.get() {
+            self.drain_on_next_tick();
+        }
+    }
+
+    fn drain_on_next_tick(&self) {
+        let Some(owner) = self.owner.get() else { return };
+        let target = match owner.kind() {
+            SendQueueOwnerKind::Subprocess => owner.this_jsvalue(),
+            SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
+        };
+        if target.is_empty() {
+            return;
+        }
+        let global = self.get_global_this();
+        let drain = crate::ipc_host::drain_function(&global);
+        self.drain_requested
+            .set(JSValue::call_next_tick_1(drain, &global, target).is_ok());
+    }
+
+    pub(crate) fn drain(&self) {
+        self.drain_requested.set(false);
+        if !self.socket_is_open() {
+            return;
+        }
+        let global_this = self.get_global_this();
+        let _scope = global_this.bun_vm().enter_event_loop_scope();
+        self.dispatch_incoming(&global_this);
+    }
+
+    /// The channel is closed, and what waited for a listener is gone with it.
+    fn discard_incoming(&self) {
+        for fd in self.held_fds.with_mut(std::mem::take) {
+            let _ = fd.close_allowing_standard_io(None);
+        }
+        if !self.dispatching.get() {
+            self.incoming.set(IncomingBuffer::init(self.mode));
+        }
+    }
+
+    /// Answers a frame that came with a handle: an ack with its descriptor, or a nack without one. The sender then sends the frame again.
+    fn ack_handle(&self, msg_data: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<Fd>> {
+        #[cfg(windows)]
+        let fd = import_windows_socket_payload(global_this, msg_data)?;
+        #[cfg(not(windows))]
+        let fd = {
+            let _ = msg_data;
+            self.incoming_fd.take()
+        };
+        let packet = if fd.is_some() {
+            get_ack_packet(self.mode)
+        } else {
+            get_nack_packet(self.mode)
+        };
+        let mut reply = SendHandle {
+            data: StreamBuffer::default(),
+            handle: None,
+            callbacks: CallbackList::AckNack,
+        };
+        handle_oom(reply.data.write(packet));
+
+        // Insert at appropriate position in send queue
+        self.insert_message(reply);
+
+        // Send if needed
+        log!("IPC call continueSend() from ackHandle");
+        self.continue_send(global_this, ContinueSendReason::NewMessageAppended);
+        Ok(fd)
+    }
+
+    /// A 'message' with a handle. Its frame is acked when it is read, as in node, so its sender never waits for a listener.
+    /// `held`: the frame waited in `incoming`, and its descriptor with it.
+    fn receive_handle(
+        &self,
+        msg_data: JSValue,
+        held: bool,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Delivery> {
+        let acked = if held {
+            None
+        } else {
+            let Some(fd) = self.ack_handle(msg_data, global_this)? else {
+                return Ok(Delivery::Taken);
+            };
+            Some(fd)
+        };
+        let Some(owner) = self.owner_ref() else {
+            if let Some(fd) = acked {
+                let _ = fd.close_allowing_standard_io(None);
+            }
+            return Ok(Delivery::Taken);
+        };
+        // The handle is made once a listener is there for its message. Until then the descriptor waits with the frame.
+        if !owner.listeners().message {
+            if let Some(fd) = acked {
+                self.held_fds.with_mut(|fds| fds.push_back(fd));
+            }
+            return Ok(Delivery::NotTaken);
+        }
+        let Some(fd) = acked.or_else(|| self.held_fds.with_mut(|fds| fds.pop_front())) else {
+            return Ok(Delivery::Taken);
+        };
+        let target: JSValue = match owner.kind() {
+            SendQueueOwnerKind::Subprocess => owner.this_jsvalue(),
+            SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
+        };
+
+        // RAII: `enter()` now, `exit()` on drop — covers both the
+        // early-error return and the fall-through.
+        let _scope = global_this.bun_vm().enter_event_loop_scope();
+        let fd_js = received_fd_to_js(fd);
+        if let Err(e) = ipc_parse(global_this, target, msg_data, fd_js) {
+            // ack written already, that's okay.
+            let _ = fd.close_allowing_standard_io(None);
+            return Err(e);
+        }
+
+        // ipc_parse will call the callback which calls the owner's handle_ipc_message()
+        // we have sent the ack already so the next message could arrive at any time. maybe even before
+        // parseHandle calls emit(). however, node does this too and its messages don't end up out of order.
+        // so hopefully ours won't either.
+        Ok(Delivery::Taken)
+    }
+
+    /// Delivers the complete frames in `incoming`, and then pauses or resumes the socket.
+    fn dispatch_incoming(&self, global_this: &JSGlobalObject) {
+        // A handler turned the event loop. The frame it has is still in `incoming`, and the delivery that gave it goes on.
+        if self.dispatching.replace(true) {
+            return;
+        }
+        let result = self.deliver_incoming(global_this);
+        self.dispatching.set(false);
+        match result {
+            Ok(()) => {
+                log!("hit NotEnoughBytes");
+                self.incoming.with_mut(|incoming| incoming.wait());
+            }
+            Err(err) => finish_decode(self, err),
+        }
+        self.update_socket_reading();
+    }
+
+    fn deliver_incoming(&self, global_this: &JSGlobalObject) -> Result<(), IPCDecodeError> {
+        let mode = self.mode;
+
+        // The frames that wait are offered again, while the owner takes them.
+        let takes = self.incoming.get().held_len() != 0
+            && self.is_connected()
+            && self
+                .owner
+                .get()
+                .is_some_and(|owner| owner.listeners().message);
+        while takes {
+            let offered = self.incoming.with_mut(|incoming| {
+                let frame = incoming.first_held()?;
+                Some((frame.len(), decode_ipc_message(mode, frame, global_this)))
+            });
+            let Some((len, message)) = offered else { break };
+            let message = message?;
+            let kind = kind_of(&message, global_this);
+            let has_handle = matches!(kind, Ok(Kind::Handle));
+            let delivery = kind.and_then(|kind| deliver(self, message, kind, true, global_this));
+            if delivered(delivery) == Delivery::NotTaken {
+                break;
+            }
+            self.incoming.with_mut(|incoming| incoming.release(len));
+            if has_handle {
+                // The handle is made on the next tick, and its message is emitted then. The frames behind it follow.
+                self.drain_on_next_tick();
+                return Ok(());
+            }
+        }
+
+        // Past the mark the socket is read on only for something else than a 'message'. Asked once, when it matters.
+        let mut drops: Option<bool> = None;
+        loop {
+            let holding = self.incoming.get().held_len() != 0;
+            let next = self
+                .incoming
+                .with_mut(|incoming| -> Result<_, IPCDecodeError> {
+                    let Some(frame) = incoming.next()? else {
+                        return Ok(None);
+                    };
+                    // Behind a frame that waits, a 'message' is not decoded to learn that it waits too.
+                    if holding && is_user_frame(mode, frame) {
+                        return Ok(Some((frame.len(), None)));
+                    }
+                    let message = decode_ipc_message(mode, frame, global_this)?;
+                    Ok(Some((frame.len(), Some(message))))
+                })?;
+            let Some((len, message)) = next else {
+                return Ok(());
+            };
+            let kind = match &message {
+                None => Ok(Kind::User),
+                Some(message) => kind_of(message, global_this),
+            };
+            let waits = match (kind, message) {
+                (Ok(kind), Some(message)) if !kind.waits() => {
+                    // Not a 'message': it never waits, and it passes the ones that do.
+                    self.incoming.with_mut(|incoming| incoming.remove(len));
+                    let _ = delivered(deliver(self, message, kind, false, global_this));
+                    continue;
+                }
+                // Nothing waits in front of it, so the owner answers for this one.
+                (Ok(kind), Some(message)) if !holding => {
+                    delivered(deliver(self, message, kind, false, global_this))
+                        == Delivery::NotTaken
+                }
+                (Ok(kind), message) => {
+                    let drop = self.incoming.get().held_len() >= RECEIVE_HIGH_WATER_MARK
+                        && *drops.get_or_insert_with(|| self.keeps_reading());
+                    match (kind, message) {
+                        (Kind::Handle, Some(DecodedIPCMessage::Data(msg_data))) => {
+                            match self.ack_handle(msg_data, global_this) {
+                                Ok(Some(fd)) if drop => {
+                                    let _ = fd.close_allowing_standard_io(None);
+                                    false
+                                }
+                                Ok(Some(fd)) => {
+                                    self.held_fds.with_mut(|fds| fds.push_back(fd));
+                                    true
+                                }
+                                Ok(None) => false,
+                                Err(err) => delivered(Err(err)) == Delivery::NotTaken,
+                            }
+                        }
+                        _ => !drop,
+                    }
+                }
+                (Err(err), _) => delivered(Err(err)) == Delivery::NotTaken,
+            };
+            self.incoming.with_mut(|incoming| {
+                if waits {
+                    incoming.hold(len)
+                } else {
+                    incoming.remove(len)
+                }
+            });
+        }
+    }
+
+    /// Advanced mode with nothing buffered: the frames are decoded from the chunk itself, and only what stays is copied.
+    /// Returns what stays, and the length of its first frame if that one waits for a listener.
+    fn deliver_chunk<'a>(
+        &self,
+        mut data: &'a [u8],
+        global_this: &JSGlobalObject,
+    ) -> Result<(&'a [u8], usize), IPCDecodeError> {
+        while let Some(len) = advanced::frame_len(data)? {
+            let message = decode_ipc_message(Mode::Advanced, &data[..len], global_this)?;
+            let delivery = kind_of(&message, global_this)
+                .and_then(|kind| deliver(self, message, kind, false, global_this));
+            if delivered(delivery) == Delivery::NotTaken {
+                return Ok((data, len));
+            }
+            data = &data[len..];
+        }
+        Ok((data, 0))
     }
 
     fn close_socket(&self, reason: CloseReason, from: CloseFrom) {
@@ -1274,6 +1699,7 @@ impl SendQueue {
                 log!("SendQueue#_onAfterIPCClosed");
                 if !sq.close_event_sent.replace(true) {
                     let global = sq.get_global_this();
+                    sq.discard_incoming();
                     if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
                         item.complete(&global);
                     }
@@ -1476,8 +1902,7 @@ impl SendQueue {
                     .unwrap();
                 self.insert_message(item);
                 log!("IPC call continueSend() from onAckNack retry");
-                self.continue_send(global, ContinueSendReason::NewMessageAppended);
-                return self.update_reading();
+                return self.continue_send(global, ContinueSendReason::NewMessageAppended);
             }
             let cluster_seq = self
                 .waiting_for_ack
@@ -1519,7 +1944,6 @@ impl SendQueue {
         }
         log!("IPC call continueSend() from onAckNack success");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
-        self.update_reading();
     }
 
     fn should_ref(&self) -> bool {
@@ -1676,7 +2100,8 @@ impl SendQueue {
         });
         match done {
             Done::AwaitAck => {
-                self.update_reading();
+                // The ack is read past the mark too.
+                self.apply_socket_reading(true);
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
             Done::Completed(item) => {
@@ -2075,6 +2500,9 @@ impl Drop for SendQueue {
         if let Some(fd) = self.incoming_fd.take() {
             let _ = fd.close_allowing_standard_io(None);
         }
+        for fd in self.held_fds.with_mut(std::mem::take) {
+            let _ = fd.close_allowing_standard_io(None);
+        }
     }
 }
 
@@ -2164,19 +2592,89 @@ fn received_fd_to_js(fd: Fd) -> JSValue {
     }
 }
 
-enum IPCCommand {
-    Handle(JSValue),
+/// What a decoded frame is, by its `cmd`.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum Kind {
+    Version,
+    /// A control message of node:cluster.
+    Cluster,
     Ack,
     Nack,
+    /// A 'message' that comes with a handle.
+    Handle,
+    /// An 'internalMessage'.
+    NodeInternal,
+    /// A 'message'.
+    User,
 }
 
-/// One decoded message's delivery. A JS exception raised while inspecting or delivering it is this message's
-/// failure; the on-data callers fold it (reported as uncaught) and go on to the next message.
-fn handle_ipc_message(
+impl Kind {
+    /// A 'message' waits for a listener. Every other frame is delivered when it is read, as in node.
+    fn waits(self) -> bool {
+        matches!(self, Kind::Handle | Kind::User)
+    }
+}
+
+fn kind_of(message: &DecodedIPCMessage, global_this: &JSGlobalObject) -> JsResult<Kind> {
+    let msg_data = match message {
+        DecodedIPCMessage::Version(_) => return Ok(Kind::Version),
+        DecodedIPCMessage::Internal(_) => return Ok(Kind::Cluster),
+        DecodedIPCMessage::Data(msg_data) => *msg_data,
+    };
+    if !msg_data.is_object() {
+        return Ok(Kind::User);
+    }
+    let Some(cmd) = msg_data.fast_get(global_this, jsc::BuiltinName::cmd)? else {
+        return Ok(Kind::User);
+    };
+    if !cmd.is_string() {
+        return Ok(Kind::User);
+    }
+    let cmd = bun_core::String::from_js(cmd, global_this)?;
+    Ok(if cmd.eq_ascii(b"NODE_HANDLE") {
+        Kind::Handle
+    } else if cmd.eq_ascii(b"NODE_HANDLE_ACK") {
+        Kind::Ack
+    } else if cmd.eq_ascii(b"NODE_HANDLE_NACK") {
+        Kind::Nack
+    } else if cmd.length() > INTERNAL_CMD_PREFIX.len() && cmd.starts_with_ascii(INTERNAL_CMD_PREFIX)
+    {
+        Kind::NodeInternal
+    } else {
+        Kind::User
+    })
+}
+
+/// Whether `message` is for 'internalMessage' and not for 'message'.
+pub(crate) fn is_internal_message(message: JSValue, global_this: &JSGlobalObject) -> JsResult<bool> {
+    Ok(kind_of(&DecodedIPCMessage::Data(message), global_this)? != Kind::User)
+}
+
+/// Whether the frame is a 'message' for sure, by its bytes.
+fn is_user_frame(mode: Mode, frame: &[u8]) -> bool {
+    match mode {
+        Mode::Advanced => advanced::is_user_frame(frame),
+        Mode::Json => json::is_user_frame(frame),
+    }
+}
+
+/// A JS exception raised while inspecting or delivering a message is that message's failure: it is reported
+/// as uncaught, the message is gone, and the next one is delivered.
+fn delivered(delivery: JsResult<Delivery>) -> Delivery {
+    delivery.unwrap_or_else(|err| {
+        crate::dispatch::fold(Err(err));
+        Delivery::Taken
+    })
+}
+
+/// One decoded message's delivery. `held`: its frame waited in `incoming` for a listener.
+fn deliver(
     send_queue: &SendQueue,
     message: DecodedIPCMessage,
+    kind: Kind,
+    held: bool,
     global_this: &JSGlobalObject,
-) -> JsResult<()> {
+) -> JsResult<Delivery> {
     #[cfg(debug_assertions)]
     {
         // The `Formatter` runs its deinit in `Drop`.
@@ -2196,268 +2694,71 @@ fn handle_ipc_message(
             }
         }
     }
-    let mut internal_command: Option<IPCCommand> = None;
-    'handle_message: {
-        if let DecodedIPCMessage::Data(msg_data) = &message {
-            let msg_data = *msg_data;
-            if msg_data.is_object() {
-                let Some(cmd) = msg_data.fast_get(global_this, jsc::BuiltinName::cmd)? else {
-                    break 'handle_message;
+    match (kind, &message) {
+        (Kind::Ack, _) => {
+            send_queue.on_ack_nack(global_this, AckNack::Ack);
+            return Ok(Delivery::Taken);
+        }
+        (Kind::Nack, _) => {
+            send_queue.on_ack_nack(global_this, AckNack::Nack);
+            return Ok(Delivery::Taken);
+        }
+        (Kind::Handle, DecodedIPCMessage::Data(msg_data)) => {
+            return send_queue.receive_handle(*msg_data, held, global_this);
+        }
+        _ => {}
+    }
+
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
+    let mut handle_js = JSValue::UNDEFINED;
+    let mut received_fd: Option<Fd> = None;
+    if let DecodedIPCMessage::Internal(msg_data) = &message {
+        let msg_data = *msg_data;
+        if msg_data.is_object() {
+            if let Some(marker) = msg_data.get(global_this, "$hasHandle")?
+                && marker.to_boolean()
+            {
+                let Some(fd) = send_queue.ack_handle(msg_data, global_this)? else {
+                    return Ok(Delivery::Taken);
                 };
-                if cmd.is_string() {
-                    if !cmd.is_cell() {
-                        break 'handle_message;
-                    }
-                    let cmd_str = bun_core::String::from_js(cmd, global_this)?;
-                    if cmd_str.eq_ascii(b"NODE_HANDLE") {
-                        internal_command = Some(IPCCommand::Handle(msg_data));
-                    } else if cmd_str.eq_ascii(b"NODE_HANDLE_ACK") {
-                        internal_command = Some(IPCCommand::Ack);
-                    } else if cmd_str.eq_ascii(b"NODE_HANDLE_NACK") {
-                        internal_command = Some(IPCCommand::Nack);
-                    }
-                }
+                received_fd = Some(fd);
+                handle_js = received_fd_to_js(fd);
             }
         }
     }
-
-    if let Some(icmd) = internal_command {
-        match icmd {
-            IPCCommand::Handle(msg_data) => {
-                #[cfg(windows)]
-                let imported = import_windows_socket_payload(global_this, msg_data)?;
-                #[cfg(windows)]
-                let ack = imported.is_some();
-                #[cfg(not(windows))]
-                let ack = send_queue.incoming_fd.get().is_some();
-
-                let packet = if ack {
-                    get_ack_packet(send_queue.mode)
-                } else {
-                    get_nack_packet(send_queue.mode)
-                };
-                let mut handle = SendHandle {
-                    data: StreamBuffer::default(),
-                    handle: None,
-                    callbacks: CallbackList::AckNack,
-                };
-                handle_oom(handle.data.write(packet));
-
-                // Insert at appropriate position in send queue
-                send_queue.insert_message(handle);
-
-                // Send if needed
-                log!("IPC call continueSend() from handleIPCMessage");
-                send_queue.continue_send(global_this, ContinueSendReason::NewMessageAppended);
-
-                if !ack {
-                    return Ok(());
-                }
-
-                // Get file descriptor and clear it
-                #[cfg(windows)]
-                let fd: Fd = imported.unwrap();
-                #[cfg(not(windows))]
-                let fd: Fd = send_queue.incoming_fd.take().unwrap();
-
-                let Some(owner) = send_queue.owner_ref() else {
-                    let _ = fd.close_allowing_standard_io(None);
-                    return Ok(());
-                };
-                let target: JSValue = match owner.kind() {
-                    SendQueueOwnerKind::Subprocess => owner.this_jsvalue(),
-                    SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
-                };
-
-                // RAII: `enter()` now, `exit()` on drop — covers both the
-                // early-error return and the fall-through.
-                let _scope = global_this.bun_vm().enter_event_loop_scope();
-                let fd_js = received_fd_to_js(fd);
-                if let Err(e) = ipc_parse(global_this, target, msg_data, fd_js) {
-                    // ack written already, that's okay.
-                    let _ = fd.close_allowing_standard_io(None);
-                    return Err(e);
-                }
-                drop(_scope);
-
-                // ipc_parse will call the callback which calls handleIPCMessage()
-                // we have sent the ack already so the next message could arrive at any time. maybe even before
-                // parseHandle calls emit(). however, node does this too and its messages don't end up out of order.
-                // so hopefully ours won't either.
-                return Ok(());
-            }
-            IPCCommand::Ack => {
-                send_queue.on_ack_nack(global_this, AckNack::Ack);
-                return Ok(());
-            }
-            IPCCommand::Nack => {
-                send_queue.on_ack_nack(global_this, AckNack::Nack);
-                return Ok(());
-            }
+    let delivery = match send_queue.owner.get() {
+        Some(owner) => {
+            owner.handle_ipc_message(&message, handle_js, kind == Kind::NodeInternal)?
         }
+        // Owner already torn down: nobody will adopt the descriptor we just acked.
+        None => {
+            if let Some(fd) = received_fd {
+                let _ = fd.close_allowing_standard_io(None);
+            }
+            Delivery::Taken
+        }
+    };
+    // Only a 'message' waits for a listener.
+    Ok(if kind == Kind::User {
+        delivery
     } else {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
-        let mut handle_js = JSValue::UNDEFINED;
-        let mut received_fd: Option<Fd> = None;
-        if let DecodedIPCMessage::Internal(msg_data) = &message {
-            let msg_data = *msg_data;
-            if msg_data.is_object() {
-                if let Some(marker) = msg_data.get(global_this, "$hasHandle")?
-                    && marker.to_boolean()
-                {
-                    #[cfg(windows)]
-                    let imported = import_windows_socket_payload(global_this, msg_data)?;
-                    #[cfg(windows)]
-                    let ack = imported.is_some();
-                    #[cfg(not(windows))]
-                    let ack = send_queue.incoming_fd.get().is_some();
-                    let packet = if ack {
-                        get_ack_packet(send_queue.mode)
-                    } else {
-                        get_nack_packet(send_queue.mode)
-                    };
-                    let mut reply = SendHandle {
-                        data: StreamBuffer::default(),
-                        handle: None,
-                        callbacks: CallbackList::AckNack,
-                    };
-                    handle_oom(reply.data.write(packet));
-                    send_queue.insert_message(reply);
-                    log!("IPC call continueSend() from internal $hasHandle ack");
-                    send_queue.continue_send(global_this, ContinueSendReason::NewMessageAppended);
-                    if !ack {
-                        return Ok(());
-                    }
-                    #[cfg(windows)]
-                    let fd = imported.unwrap();
-                    #[cfg(not(windows))]
-                    let fd = send_queue.incoming_fd.take().unwrap();
-                    received_fd = Some(fd);
-                    handle_js = received_fd_to_js(fd);
-                }
-            }
-        }
-        match send_queue.owner.get() {
-            Some(owner) => owner.handle_ipc_message(&message, handle_js)?,
-            // Owner already torn down: nobody will adopt the descriptor we just acked.
-            None => {
-                if let Some(fd) = received_fd {
-                    let _ = fd.close_allowing_standard_io(None);
-                }
-            }
-        }
-    }
-    Ok(())
+        Delivery::Taken
+    })
 }
 
-enum DecodeStep {
-    Message(DecodeIPCMessageResult),
-    Wait,
-    Fail(IPCDecodeError),
-}
-
-fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
-    match step {
-        DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
-        DecodeStep::Wait => {
-            log!("hit NotEnoughBytes");
-        }
-        DecodeStep::Fail(IPCDecodeError::Js(JsError::OutOfMemory)) => {
+fn finish_decode(send_queue: &SendQueue, err: IPCDecodeError) {
+    match err {
+        IPCDecodeError::Js(JsError::OutOfMemory) => {
             Output::print_errorln("IPC message is too long.");
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         // Materializing the message (structured-clone deserialize, buffer
         // restore) threw: that is this message's delivery failing, folded like
         // a throwing listener, and the channel is closed as for any undecodable
         // input.
-        DecodeStep::Fail(IPCDecodeError::Js(err)) => {
-            crate::dispatch::fold(Err(*err));
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-        }
-        DecodeStep::Fail(_) => {
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-        }
+        IPCDecodeError::Js(err) => crate::dispatch::fold(Err(err)),
+        _ => {}
     }
-}
-
-fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) -> DecodeStep {
-    incoming.with_mut(|inc| {
-        let IncomingBuffer::Json(json_buf) = inc else {
-            unreachable!()
-        };
-        let Some(msg) = json_buf.next() else {
-            if json_buf.is_too_long() {
-                // Fail the same way as a complete line that's too long to become a string.
-                return DecodeStep::Fail(IPCDecodeError::Js(JsError::OutOfMemory));
-            }
-            return DecodeStep::Wait;
-        };
-        match decode_ipc_message(Mode::Json, msg.data, global, Some(msg.newline_pos)) {
-            Ok(r) => {
-                let bytes_consumed = r.bytes_consumed;
-                json_buf.consume(bytes_consumed);
-                DecodeStep::Message(r)
-            }
-            Err(IPCDecodeError::NotEnoughBytes) => DecodeStep::Wait,
-            Err(e) => DecodeStep::Fail(e),
-        }
-    })
-}
-
-fn decode_next_advanced(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) -> DecodeStep {
-    incoming.with_mut(|inc| {
-        let IncomingBuffer::Advanced {
-            data: adv_buf,
-            head,
-        } = inc
-        else {
-            unreachable!()
-        };
-        let slice = &adv_buf.slice()[*head..];
-        match decode_ipc_message(Mode::Advanced, slice, global, None) {
-            Ok(r) => {
-                let consumed = r.bytes_consumed as usize;
-                if consumed < slice.len() {
-                    *head += consumed;
-                } else {
-                    adv_buf.clear();
-                    *head = 0;
-                }
-                DecodeStep::Message(r)
-            }
-            Err(IPCDecodeError::NotEnoughBytes) => {
-                // copy the remaining bytes to the start of the buffer
-                adv_buf.drain_front(*head);
-                *head = 0;
-                DecodeStep::Wait
-            }
-            Err(e) => DecodeStep::Fail(e),
-        }
-    })
-}
-
-/// Dispatches the complete messages in `incoming`. Stops once nothing reads them, and the rest waits for the resume.
-fn dispatch_incoming(send_queue: &SendQueue, global_this: &JSGlobalObject) {
-    let was_dispatching = send_queue.dispatching_incoming.replace(true);
-    let step = loop {
-        if !send_queue.is_reading() {
-            break None;
-        }
-        let step = match send_queue.mode {
-            Mode::Json => decode_next_json(&send_queue.incoming, global_this),
-            Mode::Advanced => decode_next_advanced(&send_queue.incoming, global_this),
-        };
-        match step {
-            DecodeStep::Message(result) => {
-                crate::dispatch::fold(handle_ipc_message(send_queue, result.message, global_this));
-            }
-            step => break Some(step),
-        }
-    };
-    send_queue.dispatching_incoming.set(was_dispatching);
-    if let Some(step) = step {
-        finish_decode(send_queue, &step);
-    }
+    send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
 }
 
 fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
@@ -2465,76 +2766,28 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
     // the vm is freed before the socket closes.
     let global_this = send_queue.get_global_this();
 
-    match send_queue.mode {
-        Mode::Json => {
-            // JSON mode: append to buffer (scans only new data for newline),
-            // then process complete messages using next().
-            send_queue.incoming.with_mut(|inc| {
-                let IncomingBuffer::Json(json_buf) = inc else {
-                    unreachable!()
-                };
-                json_buf.append(all_data);
-            });
+    let mut data = all_data;
+    let mut held = 0;
+    // Advanced mode uses a length-prefix, so it tries to decode directly from the incoming chunk first.
+    if send_queue.mode == Mode::Advanced
+        && send_queue.incoming.get().is_empty()
+        && !send_queue.dispatching.replace(true)
+    {
+        let delivered = send_queue.deliver_chunk(data, &global_this);
+        send_queue.dispatching.set(false);
+        match delivered {
+            Ok(rest) => (data, held) = rest,
+            Err(err) => return finish_decode(send_queue, err),
         }
-        Mode::Advanced => {
-            // Advanced mode: uses length-prefix, no newline scanning needed.
-            // Try to decode directly from the incoming chunk first, only buffer if needed.
-            let buffered = send_queue.incoming.with_mut(|inc| {
-                let IncomingBuffer::Advanced { data: adv_buf, .. } = inc else {
-                    unreachable!()
-                };
-                adv_buf.len() != 0
-            });
-            if !buffered {
-                let was_dispatching = send_queue.dispatching_incoming.replace(true);
-                let mut data = all_data;
-                let result = loop {
-                    if !send_queue.is_reading() {
-                        break Err(IPCDecodeError::NotEnoughBytes);
-                    }
-                    match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
-                        Ok(result) => {
-                            let consumed = result.bytes_consumed as usize;
-                            crate::dispatch::fold(handle_ipc_message(
-                                send_queue,
-                                result.message,
-                                &global_this,
-                            ));
-                            data = &data[consumed..];
-                            if data.is_empty() {
-                                break Ok(());
-                            }
-                        }
-                        Err(e) => break Err(e),
-                    }
-                };
-                send_queue.dispatching_incoming.set(was_dispatching);
-                match result {
-                    Ok(()) => {}
-                    Err(IPCDecodeError::NotEnoughBytes) => {
-                        send_queue.incoming.with_mut(|inc| {
-                            let IncomingBuffer::Advanced { data: adv_buf, .. } = inc else {
-                                unreachable!()
-                            };
-                            handle_oom(adv_buf.write(data));
-                        });
-                        log!("hit NotEnoughBytes");
-                    }
-                    Err(e) => finish_decode(send_queue, &DecodeStep::Fail(e)),
-                }
-                return;
-            }
-
-            // Buffer has existing data, append and process
-            send_queue.incoming.with_mut(|inc| {
-                let IncomingBuffer::Advanced { data: adv_buf, .. } = inc else {
-                    unreachable!()
-                };
-                handle_oom(adv_buf.write(all_data));
-            });
+        if data.is_empty() && send_queue.incoming.get().is_empty() {
+            return;
         }
     }
-    dispatch_incoming(send_queue, &global_this);
+    send_queue.incoming.with_mut(|incoming| {
+        incoming.append(data);
+        incoming.hold(held);
+    });
+    send_queue.dispatch_incoming(&global_this);
 }
 
 /// Used on POSIX
@@ -2665,7 +2918,7 @@ pub(crate) mod IPCHandlers {
                     });
                 }
             }
-            dispatch_incoming(send_queue, &global_this);
+            send_queue.dispatch_incoming(&global_this);
         }
     }
 }

@@ -54,6 +54,7 @@ export function serialize(message, handle: IpcHandle, options) {
  * @returns {void}
  */
 export function parseHandle(target, serialized, fd) {
+  // Returns false when the listener for the message left while the handle was made. Nobody has the handle then.
   const emit = $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
   const net = require("node:net");
   // const dgram = require("node:dgram");
@@ -61,14 +62,14 @@ export function parseHandle(target, serialized, fd) {
     case "net.Server": {
       const server = new net.Server();
       server.listen({ fd, exclusive: true }, () => {
-        emit(target, serialized.msg, server);
+        if (!emit(target, serialized.msg, server)) server.close();
       });
       return;
     }
     case "net.Socket": {
       const socket = new net.Socket({ readable: true, writable: true });
       socket.connect({ fd, fdIsRawSocket: true });
-      emit(target, serialized.msg, socket);
+      if (!emit(target, serialized.msg, socket)) socket.destroy();
       return;
     }
     case "dgram.Native": {
@@ -82,7 +83,7 @@ export function parseHandle(target, serialized, fd) {
         require("node:fs").closeSync(fd);
         throw new Error(`failed to open received dgram handle: ${err}`);
       }
-      emit(target, serialized.msg, wrap);
+      if (!emit(target, serialized.msg, wrap)) wrap.close();
       return;
     }
     case "dgram.Socket": {
@@ -90,7 +91,7 @@ export function parseHandle(target, serialized, fd) {
       const dgram = require("node:dgram");
       const socket = new dgram.Socket(serialized.dgramType || "udp4");
       socket.bind({ fd, exclusive: true }, () => {
-        emit(target, serialized.msg, socket);
+        if (!emit(target, serialized.msg, socket)) socket.close();
       });
       return;
     }

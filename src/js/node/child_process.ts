@@ -684,7 +684,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
-const setSubprocessReading = $newRustFunction("ipc.rs", "setSubprocessReading", 2);
+const gateSubprocessIpc = $newRustFunction("ipc.rs", "gateSubprocessIpc", 1);
+const requestSubprocessIpcDrain = $newRustFunction("ipc.rs", "requestSubprocessIpcDrain", 1);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1145,6 +1146,7 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
+  #ipcDrainOnListener;
 
   declare send?: (message, handle?, options?, callback?) => boolean;
   declare disconnect?: () => void;
@@ -1513,9 +1515,8 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
-        this.#followIpcListeners();
-        // With no listener the channel is not read, so a 'message' waits in the kernel buffer and is not emitted to nobody.
-        this.#updateIpcReading("message");
+        // A 'message' that no listener takes waits in the channel. `#emitIpcMessage` answers for each one.
+        gateSubprocessIpc(this.#handle);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1567,33 +1568,33 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  #emitIpcMessage(message, _, handle) {
-    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
-  }
-
-  #followIpcListeners() {
-    this.on("newListener", this.#onNewIpcListener);
-    this.on("removeListener", this.#updateIpcReading);
-  }
-
-  #onNewIpcListener(name) {
-    // On the next tick, like node's flush of kPendingMessages, so each listener added in this tick gets the first message.
-    if (isIpcEvent(name)) process.nextTick(() => this.#updateIpcReading(name));
-  }
-
-  #updateIpcReading(name) {
-    const handle = this.#handle;
-    if (!handle || !isIpcEvent(name)) return;
-    const listeners =
-      this.listenerCount("message") + this.listenerCount("internalMessage") + this.listenerCount("disconnect");
-    setSubprocessReading(handle, listeners > 0);
-  }
-
-  removeAllListeners() {
-    super.removeAllListeners.$apply(this, arguments);
-    // That also removed the two listeners of #followIpcListeners.
-    if (arguments.length === 0 && this.channel) this.#followIpcListeners();
-    return this;
+  // The channel delivers a message, or with `ask` it only asks who listens. No answer: a listener took the message,
+  // or would take it. A number: no 'message' listener is there, so the message stays in the channel. It is 1 when a
+  // 'disconnect' listener waits for the close of the channel.
+  #emitIpcMessage(message, _, handle, ask?) {
+    if (ask) {
+      if (this.listenerCount("message") > 0) return;
+    } else if (isInternalIpcMessage(message)) {
+      this.emit("internalMessage", message, handle);
+      return;
+    } else if (this.emit("message", message, handle)) {
+      return;
+    }
+    // node has this listener on every ChildProcess with a channel. Here it is there only while a message waits.
+    if (!this.#ipcDrainOnListener) {
+      this.on(
+        "newListener",
+        (this.#ipcDrainOnListener = name => {
+          if (name !== "message" && name !== "disconnect") return;
+          if (name === "message") {
+            this.off("newListener", this.#ipcDrainOnListener);
+            this.#ipcDrainOnListener = undefined;
+          }
+          requestSubprocessIpcDrain(this.#handle);
+        }),
+      );
+    }
+    return this.listenerCount("disconnect") > 0 ? 1 : 0;
   }
 
   #send(message, handle, options, callback) {
@@ -1777,11 +1778,6 @@ const nodeToBunLookup = {
   inherit: "inherit",
   ipc: "ipc",
 };
-
-// All three arrive by a read of the channel. 'disconnect' is the read that sees the close.
-function isIpcEvent(name) {
-  return name === "message" || name === "internalMessage" || name === "disconnect";
-}
 
 const INTERNAL_IPC_PREFIX = "NODE_";
 

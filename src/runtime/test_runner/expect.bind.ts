@@ -190,6 +190,17 @@ export const Expect = b.class({
   },
 });
 
+/** What `expect.extend()` wraps each matcher in. The callee holds the matcher. */
+export const applyCustomMatcher = b.fn({
+  export: "Bun__Expect__applyCustomMatcher",
+  rustPath: "crate::test_runner::Expect::apply_custom_matcher",
+  passThis: true,
+  passCallee: true,
+  args: { args: b.any.variadic },
+  returns: b.any,
+  ...js,
+});
+
 /** What a matcher of `expect.extend()` makes when it is called on `expect` itself. */
 export const ExpectCustomAsymmetricMatcher = b.class({
   rustPath: "crate::test_runner::ExpectCustomAsymmetricMatcher",

@@ -3491,8 +3491,9 @@ describe("css tests", () => {
       describe("keeps an unprefixed value that a default target lacks apart", () => {
         stays(`.a { background-color: red; background: conic-gradient(red, green); }`, defaults);
         stays(`.a { background: conic-gradient(red, green); background-color: red; }`, defaults);
-        stays(
+        prefix_test(
           `.a { background-color: red; background-image: ${moz}; background-color: lab(50% 10 10); background-image: url("b.png"); }`,
+          `.a { background-color: red; background-color: lab(50% 10 10); background-image: url("b.png"); }`,
           defaults,
         );
         prefix_test(

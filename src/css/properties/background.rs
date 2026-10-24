@@ -793,8 +793,8 @@ impl BackgroundHandler {
             Property::BackgroundColor(val) => {
                 if !self.open_color_is_fallback_of(val, context) {
                     self.before_longhand(BackgroundProperty::COLOR, arena, context);
-                } else if !self.pending.is_empty() || self.open_is_partial(arena, context) {
-                    self.close(false);
+                } else if self.open_is_partial(arena, context) || !self.pending.is_empty() {
+                    self.close(true);
                 } else {
                     self.flush(dest, context);
                 }
@@ -870,7 +870,7 @@ impl BackgroundHandler {
                 let partial = self.open_is_partial(arena, context);
                 if partial || !self.pending.is_empty() {
                     // Held too, so that a later `background` can still override everything before it.
-                    self.close(!partial);
+                    self.close(false);
                     self.pending.push(Pending::Unparsed(val.deep_clone(arena)));
                 } else {
                     self.flush(dest, context);
@@ -927,7 +927,7 @@ impl BackgroundHandler {
                 // The image before it is its manual fallback.
                 self.flush(dest, context);
             } else if is_shorthand {
-                self.close(!partial);
+                self.close(false);
             } else if let Some(images) = self.open.images.take() {
                 // Only the image is held. The other longhands are declarations of their own and keep folding.
                 self.push_state(BackgroundState::image_only(images), !partial);
@@ -1084,20 +1084,20 @@ impl BackgroundHandler {
         if !every_target_reads {
             if same_images {
                 if is_fallback {
-                    self.close(false);
+                    self.close(true);
                 }
             } else if !held && ((!prefixed && self.open.images.is_some()) || is_fallback) {
                 // The image or the colour before it is its manual fallback.
                 self.flush(dest, context);
             } else {
-                self.close(!partial && !is_fallback);
+                self.close(is_fallback);
             }
             return Reach::Partial;
         }
 
         if is_fallback {
             if held {
-                self.close(false);
+                self.close(true);
             } else {
                 self.flush(dest, context);
             }
@@ -1175,12 +1175,22 @@ impl BackgroundHandler {
         }
     }
 
-    /// Moves the open state to the end of `pending`.
-    fn close(&mut self, resumable: bool) {
+    /// Moves the open state to the end of `pending`. A colour fallback stays as written.
+    fn close(&mut self, is_fallback: bool) {
+        let partial = self.reach == Reach::Partial;
+        // Separate longhands stay resumable. Only their image that a target cannot read is held as written.
+        let image = if partial && self.open.longhands() != BackgroundProperty::BACKGROUND {
+            self.open.images.take()
+        } else {
+            None
+        };
         self.reach = Reach::Every;
         if !self.open.is_empty() {
             let state = core::mem::take(&mut self.open);
-            self.push_state(state, resumable);
+            self.push_state(state, !is_fallback && (!partial || image.is_some()));
+        }
+        if let Some(images) = image {
+            self.push_state(BackgroundState::image_only(images), false);
         }
     }
 

@@ -12,8 +12,10 @@ use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
+#[cfg(not(windows))]
+use crate::generated_bindgen::sink::FileSinkStartOptions;
 use crate::generated_bindgen::sink::{
-    ArrayBufferSinkStartOptions, FileSinkStartOptions, SinkPath, js_ReadableSinkController,
+    ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController,
 };
 use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
@@ -144,7 +146,8 @@ impl Start {
         })
     }
 
-    /// `Bun.file(..).writer(options)`.
+    /// `Bun.file(..).writer(options)`, which ignores `options` on Windows.
+    #[cfg(not(windows))]
     pub(crate) fn file_sink_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Start> {
         FileSinkStartOptions::from_js(global, options, |options| {
             Ok(Start::file_sink(&options.path, options.fd))

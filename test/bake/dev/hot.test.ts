@@ -691,3 +691,161 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+
+// Sloppy code gives "object no throw made a global 2". Each file gets its own
+// `undeclaredName`, so one sloppy file cannot define the name for the next one.
+const strictModeProbe = (undeclaredName: string) => `(function () {
+  const thisOfPlainCall = (function () { return typeof this; })();
+  let frozenWrite;
+  try { Object.freeze({ x: 1 }).x = 2; frozenWrite = "no throw"; } catch (e) { frozenWrite = e.name; }
+  let undeclaredWrite;
+  try { ${undeclaredName} = 1; undeclaredWrite = "made a global"; } catch (e) { undeclaredWrite = e.name; }
+  const argumentAfterWrite = (function (a) { a = 2; return arguments[0]; })(1);
+  return [thisOfPlainCall, frozenWrite, undeclaredWrite, argumentAfterWrite].join(" ");
+})()`;
+
+devTest("a hot update runs ES module code in strict mode", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      console.log("first load");
+      import.meta.hot.accept();
+    `,
+    "esm.ts": `export default ${strictModeProbe("undeclaredInEsm")};`,
+    "top-level-await.ts": `export default await Promise.resolve(${strictModeProbe("undeclaredInTopLevelAwait")});`,
+    "no-module-syntax.js": `globalThis.noModuleSyntax = ${strictModeProbe("undeclaredInNoModuleSyntax")};`,
+    // This file has ES module syntax, and the dev server prints it as CommonJS.
+    "hot-and-require.js": `
+      import.meta.hot.accept();
+      require("./empty.cjs");
+      globalThis.hotAndRequire = ${strictModeProbe("undeclaredInHotAndRequire")};
+    `,
+    "empty.cjs": `module.exports = {};`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("first load");
+
+    // The probes first run from the hot update. The browser runs that chunk as a
+    // classic script, where the page load used a module script.
+    await dev.write(
+      "index.ts",
+      `
+        import esm from "./esm";
+        import topLevelAwait from "./top-level-await";
+        import "./no-module-syntax.js";
+        import "./hot-and-require.js";
+        console.log({
+          savedModule: ${strictModeProbe("undeclaredInSavedModule")},
+          esm,
+          topLevelAwait,
+          noModuleSyntax: globalThis.noModuleSyntax,
+          hotAndRequire: globalThis.hotAndRequire,
+        });
+        import.meta.hot.accept();
+      `,
+    );
+    const strict = "undefined TypeError ReferenceError 1";
+    await c.expectMessage({
+      savedModule: strict,
+      esm: strict,
+      topLevelAwait: strict,
+      noModuleSyntax: strict,
+      hotAndRequire: strict,
+    });
+  },
+});
+
+// `import.meta` makes dep.js an ES module. `exports` makes the dev server print it as
+// CommonJS, so each save runs its strict closure again on the same `exports` object.
+devTest("an ES module that is printed as CommonJS updates in place on each save", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import * as dep from "./dep.js";
+      console.log("value=" + dep.value);
+      import.meta.hot.accept();
+    `,
+    "dep.js": `
+      import.meta.hot.dispose(() => {});
+      exports.value = 1;
+    `,
+  },
+  async test(dev) {
+    // A reload of the page or a console.error ends this client with an error.
+    await using c = await dev.client("/");
+    await c.expectMessage("value=1");
+    for (const value of [2, 3]) {
+      await dev.write(
+        "dep.js",
+        `
+          import.meta.hot.dispose(() => {});
+          exports.value = ${value};
+        `,
+      );
+      await c.expectMessage("value=" + value);
+    }
+  },
+});
+
+// tsc 6.0.2 output for `export { helper } from "./helper"; export const value = 1;`.
+// The dev server drops the file's own "use strict", so its closure is sloppy. It
+// must stay sloppy: on the second run `helper` is already a getter on `exports`,
+// and the write of `void 0` throws in strict code.
+const tscNamedReexport = (value: number) => `
+  "use strict";
+  Object.defineProperty(exports, "__esModule", { value: true });
+  exports.value = exports.helper = void 0;
+  var helper_1 = require("./helper");
+  Object.defineProperty(exports, "helper", { enumerable: true, get: function () { return helper_1.helper; } });
+  exports.value = ${value};
+`;
+
+devTest("a save of tsc CommonJS output with a named re-export updates in place", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import * as dep from "./lib/dep.js";
+      console.log("helper=" + dep.helper + " value=" + dep.value);
+      import.meta.hot.accept();
+    `,
+    "lib/dep.js": tscNamedReexport(1),
+    "lib/helper.js": `
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.helper = void 0;
+      exports.helper = "h1";
+    `,
+  },
+  async test(dev) {
+    // A reload of the page or a console.error ends this client with an error.
+    await using c = await dev.client("/");
+    await c.expectMessage("helper=h1 value=1");
+    await dev.write("lib/dep.js", tscNamedReexport(2));
+    await c.expectMessage("helper=h1 value=2");
+  },
+});
+
+// An empty file is a lazy export. The printer looks for that statement first in
+// the closure, so an empty ES module gets no "use strict" before it.
+devTest("an empty ES module can get code and lose it again", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import * as dep from "./dep.mjs";
+      console.log("value=" + dep.value);
+      import.meta.hot.accept();
+    `,
+    "dep.mjs": ``,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value=undefined");
+    await dev.write("dep.mjs", `export const value = 1;`);
+    await c.expectMessage("value=1");
+    // One byte of white space, not zero bytes: the watcher on macOS does not see a
+    // save that only truncates the file.
+    await dev.write("dep.mjs", "\n", { dedent: false });
+    await c.expectMessage("value=undefined");
+  },
+});

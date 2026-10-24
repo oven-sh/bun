@@ -283,6 +283,55 @@ function madeArchives() {
     add(`old GNU sparse with ${extensions} more blocks of map`, ...oldSparse(extensions));
   add("old GNU sparse, cut in its map", ...oldSparse(3).slice(0, 2), Buffer.alloc(100));
 
+  const withMap = sparse(
+    { major: "1", minor: "0", name: "s", realsize: "20" },
+    tarPadded(Buffer.from("1\n10\n5\n")) + "hello",
+  );
+  for (const length of [2, 3])
+    add(`sparse 1.0, cut ${length} bytes into its map`, withMap.subarray(0, withMap.indexOf("1\n10\n5\n") + length));
+  for (const [offset, numbytes] of [
+    ["9223372036854775807", "1"],
+    ["9223372036854775806", "2"],
+    ["-1", "1"],
+  ])
+    add(`sparse 0.0, ${numbytes} bytes at ${offset}`, sparse({ numblocks: "1", offset, numbytes, size: "5" }));
+  add(
+    "sparse 0.0, the length before the offset",
+    sparse({ numblocks: "1", numbytes: "4611686018427387904", offset: "4611686018427387904" }),
+  );
+
+  const acl = file("a", "1000007\0user::rw-,group::r--,other::r--\0", "A");
+  add("Solaris ACL", acl, file("a"), end);
+  add("Solaris ACL twice", acl, acl, file("a"), end);
+  add("Solaris ACL of no size", file("a", "", "A"), file("a"), end);
+
+  // Long enough for the inner layer to have handed on a block when the outer one fails.
+  const twice = layers(Buffer.concat([file("first"), file("big", Buffer.alloc(100_000, "b")), file("last"), end]), 2);
+  add("long gzip in gzip, outer cut at 60%", twice.subarray(0, Math.floor(twice.length * 0.6)));
+  add("long gzip in gzip, outer cut near its end", twice.subarray(0, twice.length - 700));
+  add("long gzip in gzip, damaged", changed(changed(twice, twice.length >> 1, 0xff), 70_000, 0xff));
+
+  for (const [what, at, bytes] of [
+    ["time of 2^63", 136, [0x80, 0, 0, 0, 0x80]],
+    ["time below -2^63", 136, [0xff, 0xff, 0xff, 0xff, 0x7f]],
+    ["size of 2^63", 124, [0x80, 0, 0, 0, 0x80]],
+  ] as const) {
+    const number = Buffer.concat([Buffer.from(bytes), Buffer.alloc(7)]);
+    add(
+      `base-256 ${what}`,
+      tarHeader("m", 1, "0", "", h => void number.copy(h, at)),
+      tarPadded(Buffer.from("x")),
+      end,
+    );
+  }
+  for (const size of [2 ** 30, 2 ** 30 + 1])
+    add(`pax header that announces ${size} bytes`, tarHeader("PaxHeader/x", size, "x"), file("a"), end);
+  for (const bytes of [
+    [0x61, 0xf0, 0x41, 0x80, 0x80],
+    [0x61, 0xf0, 0x9f, 0x98, 0x41],
+  ])
+    add(`pax path ${Buffer.from(bytes).toString("hex")}`, pax([paxRecord("path", Buffer.from(bytes))]));
+
   // Names that Windows composes, and ones it cannot.
   let state = 1;
   const random = (below: number) => ((state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 8) % below;

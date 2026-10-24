@@ -664,9 +664,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 
     // If some of the selectors in this rule are not compatible with the targets,
     // we need to either wrap in :is() or split them into multiple rules.
-    let mut incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
-        && context.targets.should_compile_selectors()
-        && !sty.is_compatible(context.targets)
+    let mut incompatible: SmallList<Selector, 1> = if sty
+        .should_compile_selector_list(context.targets)
     {
         // The :is() selector accepts a forgiving selector list, so use that if possible.
         // Note that :is() does not allow pseudo elements, so we need to check for that.

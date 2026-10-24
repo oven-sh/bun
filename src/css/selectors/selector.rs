@@ -262,9 +262,97 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
 }
 
 pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
-    use Feature as F;
+    compatibility(selectors, targets) == Compatibility::Compatible
+}
+
+/// How the browser targets support a selector list. The worst member wins, hence `Ord`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum Compatibility {
+    Compatible,
+    /// Some target lacks, or (with no support data) may lack, a feature that a selector uses.
+    Incompatible,
+    /// A member is vendor prefixed: other engines drop the whole rule, and browser hacks use that.
+    VendorPrefixed,
+}
+
+/// `feature` with an unforgiving argument list: one unsupported argument invalidates the selector.
+fn unforgiving(
+    feature: Feature,
+    selectors: &[parser::Selector],
+    targets: &Targets,
+) -> Compatibility {
+    match compatibility(selectors, targets) {
+        Compatibility::Compatible if !targets.is_compatible(feature) => Compatibility::Incompatible,
+        other => other,
+    }
+}
+
+/// `-moz-focusring` and the like. The parser skips its unsupported-pseudo warning by the same test.
+fn is_vendor_name(name: &[u8]) -> bool {
+    bun_core::strings::starts_with_char(name, b'-')
+}
+
+/// Author-written vendor prefixes in these selectors, plus `NONE` if a component prints per pass.
+fn pseudo_prefixes(selectors: &[Selector]) -> VendorPrefix {
+    let one = core::slice::from_ref::<Selector>;
+    // A set with `NONE` is an unprefixed pseudo, as parsed or as downleveled for the targets.
+    let written = |prefix: VendorPrefix| {
+        if prefix.contains(VendorPrefix::NONE) {
+            VendorPrefix::NONE
+        } else {
+            prefix
+        }
+    };
+    let mut prefixes = VendorPrefix::empty();
     for selector in selectors {
         for component in selector.components.iter() {
+            prefixes.insert(match component {
+                Component::NonTsPseudoClass(pc) => match pc {
+                    PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
+                        pseudo_prefixes(one(selector))
+                    }
+                    PseudoClass::Lang { .. } | PseudoClass::Dir { .. } => VendorPrefix::NONE,
+                    _ => written(pc.get_prefix()),
+                },
+                Component::PseudoElement(pe) => match pe {
+                    PseudoElement::CueFunction { selector }
+                    | PseudoElement::CueRegionFunction { selector } => {
+                        pseudo_prefixes(one(selector))
+                    }
+                    _ => written(pe.get_prefix()),
+                },
+                Component::Any {
+                    vendor_prefix,
+                    selectors,
+                } => written(*vendor_prefix) | pseudo_prefixes(selectors),
+                Component::Is(selectors)
+                | Component::Where(selectors)
+                | Component::Has(selectors)
+                | Component::Negation(selectors) => VendorPrefix::NONE | pseudo_prefixes(selectors),
+                Component::NthOf(nth) => pseudo_prefixes(&nth.selectors),
+                Component::Slotted(selector) | Component::Host(Some(selector)) => {
+                    pseudo_prefixes(one(selector))
+                }
+                _ => continue,
+            });
+        }
+    }
+    prefixes
+}
+
+/// Whether a rule with this whole list has no prefix pass that would rewrite a prefixed pseudo.
+pub(crate) fn prints_as_written(selectors: &SelectorList) -> bool {
+    let prefixes = pseudo_prefixes(selectors.v.slice());
+    let written = prefixes.difference(VendorPrefix::NONE);
+    written.is_empty()
+        || (written.bits().count_ones() == 1 && !prefixes.contains(VendorPrefix::NONE))
+}
+
+pub(crate) fn compatibility(selectors: &[parser::Selector], targets: &Targets) -> Compatibility {
+    use Feature as F;
+    let mut result = Compatibility::Compatible;
+    for selector in selectors {
+        'components: for component in selector.components.iter() {
             let feature = match component {
                 Component::Id(_) | Component::Class(_) | Component::LocalName(_) => continue,
 
@@ -320,9 +408,7 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                 Component::Empty | Component::Root => F::Selectors3,
                 Component::Negation(sels) => {
                     // :not() selector list is not forgiving.
-                    if !targets.is_compatible(F::Selectors3) || !is_compatible(sels, targets) {
-                        return false;
-                    }
+                    result = result.max(unforgiving(F::Selectors3, sels, targets));
                     continue;
                 }
 
@@ -331,16 +417,14 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                         break 'brk F::Selectors2;
                     }
                     if data.ty == parser::NthType::Col || data.ty == parser::NthType::LastCol {
-                        return false;
+                        // No support data.
+                        result = result.max(Compatibility::Incompatible);
+                        continue 'components;
                     }
                     F::Selectors3
                 }
                 Component::NthOf(n) => {
-                    if !targets.is_compatible(F::NthChildOf)
-                        || !is_compatible(&n.selectors, targets)
-                    {
-                        return false;
-                    }
+                    result = result.max(unforgiving(F::NthChildOf, &n.selectors, targets));
                     continue;
                 }
 
@@ -353,11 +437,9 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                     F::IsSelector
                 }
                 Component::Where(_) | Component::Nesting => F::IsSelector,
-                Component::Any { .. } => return false,
+                Component::Any { .. } => return Compatibility::VendorPrefixed,
                 Component::Has(sels) => {
-                    if !targets.is_compatible(F::HasSelector) || !is_compatible(sels, targets) {
-                        return false;
-                    }
+                    result = result.max(unforgiving(F::HasSelector, sels, targets));
                     continue;
                 }
 
@@ -422,29 +504,29 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                             }
                         }
 
-                        // Experimental, no browser support.
-                        PseudoClass::Current
-                        | PseudoClass::Past
-                        | PseudoClass::Future
-                        | PseudoClass::Playing
-                        | PseudoClass::Paused
-                        | PseudoClass::Seeking
-                        | PseudoClass::Stalled
-                        | PseudoClass::Buffering
-                        | PseudoClass::Muted
-                        | PseudoClass::VolumeLocked
-                        | PseudoClass::TargetWithin
-                        | PseudoClass::LocalLink
-                        | PseudoClass::Blank
-                        | PseudoClass::UserInvalid
-                        | PseudoClass::UserValid
-                        | PseudoClass::Defined => return false,
+                        // CSS modules print these as the selector they wrap.
+                        PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
+                            result = result
+                                .max(compatibility(core::slice::from_ref(&**selector), targets));
+                            continue 'components;
+                        }
 
-                        PseudoClass::Custom { .. } => {}
+                        PseudoClass::WebkitScrollbar(_) => {}
+                        PseudoClass::Custom { name } | PseudoClass::CustomFunction { name, .. } => {
+                            if !is_vendor_name(name) {
+                                result = result.max(Compatibility::Incompatible);
+                                continue 'components;
+                            }
+                        }
 
-                        _ => {}
+                        // No support data (`:modal`, `:popover-open`, `:defined`, ...).
+                        _ => {
+                            result = result.max(Compatibility::Incompatible);
+                            continue 'components;
+                        }
                     }
-                    return false;
+                    // What reaches here is vendor prefixed.
+                    return Compatibility::VendorPrefixed;
                 }
 
                 Component::PseudoElement(pseudo) => 'brk: {
@@ -470,10 +552,30 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                         }
                         PseudoElement::Cue => break 'brk F::Cue,
                         PseudoElement::CueFunction { .. } => break 'brk F::CueFunction,
-                        PseudoElement::Custom { .. } => return false,
-                        _ => {}
+
+                        PseudoElement::FileSelectorButton(prefix) => {
+                            if *prefix == VendorPrefix::NONE {
+                                result = result.max(Compatibility::Incompatible);
+                                continue 'components;
+                            }
+                        }
+                        PseudoElement::WebkitScrollbar(_) => {}
+                        PseudoElement::Custom { name }
+                        | PseudoElement::CustomFunction { name, .. } => {
+                            if !is_vendor_name(name) {
+                                result = result.max(Compatibility::Incompatible);
+                                continue 'components;
+                            }
+                        }
+
+                        // No support data (`::view-transition`, `::details-content`, ...).
+                        _ => {
+                            result = result.max(Compatibility::Incompatible);
+                            continue 'components;
+                        }
                     }
-                    return false;
+                    // What reaches here is vendor prefixed.
+                    return Compatibility::VendorPrefixed;
                 }
 
                 Component::Combinator(combinator) => match combinator {
@@ -484,12 +586,12 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
             };
 
             if !targets.is_compatible(feature) {
-                return false;
+                result = result.max(Compatibility::Incompatible);
             }
         }
     }
 
-    true
+    result
 }
 
 /// Determines whether a selector list contains only unused selectors.

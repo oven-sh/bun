@@ -5819,6 +5819,197 @@ describe("css tests", () => {
     minify_test(".foo ::unknown(something(foo)) .bar {width: 20px}", ".foo ::unknown(something(foo)) .bar{width:20px}");
     minify_test(".foo ::unknown([abc]) .bar {width: 20px}", ".foo ::unknown([abc]) .bar{width:20px}");
 
+    // A selector list with a member that the targets lack splits (or wraps in :is()), so the
+    // supported members keep applying in old browsers. A member with no support data counts as
+    // one the targets lack.
+    prefix_test(
+      ".a, .b:focus-visible { color: red }",
+      `
+      .a {
+        color: red;
+      }
+
+      .b:focus-visible {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    prefix_test(".a, :focus-visible { color: red }", ":is(.a, :focus-visible) { color: red; }", {
+      safari: 14 << 16,
+    });
+    prefix_test(
+      ".d, :unknown-pseudo { color: red }",
+      `
+      .d {
+        color: red;
+      }
+
+      :unknown-pseudo {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    prefix_test(".d, :unknown-pseudo { color: red }", ":is(.d, :unknown-pseudo) { color: red; }", {
+      safari: 14 << 16,
+    });
+    prefix_test(
+      "dialog:modal, dialog.polyfilled { color: red }",
+      `
+      dialog.polyfilled {
+        color: red;
+      }
+
+      dialog:modal {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      ".a, :nth-col(2n) { color: red }",
+      `
+      .a {
+        color: red;
+      }
+
+      :nth-col(2n) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      "*, ::before, ::after, ::backdrop, ::file-selector-button { border: 0 solid }",
+      `
+      *, :before, :after {
+        border: 0 solid;
+      }
+
+      ::backdrop {
+        border: 0 solid;
+      }
+
+      ::-webkit-file-upload-button {
+        border: 0 solid;
+      }
+
+      ::file-selector-button {
+        border: 0 solid;
+      }
+      `,
+      { chrome: 80 << 16, firefox: 78 << 16, safari: 14 << 16 },
+    );
+    // A vendor-prefixed member keeps the list as written. The other engines drop the whole rule
+    // because of it, which browser hacks rely on.
+    for (const [label, targets] of [
+      ["chrome 80", { chrome: 80 << 16 }],
+      ["safari 14", { safari: 14 << 16 }],
+    ] as const) {
+      describe(label, () => {
+        prefix_test(
+          "x:-moz-any-link, .b { border-style: solid }",
+          "x:-moz-any-link, .b { border-style: solid; }",
+          targets,
+        );
+        prefix_test("_:-ms-lang(x), .c { color: red }", "_:-ms-lang(x), .c { color: red; }", targets);
+        prefix_test(".e, ::-webkit-foo { color: red }", ".e, ::-webkit-foo { color: red; }", targets);
+        prefix_test(
+          ".i, input::-moz-placeholder { color: red }",
+          ".i, input::-moz-placeholder { color: red; }",
+          targets,
+        );
+        prefix_test(".h, :-moz-focusring { outline: none }", ".h, :-moz-focusring { outline: none; }", targets);
+        prefix_test(
+          "button::-moz-focus-inner, [type=button]::-moz-focus-inner { border-style: none }",
+          'button::-moz-focus-inner, [type="button"]::-moz-focus-inner { border-style: none; }',
+          targets,
+        );
+        prefix_test(
+          ".a::-webkit-scrollbar, .b::-webkit-scrollbar { width: 0 }",
+          ".a::-webkit-scrollbar, .b::-webkit-scrollbar { width: 0; }",
+          targets,
+        );
+        prefix_test(
+          ".a, [type=file]::-webkit-file-upload-button { color: red }",
+          '.a, [type="file"]::-webkit-file-upload-button { color: red; }',
+          targets,
+        );
+        prefix_test(".a, :-webkit-any(.b, .c) { color: red }", ".a, :-webkit-any(.b, .c) { color: red; }", targets);
+        // The vendor-prefixed member wins over one that the targets only lack a feature for.
+        prefix_test(
+          ".a, .b:focus-visible, x:-moz-any-link { color: red }",
+          ".a, .b:focus-visible, x:-moz-any-link { color: red; }",
+          targets,
+        );
+        // :nth-child(of) takes an unforgiving list: a vendor-prefixed argument drops the rule.
+        prefix_test(
+          ".a, :nth-child(2n of :-moz-any-link) { color: red }",
+          ".a, :nth-child(2n of :-moz-any-link) { color: red; }",
+          targets,
+        );
+      });
+    }
+    // These lists still split. Another member gives the rule an unprefixed printing pass, and that
+    // pass would print the prefixed pseudo without its prefix.
+    prefix_test(
+      ".p::placeholder, .p::-moz-placeholder { color: red }",
+      `
+      .p::placeholder {
+        color: red;
+      }
+
+      .p::-moz-placeholder {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      ".a, .b:not(:-moz-any-link) { color: red }",
+      `
+      .a {
+        color: red;
+      }
+
+      .b:not(:-moz-any-link) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    prefix_test(
+      ".a:-webkit-autofill, .b:-moz-any-link { color: red }",
+      `
+      .a:-webkit-autofill {
+        color: red;
+      }
+
+      .b:-moz-any-link {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    // :where() is forgiving, so a vendor-prefixed argument does not drop the rule. Only :where() support counts.
+    prefix_test(
+      ".a, .b:where(:-moz-any-link) { color: red }",
+      `
+      .a {
+        color: red;
+      }
+
+      .b:where(:-moz-any-link) {
+        color: red;
+      }
+      `,
+      { chrome: 80 << 16 },
+    );
+    prefix_test(".a, .b:where(:-moz-any-link) { color: red }", ".a, .b:where(:-moz-any-link) { color: red; }", {
+      chrome: 90 << 16,
+    });
+
     let deep_options: ParserOptions = {
       flags: [ParserFlags.DEEP_SELECTOR_COMBINATOR],
     };

@@ -68,6 +68,19 @@ impl<R> StyleRule<R> {
     pub(crate) fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
+
+    /// Whether the targets need this selector list `:is()`-wrapped or split. See `Compatibility`.
+    pub(crate) fn should_compile_selector_list(&self, targets: &css::targets::Targets) -> bool {
+        use selector::Compatibility;
+        if self.selectors.v.len() <= 1 || !targets.should_compile_selectors() {
+            return false;
+        }
+        match selector::compatibility(self.selectors.v.slice(), targets) {
+            Compatibility::Compatible => false,
+            Compatibility::Incompatible => true,
+            Compatibility::VendorPrefixed => !selector::prints_as_written(&self.selectors),
+        }
+    }
 }
 
 // ─── to_css ───────────────────────────────────────────────────────────────
@@ -432,10 +445,7 @@ impl<R> StyleRule<R> {
         // nesting is compiled away the printed output still fans out per
         // selector, which is why the nesting branch bumps unconditionally.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
-        let selectors_incompatible = self.selectors.v.len() > 1
-            && context.targets.should_compile_selectors()
-            && !self.is_compatible(context.targets);
-        let splits_selectors = selectors_incompatible
+        let splits_selectors = self.should_compile_selector_list(context.targets)
             && !(context.targets.is_compatible(css::Feature::IsSelector)
                 && !self.selectors.any_has_pseudo_element()
                 && self.selectors.specifities_all_equal());

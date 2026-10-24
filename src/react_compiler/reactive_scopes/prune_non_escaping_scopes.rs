@@ -740,9 +740,17 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 };
                 (lvalues, smallvec![(object.identifier, id)])
             }
+            // Not in upstream: the value of a `PropertyStore` with a `MemberUpdate` is never an
+            // object, so it is memoized as that of a `ComputedStore` is.
             InstructionValue::ComputedStore {
                 object,
                 value: store_value,
+                ..
+            }
+            | InstructionValue::PropertyStore {
+                object,
+                value: store_value,
+                update: Some(_),
                 ..
             } => {
                 let mut lvalues = smallvec![LValueMemoization {

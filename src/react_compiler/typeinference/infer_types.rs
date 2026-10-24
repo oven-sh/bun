@@ -24,9 +24,9 @@ use crate::hir::visitors::{lvalues, operands};
 use crate::hir::{
     ArrayPatternElement, AstAlloc, BinaryOperator, FunctionId, HirFunction, HirVec, Identifier,
     IdentifierId, IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
-    LoweredFunction, NonLocalBinding, ObjectPropertyKey, ObjectPropertyOrSpread, ParamPattern,
-    Pattern, PropertyLiteral, PropertyNameKind, ReactFunctionType, SourceLocation, StoreStr,
-    Terminal, Type, TypeId,
+    LoweredFunction, MemberUpdate, NonLocalBinding, ObjectPropertyKey, ObjectPropertyOrSpread,
+    ParamPattern, Pattern, PropertyLiteral, PropertyNameKind, ReactFunctionType, SourceLocation,
+    StoreStr, Terminal, Type, TypeId,
 };
 use crate::ssa::enter_ssa::placeholder_function;
 
@@ -602,6 +602,15 @@ fn generate_for_function_id(
     Ok(())
 }
 
+/// Not in upstream: the value of `x.y++` is the store, see `MemberUpdate`. It is the number or
+/// the bigint that the load has for upstream.
+fn is_postfix_update(update: Option<MemberUpdate>) -> bool {
+    matches!(
+        update,
+        Some(MemberUpdate::UpdateExpression { prefix: false, .. })
+    )
+}
+
 fn generate_instruction_types(
     instr: &crate::hir::Instruction,
     instr_id: InstructionId,
@@ -965,7 +974,10 @@ fn generate_instruction_types(
         }
 
         InstructionValue::PropertyStore {
-            object, property, ..
+            object,
+            property,
+            update,
+            ..
         } => {
             let dummy = make_type(types);
             let object_type = get_type(object.identifier, identifiers);
@@ -977,12 +989,20 @@ fn generate_instruction_types(
                 PropertyName::Literal(property),
                 shapes,
             )?;
+            if is_postfix_update(*update) {
+                unifier.unify(left, Type::Primitive, shapes)?;
+            }
+        }
+
+        InstructionValue::ComputedStore { update, .. } => {
+            if is_postfix_update(*update) {
+                unifier.unify(left, Type::Primitive, shapes)?;
+            }
         }
 
         InstructionValue::DeclareLocal { .. }
         | InstructionValue::RegExpLiteral { .. }
         | InstructionValue::MetaProperty { .. }
-        | InstructionValue::ComputedStore { .. }
         | InstructionValue::Await { .. }
         | InstructionValue::GetIterator { .. }
         | InstructionValue::IteratorNext { .. }

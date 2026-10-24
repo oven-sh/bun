@@ -1022,6 +1022,16 @@ impl std::fmt::Display for UpdateOperator {
     }
 }
 
+impl UpdateOperator {
+    /// `x++` stores `x + 1`.
+    pub fn binary_operator(self) -> BinaryOperator {
+        match self {
+            UpdateOperator::Increment => BinaryOperator::Add,
+            UpdateOperator::Decrement => BinaryOperator::Subtract,
+        }
+    }
+}
+
 /// Not in upstream: the source form of a store whose `value` is `load op right`. The analysis
 /// reads the load, the `BinaryExpression` and the store. Codegen prints this form on the load's
 /// own node, so the object and the key print once.

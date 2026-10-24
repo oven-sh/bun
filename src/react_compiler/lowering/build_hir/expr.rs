@@ -886,9 +886,13 @@ fn lower_compound_assignment(
                 },
             )?;
             // Unlike upstream: the store prints as the compound assignment, see `MemberUpdate`.
-            let update = Some(MemberUpdate::AssignmentExpression {
-                operator: binary_op,
-            });
+            let update = builder
+                .environment()
+                .config
+                .member_updates_print_as_written
+                .then_some(MemberUpdate::AssignmentExpression {
+                    operator: binary_op,
+                });
             match lowered_property {
                 MemberProperty::Literal(prop_literal) => Ok(InstructionValue::PropertyStore {
                     object,
@@ -1079,10 +1083,7 @@ fn lower_update(
     };
     match &unary.value.data {
         Data::EDot(_) | Data::EIndex(_) => {
-            let binary_op = match operation {
-                UpdateOperator::Increment => BinaryOperator::Add,
-                UpdateOperator::Decrement => BinaryOperator::Subtract,
-            };
+            let binary_op = operation.binary_operator();
             let member_loc = convert_loc(unary.value.loc);
             let lowered = lower_member_expression(builder, &unary.value, None)?;
             let object = lowered.object;
@@ -1106,7 +1107,13 @@ fn lower_update(
                 },
             )?;
 
-            let update = Some(MemberUpdate::UpdateExpression { operation, prefix });
+            // Unlike upstream: the store prints as the update expression, see `MemberUpdate`. So it
+            // is the value of a postfix update too.
+            let is_as_written = builder
+                .environment()
+                .config
+                .member_updates_print_as_written;
+            let update = is_as_written.then_some(MemberUpdate::UpdateExpression { operation, prefix });
             let new_value_place = match lowered_property {
                 MemberProperty::Literal(prop_literal) => lower_value_to_temporary(
                     builder,
@@ -1130,10 +1137,7 @@ fn lower_update(
                 )?,
             };
 
-            // Unlike upstream: the store prints as the update expression, so it is the value of
-            // a postfix update too. `bun lint` prints nothing and keeps the value of upstream.
-            let is_lint = builder.environment().output_mode == environment::OutputMode::Lint;
-            let result_place = if prefix || !is_lint {
+            let result_place = if prefix || is_as_written {
                 new_value_place
             } else {
                 prev_value

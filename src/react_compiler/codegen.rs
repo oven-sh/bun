@@ -398,9 +398,6 @@ struct Context<'a, 'h> {
     next_cache_index: u32,
     declarations: HashSet<DeclarationId>,
     temp: Temporaries,
-    /// The temporaries in `temp` that `codegen_place_to_expression` has handed out.
-    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-    printed: HashSet<DeclarationId>,
     object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
     unique_identifiers: HashSet<String>,
     synthesized_names: HashMap<&'static str, String>,
@@ -418,8 +415,6 @@ impl<'a, 'h> Context<'a, 'h> {
             next_cache_index: 0,
             declarations: HashSet::default(),
             temp: IdMap::new(),
-            #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-            printed: HashSet::default(),
             object_methods: IdMap::new(),
             unique_identifiers,
             synthesized_names: HashMap::default(),
@@ -1677,8 +1672,6 @@ fn codegen_instruction(
     let ident = &cx.env.identifiers[lvalue.identifier.0 as usize];
     if ident.name.is_none() {
         cx.temp.insert(ident.declaration_id, Some(value));
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-        cx.printed.remove(&ident.declaration_id);
         return Ok(empty_stmt());
     }
     let (r, l) = convert_identifier(cx, lvalue.identifier)?;
@@ -3046,13 +3039,6 @@ fn codegen_place_to_expression(cx: &mut Context, place: &Place) -> Result<Expr, 
     let ident = &cx.env.identifiers[place.identifier.0 as usize];
     if let Some(tmp) = cx.temp.get(ident.declaration_id) {
         if let Some(val) = tmp {
-            // What is lowered once runs once: only an identifier or a literal may print twice.
-            #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-            assert!(
-                cx.printed.insert(ident.declaration_id) || is_identifier_or_literal(val),
-                "[Codegen] a temporary prints twice, identifier id={}",
-                place.identifier.0
-            );
             return Ok(*val);
         }
     }
@@ -3067,21 +3053,6 @@ fn codegen_place_to_expression(cx: &mut Context, place: &Place) -> Result<Expr, 
     }
     let (r, _ident_loc) = convert_identifier(cx, place.identifier)?;
     Ok(Expr::init_identifier(r, convert_loc(place.loc)))
-}
-
-#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-fn is_identifier_or_literal(expr: &Expr) -> bool {
-    matches!(
-        expr.data,
-        ExprData::EIdentifier(_)
-            | ExprData::EImportIdentifier(_)
-            | ExprData::ENumber(_)
-            | ExprData::EString(_)
-            | ExprData::EBoolean(_)
-            | ExprData::EBigInt(_)
-            | ExprData::ENull(_)
-            | ExprData::EUndefined(_)
-    )
 }
 
 fn convert_identifier(
@@ -3261,6 +3232,7 @@ fn convert_update_operator(op: crate::hir::UpdateOperator, prefix: bool) -> OpCo
     }
 }
 
+#[derive(Clone, Copy)]
 enum MemberKey<'a> {
     Literal(&'a PropertyLiteral),
     Computed(&'a Place),
@@ -3282,11 +3254,7 @@ fn codegen_member_update(
     {
         match update {
             MemberUpdate::UpdateExpression { operation, prefix } => {
-                let operator = match operation {
-                    crate::hir::UpdateOperator::Increment => crate::hir::BinaryOperator::Add,
-                    crate::hir::UpdateOperator::Decrement => crate::hir::BinaryOperator::Subtract,
-                };
-                if binary.op == convert_binary_operator(operator) {
+                if binary.op == convert_binary_operator(operation.binary_operator()) {
                     return Ok(Expr::init(
                         E::Unary {
                             op: convert_update_operator(operation, prefix),
@@ -3313,13 +3281,14 @@ fn codegen_member_update(
             }
         }
     }
-    // The load has a name: it ran ahead of a statement in `right`. PromoteInterposedTemporaries
-    // gave the object and the key a name too, so they do not run a second time here.
-    let obj = codegen_place_to_expression(cx, object)?;
+    // The load is not inline: it has a name, or it is a constant. The store prints
+    // `target = value`, and the load printed the object and the key already.
+    let (obj, mut prints_again) = codegen_place_to_print_again(cx, object)?;
     let target = match key {
         MemberKey::Literal(property) => property_access_expr(obj, property, loc, None),
         MemberKey::Computed(property) => {
-            let index = codegen_place_to_expression(cx, property)?;
+            let (index, index_prints_again) = codegen_place_to_print_again(cx, property)?;
+            prints_again &= index_prints_again;
             Expr::init(
                 E::Index {
                     target: obj,
@@ -3331,8 +3300,9 @@ fn codegen_member_update(
             )
         }
     };
-    if matches!(update, MemberUpdate::UpdateExpression { .. }) {
-        // `target = load + 1` is not `target++` for a BigInt, and not the value of a postfix update.
+    // `target = load + 1` is not `target++` for a BigInt, and not the value of a postfix update.
+    // A target that is more than identifiers and literals would run a second time.
+    if matches!(update, MemberUpdate::UpdateExpression { .. }) || !prints_again {
         cx.record_error(CompilerErrorDetail {
             category: ErrorCategory::Todo,
             reason: "(CodegenReactiveFunction) Support a member update whose load is not inline"
@@ -3350,6 +3320,29 @@ fn codegen_member_update(
         },
         loc,
     ))
+}
+
+/// The expression of `place`, and whether it can print a second time: only an identifier or a
+/// literal can. Anything else would run again.
+fn codegen_place_to_print_again(
+    cx: &mut Context,
+    place: &Place,
+) -> Result<(Expr, bool), CompilerError> {
+    let is_temporary = cx.env.identifiers[place.identifier.0 as usize]
+        .name
+        .is_none();
+    let expr = codegen_place_to_expression(cx, place)?;
+    let identifier = match expr.data {
+        ExprData::EIdentifier(identifier) => identifier.ref_,
+        ExprData::EImportIdentifier(identifier) => identifier.ref_,
+        _ => return Ok((expr, expr.is_primitive_literal())),
+    };
+    // A temporary hands out the expression that it has. Each use of a symbol has to be counted:
+    // the minifier puts a declaration with one use in the place of that use.
+    if is_temporary {
+        cx.cg.host.record_usage(identifier);
+    }
+    Ok((expr, true))
 }
 
 fn convert_compound_assignment_operator(op: crate::hir::BinaryOperator) -> Option<OpCode> {

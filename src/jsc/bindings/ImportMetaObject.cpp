@@ -237,8 +237,7 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     RETURN_IF_EXCEPTION(scope, );
     Bun::throwIfOnlyTyped(defaultGlobalObject(globalObject), known.isNull() ? resolved : known, specifier, importer, true);
     RETURN_IF_EXCEPTION(scope, );
-    size_t query = resolved.find('?');
-    StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
+    StringView path = StringView(resolved).left(moduleKeyPathLength(resolved));
     if (!path.endsWith(".node"_s) || Bun::letsTestRunLoadAddon(globalObject, resolved) || Bun::isFileInExecutable(resolved))
         return;
     if (JSValue error = Bun::errorIfCodeOutsideImageIsRefused(globalObject, Bun::ErrorCode::MODULE_NOT_FOUND, resolved))

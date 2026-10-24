@@ -9,6 +9,25 @@ use bun_core::{String as BunString, strings};
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
+pub fn module_key_without_query(key: &[u8]) -> &[u8] {
+    // The question mark in a Windows device prefix is part of the path.
+    let start = if cfg!(windows)
+        && key.len() >= 4
+        && key[2] == b'?'
+        && resolve_path::is_sep_any(key[0])
+        && resolve_path::is_sep_any(key[1])
+        && resolve_path::is_sep_any(key[3])
+    {
+        4
+    } else {
+        0
+    };
+    match strings::index_of_char_usize(&key[start..], b'?') {
+        Some(index) => &key[..start + index],
+        None => key,
+    }
+}
+
 pub(crate) fn node_module_paths(path: &BunString) -> Vec<BunString> {
     crate::mark_binding!();
     node_module_paths_list(path, false)

@@ -42,14 +42,6 @@ fn is_macro_path(str: &[u8]) -> bool {
 // MacroContext
 // ══════════════════════════════════════════════════════════════════════════
 
-/// A macro resolver that no `MacroContext` uses now, with the options of the build that it was made for.
-type IdleMacroResolver = (Arc<TransformOptions>, Box<Resolver<'static>>);
-
-thread_local! {
-    // A `MacroContext` lasts one module in a transpile job and one call of `Bun.Transpiler`: its resolver waits here for the next.
-    static IDLE_MACRO_RESOLVER: Cell<Option<IdleMacroResolver>> = const { Cell::new(None) };
-}
-
 // All three are modelled as raw pointers because the referents live
 // inside the owning `Transpiler` and are also reachable through other aliases
 // (`Transpiler.resolver`, `Transpiler.env`, `Transpiler.options`); a `&'a mut`
@@ -121,15 +113,16 @@ impl MacroContext {
         let importer = unsafe { &*self.resolver };
         let resolver = match &mut self.macro_resolver {
             Some(resolver) => resolver,
-            // The address of the options says which build made the idle resolver.
-            slot @ None => slot.insert(match IDLE_MACRO_RESOLVER.take() {
-                Some((options, idle)) if Arc::ptr_eq(&options, &self.transform_options) => idle,
-                _ => Transpiler::macro_resolver(importer, &self.transform_options)?,
-            }),
+            slot @ None => slot.insert(Transpiler::macro_resolver(
+                importer,
+                &self.transform_options,
+            )?),
         };
-        // What the importing resolver can get after its first macro: a log per module, the auto-installer, `require.extensions`.
+        // A context that lasts longer than one module meets a new log for each module.
         resolver.log = importer.log;
+        // `PackageJSON::parse` records the `npm:` aliases of a project through this. The importer gets it at its first auto-install.
         resolver.package_manager = importer.package_manager;
+        // `require.extensions` can get an entry after the first macro call.
         if resolver.opts.extra_cjs_extensions != importer.opts.extra_cjs_extensions {
             resolver
                 .opts
@@ -287,16 +280,6 @@ impl MacroContext {
         });
         Ok(ret?)
         // this.macros.getOrPut(key: K)
-    }
-}
-
-impl Drop for MacroContext {
-    fn drop(&mut self) {
-        if let Some(resolver) = self.macro_resolver.take() {
-            let idle = (Arc::clone(&self.transform_options), resolver);
-            // The slot is gone when the thread exits. Then the resolver is dropped here.
-            let _ = IDLE_MACRO_RESOLVER.try_with(|slot| slot.set(Some(idle)));
-        }
     }
 }
 

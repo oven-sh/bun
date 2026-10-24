@@ -718,22 +718,6 @@ pub struct ESMConditions {
 }
 
 impl ESMConditions {
-    /// The conditions of a build for `target`: the target's defaults, `node-addons`, then the user's.
-    pub(crate) fn for_target(
-        target: Target,
-        transform: &api::TransformOptions,
-    ) -> Result<ESMConditions, bun_alloc::AllocError> {
-        Self::init(
-            Target::default_conditions_map()[target],
-            transform.allow_addons.unwrap_or(true),
-            &transform
-                .conditions
-                .iter()
-                .map(|s| &**s)
-                .collect::<Vec<&[u8]>>(),
-        )
-    }
-
     pub fn init(
         defaults: &[&[u8]],
         allow_addons: bool,
@@ -1885,7 +1869,21 @@ impl<'a> BundleOptions<'a> {
             opts.main_fields = owned_string_list(Target::default_main_fields_map()[opts.target]);
         }
 
-        opts.conditions = ESMConditions::for_target(opts.target, &transform)?;
+        {
+            // conditions:
+            // 1. defaults
+            // 2. node-addons
+            // 3. user conditions
+            opts.conditions = ESMConditions::init(
+                Target::default_conditions_map()[opts.target],
+                transform.allow_addons.unwrap_or(true),
+                &transform
+                    .conditions
+                    .iter()
+                    .map(|s| &**s)
+                    .collect::<Vec<&[u8]>>(),
+            )?;
+        }
 
         match opts.target {
             Target::Node => {
@@ -1902,11 +1900,17 @@ impl<'a> BundleOptions<'a> {
 
                 opts.env.behavior = api::DotEnvBehavior::LoadAll;
                 if transform.extension_order.is_empty() {
-                    opts.extension_order.default.default =
-                        owned_string_list(bundle_options_defaults::EXTENSION_ORDER_BUN);
-                    opts.extension_order.node_modules.default = owned_string_list(
-                        bundle_options_defaults::node_modules::EXTENSION_ORDER_BUN,
-                    );
+                    // we must also support require'ing .node files
+                    static EXT_WITH_NODE: &[&[u8]] = &[
+                        b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts",
+                        b".json", b".node",
+                    ];
+                    static NM_EXT_WITH_NODE: &[&[u8]] = &[
+                        b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts",
+                        b".json", b".node",
+                    ];
+                    opts.extension_order.default.default = owned_string_list(EXT_WITH_NODE);
+                    opts.extension_order.node_modules.default = owned_string_list(NM_EXT_WITH_NODE);
                 }
             }
             _ => {}
@@ -2004,11 +2008,6 @@ pub(crate) mod bundle_options_defaults {
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
     ];
 
-    /// Bun must also support require'ing .node files.
-    pub(crate) const EXTENSION_ORDER_BUN: &[&[u8]] = &[
-        b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json", b".node",
-    ];
-
     pub(crate) const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
         &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
 
@@ -2019,11 +2018,6 @@ pub(crate) mod bundle_options_defaults {
     pub(crate) mod node_modules {
         pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
             b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
-        ];
-
-        pub(crate) const EXTENSION_ORDER_BUN: &[&[u8]] = &[
-            b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
-            b".node",
         ];
 
         pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[

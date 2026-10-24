@@ -1,7 +1,7 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import { existsSync, readdirSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
   addStrings,
@@ -814,13 +814,15 @@ describe("macro VM env loader", () => {
 
 // https://github.com/oven-sh/bun/issues/8779
 // A macro runs in Bun while the importing file is transpiled. Its import resolves for that environment: Bun's
-// conditions plus "macro". The target, the "browser" field and the conditions of the output decide plain imports only.
+// conditions plus "macro". The target of the output, with its conditions and the "browser" field, decides plain
+// imports only. What the user sets for the whole build applies to both: `--conditions`, `--main-fields`.
 describe("a macro import resolves for the macro environment", () => {
   const who = (label: string) =>
     `export function who() {\n  return ${JSON.stringify(label)};\n}\nexport default who;\n`;
   const whoCjs = (label: string) => `exports.who = function who() {\n  return ${JSON.stringify(label)};\n};\n`;
 
-  // The file a macro import of each specifier runs, whatever imports it: a bundle for any target, or Bun's runtime.
+  // The file a macro import of each specifier runs in Bun's runtime. `expected()` has the cells that depend on the
+  // conditions of the importer. No cell depends on its target.
   const macroCells: Record<string, string> = {
     // "macro" is the first key that matches.
     "macro-first": "macro-first/macro.js",
@@ -832,6 +834,8 @@ describe("a macro import resolves for the macro environment", () => {
     "@paths/who": "paths/who.ts",
     // The first key that matches wins, like in Node. Here that is "import".
     "macro-last": "macro-last/index.js",
+    // The "macro" entry holds conditions and none of them matches, so the next key decides.
+    "macro-fallthrough": "macro-fallthrough/index.js",
     // No "macro" key. The import still resolves for Bun and not for the output.
     "env-conditions": "env-conditions/for-bun.js",
     "browser-field": "browser-field/index.js",
@@ -858,7 +862,14 @@ describe("a macro import resolves for the macro environment", () => {
   const expected = (importer: Importer, conditions: readonly string[] = []) => ({
     macro: {
       ...macroCells,
+      // A bundle that is not for production has the "development" condition. It is not a condition of the target.
+      ...(importer !== "runtime" && { "dev-condition": "dev-condition/dev.js" }),
       ...(conditions.includes("custom") && { "custom-condition": "custom-condition/custom.js" }),
+      // A condition that the user names applies to a macro import too, also when it is the name of a target.
+      ...(conditions.includes("browser") && {
+        "env-conditions": "env-conditions/for-browser.js",
+        "macro-fallthrough": "macro-fallthrough/browser.js",
+      }),
     },
     plain: Object.fromEntries(Object.entries(plainCells).map(([specifier, files]) => [specifier, files[importer]])),
   });
@@ -914,6 +925,11 @@ describe("a macro import resolves for the macro environment", () => {
       "sub.macro.js",
       "sub.js",
     ]);
+    pkg("macro-fallthrough", { exports: { macro: { browser: "./browser.js" }, default: index } }, [
+      "browser.js",
+      "index.js",
+    ]);
+    pkg("macro-null", { exports: { macro: null, default: index } }, ["index.js"]);
     pkg("macro-only", { exports: { macro: "./macro.js" } }, ["macro.js"]);
     pkg("browser-only", { exports: { browser: "./browser.js" } }, ["browser.js"]);
     pkg("bun-file", { exports: { bun: "./bun.js", default: index } }, ["bun.js", "index.js"]);
@@ -934,7 +950,8 @@ describe("a macro import resolves for the macro environment", () => {
     return { ...files, ...extra };
   }
 
-  // The table above, derived: a macro import takes the file that Bun's runtime resolves with the "macro" condition.
+  // The table above, derived: a macro import takes the file that Bun's runtime resolves with the "macro" condition,
+  // with "development" where the importer is a bundle that is not for production, and with the user's conditions.
   test.concurrent("the cells are what `bun run --conditions=macro` resolves", async () => {
     using dir = tempDir(
       "macro-env-oracle",
@@ -952,12 +969,22 @@ describe("a macro import resolves for the macro environment", () => {
         `,
       }),
     );
-    const { result, stderr } = await run(String(dir), "run", "--conditions=macro", "oracle.ts");
-    expect({ result, stderr }).toEqual({ result: macroCells, stderr: "" });
+    const development = "--conditions=development";
+    const [runtime, bundle, withBrowser] = await Promise.all([
+      run(String(dir), "run", "--conditions=macro", "oracle.ts"),
+      run(String(dir), "run", "--conditions=macro", development, "oracle.ts"),
+      run(String(dir), "run", "--conditions=macro", development, "--conditions=browser", "oracle.ts"),
+    ]);
+    expect({ runtime, bundle, withBrowser }).toEqual({
+      runtime: { result: expected("runtime").macro, stderr: "", exitCode: 0 },
+      bundle: { result: expected("bun").macro, stderr: "", exitCode: 0 },
+      withBrowser: { result: expected("browser", ["browser"]).macro, stderr: "", exitCode: 0 },
+    });
   });
 
-  async function run(cwd: string, ...args: string[]) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+  const run = (cwd: string, ...args: string[]) => runWith(bunEnv, cwd, ...args);
+  async function runWith(env: typeof bunEnv, cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Debug builds also print "[macro] call <name>" to stdout. The result is the last line.
     const line = stdout.trim().split("\n").pop()!;
@@ -971,6 +998,7 @@ describe("a macro import resolves for the macro environment", () => {
   test.concurrent.each([
     ["bun build", [], "browser", []],
     ["bun build --target=bun --conditions=custom", ["--target=bun", "--conditions=custom"], "bun", ["custom"]],
+    ["bun build --conditions=browser", ["--conditions=browser"], "browser", ["browser"]],
   ] as const)("%s", async (_, flags, target, conditions) => {
     using dir = tempDir("macro-env-build", fixture());
     const build = await run(String(dir), "build", "./entry.ts", "--outdir=out", ...flags);
@@ -1023,14 +1051,13 @@ describe("a macro import resolves for the macro environment", () => {
   });
 
   // The entry point and a require()d module are transpiled on the main thread, an imported module on another thread.
-  test.concurrent("bun run: the entry point, imported modules, a require()d module and a Worker", async () => {
+  test.concurrent("bun run: the entry point, imported modules and a require()d module", async () => {
     using dir = tempDir(
       "macro-env-run",
       fixture({
         "imported.ts": cellsSource + `export { cells as next } from "./imported-next.ts";\n`,
         "imported-next.ts": cellsSource,
         "required.ts": cellsSource,
-        "worker.ts": cellsSource + `postMessage(cells);\n`,
         // `require.extensions` gets ".macrots" after the macros of the entry point were resolved.
         "in-extension.macrots": who("in-extension.macrots"),
         "uses-extension.ts": `import { who } from "./in-extension" with { type: "macro" };\nexport const extension = who();\n`,
@@ -1040,10 +1067,7 @@ describe("a macro import resolves for the macro environment", () => {
           `const { cells: required } = require("./required.ts");`,
           `require.extensions[".macrots"] = require.extensions[".ts"];`,
           `const { extension } = require("./uses-extension.ts");`,
-          `const worker = new Worker(new URL("./worker.ts", import.meta.url).href);`,
-          `const inWorker = await new Promise(resolve => (worker.onmessage = event => resolve(event.data)));`,
-          `worker.terminate();`,
-          `console.log(JSON.stringify({ entry: cells, imported, next, required, inWorker, extension }));`,
+          `console.log(JSON.stringify({ entry: cells, imported, next, required, extension }));`,
           ``,
         ].join("\n"),
       }),
@@ -1052,16 +1076,31 @@ describe("a macro import resolves for the macro environment", () => {
     const { result, stderr, exitCode } = await run(String(dir), "run", ...flags, "run.ts");
     const cells = expected("runtime", ["custom"]);
     expect({ result, stderr }).toEqual({
-      result: {
-        entry: cells,
-        imported: cells,
-        next: cells,
-        required: cells,
-        inWorker: cells,
-        extension: "in-extension.macrots",
-      },
+      result: { entry: cells, imported: cells, next: cells, required: cells, extension: "in-extension.macrots" },
       stderr: "",
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bun run: a Worker", async () => {
+    using dir = tempDir(
+      "macro-env-worker",
+      fixture({
+        "worker.ts": cellsSource + `postMessage(cells);\n`,
+        "run.ts": [
+          `const worker = new Worker(new URL("./worker.ts", import.meta.url).href);`,
+          `const inWorker = await new Promise(resolve => (worker.onmessage = event => resolve(event.data)));`,
+          `worker.terminate();`,
+          `console.log(JSON.stringify(inWorker));`,
+          ``,
+        ].join("\n"),
+      }),
+    );
+    // A worker that called a macro does not free its tables of macros when it ends, whatever the macro import resolved
+    // to (https://github.com/oven-sh/bun/pull/46228). So leak checking is off for this child.
+    const env = { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") };
+    const { result, stderr, exitCode } = await runWith(env, String(dir), "run", "--conditions=custom", "run.ts");
+    expect({ result, stderr }).toEqual({ result: expected("runtime", ["custom"]), stderr: "" });
     expect(exitCode).toBe(0);
   });
 
@@ -1097,7 +1136,7 @@ describe("a macro import resolves for the macro environment", () => {
           const code = await Bun.file("./macros-only.ts").text();
           const transpiler = new Bun.Transpiler({ loader: "ts", target: "browser" });
           await Bun.write("./sync.js", transpiler.transformSync(code));
-          // Each call is a new macro context. The second one takes the resolver that the first one left.
+          // Each call is a new macro context, with a macro resolver of its own.
           await Bun.write("./again.js", transpiler.transformSync(code));
           await Bun.write("./async.js", await transpiler.transform(code));
           const results = {
@@ -1117,6 +1156,8 @@ describe("a macro import resolves for the macro environment", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Not concurrent: in a debug build these three processes take most of the default timeout when the other tests run
+  // beside them.
   test("every spelling of a macro import, builtin modules, and packages with one file for a macro", async () => {
     using dir = tempDir(
       "macro-env-spellings",
@@ -1176,32 +1217,149 @@ describe("a macro import resolves for the macro environment", () => {
       bunFile: "bun-file/bun.js",
     };
     expect({
-      run: { result: atRuntime.result, stderr: atRuntime.stderr },
-      build: { result: bundle.result, stderr: build.stderr },
+      run: atRuntime,
+      build: { stderr: build.stderr, exitCode: build.exitCode },
+      bundle,
     }).toEqual({
-      run: { result: spellings, stderr: "" },
-      build: { result: spellings, stderr: "" },
+      run: { result: spellings, stderr: "", exitCode: 0 },
+      build: { stderr: "", exitCode: 0 },
+      bundle: { result: spellings, stderr: "", exitCode: 0 },
     });
   });
 
-  // Each of these ran as a macro in a bundle for the browser before. A macro runs in Bun, so now none is found.
-  test.concurrent("a package with no file for Bun is not found, whatever the build targets", async () => {
+  // A package with a file only for the browser ran as a macro in a bundle for the browser before. A macro runs in
+  // Bun, so now it is not found, unless the user names the condition for the whole build. A "macro" entry that gives
+  // no file is not found either: as in Node, the resolver does not go on to the next key.
+  test.concurrent("a package with no file for a macro is not found", async () => {
     using dir = tempDir(
-      "macro-env-browser-only",
+      "macro-env-not-found",
       fixture({
         "browser-only.ts": `import { who } from "browser-only" with { type: "macro" };\nconsole.log(who());\n`,
+        "macro-null.ts": `import { who } from "macro-null" with { type: "macro" };\nconsole.log(who());\n`,
       }),
     );
-    const { stderr, exitCode } = await run(String(dir), "build", "./browser-only.ts", "--target=browser");
-    expect({ notFound: stderr.includes(`Macro "browser-only" not found`), exitCode }).toEqual({
-      notFound: true,
-      exitCode: 1,
+    const [browserOnly, withCondition, nullInBundle, nullAtRuntime] = await Promise.all([
+      run(String(dir), "build", "./browser-only.ts", "--target=browser"),
+      run(String(dir), "build", "./browser-only.ts", "--target=browser", "--conditions=browser"),
+      run(String(dir), "build", "./macro-null.ts", "--target=browser"),
+      run(String(dir), "run", "macro-null.ts"),
+    ]);
+    const notFound = (specifier: string, { stderr, exitCode }: { stderr: string; exitCode: number }) => ({
+      notFound: stderr.includes(`error: Macro "${specifier}" not found`),
+      exitCode,
     });
+    expect({
+      browserOnly: notFound("browser-only", browserOnly),
+      withCondition,
+      nullInBundle: notFound("macro-null", nullInBundle),
+      nullAtRuntime: notFound("macro-null", nullAtRuntime),
+    }).toEqual({
+      browserOnly: { notFound: true, exitCode: 1 },
+      withCondition: { result: `console.log("browser-only/browser.js");`, stderr: "", exitCode: 0 },
+      nullInBundle: { notFound: true, exitCode: 1 },
+      nullAtRuntime: { notFound: true, exitCode: 1 },
+    });
+  });
+
+  // An HTML import makes a second graph in the same build: the page, for the browser. The resolver of that graph has
+  // neither the user's conditions nor "development". A macro import of the page still has the user's conditions, as
+  // the macro itself has when it runs. "development" follows the graph.
+  test.concurrent("bun build: the page of an HTML import", async () => {
+    using dir = tempDir(
+      "macro-env-html",
+      fixture({
+        "index.html": `<!doctype html><html><head><script type="module" src="./page.ts"></script></head></html>`,
+        "page.ts": cellsSource + `console.log(JSON.stringify(cells));\n`,
+        "server.ts": [
+          cellsSource,
+          `import page from "./index.html";`,
+          `if (!page) throw new Error("no page");`,
+          `console.log(JSON.stringify(cells));`,
+          ``,
+        ].join("\n"),
+      }),
+    );
+    const flags = ["--target=bun", "--conditions=custom", "--outdir=out"];
+    const build = await run(String(dir), "build", "./server.ts", ...flags);
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const chunks = readdirSync(path.join(String(dir), "out")).filter(name => name.endsWith(".js"));
+    expect(chunks.toSorted()).toEqual([expect.stringMatching(/^index-.+\.js$/), "server.js"]);
+    const [server, page] = await Promise.all(
+      ["server.js", chunks.find(name => name !== "server.js")!].map(name => run(String(dir), path.join("out", name))),
+    );
+    const ofPage = page.result as ReturnType<typeof expected>;
+    expect({ server: server.result, page: ofPage.macro }).toEqual({
+      server: expected("bun", ["custom"]),
+      page: { ...expected("runtime", ["custom"]).macro, "dev-condition": ofPage.plain["dev-condition"] },
+    });
+  });
+
+  // `--main-fields` replaces the list of the target, for a macro import too. The macro resolves its own imports with
+  // the same list when it runs.
+  test.concurrent("--main-fields also applies to a macro import", async () => {
+    using dir = tempDir(
+      "macro-env-main-fields",
+      fixture({
+        "main-fields.ts": `
+          import { who as browserField } from "browser-field" with { type: "macro" };
+          import { who as moduleMain } from "module-main" with { type: "macro" };
+          console.log([browserField(), moduleMain()].join(" "));
+        `,
+      }),
+    );
+    const flags = ["--main-fields=browser", "--main-fields=module", "--main-fields=main"];
+    const [atRuntime, bundle] = await Promise.all([
+      run(String(dir), "run", ...flags, "main-fields.ts"),
+      run(String(dir), "build", "./main-fields.ts", "--target=bun", ...flags),
+    ]);
+    expect({ atRuntime, bundle }).toEqual({
+      atRuntime: { result: "browser-field/browser.js module-main/module.mjs", stderr: "", exitCode: 0 },
+      bundle: {
+        result: `console.log(["browser-field/browser.js", "module-main/module.mjs"].join(" "));`,
+        stderr: "",
+        exitCode: 0,
+      },
+    });
+  });
+
+  // A module that `import()` loads is transpiled on another thread, with a copy of the transpiler of the VM. The first
+  // macro waits there until the main thread has replaced the list of `require.extensions`. Then the second macro
+  // import resolves, through an extension that the list had when the import started.
+  test.concurrent("require.extensions changes while another thread resolves a macro import", async () => {
+    using dir = tempDir("macro-env-extensions-race", {
+      "gate.macrots": `
+        import { existsSync, writeFileSync } from "node:fs";
+        export function first() {
+          writeFileSync(import.meta.dir + "/started", "");
+          while (!existsSync(import.meta.dir + "/replaced")) {}
+          return "first";
+        }
+        export function second() {
+          return "second";
+        }
+      `,
+      "imported.ts": `
+        import { first, second } from "./gate" with { type: "macro" };
+        export const results = [first(), second()];
+      `,
+      "main.ts": `
+        import { existsSync, writeFileSync } from "node:fs";
+        require.extensions[".macrots"] = require.extensions[".ts"];
+        const imported = import("./imported.ts");
+        while (!existsSync(import.meta.dir + "/started")) await new Promise(resolve => setImmediate(resolve));
+        require.extensions[".other"] = require.extensions[".ts"];
+        writeFileSync(import.meta.dir + "/replaced", "");
+        console.log(JSON.stringify((await imported).results));
+      `,
+    });
+    const { result, stderr, exitCode } = await run(String(dir), "run", "--loader=.macrots:ts", "main.ts");
+    expect({ result, stderr, exitCode }).toEqual({ result: ["first", "second"], stderr: "", exitCode: 0 });
   });
 
   // `--external` and `--packages=external` say what the bundle leaves out, and a macro import is inlined at build
   // time. The entries are in a folder with its own copy of the package: an import that the build marked external
-  // used to reach the macro VM unresolved, and then resolved from the working directory.
+  // used to reach the macro VM unresolved, and then resolved from the working directory. Not concurrent: in a debug
+  // build these five processes take most of the default timeout when the other tests run beside them.
   test("--external and --packages=external do not apply to a macro import", async () => {
     const where = (label: string) => `export function where() {\n  return ${JSON.stringify(label)};\n}\n`;
     using dir = tempDir("macro-env-external", {
@@ -1233,12 +1391,13 @@ describe("a macro import resolves for the macro environment", () => {
       ...builds.map(([entry, flag]) => run(String(dir), "build", entry, "--target=bun", flag)),
       run(String(dir), "run", "build-api.ts"),
     ]);
-    expect(bundles.map(({ result, stderr }) => ({ result, stderr }))).toEqual([
-      { result: `console.log("the importer's copy");`, stderr: "" },
-      { result: `console.log("the importer's copy");`, stderr: "" },
-      { result: `console.log("the importer's copy");`, stderr: "" },
-      { result: `console.log("the relative file");`, stderr: "" },
-      { result: [`console.log("the importer's copy");`, `console.log("the importer's copy");`], stderr: "" },
+    const importers = `console.log("the importer's copy");`;
+    expect(bundles).toEqual([
+      { result: importers, stderr: "", exitCode: 0 },
+      { result: importers, stderr: "", exitCode: 0 },
+      { result: importers, stderr: "", exitCode: 0 },
+      { result: `console.log("the relative file");`, stderr: "", exitCode: 0 },
+      { result: [importers, importers], stderr: "", exitCode: 0 },
     ]);
   });
 
@@ -1264,9 +1423,9 @@ describe("a macro import resolves for the macro environment", () => {
       run(String(dir), "run", "entry.ts"),
       run(String(dir), "run", "--preserve-symlinks", "entry.ts"),
     ]);
-    expect({ followed: followed.result, preserved: preserved.result }).toEqual({
-      followed: "linked-source",
-      preserved: "node_modules/linked",
+    expect({ followed, preserved }).toEqual({
+      followed: { result: "linked-source", stderr: "", exitCode: 0 },
+      preserved: { result: "node_modules/linked", stderr: "", exitCode: 0 },
     });
   });
 });

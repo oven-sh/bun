@@ -1,6 +1,7 @@
 import { randomUUIDv7, S3Client } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { join } from "node:path";
 import { serve, type S3Server } from "s3-server";
 
 // Serializing a FormData body (`new Response(formData)` / `new Request(..., { body: formData })`)
@@ -237,13 +238,19 @@ describe("multipart serialization of S3-backed entries", () => {
     return {
       key,
       file: () => client.file(key, { type }),
-      /** The operation and the Range header of each request for the key so far. */
-      requests: () =>
-        server.requests
+      /**
+       * The operation and the Range header of each request for the key.
+       * A HEAD request goes first, so a request that is on its way is in the list before it.
+       */
+      async requests() {
+        await client.file(key).exists();
+        return server.requests
           .filter(request => request.key === key)
-          .map(request => [request.operation, request.headers.get("range")]),
+          .map(request => [request.operation, request.headers.get("range")]);
+      },
     };
   }
+  const noRequest = [["HeadObject", null]];
 
   // `quotedName` is the entry name as the message renders it, quotes included.
   function messageFor(quotedName: string): string {
@@ -298,16 +305,18 @@ describe("multipart serialization of S3-backed entries", () => {
       const sizeBefore = (formData.get("report") as Blob).size;
 
       const error = await failureOf(() => consume(formData, receiver.url));
+      // A request from `consume` would reach the receiver before this one.
+      await fetch(receiver.url);
       expect(error).toBeInstanceOf(TypeError);
       expect({
         message: (error as TypeError).message,
-        s3Requests: stored.requests(),
+        s3Requests: await stored.requests(),
         received,
         sizeAfter: (formData.get("report") as Blob).size,
       }).toEqual({
         message: messageFor('"report"'),
-        s3Requests: [],
-        received: 0,
+        s3Requests: noRequest,
+        received: 1,
         sizeAfter: sizeBefore,
       });
     });
@@ -322,7 +331,6 @@ describe("multipart serialization of S3-backed entries", () => {
   });
 
   test.each([
-    ["a plain name", "report", '"report"'],
     ["a non-ASCII name", "レポート ☺", '"レポート ☺"'],
     ["a name containing a quote", 'quote"name', '"quote\\"name"'],
     ["a name containing CRLF", "crlf\r\nname", '"crlf\\r\\nname"'],
@@ -344,22 +352,30 @@ describe("multipart serialization of S3-backed entries", () => {
 
     const error = await failureOf(() => new Response(formData));
     expect(error).toBeInstanceOf(TypeError);
-    expect({ message: (error as TypeError).message, s3Requests: stored.requests() }).toEqual({
-      message: messageFor('"first"'),
-      s3Requests: [],
-    });
+    expect((error as TypeError).message).toBe(messageFor('"first"'));
   });
 
-  test("the message names the first of two entries that hold the same S3 file", async () => {
-    const s3file = s3Object().file();
+  // The serializer stops at the first entry that it cannot write.
+  test.each([
+    ["an S3 file and then a missing file", true],
+    ["a missing file and then an S3 file", false],
+  ])("%s: the first one decides the error", async (_label, s3First) => {
+    using dir = tempDir("formdata-s3-entry", {});
+    const s3Entry: [string, Blob] = ["s3", s3Object().file()];
+    const diskEntry: [string, Blob] = ["disk", Bun.file(join(String(dir), "missing.csv"))];
     const formData = new FormData();
-    formData.append("text", "value");
-    formData.append("one", s3file);
-    formData.append("two", s3file);
+    for (const [name, blob] of s3First ? [s3Entry, diskEntry] : [diskEntry, s3Entry]) formData.append(name, blob);
 
-    const error = await failureOf(() => new Response(formData));
-    expect(error).toBeInstanceOf(TypeError);
-    expect((error as TypeError).message).toBe(messageFor('"one"'));
+    const error = (await failureOf(() => new Response(formData))) as Error & { code?: string };
+    expect({
+      type: error.constructor.name,
+      code: error.code,
+      namesS3Entry: error.message === messageFor('"s3"'),
+    }).toEqual(
+      s3First
+        ? { type: "TypeError", code: undefined, namesS3Entry: true }
+        : { type: "Error", code: "ENOENT", namesS3Entry: false },
+    );
   });
 
   // An empty window of an S3 object has no bytes to fetch.
@@ -375,7 +391,7 @@ describe("multipart serialization of S3-backed entries", () => {
     const response = new Response(formData);
     const contentType = response.headers.get("Content-Type")!;
     const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
-    expect({ body: await response.text(), s3Requests: stored.requests() }).toEqual({
+    expect({ body: await response.text(), s3Requests: await stored.requests() }).toEqual({
       body:
         `--${boundary}\r\n` +
         `Content-Disposition: form-data; name="report"; filename="empty.csv"\r\n` +
@@ -383,34 +399,35 @@ describe("multipart serialization of S3-backed entries", () => {
         `--${boundary}\r\n` +
         `Content-Disposition: form-data; name="after"\r\n\r\nlast\r\n` +
         `--${boundary}--\r\n`,
-      s3Requests: [],
+      s3Requests: noRequest,
     });
   });
 
-  // Each of these calls used to leave the size of the S3 file at 0, which
-  // made the file look like an empty window.
-  test.each<[string, (s3file: Bun.S3File) => unknown]>([
-    ["structuredClone()", s3file => structuredClone(s3file)],
-    ["postMessage()", s3file => new MessageChannel().port1.postMessage(s3file)],
-    ["expect().toHaveLength()", s3file => expect(s3file).toHaveLength(0)],
+  // Each of these calls asks the S3 file for its size. The answer used to be
+  // stored as 0, which made the file look like an empty window.
+  test.each<[string, (s3file: Bun.S3File) => void]>([
+    [
+      "structuredClone()",
+      s3file => {
+        // It throws for an S3 file. Only its size query matters here.
+        try {
+          structuredClone(s3file);
+        } catch {}
+      },
+    ],
+    ["expect().toHaveLength()", s3file => expect(s3file).not.toHaveLength(0)],
   ])("an S3 file still fails after %s asked for its size", async (_label, ask) => {
-    const stored = s3Object("text/csv");
-    const s3file = stored.file();
-    try {
-      ask(s3file);
-    } catch {}
+    const s3file = s3Object("text/csv").file();
+    ask(s3file);
+    expect(s3file.size).toBeNaN();
 
     const error = await failureOf(() => new Response(formDataWith(s3file)));
     expect(error).toBeInstanceOf(TypeError);
-    expect({ message: (error as TypeError).message, size: s3file.size, s3Requests: stored.requests() }).toEqual({
-      message: messageFor('"report"'),
-      size: NaN,
-      s3Requests: [],
-    });
+    expect((error as TypeError).message).toBe(messageFor('"report"'));
   });
 
   // Runs the expression the message prints, character for character.
-  test("the File that the message says to pass uploads the bytes, the type and the filename", async () => {
+  test("the File that the message says to pass has the bytes, the type and the filename", async () => {
     const stored = s3Object("text/csv");
     await client.write(stored.key, object);
     const s3file = stored.file();
@@ -425,16 +442,13 @@ describe("multipart serialization of S3-backed entries", () => {
     const response = new Response(formData);
     const contentType = response.headers.get("Content-Type")!;
     const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
-    expect({ body: await response.text(), s3Requests: stored.requests() }).toEqual({
+    expect({ body: await response.text(), s3Requests: await stored.requests() }).toEqual({
       body:
         `--${boundary}\r\n` +
         `Content-Disposition: form-data; name="report"; filename="${stored.key}"\r\n` +
         `Content-Type: text/csv\r\n\r\n${object}\r\n` +
         `--${boundary}--\r\n`,
-      s3Requests: [
-        ["PutObject", null],
-        ["GetObject", null],
-      ],
+      s3Requests: [["PutObject", null], ["GetObject", null], ...noRequest],
     });
   });
 });

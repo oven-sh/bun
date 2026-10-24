@@ -872,7 +872,7 @@ impl BlobExt for Blob {
         #[cold]
         fn throw_for_s3_entry(
             global_this: &JSGlobalObject,
-            form_data: *mut jsc::DOMFormData,
+            form_data: &mut jsc::DOMFormData,
             entry: *const Blob,
         ) {
             struct Find {
@@ -898,6 +898,7 @@ impl BlobExt for Blob {
             }
             let mut find = Find { entry, name: None };
             DOMFormData__forEach(form_data, (&raw mut find).cast::<c_void>(), find_thunk);
+            debug_assert!(find.name.is_some(), "the first walk met this entry");
             let _ = global_this.throw_type_error(format_args!(
                 "FormData entry {} is an S3 file, which cannot be read while the body is serialized. Pass its bytes instead: new File([await s3file.bytes()], s3file.name, {{ type: s3file.type }})",
                 bun_core::fmt::quote(find.name.as_deref().unwrap_or_default()),
@@ -3499,7 +3500,7 @@ struct FormDataContext<'a> {
 enum FormDataFailure {
     /// `on_entry` threw.
     Thrown,
-    /// The entry with this Blob is an S3 object. `from_dom_form_data` throws for it after the walk.
+    /// An S3 entry, known by the address of its Blob (compared, never read). `from_dom_form_data` throws for it after the walk.
     S3Entry(*const Blob),
 }
 

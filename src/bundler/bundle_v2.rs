@@ -4422,6 +4422,9 @@ pub mod bv2_impl {
                             // An npm scope is never empty, so `@/x` can only be a tsconfig `paths`
                             // alias that matched nothing.
                             && !name.starts_with(b"@/")
+                            // A `url()` token or the URL of a page asset names a file, as
+                            // `images/bg.png` does. Only a scoped path reads as a package.
+                            && (record.kind != ImportKind::Url || name.starts_with(b"@"))
                             && strings::is_npm_package_name_ignore_length(name)
                         {
                             external_deps.insert(name)?;

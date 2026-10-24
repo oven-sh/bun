@@ -3343,6 +3343,45 @@ impl<'a> LinkerContext<'a> {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
+    /// The module-level `var require` of a CommonJS file, when this build gives it the value of
+    /// the wrapper parameter that it is in Node (`Ast::needs_require_parameter`).
+    pub(crate) fn require_parameter_ref(&self, source_index: crate::IndexInt) -> Option<Ref> {
+        if !self.graph.ast.items_flags()[source_index as usize]
+            .contains(AstFlags::NEEDS_REQUIRE_PARAMETER)
+        {
+            return None;
+        }
+        let targets = self.graph.ast.items_target();
+        // A browser has no `require`, and a script made for one reads the `var` to find that out.
+        if targets[source_index as usize] == Target::Browser {
+            return None;
+        }
+        match self.options.output_format {
+            Format::Cjs | Format::InternalBakeDev => {}
+            Format::Esm => {
+                // Every chunk prints the runtime `__require` part, and Node's imports `node:module`: a browser chunk would not load.
+                if self.options.target == Target::Node
+                    && self
+                        .graph
+                        .entry_points
+                        .items_source_index()
+                        .iter()
+                        .any(|&entry| targets[entry as usize] == Target::Browser)
+                {
+                    return None;
+                }
+            }
+            // The runtime's `__require` is not defined there.
+            Format::Iife => return None,
+        }
+        let scope = &self.graph.ast.items_module_scope()[source_index as usize];
+        Some(
+            self.graph
+                .symbols
+                .follow(scope.members.get(&b"require"[..])?.ref_),
+        )
+    }
+
     /// Note: returns `'static` so callers can hold the source across a
     /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
     /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
@@ -3530,6 +3569,20 @@ impl<'a> LinkerContext<'a> {
                             self.cjs_runtime_ref,
                             1,
                             crate::Index::RUNTIME,
+                        )
+                        .expect("unreachable");
+                }
+
+                // The wrapper passes the runtime's `__require` as the file's `require` parameter.
+                if self.options.output_format == Format::Esm
+                    && self.require_parameter_ref(source_index).is_some()
+                {
+                    self.graph
+                        .generate_runtime_symbol_import_and_use(
+                            source_index,
+                            crate::Index::part(part_index),
+                            b"__require",
+                            1,
                         )
                         .expect("unreachable");
                 }

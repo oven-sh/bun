@@ -1,5 +1,6 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { describe, expect, test } from "bun:test";
+import { readdirSync } from "fs";
+import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
 //
@@ -1233,6 +1234,510 @@ describe("bundler", () => {
     },
     run: {
       stdout: "function/undefined",
+    },
+  });
+
+  // ============================================================================
+  // `require`, `__dirname` and `__filename` are parameters of Node's module
+  // wrapper, as `exports` and `module` are. A module-level `var` of one of those
+  // names in a CommonJS file is that parameter: it starts with its value.
+  //
+  // Each file exports what Node and `bun run` give for it.
+  // ============================================================================
+
+  const wrapperParameterCases: Record<string, [source: string, exported: string]> = {
+    read_before_declaration: [
+      `const path = require("node:path"); var require = require; module.exports = typeof path.join + " " + typeof require;`,
+      "function function",
+    ],
+    declared_without_value: [
+      `var require; module.exports = typeof require + " " + typeof require("node:path").join;`,
+      "function function",
+    ],
+    typeof_only: [`var require; module.exports = typeof require;`, "function"],
+    properties: [
+      `var require; module.exports = typeof require.resolve + " " + typeof require.cache;`,
+      "function object",
+    ],
+    declared_in_a_block: [
+      `if (true) { var require = require; } module.exports = typeof require + " " + typeof require("node:path").join;`,
+      "function function",
+    ],
+    own_value_after_a_read: [
+      `var before = require; var require = function (id) { return "own:" + id; }; module.exports = typeof before + " " + require("id");`,
+      "function own:id",
+    ],
+    own_value_first: [`var require = function (id) { return "own:" + id; }; module.exports = require("id");`, "own:id"],
+    // The shape of requirejs `bin/r.js`.
+    assigned_in_a_closure: [
+      `var requirejs, require, define; (function () { var fs = require("fs"); var nodeRequire = require; require = undefined; requirejs = function (id) { return "rjs:" + id; }; if (!require) require = requirejs; module.exports = typeof fs.readFileSync + " " + typeof nodeRequire + " " + require("id"); })();`,
+      "function function rjs:id",
+    ],
+    // A direct eval keeps the name `require` for the `var`.
+    with_direct_eval: [
+      `var require; var before = eval("typeof require"); require = undefined; module.exports = before + " " + eval("typeof require");`,
+      "function undefined",
+    ],
+    read_only_by_direct_eval: [
+      `var require, __dirname; module.exports = eval("typeof require + ' ' + typeof __dirname");`,
+      "function string",
+    ],
+    function_then_var: [
+      `function require(id) { return "fn:" + id; } var require; module.exports = require("id");`,
+      "fn:id",
+    ],
+    var_then_function: [
+      `var require; function require(id) { return "fn:" + id; } module.exports = require("id");`,
+      "fn:id",
+    ],
+    strict_mode: [
+      `"use strict"; var require; var __filename; module.exports = typeof require + " " + typeof __filename;`,
+      "function string",
+    ],
+    all_five_names: [
+      `var require, __dirname, __filename, module, exports; module.exports = [typeof require, typeof __dirname, typeof __filename, typeof module, typeof exports].join(" ");`,
+      "function string string object object",
+    ],
+    dirname_and_filename: [
+      `var path = require("node:path"); var __dirname = __dirname; var __filename = __filename; module.exports = typeof __dirname + " " + path.basename(__filename) + " " + (path.dirname(__filename) === __dirname);`,
+      "string dirname_and_filename.cjs true",
+    ],
+    own_dirname: [
+      `var __dirname = "own"; var __filename; module.exports = __dirname + " " + typeof __filename;`,
+      "own string",
+    ],
+    function_named_dirname: [`function __dirname() {} var __dirname; module.exports = typeof __dirname;`, "function"],
+    arguments_object: [
+      `var require; module.exports = [arguments[0] === exports, arguments[1] === require, arguments[2] === module].join(" ");`,
+      "true true true",
+    ],
+    // Each module has its own `require`: the second file is not affected by the first.
+    one_module_writes: [
+      `var require; var keep = require; require = undefined; module.exports = typeof keep + " " + typeof require;`,
+      "function undefined",
+    ],
+    another_module_reads: [
+      `var require; module.exports = typeof require + " " + typeof require("node:path").join;`,
+      "function function",
+    ],
+  };
+  const wrapperParameterFiles = {
+    "/entry.cjs": Object.keys(wrapperParameterCases)
+      .map(name => `console.log("${name}:", require("./${name}.cjs"));`)
+      .join("\n"),
+    ...Object.fromEntries(Object.entries(wrapperParameterCases).map(([name, [source]]) => [`/${name}.cjs`, source])),
+  };
+  const wrapperParameterStdout = Object.entries(wrapperParameterCases)
+    .map(([name, [, exported]]) => `${name}: ${exported}`)
+    .join("\n");
+  const outfileFor = (format: "cjs" | "esm") => (format === "esm" ? "/out.mjs" : "/out.cjs");
+
+  for (const target of ["node", "bun"] as const) {
+    for (const format of ["cjs", "esm"] as const) {
+      itBundled(`cjs/wrapper_parameter_var_${target}_${format}`, {
+        files: wrapperParameterFiles,
+        target,
+        format,
+        outfile: outfileFor(format),
+        run: { stdout: wrapperParameterStdout },
+      });
+    }
+  }
+
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`cjs/wrapper_parameter_var_minified_${format}`, {
+      files: wrapperParameterFiles,
+      target: "node",
+      format,
+      outfile: outfileFor(format),
+      minifyIdentifiers: true,
+      minifySyntax: true,
+      minifyWhitespace: true,
+      run: { stdout: wrapperParameterStdout },
+    });
+  }
+
+  itBundled("cjs/wrapper_parameter_var_cli", {
+    backend: "cli",
+    files: wrapperParameterFiles,
+    target: "node",
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: { stdout: wrapperParameterStdout },
+  });
+
+  itBundled("cjs/wrapper_parameter_var_compile_bytecode", {
+    files: wrapperParameterFiles,
+    compile: true,
+    bytecode: true,
+    format: "cjs",
+    run: { stdout: wrapperParameterStdout },
+  });
+
+  // The file is the entry point. cjs output does not wrap it: it runs at the
+  // top level of the output file, and its `var` is that file's `require`.
+  for (const target of ["node", "bun"] as const) {
+    for (const format of ["cjs", "esm"] as const) {
+      itBundled(`cjs/wrapper_parameter_var_in_entry_point_${target}_${format}`, {
+        files: {
+          "/entry.cjs": /* js */ `
+            var require, __dirname;
+            console.log(typeof require, typeof require("node:path").join, typeof __dirname);
+            import("./other.cjs").then(other => console.log(other.default));
+          `,
+          "/other.cjs": /* js */ `module.exports = typeof require("node:fs").readFileSync;`,
+        },
+        target,
+        format,
+        outfile: outfileFor(format),
+        run: { stdout: "function function string\nfunction" },
+      });
+    }
+  }
+
+  // In cjs output every file reads the `require` of the output file. The entry
+  // point that is not wrapped writes to it through its `var`.
+  itBundled("cjs/wrapper_parameter_var_in_cjs_entry_point_is_the_output_files_require", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var require;
+        const load = require;
+        require = function (id) { return load(id === "an alias" ? "node:fs" : id); };
+        import("./other.cjs").then(other => console.log(other.default));
+      `,
+      "/other.cjs": /* js */ `
+        const id = "an alias";
+        module.exports = typeof require(id).readFileSync;
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: { stdout: "function" },
+  });
+
+  // A `.js` file with no package.json "type". The `var` that it reads is its
+  // only CommonJS feature.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`cjs/wrapper_parameter_var_is_the_only_commonjs_feature_${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./lib.js";
+          console.log(globalThis.seen);
+        `,
+        "/lib.js": /* js */ `
+          var require, __filename;
+          globalThis.seen = typeof require + " " + typeof require("node:path").join + " " + typeof __filename;
+        `,
+      },
+      target: "node",
+      format,
+      outfile: outfileFor(format),
+      run: { stdout: "function function string" },
+    });
+  }
+
+  // The `import` that the JSX transform adds does not make the file an ES module.
+  // `bun run` cannot run this file as CommonJS and leaves the `var` undefined:
+  // see test/cli/run/commonjs-no-export.test.ts.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`cjs/wrapper_parameter_var_in_file_with_jsx_${format}`, {
+      files: {
+        "/entry.jsx": /* js */ `
+          var require, __filename;
+          console.log(typeof require, typeof __filename, (<div />).type);
+        `,
+        "/node_modules/react/package.json": JSON.stringify({ name: "react", version: "0.0.0" }),
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          export function jsxDEV(type) { return { type }; }
+        `,
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          export function jsx(type) { return { type }; }
+        `,
+      },
+      target: "node",
+      format,
+      outfile: outfileFor(format),
+      run: { stdout: "function string div" },
+    });
+  }
+
+  // esm output gives the exports of this file to its importer directly and does
+  // not wrap the file. The `var` starts with the `require` of the output file.
+  for (const target of ["node", "bun"] as const) {
+    for (const format of ["cjs", "esm"] as const) {
+      itBundled(`cjs/wrapper_parameter_var_in_file_with_named_exports_${target}_${format}`, {
+        files: {
+          "/entry.mjs": /* js */ `
+            import { seen } from "./lib.js";
+            console.log(seen);
+          `,
+          "/lib.js": /* js */ `
+            var require, __dirname;
+            exports.seen = [typeof require, typeof require("node:path").join, typeof __dirname].join(" ");
+          `,
+        },
+        target,
+        format,
+        outfile: outfileFor(format),
+        run: { stdout: "function function string" },
+      });
+    }
+  }
+
+  // A file this long is printed as two ranges of statements. The `var` gets its
+  // value once, before the first of them.
+  itBundled("cjs/wrapper_parameter_var_in_long_file_with_named_exports", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { first, second } from "./lib.js";
+        console.log(first, second);
+      `,
+      "/lib.js": Buffer.concat([
+        Buffer.from(`var require;\nexports.first = typeof require("node:path").join;\n/*`),
+        Buffer.alloc(130 * 1024, "-"),
+        Buffer.from(`*/\nexports.second = typeof require("node:fs").readFileSync;\n`),
+      ]),
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.mjs").match(/^var \w+ = __require;$/gm)).toHaveLength(1);
+    },
+    run: { stdout: "function function" },
+  });
+
+  // The only statement that reads the `var` is the value of an export that
+  // nothing imports, so the output has neither of them and takes no `require`.
+  itBundled("cjs/wrapper_parameter_var_read_only_by_unused_export", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { used } from "./lib.js";
+        console.log(used);
+      `,
+      "/lib.js": /* js */ `
+        var require;
+        exports.used = "used";
+        exports.unused = typeof require;
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("require");
+    },
+    run: { stdout: "used" },
+  });
+
+  // With --splitting the file has its own chunk, which imports the runtime's
+  // `__require` from the chunk that holds the runtime.
+  itBundled("cjs/wrapper_parameter_var_splitting", {
+    files: {
+      "/entry.js": /* js */ `
+        const { default: seen } = await import("./lib.cjs");
+        console.log(seen);
+      `,
+      "/lib.cjs": /* js */ `
+        var require;
+        module.exports = typeof require + " " + typeof require("node:path").join;
+      `,
+    },
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    run: { stdout: "function function" },
+  });
+
+  // A call through the `var` is not bundled: it is a call of the output file's
+  // `require` at run time.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled(`cjs/wrapper_parameter_var_call_loads_at_run_time_${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import loaded from "./lib.cjs";
+          console.log(loaded);
+        `,
+        "/lib.cjs": /* js */ `
+          var require;
+          module.exports = require("./at-run-time.cjs");
+        `,
+      },
+      runtimeFiles: {
+        "/at-run-time.cjs": /* js */ `module.exports = "loaded at run time";`,
+      },
+      target: "node",
+      format,
+      outfile: outfileFor(format),
+      run: { stdout: "loaded at run time" },
+    });
+  }
+
+  // An ES module has no wrapper, so the `var` is a new variable there. One
+  // file is an ES module by its extension, the other by its syntax.
+  itBundled("cjs/wrapper_parameter_var_in_es_module", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./by-extension.mjs";
+        import { bySyntax } from "./by-syntax.js";
+        console.log(globalThis.byExtension, bySyntax);
+      `,
+      "/by-extension.mjs": /* js */ `
+        var require, __dirname, __filename;
+        globalThis.byExtension = [typeof require, typeof __dirname, typeof __filename].join(" ");
+      `,
+      "/by-syntax.js": /* js */ `
+        var require, __dirname, __filename;
+        export const bySyntax = [typeof require, typeof __dirname, typeof __filename].join(" ");
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: { stdout: "undefined undefined undefined undefined undefined undefined" },
+  });
+
+  // No file reads a parameter: the first never reads its variables, the
+  // others give them their own values first. A function that names the `var`
+  // it is the value of reads it when it is called. The output takes nothing
+  // for them.
+  itBundled("cjs/wrapper_parameter_var_that_reads_no_parameter", {
+    files: {
+      "/entry.cjs": /* js */ `
+        console.log(require("./never-read.cjs"), require("./own-values.cjs"), require("./own-function.cjs"));
+      `,
+      "/never-read.cjs": /* js */ `var require, __dirname, __filename; module.exports = "never read";`,
+      "/own-values.cjs": /* js */ `
+        var require = function (id) { return "own:" + id; }, __dirname = "own";
+        module.exports = require("id") + " " + __dirname;
+      `,
+      "/own-function.cjs": /* js */ `
+        var require = function (id) { return require.prefix + id; };
+        require.prefix = "function:";
+        module.exports = require("id");
+      `,
+    },
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.mjs");
+      expect(out).not.toContain("__require");
+      expect(out).not.toContain("node:module");
+      expect(out).not.toContain(api.root);
+      expect(out).not.toMatch(/^\s*\(function\(/m);
+    },
+    run: { stdout: "never read own:id own function:id" },
+  });
+
+  // The output calls `require("node:fs")` for `module.require("node:fs")`. The
+  // file's own `var require` does not take that name.
+  itBundled("cjs/wrapper_parameter_var_leaves_the_name_require", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var require = function (id) { return "own:" + id; };
+        console.log(typeof module.require("node:fs").readFileSync, require("id"));
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: { stdout: "function own:id" },
+  });
+
+  // Transpile-only output runs in a module wrapper that is not in the output,
+  // so the `var` stays as written and gets no value.
+  test("cjs/wrapper_parameter_var_transpile_only", () => {
+    const source =
+      "var require = require, __dirname = __dirname, __filename = __filename;\n" +
+      "console.log(require, __dirname, __filename);\n";
+    expect(new Bun.Transpiler({ loader: "js" }).transformSync(source)).toBe(source);
+  });
+
+  // A browser has no `require`, and a script made for one reads the `var` to
+  // find that out.
+  itBundled("cjs/wrapper_parameter_var_target_browser", {
+    files: {
+      "/entry.js": /* js */ `
+        import seen from "./lib.cjs";
+        console.log(seen);
+      `,
+      "/lib.cjs": /* js */ `var require; module.exports = typeof require;`,
+    },
+    target: "browser",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("__require");
+    },
+    run: { stdout: "undefined" },
+  });
+
+  // iife output has no `require` to give.
+  itBundled("cjs/wrapper_parameter_var_format_iife", {
+    files: {
+      "/entry.js": /* js */ `
+        import seen from "./lib.cjs";
+        console.log(seen);
+      `,
+      "/lib.cjs": /* js */ `var require; module.exports = typeof require;`,
+    },
+    target: "node",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__require");
+    },
+    run: { stdout: "undefined" },
+  });
+
+  // A server build bundles the scripts of an imported HTML file for the
+  // browser. Only the server's copy of the file gets a `require`.
+  const htmlImportFiles = {
+    "/server.js": /* js */ `
+      import page from "./index.html";
+      import seen from "./lib.cjs";
+      console.log(seen, typeof page.index);
+    `,
+    "/index.html": /* html */ `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+    "/client.js": /* js */ `
+      import seen from "./lib.cjs";
+      console.log(seen);
+    `,
+    "/lib.cjs": /* js */ `var require; module.exports = typeof require;`,
+  };
+  const jsChunks = (api: BundlerTestBundleAPI) => readdirSync(api.outdir).filter(name => name.endsWith(".js"));
+  const takesRequire = (api: BundlerTestBundleAPI, name: string) =>
+    /^\s*\(function\(/m.test(api.readFile("/out/" + name));
+
+  itBundled("cjs/wrapper_parameter_var_in_server_and_browser_chunk", {
+    files: htmlImportFiles,
+    entryPoints: ["/server.js"],
+    outdir: "/out",
+    target: "bun",
+    onAfterBundle(api) {
+      const chunks = jsChunks(api);
+      expect(chunks).toHaveLength(2);
+      expect(chunks.filter(name => takesRequire(api, name))).toEqual(["server.js"]);
+    },
+    run: { stdout: "function string" },
+  });
+
+  // Node's `__require` imports `node:module`, and each chunk prints every live
+  // part of the runtime. The browser chunk must still load, so nothing changes.
+  itBundled("cjs/wrapper_parameter_var_node_build_with_html_import", {
+    files: htmlImportFiles,
+    entryPoints: ["/server.js"],
+    outdir: "/out",
+    target: "node",
+    format: "esm",
+    onAfterBundle(api) {
+      const chunks = jsChunks(api);
+      expect(chunks).toHaveLength(2);
+      for (const name of chunks) {
+        expect(takesRequire(api, name)).toBe(false);
+        api.expectFile("/out/" + name).not.toContain("node:module");
+      }
     },
   });
 });

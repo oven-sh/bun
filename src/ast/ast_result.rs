@@ -33,6 +33,9 @@ pub struct Ast<'a> {
     pub uses_exports_ref: bool,
     pub uses_module_ref: bool,
     pub uses_require_ref: bool,
+    /// A CommonJS file reads its own module-level `var require` before it gives it a value.
+    /// That `var` is the `require` parameter of the module wrapper, so a bundle has to pass it in.
+    pub needs_require_parameter: bool,
     pub commonjs_module_exports_assigned_deoptimized: bool,
 
     pub force_cjs_to_esm: bool,
@@ -116,6 +119,7 @@ impl<'a> Ast<'a> {
             uses_exports_ref: false,
             uses_module_ref: false,
             uses_require_ref: false,
+            needs_require_parameter: false,
             commonjs_module_exports_assigned_deoptimized: false,
             force_cjs_to_esm: false,
             commonjs_lifted_to_esm: false,

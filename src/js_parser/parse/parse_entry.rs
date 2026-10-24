@@ -759,6 +759,7 @@ impl<'a> Parser<'a> {
             exports_kind,
             WrapMode::None,
             b"",
+            false,
         )?))
     }
 }
@@ -1259,10 +1260,8 @@ impl<'a> Parser<'a> {
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
         let _postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
 
-        let mut uses_dirname =
-            p.symbols.as_slice()[p.dirname_ref.inner_index() as usize].use_count_estimate > 0;
-        let mut uses_filename =
-            p.symbols.as_slice()[p.filename_ref.inner_index() as usize].use_count_estimate > 0;
+        let mut uses_dirname = p.reads_common_js_parameter(p.dirname_ref, parts.as_slice());
+        let mut uses_filename = p.reads_common_js_parameter(p.filename_ref, parts.as_slice());
 
         // Handle dirname and filename at bundle-time
         // We always inject it at the top of the module
@@ -1894,6 +1893,7 @@ impl<'a> Parser<'a> {
 
         let uses_module_ref =
             p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate > 0;
+        let reads_require = p.reads_common_js_parameter(p.require_ref, parts.as_slice());
 
         let mut wrap_mode: WrapMode = WrapMode::None;
         // Checked after `to_ast`, which marks TypeScript type-only imports unused.
@@ -1961,9 +1961,7 @@ impl<'a> Parser<'a> {
                     }
                     // Otherwise, if they use CommonJS features its CommonJS.
                     // If you add a 'use strict'; at the top, you probably meant CommonJS because "use strict"; does nothing in ESM.
-                    else if p.symbols.as_slice()[p.require_ref.inner_index() as usize]
-                        .use_count_estimate
-                        > 0
+                    else if reads_require
                         || uses_dirname
                         || uses_filename
                         || (!p.options.bundle
@@ -2270,7 +2268,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if p.has_called_runtime {
+        if p.imports_runtime_helpers() {
             let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =
                 [0; RuntimeImports::ALL.len()];
             let mut iter = p.runtime_imports.iter();
@@ -2309,10 +2307,7 @@ impl<'a> Parser<'a> {
         }
 
         // handle new way to do automatic JSX imports which fixes symbol collision issues
-        if p.options.jsx.parse
-            && p.options.features.auto_import_jsx
-            && p.options.jsx.runtime == options::JSX::Runtime::Automatic
-        {
+        if p.imports_jsx_runtime() {
             // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
             // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
             // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
@@ -2488,7 +2483,18 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        // The wrapper of a bundled CommonJS file has no `require` parameter for a `var require` to be.
+        let needs_require_parameter = p.options.bundle
+            && reads_require
+            && p.symbols.as_slice()[p.require_ref.inner_index() as usize].kind
+                == js_ast::symbol::Kind::Hoisted;
+        let ast = p.to_ast(
+            &mut parts,
+            exports_kind,
+            wrap_mode,
+            hashbang,
+            needs_require_parameter,
+        )?;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

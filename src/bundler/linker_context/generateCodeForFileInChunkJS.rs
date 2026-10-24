@@ -78,6 +78,36 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
+            // "var require = hmr.cjs.require;": the file's own `var require` holds the
+            // `require` of its module object, which only a CommonJS module has.
+            if ast.exports_kind != bun_ast::ExportsKind::Esm
+                && let Some(require_ref) = c.require_parameter_ref(source_index as u32)
+            {
+                let property = |target: Expr, name: &'static [u8]| {
+                    Expr::init(
+                        E::Dot {
+                            target,
+                            name: name.into(),
+                            name_loc: bun_ast::Loc::EMPTY,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    )
+                };
+                let module_object = property(
+                    Expr::init_identifier(hmr_api_ref, bun_ast::Loc::EMPTY),
+                    b"cjs",
+                );
+                stmts
+                    .inside_wrapper_prefix
+                    .append_non_dependency(var_require_stmt(
+                        temp_arena,
+                        require_ref,
+                        property(module_object, b"require"),
+                    ))
+                    .expect("unreachable");
+            }
+
             // SAFETY: see `parts` raw-pointer note above.
             for part in unsafe { (*parts).iter() } {
                 let part_stmts: &[Stmt] = part.stmts.slice();
@@ -279,6 +309,39 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // reallocate after `tree_shaking_and_code_splitting` initializes it.
     let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
         bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
+
+    // "var require2 = __require;": a file that esm output does not wrap has no function of
+    // its own to take a `require` parameter. The statement goes into the first range of the
+    // file's parts that is printed, when a part that declares the `var` is printed at all.
+    let first_part_index = namespace_export_part_index + 1;
+    if flags.wrap == WrapKind::None
+        && output_format == OutputFormat::Esm
+        && part_range.part_index_end > first_part_index
+        && let Some(require_ref) = c.require_parameter_ref(source_index as u32)
+        && c.graph
+            .top_level_symbol_to_parts(source_index as u32, require_ref)
+            .iter()
+            .any(|&part_index| parts_live.is_set(part_index as usize))
+        && !(first_part_index..part_range.part_index_begin).any(|part_index| {
+            parts_live.is_set(part_index as usize)
+                && c.should_include_part(
+                    source_index as u32,
+                    &c.graph.ast.items_parts()[source_index].as_slice()[part_index as usize],
+                )
+        })
+    {
+        stmts
+            .inside_wrapper_prefix
+            .append_non_dependency(var_require_stmt(
+                temp_arena,
+                require_ref,
+                Expr {
+                    data: ExprData::ERequireCallTarget,
+                    loc: bun_ast::Loc::EMPTY,
+                },
+            ))
+            .expect("unreachable");
+    }
 
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
@@ -586,7 +649,67 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 // TODO: variants of the runtime functions
-                let body_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+                let mut body_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+
+                // The file's own `var require` is the `require` parameter of Node's wrapper.
+                // The body runs in a function that has that parameter, between `exports` and
+                // `module` as in Node. The value is read out here, where the `var` is not in scope:
+                //
+                //   function(exports, module) {
+                //     (function(exports, require, module) { ... })(exports, require, module);
+                //   }
+                if let Some(require_ref) = c.require_parameter_ref(source_index as u32) {
+                    debug_assert!(
+                        ast.flags
+                            .contains(AstFlags::USES_EXPORTS_REF | AstFlags::USES_MODULE_REF)
+                    );
+                    let parameters = [ast.exports_ref, require_ref, ast.module_ref];
+                    let mut inner_args: bun_alloc::ArenaVec<'_, G::Arg> =
+                        bun_alloc::ArenaVec::with_capacity_in(parameters.len(), temp_arena);
+                    for r#ref in parameters {
+                        inner_args.push(G::Arg {
+                            binding: Binding::alloc(
+                                temp_arena,
+                                B::Identifier { r#ref },
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            ..Default::default()
+                        });
+                    }
+                    let call = Expr::init(
+                        E::Call {
+                            target: Expr::init(
+                                E::Function {
+                                    func: G::Fn {
+                                        args: bun_ast::StoreSlice::new(
+                                            inner_args.into_bump_slice(),
+                                        ),
+                                        body: G::FnBody {
+                                            stmts: body_stmts,
+                                            loc: bun_ast::Loc::EMPTY,
+                                        },
+                                        ..Default::default()
+                                    },
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            args: Vec::move_from_list(Vec::<Expr>::from_slice(&[
+                                Expr::init_identifier(ast.exports_ref, bun_ast::Loc::EMPTY),
+                                Expr {
+                                    data: ExprData::ERequireCallTarget,
+                                    loc: bun_ast::Loc::EMPTY,
+                                },
+                                Expr::init_identifier(ast.module_ref, bun_ast::Loc::EMPTY),
+                            ])),
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
+                    body_stmts = bun_ast::StoreSlice::new_mut(
+                        temp_arena.alloc_slice_copy(&[Stmt::allocate_expr(temp_arena, call)]),
+                    );
+                }
+
                 // The wrapper must be a regular function, not an arrow, so that a
                 // top-level `arguments` reference in the CommonJS body binds to the
                 // wrapper's own `arguments` object (Node and esbuild both allow it).
@@ -991,6 +1114,24 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         part_range.source_index,
         source,
         module_info,
+    )
+}
+
+/// `var require = <value>;` for the file's own `var require` (`LinkerContext::require_parameter_ref`).
+fn var_require_stmt(arena: &Bump, require_ref: Ref, value: Expr) -> Stmt {
+    Stmt::alloc(
+        S::Local {
+            decls: G::DeclList::from_slice(&[G::Decl {
+                binding: Binding::alloc(
+                    arena,
+                    B::Identifier { r#ref: require_ref },
+                    bun_ast::Loc::EMPTY,
+                ),
+                value: Some(value),
+            }]),
+            ..Default::default()
+        },
+        bun_ast::Loc::EMPTY,
     )
 }
 

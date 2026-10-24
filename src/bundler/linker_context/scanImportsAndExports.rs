@@ -614,6 +614,11 @@ pub(crate) fn scan_imports_and_exports(
                     unsafe { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
                     // SAFETY: same as above; `module_ref` is a distinct slot.
                     unsafe { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
+                    // The file's own `var require` is the `require` of the output file, too.
+                    if let Some(require_ref) = this.require_parameter_ref(source_index_.get()) {
+                        // SAFETY: same as above; `require_ref` is a distinct slot.
+                        unsafe { this.graph.symbol_mut(require_ref) }.kind = SymbolKind::Unbound;
+                    }
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
                 {
@@ -633,6 +638,30 @@ pub(crate) fn scan_imports_and_exports(
                         SymbolKind::Other,
                         b"value",
                     );
+                }
+
+                if flag.wrap != WrapKind::Esm
+                    && let Some(require_ref) = this.require_parameter_ref(source_index_.get())
+                {
+                    if flag.wrap == WrapKind::Cjs {
+                        // The wrapper passes both on to the function that takes `require`.
+                        col!(ast_flags_list)[source_index]
+                            .insert(AstFlags::USES_EXPORTS_REF | AstFlags::USES_MODULE_REF);
+                    } else if output_format == Format::Esm {
+                        // "var require2 = __require;" is printed with the parts that declare the `var`.
+                        let declarations = this
+                            .graph
+                            .top_level_symbol_to_parts(source_index_.get(), require_ref)
+                            .to_vec();
+                        for part_index in declarations {
+                            this.graph.generate_runtime_symbol_import_and_use(
+                                source_index_.get(),
+                                Index::part(part_index),
+                                b"__require",
+                                1,
+                            )?;
+                        }
+                    }
                 }
 
                 let wrapped_ref = col_ref!(wrapper_refs)[source_index];

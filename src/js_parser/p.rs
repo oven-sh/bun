@@ -3344,12 +3344,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.module_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"module")?;
 
-        self.require_ref =
-            self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"require")?;
-        self.dirname_ref =
-            self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__dirname")?;
-        self.filename_ref =
-            self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__filename")?;
+        self.require_ref = self.declare_common_js_parameter(b"require")?;
+        self.dirname_ref = self.declare_common_js_parameter(b"__dirname")?;
+        self.filename_ref = self.declare_common_js_parameter(b"__filename")?;
 
         if self.options.features.inject_jest_globals {
             self.jest.test =
@@ -4880,13 +4877,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// - Both sides `Hoisted` and the file has no ESM syntax: not a collision
     ///   (`var exports` inside the CJS wrapper merges with the `exports`
     ///   argument). Returns the user's existing ref.
-    /// - Otherwise: returns a fresh ref appended to `module_scope.generated`
-    ///   (so generated code referencing it still gets a renamer-unique name)
-    ///   and leaves the user's member entry untouched.
+    /// - Otherwise: appends a fresh ref to `module_scope.generated` (so generated
+    ///   code referencing it still gets a renamer-unique name) and leaves the
+    ///   user's member entry untouched. Returns the fresh ref, except that
+    ///   [`Self::declare_common_js_parameter`] returns the user's existing ref
+    ///   for a module-level `var` of a CommonJS file, which is that parameter.
     ///
     /// Callers that only want to emit when the ambient was actually reached check
     /// `symbols[ref].use_count_estimate > 0` after visit: a fresh shadowed ref
-    /// is never recorded by `find_symbol`, so the count stays 0.
+    /// is never recorded by `find_symbol`, so the count stays 0. For a wrapper
+    /// parameter they ask [`Self::reads_common_js_parameter`], because a merged
+    /// `var` also counts the uses of a value the file gave it.
     ///
     /// Named for its original CJS-wrapper callers. For parser-generated symbols
     /// consumed BY REF (never via `find_symbol`), use
@@ -4895,6 +4896,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         kind: js_ast::symbol::Kind,
         name: &'static [u8],
+    ) -> Result<Ref, crate::Error> {
+        self.declare_ambient_symbol(kind, name, false)
+    }
+
+    /// `require`, `__dirname` or `__filename`. Node's module wrapper binds them as
+    /// parameters, as it does `exports` and `module`, so `var require;` at module
+    /// level of a CommonJS file declares no new variable.
+    fn declare_common_js_parameter(&mut self, name: &'static [u8]) -> Result<Ref, crate::Error> {
+        self.declare_ambient_symbol(js_ast::symbol::Kind::Unbound, name, true)
+    }
+
+    /// Whether the module-level `var` behind `var_ref` starts with the value of
+    /// the wrapper parameter it is named after.
+    fn var_is_common_js_parameter(&self, var_ref: Ref) -> bool {
+        if self.options.module_type == options::ModuleType::Esm {
+            return false;
+        }
+        // Transpile-only output is printed as written, for the wrapper that will run it.
+        if !self.options.bundle && !self.options.features.commonjs_at_runtime {
+            return false;
+        }
+        // `function require() {} var require;` holds the function from the start.
+        !(self.has_top_level_function_merged_with_var
+            && self.symbols.iter().any(|symbol| {
+                symbol.kind.is_function()
+                    && symbol.has_link()
+                    && js_ast::symbol::follow_symbols(&self.symbols, symbol.link.get()) == var_ref
+            }))
+    }
+
+    fn declare_ambient_symbol(
+        &mut self,
+        kind: js_ast::symbol::Kind,
+        name: &'static [u8],
+        is_wrapper_parameter: bool,
     ) -> Result<Ref, crate::Error> {
         let name_hash = Scope::get_member_hash(name);
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; shared
@@ -4933,7 +4969,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Create a new symbol if we didn't merge with an existing one above
         let ref_ = self.new_symbol(kind, name);
 
-        if member.is_none() {
+        let Some(member) = member else {
             // SAFETY: `name` is `'static`.
             unsafe {
                 self.module_scope_mut().members.put(
@@ -4945,14 +4981,97 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             };
             return Ok(ref_);
-        }
+        };
 
         // If the variable was declared, then it shadows this symbol. The code in
         // this module will be unable to reference this symbol. However, we must
         // still add the symbol to the scope so it gets minified (automatically-
         // generated code may still reference the symbol).
         VecExt::append(&mut self.module_scope_mut().generated, ref_);
+
+        // A `var` does not shadow a wrapper parameter: it is the parameter, as
+        // "var exports" is above. The new symbol still keeps the name from the `var`,
+        // because generated code names the wrapper's own value with it.
+        if is_wrapper_parameter
+            && self.symbols[member.ref_.inner_index() as usize].kind
+                == js_ast::symbol::Kind::Hoisted
+            && !self.has_es_module_syntax
+            && self.var_is_common_js_parameter(member.ref_)
+        {
+            return Ok(member.ref_);
+        }
         Ok(ref_)
+    }
+
+    /// Whether the file, after the visit, calls a runtime helper. `_parse` then
+    /// adds the `import` statement of the helpers.
+    pub(crate) fn imports_runtime_helpers(&self) -> bool {
+        self.has_called_runtime && self.runtime_imports.iter().next().is_some()
+    }
+
+    /// Whether the file, after the visit, has JSX that calls the automatic runtime.
+    /// `_parse` then adds the `import` statement of that runtime.
+    pub(crate) fn imports_jsx_runtime(&self) -> bool {
+        let jsx = &self.jsx_imports;
+        self.options.jsx.parse
+            && self.options.features.auto_import_jsx
+            && self.options.jsx.runtime == options::JSX::Runtime::Automatic
+            && (jsx.jsx.is_some()
+                || jsx.jsx_dev.is_some()
+                || jsx.jsxs.is_some()
+                || jsx.fragment.is_some()
+                || jsx.create_element.is_some())
+    }
+
+    /// Whether the file reads the value that the CommonJS wrapper passes for
+    /// `ref_`: `require_ref`, `dirname_ref` or `filename_ref`, after the visit.
+    ///
+    /// Each use of the unbound name reads it. A module-level `var` of the name
+    /// is the parameter too, until the file gives the `var` its own value: a
+    /// file whose first statement to name it is `var require = ...` reads none.
+    pub(crate) fn reads_common_js_parameter(&self, ref_: Ref, parts: &[js_ast::Part]) -> bool {
+        let symbol = &self.symbols[ref_.inner_index() as usize];
+        if symbol.kind != js_ast::symbol::Kind::Hoisted {
+            return symbol.use_count_estimate > 0;
+        }
+        // A direct eval can read a `var` that no code names.
+        if symbol.use_count_estimate == 0 && !self.module_scope().contains_direct_eval {
+            return false;
+        }
+        // The runtime's wrapper function cannot hold an `import` statement, so the `var`
+        // does not make a file CommonJS when the parser adds one.
+        if !self.options.bundle && (self.imports_runtime_helpers() || self.imports_jsx_runtime()) {
+            return false;
+        }
+        // One part holds the whole file when tree shaking is off: its uses have no order.
+        if !self.options.tree_shaking || self.will_wrap_module_in_try_catch_for_using {
+            return true;
+        }
+        for part in parts {
+            let uses = part.symbol_uses.contains_key(&ref_);
+            let own_value = part.stmts.slice().iter().find_map(|stmt| match &stmt.data {
+                js_ast::StmtData::SLocal(local) => local.decls.slice().iter().find_map(|decl| {
+                    matches!(decl.binding.data, js_ast::b::B::BIdentifier(id)
+                        if js_ast::symbol::follow_symbols(&self.symbols, id.r#ref) == ref_)
+                    .then_some(decl.value)
+                    .flatten()
+                }),
+                _ => None,
+            });
+            match own_value {
+                // A function that names the `var` reads it when it is called.
+                Some(value) => {
+                    return uses
+                        && !matches!(
+                            value.data,
+                            js_ast::ExprData::EFunction(_) | js_ast::ExprData::EArrow(_)
+                        );
+                }
+                None if uses => return true,
+                None => {}
+            }
+        }
+        true
     }
 
     /// Hashed generated-symbol name; arena-owned for symbol lifetime.
@@ -8811,6 +8930,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
+        needs_require_parameter: bool,
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
@@ -9317,7 +9437,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .use_count_estimate
                     > 0
         } else {
-            self.symbols[self.require_ref.inner_index() as usize].use_count_estimate > 0
+            // A module-level `var require` is the wrapper's parameter, not the unbound name.
+            let require = &self.symbols[self.require_ref.inner_index() as usize];
+            require.use_count_estimate > 0 && require.kind == js_ast::symbol::Kind::Unbound
         };
 
         // Move the
@@ -9382,6 +9504,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             uses_module_ref,
             uses_exports_ref,
             uses_require_ref,
+            needs_require_parameter,
             commonjs_module_exports_assigned_deoptimized: self
                 .commonjs_module_exports_assigned_deoptimized,
             top_level_await_keyword: self.top_level_await_keyword,

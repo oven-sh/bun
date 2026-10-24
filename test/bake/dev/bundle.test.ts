@@ -1565,6 +1565,47 @@ devTest("require() of a built-in module in server code returns what require() re
     });
   },
 });
+// A module-level `var require` in a CommonJS file is the `require` parameter of Node's module
+// wrapper. In server code it holds the `require` of the file's module object.
+devTest("a CommonJS file's own var require is its module's require in server code", {
+  framework: minimalFramework,
+  files: {
+    "node_modules/cjsdep/package.json": JSON.stringify({ name: "cjsdep", main: "index.js" }),
+    "node_modules/cjsdep/index.js": `
+      var require;
+      module.exports = typeof require + ":" + (require === module.require);
+    `,
+    "routes/index.ts": `
+      import seen from "cjsdep";
+      export default function () {
+        return new Response(seen);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("function:true");
+  },
+});
+// A browser has no `require`, and a script made for one reads the `var` to find that out.
+devTest("a CommonJS file's own var require is undefined in client code", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import seen from "./cjs.js";
+      console.log(seen);
+    `,
+    "cjs.js": `
+      var require;
+      module.exports = typeof require;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("undefined");
+  },
+});
 devTest("a route whose import throws on load throws that error again on the next request", {
   framework: minimalFramework,
   files: {

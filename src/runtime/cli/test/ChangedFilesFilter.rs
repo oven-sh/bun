@@ -303,6 +303,8 @@ pub(crate) fn filter<'a>(
     // `'static` borrow), so its Drop never runs either; free its heap-backed
     // options through the borrow `bundle` still holds.
     bundle.deinit_without_freeing_arena();
+    // The scan log is in the CLI arena as well, and it owns every message that the scan logged.
+    drop(core::mem::take(bundle.transpiler.log_mut()));
     // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
     // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
     unsafe { bundle.transpiler.deinit() };

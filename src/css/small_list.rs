@@ -134,14 +134,20 @@ pub(crate) mod fallbacks_gated {
         ) {
             if pfs.contains(css::VendorPrefix::from_name_str(prefix)) {
                 let mut images = SmallList::<T, 1>::init_capacity(pfi.len());
+                let mut has_prefix = false;
                 for i in 0..pfi.len() {
                     let in_ = pfi.at(i);
+                    // A layer that the syntax of the prefix cannot express stays as it is.
                     let image = in_
                         .get_image()
-                        .get_prefixed(alloc, css::VendorPrefix::from_name_str(prefix));
+                        .get_prefixed(alloc, css::VendorPrefix::from_name_str(prefix))
+                        .unwrap_or_else(|| in_.get_image().deep_clone(alloc));
+                    has_prefix |= image.has_vendor_prefix();
                     images.append(in_.with_image(alloc, image));
                 }
-                r.push(images);
+                if has_prefix {
+                    r.push(images);
+                }
             }
         }
 

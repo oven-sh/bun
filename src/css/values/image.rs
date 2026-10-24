@@ -46,6 +46,14 @@ impl Image {
                     css::Feature::RepeatingRadialGradient.is_compatible(browsers)
                         && repeating_radial.is_compatible(browsers)
                 }
+                Gradient::PrefixedRadial(radial) => {
+                    css::Feature::RadialGradient.is_compatible(browsers)
+                        && radial.is_compatible(browsers)
+                }
+                Gradient::RepeatingPrefixedRadial(repeating_radial) => {
+                    css::Feature::RepeatingRadialGradient.is_compatible(browsers)
+                        && repeating_radial.is_compatible(browsers)
+                }
                 Gradient::Conic(conic) => {
                     css::Feature::ConicGradient.is_compatible(browsers)
                         && conic.is_compatible(browsers)
@@ -61,12 +69,13 @@ impl Image {
         }
     }
 
-    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
-        match self {
-            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
+    /// Returns `None` when the syntax of `prefix` cannot express the image.
+    pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Option<Image> {
+        Some(match self {
+            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix)?)),
             Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
             _ => self.deep_clone(arena),
-        }
+        })
     }
 
     pub(crate) fn get_necessary_prefixes(
@@ -176,16 +185,12 @@ impl Image {
         }
 
         // Standard syntax, with prefixes.
-        if prefixes.contains(VendorPrefix::WEBKIT) {
-            res.append(prefix_image.get_prefixed(arena, css::VendorPrefix::WEBKIT));
-        }
-
-        if prefixes.contains(VendorPrefix::MOZ) {
-            res.append(prefix_image.get_prefixed(arena, css::VendorPrefix::MOZ));
-        }
-
-        if prefixes.contains(VendorPrefix::O) {
-            res.append(prefix_image.get_prefixed(arena, css::VendorPrefix::O));
+        for prefix in [VendorPrefix::WEBKIT, VendorPrefix::MOZ, VendorPrefix::O] {
+            if prefixes.contains(prefix) {
+                if let Some(prefixed) = prefix_image.get_prefixed(arena, prefix) {
+                    res.append(prefixed);
+                }
+            }
         }
 
         if prefixes.contains(VendorPrefix::NONE) {

@@ -464,11 +464,13 @@ mod inherent_bridge {
     // `#[derive(css::DeepClone)]` on `Gradient` / `WebKitGradient` (UFCS trait
     // dispatch) resolves.
     use crate::values::gradient::{
-        ConicGradient, LinearGradient, RadialGradient, WebKitGradientLinear, WebKitGradientRadial,
+        ConicGradient, LinearGradient, PrefixedRadialGradient, RadialGradient,
+        WebKitGradientLinear, WebKitGradientRadial,
     };
     bridge_deep_clone!(
         LinearGradient,
         RadialGradient,
+        PrefixedRadialGradient,
         ConicGradient,
         WebKitGradientLinear,
         WebKitGradientRadial

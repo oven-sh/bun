@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_parser::{CssResult as Result, Parser, Token};
+use crate::css_parser::{CssResult as Result, Parser, ParserError, Token};
 use crate::generics::{CssEql as _, DeepClone as _};
 use crate::values::angle::{Angle, AnglePercentage};
 use crate::values::color::{ColorFallbackKind, CssColor};
@@ -99,10 +99,14 @@ pub enum Gradient {
     Linear(LinearGradient),
     /// A `repeating-linear-gradient()`, and its vendor prefix.
     RepeatingLinear(LinearGradient),
-    /// A `radial-gradient()`, and its vendor prefix.
+    /// A `radial-gradient()`.
     Radial(RadialGradient),
-    /// A `repeating-radial-gradient`, and its vendor prefix.
+    /// A `repeating-radial-gradient()`.
     RepeatingRadial(RadialGradient),
+    /// A `radial-gradient()` with a vendor prefix.
+    PrefixedRadial(PrefixedRadialGradient),
+    /// A `repeating-radial-gradient()` with a vendor prefix.
+    RepeatingPrefixedRadial(PrefixedRadialGradient),
     /// A `conic-gradient()`.
     Conic(ConicGradient),
     /// A `repeating-conic-gradient()`.
@@ -119,22 +123,22 @@ impl Gradient {
             crate::match_ignore_ascii_case! { func, {
                 b"linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::NONE)?)),
                 b"repeating-linear-gradient" => Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::NONE)?)),
-                b"radial-gradient" => Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::NONE)?)),
-                b"repeating-radial-gradient" => Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::NONE)?)),
+                b"radial-gradient" => Ok(Gradient::Radial(RadialGradient::parse(input_)?)),
+                b"repeating-radial-gradient" => Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_)?)),
                 b"conic-gradient" => Ok(Gradient::Conic(ConicGradient::parse(input_)?)),
                 b"repeating-conic-gradient" => Ok(Gradient::RepeatingConic(ConicGradient::parse(input_)?)),
                 b"-webkit-linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::WEBKIT)?)),
                 b"-webkit-repeating-linear-gradient" => Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::WEBKIT)?)),
-                b"-webkit-radial-gradient" => Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::WEBKIT)?)),
-                b"-webkit-repeating-radial-gradient" => Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::WEBKIT)?)),
+                b"-webkit-radial-gradient" => Ok(Gradient::PrefixedRadial(PrefixedRadialGradient::parse(input_, VendorPrefix::WEBKIT)?)),
+                b"-webkit-repeating-radial-gradient" => Ok(Gradient::RepeatingPrefixedRadial(PrefixedRadialGradient::parse(input_, VendorPrefix::WEBKIT)?)),
                 b"-moz-linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::MOZ)?)),
                 b"-moz-repeating-linear-gradient" => Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::MOZ)?)),
-                b"-moz-radial-gradient" => Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::MOZ)?)),
-                b"-moz-repeating-radial-gradient" => Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::MOZ)?)),
+                b"-moz-radial-gradient" => Ok(Gradient::PrefixedRadial(PrefixedRadialGradient::parse(input_, VendorPrefix::MOZ)?)),
+                b"-moz-repeating-radial-gradient" => Ok(Gradient::RepeatingPrefixedRadial(PrefixedRadialGradient::parse(input_, VendorPrefix::MOZ)?)),
                 b"-o-linear-gradient" => Ok(Gradient::Linear(LinearGradient::parse(input_, VendorPrefix::O)?)),
                 b"-o-repeating-linear-gradient" => Ok(Gradient::RepeatingLinear(LinearGradient::parse(input_, VendorPrefix::O)?)),
-                b"-o-radial-gradient" => Ok(Gradient::Radial(RadialGradient::parse(input_, VendorPrefix::O)?)),
-                b"-o-repeating-radial-gradient" => Ok(Gradient::RepeatingRadial(RadialGradient::parse(input_, VendorPrefix::O)?)),
+                b"-o-radial-gradient" => Ok(Gradient::PrefixedRadial(PrefixedRadialGradient::parse(input_, VendorPrefix::O)?)),
+                b"-o-repeating-radial-gradient" => Ok(Gradient::RepeatingPrefixedRadial(PrefixedRadialGradient::parse(input_, VendorPrefix::O)?)),
                 b"-webkit-gradient" => Ok(Gradient::WebkitGradient(WebKitGradient::parse(input_)?)),
                 _ => Err(location.new_unexpected_token_error(Token::Ident(func))),
             }}
@@ -145,8 +149,12 @@ impl Gradient {
         let (f, prefix): (&'static [u8], Option<VendorPrefix>) = match self {
             Gradient::Linear(g) => (b"linear-gradient(", Some(g.vendor_prefix)),
             Gradient::RepeatingLinear(g) => (b"repeating-linear-gradient(", Some(g.vendor_prefix)),
-            Gradient::Radial(g) => (b"radial-gradient(", Some(g.vendor_prefix)),
-            Gradient::RepeatingRadial(g) => (b"repeating-radial-gradient(", Some(g.vendor_prefix)),
+            Gradient::Radial(_) => (b"radial-gradient(", None),
+            Gradient::RepeatingRadial(_) => (b"repeating-radial-gradient(", None),
+            Gradient::PrefixedRadial(g) => (b"radial-gradient(", Some(g.vendor_prefix)),
+            Gradient::RepeatingPrefixedRadial(g) => {
+                (b"repeating-radial-gradient(", Some(g.vendor_prefix))
+            }
             Gradient::Conic(_) => (b"conic-gradient(", None),
             Gradient::RepeatingConic(_) => (b"repeating-conic-gradient(", None),
             Gradient::WebkitGradient(_) => (b"-webkit-gradient(", None),
@@ -163,6 +171,9 @@ impl Gradient {
                 linear.to_css(dest, linear.vendor_prefix != VendorPrefix::NONE)?;
             }
             Gradient::Radial(radial) | Gradient::RepeatingRadial(radial) => {
+                radial.to_css(dest)?;
+            }
+            Gradient::PrefixedRadial(radial) | Gradient::RepeatingPrefixedRadial(radial) => {
                 radial.to_css(dest)?;
             }
             Gradient::Conic(conic) | Gradient::RepeatingConic(conic) => {
@@ -193,10 +204,13 @@ impl Gradient {
         match self {
             Gradient::Linear(linear) => linear.vendor_prefix,
             Gradient::RepeatingLinear(linear) => linear.vendor_prefix,
-            Gradient::Radial(radial) => radial.vendor_prefix,
-            Gradient::RepeatingRadial(radial) => radial.vendor_prefix,
+            Gradient::PrefixedRadial(radial) => radial.vendor_prefix,
+            Gradient::RepeatingPrefixedRadial(radial) => radial.vendor_prefix,
             Gradient::WebkitGradient(_) => VendorPrefix::WEBKIT,
-            _ => VendorPrefix::NONE,
+            Gradient::Radial(_)
+            | Gradient::RepeatingRadial(_)
+            | Gradient::Conic(_)
+            | Gradient::RepeatingConic(_) => VendorPrefix::NONE,
         }
     }
 
@@ -218,23 +232,31 @@ impl Gradient {
                 css::prefixes::Feature::RepeatingLinearGradient,
                 linear.vendor_prefix,
             ),
-            Gradient::Radial(radial) => get_prefixes(
+            Gradient::Radial(_) => get_prefixes(
                 targets,
                 css::prefixes::Feature::RadialGradient,
-                radial.vendor_prefix,
+                VendorPrefix::NONE,
             ),
-            Gradient::RepeatingRadial(radial) => get_prefixes(
+            Gradient::RepeatingRadial(_) => get_prefixes(
                 targets,
                 css::prefixes::Feature::RepeatingRadialGradient,
-                radial.vendor_prefix,
+                VendorPrefix::NONE,
             ),
-            _ => VendorPrefix::NONE,
+            // `Targets::prefixes` returns the prefix of the author as it is.
+            Gradient::PrefixedRadial(radial) | Gradient::RepeatingPrefixedRadial(radial) => {
+                radial.vendor_prefix
+            }
+            Gradient::Conic(_) | Gradient::RepeatingConic(_) | Gradient::WebkitGradient(_) => {
+                VendorPrefix::NONE
+            }
         }
     }
 
-    /// Returns a copy of the gradient with the given vendor prefix.
-    pub(crate) fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> Gradient {
-        match self {
+    /// Returns a copy of the gradient with the given vendor prefix, in the syntax
+    /// of that prefix. Returns `None` when that syntax cannot express the gradient.
+    pub(crate) fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> Option<Gradient> {
+        debug_assert!(prefix != VendorPrefix::NONE);
+        let copy = match self {
             Gradient::Linear(linear) => Gradient::Linear({
                 let mut x = linear.deep_clone(bump);
                 x.vendor_prefix = prefix;
@@ -245,18 +267,27 @@ impl Gradient {
                 x.vendor_prefix = prefix;
                 x
             }),
-            Gradient::Radial(radial) => Gradient::Radial({
+            Gradient::Radial(radial) => Gradient::PrefixedRadial(
+                PrefixedRadialGradient::from_standard(radial, bump, prefix)?,
+            ),
+            Gradient::RepeatingRadial(radial) => Gradient::RepeatingPrefixedRadial(
+                PrefixedRadialGradient::from_standard(radial, bump, prefix)?,
+            ),
+            Gradient::PrefixedRadial(radial) => Gradient::PrefixedRadial({
                 let mut x = radial.deep_clone(bump);
                 x.vendor_prefix = prefix;
                 x
             }),
-            Gradient::RepeatingRadial(radial) => Gradient::RepeatingRadial({
+            Gradient::RepeatingPrefixedRadial(radial) => Gradient::RepeatingPrefixedRadial({
                 let mut x = radial.deep_clone(bump);
                 x.vendor_prefix = prefix;
                 x
             }),
-            _ => self.deep_clone(bump),
-        }
+            Gradient::Conic(_) | Gradient::RepeatingConic(_) | Gradient::WebkitGradient(_) => {
+                self.deep_clone(bump)
+            }
+        };
+        Some(copy)
     }
 
     /// Returns a fallback gradient for the given color fallback type.
@@ -266,6 +297,10 @@ impl Gradient {
             Gradient::RepeatingLinear(g) => Gradient::RepeatingLinear(g.get_fallback(bump, kind)),
             Gradient::Radial(g) => Gradient::Radial(g.get_fallback(bump, kind)),
             Gradient::RepeatingRadial(g) => Gradient::RepeatingRadial(g.get_fallback(bump, kind)),
+            Gradient::PrefixedRadial(g) => Gradient::PrefixedRadial(g.get_fallback(bump, kind)),
+            Gradient::RepeatingPrefixedRadial(g) => {
+                Gradient::RepeatingPrefixedRadial(g.get_fallback(bump, kind))
+            }
             Gradient::Conic(g) => Gradient::Conic(g.get_fallback(bump, kind)),
             Gradient::RepeatingConic(g) => Gradient::RepeatingConic(g.get_fallback(bump, kind)),
             Gradient::WebkitGradient(g) => Gradient::WebkitGradient(g.get_fallback(bump, kind)),
@@ -287,6 +322,11 @@ impl Gradient {
             Gradient::Radial(radial) | Gradient::RepeatingRadial(radial) => {
                 for item in radial.items.iter() {
                     fallbacks.insert(item.get_necessary_fallbacks(targets));
+                }
+            }
+            Gradient::PrefixedRadial(radial) | Gradient::RepeatingPrefixedRadial(radial) => {
+                for stop in radial.stops.iter() {
+                    fallbacks.insert(stop.color.get_necessary_fallbacks(targets));
                 }
             }
             Gradient::Conic(conic) | Gradient::RepeatingConic(conic) => {
@@ -459,8 +499,6 @@ impl LinearGradient {
 /// A CSS [`radial-gradient()`](https://www.w3.org/TR/css-images-3/#radial-gradients) or `repeating-radial-gradient()`.
 #[derive(PartialEq)]
 pub struct RadialGradient {
-    /// The vendor prefixes for the gradient.
-    pub(crate) vendor_prefix: VendorPrefix,
     /// The shape of the gradient.
     pub(crate) shape: EndingShape,
     /// The position of the gradient.
@@ -470,7 +508,7 @@ pub struct RadialGradient {
 }
 
 impl RadialGradient {
-    fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<RadialGradient> {
+    fn parse(input: &mut css::Parser) -> Result<RadialGradient> {
         // todo_stuff.depth
         let shape = input.try_parse(EndingShape::parse).ok();
         let position = input
@@ -491,7 +529,6 @@ impl RadialGradient {
             // todo_stuff.depth
             position: position.unwrap_or_else(Position::center),
             items,
-            vendor_prefix,
         })
     }
 
@@ -534,7 +571,6 @@ impl RadialGradient {
             shape: self.shape.clone(),
             position: self.position.deep_clone(bump),
             items,
-            vendor_prefix: self.vendor_prefix,
         }
     }
 
@@ -547,8 +583,349 @@ impl RadialGradient {
             shape: self.shape.clone(),
             position: self.position.deep_clone(bump),
             items,
-            vendor_prefix: self.vendor_prefix,
         }
+    }
+}
+
+/// A `radial-gradient()` or `repeating-radial-gradient()` with a vendor prefix.
+///
+/// The prefixed names keep the syntax of
+/// [css3-images-20110217](https://www.w3.org/TR/2011/WD-css3-images-20110217/#radial-gradients),
+/// see the [Compatibility Standard](https://compat.spec.whatwg.org/#css-gradients-webkit-radial-gradient):
+/// `[<position>,]? [[circle | ellipse] || <extent> | <length-percentage>{2},]? <color-stop>#`.
+/// The position comes first, there is no `at`, and a circle has no radius.
+#[derive(PartialEq)]
+pub struct PrefixedRadialGradient {
+    /// The vendor prefix of the function name. It is never `VendorPrefix::NONE`.
+    pub(crate) vendor_prefix: VendorPrefix,
+    /// The shape of the gradient.
+    pub(crate) shape: PrefixedEndingShape,
+    /// The position of the gradient.
+    pub(crate) position: PrefixedPosition,
+    /// The color stops of the gradient. This syntax has no transition hints.
+    pub(crate) stops: Vec<ColorStop<LengthPercentage>>,
+}
+
+impl PrefixedRadialGradient {
+    /// Parses what Chromium, WebKit and Gecko all read in the same way. Any
+    /// other value fails, and its declaration stays as the author wrote it.
+    fn parse(
+        input: &mut css::Parser,
+        vendor_prefix: VendorPrefix,
+    ) -> Result<PrefixedRadialGradient> {
+        let position = input
+            .try_parse(|i: &mut css::Parser| -> Result<Position> {
+                let position = Position::parse(i)?;
+                i.expect_comma()?;
+                Ok(position)
+            })
+            .ok();
+        let position = match position {
+            Some(position) => PrefixedPosition::from_standard(&position)
+                .ok_or_else(|| input.new_custom_error(ParserError::invalid_value))?,
+            None => PrefixedPosition::center(),
+        };
+        let shape = PrefixedEndingShape::parse(input)?;
+
+        let parsed = input.parse_comma_separated(
+            |i: &mut css::Parser| -> Result<(ColorStop<LengthPercentage>, Option<LengthPercentage>)> {
+                let stop = ColorStop::<LengthPercentage>::parse(i)?;
+                let second_position = match stop.position {
+                    Some(_) => i.try_parse(LengthPercentage::parse).ok(),
+                    None => None,
+                };
+                Ok((stop, second_position))
+            },
+        )?;
+        let mut stops: Vec<ColorStop<LengthPercentage>> = Vec::with_capacity(parsed.len());
+        for (stop, second_position) in parsed {
+            // A stop with two positions is two stops of one color.
+            if let Some(position) = second_position {
+                let color = stop.color.clone();
+                stops.push(stop);
+                stops.push(ColorStop {
+                    color,
+                    position: Some(position),
+                });
+            } else {
+                stops.push(stop);
+            }
+        }
+        // Chromium before 135 needs two stops.
+        if stops.len() < 2 {
+            return Err(input.new_custom_error(ParserError::invalid_value));
+        }
+
+        Ok(PrefixedRadialGradient {
+            vendor_prefix,
+            shape,
+            position,
+            stops,
+        })
+    }
+
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        // Two radii that come first would be read as the position.
+        if !self.position.is_center() || matches!(self.shape, PrefixedEndingShape::Size(_)) {
+            self.position.to_css(dest)?;
+            dest.delim(b',', false)?;
+        }
+
+        if self.shape != PrefixedEndingShape::default() {
+            self.shape.to_css(dest)?;
+            dest.delim(b',', false)?;
+        }
+
+        dest.write_comma_separated(self.stops.iter(), |d, stop| stop.to_css(d))
+    }
+
+    /// Converts a standard gradient to the prefixed syntax. Returns `None`
+    /// when that syntax cannot express the gradient.
+    fn from_standard(
+        radial: &RadialGradient,
+        bump: &Arena,
+        vendor_prefix: VendorPrefix,
+    ) -> Option<PrefixedRadialGradient> {
+        let shape = match &radial.shape {
+            EndingShape::Circle(Circle::Extent(extent)) => PrefixedEndingShape::Circle(*extent),
+            EndingShape::Ellipse(Ellipse::Extent(extent)) => PrefixedEndingShape::Ellipse(*extent),
+            EndingShape::Ellipse(Ellipse::Size(size)) => PrefixedEndingShape::Size(size.clone()),
+            // A circle is an ellipse with two equal radii. A radius of zero is
+            // not: css-images-3 renders the two degenerate shapes differently.
+            EndingShape::Circle(Circle::Radius(Length::Value(radius))) if !radius.is_zero() => {
+                let radius = LengthPercentage::Dimension(*radius);
+                PrefixedEndingShape::Size(EllipseSize {
+                    x: radius.clone(),
+                    y: radius,
+                })
+            }
+            EndingShape::Circle(Circle::Radius(_)) => return None,
+        };
+
+        let mut stops: Vec<ColorStop<LengthPercentage>> = Vec::with_capacity(radial.items.len());
+        for item in radial.items.iter() {
+            match item {
+                GradientItem::ColorStop(stop) => stops.push(ColorStop {
+                    color: stop.color.deep_clone(bump),
+                    position: stop.position.clone(),
+                }),
+                // `serialize_items` leaves this hint out too.
+                GradientItem::Hint(hint) if hint.is_percentage_with_value(0.5) => {}
+                GradientItem::Hint(_) => return None,
+            }
+        }
+
+        Some(PrefixedRadialGradient {
+            vendor_prefix,
+            shape,
+            position: PrefixedPosition::from_standard(&radial.position)?,
+            stops,
+        })
+    }
+
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+        self.stops
+            .iter()
+            .all(|stop| stop.color.is_compatible(browsers))
+    }
+
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> PrefixedRadialGradient {
+        self.with_colors(|color| color.get_fallback(bump, kind))
+    }
+
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+        self.with_colors(|color| color.deep_clone(bump))
+    }
+
+    fn with_colors(&self, color: impl Fn(&CssColor) -> CssColor) -> PrefixedRadialGradient {
+        PrefixedRadialGradient {
+            vendor_prefix: self.vendor_prefix,
+            shape: self.shape.clone(),
+            position: self.position.clone(),
+            stops: self
+                .stops
+                .iter()
+                .map(|stop| ColorStop {
+                    color: color(&stop.color),
+                    position: stop.position.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+// The prefixed variants must not make `Gradient` larger.
+const _: () = assert!(size_of::<PrefixedRadialGradient>() <= size_of::<RadialGradient>());
+
+/// The ending shape of a [PrefixedRadialGradient].
+#[derive(Clone, PartialEq)]
+pub enum PrefixedEndingShape {
+    /// A circle, sized by an extent keyword.
+    Circle(ShapeExtent),
+    /// An ellipse, sized by an extent keyword.
+    Ellipse(ShapeExtent),
+    /// An ellipse with a horizontal and a vertical radius.
+    Size(EllipseSize),
+}
+
+impl PrefixedEndingShape {
+    fn default() -> PrefixedEndingShape {
+        PrefixedEndingShape::Ellipse(ShapeExtent::FarthestCorner)
+    }
+
+    /// Parses the shape and the comma after it. A gradient with no shape has the default one.
+    fn parse(input: &mut css::Parser) -> Result<PrefixedEndingShape> {
+        let mut is_circle = input.try_parse(Self::parse_circle_or_ellipse).ok();
+        let extent = input.try_parse(Self::parse_extent).ok();
+        if is_circle.is_none() && extent.is_some() {
+            is_circle = input.try_parse(Self::parse_circle_or_ellipse).ok();
+        }
+        if is_circle.is_some() || extent.is_some() {
+            // WebKit needs this comma. Chromium does not.
+            input.expect_comma()?;
+            let extent = extent.unwrap_or(ShapeExtent::FarthestCorner);
+            return Ok(if is_circle == Some(true) {
+                PrefixedEndingShape::Circle(extent)
+            } else {
+                PrefixedEndingShape::Ellipse(extent)
+            });
+        }
+
+        let size = input.try_parse(|i: &mut css::Parser| -> Result<EllipseSize> {
+            let x = LengthPercentage::parse(i)?;
+            let y = LengthPercentage::parse(i)?;
+            i.expect_comma()?;
+            Ok(EllipseSize { x, y })
+        });
+        match size {
+            Ok(size) if is_negative(&size.x) || is_negative(&size.y) => {
+                Err(input.new_custom_error(ParserError::invalid_value))
+            }
+            Ok(size) => Ok(PrefixedEndingShape::Size(size)),
+            Err(_) => Ok(PrefixedEndingShape::default()),
+        }
+    }
+
+    /// Returns `true` for `circle` and `false` for `ellipse`.
+    fn parse_circle_or_ellipse(input: &mut css::Parser) -> Result<bool> {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"circle"))
+            .is_ok()
+        {
+            return Ok(true);
+        }
+        input.expect_ident_matching(b"ellipse")?;
+        Ok(false)
+    }
+
+    fn parse_extent(input: &mut css::Parser) -> Result<ShapeExtent> {
+        if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
+            return Ok(extent);
+        }
+        // `contain` and `cover` are the older names of `closest-side` and
+        // `farthest-corner`. Only this syntax has them.
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"contain"))
+            .is_ok()
+        {
+            return Ok(ShapeExtent::ClosestSide);
+        }
+        input.expect_ident_matching(b"cover")?;
+        Ok(ShapeExtent::FarthestCorner)
+    }
+
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        match self {
+            PrefixedEndingShape::Circle(extent) => {
+                dest.write_str(b"circle")?;
+                if *extent != ShapeExtent::FarthestCorner {
+                    dest.write_char(b' ')?;
+                    extent.to_css(dest)?;
+                }
+                Ok(())
+            }
+            // The `ellipse` keyword is optional, so we don't emit it.
+            PrefixedEndingShape::Ellipse(extent) => extent.to_css(dest),
+            PrefixedEndingShape::Size(size) => {
+                size.x.to_css(dest)?;
+                dest.write_char(b' ')?;
+                size.y.to_css(dest)
+            }
+        }
+    }
+}
+
+/// The position of a [PrefixedRadialGradient]: a `<position>` of one or two
+/// components. A side keyword is stored as the length that it stands for.
+#[derive(Clone, PartialEq)]
+pub struct PrefixedPosition {
+    /// The x-position.
+    pub(crate) x: LengthPercentage,
+    /// The y-position.
+    pub(crate) y: LengthPercentage,
+}
+
+impl PrefixedPosition {
+    fn center() -> PrefixedPosition {
+        PrefixedPosition {
+            x: LengthPercentage::Percentage(Percentage { v: 0.5 }),
+            y: LengthPercentage::Percentage(Percentage { v: 0.5 }),
+        }
+    }
+
+    fn is_center(&self) -> bool {
+        self.x.is_percentage_with_value(0.5) && self.y.is_percentage_with_value(0.5)
+    }
+
+    /// Returns `None` when a side has an offset, which takes three or four components.
+    fn from_standard(position: &Position) -> Option<PrefixedPosition> {
+        fn component<S: GradientSideKeyword>(
+            value: &PositionComponent<S>,
+        ) -> Option<LengthPercentage> {
+            match value {
+                PositionComponent::Center => {
+                    Some(LengthPercentage::Percentage(Percentage { v: 0.5 }))
+                }
+                PositionComponent::Length(length) => Some(length.clone()),
+                PositionComponent::Side(side) if side.offset.is_none() => {
+                    Some(side.side.into_length_percentage())
+                }
+                PositionComponent::Side(_) => None,
+            }
+        }
+
+        Some(PrefixedPosition {
+            x: component(&position.x)?,
+            y: component(&position.y)?,
+        })
+    }
+
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        // `center` is assumed if omitted.
+        if self.y.is_percentage_with_value(0.5) {
+            return self.x.to_css(dest);
+        }
+        if self.x.is_percentage_with_value(0.5) {
+            // A lone `top` or `bottom` is centered on the x-axis.
+            if self.y.is_zero() {
+                return dest.write_str(b"top");
+            }
+            if self.y.is_percentage_with_value(1.0) {
+                return dest.write_str(b"bottom");
+            }
+        }
+        self.x.to_css(dest)?;
+        dest.write_char(b' ')?;
+        self.y.to_css(dest)
+    }
+}
+
+fn is_negative(length: &LengthPercentage) -> bool {
+    match length {
+        LengthPercentage::Dimension(dimension) => dimension.to_unit_value().0 < 0.0,
+        LengthPercentage::Percentage(percentage) => percentage.v < 0.0,
+        // A browser clamps a calc() when it uses the value.
+        LengthPercentage::Calc(_) => false,
     }
 }
 
@@ -900,7 +1277,13 @@ impl WebKitGradient {
                     stops: convert_stops_to_webkit(bump, &radial.items)?,
                 }))
             }
-            _ => None,
+            Gradient::RepeatingLinear(_)
+            | Gradient::RepeatingRadial(_)
+            | Gradient::PrefixedRadial(_)
+            | Gradient::RepeatingPrefixedRadial(_)
+            | Gradient::Conic(_)
+            | Gradient::RepeatingConic(_)
+            | Gradient::WebkitGradient(_) => None,
         }
     }
 
@@ -1250,12 +1633,14 @@ pub struct ColorStop<D> {
 }
 
 impl<D: GradientPosition> ColorStop<D> {
+    #[inline]
     fn parse(input: &mut css::Parser) -> Result<ColorStop<D>> {
         let color = CssColor::parse(input)?;
         let position = input.try_parse(D::parse).ok();
         Ok(ColorStop { color, position })
     }
 
+    #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.color.to_css(dest)?;
         if let Some(position) = &self.position {
@@ -1417,6 +1802,9 @@ crate::css_eql_partialeq!(
     Gradient,
     LinearGradient,
     RadialGradient,
+    PrefixedRadialGradient,
+    PrefixedEndingShape,
+    PrefixedPosition,
     ConicGradient,
     WebKitGradientLinear,
     WebKitGradientRadial,

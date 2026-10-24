@@ -18,7 +18,17 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  copyFileSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -1682,6 +1692,44 @@ it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path le
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("threw");
+  expect(exitCode).toBe(0);
+});
+
+// Windows' opt-out from running a bare name out of the working directory. libuv
+// asks NeedCurrentDirectoryForExePathW on every spawn, so a `process.env` write
+// after the first spawn counts.
+it.if(isWindows)("NoDefaultCurrentDirectoryInExePath set at runtime stops the working directory lookup", async () => {
+  using dir = tempDir("spawn-cwd-opt-out", {});
+  copyFileSync(
+    join(process.env.SystemRoot ?? "C:\\Windows", "System32", "chcp.com"),
+    join(String(dir), "bun-spawn-cwd-tool.exe"),
+  );
+  const fixture = `
+    const run = () => {
+      try {
+        Bun.spawnSync({ cmd: ["bun-spawn-cwd-tool"], cwd: process.cwd() });
+        return "ran";
+      } catch (err) {
+        return err.code;
+      }
+    };
+    const unset = run();
+    process.env.NoDefaultCurrentDirectoryInExePath = "1";
+    const set = run();
+    delete process.env.NoDefaultCurrentDirectoryInExePath;
+    console.log(JSON.stringify({ unset, set, deleted: run() }));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    cwd: String(dir),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ unset: "ran", set: "ENOENT", deleted: "ran" }),
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });
 

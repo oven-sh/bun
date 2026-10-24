@@ -646,11 +646,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: &Ctx) -> LauncherRet
                 // SAFETY: `Buffer` is buf1, whose first `Length` bytes were written above.
                 fmt16(unsafe { unicode_string_to_u16(&nt_name) })
             );
-            debug!(
-                "NtCreateFile({})",
-                // SAFETY: `Buffer` is buf1, whose first `Length` bytes were written above.
-                fmt16(unsafe { unicode_string_to_u16(&nt_name) })
-            );
         }
         let mut attr = w::OBJECT_ATTRIBUTES {
             Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,

@@ -37,8 +37,8 @@ env:
   BUN_VERSION: "1.4.4"
   LLVM_VERSION_MAJOR: "23"
   # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
-  # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need
-  # to lint the host). Keep in sync with `channel` in rust-toolchain.toml.
+  # `targets` list (11 cross triples ≈ 450 MB of prebuilt std); each job adds
+  # the few it lints. Keep in sync with `channel` in rust-toolchain.toml.
   RUSTUP_TOOLCHAIN: nightly-2026-09-15
 
 jobs:
@@ -71,10 +71,11 @@ jobs:
         # Clippy above covers the default cargo targets only (lib and bin). This
         # type-checks what it skips (`#[cfg(test)]` code, `tests/`, `benches/`)
         # so that code keeps compiling: the miri job builds a few crates'
-        # tests, nothing builds the rest.
+        # tests, nothing builds the rest. `--target` shares clippy's build of
+        # the third-party crates.
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
-        run: cargo check --workspace --all-targets --keep-going
+        run: cargo check --workspace --all-targets --keep-going --target x86_64-unknown-linux-gnu
 
   miri:
     name: cargo miri test

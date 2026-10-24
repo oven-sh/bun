@@ -10,6 +10,9 @@
  *   bun run rust:clippy --target x86_64-pc-windows-msvc  # only the ones named
  *   bun run rust:clippy --message-format=short           # other args go to `cargo clippy`
  *
+ * With one target named, cargo's "unused dependency" warnings include crates
+ * that only another target uses. Trust them from a run over every target.
+ *
  * Read what `--fix` did before keeping it. Clippy sees the code after `cfg`
  * stripping, so a fix for one target can delete what another target needs: an
  * arm that is `cfg!(unix)`, a `#[cfg(not(windows))]` block, a clamp that is a
@@ -36,5 +39,30 @@ if (targets.length > 0) {
   if (added.error === undefined && added.status !== 0) process.exit(added.status ?? 1);
 }
 
-const clippy = ["clippy", "--workspace", "--no-deps", "--keep-going"];
-process.exit(run("cargo", [...clippy, ...targets.flatMap(target => ["--target", target]), ...args]).status ?? 1);
+const workspace = run("cargo", [
+  "clippy",
+  "--workspace",
+  "--no-deps",
+  "--keep-going",
+  ...targets.flatMap(target => ["--target", target]),
+  ...args,
+]).status;
+
+// `bun_shim_impl.exe` is a `[[bin]]` behind a feature, so `--workspace` skips it
+// and only sees that file as a module of `bun_install`.
+let shim: number | null = 0;
+if (targets.length > 0) {
+  const windows = targets.filter(target => target.includes("windows")).flatMap(target => ["--target", target]);
+  shim = run("cargo", [
+    "clippy",
+    "-p",
+    "bun_shim_impl",
+    "--features",
+    "shim_standalone",
+    "--no-deps",
+    ...windows,
+    ...args,
+  ]).status;
+}
+
+process.exit(workspace !== 0 ? (workspace ?? 1) : (shim ?? 1));

@@ -57,6 +57,15 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
     Some(u16::try_from(filepath.len()).expect("int cast"))
 }
 
+#[cfg(windows)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "bun_core::env_var caches its first read; a later `process.env` write reaches the OS environment and must be seen here"
+)]
+fn cwd_search_disabled() -> bool {
+    std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_some()
+}
+
 /// `which()` for spawn-style executable resolution. Windows resolves bare
 /// names against the working directory before `$PATH` (CreateProcessW search
 /// order; libuv and Node.js spawn behave the same), unlike `which()` which is
@@ -78,9 +87,7 @@ pub fn which_for_spawn<'a>(
             && !has_sep
             && !is_absolute(bin)
             && !cwd.is_empty()
-            && bun_core::env_var::NO_DEFAULT_CURRENT_DIRECTORY_IN_EXE_PATH
-                .get()
-                .is_none()
+            && !cwd_search_disabled()
         {
             // One more `$PATH` directory: .exe/.cmd/.bat before the walk, .com after it.
             let mut convert_buf = w_path_buffer_pool::get();

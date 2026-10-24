@@ -1798,8 +1798,6 @@ impl<'a> CopyFileWindows<'a> {
         self.event_loop.unref_keep_alive();
 
         if let Some(err) = self.err.take() {
-            // `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with
-            // `err` inside `throw`.
             self.throw(&err);
             return;
         }

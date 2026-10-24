@@ -15,7 +15,7 @@ use crate::css_properties::margin_padding::{
 };
 use crate::css_properties::prefix_handler::FallbackHandler;
 use crate::css_properties::size::SizeHandler;
-use crate::css_properties::text::{Direction, UnicodeBidi};
+use crate::css_properties::text::Direction;
 use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
@@ -98,6 +98,7 @@ impl<'bump> DeclarationBlock<'bump> {
 
         handler.finalize(context);
         important_handler.finalize(context);
+        debug_assert!(is_settled(&handler.decls) && is_settled(&important_handler.decls));
         // The old bumpalo Vecs drop implicitly on overwrite (arena reclaims
         // on reset).
         self.important_declarations =
@@ -404,7 +405,6 @@ pub struct DeclarationHandler<'bump> {
     pub(crate) color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
     pub(crate) direction: Option<Direction>,
-    pub(crate) unicode_bidi: Option<UnicodeBidi>,
     pub(crate) decls: DeclarationList<'bump>,
 }
 
@@ -412,9 +412,6 @@ impl<'bump> DeclarationHandler<'bump> {
     pub(crate) fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
-        }
-        if let Some(unicode_bidi) = self.unicode_bidi.take() {
-            self.decls.push(css::Property::UnicodeBidi(unicode_bidi));
         }
 
         self.background.finalize(&mut self.decls, context);
@@ -439,6 +436,7 @@ impl<'bump> DeclarationHandler<'bump> {
         property: &css::Property,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
+        // return this.background.handleProperty(property, &this.decls, context);
         self.background
             .handle_property(property, &mut self.decls, context)
             || self
@@ -483,64 +481,43 @@ impl<'bump> DeclarationHandler<'bump> {
             || self
                 .fallback
                 .handle_property(property, &mut self.decls, context)
-            || self.handle_all(property)
+            || self.handle_all(property, context)
     }
 
     /// https://drafts.csswg.org/css-cascade-5/#all-shorthand
-    fn handle_all(&mut self, property: &css::Property) -> bool {
+    fn handle_all(
+        &mut self,
+        property: &css::Property,
+        context: &mut css::PropertyHandlerContext,
+    ) -> bool {
         match property {
-            css::Property::Direction(direction) => {
-                self.direction = Some(*direction);
-                true
-            }
-            css::Property::UnicodeBidi(unicode_bidi) => {
-                self.unicode_bidi = Some(*unicode_bidi);
-                true
-            }
             css::Property::All(keyword) => {
-                self.reset_for_all();
-                self.decls.push(css::Property::All(*keyword));
+                self.reset_for_all(css::Property::All(*keyword));
                 true
             }
-            css::Property::Unparsed(unparsed) => match unparsed.property_id {
-                // Any other non-keyword value is invalid, and browsers drop the declaration.
-                css::PropertyId::All if unparsed.value.has_variable_reference() => {
-                    self.reset_for_all();
+            css::Property::Unparsed(unparsed)
+                if matches!(unparsed.property_id, css::PropertyId::All) =>
+            {
+                if unparsed.resets_block() {
                     let bump = self.decls.bump();
-                    self.decls
-                        .push(css::Property::Unparsed(unparsed.deep_clone(bump)));
-                    true
+                    self.reset_for_all(css::Property::Unparsed(unparsed.deep_clone(bump)));
+                    return true;
                 }
-                // Keep a buffered typed value ahead of the unparsed one the caller pushes next.
-                css::PropertyId::Direction => {
-                    if let Some(direction) = self.direction.take() {
-                        self.decls.push(css::Property::Direction(direction));
-                    }
-                    false
-                }
-                css::PropertyId::UnicodeBidi => {
-                    if let Some(unicode_bidi) = self.unicode_bidi.take() {
-                        self.decls.push(css::Property::UnicodeBidi(unicode_bidi));
-                    }
-                    false
-                }
-                _ => false,
-            },
+                // Browsers differ on whether any other value is valid, so it only keeps its place.
+                self.finalize(context);
+                false
+            }
             _ => false,
         }
     }
 
-    /// Drops everything the block declared so far that `all` resets.
-    ///
-    /// `handle_all` pushes the `all` right after every reset, so the last resetting `all` in
-    /// `decls` marks where the previous reset stopped. Nothing ahead of it is looked at again.
-    fn reset_for_all(&mut self) {
+    /// Drops what `all` resets, then writes it. Unlike lightningcss, it reads only the new tail.
+    fn reset_for_all(&mut self, all: css::Property) {
+        debug_assert!(all.resets_block());
         let bump: &'bump Bump = self.decls.bump();
         let previous = core::mem::replace(self, DeclarationHandler::new(bump));
-        self.direction = previous.direction;
-        self.unicode_bidi = previous.unicode_bidi;
         self.decls = previous.decls;
-        let start = self.decls.iter().rposition(resets_all).unwrap_or(0);
+        let start = settled_len(&self.decls);
         let mut kept = start;
         for index in start..self.decls.len() {
             if survives_all(&self.decls[index]) {
@@ -549,6 +526,7 @@ impl<'bump> DeclarationHandler<'bump> {
             }
         }
         self.decls.truncate(kept);
+        self.decls.push(all);
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {
@@ -569,22 +547,22 @@ impl<'bump> DeclarationHandler<'bump> {
             color_scheme: Default::default(),
             fallback: Default::default(),
             direction: None,
-            unicode_bidi: None,
             decls: DeclarationList::new_in(bump),
         }
     }
 }
 
-/// Whether `property` is an `all` that `DeclarationHandler::handle_all` resets the block for.
-fn resets_all(property: &css::Property) -> bool {
-    match property {
-        css::Property::All(..) => true,
-        css::Property::Unparsed(unparsed) => {
-            matches!(unparsed.property_id, css::PropertyId::All)
-                && unparsed.value.has_variable_reference()
-        }
-        _ => false,
-    }
+/// The index of the last resetting `all`, or 0. Everything ahead of it survived that reset.
+fn settled_len(decls: &[css::Property]) -> usize {
+    decls
+        .iter()
+        .rposition(css::Property::resets_block)
+        .unwrap_or(0)
+}
+
+/// What `reset_for_all` relies on: nothing ahead of the last resetting `all` is reset by it.
+fn is_settled(decls: &[css::Property]) -> bool {
+    decls[..settled_len(decls)].iter().all(survives_all)
 }
 
 /// Whether `all` leaves `property` alone.

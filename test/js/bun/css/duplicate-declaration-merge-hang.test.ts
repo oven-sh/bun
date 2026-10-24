@@ -1,6 +1,6 @@
 import { cssInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
 // Minifying n adjacent rules with equivalent selectors used to re-run the
 // property handlers over the whole accumulated declaration list once per
@@ -59,39 +59,6 @@ const script = `
     if (typeof out !== "string" || out.length === 0) throw new Error(name + " produced no output");
     console.log("OK:" + name);
   }
-
-  // Every \`all\` resets the block again. Custom properties, \`direction\` and
-  // \`unicode-bidi\` outlive it, so a reset that walks everything the earlier
-  // resets kept is O(n^2), too slow for the spawn timeout at this size. A
-  // build that never resets is fast, and prints another block.
-  const m = 24000;
-  const numbers = Array.from({ length: m }, (_, i) => i);
-  // each("--c", ":1;") is "--c0:1;--c1:1;" and so on. One native join per list
-  // keeps the setup fast in a debug build.
-  const each = (before, after) => before + numbers.join(after + before) + after;
-  const kept = each("--c", ":1;");
-  const reset = "all:initial;";
-  const allFloods = {
-    "all-pairs": ["a{" + each("--c", ":1;all:initial;") + "}", "a{" + kept + "all:initial}"],
-    "all-after-kept": [
-      "a{" + kept + Buffer.alloc(m * reset.length, reset).toString() + "}",
-      "a{" + kept + "all:initial}",
-    ],
-    "all-important": [
-      "a{" + each("--c", ":1!important;all:initial!important;") + "}",
-      "a{" + each("--c", ":1!important;") + "all:initial!important}",
-    ],
-    "all-unparsed": ["a{" + each("--c", ":1;all:var(--x);") + "}", "a{" + kept + "all:var(--x)}"],
-    "all-unparsed-direction": [
-      "a{" + each("direction:var(--d", ");all:initial;") + "}",
-      "a{" + each("direction:var(--d", ");") + "all:initial}",
-    ],
-    "all-merged-rules": [each(".a{--c", ":1;all:initial}"), ".a{" + kept + "all:initial}"],
-  };
-  for (const [name, [src, expected]] of Object.entries(allFloods)) {
-    if (c.minifyTest(src, "") !== expected) throw new Error(name + " produced the wrong output");
-    console.log("OK:" + name);
-  }
 `;
 
 test("duplicate declarations across merged rules minify in linear time instead of hanging", async () => {
@@ -118,14 +85,90 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:clamp",
       "OK:distinct-custom-props",
       "OK:distinct-selectors",
-      "OK:all-pairs",
-      "OK:all-after-kept",
-      "OK:all-important",
-      "OK:all-unparsed",
-      "OK:all-unparsed-direction",
-      "OK:all-merged-rules",
       "",
     ].join("\n"),
+    stderr: "",
+    exitCode: 0,
+  });
+}, 90_000);
+
+// Every `all` resets its block again, and custom properties outlive it. A
+// reset that reads again what the earlier resets kept is O(n^2) and prints
+// the same bytes. So each flood is weighed against a block of the same size
+// without `all`, by CPU time: that holds on a busy machine and in every build.
+test("every `all` in a block resets it in linear time", async () => {
+  const script = `
+    const c = require("bun:internal-for-testing").cssInternals;
+
+    const m = 8000;
+    const numbers = Array.from({ length: m }, (_, i) => i);
+    // each("--c", ":1;") is "--c0:1;--c1:1;" and so on.
+    const each = (before, after) => before + numbers.join(after + before) + after;
+    const kept = each("--c", ":1;");
+    // name: [flood, its output, the flood with a declaration that resets nothing in place of \`all\`]
+    const floods = {
+      "pairs": [
+        "a{" + each("--c", ":1;all:initial;") + "}",
+        "a{" + kept + "all:initial}",
+        "a{" + each("--c", ":1;color:red;") + "}",
+      ],
+      "unparsed": [
+        "a{" + each("--c", ":1;all:var(--x);") + "}",
+        "a{" + kept + "all:var(--x)}",
+        "a{" + each("--c", ":1;color:var(--x);") + "}",
+      ],
+      "merged-rules": [
+        each(".a{--c", ":1;all:initial}"),
+        ".a{" + kept + "all:initial}",
+        each(".a{--c", ":1;color:red}"),
+      ],
+      "unknown-value": [
+        "a{" + each("--c", ":1;all:revert-rule;") + "}",
+        "a{" + each("--c", ":1;all:revert-rule;").slice(0, -1) + "}",
+        "a{" + each("--c", ":1;color:red;") + "}",
+      ],
+    };
+    const time = src => {
+      let cpu = Infinity, out;
+      for (let i = 0; i < ${isDebug || isASAN ? 1 : 5}; i++) {
+        const before = process.cpuUsage();
+        out = c.minifyTest(src, "");
+        const { user, system } = process.cpuUsage(before);
+        cpu = Math.min(cpu, user + system);
+      }
+      return { cpu, out };
+    };
+    const slowdown = {};
+    for (const [name, [flood, expected, control]] of Object.entries(floods)) {
+      const odd = time(flood);
+      if (odd.out !== expected) throw new Error(name + " produced the wrong output");
+      // Windows counts CPU time in ticks of 1/64 s, so a short run can report 0.
+      slowdown[name] = odd.cpu / Math.max(time(control).cpu, ${isWindows ? 15_625 : 1});
+    }
+    console.log(JSON.stringify(slowdown));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // A linear reset takes up to 2 times the CPU time of its control. A quadratic one takes 24 times or more at this size.
+  const slowdown: Record<string, number> = exitCode === 0 ? JSON.parse(stdout) : {};
+  expect({
+    slow: Object.entries(slowdown).filter(([, times]) => !(times < 8)),
+    shapes: Object.keys(slowdown),
+    stderr: /error|panic|assert|crash|abort/i.test(stderr) ? stderr : "",
+    exitCode,
+  }).toEqual({
+    slow: [],
+    shapes: ["pairs", "unparsed", "merged-rules", "unknown-value"],
     stderr: "",
     exitCode: 0,
   });

@@ -300,7 +300,7 @@ pub struct TokenList {
 impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
-    /// Whether the value uses `var()` or `env()`, which makes a declaration valid at parse time.
+    /// Whether the value uses `var()` or `env()`, which every browser accepts in any property.
     pub(crate) fn has_variable_reference(&self) -> bool {
         self.v.iter().any(|token_or_value| match token_or_value {
             TokenOrValue::Var(_) | TokenOrValue::Env(_) => true,
@@ -1534,6 +1534,12 @@ impl UnparsedProperty {
         // `PropertyId` is `Copy` (tag + optional `VendorPrefix`/`CustomPropertyName`)
         // and derives `PartialEq` in `properties_generated.rs` — use `==` directly.
         self.property_id == rhs.property_id && self.value.eql(&rhs.value)
+    }
+
+    /// Whether this is an `all` that every browser keeps, so it resets the declarations before it.
+    pub(crate) fn resets_block(&self) -> bool {
+        matches!(self.property_id, css::properties::PropertyId::All)
+            && self.value.has_variable_reference()
     }
 }
 

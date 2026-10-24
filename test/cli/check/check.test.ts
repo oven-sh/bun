@@ -10076,6 +10076,55 @@ export function f(input: { v: string } | undefined) {
       expect(exitCode).toBe(0);
     });
 
+    test("what can be reached after a `finally` block depends on how the block was entered", async () => {
+      using dir = project({
+        "a.ts": `declare const c: boolean;
+declare function fail(): never;
+declare function use(): void;
+// The end of each function can be reached if and only if an error is reported at its return type.
+export function neverBefore(): number { fail(); try { use(); } finally { if (c) { use(); } if (c) { use(); } } }
+export function neverInTry(): number { try { fail(); } finally { if (c) { use(); } if (c) { use(); } } }
+export function neverInOneBranch(): number { try { if (c) fail(); } finally { if (c) { use(); } if (c) { use(); } } }
+export function neverInFinally(): number { try { use(); } finally { if (c) { use(); } if (c) { fail(); } else { fail(); } } }
+export function neverInOneBranchOfFinally(): number { try { use(); } finally { if (c) { fail(); } if (c) { use(); } } }
+export function returns(): number { try { return 1; } finally { if (c) { use(); } if (c) { use(); } } }
+export function returnsInOneBranch(): number { try { if (c) return 1; } finally { if (c) { use(); } if (c) { use(); } } }
+export function exhaustive(x: boolean): number { try { switch (x) { case true: return 1; case false: return 0; } } finally { if (c) { use(); } if (c) { use(); } } }
+export function notExhaustive(x: boolean): number { try { switch (x) { case true: return 1; } } finally { if (c) { use(); } if (c) { use(); } } }
+export function breaks(): number { for (;;) { try { break; } finally { if (c) { use(); } if (c) { use(); } } } }
+export function continues(): number { for (;;) { try { continue; } finally { if (c) { use(); } if (c) { use(); } } } }
+export function breaksOut(): number { out: { try { if (c) break out; return 1; } finally { if (c) { use(); } if (c) { use(); } } } }
+export function caught(): number { try { fail(); } catch { use(); } finally { if (c) { use(); } if (c) { use(); } } }
+export function caughtToo(): number { try { fail(); } catch { fail(); } finally { if (c) { use(); } if (c) { use(); } } }
+// One block is walked with the inner label reduced, with the outer one, and with both.
+export function nestedReturns(): number { try { try { return 1; } finally { if (c) { use(); } if (c) { use(); } } } finally { if (c) { use(); } if (c) { use(); } } }
+export function nestedReturnsInOneBranch(): number { try { try { if (c) return 1; } finally { if (c) { use(); } if (c) { use(); } } } finally { if (c) { use(); } if (c) { use(); } } }
+export function inFinally(): number { try { use(); } finally { try { return 1; } finally { if (c) { use(); } if (c) { use(); } } } }
+export function inFinallyInOneBranch(): number { try { use(); } finally { try { if (c) return 1; } finally { if (c) { use(); } if (c) { use(); } } } }
+export function neverBeforeNested(): number { fail(); try { try { use(); } finally { if (c) { use(); } if (c) { use(); } } } finally { try { use(); } finally { if (c) { use(); } } if (c) { use(); } } }
+// The first statement's block is unreachable after the \`try\`, and reachable from inside of it.
+export function twice(x: boolean): number { try { if (x) return 1; return 2; } finally { if (c) { use(); } if (c) { use(); } } try { use(); } finally { if (c) { use(); } } }
+export function oneAfterTheOther(x: boolean): number { try { if (x) return 1; } finally { if (c) { use(); } if (c) { use(); } } try { return 2; } finally { if (c) { use(); } if (c) { use(); } } }
+export function loopInFinally(): number { fail(); try { use(); } finally { while (c) { if (c) { use(); } if (c) continue; } do { if (c) { use(); } } while (c); } }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        [
+          "a.ts(7,37): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+          "a.ts(9,46): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+          "a.ts(11,39): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.",
+          "a.ts(13,44): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.",
+          "a.ts(14,27): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+          "a.ts(16,30): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.",
+          "a.ts(17,27): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+          "a.ts(21,45): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.",
+          "a.ts(23,41): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("a shared flow node in a `finally` block has the type of its first visit", async () => {
       using dir = project({
         "a.ts": `declare const c: boolean;
@@ -30205,6 +30254,26 @@ describe.concurrent("--check", () => {
           )
             .map(() => "if (c) { c; }")
             .join(" ")} } return d.length; }`,
+      ],
+      [
+        // Every path through the block is walked to find out that none leads to the start of the function.
+        "a sequence of `if` statements in a `finally` block after a call that never returns",
+        size,
+        n =>
+          `declare const c: boolean; declare function fail(): never;\nexport function g() { fail(); try { c; } finally { ${range(
+            n,
+          )
+            .map(() => "if (c) { c; }")
+            .join(" ")} } return c; }`,
+      ],
+      [
+        "`finally` blocks with `if` statements, one in the other, after a call that never returns",
+        size / 2,
+        n =>
+          `declare const c: boolean; declare function fail(): never;\nexport function g() { fail(); ${repeat(
+            "try { c; } finally { if (c) { c; } if (c) { c; } ",
+            n,
+          )}${repeat("}", n)} return c; }`,
       ],
       [
         "a sequence of `if` statements that assign in a loop",

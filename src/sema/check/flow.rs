@@ -180,6 +180,9 @@ pub(super) struct FlowMemo {
     type_predicates_in_progress: SmallVec<[PredicateInProgress; 2]>,
     /// `flowNodePostSuper`
     flow_node_post_super: FxHashMap<(FileId, FlowId), bool>,
+    /// The shared nodes that `is_reachable_worker` found unreachable with the labels that are reduced right now.
+    /// Without it, each `if` in a `finally` block after a call that never returns doubles the paths to walk.
+    unreachable_with_reduced_labels: crate::util::FxHashSet<FlowId>,
     /// `finalArrayType` of an evolving array type whose element type is a union.
     final_array_types: FxHashMap<TypeId, TypeId>,
     /// Two bits per flow node of the file `settled_calls_of`. The first marks a `Flow::Call` node
@@ -7908,6 +7911,7 @@ impl<'p, 's> Checker<'p, 's> {
         // statements has that many in a row, so here these invocations wait in a list, outermost
         // first.
         let mut shared: SmallVec<[(FlowId, Memoizable); 2]> = SmallVec::new();
+        let mut shared_with_reduced_labels: SmallVec<[FlowId; 2]> = SmallVec::new();
         let reachable = loop {
             if (file, flow) == (self.last_flow_node.0, self.last_flow_node.1) {
                 break self.last_flow_node.2;
@@ -7920,6 +7924,11 @@ impl<'p, 's> Checker<'p, 's> {
                     break cached_reachable;
                 }
                 shared.push((flow, self.begin_memoizable()));
+            } else if bound.is_shared(flow) {
+                if (self.flow_memo.unreachable_with_reduced_labels).contains(&flow) {
+                    break false;
+                }
+                shared_with_reduced_labels.push(flow);
             }
             match bound.flow[flow.idx()] {
                 Flow::Unreachable => break false,
@@ -7962,7 +7971,9 @@ impl<'p, 's> Checker<'p, 's> {
                     // "Cache is unreliable once we start adjusting labels"
                     self.last_flow_node.1 = FlowId::NONE;
                     reduced.push((label, instead));
+                    let outer = std::mem::take(&mut self.flow_memo.unreachable_with_reduced_labels);
                     let reachable = self.is_reachable_worker(file, before, reduced);
+                    self.flow_memo.unreachable_with_reduced_labels = outer;
                     reduced.pop();
                     break reachable;
                 }
@@ -7986,6 +7997,9 @@ impl<'p, 's> Checker<'p, 's> {
             if self.end_memoizable(begun).is_some() {
                 (self.p.flow_node_reachable).rewrite(&self.task, (file, flow), reachable);
             }
+        }
+        if !reachable {
+            (self.flow_memo.unreachable_with_reduced_labels).extend(shared_with_reduced_labels);
         }
         reachable
     }

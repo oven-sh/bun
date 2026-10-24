@@ -1348,6 +1348,8 @@ private:
             if (JSWebAssemblyModule* module = dynamicDowncast<JSWebAssemblyModule>(obj)) {
                 if (m_context != SerializationContext::WorkerPostMessage && m_context != SerializationContext::WindowPostMessage)
                     return false;
+                if (!startObjectInternal(obj)) // handle duplicates
+                    return true;
 
                 uint32_t index = m_wasmModules.size();
                 m_wasmModules.append(&module->module());
@@ -1365,6 +1367,8 @@ private:
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
+                if (!startObjectInternal(obj)) // handle duplicates
+                    return true;
                 uint32_t index = m_wasmMemoryHandles.size();
                 m_wasmMemoryHandles.append(memory->memory().shared());
                 write(WasmMemoryTag);
@@ -3744,7 +3748,10 @@ private:
                 fail();
                 return JSValue();
             }
-            return JSC::JSWebAssemblyModule::create(m_lexicalGlobalObject->vm(), m_globalObject->webAssemblyModuleStructure(), Ref { *m_wasmModules->at(index) });
+            JSValue result = JSC::JSWebAssemblyModule::create(m_lexicalGlobalObject->vm(), m_globalObject->webAssemblyModuleStructure(), Ref { *m_wasmModules->at(index) });
+            // Not version-gated: a wasm record indexes an in-process side table, so this binary wrote it.
+            addToObjectPool(result);
+            return result;
         }
         case WasmMemoryTag: {
             if (m_version >= 12) {
@@ -3789,7 +3796,7 @@ private:
             }
 
             result->adopt(memory.releaseNonNull());
-            m_gcBuffer.appendWithCrashOnOverflow(result);
+            addToObjectPool(result);
             return result;
         }
 #endif

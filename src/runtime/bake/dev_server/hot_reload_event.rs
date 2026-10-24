@@ -117,16 +117,28 @@ impl HotReloadEvent {
                     while let Some(index) = it {
                         // Note: reshaped for borrowck — re-index per iteration instead of
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
-                        let (source_file_path, specifier, next) = {
+                        let (source_file_path, specifier, graph, next) = {
                             let dep = &dev.directory_watchers.dependencies[index as usize];
-                            (dep.source_file_path, &raw const *dep.specifier, dep.next)
+                            (
+                                dep.source_file_path,
+                                &raw const *dep.specifier,
+                                dep.graph,
+                                dep.next,
+                            )
                         };
                         it = next;
 
+                        let transpiler = match graph {
+                            Graph::Client => &mut dev.client_transpiler,
+                            Graph::Server | Graph::Ssr => &mut dev.server_transpiler,
+                        };
+                        // SAFETY: both transpilers are initialized in DevServer::init
+                        // before any HotReloadEvent can fire.
+                        let transpiler = unsafe { transpiler.assume_init_mut() };
                         // `specifier` points into the dep's owned `Box<[u8]>`, which is
                         // not mutated until after `resolve` returns.
                         // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                        let resolved = transpiler
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(

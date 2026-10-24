@@ -116,6 +116,8 @@ pub(crate) struct Dep {
     pub(crate) source_file_path: bun_ptr::RawSlice<u8>,
     /// The specifier that failed. Allocated memory.
     pub(crate) specifier: Box<[u8]>,
+    /// The graph of the importer. Its resolver tries the import again.
+    pub(crate) graph: Graph,
 }
 impl Default for Dep {
     fn default() -> Self {
@@ -123,6 +125,7 @@ impl Default for Dep {
             next: None,
             source_file_path: bun_ptr::RawSlice::EMPTY,
             specifier: Box::default(),
+            graph: Graph::Client,
         }
     }
 }
@@ -213,7 +216,7 @@ impl DirectoryWatchStore {
             }
         };
 
-        match self.insert(dir, owned_file_path, specifier) {
+        match self.insert(dir, owned_file_path, specifier, renderer) {
             Ok(()) => Ok(()),
             Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
             Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
@@ -227,6 +230,7 @@ impl DirectoryWatchStore {
         dir_name_to_watch: &[u8],
         file_path: bun_ptr::RawSlice<u8>,
         specifier: &[u8],
+        graph: Graph,
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
@@ -282,6 +286,7 @@ impl DirectoryWatchStore {
                 next: prev_first,
                 source_file_path: file_path,
                 specifier: specifier_cloned,
+                graph,
             });
             self.watches.values_mut()[gop_index].first_dep = dep;
             return Ok(());
@@ -374,6 +379,7 @@ impl DirectoryWatchStore {
             next: None,
             source_file_path: file_path,
             specifier: specifier_cloned,
+            graph,
         });
         self.watches.values_mut()[gop_index] = Entry {
             dir: fd,

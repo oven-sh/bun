@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
-import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
+import {
+  minimalFramework,
+  platformFiles,
+  platformFilesIn,
+  platformPackages,
+  tempDirWithBakeDeps,
+} from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -486,6 +492,160 @@ export default function () {
     const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/);
     expect(script).toBeTruthy();
     expect(existsSync(path.join(String(dir), "dist", script![1]))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // The server and SSR graphs run in Bun, so a package's "browser" field and
+  // "browser" map are not for them. The client graph keeps both. Every graph
+  // imports the same packages, and the client component is in two of them.
+  test("each graph resolves packages for the platform that runs it", async () => {
+    using dir = tempDir("bake-production-platform-packages", {
+      ...platformPackages,
+      "client-entry.ts": `
+        console.log("client entry point");
+      `,
+      "server-entry.ts": `
+        export function render(req, meta) {
+          return new Response("");
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": JSON.stringify(await meta.pageModule.default()) } };
+        }
+        export function registerClientReference(value, file, uid) {
+          return { value, file, uid };
+        }
+      `,
+      "island.ts": `
+        "use client";
+        import resolved from "./resolved";
+        export const island = resolved;
+      `,
+      "ssr.ts": `
+        export { default } from "./resolved";
+      `,
+      "routes/index.ts": `
+        import { ssrManifest } from "bun:bake/server";
+        import server from "../resolved";
+        import ssr from "../ssr" with { bunBakeGraph: "ssr" };
+        import "../island";
+        export default async function () {
+          // The SSR copy of the component, loaded as a framework loads it.
+          const [{ specifier, name }] = Object.values(Object.values(ssrManifest)[0]);
+          return { server, ssr, island: (await import(specifier))[name] };
+        }
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server-entry.ts", clientEntryPoint: "./client-entry.ts" };
+        const serverComponents = {
+          separateSSRGraph: true,
+          serverRuntimeImportSource: "./server-entry.ts",
+          serverRegisterClientReferenceExport: "registerClientReference",
+        };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr], serverComponents } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    const dist = path.join(String(dir), "dist");
+    const serverSide = await Bun.file(path.join(dist, "index.html"))
+      .json()
+      .catch(() => stderr.toString());
+    expect(serverSide).toEqual({ server: platformFiles.bun, ssr: platformFiles.bun, island: platformFiles.bun });
+    // The chunks of the client graph have the source of each package file that it resolved.
+    const clientChunks = await Promise.all(
+      [...new Bun.Glob("_bun/*.js").scanSync(dist)].map(chunk => Bun.file(path.join(dist, chunk)).text()),
+    );
+    expect(platformFilesIn(clientChunks.join("\n"))).toEqual(platformFiles.browser);
+    expect(exitCode).toBe(0);
+  });
+
+  // The server entry point and the server components runtime of a framework
+  // run in Bun.
+  test("a framework's server modules resolve for bun", async () => {
+    using dir = tempDir("bake-production-framework-server", {
+      // A "browser" condition and a "browser" map: each of them sends a resolver for a browser to browser.js.
+      "node_modules/framework-server/package.json": JSON.stringify({
+        name: "framework-server",
+        version: "1.0.0",
+        main: "./main.js",
+        exports: { ".": { browser: "./browser.js", default: "./main.js" } },
+        browser: { "./main.js": "./browser.js" },
+      }),
+      ...Object.fromEntries(
+        ["main.js", "browser.js"].map(file => [
+          `node_modules/framework-server/${file}`,
+          `
+            export const render = (req, meta) => new Response("");
+            export const prerender = async meta => ({
+              files: { "index.html": "${file} renders a reference from " + meta.pageModule.default },
+            });
+            export const registerClientReference = () => "${file}";
+          `,
+        ]),
+      ),
+      "component.ts": `
+        "use client";
+        export const component = 1;
+      `,
+      "routes/index.ts": `
+        export { component as default } from "../component";
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "framework-server" };
+        const serverComponents = {
+          separateSSRGraph: true,
+          serverRuntimeImportSource: "framework-server",
+          serverRegisterClientReferenceExport: "registerClientReference",
+        };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr], serverComponents } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => stderr.toString());
+    expect(html).toBe("main.js renders a reference from main.js");
+    expect(exitCode).toBe(0);
+  });
+
+  // No environment variable is a define of the server graph.
+  test("a server route reads process.env when it is rendered", async () => {
+    using dir = tempDir("bake-production-env", {
+      "server-entry.ts": `
+        export function render(req, meta) {
+          return new Response(meta.pageModule.default());
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": meta.pageModule.default() } };
+        }
+      `,
+      "routes/index.ts": `
+        export default function () {
+          Reflect.set(process.env, "BAKE_ENV_PROBE", "set when the route ran");
+          return process.env.BAKE_ENV_PROBE;
+        }
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server-entry.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env({ ...bunEnv, BAKE_ENV_PROBE: "set when the build started" })
+      .throws(false);
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => stderr.toString());
+    expect(html).toBe("set when the route ran");
     expect(exitCode).toBe(0);
   });
 

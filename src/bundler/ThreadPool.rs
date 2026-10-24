@@ -7,15 +7,15 @@
 //! bitwise struct copy); the self-referential `linker` backrefs are wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::mem::ManuallyDrop;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_collections::{ArrayHashMap, MapEntry};
-use bun_core::{self, env_var, output as Output};
+use bun_core::{self, output as Output};
 use bun_sys::Fd;
-use bun_threading::{Mutex, WaitGroup, thread_pool as ThreadPoolLib};
+use bun_threading::{WaitGroup, io_thread_pool, thread_pool as ThreadPoolLib};
 
 use crate::cache::{Contents, Entry as CacheEntry};
 use crate::linker_context_mod::StmtList;
@@ -49,10 +49,9 @@ pub struct ThreadPool {
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
     pub(crate) io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
-    /// One count per task on `io_pool`, finished when its callback returns.
-    /// That callback ends by scheduling the task onto `worker_pool`, and the
-    /// parse can complete (`graph.pending_items` reaching zero) before it has
-    /// returned from that, so teardown joins this before it frees `worker_pool`.
+    /// Tracks the `io_pool` tasks whose callbacks haven't returned. A callback's
+    /// last step schedules a parse on `worker_pool`, and that parse can finish
+    /// before the callback returns.
     io_tasks_in_flight: WaitGroup,
     // Conditionally owned via `worker_pool_is_owned`.
     pub worker_pool: *mut ThreadPoolLib::ThreadPool,
@@ -83,84 +82,6 @@ unsafe impl Send for ThreadPool {}
 // `workers_assignments` (through its `bun_threading::Guarded` lock), and the
 // raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
 unsafe impl Sync for ThreadPool {}
-
-mod io_thread_pool {
-    use super::*;
-
-    // PORTING.md §Global mutable state: init/drop guarded by `MUTEX` +
-    // `REF_COUNT`. RacyCell so accessors stay in raw-ptr land; the mutex
-    // provides synchronization.
-    static THREAD_POOL: bun_core::RacyCell<MaybeUninit<ThreadPoolLib::ThreadPool>> =
-        bun_core::RacyCell::new(MaybeUninit::uninit());
-    /// Protects initialization and deinitialization of the IO thread pool.
-    static MUTEX: Mutex = {
-        // `Mutex` derives `Default` but `Default::default()` isn't
-        // `const`. An all-zero `Mutex` is the documented unlocked state on
-        // every impl.
-        // SAFETY: `Mutex` is `repr(Rust)` over an atomic / Futex word; zero is
-        // the valid initial value (matches `#[derive(Default)]`).
-        unsafe { bun_core::ffi::zeroed_unchecked() }
-    };
-    /// 0 means not initialized. 1 means initialized but not used.
-    /// N > 1 means N-1 `ThreadPool`s are using the IO thread pool.
-    static REF_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-    pub(super) fn acquire() -> NonNull<ThreadPoolLib::ThreadPool> {
-        let mut count = REF_COUNT.load(Ordering::Acquire);
-        loop {
-            if count == 0 {
-                break;
-            }
-            // Relaxed is okay because we already loaded this value with Acquire,
-            // and we don't need the store to be Release because the only store that
-            // matters is the one that goes from 0 to 1, and that one is Release.
-            match REF_COUNT.compare_exchange_weak(
-                count,
-                count + 1,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    // REF_COUNT != 0 ⇒ THREAD_POOL is initialized (set under MUTEX below).
-                    // `UnsafeCell::get` never returns null.
-                    return NonNull::new(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
-                        .expect("UnsafeCell::get is non-null");
-                }
-                Err(actual) => count = actual,
-            }
-        }
-
-        let _guard = MUTEX.lock_guard();
-
-        // Relaxed because the store we care about (the one that stores 1 to
-        // indicate the thread pool is initialized) is guarded by the mutex.
-        if REF_COUNT.load(Ordering::Relaxed) == 0 {
-            // SAFETY: we hold MUTEX and REF_COUNT == 0, so no other thread is reading THREAD_POOL.
-            unsafe {
-                (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(
-                    ThreadPoolLib::Config {
-                        max_threads: u32::from(bun_core::get_thread_count().clamp(2, 4)),
-                        // Use a much smaller stack size for the IO thread pool
-                        stack_size: 512 * 1024,
-                    },
-                ));
-            }
-            // 2 means initialized and referenced by one `ThreadPool`.
-            REF_COUNT.store(2, Ordering::Release);
-        } else {
-            // NOTE: a racing acquirer that reaches here does not bump the ref
-            // count — a latent under-count, preserved intentionally.
-        }
-        // Just initialized (or observed initialized) above. `UnsafeCell::get` never returns null.
-        NonNull::new(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
-            .expect("UnsafeCell::get is non-null")
-    }
-
-    pub(super) fn release() {
-        let old = REF_COUNT.fetch_sub(1, Ordering::Release);
-        debug_assert!(old > 1, "IOThreadPool: too many calls to release()");
-    }
-}
 
 impl ThreadPool {
     /// Inherent associated type so call sites that wrote
@@ -220,26 +141,24 @@ impl ThreadPool {
         }
     }
 
-    /// Blocks until every IO callback has returned. `&self` on purpose: IO
-    /// threads still read the pool until this returns.
+    /// Blocks until every IO callback has returned.
     pub(crate) fn wait_for_io_tasks(&self) {
         self.io_tasks_in_flight.wait();
     }
 
-    /// The last step of `io_task_callback`.
+    /// Marks one IO task as finished. `io_task_callback` calls this last.
     ///
     /// # Safety
-    /// `this` scheduled the task. It may be freed once [`Self::wait_for_io_tasks`]
-    /// returns, which this call permits, so nothing may touch it afterwards.
+    /// `this` must have scheduled the task. `this` may be freed as soon as this
+    /// call unblocks [`Self::wait_for_io_tasks`].
     pub(crate) unsafe fn finish_io_task(this: *const Self) {
-        // SAFETY: caller contract; `finish_raw` is the matching last access.
+        // SAFETY: caller contract.
         unsafe { WaitGroup::finish_raw(&raw const (*this).io_tasks_in_flight) };
     }
 
     /// Explicit teardown (no Drop on
     /// `ThreadPool` because `Graph.pool` is `NonNull<ThreadPool>` and the arena
-    /// owns the storage). Only valid once no task of this pool is running:
-    /// the caller drains the parse tasks and calls [`Self::wait_for_io_tasks`].
+    /// owns the storage). Call [`Self::wait_for_io_tasks`] first.
     pub(crate) fn deinit(&mut self) {
         if self.worker_pool_is_owned {
             // SAFETY: worker_pool was heap-allocated in `init()` when owned.
@@ -291,21 +210,7 @@ impl ThreadPool {
     }
 
     pub(crate) fn uses_io_pool() -> bool {
-        if env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_IO_POOL.get() == Some(true) {
-            // For testing.
-            return true;
-        }
-
-        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IO_POOL.get() == Some(true) {
-            // For testing.
-            return false;
-        }
-
-        // 4 was the sweet spot on macOS. Didn't check the sweet spot on Windows.
-        #[cfg(any(target_os = "macos", windows))]
-        return bun_core::get_thread_count() > 3;
-        #[cfg(not(any(target_os = "macos", windows)))]
-        return false;
+        io_thread_pool::uses_io_pool()
     }
 
     /// `parse_task` is raw, not `&mut`: `schedule_fn` publishes the embedded
@@ -377,7 +282,6 @@ impl ThreadPool {
                     ParseTaskStage::NeedsSourceCode => {
                         // io_pool is Some when uses_io_pool().
                         let io = self.io_pool_ref().unwrap();
-                        // Finished by `finish_io_task` at the end of `io_task_callback`.
                         self.io_tasks_in_flight.add_one();
                         schedule_fn(
                             io,

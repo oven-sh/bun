@@ -23,36 +23,35 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "fetch/FetchTasklet.rs"]
-pub mod fetch_tasklet;
+pub(crate) mod fetch_tasklet;
 
 #[path = "fetch/FetchRequestBodySink.rs"]
-pub mod fetch_request_body_sink;
-pub use self::fetch_request_body_sink::FetchRequestBodySink;
+pub(crate) mod fetch_request_body_sink;
+pub(crate) use self::fetch_request_body_sink::FetchRequestBodySink;
 
 #[path = "fetch/compress_body.rs"]
-pub mod compress_body;
+pub(crate) mod compress_body;
 
 #[path = "fetch/FetchSession.rs"]
-pub mod fetch_session;
-pub use self::fetch_session::FetchSession;
+pub(crate) mod fetch_session;
+pub(crate) use self::fetch_session::FetchSession;
 
-/// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
-/// snake-cases `TestingAPIs` as `testing_ap_is`.
 #[path = "fetch/proxy_testing.rs"]
-pub mod testing_ap_is;
+pub(crate) mod proxy_testing;
 
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
 
 use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
 use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::http_request_body::StreamFraming;
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -81,7 +80,9 @@ use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
-pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
+pub(crate) use self::fetch_tasklet::{
+    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -204,25 +205,13 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Bun__fetchPreconnect
+// fetch.preconnect
 // ──────────────────────────────────────────────────────────────────────────
 
-#[bun_jsc::host_fn(export = "Bun__fetchPreconnect")]
-fn bun_fetch_preconnect(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
+pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> {
+    let global_object = cx.global();
 
-    if arguments.len() < 1 {
-        return Err(global_object.throw_not_enough_arguments(
-            "fetch.preconnect",
-            1,
-            arguments.len(),
-        ));
-    }
-
-    let url_str = jsc::URL::href_from_js(arguments[0], global_object)?;
+    let url_str = bun_url::href_from_string(url);
 
     if url_str.tag() == BunStringTag::Dead {
         return Err(global_object
@@ -284,17 +273,14 @@ fn bun_fetch_preconnect(
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership
     // of `href_raw` transfers here (`is_url_owned: true`).
-    // A request to an origin the environment proxies never dials it.
-    if VirtualMachine::get()
-        .env_loader()
-        .get_http_proxy_for(&url)
-        .is_some()
-    {
+    // A request to an origin the environment proxies never dials it. One after `tls.DEFAULT_CIPHERS` was assigned does not use the default context.
+    let vm = VirtualMachine::get();
+    if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
         reclaim_href!();
-        return Ok(JSValue::UNDEFINED);
+        return Ok(());
     }
     http::async_http::preconnect(url, true);
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -318,54 +304,31 @@ impl StringOrURL {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Bun__fetch entry point
+// fetch entry point
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
-#[bun_jsc::host_fn(export = "Bun__fetch")]
-fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe, None))
+pub(crate) fn fetch(
+    cx: &mut JsScope<'_>,
+    input: JsLocal<'_>,
+    init: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    fetch_impl::<false>(cx.global(), input.to_js(), init.to_js(), None)
 }
 
 /// What `session.fetch` is bound from: `fetch()` with `this` as its session.
-#[bun_jsc::host_fn]
-pub(crate) fn session_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(
-        ctx,
-        fetch_impl::<false>(ctx, callframe, Some(callframe.this())),
-    )
-}
-
-/// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
-/// rejects the returned promise; `fetch()` never throws synchronously.
-fn reject_on_exception(
-    global_this: &JSGlobalObject,
-    result: JsResult<JSValue>,
+pub(crate) fn session_fetch(
+    cx: &mut JsScope<'_>,
+    this_value: JsLocal<'_>,
+    input: JsLocal<'_>,
+    init: JsLocal<'_>,
 ) -> JsResult<JSValue> {
-    let err = match result {
-        Ok(v) => return Ok(v),
-        Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
-        // A terminated worker gets no rejected promise: its termination keeps unwinding.
-        Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
-            if global_this.has_pending_termination_exception() =>
-        {
-            return Err(jsc::JsError::Thrown);
-        }
-        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
-        Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
-            Some(exc) => exc.to_error().unwrap_or(exc),
-            None => {
-                // `fetch_impl` only returns Err(Thrown) with an exception
-                // pending; reaching here means it was cleared, which is a bug.
-                debug_assert!(
-                    false,
-                    "fetch_impl signaled a thrown exception but none is pending"
-                );
-                global_this.create_error_instance(format_args!("fetch() failed"))
-            }
-        },
-    };
-    Ok(JSPromise::rejected_promise(global_this, err).to_js())
+    fetch_impl::<false>(
+        cx.global(),
+        input.to_js(),
+        init.to_js(),
+        Some(this_value.to_js()),
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -401,11 +364,12 @@ fn reject_before_send(
 /// Shared implementation of fetch
 fn fetch_impl<const ALLOW_GET_BODY: bool>(
     ctx: &JSGlobalObject,
-    callframe: &CallFrame,
+    first_arg: JSValue,
+    options: JSValue,
     // `session.fetch()`: the session, which a `session` in the init does not replace.
     bound_session: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    let context = ctx.bun_vm().context_of_caller(callframe);
+    let context = ctx.bun_vm().context_of_caller_no_frame();
     // What script of a disposed `Bun.ModuleGraph` starts does not start, and reports nothing: no
     // connection goes out, and the promise stays pending.
     if context.is_stopped() {
@@ -421,23 +385,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut upgraded_connection = false;
     let mut forced_protocol: Option<http::Protocol> = None;
 
-    if callframe.arguments_count() == 0 {
-        let err = ctx.to_type_error(
-            jsc::ErrorCode::MISSING_ARGS,
-            format_args!("fetch() expects a string but received no arguments."),
-        );
-        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-    }
-
     let mut headers: Option<Headers> = None;
 
-    // hoist the one `&mut vm` accessor before `args` takes an
-    // immutable borrow of `vm` for the rest of the function.
     let vm_verbose_fetch = vm.get_verbose_fetch();
-
-    let mut args = jsc::ArgumentsSlice::init(vm, callframe.arguments());
-
-    let first_arg = args.next_eat().unwrap();
 
     let mut disable_timeout = false;
     let mut idle_timeout_seconds: Option<core::ffi::c_uint> = None;
@@ -486,11 +436,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // ssl_config are all owning types whose Drop runs on early return.
 
     let options_object: Option<JSValue> = 'brk: {
-        if let Some(options) = args.next_eat() {
-            let options: JSValue = options;
-            if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
-                break 'brk Some(options);
-            }
+        if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
+            break 'brk Some(options);
         }
         break 'brk None;
     };
@@ -756,6 +703,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ssl_config = session.ssl_config();
         reject_unauthorized = session.reject_unauthorized().unwrap_or(reject_unauthorized);
         session_check_server_identity = session.check_server_identity().is_some();
+    }
+    if ssl_config.is_none() {
+        ssl_config = crate::socket::http_client_defaults(vm);
     }
 
     // unix: string | undefined
@@ -1231,9 +1181,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             Some(from_fetch_headers(
+                global_this,
                 Some(headers_ref),
                 any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-            ))
+            )?)
         } else {
             headers
         };
@@ -1325,6 +1276,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
+        // `open` would truncate the path at a decoded `%00`. `Bun.file(url)` and node:fs reject it the same way.
+        if url_type == URLType::File {
+            crate::node::types::Valid::path_null_bytes(url_path_decoded, global_this)?;
+        }
 
         let url_string: BunString;
 
@@ -1393,15 +1348,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 };
                 #[cfg(not(windows))]
-                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
-                let main = global_this.bun_vm().as_mut().main();
+                // Relative to the folder of the entry module, or to the working directory when there
+                // is none (`bun bake`).
+                let parts: &[&[u8]] = match global_this.bun_vm().as_mut().main() {
+                    Some(main) => &[main, b"../", url_path_decoded],
+                    None => &[url_path_decoded],
+                };
                 let fullpath = bun_paths::resolve_path::join_abs_string_buf::<
                     bun_paths::platform::Auto,
-                >(
-                    cwd, &mut path_buf, &[main, b"../", url_path_decoded]
-                );
+                >(cwd, &mut path_buf, parts);
                 #[cfg(windows)]
                 {
                     break 'brk match PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
@@ -1485,9 +1443,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
         headers = Some(from_fetch_headers(
+            global_this,
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-        ));
+        )?);
     }
 
     // Userinfo in the URL is the request's credentials, like curl and
@@ -1527,8 +1486,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         global_this,
                     )),
                 );
-                // HTTPRequestBody has no Drop
-                // impl, so a bare `drop(old)` would leak the S3 Blob.Store ref.
                 old.detach();
                 break 'prepare_body;
             }
@@ -1537,8 +1494,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 global_this.create_error_instance(format_args!("Failed to start s3 stream")),
             )
             .to_js();
-            // HTTPRequestBody has no Drop impl, so a bare `drop(body)` would
-            // leak the S3 Blob.Store ref.
             body.detach();
             return Ok(rejected_value);
         }
@@ -1577,7 +1532,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // An explicit `compress` request always wins over the sendfile
             // heuristic — otherwise the same `Bun.file()` body would compress
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
-            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
+            let env_proxy_is_tls = !proxy_direct
+                && vm
+                    .env_loader()
+                    .get_http_proxy_for(&url)
+                    .is_some_and(|env_proxy| env_proxy.is_https());
+            if proxy.is_none()
+                && !env_proxy_is_tls
+                && compress.is_none()
+                && http::SendFile::is_eligible(&url)
+            {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,

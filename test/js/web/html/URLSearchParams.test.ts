@@ -1,4 +1,6 @@
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("URLSearchParams", () => {
   it("does not crash when calling .toJSON() on a URLSearchParams object with a large number of properties", () => {
@@ -84,7 +86,6 @@ describe("URLSearchParams", () => {
       params.set(key, props[key as keyof typeof props]);
     }
 
-    // @ts-expect-error
     expect(params.toJSON()).toEqual(props);
 
     expect(Array.from(params.keys())).toHaveLength(params.size);
@@ -119,7 +120,7 @@ describe("URLSearchParams", () => {
       params.append("foo", "boop");
       params.append("bar", "baz");
       // @ts-ignore
-      expect(params.toJSON()).toEqual({
+      expect(params.toJSON() as Record<string, string | string[]>).toEqual({
         foo: ["bar", "boop"],
         bar: "baz",
       });
@@ -195,7 +196,7 @@ describe("URLSearchParams", () => {
       params.append("100", "second");
       params.append("name", "test");
       // @ts-ignore
-      expect(params.toJSON()).toEqual({
+      expect(params.toJSON() as Record<string, string | string[]>).toEqual({
         "100": ["first", "second"],
         "name": "test",
       });
@@ -221,7 +222,7 @@ it("size property should be configurable (issue #9251)", () => {
 
 it(".delete second argument", () => {
   const params = new URLSearchParams("a=1&a=2&b=3");
-  params.delete("a", 1);
+  params.delete("a", 1 as any);
   params.delete("b", undefined);
   expect(params + "").toBe("a=2");
 });
@@ -300,9 +301,63 @@ describe("USVString conversion of lone surrogates", () => {
 
 it(".has second argument", () => {
   const params = new URLSearchParams("a=1&a=2&b=3");
-  expect(params.has("a", 1)).toBe(true);
-  expect(params.has("a", 2)).toBe(true);
-  expect(params.has("a", 3)).toBe(false);
-  expect(params.has("b", 3)).toBe(true);
-  expect(params.has("b", 4)).toBe(false);
+  expect(params.has("a", 1 as any)).toBe(true);
+  expect(params.has("a", 2 as any)).toBe(true);
+  expect(params.has("a", 3 as any)).toBe(false);
+  expect(params.has("b", 3 as any)).toBe(true);
+  expect(params.has("b", 4 as any)).toBe(false);
+});
+
+it("throws for a name or value that is too long to decode", () => {
+  const long = Buffer.alloc(600_000, "é").toString();
+  const ascii = Buffer.alloc(600_000, "a").toString();
+  const url = new URL("http://x/?a=1");
+  const params = url.searchParams;
+  // With a 1 MiB limit the decoder is capped at 524288 UTF-8 bytes.
+  const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+  try {
+    expect(() => new URLSearchParams(long)).toThrow("Out of memory");
+    expect(() => new URLSearchParams("a=1&b=" + long)).toThrow("Out of memory");
+    expect(() => new URL("http://x/?" + long).searchParams).toThrow("Out of memory");
+    expect(() => {
+      url.href = "http://x/?" + long;
+    }).toThrow("Out of memory");
+    expect(params.size).toBe(0);
+    // ASCII without escapes doesn't need decoding.
+    expect(new URLSearchParams(ascii).size).toBe(1);
+  } finally {
+    setSyntheticAllocationLimitForTesting(originalLimit);
+  }
+});
+
+it("throws when the pair list can't grow", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // With a 64 KiB limit the list is capped at 4096 pairs.
+        const full = Buffer.alloc(8192, "a&").toString();
+        const params = new URLSearchParams(full);
+        for (const grow of [() => params.append("a", ""), () => params.set("b", ""), () => new URLSearchParams(full + "a")]) {
+          try {
+            grow();
+            console.log("no error");
+          } catch (e) {
+            console.log(e.name, e.message);
+          }
+        }
+        console.log(params.size);
+      `,
+    ],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "RangeError Out of memory\n".repeat(3) + "4096\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });

@@ -1,0 +1,11 @@
+useEffect(() => {
+  console.log(x);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [/* intentionally missing deps */]);
+useEffect(() => {
+  console.log(x);
+}, [
+  // c
+]);
+useEffect(() => {
+  console.log(x);

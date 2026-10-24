@@ -11,13 +11,13 @@ use crate::shell::yield_::Yield;
 use core::ptr::NonNull;
 
 #[derive(Default)]
-pub struct Mkdir {
+pub(crate) struct Mkdir {
     pub(crate) opts: Opts,
     pub(crate) state: State,
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     Exec(Exec),
@@ -25,12 +25,12 @@ pub enum State {
     Done,
 }
 
-pub struct Exec {
+pub(crate) struct Exec {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
-    pub(crate) output_waiting: u16,
-    pub(crate) output_done: u16,
+    pub(crate) output_waiting: usize,
+    pub(crate) output_done: usize,
     /// Index into `Builtin::args` where filepath args start (storing the
     /// index keeps the lifetime tied to the Cmd's argv without a
     /// self-reference).
@@ -433,7 +433,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// `-p`, `--parents` — no error if existing, make parent directories as
     /// needed, with their file modes unaffected by any -m option.
     pub(crate) parents: bool,

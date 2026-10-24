@@ -15,7 +15,7 @@ bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 /// directly into the locked stream buffer so no intermediate UTF-8 buffer is
 /// allocated.
 #[derive(Clone, Copy)]
-pub enum RequestBodyChunk<'a> {
+pub(crate) enum RequestBodyChunk<'a> {
     Bytes(&'a [u8]),
     Latin1(&'a [u8]),
     Utf16(&'a [u16]),
@@ -23,7 +23,7 @@ pub enum RequestBodyChunk<'a> {
 
 impl<'a> RequestBodyChunk<'a> {
     #[inline]
-    pub fn utf8_len(&self) -> usize {
+    pub(crate) fn utf8_len(&self) -> usize {
         match *self {
             Self::Bytes(b) => b.len(),
             Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
@@ -34,7 +34,7 @@ impl<'a> RequestBodyChunk<'a> {
     }
 
     #[inline]
-    pub fn append_utf8_into(&self, out: &mut Vec<u8>) {
+    pub(crate) fn append_utf8_into(&self, out: &mut Vec<u8>) {
         match *self {
             Self::Bytes(b) => out.extend_from_slice(b),
             Self::Latin1(b) => {

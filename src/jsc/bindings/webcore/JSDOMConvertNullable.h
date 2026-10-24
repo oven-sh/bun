@@ -74,17 +74,6 @@ template<typename T> struct Converter<IDLNullable<T>> : DefaultConverter<IDLNull
     // 3. Otherwise, return the result of converting V using the rules for the inner IDL type T.
 
     template<Bun::IDLConversionContext Ctx>
-    static std::optional<ReturnType> tryConvert(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        JSC::JSValue value,
-        Ctx& ctx)
-    {
-        if (value.isUndefinedOrNull())
-            return T::nullValue();
-        return Bun::tryConvertIDL<T>(lexicalGlobalObject, value, ctx);
-    }
-
-    template<Bun::IDLConversionContext Ctx>
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx)
     {
         if (value.isUndefinedOrNull())

@@ -569,11 +569,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // To avoid thinking too much about edgecases, only do this for:
                             //   1) Objects with a single property
                             //   2) Not a method, not a computed property
-                            //
-                            // An anonymous function or class stays in the object:
-                            // `{ f: () => {} }.f.name` is "f". Reading that one data
-                            // property runs no code, so the read is still free of
-                            // side effects when the value is.
+                            //   3) Not an anonymous function or class: `{ f: () => {} }.f.name` is "f"
                             if obj.properties.len_u32() == 1
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -595,6 +591,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         if !value.is_anonymous_named() {
                                             return Some(value);
                                         }
+                                        // The object stays, but reading it runs no code.
                                         if p.expr_can_be_removed_if_unused(&value) {
                                             return Some(p.new_expr(
                                                 E::Dot {

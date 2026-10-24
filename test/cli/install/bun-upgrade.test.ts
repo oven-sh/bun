@@ -181,8 +181,14 @@ type ReleaseServer = Bun.Server<undefined> & { env: Record<string, string> };
 function startReleaseServer(opts: {
   tagName: string;
   assetNames?: string[];
+  // Reported as the `size` of every asset; `bun upgrade` uses it as the total
+  // of the "Downloading" progress line.
+  assetSize?: number;
   zipPath?: string;
   zipBody?: string;
+  // Send the archive as `count` zero-filled chunks of `bytes`, paced
+  // `intervalMs` apart.
+  zipStream?: { count: number; bytes: number; intervalMs: number };
   digest?: string;
 }): ReleaseServer {
   const assetNames = opts.assetNames ?? allAssetNames();
@@ -193,6 +199,17 @@ function startReleaseServer(opts: {
       const { pathname } = new URL(req.url);
       if (pathname.startsWith("/download/")) {
         if (opts.zipPath) return new Response(Bun.file(opts.zipPath));
+        if (opts.zipStream) {
+          const { count, bytes, intervalMs } = opts.zipStream;
+          return new Response(
+            (async function* () {
+              for (let i = 0; i < count; i++) {
+                yield new Uint8Array(bytes);
+                await Bun.sleep(intervalMs);
+              }
+            })(),
+          );
+        }
         return new Response(opts.zipBody ?? "this is not a real zip archive");
       }
       return new Response(
@@ -203,6 +220,7 @@ function startReleaseServer(opts: {
             content_type: "application/zip",
             name,
             ...(opts.digest ? { digest: opts.digest } : {}),
+            ...(opts.assetSize ? { size: opts.assetSize } : {}),
             browser_download_url: `https://${server.hostname}:${server.port}/download/${name}`,
           })),
         }),
@@ -506,4 +524,53 @@ it.concurrent("verifies the downloaded release archive against the digest report
   expect(matched.stderr).toEndWith(unpackFailure);
   expect(matched.staged).toEqual(["9.9.8"]);
   expect(matched.exitCode).toBe(1);
+});
+
+// When stderr is not a terminal, Windows prints no progress at all, while
+// POSIX prints each refresh as its own line. The archive is sent as paced
+// 64 KiB chunks so the download outlasts the 500ms initial delay of the
+// progress bar and a frame renders while bytes are still arriving. The
+// assertions match the counter alone: the node name can move around it.
+describe.skipIf(isWindows).concurrent("download progress", () => {
+  const pacedZip = { count: 8, bytes: 64 * 1024, intervalMs: 100 };
+
+  const runUpgrade = async (server: ReleaseServer) => {
+    using stagingRoot = tempDir("bun-upgrade-progress", {});
+
+    await using proc = Bun.spawn({
+      cmd: [standInExe, "upgrade", "--stable"],
+      cwd: standInDir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  };
+
+  it("prints the received and total bytes in IEC units", async () => {
+    // The asset size is the total. One byte under 1 MiB rounds up to the
+    // next unit (`1.00MiB`, not `1024.00KiB`). The first frame prints before
+    // any byte arrives, later frames carry a KiB count.
+    using server = startReleaseServer({ tagName: "bun-v9.9.9", assetSize: 1048575, zipStream: pacedZip });
+    const { stderr, exitCode } = await runUpgrade(server);
+
+    expect(stderr).toMatch(/\[0B\/1\.00MiB\] /);
+    expect(stderr).toMatch(/\[\d+\.\d\dKiB\/1\.00MiB\] /);
+    expect(stderr).not.toContain("/1048575]");
+    // The bogus archive must not be installed; the upgrade fails cleanly.
+    expect(exitCode).toBe(1);
+  });
+
+  it("prints the received bytes in IEC units when the total is unknown", async () => {
+    // No asset size: the progress line has no total, as on the canary channel.
+    using server = startReleaseServer({ tagName: "bun-v9.9.9", zipStream: pacedZip });
+    const { stderr, exitCode } = await runUpgrade(server);
+
+    expect(stderr).toMatch(/\[\d+\.\d\dKiB\] /);
+    expect(stderr).not.toMatch(/\[\d+\] /);
+    expect(exitCode).toBe(1);
+  });
 });

@@ -413,37 +413,45 @@ test("hot", () => {
     expect(exitCode).toBe(0);
   });
 
-  // --changed runs git before the tests. That must leave JSC's fault handler installed, because JSC
-  // interrupts DFG code with a fault. Lower tiers poll instead, so the worker compiles `spin` before
-  // it calls it with a step of 0: the same types, and it never returns.
+  // --changed runs git before the tests. That must leave JSC's fault handler installed: JSC stops
+  // optimized code with a fault, and everything else polls. So `spin` is DFG-compiled before its
+  // endless call, and that call reports itself with a store to shared memory: a postMessage() in
+  // the loop would poll.
   test("worker.terminate() can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-worker-terminate", {
       "package.json": JSON.stringify({ name: "worker-terminate", type: "module" }),
       "worker.js": `import { noInline, numberOfDFGCompiles } from "bun:jsc";
-import { parentPort } from "node:worker_threads";
+const spinning = new Int32Array(new SharedArrayBuffer(4));
 function spin(state) {
-  while (state.left > 0) state.left -= state.step;
+  while (state.left > 0) {
+    spinning[0] = state.forever;
+    state.left -= state.step;
+  }
 }
 noInline(spin);
-while (numberOfDFGCompiles(spin) === 0) spin({ left: 100, step: 1 });
-parentPort.postMessage("hot");
-spin({ left: 1, step: 0 });
+while (numberOfDFGCompiles(spin) === 0) spin({ left: 100, step: 1, forever: 0 });
+postMessage(spinning);
+spin({ left: 1, step: 0, forever: 1 });
 `,
-      "busy.test.ts": `import { test, expect } from "bun:test";
-import { once } from "node:events";
-import { Worker } from "node:worker_threads";
+      "busy.test.js": `import { test } from "bun:test";
 test("busy", async () => {
   const worker = new Worker(new URL("./worker.js", import.meta.url));
-  expect(await once(worker, "message")).toEqual(["hot"]);
-  await worker.terminate();
+  const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+  const spinning = await new Promise((resolve, reject) => {
+    worker.onmessage = event => resolve(event.data);
+    worker.onerror = event => reject(new Error(event.message));
+    closed.then(() => reject(new Error("the worker closed before it reported")));
+  });
+  while (Atomics.load(spinning, 0) === 0) await new Promise(setImmediate);
+  worker.terminate();
+  await closed;
 });
 `,
     });
     initRepo(String(dir));
-    appendFileSync(join(String(dir), "busy.test.ts"), "// touched\n");
+    appendFileSync(join(String(dir), "busy.test.js"), "// touched\n");
 
-    // The 5s default of the child run is too short for an ASAN build to start the worker under load.
-    const { stderr, exitCode } = await runTestChanged(String(dir), [`--timeout=${isASAN ? 60_000 : 15_000}`]);
+    const { stderr, exitCode } = await runTestChanged(String(dir));
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });

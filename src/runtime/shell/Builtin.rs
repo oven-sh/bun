@@ -9,8 +9,8 @@ use std::sync::Arc;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, RedirectTarget, is_pollable_from_mode,
-    shell_openat,
+    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, RedirectTarget, is_pollable,
+    is_pollable_from_mode, shell_openat,
 };
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
@@ -228,7 +228,7 @@ pub(crate) enum IoKind {
 // ──────────────────────────────────────────────────────────────────────────
 // BuiltinIO
 //
-// Distinct from `IO::OutKind` because builtins can target ArrayBuffer/Blob
+// Distinct from `IO::OutKind` because builtins can target ArrayBuffer
 // JS objects (`> ${buf}`) and accumulate into a per-builtin `.buf` when the
 // Cmd's IO is `.pipe`. The `.buf` arm is reshaped in the NodeId port: instead
 // of a local Vec flushed in `done()`, `write_no_io` appends straight to the
@@ -251,7 +251,6 @@ pub(crate) enum BuiltinIO {
         buf: PinnedArrayBuffer,
         i: u32,
     },
-    Blob(Arc<BuiltinBlob>),
     Ignore,
 }
 
@@ -259,21 +258,9 @@ pub(crate) enum BuiltinIO {
 pub(crate) enum BuiltinInput {
     Fd(Arc<IOReader>),
     ArrayBuf { buf: PinnedArrayBuffer },
-    Blob(Arc<BuiltinBlob>),
+    Blob(Box<crate::webcore::Blob>),
     Ignore,
 }
-
-/// Refcounted wrapper around a `webcore.Blob`. `Arc` provides the refcount;
-/// `Drop` runs `Blob::deinit`.
-pub(crate) struct BuiltinBlob {
-    pub(crate) blob: crate::webcore::Blob,
-}
-// `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,
-// which already asserts `Send + Sync`. No `unsafe impl` needed.
-const _: fn() = || {
-    fn assert<T: Send + Sync>() {}
-    assert::<BuiltinBlob>();
-};
 
 impl BuiltinIO {
     /// From the Cmd's IO::OutKind. `Arc::clone` (via `OutFd: Clone`) bumps
@@ -289,7 +276,7 @@ impl BuiltinIO {
 
     /// Bump refcounts and return a shallow copy. Only reachable from the
     /// `duplicate_out` path, which fires before any `.jsbuf` redirect, so
-    /// `ArrayBuf`/`Blob` are unreachable here. The `Buf` target is copied
+    /// `ArrayBuf` is unreachable here. The `Buf` target is copied
     /// verbatim so stderr writes accumulate in (and flush from) stdout's
     /// buffer; that aliasing is the carried `IoKind`.
     fn dup_ref(&self) -> BuiltinIO {
@@ -297,7 +284,6 @@ impl BuiltinIO {
             BuiltinIO::Fd(fd) => BuiltinIO::Fd(fd.clone()),
             BuiltinIO::Buf(target) => BuiltinIO::Buf(*target),
             BuiltinIO::Ignore => BuiltinIO::Ignore,
-            BuiltinIO::Blob(b) => BuiltinIO::Blob(Arc::clone(b)),
             BuiltinIO::ArrayBuf { .. } => {
                 unreachable!("duplicate_out precedes jsbuf redirects")
             }
@@ -367,7 +353,7 @@ impl BuiltinIO {
                 *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
             }
-            BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
+            BuiltinIO::Ignore => Ok(buf.len()),
         }
     }
 
@@ -519,7 +505,7 @@ impl Builtin {
         Self::init_redirections(interp, cmd, kind)
     }
 
-    /// Opens redirect files / wires ArrayBuffer & Blob targets / handles
+    /// Opens redirect files / wires JS object targets / handles
     /// `2>&1` (`duplicate_out`).
     fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
         // `node` points into the AST arena which outlives every state node (see Cmd::next).
@@ -534,7 +520,14 @@ impl Builtin {
             None => None,
         };
 
-        match target {
+        let evtloop = interp.event_loop;
+
+        let mut pollable = false;
+        let mut is_socket = false;
+        let mut is_nonblocking = false;
+
+        // The arm of a target that is no file returns.
+        let (redirfd, response) = match target {
             Some(RedirectTarget::Path(path_buf, response)) => {
                 // ── File redirect (`> path` / `< path` / `>> path` / `&> path`).
                 if path_buf.is_empty() {
@@ -547,11 +540,6 @@ impl Builtin {
                 let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
-                let evtloop = interp.event_loop;
-
-                let mut pollable = false;
-                let mut is_socket = false;
-                let mut is_nonblocking = false;
 
                 let redirfd: bun_sys::Fd = if redirect.stdin() {
                     match shell_openat(cwd_fd, path, redirect.to_flags(), perm) {
@@ -600,53 +588,27 @@ impl Builtin {
                         Ok(f) => f,
                     }
                 };
-                if let Some(response) = response {
-                    response.consume_body();
-                }
-
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-                if redirect.stdin() {
-                    let r = IOReader::init(redirfd, evtloop);
-                    r.set_interp(interp_ptr);
-                    Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
-                }
-
-                if !redirect.stdout() && !redirect.stderr() {
-                    return None;
-                }
-
-                // Honor the `pollable` computed by `open_for_writing_impl` on
-                // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
-                // takes the pollable path; Windows keeps the async writer.
-                let redirect_writer = IOWriter::init(
-                    redirfd,
-                    io_writer::Flags {
-                        pollable: if cfg!(windows) { true } else { pollable },
-                        nonblock: is_nonblocking,
-                        is_socket,
-                        ..Default::default()
-                    },
-                    evtloop,
-                );
-                redirect_writer.set_interp(interp_ptr);
-
-                if redirect.stdout() {
-                    let me = Self::of_mut(interp, cmd);
-                    me.stdout = BuiltinIO::Fd(OutFd {
-                        writer: Arc::clone(&redirect_writer),
-                        captured: None,
-                    });
-                }
-                if redirect.stderr() {
-                    let me = Self::of_mut(interp, cmd);
-                    me.stderr = BuiltinIO::Fd(OutFd {
-                        writer: redirect_writer,
-                        captured: None,
-                    });
-                }
+                (redirfd, response)
             }
+            Some(RedirectTarget::Fd(fd, response)) => match fd.dup() {
+                Err(e) => {
+                    let sys = e.to_shell_system_error();
+                    return Some(Self::cmd_write_failing_error(
+                        interp,
+                        cmd,
+                        format_args!("bun: {}: {}", bstr::BStr::new(sys.message.byte_slice()), fd),
+                    ));
+                }
+                Ok(dup) => {
+                    // Not `open_for_writing_impl`: it sets O_NONBLOCK, which the duplicate shares with the descriptor.
+                    if redirect.stdout() || redirect.stderr() {
+                        pollable = is_pollable(dup);
+                    }
+                    (dup, response)
+                }
+            },
             Some(RedirectTarget::Object(global, jsval)) => {
-                // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
+                // ── JS object redirect (`> ${arraybuf}` / `< ${blob}`).
                 if jsval.js_type().is_array_buffer_like() {
                     // Each slot gets its own pin + GC root; `None` has thrown OOM.
                     let root = || {
@@ -681,51 +643,11 @@ impl Builtin {
                     // SAFETY: returned a live JSC-owned `*mut Value` borrowed
                     // from a Response/Request wrapper.
                     let body = unsafe { &mut *body };
-                    let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
-                        if !b.needs_to_read_file());
-                    if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
-                        let _ = global.throw(format_args!(
-                            "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
-                        ));
-                        return Some(Yield::Failed(cmd));
-                    }
-                    let original_blob = body.use_();
-                    if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
-                        drop(original_blob);
-                        return None;
-                    }
-                    let blob = Arc::new(BuiltinBlob {
-                        blob: original_blob.dupe(),
-                    });
-                    drop(original_blob);
-                    let me = Self::of_mut(interp, cmd);
-                    if redirect.stdin() {
-                        me.stdin = BuiltinInput::Blob(Arc::clone(&blob));
-                    }
-                    if redirect.stdout() {
-                        me.stdout = BuiltinIO::Blob(Arc::clone(&blob));
-                    }
-                    if redirect.stderr() {
-                        me.stderr = BuiltinIO::Blob(blob);
-                    }
+                    return Self::redirect_to_bytes(interp, cmd, global, redirect, || body.use_());
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
-                    if (redirect.stdout() || redirect.stderr()) && !blob_ref.needs_to_read_file() {
-                        let _ = global.throw(format_args!(
-                            "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
-                        ));
-                        return Some(Yield::Failed(cmd));
-                    }
-                    let theblob = Arc::new(BuiltinBlob {
-                        blob: blob_ref.dupe(),
+                    return Self::redirect_to_bytes(interp, cmd, global, redirect, || {
+                        blob_ref.dupe()
                     });
-                    let me = Self::of_mut(interp, cmd);
-                    if redirect.stdin() {
-                        me.stdin = BuiltinInput::Blob(theblob);
-                    } else if redirect.stdout() {
-                        me.stdout = BuiltinIO::Blob(theblob);
-                    } else if redirect.stderr() {
-                        me.stderr = BuiltinIO::Blob(theblob);
-                    }
                 } else {
                     let _ = global.throw(format_args!(
                         "Unknown JS value used in shell: {}",
@@ -733,6 +655,7 @@ impl Builtin {
                     ));
                     return Some(Yield::Failed(cmd));
                 }
+                return None;
             }
             None if redirect.duplicate_out() => {
                 // `2>&1` (stderr=true,dup_out=true) → stderr := stdout
@@ -744,10 +667,72 @@ impl Builtin {
                 if redirect.stderr() {
                     me.stdout = me.stderr.dup_ref();
                 }
+                return None;
             }
-            None => {}
+            None => return None,
+        };
+        if let Some(response) = response {
+            response.consume_body();
         }
 
+        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
+        if redirect.stdin() {
+            let r = IOReader::init(redirfd, evtloop);
+            r.set_interp(interp_ptr);
+            Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
+        }
+
+        if !redirect.stdout() && !redirect.stderr() {
+            return None;
+        }
+
+        // A FIFO, socket or terminal takes the pollable path on POSIX. Windows keeps the async writer.
+        let redirect_writer = IOWriter::init(
+            redirfd,
+            io_writer::Flags {
+                pollable: if cfg!(windows) { true } else { pollable },
+                nonblock: is_nonblocking,
+                is_socket,
+                ..Default::default()
+            },
+            evtloop,
+        );
+        redirect_writer.set_interp(interp_ptr);
+
+        if redirect.stdout() {
+            let me = Self::of_mut(interp, cmd);
+            me.stdout = BuiltinIO::Fd(OutFd {
+                writer: Arc::clone(&redirect_writer),
+                captured: None,
+            });
+        }
+        if redirect.stderr() {
+            let me = Self::of_mut(interp, cmd);
+            me.stderr = BuiltinIO::Fd(OutFd {
+                writer: redirect_writer,
+                captured: None,
+            });
+        }
+        None
+    }
+
+    /// A Blob or a `Response` body that `redirect_target` left as an object: readable as stdin, refused as an output before `take` spends the body.
+    fn redirect_to_bytes(
+        interp: &Interpreter,
+        cmd: NodeId,
+        global: &crate::jsc::JSGlobalObject,
+        redirect: ast::RedirectFlags,
+        take: impl FnOnce() -> crate::webcore::Blob,
+    ) -> Option<Yield> {
+        if redirect.stdout() || redirect.stderr() {
+            let _ = global.throw(format_args!(
+                "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
+            ));
+            return Some(Yield::Failed(cmd));
+        }
+        if redirect.stdin() {
+            Self::of_mut(interp, cmd).stdin = BuiltinInput::Blob(Box::new(take()));
+        }
         None
     }
 
@@ -828,13 +813,13 @@ impl Builtin {
     pub(crate) fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
         match &Self::of(interp, cmd).stdin {
             BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
-            BuiltinInput::Blob(b) => b.blob.shared_view(),
+            BuiltinInput::Blob(blob) => blob.shared_view(),
             BuiltinInput::Fd(_) | BuiltinInput::Ignore => b"",
         }
     }
 
     /// Write `buf` to stdout/stderr without going through IOWriter (the
-    /// stream is a captured buffer / arraybuffer / blob / /dev/null).
+    /// stream is a captured buffer / arraybuffer / /dev/null).
     ///
     /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
@@ -1045,6 +1030,6 @@ impl Builtin {
 
 // Cleanup: every `Impl` variant owns its state via `Box`/`Vec`/`Arc`, and
 // `BuiltinIO`/`BuiltinInput` hold `Arc<IOWriter>` / `Arc<IOReader>` /
-// `PinnedArrayBuffer` / `Arc<BuiltinBlob>` whose `Drop` already decrements
+// `PinnedArrayBuffer` / `Box<Blob>` whose `Drop` already decrements
 // the refcount. So cleanup is fully covered by `Drop` on `Box<Builtin>`
 // (called from `Cmd::deinit`). No explicit deinit needed.

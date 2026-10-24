@@ -1393,6 +1393,36 @@ extern "C" fn remove_node_gyp_tempdir() {
     }
 }
 
+const NODE_GYP_EXTNAME: &[u8] = b"node-gyp";
+
+/// True if `dir` has the name that a `bun install` gives the directory of its `node-gyp` script.
+pub fn is_node_gyp_script_dir(dir: &[u8]) -> bool {
+    fs::FileSystem::is_tmpname(bun_paths::basename(dir), NODE_GYP_EXTNAME)
+}
+
+/// `bun x` as the `node-gyp` script starts it: this executable by its path, or `bun` from PATH.
+fn node_gyp_script_bun_x() -> Vec<u8> {
+    let exe = match bun_core::self_exe_path() {
+        Ok(exe) if !crate::is_node(exe.as_bytes()) => exe.as_bytes(),
+        _ => return b"bun x".to_vec(),
+    };
+    let quoted = if cfg!(windows) {
+        // cmd reads the file in the code page of the console, and `%` starts a variable.
+        if !strings::is_all_ascii(exe) || strings::contains_char(exe, b'%') {
+            return b"bun x".to_vec();
+        }
+        [b"\"".as_slice(), exe, b"\""].concat()
+    } else {
+        let escaped = strings::replace_owned(exe, b"'", b"'\\''");
+        [b"'".as_slice(), &escaped, b"'"].concat()
+    };
+    // An executable with the name `bunx` takes `x` for a package.
+    if crate::is_bun_x(exe) {
+        return quoted;
+    }
+    [quoted.as_slice(), b" x"].concat()
+}
+
 fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
     if !manager.node_gyp_tempdir_name.is_empty() {
         return Ok(());
@@ -1401,7 +1431,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let tempdir = get_temporary_directory(manager);
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let node_gyp_tempdir_name =
-        fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
+        fs::FileSystem::tmpname(NODE_GYP_EXTNAME, &mut path_buf.0, bun_core::fast_random())?;
 
     // used later for adding to path for scripts
     manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
@@ -1459,28 +1489,29 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         }
     };
 
+    // Not the first `bun` on PATH: the `bun x` of an older one finds this script again.
+    let bun_x = node_gyp_script_bun_x();
     #[cfg(windows)]
-    const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
-    #[cfg(all(not(windows), not(target_os = "android")))]
-    const CONTENT: &str = concat!(
-        "#!/bin/sh\n",
-        "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
-        "else\n",
-        "  \"$npm_config_node_gyp\" $@\n",
-        "fi\n"
-    );
-    #[cfg(target_os = "android")]
-    const CONTENT: &str = concat!(
-        "#!/system/bin/sh\n",
-        "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  bun x --silent node-gyp $@\n",
-        "else\n",
-        "  \"$npm_config_node_gyp\" $@\n",
-        "fi\n"
-    );
+    let content = [
+        b"if not defined npm_config_node_gyp (\n  ".as_slice(),
+        &bun_x,
+        b" --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n",
+    ]
+    .concat();
+    #[cfg(not(windows))]
+    let content = [
+        if cfg!(target_os = "android") {
+            b"#!/system/bin/sh\n".as_slice()
+        } else {
+            b"#!/bin/sh\n"
+        },
+        b"if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n  ",
+        &bun_x,
+        b" --silent node-gyp $@\nelse\n  \"$npm_config_node_gyp\" $@\nfi\n",
+    ]
+    .concat();
 
-    if let Err(e) = node_gyp_file.write_all(CONTENT.as_bytes()) {
+    if let Err(e) = node_gyp_file.write_all(&content) {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: <b><red>{}<r> writing to {} file",
             bstr::BStr::new(e.name()),
@@ -1495,15 +1526,46 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         &[SEP],
         &manager.node_gyp_tempdir_name,
     ];
-    let node_gyp_abs_dir = parts.concat();
+    let mut node_gyp_abs_dir = parts.concat();
+    // A script runs in the directory of its package, where a relative entry leads elsewhere.
+    if !bun_paths::is_fully_qualified(&node_gyp_abs_dir) {
+        let cwd = FileSystem::instance().top_level_dir();
+        let absolute = if cfg!(windows) {
+            // A join can differ from what Windows opened: an empty name is the working directory.
+            let mut opened = bun_paths::path_buffer_pool::get();
+            match bun_sys::get_fd_path(node_gyp_tempdir.fd, &mut opened) {
+                Ok(path) => path.to_vec(),
+                Err(_) => {
+                    resolve_path::join_abs_string::<platform::Windows>(cwd, &[&node_gyp_abs_dir])
+                        .to_vec()
+                }
+            }
+        } else {
+            // Only a prefix: the kernel resolved `link/..` as it is spelled, and a join does not.
+            bun_paths::join_sep_maybe_z::<false>(&[cwd, &node_gyp_abs_dir]).into_vec()
+        };
+        // PATH cannot hold an entry with the delimiter in it. Then the relative entry stays.
+        if !strings::contains_char(&absolute, DELIMITER) {
+            node_gyp_abs_dir = absolute;
+        }
+    }
 
     // Add our node-gyp tempdir to the path
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
     let mut path_var: Vec<u8> =
         Vec::with_capacity(existing_path.len() + 1 + node_gyp_abs_dir.len());
-    path_var.extend_from_slice(existing_path);
-    if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != DELIMITER {
-        path_var.push(DELIMITER);
+    // An install that started this one can be older: its script runs the first `bun` on PATH.
+    if !existing_path.is_empty() {
+        // A delimiter at the end already separates the new entry.
+        let inherited = existing_path
+            .strip_suffix(&[DELIMITER])
+            .unwrap_or(existing_path);
+        for dir in
+            strings::split(inherited, &[DELIMITER]).filter(|dir| !is_node_gyp_script_dir(dir))
+        {
+            path_var.extend_from_slice(dir);
+            path_var.push(DELIMITER);
+        }
     }
     path_var.extend_from_slice(&node_gyp_abs_dir);
     manager.env_mut().map.put(b"PATH", &path_var)?;

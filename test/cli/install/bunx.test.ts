@@ -22,6 +22,7 @@ import {
   lutimesSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -30,7 +31,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, dirname, join, resolve } from "path";
+import { delimiter, dirname, join, relative, resolve, sep } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -861,6 +862,61 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
   expect(err).not.toContain("Cannot find module 'exec'");
   expect(out.trim()).toBe("esbuild 0.28.2 after postinstall --version");
   expect(registry.requests).toEqual(["/esbuild", "/esbuild/-/esbuild-0.28.2.tgz"]);
+  expect(exited).toBe(0);
+});
+
+// The node-gyp script of that install starts the executable that wrote it, by its path. One with
+// the name `bunx` takes `x --silent node-gyp` for the package `x`. The `bun` that is first on PATH
+// stands in for an older one, which the script must not run.
+it.concurrent("the node-gyp script of an install that a copied bunx starts runs node-gyp", async () => {
+  const { x_dir, env } = setup();
+  const bunx = join(x_dir, isWindows ? "bunx.exe" : "bunx");
+  const first = join(x_dir, "first-on-path");
+  const ran = join(x_dir, "node-gyp-ran.txt");
+  copyFileSync(bunExe(), bunx);
+  mkdirSync(first);
+  if (isWindows) writeFileSync(join(first, "bun.cmd"), "@exit /b 99\r\n");
+  else writeFileSync(join(first, "bun"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+
+  // esbuild is in bun's default trusted dependencies, so its postinstall runs.
+  using registry = await localRegistry(
+    {
+      name: "esbuild",
+      version: "0.28.2",
+      bin: { esbuild: "cli.js" },
+      scripts: { postinstall: "node-gyp from-the-postinstall" },
+      files: { "cli.js": echoBin("esbuild 0.28.2") },
+    },
+    {
+      name: "node-gyp",
+      version: "1.0.0",
+      bin: { "node-gyp": "cli.js" },
+      files: {
+        "cli.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync(process.env.NODE_GYP_RAN, process.argv[2]);\n`,
+      },
+    },
+  );
+
+  await using subprocess = spawn({
+    cmd: [bunx, "esbuild@latest"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: {
+      ...env,
+      npm_config_registry: registry.url,
+      NODE_GYP_RAN: ran,
+      PATH: `${first}${delimiter}${pathWithout("node-gyp", env.PATH)}`,
+    },
+  });
+  const [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
+
+  expect(err).not.toContain("error:");
+  expect({ out: out.trim(), nodeGyp: existsSync(ran) ? readFileSync(ran, "utf8") : "" }).toEqual({
+    out: "esbuild 0.28.2",
+    nodeGyp: "from-the-postinstall",
+  });
   expect(exited).toBe(0);
 });
 
@@ -3083,6 +3139,87 @@ it.concurrent("a package without a bin isn't installed again just to report that
     requests: [`/${name}`],
   });
 });
+
+// `bun install` puts a directory with a `node-gyp` script on the PATH of lifecycle scripts, and that
+// script runs `bun x node-gyp`. So `bun x` must not take the script for node-gyp. It knows such a
+// directory by the name that the install gives it, `.<hex>-<HEX>.node-gyp` (with zeros before both
+// numbers in 1.3), and it leaves out the directory in BUN_WHICH_IGNORE_CWD, whatever its name is.
+it.concurrent(
+  "node-gyp is not taken from the directory that a `bun install` made for its node-gyp script",
+  async () => {
+    using box = sandbox();
+    /** A directory for PATH. Its `bin` prints the name of the directory. */
+    function plant(name: string, bin = "node-gyp") {
+      const dir = join(box.dir, "path", name);
+      mkdirSync(dir, { recursive: true });
+      if (isWindows) writeFileSync(join(dir, `${bin}.cmd`), `@echo ${name}\r\n`);
+      else writeFileSync(join(dir, bin), `#!/bin/sh\necho '${name}'\n`, { mode: 0o755 });
+      return dir;
+    }
+    const made = [
+      ".57c41e258af0c3a3-1.node-gyp",
+      ".18e12f1c7864b7ff-00000001.node-gyp",
+      ".0-0.node-gyp",
+      ".0123456789abcdef-01234567.node-gyp",
+      ".fedcba9876543210-89ABCDEF.node-gyp",
+    ];
+    const others = [
+      ".DEADBEEF-1.node-gyp",
+      ".deadbeef-1f.node-gyp",
+      ".deadbeefg-1.node-gyp",
+      ".deadbeef-1G.node-gyp",
+      ".deadbeef-1@.node-gyp",
+      ".dead-BEEF-1.node-gyp",
+      ".dead beef-1.node-gyp",
+      ".-1.node-gyp",
+      ".deadbeef-.node-gyp",
+      ".00000000000000000-1.node-gyp",
+      ".deadbeef-000000001.node-gyp",
+      "deadbeef-1.node-gyp",
+      ".deadbeef.node-gyp",
+      ".deadbeef-1.node-gypx",
+      "tools.node-gyp",
+    ];
+    const [real, renamed, first, second] = ["real", "renamed", made[0], made[1]].map(name => plant(name));
+    const system = pathWithout("node-gyp", box.env.PATH);
+    async function run(path: string[], ignore?: string, args = ["node-gyp"]) {
+      const env = { ...box.env, PATH: [...path, system].join(delimiter), BUN_WHICH_IGNORE_CWD: ignore };
+      const { stdout, stderr, exitCode } = await box.run(["--no-install", ...args], { env });
+      return exitCode === 0 ? stdout.trim() : stderr.trim();
+    }
+
+    const cases: Record<string, Promise<string>> = {
+      ...Object.fromEntries(made.map(name => [name, run([plant(name), real])])),
+      "with a separator at the end": run([first + sep, real]),
+      "with two separators at the end": run([first + sep + sep, real]),
+      "relative to the working directory": run([relative(box.cwd, first), real]),
+      "two of them": run([first, second, real]),
+      "one that BUN_WHICH_IGNORE_CWD names too": run([first, real], first),
+      "one beside the one that BUN_WHICH_IGNORE_CWD names": run([first, second, real], second),
+      "a directory that only BUN_WHICH_IGNORE_CWD names": run([renamed, real], renamed),
+      "no other node-gyp on PATH": run([first]),
+      "another program in such a directory": run([plant(made[2], "other-program"), real], undefined, ["other-program"]),
+      ...Object.fromEntries(others.map(name => [name, run([plant(name), real])])),
+    };
+    expect(
+      Object.fromEntries(await Promise.all(Object.entries(cases).map(async ([name, ran]) => [name, await ran]))),
+    ).toEqual({
+      ...Object.fromEntries(made.map(name => [name, "real"])),
+      "with a separator at the end": "real",
+      "with two separators at the end": "real",
+      "relative to the working directory": "real",
+      "two of them": "real",
+      "one that BUN_WHICH_IGNORE_CWD names too": "real",
+      "one beside the one that BUN_WHICH_IGNORE_CWD names": "real",
+      "a directory that only BUN_WHICH_IGNORE_CWD names": "real",
+      "no other node-gyp on PATH":
+        "error: Could not find an existing 'node-gyp' binary to run. Stopping because --no-install was passed.",
+      "another program in such a directory": made[2],
+      // These are not names that an install gives the directory, so their node-gyp runs.
+      ...Object.fromEntries(others.map(name => [name, name])),
+    });
+  },
+);
 
 describe("flags", () => {
   // Skipping a flag made the value of `--flag value` the package that is downloaded and run.

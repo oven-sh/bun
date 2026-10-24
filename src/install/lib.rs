@@ -383,6 +383,18 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// True if an executable that starts as `argv0` runs as `bunx`, which is `bun x`.
+pub fn is_bun_x(argv0: &[u8]) -> bool {
+    bun_core::strings::ends_with(argv0, b"bunx")
+        || (cfg!(windows) && bun_core::strings::ends_with(argv0, b"bunx.exe"))
+}
+
+/// True if an executable that starts as `argv0` runs as `node`.
+pub fn is_node(argv0: &[u8]) -> bool {
+    bun_core::strings::ends_with(argv0, b"node")
+        || (cfg!(windows) && bun_core::strings::ends_with(argv0, b"node.exe"))
+}
+
 #[cfg(not(windows))]
 use bun_core::ZStr;
 

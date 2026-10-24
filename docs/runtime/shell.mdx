@@ -327,6 +327,68 @@ const foo = "bar123; rm -rf /tmp";
 await $`FOO=${foo} bun -e 'console.log(process.env.FOO)'`; // bar123; rm -rf /tmp\n
 ```
 
+### Reading variables
+
+Read a variable with `$NAME` or `${NAME}`. Use the braces when text follows the name, because `$FOObaz` reads the variable `FOObaz`:
+
+```sh script.sh icon="file-code"
+FOO=bar
+echo ${FOO}baz
+```
+
+```txt
+barbaz
+```
+
+`${0}` to `${9}` read the same positional arguments as `$0` to `$9`.
+
+A form with an operator gives a default value, an alternative value, an assignment or an error:
+
+| Form                            | `NAME` is set | `NAME` is not set                            |
+| ------------------------------- | ------------- | -------------------------------------------- |
+| `${NAME:-word}`, `${NAME-word}` | its value     | `word`                                       |
+| `${NAME:+word}`, `${NAME+word}` | `word`        | nothing                                      |
+| `${NAME:=word}`, `${NAME=word}` | its value     | `word`, and `NAME` is set to `word`          |
+| `${NAME:?word}`, `${NAME?word}` | its value     | the command fails, and `word` is the message |
+
+With the `:`, a variable that is empty also counts as not set.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "dev": "next dev --port ${PORT:-3000}",
+    "deploy": "./deploy.sh --env ${DEPLOY_ENV:?set DEPLOY_ENV first}"
+  }
+}
+```
+
+The word is expanded only when it is the result. It can hold quotes, variables, `$(...)` and other forms. Unquoted whitespace in the word separates arguments, so `${TOKEN:+--token $TOKEN}` gives two arguments or none.
+
+These forms differ from `sh` in a few ways:
+
+- `${NAME:?word}` fails its command with exit code 1 before the command runs. The script then continues with the next command. Put `&&` after the command to stop what follows it: `true "${NAME:?}" && ./deploy.sh`.
+- Three cases do not fail the command. After `export NAME` with no value, `${NAME?word}` sees `NAME` as set. `VAR=$(cmd "${NAME:?}")` prints the message, but the assignment succeeds. An assignment that is a member of a pipeline, as in `VAR=${NAME:?} | cmd`, is not expanded.
+- The value of a variable is one argument. Bun Shell does not split it at whitespace, and a `*` in it is not a glob. `${NAME:=a b}` is one argument.
+- A form in double quotes that expands to nothing gives no argument, as `"$NAME"` does.
+- A `*` or a `{a,b}` expands only in the last argument that a word gives. In `*.md${EXTRA:+ $EXTRA}`, the `*.md` stays as written when `EXTRA` is set. Put a space before the form.
+- An assignment before a command does not read an earlier one of the same command. In `A=1 B=${A:-2} cmd`, `B` is `2`.
+- Other `${...}` forms, such as `${#NAME}`, `${NAME%pattern}`, `${NAME/a/b}` and `${10}`, are not supported. Bun Shell does not expand them: the `$` is text, and the rest is read as ordinary shell syntax.
+- When a form has no closing `}`, Bun Shell reads every `${` of the script as text. When that script also has a `:?` or a `?` form, Bun Shell reports `Unclosed parameter expansion` and runs nothing.
+
+<Note>
+
+In a `$` template literal, `${...}` is a JavaScript interpolation. `\${...}` is text there, because Bun reads the [`raw`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals#raw_strings) template. Write `$NAME` to read a variable, and put it in double quotes when text follows the name. To use a form with an operator, put it in a constant `{ raw }` object (see `$.escape` under Utilities):
+
+```js
+import { $ } from "bun";
+
+await $`FOO=bar; echo "$FOO"baz`; // barbaz\n
+await $`echo ${{ raw: "${PORT:-3000}" }}`; // 3000\n
+await $`echo \${PORT:-3000}`; // ${PORT:-3000}\n
+```
+
+</Note>
+
 ### Changing the environment variables
 
 By default, all commands use `process.env` as their environment variables.

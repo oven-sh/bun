@@ -740,7 +740,7 @@ test("serve html whose file is deleted before its first bundle", async () => {
 });
 
 /** Runs the `serve.ts` of a fixture directory to completion. */
-async function runServeFixture(dir: { toString(): string }, env: Record<string, string> = {}) {
+async function runServeFixture(dir: { toString(): string }, env: Record<string, string | undefined> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "serve.ts"],
     env: { ...bunEnv, ...env },

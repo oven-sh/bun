@@ -22,7 +22,7 @@ use crate::update_transitive::{
 };
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
-    TaskCallbackContext, invalid_package_id,
+    TaskCallbackContext, invalid_dependency_id, invalid_package_id,
 };
 // Bring the typed `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
@@ -1063,9 +1063,11 @@ pub fn install_with_manager(
                 || manager.lockfile.is_empty()
                 || manager.options.enable.force_save_lockfile()));
 
+    // The resolved lockfile takes the place of the loaded one: a save, a dry run of one, or the hoisted linker's folder cleanup under `--no-save`.
+    let mut replaces_lockfile = manager.options.dry_run || (removes_collapsed_copies && !isolated);
     if should_save_lockfile {
         super::package_json_write_back::write_migrated(manager);
-        save_lockfile(
+        replaces_lockfile = save_lockfile(
             manager,
             &load_result,
             save_format,
@@ -1118,12 +1120,22 @@ pub fn install_with_manager(
     }
 
     if log_level != Options::LogLevel::Silent {
+        // Another package manager's lockfile has no bun.lock entries to compare with.
+        let replaced_lockfile = match &load_result {
+            lockfile::LoadResult::Ok(ok)
+                if replaces_lockfile && ok.migrated == lockfile::Migrated::None =>
+            {
+                Some((&*lockfile_before_clean, ok.format))
+            }
+            _ => None,
+        };
         print_install_summary(
             manager,
             ctx,
             &install_summary,
             did_meta_hash_change,
             requests_removed_from_lockfile,
+            replaced_lockfile,
             log_level,
         )?;
     }
@@ -1280,6 +1292,7 @@ fn print_install_summary(
     install_summary: &PackageInstallSummary,
     did_meta_hash_change: bool,
     requests_removed_from_lockfile: u32,
+    replaced_lockfile: Option<(&Lockfile, lockfile::Format)>,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     let _flush_guard = Output::flush_guard();
@@ -1309,6 +1322,12 @@ fn print_install_summary(
             this.summary.remove = 0;
             this.summary.add = 0;
             this.summary.update = 0;
+        } else if this.summary.remove == 0
+            && this.subcommand != Subcommand::Remove
+            && let Some((before, format)) = replaced_lockfile
+        {
+            this.summary.remove =
+                count_entries_removed_from_lockfile(before, &this.lockfile, format);
         }
 
         if print_removed {
@@ -1465,6 +1484,75 @@ fn count_requests_removed_from_lockfile(manager: &PackageManager, before_clean: 
             before.contains(&request.name_hash) && !after.contains(&request.name_hash)
         })
         .count() as u32
+}
+
+/// The `packages` entries that left bun.lock, per dependency name, so an entry that moves is not a removal. bun.lockb keeps its writer's tree, so it counts packages. The links of several dependents to one workspace count once.
+#[cold]
+#[inline(never)]
+fn count_entries_removed_from_lockfile(
+    before: &Lockfile,
+    after: &Lockfile,
+    format: lockfile::Format,
+) -> u32 {
+    let is_local = |lockfile: &Lockfile, id: PackageID| {
+        let resolution = lockfile.packages.items_resolution().get(id as usize);
+        resolution
+            .is_some_and(|res| matches!(res.tag, ResolutionTag::Root | ResolutionTag::Workspace))
+    };
+    let names = |lockfile: &Lockfile, packages: PackageID| {
+        let mut names: Vec<PackageNameHash>;
+        if format == lockfile::Format::Binary {
+            let hashes = lockfile.packages.items_name_hash();
+            let registry = (0..packages).filter(|&id| !is_local(lockfile, id));
+            names = Vec::with_capacity(packages as usize);
+            names.extend(registry.map(|id| hashes[id as usize]));
+        } else {
+            let rows = lockfile.buffers.dependencies.as_slice();
+            let entries = lockfile.buffers.hoisted_dependencies.as_slice();
+            let placed = entries.iter().filter(|&&id| id != invalid_dependency_id);
+            names = Vec::with_capacity(entries.len());
+            names.extend(placed.map(|&id| rows[id as usize].name_hash));
+        }
+        names.sort_unstable();
+        names
+    };
+    // The names of the root and the workspaces, and the names that link one after the run.
+    let link_names = || {
+        let rows = after.buffers.dependencies.as_slice();
+        let resolutions = after.buffers.resolutions.as_slice();
+        let hashes = after.packages.items_name_hash();
+        let local = (0..hashes.len()).filter(|&id| is_local(after, id as PackageID));
+        let mut links: Vec<PackageNameHash> = local.map(|id| hashes[id]).collect();
+        let entries = after.buffers.hoisted_dependencies.iter();
+        let linked = entries.filter(|&&id| {
+            id != invalid_dependency_id && is_local(after, resolutions[id as usize])
+        });
+        links.extend(linked.map(|&id| rows[id as usize].name_hash));
+        links.sort_unstable();
+        links
+    };
+
+    let before = names(before, before.loaded_package_count);
+    let after_names = names(after, after.packages.len() as PackageID);
+    let mut after_names = after_names.iter().peekable();
+    let mut links: Option<Vec<PackageNameHash>> = None;
+    let mut removed = 0;
+    for entries in before.chunk_by(|a, b| a == b) {
+        let name = entries[0];
+        while after_names.next_if(|&&other| other < name).is_some() {}
+        let mut left = entries.len() as u32;
+        while left > 0 && after_names.next_if_eq(&&name).is_some() {
+            left -= 1;
+        }
+        if left > 1
+            && format == lockfile::Format::Text
+            && (links.get_or_insert_with(link_names).binary_search(&name)).is_ok()
+        {
+            left = 1;
+        }
+        removed += left;
+    }
+    removed
 }
 
 #[cold]

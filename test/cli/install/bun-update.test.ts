@@ -1043,8 +1043,9 @@ it.concurrent("should print every row of the install summary with colors enabled
   );
 
   const [r, b, d, green, blue, cyan] = [0, 1, 2, 32, 34, 36].map(code => `\x1b[${code}m`);
-  // `expected` is stdout from the end of `after` (by default the version line) up to the line with the count and the time.
-  const expectSummary = async (args: string[], expected: string, after = "\n") => {
+  // `expected` is stdout from the end of `after` (by default the version line) up to the line with the count and the
+  // time, and `afterCount` is what follows that line.
+  const expectSummary = async (args: string[], expected: string, after = "\n", afterCount = "") => {
     await using proc = spawn({
       cmd: [bunExe(), ...args],
       cwd: ctx.package_dir,
@@ -1054,7 +1055,8 @@ it.concurrent("should print every row of the install summary with colors enabled
       stdin: "ignore",
     });
     const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
-    expect(out.slice(out.indexOf(after) + after.length, out.lastIndexOf("\n", out.length - 2) + 1)).toBe(expected);
+    const [rows, rest] = out.slice(out.indexOf(after) + after.length).split(/^.* installed .*\n/m);
+    expect({ rows, afterCount: rest }).toEqual({ rows: expected, afterCount });
     expect(exitCode).toBe(0);
   };
 
@@ -1072,9 +1074,12 @@ it.concurrent("should print every row of the install summary with colors enabled
     "-- END HASH--\n",
   );
 
+  // The root moves onto pkg-a's version, so baz@0.0.3 leaves the lockfile.
   await expectSummary(
     ["update", "--latest"],
     `\n${r}${cyan}↑${r} ${b}baz${r} ${d}0.0.3 →${r} ${b}${cyan}0.0.5${r}\n\n`,
+    "\n",
+    `Removed: ${cyan}1${r}\n`,
   );
 
   await expectSummary(
@@ -1104,10 +1109,12 @@ it.concurrent("should print the previous prerelease and build tags in the update
   expect(out).toContain(`^ baz ${oldVersion} -> ${newVersion}`);
 });
 
-type PerNameManifests = Record<
-  string,
-  { versions: Record<string, { dependencies?: Record<string, string> }>; latest: string }
->;
+type PerNameVersion = {
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  os?: string[];
+};
+type PerNameManifests = Record<string, { versions: Record<string, PerNameVersion>; latest: string }>;
 
 // Unlike `dummyRegistry`, this serves a distinct manifest per package name, from tarballs built in-process for every
 // version in `published`. It returns a function that serves another view of those packages (a moved dist-tag, a
@@ -1370,6 +1377,438 @@ it.concurrent("bun update <name> rejects a name that is not in the lockfile", as
   expect(exitCode).toBe(1);
   expect(await packageJsonOf(ctx)).toStrictEqual(packageJson);
   expect(await lockText(ctx)).toBe(lockBefore);
+});
+
+// The keys of bun.lock's `packages` section, and the packages in the root node_modules.
+async function lockedAndInstalled(ctx: TestContext) {
+  const lock = Bun.JSONC.parse(await lockText(ctx)) as Json;
+  const installed = await readdirSorted(join(ctx.package_dir, "node_modules"));
+  return { locked: Object.keys(lock.packages).sort(), installed: installed.filter(name => !name.startsWith(".")) };
+}
+
+type Linker = "hoisted" | "isolated";
+
+// Replaces the bunfig of `useTextLockfile`, for the cases that use the isolated linker or bun.lockb.
+function useLinker(ctx: TestContext, linker: Linker, saveTextLockfile = true) {
+  return writeFile(
+    join(ctx.package_dir, "bunfig.toml"),
+    `[install]\ncache = false\nregistry = "${ctx.registry_url}"\nsaveTextLockfile = ${saveTextLockfile}\nlinker = "${linker}"\n`,
+  );
+}
+
+// Installs the optional dependency old@1.1.0 next to `dependencies`. After that, the registry has no version of `old`
+// in `^1.0.0`, and an optional dependency that doesn't resolve is left out.
+async function setupOptionalWithoutVersion(
+  ctx: TestContext,
+  dependencies: Record<string, string>,
+  linker: Linker = "hoisted",
+  saveTextLockfile = true,
+) {
+  const others = {
+    keep: { versions: { "1.0.0": {} }, latest: "1.0.0" },
+    extra: { versions: { "1.0.0": {} }, latest: "1.0.0" },
+  };
+  const published = { ...others, old: { versions: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {} }, latest: "2.0.0" } };
+  const serveManifests = await perNameRegistry(ctx, published);
+  await useLinker(ctx, linker, saveTextLockfile);
+  serveManifests({ ...others, old: { versions: { "1.0.0": {}, "1.1.0": {} }, latest: "1.1.0" } });
+  const packageJson = { name: "root", dependencies, optionalDependencies: { old: "^1.0.0" } };
+  await writeFile(join(ctx.package_dir, "package.json"), JSON.stringify(packageJson));
+  await runInstall(ctx);
+  serveManifests({ ...others, old: { versions: { "2.0.0": {} }, latest: "2.0.0" } });
+  return packageJson;
+}
+
+// `bun install` only resolves `old` again after its range changes. No version is in the new range.
+const editOptionalRange = (ctx: TestContext, packageJson: Json) =>
+  writeFile(
+    join(ctx.package_dir, "package.json"),
+    JSON.stringify({ ...packageJson, optionalDependencies: { old: "^5.0.0" } }),
+  );
+
+it.concurrent.each([[[]], [["old"]]])(
+  "bun update %j counts the bun.lock entry of a dependency that it can no longer resolve",
+  async args => {
+    using ctx = await testContext();
+    const packageJson = await setupOptionalWithoutVersion(ctx, { keep: "^1.0.0" });
+    expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["keep", "old"], installed: ["keep", "old"] });
+
+    const { out, err } = await runUpdate(ctx, args);
+    expect(err).toBe("Saved lockfile\n");
+    expect(out).toMatchInlineSnapshot(`
+      "bun update <version> (<revision>)
+
+      1 package removed"
+    `);
+    expect(await packageJsonOf(ctx)).toStrictEqual(packageJson);
+    expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["keep"], installed: ["keep"] });
+
+    // Nothing is left to remove.
+    const again = await runUpdate(ctx, []);
+    expect(again.err).toBe("");
+    expect(again.out).toMatchInlineSnapshot(`
+      "bun update <version> (<revision>)
+
+      Checked 1 install across 2 packages (no changes)"
+    `);
+  },
+);
+
+// The count is of bun.lock entries. The isolated linker keeps the link of a dependency that package.json still lists.
+it.concurrent("bun update with the isolated linker counts the bun.lock entry and keeps the link", async () => {
+  using ctx = await testContext();
+  await setupOptionalWithoutVersion(ctx, { keep: "^1.0.0" }, "isolated");
+
+  const { out, err } = await runUpdate(ctx, []);
+  expect(err).toBe("Saved lockfile\n");
+  expect(out).toMatchInlineSnapshot(`
+    "bun update <version> (<revision>)
+
+    1 package removed"
+  `);
+  expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["keep"], installed: ["keep", "old"] });
+  expect((await runUpdate(ctx, [])).out).toContain("(no changes)");
+});
+
+// bun.lockb keeps the tree of the Bun that wrote it, so the count of a bun.lockb is of packages.
+it.concurrent("bun update counts the package that a bun.lockb loses", async () => {
+  using ctx = await testContext();
+  await setupOptionalWithoutVersion(ctx, { keep: "^1.0.0" }, "hoisted", false);
+
+  const { out, err } = await runUpdate(ctx, []);
+  expect(err).toBe("Saved lockfile\n");
+  expect(out).toMatchInlineSnapshot(`
+    "bun update <version> (<revision>)
+
+    1 package removed"
+  `);
+  expect((await runUpdate(ctx, [])).out).toContain("(no changes)");
+});
+
+it.concurrent("bun update counts a removed bun.lock entry when no other package is installed", async () => {
+  using ctx = await testContext();
+  await setupOptionalWithoutVersion(ctx, {});
+  expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["old"], installed: ["old"] });
+
+  const { out, err } = await runUpdate(ctx, []);
+  expect(err).toBe("Saved lockfile\n");
+  expect(out).toMatchInlineSnapshot(`
+    "bun update <version> (<revision>)
+
+    1 package removed"
+  `);
+  expect(await lockedAndInstalled(ctx)).toEqual({ locked: [], installed: [] });
+});
+
+it.concurrent.each(["hoisted", "isolated"] as const)(
+  "with the %s linker, bun install counts the bun.lock entry of a range that has no version left",
+  async linker => {
+    using ctx = await testContext();
+    const packageJson = await setupOptionalWithoutVersion(ctx, { keep: "^1.0.0" }, linker);
+    await editOptionalRange(ctx, packageJson);
+
+    expect(await runInstall(ctx)).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      1 package removed"
+    `);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["keep"]);
+  },
+);
+
+// A dry run prints the count of the run that it stands for.
+it.concurrent.each([
+  [["install", "--dry-run"], " keep@1.0.0\n1 package removed"],
+  [["add", "extra", "--dry-run"], " keep@1.0.0\ninstalled extra@1.0.0\n\n1 package removed"],
+])("bun %j counts the bun.lock entry that the run would remove", async (args, summary) => {
+  using ctx = await testContext();
+  const packageJson = await setupOptionalWithoutVersion(ctx, { keep: "^1.0.0" });
+  await editOptionalRange(ctx, packageJson);
+
+  const { out, err, exitCode } = await run(ctx, args);
+  expect(err).toBe("");
+  expect(out).toBe(`bun ${args[0]} <version> (<revision>)\n\n${summary}`);
+  expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["keep", "old"], installed: ["keep", "old"] });
+  expect(exitCode).toBe(0);
+});
+
+// `--no-save` leaves bun.lock as it is. The hoisted linker still deletes the folder. The isolated linker changes nothing.
+it.concurrent.each([
+  ["hoisted", "1 package removed", ["keep"]],
+  ["isolated", "Done! Checked 2 packages (no changes)", ["keep", "old"]],
+] as const)("with the %s linker, bun update --no-save prints %j", async (linker, summary, installed) => {
+  using ctx = await testContext();
+  await setupOptionalWithoutVersion(ctx, { keep: "^1.0.0" }, linker);
+
+  const { out, err } = await runUpdate(ctx, ["--no-save"]);
+  expect(err).toBe("");
+  expect(out).toBe(`bun update <version> (<revision>)\n\n${summary}`);
+  expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["keep", "old"], installed: [...installed] });
+});
+
+// Installs parent@1.0.0, which has `before` as its dependencies. After that, the registry also lists parent@1.1.0,
+// which has `after`.
+async function setupParentThatChanges(
+  ctx: TestContext,
+  before: PerNameVersion,
+  after: PerNameVersion,
+  others: PerNameManifests,
+  linker: Linker = "hoisted",
+) {
+  const parent = { "1.0.0": before, "1.1.0": after };
+  const serveManifests = await perNameRegistry(ctx, { ...others, parent: { versions: parent, latest: "1.1.0" } });
+  await useLinker(ctx, linker);
+  serveManifests({ ...others, parent: { versions: { "1.0.0": before }, latest: "1.0.0" } });
+  await writeFile(
+    join(ctx.package_dir, "package.json"),
+    JSON.stringify({ name: "root", dependencies: { parent: "^1.0.0" } }),
+  );
+  await runInstall(ctx);
+  serveManifests({ ...others, parent: { versions: parent, latest: "1.1.0" } });
+}
+
+const one = (name: string): PerNameManifests => ({ [name]: { versions: { "1.0.0": {} }, latest: "1.0.0" } });
+
+it.concurrent.each([
+  ["hoisted", ["update"], "^ parent 1.0.0 -> 1.1.0"],
+  ["hoisted", ["update", "parent"], "^ parent 1.0.0 -> 1.1.0"],
+  ["hoisted", ["add", "parent@1.1.0"], "installed parent@1.1.0"],
+  ["isolated", ["update"], "^ parent 1.0.0 -> 1.1.0"],
+] as const)(
+  "with the %s linker, bun %j prints the removed bun.lock entry below the installed count",
+  async (linker, args, row) => {
+    using ctx = await testContext();
+    await setupParentThatChanges(ctx, { dependencies: { child: "^1.0.0" } }, {}, one("child"), linker);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["child", "parent"]);
+
+    const { out, err, exitCode } = await run(ctx, [...args]);
+    expect(err).toBe("Saved lockfile\n");
+    expect(out).toBe(`bun ${args[0]} <version> (<revision>)\n\n${row}\n\n1 package installed\nRemoved: 1`);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["parent"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The count is per dependency name. In each case one entry leaves and another entry arrives, and in the second case
+// the package of the two entries is the same.
+it.concurrent.each([
+  [
+    { child: "^1.0.0" },
+    { other: "^1.0.0" },
+    { ...one("child"), ...one("other") },
+    ["child", "parent"],
+    ["other", "parent"],
+  ],
+  [{ alias: "npm:real@^1.0.0" }, { real: "^1.0.0" }, one("real"), ["alias", "parent"], ["parent", "real"]],
+])(
+  "bun update counts the entry %j that the entry %j replaces",
+  async (before, after, others, lockedBefore, lockedAfter) => {
+    using ctx = await testContext();
+    await setupParentThatChanges(ctx, { dependencies: before }, { dependencies: after }, others);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(lockedBefore);
+
+    const { out, err } = await runUpdate(ctx, []);
+    expect(err).toBe("Saved lockfile\n");
+    expect(out).toMatchInlineSnapshot(`
+      "bun update <version> (<revision>)
+
+      ^ parent 1.0.0 -> 1.1.0
+
+      2 packages installed
+      Removed: 1"
+    `);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(lockedAfter);
+  },
+);
+
+// The root takes q@2.0.0, so the q@1.0.0 of p moves below p, and so does its x@1.0.0. No name has fewer entries.
+it.concurrent.each(["hoisted", "isolated"] as const)(
+  "with the %s linker, bun install counts no removal for entries that move to another folder",
+  async linker => {
+    using ctx = await testContext();
+    const noDependencies = { "1.0.0": {}, "2.0.0": {} };
+    await perNameRegistry(ctx, {
+      p: { versions: { "1.0.0": { dependencies: { q: "^1.0.0" } } }, latest: "1.0.0" },
+      q: { versions: { "1.0.0": { dependencies: { x: "^1.0.0" } }, "2.0.0": {} }, latest: "2.0.0" },
+      x: { versions: noDependencies, latest: "2.0.0" },
+    });
+    await useLinker(ctx, linker);
+    const dependencies = { p: "^1.0.0", x: "2.0.0" };
+    await writeFile(join(ctx.package_dir, "package.json"), JSON.stringify({ name: "root", dependencies }));
+    await runInstall(ctx);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["p", "q", "q/x", "x"]);
+
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({ name: "root", dependencies: { ...dependencies, q: "2.0.0" } }),
+    );
+    expect(await runInstall(ctx)).toMatch(/\n\+ q@2\.0\.0\n\n\d packages? installed$/);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["p", "p/q", "p/q/x", "q", "x"]);
+  },
+);
+
+// https://github.com/oven-sh/bun/issues/45464: the platform package is an alias for a version of the package itself,
+// and the registry lists tool@1.1.0 before tool@1.1.0-linux. The name `tool` stays in bun.lock, the entry does not.
+it.concurrent("bun update counts an optional alias entry whose version is not published yet", async () => {
+  using ctx = await testContext();
+  const platform = (version: string) => ({ optionalDependencies: { "tool-linux": `npm:tool@${version}-linux` } });
+  const versions = { "1.0.0": platform("1.0.0"), "1.0.0-linux": {}, "1.1.0": platform("1.1.0") };
+  const serveManifests = await perNameRegistry(ctx, { tool: { versions, latest: "1.1.0" } });
+  const { "1.1.0": _, ...first } = versions;
+  serveManifests({ tool: { versions: first, latest: "1.0.0" } });
+  await writeFile(
+    join(ctx.package_dir, "package.json"),
+    JSON.stringify({ name: "root", dependencies: { tool: "^1.0.0" } }),
+  );
+  await runInstall(ctx);
+  expect((await lockedAndInstalled(ctx)).locked).toEqual(["tool", "tool-linux"]);
+
+  serveManifests({ tool: { versions, latest: "1.1.0" } });
+  const { out, err } = await runUpdate(ctx, []);
+  expect(err).toBe("Saved lockfile\n");
+  expect(out).toMatchInlineSnapshot(`
+    "bun update <version> (<revision>)
+
+    ^ tool 1.0.0 -> 1.1.0
+
+    1 package installed
+    Removed: 1"
+  `);
+  expect((await lockedAndInstalled(ctx)).locked).toEqual(["tool"]);
+});
+
+// bun.lock has an entry for every platform, so the count includes entries that this machine never installed.
+describe("bun update counts the bun.lock entries of other platforms", () => {
+  const otherPlatform = process.platform === "darwin" ? "linux" : "darwin";
+
+  it.concurrent("an entry that was never installed leaves, and node_modules stays as it is", async () => {
+    using ctx = await testContext();
+    const keep = one("keep");
+    const published = { "1.0.0": { os: [otherPlatform] }, "2.0.0": { os: [otherPlatform] } };
+    const serveManifests = await perNameRegistry(ctx, { ...keep, plat: { versions: published, latest: "2.0.0" } });
+    serveManifests({ ...keep, plat: { versions: { "1.0.0": published["1.0.0"] }, latest: "1.0.0" } });
+    const packageJson = { name: "root", dependencies: { keep: "^1.0.0" }, optionalDependencies: { plat: "^1.0.0" } };
+    await writeFile(join(ctx.package_dir, "package.json"), JSON.stringify(packageJson));
+    await runInstall(ctx);
+    expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["keep", "plat"], installed: ["keep"] });
+
+    serveManifests({ ...keep, plat: { versions: { "2.0.0": published["2.0.0"] }, latest: "2.0.0" } });
+    const { out, err } = await runUpdate(ctx, []);
+    expect(err).toBe("Saved lockfile\n");
+    expect(out).toMatchInlineSnapshot(`
+      "bun update <version> (<revision>)
+
+      1 package removed"
+    `);
+    expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["keep"], installed: ["keep"] });
+  });
+
+  it.concurrent("three platform entries leave, and one folder is deleted", async () => {
+    using ctx = await testContext();
+    const platforms = ["darwin", "linux", "win32"];
+    const packages: PerNameManifests = {};
+    const optionalDependencies: Record<string, string> = {};
+    for (const os of platforms) {
+      packages[`plat-${os}`] = { versions: { "1.0.0": { os: [os] } }, latest: "1.0.0" };
+      optionalDependencies[`plat-${os}`] = "1.0.0";
+    }
+    await setupParentThatChanges(ctx, { optionalDependencies }, {}, packages);
+    expect(await lockedAndInstalled(ctx)).toEqual({
+      locked: ["parent", "plat-darwin", "plat-linux", "plat-win32"],
+      installed: ["parent", `plat-${process.platform}`],
+    });
+
+    const { out, err } = await runUpdate(ctx, []);
+    expect(err).toBe("Saved lockfile\n");
+    expect(out).toMatchInlineSnapshot(`
+      "bun update <version> (<revision>)
+
+      ^ parent 1.0.0 -> 1.1.0
+
+      1 package installed
+      Removed: 3"
+    `);
+    expect(await lockedAndInstalled(ctx)).toEqual({ locked: ["parent"], installed: ["parent"] });
+  });
+});
+
+// The count compares the entries that Bun places when it loads bun.lock with the entries that it saves. A key that
+// Bun does not place, here a second copy of `child` below `parent`, leaves on the next save without a count.
+it.concurrent("bun add counts no removal for a bun.lock key that Bun does not place", async () => {
+  using ctx = await testContext();
+  await setupParentThatChanges(ctx, { dependencies: { child: "^1.0.0" } }, {}, { ...one("child"), ...one("extra") });
+  const lock = Bun.JSONC.parse(await lockText(ctx)) as Json;
+  lock.packages["parent/child"] = lock.packages.child;
+  await writeFile(join(ctx.package_dir, "bun.lock"), JSON.stringify(lock, null, 2));
+  expect((await lockedAndInstalled(ctx)).locked).toEqual(["child", "parent", "parent/child"]);
+
+  const { out, err, exitCode } = await run(ctx, ["add", "extra"]);
+  expect(err).toBe("Saved lockfile\n");
+  expect(out).toMatchInlineSnapshot(`
+    "bun add <version> (<revision>)
+
+    installed extra@1.0.0
+
+    1 package installed"
+  `);
+  expect((await lockedAndInstalled(ctx)).locked).toEqual(["child", "extra", "parent"]);
+  expect(exitCode).toBe(0);
+});
+
+// Writes a project with the workspaces `members` below packages/, and installs it.
+async function setupMembers(ctx: TestContext, linker: Linker, root: Json, members: Record<string, Json>) {
+  await useLinker(ctx, linker);
+  await writeFile(
+    join(ctx.package_dir, "package.json"),
+    JSON.stringify({ name: "root", workspaces: ["packages/*"], ...root }),
+  );
+  for (const [name, body] of Object.entries(members)) {
+    await mkdir(join(ctx.package_dir, "packages", name), { recursive: true });
+    await writeFile(
+      join(ctx.package_dir, "packages", name, "package.json"),
+      JSON.stringify({ name, version: "1.0.0", ...body }),
+    );
+  }
+  await runInstall(ctx);
+}
+
+const setMemberVersion = (ctx: TestContext, name: string, version: string) =>
+  writeFile(join(ctx.package_dir, "packages", name, "package.json"), JSON.stringify({ name, version }));
+
+describe.each(["hoisted", "isolated"] as const)("bun install counts a link to a workspace once (%s linker)", linker => {
+  // The root has the registry m@2.0.0, so n and o each have their own link to the workspace m. When the workspace
+  // moves to 2.0.0, the root links it, and the two links merge into the root's.
+  it.concurrent("links that merge count as the one registry package that left", async () => {
+    using ctx = await testContext();
+    await perNameRegistry(ctx, { m: { versions: { "2.0.0": {} }, latest: "2.0.0" } });
+    const link = { dependencies: { m: "workspace:*" } };
+    await setupMembers(ctx, linker, { dependencies: { m: "^2.0.0" } }, { m: {}, n: link, o: link });
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["m", "n", "n/m", "o", "o/m"]);
+
+    await setMemberVersion(ctx, "m", "2.0.0");
+    // The hoisted linker also links the workspace at the root, so it reports the removal on a second line.
+    expect(await runInstall(ctx)).toMatch(/\n(?:1 package removed|Removed: 1)$/);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["m", "n", "o"]);
+  });
+
+  // The optional alias links the workspace m@1.0.0. The registry has no `m`, so nothing takes its place at 2.0.0.
+  it.concurrent("a link that no longer resolves counts", async () => {
+    using ctx = await testContext();
+    await perNameRegistry(ctx, {});
+    await setupMembers(ctx, linker, { optionalDependencies: { "alias-m": "npm:m@^1.0.0" } }, { m: {} });
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["alias-m", "m"]);
+
+    await setMemberVersion(ctx, "m", "2.0.0");
+    const { out, err, exitCode } = await run(ctx, ["install"]);
+    expect(err).toBe(`warn: GET ${ctx.registry_url}m - 404\nSaved lockfile\n`);
+    expect(out).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      1 package removed"
+    `);
+    expect((await lockedAndInstalled(ctx)).locked).toEqual(["m"]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0; a-dep 1.0.1..1.0.10; dep-with-tags latest=3.0.0, pre-2=2.0.1; @types/* 1.0.0/2.0.0.

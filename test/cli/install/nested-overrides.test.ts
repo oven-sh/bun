@@ -47,8 +47,9 @@ function diagnostics(err: string): string[] {
     .map(line => line.replace(/^\[[\d.]+m?s\] /, ""));
 }
 
-// Returns what a successful install prints after its last blank line. A direct dependency that was removed adds the
-// "Removed: N" line, which replaces the summary if nothing had to be linked.
+// Returns what a successful install prints after its last blank line. A direct dependency that was removed, or a
+// bun.lock entry that left while its dependency stayed, adds the "Removed: N" line, which replaces the summary if
+// nothing had to be linked.
 const installSummary =
   /^(?:\d+ packages? installed(?:\nRemoved: \d+)?|\d+ packages? removed|Checked \d+ installs? across \d+ packages? \(no changes\)|Done! Checked \d+ packages? \(no changes\)|Saved bun\.lock \(\d+ packages?\))$/;
 
@@ -114,6 +115,9 @@ async function expectVersionsSeenBy(packageDir: string, name: string, expected: 
 }
 
 const lock = (dir: string) => file(join(dir, "bun.lock")).text();
+// The keys of bun.lock's `packages` section.
+const lockedEntries = async (dir: string) =>
+  Object.keys((Bun.JSONC.parse(await lock(dir)) as { packages: object }).packages).sort();
 const packageJsonText = (dir: string) => file(join(dir, "package.json")).text();
 const occurrences = (text: string, needle: string) => text.split(needle).length - 1;
 
@@ -1465,6 +1469,66 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
     await installNoChanges(dir, "--linker", linker, "--frozen-lockfile");
   });
 
+  // The root has no-deps@2.0.0, so bun.lock has a copy of no-deps@1.1.0 for each of the two dependents.
+  const twoCopies = { "no-deps": "2.0.0", "one-range-dep": "1.0.0", "two-range-deps": "1.0.0" };
+  test.each([
+    ["one of two copies of a version", { "one-range-dep": { "no-deps": "2.0.0" } }, ["one-range-dep/no-deps"]],
+    ["both copies of a version", { "no-deps": "2.0.0" }, ["one-range-dep/no-deps", "two-range-deps/no-deps"]],
+  ])("a new rule that takes %s out of bun.lock is counted as a removal", async (_, overrides, removed) => {
+    const dir = await project({ dependencies: twoCopies }, linker);
+    await installOk(dir, "--linker", linker);
+    const before = await lockedEntries(dir);
+    expect(before).toEqual([
+      "@types/is-number",
+      "no-deps",
+      "one-range-dep",
+      "one-range-dep/no-deps",
+      "two-range-deps",
+      "two-range-deps/no-deps",
+    ]);
+
+    await write(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "nested-overrides", dependencies: twoCopies, overrides }),
+    );
+    const { summary } = await installOk(dir, "--linker", linker);
+    expect(await lockedEntries(dir)).toEqual(before.filter(entry => !removed.includes(entry)));
+    // The isolated linker links the dependents again, so it reports the removal on a second line.
+    expect(summary).toMatch(new RegExp(`^${removed.length} packages? removed$|\\nRemoved: ${removed.length}$`));
+    await installNoChanges(dir, "--linker", linker);
+  });
+
+  test("a new rule that moves a bun.lock entry to another version is not counted as a removal", async () => {
+    const dependencies = { "one-range-dep": "1.0.0" };
+    const dir = await project({ dependencies }, linker);
+    await installOk(dir, "--linker", linker);
+    expect(await lockedEntries(dir)).toEqual(["no-deps", "one-range-dep"]);
+
+    await write(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "nested-overrides", dependencies, overrides: { "no-deps": "1.0.0" } }),
+    );
+    const { summary } = await installOk(dir, "--linker", linker);
+    expect(summary).toMatch(/^\d packages? installed$/);
+    expect(await lockedEntries(dir)).toEqual(["no-deps", "one-range-dep"]);
+    expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.0.0");
+  });
+
+  // `bun remove` keeps its own count: the names it was given that left bun.lock. The run does lose the entry of
+  // no-deps@2.0.0, but one-dep's copy keeps the name in bun.lock.
+  test("bun remove still counts only the names that it was given", async () => {
+    const dir = await project({ dependencies: { "no-deps": "2.0.0", "one-dep": "1.0.0" } }, linker);
+    await installOk(dir, "--linker", linker);
+    expect(await lockedEntries(dir)).toEqual(["no-deps", "one-dep", "one-dep/no-deps"]);
+
+    const { out, err, exitCode } = await run(dir, "remove", "no-deps");
+    expect(diagnostics(err)).toEqual([]);
+    expect(out).not.toMatch(/\d packages? removed|Removed: \d/);
+    expect(await lockedEntries(dir)).toEqual(["no-deps", "one-dep"]);
+    expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("1.0.1");
+    expect(exitCode).toBe(0);
+  });
+
   test("workspace packages can be parents", async () => {
     const dir = await project(
       {
@@ -2463,6 +2527,46 @@ one-range-dep@1.0.0:
       await installNoChanges(dir, "--frozen-lockfile");
     },
   );
+
+  // The removed count is of bun.lock entries, and a migration has no bun.lock to compare with.
+  test("a rule that takes a package-lock.json entry away is not counted as a removal", async () => {
+    const tarball = (name: string, version: string) => `${registry.registryUrl()}${name}/-/${name}-${version}.tgz`;
+    const [dependent, nested, hoisted] = await Promise.all([
+      integrityOf("one-dep", "1.0.0"),
+      integrityOf("no-deps", "1.0.1"),
+      integrityOf("no-deps", "2.0.0"),
+    ]);
+    const dependencies = { "no-deps": "2.0.0", "one-dep": "1.0.0" };
+    const dir = await project({ dependencies, overrides: { "no-deps": "2.0.0" } }, "hoisted", {
+      "package-lock.json": JSON.stringify({
+        name: "nested-overrides",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "nested-overrides", dependencies },
+          "node_modules/no-deps": { version: "2.0.0", resolved: tarball("no-deps", "2.0.0"), integrity: hoisted },
+          "node_modules/one-dep": {
+            version: "1.0.0",
+            resolved: tarball("one-dep", "1.0.0"),
+            integrity: dependent,
+            dependencies: { "no-deps": "1.0.1" },
+          },
+          "node_modules/one-dep/node_modules/no-deps": {
+            version: "1.0.1",
+            resolved: tarball("no-deps", "1.0.1"),
+            integrity: nested,
+          },
+        },
+      }),
+    });
+
+    const { out, err, exitCode } = await install(dir);
+    expect(diagnostics(err)).toEqual(["migrated lockfile from package-lock.json"]);
+    // No "Removed: 1" line follows the installed count.
+    expect(out.trimEnd().split(/\r?\n/).at(-1)).toMatch(/^2 packages installed \[/);
+    expect(await lockedEntries(dir)).toEqual(["no-deps", "one-dep"]);
+    expect(exitCode).toBe(0);
+  });
 
   // one-dep@1.0.0 declares no-deps@1.0.1; a lockfile snapshot on 2.0.0 is only consistent with an override.
   async function pnpmLock({ overrides, noDepsVersion = "2.0.0" }: { overrides?: string[]; noDepsVersion?: string }) {

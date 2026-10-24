@@ -733,11 +733,7 @@ impl Value {
 
     pub(crate) fn size(&mut self) -> blob::SizeType {
         match self {
-            Value::Blob(b) => match b.get_size_for_bindings() {
-                // The size of an S3 object is unknown: 0, like a `Locked` body with no hint.
-                u64::MAX if b.is_s3() => 0,
-                size => size as blob::SizeType,
-            },
+            Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
             Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
@@ -745,7 +741,7 @@ impl Value {
         }
     }
 
-    /// `None` for a file that does not exist or is not seekable.
+    /// `None` for a file that does not exist or is not seekable, and for an S3 object that is not a slice.
     pub(crate) fn known_size(&mut self) -> Option<usize> {
         match self.size() {
             u64::MAX => None,

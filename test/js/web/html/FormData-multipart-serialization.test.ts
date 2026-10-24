@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { randomUUIDv7, S3Client } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
-import { s3LocalEndpoint } from "../../bun/s3/s3-local-endpoint";
+import { serve, type S3Server } from "s3-server";
 
 // Serializing a FormData body (`new Response(formData)` / `new Request(..., { body: formData })`)
 // goes through Blob::from_dom_form_data, which joins the multipart parts out of
@@ -222,6 +223,28 @@ describe("multipart serialization of S3-backed entries", () => {
   const object = "id,name\n1,bun\n";
   const remedy = "new File([await s3file.bytes()], s3file.name, { type: s3file.type })";
 
+  let server: S3Server;
+  let client: S3Client;
+  beforeAll(() => {
+    server = serve({ buckets: ["bucket"] });
+    client = new S3Client(server.clientOptions("bucket"));
+  });
+  afterAll(() => server.stop());
+
+  /** An S3 file under a new key. Nothing is stored there: only one test downloads. */
+  function s3Object(type?: string) {
+    const key = `${randomUUIDv7()}.csv`;
+    return {
+      key,
+      file: () => client.file(key, { type }),
+      /** The operation and the Range header of each request for the key so far. */
+      requests: () =>
+        server.requests
+          .filter(request => request.key === key)
+          .map(request => [request.operation, request.headers.get("range")]),
+    };
+  }
+
   // `quotedName` is the entry name as the message renders it, quotes included.
   function messageFor(quotedName: string): string {
     return (
@@ -261,7 +284,7 @@ describe("multipart serialization of S3-backed entries", () => {
 
   describe.each(shapes)("%s", (_shape, makeEntry) => {
     test.each(consumers)("%s fails and sends nothing", async (_consumer, consume) => {
-      using endpoint = s3LocalEndpoint(object);
+      const stored = s3Object("text/csv");
       let received = 0;
       using receiver = Bun.serve({
         hostname: "127.0.0.1",
@@ -271,14 +294,14 @@ describe("multipart serialization of S3-backed entries", () => {
           return new Response("stored");
         },
       });
-      const formData = formDataWith(makeEntry(endpoint.file("text/csv")));
+      const formData = formDataWith(makeEntry(stored.file()));
       const sizeBefore = (formData.get("report") as Blob).size;
 
       const error = await failureOf(() => consume(formData, receiver.url));
       expect(error).toBeInstanceOf(TypeError);
       expect({
         message: (error as TypeError).message,
-        s3Requests: endpoint.ranges,
+        s3Requests: stored.requests(),
         received,
         sizeAfter: (formData.get("report") as Blob).size,
       }).toEqual({
@@ -304,8 +327,7 @@ describe("multipart serialization of S3-backed entries", () => {
     ["a name containing a quote", 'quote"name', '"quote\\"name"'],
     ["a name containing CRLF", "crlf\r\nname", '"crlf\\r\\nname"'],
   ])("the message quotes %s", async (_label, name, quotedName) => {
-    using endpoint = s3LocalEndpoint(object);
-    const formData = formDataWith(endpoint.file(), name);
+    const formData = formDataWith(s3Object().file(), name);
 
     const error = await failureOf(() => new Response(formData));
     expect((error as TypeError).message).toBe(messageFor(quotedName));
@@ -313,19 +335,31 @@ describe("multipart serialization of S3-backed entries", () => {
 
   // The entries before the S3 file are ones the serializer can write.
   test("the message names the first S3 file, after a Blob and an empty S3 slice", async () => {
-    using endpoint = s3LocalEndpoint(object);
+    const stored = s3Object();
     const formData = new FormData();
     formData.append("blob", new Blob(["in memory"]), "blob.txt");
-    formData.append("empty", endpoint.file().slice(4, 4), "empty.csv");
-    formData.append("first", endpoint.file(), "first.csv");
-    formData.append("second", endpoint.file(), "second.csv");
+    formData.append("empty", stored.file().slice(4, 4), "empty.csv");
+    formData.append("first", stored.file(), "first.csv");
+    formData.append("second", stored.file(), "second.csv");
 
     const error = await failureOf(() => new Response(formData));
     expect(error).toBeInstanceOf(TypeError);
-    expect({ message: (error as TypeError).message, s3Requests: endpoint.ranges }).toEqual({
+    expect({ message: (error as TypeError).message, s3Requests: stored.requests() }).toEqual({
       message: messageFor('"first"'),
       s3Requests: [],
     });
+  });
+
+  test("the message names the first of two entries that hold the same S3 file", async () => {
+    const s3file = s3Object().file();
+    const formData = new FormData();
+    formData.append("text", "value");
+    formData.append("one", s3file);
+    formData.append("two", s3file);
+
+    const error = await failureOf(() => new Response(formData));
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as TypeError).message).toBe(messageFor('"one"'));
   });
 
   // An empty window of an S3 object has no bytes to fetch.
@@ -333,15 +367,15 @@ describe("multipart serialization of S3-backed entries", () => {
     ["slice(0, 0)", 0],
     ["slice(3, 3)", 3],
   ])("s3file.%s serializes as an empty part", async (_label, at) => {
-    using endpoint = s3LocalEndpoint(object);
+    const stored = s3Object("text/csv");
     const formData = new FormData();
-    formData.append("report", endpoint.file("text/csv").slice(at, at), "empty.csv");
+    formData.append("report", stored.file().slice(at, at), "empty.csv");
     formData.append("after", "last");
 
     const response = new Response(formData);
     const contentType = response.headers.get("Content-Type")!;
     const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
-    expect({ body: await response.text(), s3Requests: endpoint.ranges }).toEqual({
+    expect({ body: await response.text(), s3Requests: stored.requests() }).toEqual({
       body:
         `--${boundary}\r\n` +
         `Content-Disposition: form-data; name="report"; filename="empty.csv"\r\n` +
@@ -353,18 +387,22 @@ describe("multipart serialization of S3-backed entries", () => {
     });
   });
 
-  // structuredClone() used to leave the size of an S3 file at 0, which made
-  // the file look like an empty window.
-  test("an S3 file still fails after structuredClone() looked at it", async () => {
-    using endpoint = s3LocalEndpoint(object);
-    const s3file = endpoint.file("text/csv");
+  // Each of these calls used to leave the size of the S3 file at 0, which
+  // made the file look like an empty window.
+  test.each<[string, (s3file: Bun.S3File) => unknown]>([
+    ["structuredClone()", s3file => structuredClone(s3file)],
+    ["postMessage()", s3file => new MessageChannel().port1.postMessage(s3file)],
+    ["expect().toHaveLength()", s3file => expect(s3file).toHaveLength(0)],
+  ])("an S3 file still fails after %s asked for its size", async (_label, ask) => {
+    const stored = s3Object("text/csv");
+    const s3file = stored.file();
     try {
-      structuredClone(s3file);
+      ask(s3file);
     } catch {}
 
     const error = await failureOf(() => new Response(formDataWith(s3file)));
     expect(error).toBeInstanceOf(TypeError);
-    expect({ message: (error as TypeError).message, size: s3file.size, s3Requests: endpoint.ranges }).toEqual({
+    expect({ message: (error as TypeError).message, size: s3file.size, s3Requests: stored.requests() }).toEqual({
       message: messageFor('"report"'),
       size: NaN,
       s3Requests: [],
@@ -373,8 +411,9 @@ describe("multipart serialization of S3-backed entries", () => {
 
   // Runs the expression the message prints, character for character.
   test("the File that the message says to pass uploads the bytes, the type and the filename", async () => {
-    using endpoint = s3LocalEndpoint(object);
-    const s3file = endpoint.file("text/csv");
+    const stored = s3Object("text/csv");
+    await client.write(stored.key, object);
+    const s3file = stored.file();
     const error = await failureOf(() => new Response(formDataWith(s3file)));
     const printed = (error as TypeError).message.slice((error as TypeError).message.indexOf("new File("));
     expect(printed).toBe(remedy);
@@ -386,13 +425,16 @@ describe("multipart serialization of S3-backed entries", () => {
     const response = new Response(formData);
     const contentType = response.headers.get("Content-Type")!;
     const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
-    expect({ body: await response.text(), s3Requests: endpoint.ranges }).toEqual({
+    expect({ body: await response.text(), s3Requests: stored.requests() }).toEqual({
       body:
         `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="report"; filename="key"\r\n` +
+        `Content-Disposition: form-data; name="report"; filename="${stored.key}"\r\n` +
         `Content-Type: text/csv\r\n\r\n${object}\r\n` +
         `--${boundary}--\r\n`,
-      s3Requests: [null],
+      s3Requests: [
+        ["PutObject", null],
+        ["GetObject", null],
+      ],
     });
   });
 });

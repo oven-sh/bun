@@ -16,6 +16,7 @@
 #include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSModuleRecord.h>
+#include <JavaScriptCore/SyntheticModuleRecord.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypeInfo.h>
@@ -525,14 +526,10 @@ static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* s
 
     loaded.staleESMEntry = true;
     if (auto* mod = entry->record()) {
-        // getModuleNamespace asserts the record has progressed past linking.
-        // A previous import that failed during link (e.g. unresolved binding)
-        // leaves the record at New/Unlinked; in that case there is no
-        // namespace to patch — drop the stale entry so the mock takes over
-        // on the next import.
+        // A record that never linked or whose body threw has no namespace to patch: the entry is dropped so the next import loads the mock.
         bool linked = true;
         if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mod))
-            linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
+            linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked && !cyclic->evaluationError();
         if (linked) {
             loaded.esmNamespace = mod->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, );
@@ -569,7 +566,40 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
     return loaded;
 }
 
-static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const LoadedModule& loaded, JSC::JSObject* exports)
+static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
+{
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
+        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
+    return record->moduleEnvironmentMayBeNull() != nullptr;
+}
+
+// Re-exports the old names rather than copying them: linked importers bind into the loaded record, and a later mock.module() must still write those bindings.
+static void replaceOutgrownESModule(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* loadedNamespace, const Vector<JSC::Identifier, 4>& newNames, const MarkedArgumentBuffer& newValues, const String& specifier)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* loader = globalObject->moduleLoader();
+    auto specifierIdent = JSC::Identifier::fromString(vm, specifier);
+    auto* record = JSC::SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, loader, specifierIdent, newNames, JSC::ArgList(newValues), nullptr);
+    RETURN_IF_EXCEPTION(scope, );
+
+    JSC::PropertyNameArrayBuilder loadedNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    loadedNamespace->methodTable()->getOwnPropertyNames(loadedNamespace, globalObject, loadedNames, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+    for (auto& name : loadedNames)
+        record->addExportEntry(JSC::AbstractModuleRecord::ExportEntry::createIndirect(name, name, specifierIdent, JSC::ScriptFetchParameters::Type::JavaScript));
+    record->setImportedModule(globalObject, JSC::AbstractModuleRecord::ModuleRequest { specifierIdent, nullptr }, loadedNamespace->moduleRecord());
+    RETURN_IF_EXCEPTION(scope, );
+
+    loader->removeEntry(specifierIdent); // takes the loader's cellLock itself
+    auto* entry = loader->ensureRegistered(globalObject, specifierIdent, JSC::ScriptFetchParameters::Type::JavaScript);
+    RETURN_IF_EXCEPTION(scope, );
+    entry->provideModule(vm, record);
+    entry->markLoaded(); // a synthetic record requests nothing
+}
+
+static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const LoadedModule& loaded, JSC::JSObject* exports, const String& specifier)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -593,8 +623,27 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
             throwOutOfMemoryError(globalObject, scope);
             return;
         }
+        Vector<JSC::Identifier, 4> newNames;
+        MarkedArgumentBuffer newValues;
+        bool outgrown = false;
         for (size_t i = 0; i < names.size(); ++i) {
-            moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+            bool overridden = moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+            RETURN_IF_EXCEPTION(scope, );
+            if (overridden)
+                continue;
+            newNames.append(names[i]);
+            newValues.append(values.at(i));
+            // A source-text module never exports `__esModule`: its namespace serves it from the prototype.
+            if (names[i] != vm.propertyNames->__esModule)
+                outgrown = true;
+        }
+        if (newValues.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+        // A replacement of a record still evaluating would hand later importers uninitialized bindings.
+        if (outgrown && isModuleEvaluated(moduleNamespaceObject->moduleRecord())) {
+            replaceOutgrownESModule(globalObject, moduleNamespaceObject, newNames, newValues, specifier);
             RETURN_IF_EXCEPTION(scope, );
         }
     }
@@ -736,7 +785,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                 throwFactoryMustReturnObject(globalObject, scope);
                 return {};
             }
-            overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject());
+            overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject(), specifier);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -1026,7 +1075,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve, (JSC::JSGlobalObjec
     } else {
         Zig::LoadedModule loaded = Zig::findLoadedModule(globalObject, mock->specifier.get());
         if (!scope.exception()) [[likely]]
-            Zig::overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject());
+            Zig::overrideLoadedModuleExports(globalObject, loaded, exportsValue.getObject(), specifier);
     }
     if (scope.exception()) [[unlikely]] {
         Zig::unregisterModuleMock(globalObject, mock, specifier);

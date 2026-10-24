@@ -155,7 +155,7 @@ macro_rules! extern_crypto_job {
                 ctx: *mut Ctx,
                 callback: JSValue,
             ) {
-                let cx = global.js_thread_of_caller_no_frame();
+                let cx = global.js_thread_of_caller();
                 let callback = callback.with_async_context_if_needed(global);
                 Job::<ExternJob>::schedule(
                     &cx,

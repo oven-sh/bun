@@ -610,7 +610,7 @@ pub(crate) mod exports {
         // SAFETY: JSC method shim passes the wrapper's live Blob and global.
         let (this, global) = unsafe { (&*this, &*global) };
         bun_jsc::to_js_host_call(global, || {
-            S3BlobStatTask::stat(&global.js_thread_of_caller_no_frame(), this)
+            S3BlobStatTask::stat(&global.js_thread_of_caller(), this)
         })
     }
 }

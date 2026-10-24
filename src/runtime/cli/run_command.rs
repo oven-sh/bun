@@ -778,6 +778,24 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Ok(root_dir_info)
     }
 
+    /// Every form of `bun run <script>` calls this once. `bun install` prints the same line.
+    pub(crate) fn check_bun_version(package_json: Option<&PackageJSON>, silent: bool) {
+        if !silent
+            && let Some(package_json) = package_json
+            && let Some(range) = package_json.declared_bun_range()
+        {
+            Self::warn_bun_version(package_json.source.path.text, range);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn warn_bun_version(path: &[u8], range: &[u8]) {
+        if let Some(mismatch) = bun_semver::running_bun::mismatch(path, range) {
+            bun_core::warn!("{}", mismatch);
+        }
+    }
+
     /// Best-effort default-loader lookup by file extension. Thin forwarder to
     /// `bun_bundler::options::DEFAULT_LOADERS` (the *file-extension*→Loader map
     /// — NOT `Loader::NAMES`, which is the *loader-name*
@@ -2552,6 +2570,8 @@ impl RunCommand {
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
+
+                        Self::check_bun_version(Some(package_json), silent);
 
                         // A script has no entry point to start from: the project is checked, as by `bun check`.
                         if ctx.runtime_options.check

@@ -67,6 +67,8 @@ new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_
 // if it fires the request fails with `error.Timeout`. Covers the TLS
 // handshake through the response body. 0 disables. See `src/http/lib.rs`.
 new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", { default: 300 });
+// Skips the warning for a `packageManager` or `engines.bun` that the running bun does not satisfy.
+new!(pub BUN_CONFIG_IGNORE_ENGINES: boolean, "BUN_CONFIG_IGNORE_ENGINES", { default: false });
 // Opening-handshake timeout for the `new WebSocket()` client, in seconds.
 // A peer that accepts the TCP connection but never answers the upgrade fails
 // with error + close(1006). 0 disables; uSockets' 4 s sweep rounds small values up.

@@ -844,7 +844,7 @@ pub(crate) fn run_scripts_with_filter(
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(
+    let root_dir_info = RunCommand::configure_env_for_run(
         &mut *ctx,
         &mut this_transpiler,
         None,
@@ -947,6 +947,7 @@ pub(crate) fn run_scripts_with_filter(
             bun_install::package_manager::workspace_selection::quote_patterns(&[script_name]);
         selected.error_script_not_found(&*ctx, &quoted);
     }
+    RunCommand::check_bun_version(root_dir_info.enclosing_package_json, ctx.debug.silent);
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
     let env_ptr: *mut bun_dotenv::Loader = this_transpiler.env;

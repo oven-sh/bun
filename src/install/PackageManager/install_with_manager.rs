@@ -88,6 +88,10 @@ pub fn install_with_manager(
         Global::crash();
     }
 
+    if !manager.options.ignore_engines && !log_level.is_silent() {
+        warn_bun_version(manager, root_package_json_path);
+    }
+
     // reshaped for borrowck — `loadFromCwd` needs `manager`, `manager.lockfile`,
     // and `manager.log` simultaneously. Route through a single
     // raw provenance root so the three reborrows share a tag.
@@ -1660,6 +1664,41 @@ fn overrides_field(
         return Field::Overrides;
     };
     Field::of(&entry.root).map_or(Field::Overrides, |(field, _)| field)
+}
+
+/// Runs before the lockfile loads, so the line also shows when this bun cannot read the lockfile.
+#[cold]
+#[inline(never)]
+fn warn_bun_version(manager: &mut PackageManager, root_package_json_path: &ZStr) {
+    use bun_ast::Expr;
+    use bun_semver::running_bun;
+
+    let mut scratch_log = bun_ast::Log::init();
+    let WorkspacePackageJsonCacheResult::Entry(entry) =
+        manager.workspace_package_json_cache.get_with_path(
+            &mut scratch_log,
+            root_package_json_path.as_bytes(),
+            Default::default(),
+        )
+    else {
+        return;
+    };
+    let package_manager = entry.root.get(b"packageManager");
+    let engines_bun = entry
+        .root
+        .get(b"engines")
+        .and_then(|engines| engines.get(b"bun"));
+    let Some(range) = running_bun::declared_bun_range(
+        package_manager
+            .as_ref()
+            .and_then(Expr::as_utf8_string_literal),
+        engines_bun.as_ref().and_then(Expr::as_utf8_string_literal),
+    ) else {
+        return;
+    };
+    if let Some(mismatch) = running_bun::mismatch(entry.source.path.text, range) {
+        bun_core::warn!("{}", mismatch);
+    }
 }
 
 pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {

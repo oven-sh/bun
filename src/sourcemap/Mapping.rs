@@ -324,11 +324,7 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        if source_map.is_standalone_module_graph {
-            return Some(bun_core::String::clone_utf8(name));
-        }
-
-        if bun_paths::is_absolute(base_filename) {
+        if !source_map.is_standalone_module_graph && bun_paths::is_absolute(base_filename) {
             // `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
@@ -337,7 +333,7 @@ impl Lookup {
             ));
         }
 
-        Some(bun_core::String::borrow_utf8(name))
+        Some(bun_core::String::clone_utf8(name))
     }
 
     /// Only valid if `lookup.source_map.is_external()`

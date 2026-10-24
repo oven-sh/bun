@@ -399,6 +399,59 @@ describe("source map remapping of the printed stack", () => {
     });
     expect(exitCode).toBe(1);
   });
+
+  // A file loaded through a blob: URL keeps the relative path it was opened
+  // with as its source URL. Loading it again replaces its source map, and the
+  // printer runs the `cause` getter between remapping the frames and printing
+  // them.
+  test.concurrent("a `cause` getter that loads the throwing file again", async () => {
+    const map = {
+      version: 3,
+      sources: ["orig.ts"],
+      sourcesContent: ["// the original source\n"],
+      names: [],
+      mappings: ";;AAUI;AAUA",
+    };
+    const { dir, out, stderr, exitCode } = await run({
+      "rel.js": [
+        "// @bun @bun-cjs",
+        "(function(exports, require, module, __filename, __dirname) {",
+        'function thrower() { throw new Error("RELOADED"); }',
+        "module.exports = function caller() { thrower(); };",
+        "})",
+        "//# sourceMappingURL=data:application/json;base64," + Buffer.from(JSON.stringify(map)).toString("base64"),
+      ].join("\n"),
+      "main.js": [
+        'const load = () => require(URL.createObjectURL(Bun.file("rel.js")));',
+        "let reloads = 0;",
+        "function thrown() {",
+        "  let error;",
+        "  try { load()(); } catch (e) { error = e; }",
+        '  Object.defineProperty(error, "cause", { get() { reloads++; load(); } });',
+        "  return error;",
+        "}",
+        "const out = { inspect: Bun.inspect(thrown()), stack: thrown().stack };",
+        "console.error(thrown());",
+        "console.log(JSON.stringify({ ...out, reloads }));",
+      ].join("\n"),
+    });
+
+    const files = ["orig.ts", "rel.js"];
+    const expected = ["at thrower (orig.ts:11:5)", "at caller (orig.ts:21:5)"];
+    expect({
+      reloads: out.reloads,
+      inspect: frames(out.inspect, dir, files),
+      consoleError: frames(stderr, dir, files),
+      stack: frames(out.stack, dir, files),
+    }).toEqual({
+      // Once for Bun.inspect and once for console.error.
+      reloads: 2,
+      inspect: expected,
+      consoleError: expected,
+      stack: expected,
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The printer replaces an AggregateError with the members of its `errors`

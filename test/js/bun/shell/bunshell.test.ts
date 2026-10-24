@@ -3592,6 +3592,328 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
   });
 });
 
+describe("stdin redirect from a Response", () => {
+  // `< ${response}` takes the whole body when the command starts. A stream, an unfinished
+  // fetch() body or a used body has no bytes to give by then, and used to read as empty input.
+  const payload = "hello from a response body\n";
+  const encoder = new TextEncoder();
+  const readStdin = "process.stdout.write(await Bun.stdin.text())";
+  const unsupported =
+    "A Response with a ReadableStream body is not supported as a shell redirect yet. Buffer it first, e.g. `< ${await response.blob()}`, or use Bun.spawn({ stdin: response })";
+
+  const streamOf = (...chunks: string[]) =>
+    new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    });
+
+  // A server that sends "first " and holds "second" back until `sendRest()`,
+  // so the body of a `fetch()` Response is not complete before then.
+  function serveHeldBody() {
+    const rest = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(encoder.encode("first "));
+              await rest.promise;
+              controller.enqueue(encoder.encode("second"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+    return {
+      url: server.url,
+      sendRest: () => rest.resolve(),
+      async [Symbol.asyncDispose]() {
+        rest.resolve();
+        await server.stop(true);
+      },
+    };
+  }
+
+  // `then()` starts the shell, so settle the promise through it.
+  const rejection = (shell: $.ShellPromise) =>
+    shell.quiet().then(
+      output => `resolved with exit code ${output.exitCode} and stdout ${JSON.stringify(output.stdout.toString())}`,
+      error => (error.code ? `${error.code}: ${error.message}` : error.message),
+    );
+
+  // `cat` is a subprocess on POSIX and a builtin on Windows. `echo` is a builtin
+  // everywhere: it never reads stdin, but it still sets the redirect up. `ls`
+  // runs on the thread pool, so the `cat` after it starts from an async resume.
+  const commands = [
+    ["cat", (input: Response) => $`cat < ${input}`],
+    ["a subprocess", (input: Response) => $`${BUN} -e ${readStdin} < ${input}`],
+    ["a builtin", (input: Response) => $`echo hi < ${input}`],
+    ["a command that starts from an async resume", (input: Response) => $`ls . && cat < ${input}`],
+    ["a pipeline member", (input: Response) => $`cat < ${input} | cat`],
+  ] as const;
+
+  describe("a ReadableStream body rejects", () => {
+    test.concurrent.each(commands)("%s", async (_name, run) => {
+      const response = new Response(streamOf(payload));
+      expect(await rejection(run(response))).toBe(unsupported);
+      // The body is left unread, so the fix that the message names still works.
+      expect(response.bodyUsed).toBe(false);
+      expect(await $`cat < ${await response.blob()}`.text()).toBe(payload);
+    });
+
+    const bodies: Array<[string, () => Bun.BodyInit]> = [
+      [
+        "a stream that errors",
+        () =>
+          new ReadableStream({
+            pull(controller) {
+              controller.error(new Error("boom"));
+            },
+          }),
+      ],
+      [
+        "a stream that errors after some data",
+        () =>
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode(payload));
+            },
+            pull(controller) {
+              controller.error(new Error("boom"));
+            },
+          }),
+      ],
+      [
+        "an async generator",
+        () =>
+          (async function* () {
+            yield payload;
+          })() as unknown as Bun.BodyInit,
+      ],
+    ];
+    test.concurrent.each(bodies)("%s", async (_name, body) => {
+      expect(await rejection($`cat < ${new Response(body())}`)).toBe(unsupported);
+    });
+
+    test.concurrent("a fetch() body that is still arriving", async () => {
+      await using held = serveHeldBody();
+      const response = await fetch(held.url);
+      expect(await rejection($`cat < ${response}`)).toBe(unsupported);
+      expect(response.bodyUsed).toBe(false);
+      held.sendRest();
+      expect(await $`cat < ${await response.blob()}`.text()).toBe("first second");
+    });
+  });
+
+  describe("a body that was already used rejects", () => {
+    const alreadyUsed = "ERR_BODY_ALREADY_USED: Body already used";
+
+    test.concurrent.each(commands)("%s", async (_name, run) => {
+      const response = new Response(payload);
+      await response.text();
+      expect(await rejection(run(response))).toBe(alreadyUsed);
+    });
+
+    test.concurrent("the redirect uses the body, so a second redirect of the same Response rejects", async () => {
+      const response = new Response(payload);
+      expect(await $`cat < ${response}`.text()).toBe(payload);
+      expect(response.bodyUsed).toBe(true);
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+    });
+
+    test.concurrent("a stream body that a reader has started to read", async () => {
+      const response = new Response(streamOf("a", "b"));
+      const reader = response.body!.getReader();
+      await reader.read();
+      reader.releaseLock();
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+    });
+
+    test.concurrent("an in-memory body whose stream has a reader", async () => {
+      // A reader on the native stream of an in-memory body disturbs the body at once.
+      const response = new Response(payload);
+      response.body!.getReader();
+      expect(response.bodyUsed).toBe(true);
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+    });
+
+    test.concurrent("a stream body that text() is reading", async () => {
+      const rest = Promise.withResolvers<void>();
+      const response = new Response(
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(encoder.encode("first "));
+            await rest.promise;
+            controller.enqueue(encoder.encode("second"));
+            controller.close();
+          },
+        }),
+      );
+      const text = response.text();
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+      rest.resolve();
+      expect(await text).toBe("first second");
+    });
+
+    test.concurrent("a fetch() body that text() is reading", async () => {
+      await using held = serveHeldBody();
+      const response = await fetch(held.url);
+      const text = response.text();
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+      held.sendRest();
+      expect(await text).toBe("first second");
+    });
+
+    test.concurrent("a fetch() body that Bun.write() is reading", async () => {
+      using dir = tempDir("shell-response-redirect", {});
+      await using held = serveHeldBody();
+      const response = await fetch(held.url);
+      const written = Bun.write(join(String(dir), "body.txt"), response);
+      expect(await rejection($`cat < ${response}`)).toBe(alreadyUsed);
+      held.sendRest();
+      expect(await written).toBe("first second".length);
+    });
+  });
+
+  test.concurrent("a stream body that a reader holds rejects the way blob() does", async () => {
+    const response = new Response(streamOf(payload));
+    const reader = response.body!.getReader();
+    const locked = "ERR_INVALID_STATE: Invalid state: ReadableStream is locked";
+    expect(await rejection($`cat < ${response}`)).toBe(locked);
+    expect(await rejection($`echo hi < ${response}`)).toBe(locked);
+    expect(await response.blob().then(String, error => `${error.code}: ${error.message}`)).toBe(locked);
+    // The reader read nothing, so the body is whole once it lets go.
+    reader.releaseLock();
+    expect(await $`cat < ${await response.blob()}`.text()).toBe(payload);
+  });
+
+  test.concurrent("a fetch() body that failed rejects with its error", async () => {
+    await using held = serveHeldBody();
+    for (const [, run] of commands) {
+      const controller = new AbortController();
+      const response = await fetch(held.url, { signal: controller.signal });
+      controller.abort(new Error("the test aborted the fetch"));
+      expect(await rejection(run(response))).toBe("the test aborted the fetch");
+    }
+  });
+
+  describe("an S3-backed body rejects", () => {
+    // An S3-backed Blob has no bytes until a request reads them. A spawned
+    // command never saw the end of its stdin, and a builtin read zero bytes.
+    const unsupportedS3 =
+      "A Response with an S3-backed body is not supported as a shell redirect yet. To redirect from it, pass its bytes: `< ${await response.bytes()}`";
+
+    // A server on the loopback stands in for S3 and records each request.
+    function serveS3() {
+      const requests: string[] = [];
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(request) {
+          requests.push(`${request.method} ${new URL(request.url).pathname}`);
+          return new Response(payload);
+        },
+      });
+      const client = new Bun.S3Client({
+        endpoint: server.url.href,
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        bucket: "bucket",
+      });
+      return {
+        requests,
+        file: () => client.file("key"),
+        [Symbol.asyncDispose]: () => server.stop(true),
+      };
+    }
+
+    // An array keeps the S3File as the body.
+    test.concurrent.each(commands)("%s", async (_name, run) => {
+      await using s3 = serveS3();
+      const response = new Response([s3.file()] as unknown as Bun.BodyInit);
+      expect(await rejection(run(response))).toBe(unsupportedS3);
+      // The shell sent no request and left the body unread, so the fix that the message names still works.
+      expect({ requests: s3.requests, bodyUsed: response.bodyUsed }).toEqual({ requests: [], bodyUsed: false });
+      expect(await $`cat < ${await response.bytes()}`.text()).toBe(payload);
+      expect(s3.requests).toEqual(["GET /bucket/key"]);
+    });
+
+    test.concurrent("a fetch() of an object URL for an S3File", async () => {
+      await using s3 = serveS3();
+      const url = URL.createObjectURL(s3.file());
+      try {
+        const response = await fetch(url);
+        expect(await rejection($`cat < ${response}`)).toBe(unsupportedS3);
+        expect(await rejection($`echo hi < ${response}`)).toBe(unsupportedS3);
+        expect(s3.requests).toEqual([]);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    });
+
+    test.concurrent("new Response(s3file) is a redirect with no body, so the command reads nothing", async () => {
+      await using s3 = serveS3();
+      const response = new Response(s3.file());
+      expect({ status: response.status, body: response.body }).toEqual({ status: 302, body: null });
+      const output = await $`cat < ${response}`.quiet();
+      expect({ stdout: output.stdout.toString(), exitCode: output.exitCode, requests: s3.requests }).toEqual({
+        stdout: "",
+        exitCode: 0,
+        requests: [],
+      });
+    });
+  });
+
+  describe("a file-backed body still reaches a spawned command", () => {
+    const fileBacked: Array<[string, (path: string) => Response]> = [
+      ["new Response(file)", path => new Response(Bun.file(path))],
+      ["new Response([file])", path => new Response([Bun.file(path)] as unknown as Bun.BodyInit)],
+    ];
+    test.concurrent.each(fileBacked)("%s", async (_name, make) => {
+      using dir = tempDir("shell-response-redirect", { "body.txt": payload });
+      const output = await $`${BUN} -e ${readStdin} < ${make(join(String(dir), "body.txt"))}`.quiet();
+      expect({ stdout: output.stdout.toString(), exitCode: output.exitCode }).toEqual({
+        stdout: payload,
+        exitCode: 0,
+      });
+    });
+  });
+
+  describe("a body that is in memory still reaches the command", () => {
+    const inMemory: Array<[string, () => Response, string]> = [
+      ["a string", () => new Response(payload), payload],
+      ["a Blob", () => new Response(new Blob([payload])), payload],
+      ["a Uint8Array", () => new Response(encoder.encode(payload)), payload],
+      ["a Blob's stream", () => new Response(new Blob([payload]).stream()), payload],
+      [
+        "a body whose .body stream exists but is unread",
+        () => {
+          const response = new Response(payload);
+          expect(response.body).toBeInstanceOf(ReadableStream);
+          return response;
+        },
+        payload,
+      ],
+      ["an empty string", () => new Response(""), ""],
+      ["no body", () => new Response(null), ""],
+      ["a stream that closed with no data", () => new Response(streamOf()), ""],
+    ];
+
+    const [cat, subprocess, builtin] = commands.map(([, run]) => run);
+    test.concurrent.each(inMemory)("%s", async (_name, make, expected) => {
+      const outputs = [await cat(make()).quiet(), await subprocess(make()).quiet(), await builtin(make()).quiet()];
+      expect(outputs.map(output => ({ stdout: output.stdout.toString(), exitCode: output.exitCode }))).toEqual([
+        { stdout: expected, exitCode: 0 },
+        { stdout: expected, exitCode: 0 },
+        { stdout: "hi\n", exitCode: 0 },
+      ]);
+    });
+  });
+});
+
 describe.skipIf(isWindows)("stdin redirect whose pipe outlives the command's process", () => {
   // `< ${input}` is pumped into the child over a pipe. A command finishes once
   // its exit code and the stdin, stdout and stderr closes are all in, and the

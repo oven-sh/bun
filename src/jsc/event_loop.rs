@@ -459,7 +459,7 @@ impl EventLoop {
 
         let drained = JSC__JSGlobalObject__drainMicrotasks(global_object);
         if drained != drain_result::SUCCESS {
-            return self.checkpoint_not_clean(global_object, vm, drained, after_callback);
+            return self.checkpoint_not_clean(drained, after_callback);
         }
 
         self.run_deferred_tasks(vm);
@@ -483,22 +483,21 @@ impl EventLoop {
         }
     }
 
-    /// The checkpoint did not answer `SUCCESS`. Out of line, so that the answer every other
-    /// checkpoint gets costs it one compare.
+    /// The checkpoint did not answer `SUCCESS`. Out of line, and with nothing of the caller's to
+    /// keep alive for it, so that the answer every other checkpoint gets costs it one compare.
     #[cold]
     #[inline(never)]
     fn checkpoint_not_clean(
         &mut self,
-        global_object: &JSGlobalObject,
-        vm: &VirtualMachine,
         mut drained: u8,
         after_callback: bool,
     ) -> Result<(), Stopped> {
         if drained == drain_result::REJECTIONS && after_callback {
-            drained = JSC__JSGlobalObject__handleRejectedPromisesAfterCallback(global_object);
+            drained = JSC__JSGlobalObject__handleRejectedPromisesAfterCallback(self.global_ref());
         }
         match drained {
             drain_result::SUCCESS | drain_result::REJECTIONS => {
+                let vm = self.vm_ref();
                 self.run_deferred_tasks(vm);
                 Ok(())
             }
@@ -1099,13 +1098,13 @@ impl EventLoop {
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
             // until `__bun_run_immediate_task` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
-            exception_thrown |= unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
         // Re-escape `this` after the re-entrant loop so nothing about `*this`
         // is carried across it.
         let this: *mut Self = core::hint::black_box(this);
 
-        // A task that threw skipped its own checkpoint: it runs here, after the rest of the batch.
+        // make sure microtasks are drained if the last task had an exception
         if exception_thrown {
             // SAFETY: as above.
             let _ = unsafe { (*this).maybe_drain_microtasks() };

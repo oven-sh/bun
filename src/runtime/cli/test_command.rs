@@ -2640,10 +2640,11 @@ impl TestCommand {
                 }
 
                 let mut print_expect_calls = summary.expectations > 0;
-                if reporter.jest.snapshots.total > 0 {
-                    let passed = reporter.jest.snapshots.passed;
-                    let failed = reporter.jest.snapshots.failed;
-                    let added = reporter.jest.snapshots.added;
+                let snapshots = reporter.jest.snapshots.tallies();
+                if snapshots.total > 0 {
+                    let passed = snapshots.passed;
+                    let failed = snapshots.failed;
+                    let added = snapshots.added;
 
                     let mut first = true;
                     if print_expect_calls && added == 0 && failed == 0 {
@@ -2651,7 +2652,7 @@ impl TestCommand {
                         pretty_error!(
                             "{}{:5>} snapshots, {:5>} expect() calls",
                             &indenter,
-                            reporter.jest.snapshots.total,
+                            snapshots.total,
                             summary.expectations
                         );
                     } else {

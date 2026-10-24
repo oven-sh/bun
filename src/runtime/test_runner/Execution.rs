@@ -44,6 +44,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
+use super::snapshot::Superseded;
 use super::bun_test::{
     group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
@@ -167,6 +168,8 @@ pub(crate) struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
+    /// `Snapshots` journals what this attempt records, for `reset_sequence` to undo.
+    pub(crate) snapshot_journal_armed: bool,
 }
 
 impl ExecutionSequence {
@@ -189,6 +192,7 @@ impl ExecutionSequence {
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
+            snapshot_journal_armed: false,
         }
     }
 
@@ -540,7 +544,7 @@ impl Execution {
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
                 Execution::discard_junit_failure(buntest);
-                Execution::reset_sequence(sequence);
+                Execution::reset_sequence(sequence, Superseded::Retry);
                 return;
             }
 
@@ -548,7 +552,7 @@ impl Execution {
             if test_passed && sequence.remaining_repeat_count > 0 {
                 sequence.remaining_repeat_count -= 1;
                 Execution::discard_junit_failure(buntest);
-                Execution::reset_sequence(sequence);
+                Execution::reset_sequence(sequence, Superseded::Repeat);
                 return;
             }
 
@@ -721,7 +725,7 @@ impl Execution {
         }
     }
 
-    pub(crate) fn reset_sequence(sequence: &mut ExecutionSequence) {
+    pub(crate) fn reset_sequence(sequence: &mut ExecutionSequence, why: Superseded) {
         debug_assert!(!sequence.executing);
         {
             // reset the entries
@@ -744,6 +748,14 @@ impl Execution {
             }
         }
 
+        // The next run takes the same snapshot keys (https://github.com/oven-sh/bun/issues/23705),
+        // and a failed attempt leaves no snapshot behind for the retry to collide with.
+        if sequence.snapshot_journal_armed
+            && let Some(runner) = super::jest::Jest::runner()
+        {
+            runner.snapshots.undo_attempt(NonNull::from(&mut *sequence), why);
+        }
+
         // Preserve retry/repeat counts across reset
         *sequence = ExecutionSequence::init(
             sequence.first_entry,
@@ -751,17 +763,6 @@ impl Execution {
             sequence.remaining_retry_count,
             sequence.remaining_repeat_count,
         );
-
-        // Snapshot counters are keyed by full test name and incremented on every
-        // toMatchSnapshot() call. Without this reset, retries / repeats would
-        // increment the counter to N on attempt N and look for a key that does
-        // not exist (https://github.com/oven-sh/bun/issues/23705).
-        // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
-        // jestjs/jest#7493). Concurrent tests never touch the counts map — see
-        // SnapshotInConcurrentGroup in expect.rs.
-        if let Some(runner) = super::jest::Jest::runner() {
-            runner.snapshots.reset_counts();
-        }
     }
 
     pub(crate) fn handle_uncaught_exception(

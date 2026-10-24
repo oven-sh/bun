@@ -19,6 +19,7 @@ use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
+use super::snapshot::{AttemptOwner, Snapshots, Tally};
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
@@ -212,6 +213,32 @@ impl Expect {
     pub(crate) fn bun_test(&self) -> Option<bun_test::BunTestPtr> {
         let parent = self.parent.as_ref()?;
         parent.bun_test()
+    }
+
+    /// The sequence to journal this snapshot matcher call under: the one this `expect()` was made in,
+    /// while a retry or a repeat can still run it again. Arms the journal on the attempt's first call.
+    fn snapshot_attempt(&self, snapshots: &mut Snapshots) -> Option<AttemptOwner> {
+        let parent = self.parent.as_ref()?;
+        let buntest_strong = parent.bun_test()?;
+        let buntest = buntest_strong.get();
+        let file_id = buntest.file_id;
+        // An `expect()` made while the file loads belongs to the test that calls its matcher.
+        let phase = match parent.phase {
+            bun_test::RefDataValue::Collection { .. } => buntest.get_current_state_data(),
+            phase => phase,
+        };
+        let sequence = phase.sequence(buntest)?;
+        if sequence.active_entry.is_none()
+            || (sequence.remaining_retry_count == 0 && sequence.remaining_repeat_count == 0)
+        {
+            return None;
+        }
+        let owner = AttemptOwner::from(&mut *sequence);
+        if !sequence.snapshot_journal_armed {
+            sequence.snapshot_journal_armed = true;
+            snapshots.begin_attempt(owner, file_id);
+        }
+        Some(owner)
     }
 
     pub(crate) fn get_signature(
@@ -1003,7 +1030,8 @@ impl Expect {
             let signature = Self::get_signature(fn_name, "", false);
             return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
         };
-        match runner.snapshots.add_count(this, b"") {
+        let attempt = this.snapshot_attempt(&mut runner.snapshots);
+        match runner.snapshots.add_count(this, b"", attempt) {
             Ok(_) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => return Err(JsError::OutOfMemory),
             Err(crate::Error::NoTest) => {}
@@ -1025,15 +1053,15 @@ impl Expect {
             let trim_res = Self::trim_leading_whitespace_for_inline_snapshot(saved_value, &mut buf);
 
             if strings::eql_long(&pretty_value, trim_res.trimmed, true) {
-                runner.snapshots.passed += 1;
+                runner.snapshots.tally(Tally::Passed, attempt);
                 return Ok(JSValue::UNDEFINED);
             } else if update {
-                runner.snapshots.passed += 1;
+                runner.snapshots.tally(Tally::Passed, attempt);
                 needs_write = true;
                 start_indent = trim_res.start_indent.map(Box::<[u8]>::from);
                 end_indent = trim_res.end_indent.map(Box::<[u8]>::from);
             } else {
-                runner.snapshots.failed += 1;
+                runner.snapshots.tally(Tally::Failed, attempt);
                 let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
                 let diff_format = DiffFormatter::from_strings(&pretty_value, trim_res.trimmed, false);
                 return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
@@ -1089,7 +1117,7 @@ impl Expect {
                 kind: fn_name.as_bytes(),
                 start_indent,
                 end_indent,
-            })?;
+            }, attempt)?;
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1139,7 +1167,8 @@ impl Expect {
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
 
         let runner = Jest::runner().expect("unreachable");
-        let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
+        let attempt = this.snapshot_attempt(&mut runner.snapshots);
+        let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint, attempt) {
             Ok(v) => v,
             Err(err) => {
                 let Some(buntest_strong) = this.bun_test() else {
@@ -1196,11 +1225,11 @@ impl Expect {
             // before mutating passed/failed counters below.
             let saved_value: Vec<u8> = saved_value.to_vec();
             if strings::eql_long(&pretty_value, &saved_value, true) {
-                runner.snapshots.passed += 1;
+                runner.snapshots.tally(Tally::Passed, attempt);
                 return Ok(JSValue::UNDEFINED);
             }
 
-            runner.snapshots.failed += 1;
+            runner.snapshots.tally(Tally::Failed, attempt);
             let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
             let diff_format = DiffFormatter::from_strings(&pretty_value, &saved_value, false);
             return throw!(self, global_this, signature, "\n\n{}\n", diff_format);

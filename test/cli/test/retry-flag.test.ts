@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 test("--retry retries failed tests", async () => {
   using dir = tempDir("retry-flag", {
@@ -312,4 +313,552 @@ retry = 3
   expect(stderr).toContain("flaky via bunfig");
   expect(stderr).toContain("attempt 3");
   expect(exitCode).toBe(0);
+});
+
+describe("snapshots of a retried test", () => {
+  const imports = `import { test, expect, describe, beforeEach, afterEach } from "bun:test";\nlet attempt = 0;\n`;
+  const snapshotFile = (entries: Record<string, string>) =>
+    "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n" +
+    Object.entries(entries)
+      .map(([key, value]) => `\nexports[\`${key}\`] = \`${JSON.stringify(value)}\`;\n`)
+      .join("");
+
+  /** Runs `bun test` in a directory of `files`. Reports each test's result line, the snapshot summary and every file afterwards. */
+  async function run(files: Record<string, string>, options: { args?: string[]; ci?: boolean } = {}) {
+    using dir = tempDir("retry-snapshots", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...(options.args ?? [])],
+      env: { ...bunEnv, CI: options.ci ? "true" : "false" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const lines = stderr.split(/\r?\n/);
+    const after: Record<string, string> = {};
+    for (const name of Object.keys(files).concat(
+      await Array.fromAsync(new Bun.Glob("__snapshots__/*").scan(String(dir))),
+    )) {
+      after[name.replaceAll("\\", "/")] = await Bun.file(join(String(dir), name)).text();
+    }
+    return {
+      results: lines.filter(line => /^\((pass|fail)\)/.test(line)).map(line => line.replace(/ \[[\d.]+m?s\]$/, "")),
+      conflicts: lines.filter(line => line.includes("Failed to update inline snapshot")).length,
+      snapshots: lines.find(line => /^snapshots: |^ *\d+ snapshots, /.test(line))?.trim(),
+      files: after,
+      exitCode,
+    };
+  }
+
+  const flaky = (matcher: string) => `${imports}test("flaky", () => {
+  attempt++;
+  ${matcher};
+  if (attempt === 1) throw new Error("first attempt fails");
+});
+`;
+
+  test.concurrent.each([
+    {
+      how: "{ retry: 1 }",
+      args: [],
+      edit: (source: string) => source.replace("});\n", "}, { retry: 1 });\n"),
+      more: {},
+    },
+    { how: "--retry=1", args: ["--retry=1"], edit: (source: string) => source, more: {} },
+    { how: "bunfig.toml", args: [], edit: (source: string) => source, more: { "bunfig.toml": "[test]\nretry = 1\n" } },
+  ])("toMatchInlineSnapshot() writes the value of the attempt that passed ($how)", async ({ args, edit, more }) => {
+    const source = (snapshot: string) => edit(flaky(`expect("value-" + attempt).toMatchInlineSnapshot(${snapshot})`));
+    expect(await run({ "flaky.test.js": source(""), ...more }, { args })).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +1 added",
+      files: { "flaky.test.js": source('`"value-2"`'), ...more },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("toThrowErrorMatchingInlineSnapshot() writes the message of the attempt that passed", async () => {
+    const source = (snapshot: string) =>
+      flaky(`expect(() => { throw new Error("message-" + attempt); }).toThrowErrorMatchingInlineSnapshot(${snapshot})`);
+    expect(await run({ "flaky.test.js": source("") }, { args: ["--retry=1"] })).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +1 added",
+      files: { "flaky.test.js": source('`"message-2"`') },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent(
+    "--update-snapshots replaces an inline snapshot with the value of the attempt that passed",
+    async () => {
+      const source = (snapshot: string) => flaky(`expect("value-" + attempt).toMatchInlineSnapshot(${snapshot})`);
+      expect(await run({ "flaky.test.js": source('`"old"`') }, { args: ["--retry=1", "-u"] })).toEqual({
+        results: ["(pass) flaky (attempt 2)"],
+        conflicts: 0,
+        snapshots: "1 snapshots, 1 expect() calls",
+        files: { "flaky.test.js": source('`"value-2"`') },
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.concurrent(
+    "--update-snapshots keeps an inline snapshot that only the failed attempt did not match",
+    async () => {
+      const source = `${imports}test("flaky", () => {
+  attempt++;
+  expect(attempt === 1 ? "half-initialised" : "right").toMatchInlineSnapshot(\`"right"\`);
+  if (attempt === 1) throw new Error("first attempt fails");
+}, { retry: 1 });
+`;
+      expect(await run({ "flaky.test.js": source }, { args: ["-u"] })).toEqual({
+        results: ["(pass) flaky (attempt 2)"],
+        conflicts: 0,
+        snapshots: "1 snapshots, 1 expect() calls",
+        files: { "flaky.test.js": source },
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.concurrent("an inline snapshot that only the failed attempt reached is not written", async () => {
+    const source = (snapshot: string) => `${imports}test("flaky", () => {
+  attempt++;
+  if (attempt === 1) {
+    expect("from the failed attempt").toMatchInlineSnapshot();
+    throw new Error("first attempt fails");
+  }
+  expect("from the attempt that passed").toMatchInlineSnapshot(${snapshot});
+}, { retry: 1 });
+`;
+    expect(await run({ "flaky.test.js": source("") })).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +1 added",
+      files: { "flaky.test.js": source('`"from the attempt that passed"`') },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("the tests around a retried test keep their inline snapshots", async () => {
+    const source = (before: string, flaky: string, after: string) => `${imports}test("before", () => {
+  expect("before").toMatchInlineSnapshot(${before});
+});
+test("flaky", () => {
+  attempt++;
+  expect("value-" + attempt).toMatchInlineSnapshot(${flaky});
+  if (attempt < 3) throw new Error("attempt fails");
+}, { retry: 2 });
+test("after", () => {
+  expect("after").toMatchInlineSnapshot(${after});
+});
+`;
+    expect(await run({ "flaky.test.js": source("", "", "") })).toEqual({
+      results: ["(pass) before", "(pass) flaky (attempt 3)", "(pass) after"],
+      conflicts: 0,
+      snapshots: "snapshots: +3 added",
+      files: { "flaky.test.js": source('`"before"`', '`"value-3"`', '`"after"`') },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("inline snapshots taken in beforeEach and afterEach belong to the attempt", async () => {
+    const source = (before: string, after: string) => `${imports}beforeEach(() => {
+  attempt++;
+  expect("before-" + attempt).toMatchInlineSnapshot(${before});
+});
+afterEach(() => {
+  expect("after-" + attempt).toMatchInlineSnapshot(${after});
+});
+test("flaky", () => {
+  if (attempt === 1) throw new Error("first attempt fails");
+}, { retry: 1 });
+`;
+    expect(await run({ "flaky.test.js": source("", "") })).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +2 added",
+      files: { "flaky.test.js": source('`"before-2"`', '`"after-2"`') },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("an expect() made outside the test body belongs to the attempt that calls its matcher", async () => {
+    const source = (top: string, hook: string) => `${imports}const thrower = () => {
+  throw new Error("message-" + attempt);
+};
+const madeWhileLoading = expect(thrower);
+let madeInHook;
+beforeEach(() => {
+  madeInHook = expect(thrower);
+});
+test("flaky", () => {
+  attempt++;
+  madeWhileLoading.toThrowErrorMatchingInlineSnapshot(${top});
+  madeInHook.toThrowErrorMatchingInlineSnapshot(${hook});
+  if (attempt === 1) throw new Error("first attempt fails");
+}, { retry: 1 });
+`;
+    expect(await run({ "flaky.test.js": source("", "") })).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +2 added",
+      files: { "flaky.test.js": source('`"message-2"`', '`"message-2"`') },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("when every attempt fails, the last attempt's inline snapshot is written", async () => {
+    const source = (snapshot: string) => `${imports}test("broken", () => {
+  attempt++;
+  expect("value-" + attempt).toMatchInlineSnapshot(${snapshot});
+  throw new Error("every attempt fails");
+}, { retry: 1 });
+`;
+    expect(await run({ "broken.test.js": source("") })).toEqual({
+      results: ["(fail) broken (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +1 added",
+      files: { "broken.test.js": source('`"value-2"`') },
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("two values at one call site in the attempt that passed are still a conflict", async () => {
+    const source = `${imports}function check(value) {
+  expect(value).toMatchInlineSnapshot();
+}
+test("flaky", () => {
+  attempt++;
+  check(1);
+  check(2);
+  if (attempt === 1) throw new Error("first attempt fails");
+}, { retry: 1 });
+`;
+    expect(await run({ "flaky.test.js": source })).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 1,
+      snapshots: "snapshots: +1 added",
+      files: { "flaky.test.js": source },
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("repeats that take different snapshots are still reported", async () => {
+    const source = `${imports}test("inline", () => {
+  expect("value-" + ++attempt).toMatchInlineSnapshot();
+}, { repeats: 1 });
+test("file", () => {
+  expect("value-" + ++attempt).toMatchSnapshot();
+}, { repeats: 1 });
+`;
+    expect(await run({ "repeats.test.js": source })).toEqual({
+      results: ["(pass) inline (run 2)", "(fail) file (run 2)"],
+      conflicts: 1,
+      snapshots: "snapshots: +2 added, 1 failed",
+      files: { "repeats.test.js": source, "__snapshots__/repeats.test.js.snap": snapshotFile({ "file 1": "value-3" }) },
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("--rerun-each keeps the snapshot of the attempt that passed in each run", async () => {
+    const source = (snapshot: string) =>
+      flaky(`expect("value-" + attempt).toMatchInlineSnapshot(${snapshot})`).replace("});\n", "}, { retry: 1 });\n");
+    expect(await run({ "flaky.test.js": source("") }, { args: ["--rerun-each=2"] })).toEqual({
+      results: ["(pass) flaky (attempt 2)", "(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +1 added",
+      files: { "flaky.test.js": source('`"value-2"`') },
+      exitCode: 0,
+    });
+  });
+
+  // The runner cannot tell which test of a concurrent group called the matcher.
+  test.todo("a retried test in a concurrent group writes the inline snapshot of the attempt that passed", async () => {
+    const source = (flaky: string, steady: string) => `${imports}test.concurrent("flaky", async () => {
+  const mine = ++attempt;
+  await null;
+  expect("value-" + mine).toMatchInlineSnapshot(${flaky});
+  if (mine === 1) throw new Error("first attempt fails");
+}, { retry: 1 });
+test.concurrent("steady", async () => {
+  await null;
+  expect("steady").toMatchInlineSnapshot(${steady});
+});
+`;
+    expect((await run({ "flaky.test.js": source("", "") })).files).toEqual({
+      "flaky.test.js": source('`"value-2"`', '`"steady"`'),
+    });
+  });
+
+  test.concurrent("toMatchSnapshot() writes the value of the attempt that passed", async () => {
+    const source = flaky(`expect("value-" + attempt).toMatchSnapshot()`);
+    expect(await run({ "flaky.test.js": source }, { args: ["--retry=1"] })).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +1 added",
+      files: { "flaky.test.js": source, "__snapshots__/flaky.test.js.snap": snapshotFile({ "flaky 1": "value-2" }) },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("every snapshot matcher of a test that passes on its third attempt", async () => {
+    const source = (inline: string) => `${imports}test("flaky", () => {
+  attempt++;
+  expect("hinted-" + attempt).toMatchSnapshot("hint");
+  expect("inline-" + attempt).toMatchInlineSnapshot(${inline});
+  expect("plain-" + attempt).toMatchSnapshot();
+  expect(() => { throw new Error("thrown-" + attempt); }).toThrowErrorMatchingSnapshot();
+  if (attempt < 3) throw new Error("attempt fails");
+}, { retry: 2 });
+test("after", () => {
+  expect("after").toMatchSnapshot();
+});
+`;
+    expect(await run({ "flaky.test.js": source("") })).toEqual({
+      results: ["(pass) flaky (attempt 3)", "(pass) after"],
+      conflicts: 0,
+      snapshots: "snapshots: +5 added",
+      files: {
+        "flaky.test.js": source('`"inline-3"`'),
+        "__snapshots__/flaky.test.js.snap": snapshotFile({
+          "flaky: hint 1": "hinted-3",
+          "flaky 2": "plain-3",
+          "flaky 3": "thrown-3",
+          "after 1": "after",
+        }),
+      },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a snapshot that only the failed attempt took is not written to the .snap file", async () => {
+    const source = `${imports}test("flaky", () => {
+  attempt++;
+  if (attempt === 1) expect("from the failed attempt").toMatchSnapshot();
+  expect("steady").toMatchSnapshot();
+  if (attempt === 1) throw new Error("first attempt fails");
+}, { retry: 1 });
+`;
+    expect(await run({ "flaky.test.js": source })).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +1 added",
+      files: { "flaky.test.js": source, "__snapshots__/flaky.test.js.snap": snapshotFile({ "flaky 1": "steady" }) },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("--update-snapshots replaces a .snap entry with the value of the attempt that passed", async () => {
+    const source = flaky(`expect("value-" + attempt).toMatchSnapshot()`);
+    const snap = "__snapshots__/flaky.test.js.snap";
+    expect(
+      await run({ "flaky.test.js": source, [snap]: snapshotFile({ "flaky 1": "old" }) }, { args: ["--retry=1", "-u"] }),
+    ).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +1 added",
+      files: { "flaky.test.js": source, [snap]: snapshotFile({ "flaky 1": "value-2" }) },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("when every attempt fails, the last attempt's .snap entry is written", async () => {
+    const source = `${imports}test("broken", () => {
+  expect("value-" + ++attempt).toMatchSnapshot();
+  throw new Error("every attempt fails");
+}, { retry: 1 });
+`;
+    expect(await run({ "broken.test.js": source })).toEqual({
+      results: ["(fail) broken (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +1 added",
+      files: { "broken.test.js": source, "__snapshots__/broken.test.js.snap": snapshotFile({ "broken 1": "value-2" }) },
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("a retried test takes its own .snap keys again, not those of a test with the same name", async () => {
+    const source = `${imports}test("same name", () => {
+  expect("first").toMatchSnapshot();
+});
+test("same name", () => {
+  expect("second").toMatchSnapshot();
+  if (++attempt === 1) throw new Error("first attempt fails");
+}, { retry: 1 });
+test("same name", () => {
+  expect("third").toMatchSnapshot();
+});
+`;
+    const snap = snapshotFile({ "same name 1": "first", "same name 2": "second", "same name 3": "third" });
+    const results = ["(pass) same name", "(pass) same name (attempt 2)", "(pass) same name"];
+    expect(await run({ "names.test.js": source })).toEqual({
+      results,
+      conflicts: 0,
+      snapshots: "snapshots: +3 added",
+      files: { "names.test.js": source, "__snapshots__/names.test.js.snap": snap },
+      exitCode: 0,
+    });
+    // With the .snap file committed, the same run passes where snapshots cannot be created.
+    expect(await run({ "names.test.js": source, "__snapshots__/names.test.js.snap": snap }, { ci: true })).toEqual({
+      results,
+      conflicts: 0,
+      snapshots: "3 snapshots, 3 expect() calls",
+      files: { "names.test.js": source, "__snapshots__/names.test.js.snap": snap },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent(
+    "one flaky row of test.each under --retry does not renumber the .snap keys of the other rows",
+    async () => {
+      const source = `${imports}test.each(["a", "b", "c", "d"])("row", value => {
+  expect(value).toMatchSnapshot();
+  if (value === "b" && ++attempt === 1) throw new Error("first attempt fails");
+});
+`;
+      const snap = snapshotFile({ "row 1": "a", "row 2": "b", "row 3": "c", "row 4": "d" });
+      expect(
+        await run(
+          { "rows.test.js": source, "__snapshots__/rows.test.js.snap": snap },
+          { args: ["--retry=1"], ci: true },
+        ),
+      ).toEqual({
+        results: ["(pass) row", "(pass) row (attempt 2)", "(pass) row", "(pass) row"],
+        conflicts: 0,
+        snapshots: "4 snapshots, 4 expect() calls",
+        files: { "rows.test.js": source, "__snapshots__/rows.test.js.snap": snap },
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.concurrent(".snap snapshots taken in beforeEach and afterEach belong to the attempt", async () => {
+    const source = `${imports}let run = 0;
+describe("hooks", () => {
+  beforeEach(() => {
+    expect("before-" + ++run).toMatchSnapshot();
+  });
+  afterEach(() => {
+    expect("after-" + run).toMatchSnapshot();
+  });
+  test("steady", () => {});
+  test("flaky", () => {
+    expect("body-" + run).toMatchSnapshot();
+    if (++attempt === 1) throw new Error("first attempt fails");
+  }, { retry: 1 });
+  test("last", () => {});
+});
+`;
+    expect(await run({ "hooks.test.js": source })).toEqual({
+      results: ["(pass) hooks > steady", "(pass) hooks > flaky (attempt 2)", "(pass) hooks > last"],
+      conflicts: 0,
+      snapshots: "snapshots: +7 added",
+      files: {
+        "hooks.test.js": source,
+        "__snapshots__/hooks.test.js.snap": snapshotFile({
+          "hooks (unnamed) 1": "before-1",
+          "hooks (unnamed) 2": "after-1",
+          "hooks (unnamed) 3": "before-3",
+          "hooks flaky 1": "body-3",
+          "hooks (unnamed) 4": "after-3",
+          "hooks (unnamed) 5": "before-4",
+          "hooks (unnamed) 6": "after-4",
+        }),
+      },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a mismatch in the failed attempt is not counted as a failed snapshot", async () => {
+    const source = `${imports}test("flaky", () => {
+  expect(++attempt === 1 ? "wrong" : "right").toMatchSnapshot();
+  expect(attempt === 1 ? "wrong" : "right").toMatchInlineSnapshot(\`"right"\`);
+}, { retry: 1 });
+`;
+    const snap = snapshotFile({ "flaky 1": "right" });
+    expect(await run({ "flaky.test.js": source, "__snapshots__/flaky.test.js.snap": snap }, { ci: true })).toEqual({
+      results: ["(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "2 snapshots, 2 expect() calls",
+      files: { "flaky.test.js": source, "__snapshots__/flaky.test.js.snap": snap },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a repeated test does not renumber the .snap keys of the tests around it", async () => {
+    const source = `${imports}test("same name", () => {
+  expect("first").toMatchSnapshot();
+});
+test("repeated", () => {
+  expect("repeated").toMatchSnapshot();
+}, { repeats: 2 });
+test("same name", () => {
+  expect("second").toMatchSnapshot();
+});
+`;
+    expect(await run({ "names.test.js": source })).toEqual({
+      results: ["(pass) same name", "(pass) repeated (run 3)", "(pass) same name"],
+      conflicts: 0,
+      snapshots: "snapshots: 2 passed, 3 added",
+      files: {
+        "names.test.js": source,
+        "__snapshots__/names.test.js.snap": snapshotFile({
+          "same name 1": "first",
+          "repeated 1": "repeated",
+          "same name 2": "second",
+        }),
+      },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a retried test in the second of two files", async () => {
+    const first = `${imports}test("first file", () => {
+  expect("first file").toMatchSnapshot();
+});
+`;
+    const second = (inline: string) => `${imports}test("flaky", () => {
+  attempt++;
+  expect("inline-" + attempt).toMatchInlineSnapshot(${inline});
+  expect("file-" + attempt).toMatchSnapshot();
+  if (attempt === 1) throw new Error("first attempt fails");
+}, { retry: 1 });
+`;
+    expect(
+      await run({ "a.test.js": first, "b.test.js": second("") }, { args: ["./a.test.js", "./b.test.js"] }),
+    ).toEqual({
+      results: ["(pass) first file", "(pass) flaky (attempt 2)"],
+      conflicts: 0,
+      snapshots: "snapshots: +3 added",
+      files: {
+        "a.test.js": first,
+        "b.test.js": second('`"inline-2"`'),
+        "__snapshots__/a.test.js.snap": snapshotFile({ "first file 1": "first file" }),
+        "__snapshots__/b.test.js.snap": snapshotFile({ "flaky 2": "file-2" }),
+      },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("--parallel workers write the snapshots of the attempt that passed", async () => {
+    const source = (inline: string) =>
+      flaky(`expect("inline-" + attempt).toMatchInlineSnapshot(${inline});
+  expect("file-" + attempt).toMatchSnapshot()`);
+    const { results, files, exitCode } = await run(
+      { "a.test.js": source(""), "b.test.js": source("") },
+      { args: ["--retry=1", "--parallel=2"] },
+    );
+    expect({ results: results.sort(), files, exitCode }).toEqual({
+      results: ["(pass) flaky (attempt 2)", "(pass) flaky (attempt 2)"],
+      files: {
+        "a.test.js": source('`"inline-2"`'),
+        "b.test.js": source('`"inline-2"`'),
+        "__snapshots__/a.test.js.snap": snapshotFile({ "flaky 2": "file-2" }),
+        "__snapshots__/b.test.js.snap": snapshotFile({ "flaky 2": "file-2" }),
+      },
+      exitCode: 0,
+    });
+  });
 });

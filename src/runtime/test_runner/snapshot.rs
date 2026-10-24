@@ -21,12 +21,97 @@ type FileId = super::jest::FileId;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
-pub(crate) struct Snapshots {
-    pub(crate) update_snapshots: bool,
+/// The sequence whose running attempt made a record. Compared, never dereferenced.
+pub(crate) type AttemptOwner = core::ptr::NonNull<super::execution::ExecutionSequence>;
+
+/// Why `Execution::reset_sequence` runs a sequence again.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Superseded {
+    /// The attempt failed, so nothing it recorded stays.
+    Retry,
+    /// The attempt passed and `repeats` runs it again. Its records stay, so a later run that differs is reported.
+    Repeat,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Tallies {
     pub(crate) total: usize,
     pub(crate) added: usize,
     pub(crate) passed: usize,
     pub(crate) failed: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Tally {
+    Total,
+    Added,
+    Passed,
+    Failed,
+}
+
+impl Tallies {
+    fn of(&mut self, tally: Tally) -> &mut usize {
+        match tally {
+            Tally::Total => &mut self.total,
+            Tally::Added => &mut self.added,
+            Tally::Passed => &mut self.passed,
+            Tally::Failed => &mut self.failed,
+        }
+    }
+}
+
+/// What one attempt put in the store, for `Snapshots::undo_attempt` to take back.
+/// One per process: only a group with a single sequence has an owner, so one attempt records at a time.
+#[derive(Default)]
+struct AttemptJournal {
+    owner: Option<AttemptOwner>,
+    file_id: FileId,
+    /// The names `add_count` bumped, back to back. `counted[i]` is where name `i` starts and how
+    /// often it was bumped in a row.
+    counted_names: Vec<u8>,
+    counted: Vec<(usize, usize)>,
+    /// Keys `get_or_put` added to `values`.
+    value_hashes: Vec<u64>,
+    /// `file_buf.len()` before the first of those keys was appended.
+    file_buf_mark: Option<usize>,
+    /// Positions in `inline_snapshots_to_write[file_id]`, ascending.
+    inline_indices: Vec<usize>,
+    tallies: Tallies,
+}
+
+impl AttemptJournal {
+    fn begin(&mut self, owner: AttemptOwner, file_id: FileId) {
+        self.forget();
+        self.owner = Some(owner);
+        self.file_id = file_id;
+    }
+
+    fn forget(&mut self) {
+        self.owner = None;
+        self.counted_names.clear();
+        self.counted.clear();
+        self.value_hashes.clear();
+        self.file_buf_mark = None;
+        self.inline_indices.clear();
+        self.tallies = Tallies::default();
+    }
+
+    fn count(&mut self, name: &[u8]) {
+        if let Some((start, bumps)) = self.counted.last_mut()
+            && self.counted_names[*start..] == *name
+        {
+            *bumps += 1;
+            return;
+        }
+        self.counted.push((self.counted_names.len(), 1));
+        self.counted_names.extend_from_slice(name);
+    }
+}
+
+pub(crate) struct Snapshots {
+    pub(crate) update_snapshots: bool,
+    tallies: Tallies,
+    journal: AttemptJournal,
 
     file_buf: Vec<u8>,
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
@@ -55,10 +140,8 @@ impl Snapshots {
     pub(crate) fn init(update_snapshots: bool) -> Snapshots {
         Snapshots {
             update_snapshots,
-            total: 0,
-            added: 0,
-            passed: 0,
-            failed: 0,
+            tallies: Tallies::default(),
+            journal: AttemptJournal::default(),
             file_buf: Vec::new(),
             values: HashMap::new(),
             counts: StringHashMap::new(),
@@ -116,12 +199,79 @@ impl Snapshots {
         }
     }
 
+    pub(crate) fn tallies(&self) -> Tallies {
+        self.tallies
+    }
+
+    pub(crate) fn tally(&mut self, tally: Tally, owner: Option<AttemptOwner>) {
+        *self.tallies.of(tally) += 1;
+        if let Some(journal) = self.journal_of(owner) {
+            *journal.tallies.of(tally) += 1;
+        }
+    }
+
+    fn journal_of(&mut self, owner: Option<AttemptOwner>) -> Option<&mut AttemptJournal> {
+        (owner.is_some() && self.journal.owner == owner).then_some(&mut self.journal)
+    }
+
+    /// Call before the first record of an attempt that a retry or a repeat can supersede.
+    pub(crate) fn begin_attempt(&mut self, owner: AttemptOwner, file_id: FileId) {
+        self.journal.begin(owner, file_id);
+    }
+
+    /// Takes back what the attempt of `owner` recorded since `begin_attempt`.
+    pub(crate) fn undo_attempt(&mut self, owner: AttemptOwner, why: Superseded) {
+        if self.journal.owner != Some(owner) {
+            return;
+        }
+        let journal = &mut self.journal;
+
+        // The next run of the test numbers its snapshots from where this one started.
+        let mut end = journal.counted_names.len();
+        for &(start, bumps) in journal.counted.iter().rev() {
+            if let Some(count) = self.counts.get_mut(&journal.counted_names[start..end]) {
+                *count = count.saturating_sub(bumps);
+            }
+            end = start;
+        }
+
+        if why == Superseded::Retry {
+            for tally in [Tally::Total, Tally::Added, Tally::Passed, Tally::Failed] {
+                let total = self.tallies.of(tally);
+                *total = total.saturating_sub(*journal.tallies.of(tally));
+            }
+            // Only the running test appends, so everything after the mark is this attempt's.
+            if let Some(mark) = journal.file_buf_mark {
+                self.file_buf.truncate(mark);
+            }
+            for hash in &journal.value_hashes {
+                self.values.remove(hash);
+            }
+            if let Some(&first) = journal.inline_indices.first()
+                && let Some(queue) = self.inline_snapshots_to_write.get_mut(&journal.file_id)
+            {
+                // Entries that another `expect()` queued in between stay, in their order.
+                let mut undone = journal.inline_indices.iter().copied().peekable();
+                let mut kept = first;
+                for index in first..queue.len() {
+                    if undone.next_if_eq(&index).is_none() {
+                        queue.swap(kept, index);
+                        kept += 1;
+                    }
+                }
+                queue.truncate(kept);
+            }
+        }
+        journal.forget();
+    }
+
     pub(crate) fn add_count(
         &mut self,
         expect: &Expect,
         hint: &[u8],
+        owner: Option<AttemptOwner>,
     ) -> Result<(Vec<u8>, usize), Error> {
-        self.total += 1;
+        self.tally(Tally::Total, owner);
         let snapshot_name = expect.get_snapshot_name(hint)?;
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
@@ -135,6 +285,9 @@ impl Snapshots {
             *gop.value_ptr = 1;
         }
         let count = *gop.value_ptr;
+        if let Some(journal) = self.journal_of(owner) {
+            journal.count(&snapshot_name);
+        }
         Ok((snapshot_name, count))
     }
 
@@ -143,6 +296,7 @@ impl Snapshots {
         expect: &Expect,
         target_value: &[u8],
         hint: &[u8],
+        owner: Option<AttemptOwner>,
     ) -> Result<Option<&[u8]>, Error> {
         let buntest_strong = expect.bun_test().ok_or(crate::Error::SnapshotFailed)?;
         let bun_test = buntest_strong.get();
@@ -161,7 +315,7 @@ impl Snapshots {
             }
         }
 
-        let (name, counter) = self.add_count(expect, hint)?;
+        let (name, counter) = self.add_count(expect, hint, owner)?;
 
         let mut counter_string_buf = [0u8; 32];
         let counter_string = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
@@ -195,6 +349,11 @@ impl Snapshots {
             + b"`] = `".len()
             + target_value.len()
             + b"`;\n".len();
+        let file_buf_len = self.file_buf.len();
+        if let Some(journal) = self.journal_of(owner) {
+            journal.file_buf_mark.get_or_insert(file_buf_len);
+            journal.value_hashes.push(name_hash);
+        }
         self.file_buf.reserve(estimated_length + 10);
         write!(
             self.file_buf,
@@ -216,7 +375,7 @@ impl Snapshots {
         )
         .map_err(|_| crate::Error::WriteError)?;
 
-        self.added += 1;
+        self.tally(Tally::Added, owner);
         self.values
             .insert(name_hash, Box::<[u8]>::from(target_value));
         Ok(None)
@@ -363,8 +522,13 @@ impl Snapshots {
         &mut self,
         file_id: FileId,
         value: InlineSnapshotToWrite,
+        owner: Option<AttemptOwner>,
     ) -> Result<(), Error> {
         let list = self.inline_snapshots_to_write.entry(file_id).or_default();
+        if owner.is_some() && self.journal.owner == owner {
+            debug_assert!(self.journal.file_id == file_id);
+            self.journal.inline_indices.push(list.len());
+        }
         list.push(value);
         Ok(())
     }
@@ -387,6 +551,10 @@ impl Snapshots {
                 .inline_snapshots_to_write
                 .get_mut(&file_id)
                 .expect("unreachable");
+            // `undo_attempt` can leave a file with nothing to write.
+            if ils_info.is_empty() {
+                continue;
+            }
 
             // The guard runs on every exit of the loop body (continue,
             // fall-through, AND `?` early-return).
@@ -781,7 +949,7 @@ impl Snapshots {
                 if ils.is_added {
                     // `runner.snapshots` *is* `*self`: going back through `Jest::runner()` would
                     // create a second `&mut Snapshots` aliasing `self` (UB) and invalidate `ils_info`.
-                    self.added += 1;
+                    self.tallies.added += 1;
                 }
             }
 

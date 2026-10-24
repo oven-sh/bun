@@ -3202,6 +3202,16 @@ mod posix_impl {
         Ok(())
     }
 
+    /// Clear CLOEXEC and return whether it was previously set.
+    pub fn clear_close_on_exec(fd: Fd) -> Maybe<bool> {
+        let flags = fcntl(fd, libc::F_GETFD, 0)?;
+        let was_set = flags & libc::FD_CLOEXEC as isize != 0;
+        if was_set {
+            fcntl(fd, libc::F_SETFD, flags & !(libc::FD_CLOEXEC as isize))?;
+        }
+        Ok(was_set)
+    }
+
     /// `socketpair_impl(.., for_shell = false)`.
     /// Linux uses `SOCK_CLOEXEC|SOCK_NONBLOCK` type flags; non-Linux sets
     /// CLOEXEC + nonblock + (Darwin) `SO_NOSIGPIPE` per-fd, closing both on

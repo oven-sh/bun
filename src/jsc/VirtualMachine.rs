@@ -2343,6 +2343,9 @@ impl VirtualMachine {
 
         self.is_shutting_down = true;
 
+        // After exit handlers, so a `Profiler.stop` in one still gets its profile.
+        crate::bun_cpu_profiler::stop_cpu_profiler_if_running(self.jsc_vm_mut());
+
         // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the
         // Node-API env teardown below refuses every `NAPI_PREAMBLE` call.
         self.handle.stop();

@@ -178,7 +178,8 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
     // Program 0 stops neither the server nor the interval, so its event loop
     // never ends. The loop gets a fixed slice, then the status goes out and
     // the reset stops both. Program 1 reads the port out of the file, because
-    // program 0's globals are gone by then.
+    // program 0's globals are gone by then. A second listener on that port
+    // binds only if the first one is gone, and it throws at once if not.
     const result = await runReprl([
       `
         const server = Bun.serve({ port: 0, fetch: () => new Response("program 0") });
@@ -187,15 +188,18 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
         console.log("serving");
       `,
       `
-        const port = require("fs").readFileSync("port.txt", "utf8");
-        fetch("http://localhost:" + port + "/").then(
-          () => console.log("server alive: true"),
-          () => console.log("server alive: false"),
-        );
+        const port = Number(require("fs").readFileSync("port.txt", "utf8"));
+        let stopped = true;
+        try {
+          Bun.serve({ port, fetch: () => new Response("program 1") }).stop(true);
+        } catch {
+          stopped = false;
+        }
+        console.log("server stopped: " + stopped);
       `,
     ]);
 
-    expect(result.stdout).toEqual(["serving", "server alive: false"]);
+    expect(result.stdout).toEqual(["serving", "server stopped: true"]);
     expect(result.statuses).toEqual([0, 0]);
     expect(result.exitCode).toBe(0);
   });

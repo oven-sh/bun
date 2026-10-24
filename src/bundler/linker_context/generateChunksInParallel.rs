@@ -434,8 +434,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .path
                 .pretty;
             if opens_output_paths {
-                // A standalone HTML build inlines every chunk but the HTML, and an executable embeds them all.
-                // Both still write a chunk's `.map` file, the executable under its basename.
+                // Inlined and embedded chunks are not opened, but their `.map` files are: an executable's by basename.
                 let has_map = chunk
                     .content
                     .sourcemap(c.options.source_maps)

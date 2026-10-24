@@ -34,8 +34,7 @@ pub(crate) mod js_bundler {
 
     type OwnedString = MutableString;
 
-    /// Throws if `value`, which the build takes from `entrypoints` unless `option` is set, has a NUL byte: a syscall
-    /// would read it only up to there.
+    /// Throws if `value`, which comes from `entrypoints` unless `option` is set, has a NUL byte.
     fn derived_no_null_bytes(
         global: &JSGlobalObject,
         what: &str,

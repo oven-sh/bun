@@ -20,8 +20,8 @@
 
 use super::*;
 
+use bun_collections::HashMap;
 use core::cell::RefCell;
-use std::collections::HashMap;
 
 /// How a teardown closes a handle that has an owner: `close(owner)`.
 pub type CloseViaOwner = unsafe fn(owner: *mut c_void);
@@ -93,10 +93,13 @@ pub(super) fn remove(handle: *mut uv_handle_t) {
 /// [`remove_file`] when the reader hands the box to libuv or drops it.
 pub fn add_file(file: *mut c_void) {
     OPEN.with(|o| {
-        o.borrow_mut().files.entry(file).or_insert(FileEntry {
-            owner: ptr::null_mut(),
-            close_via_owner: None,
-        });
+        o.borrow_mut()
+            .files
+            .entry(file)
+            .or_insert_with(|| FileEntry {
+                owner: ptr::null_mut(),
+                close_via_owner: None,
+            });
     });
 }
 

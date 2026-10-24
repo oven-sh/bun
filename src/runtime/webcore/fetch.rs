@@ -1236,11 +1236,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let mut rest = url.path;
             while let Some(percent) = bun_core::strings::index_of_char(rest, b'%') {
                 rest = &rest[percent as usize + 1..];
-                encoded_separator = match rest {
-                    [b'2', b'f' | b'F', ..] => true,
-                    [b'5', b'c' | b'C', ..] => cfg!(windows),
-                    _ => false,
-                };
+                encoded_separator = matches!(rest, [b'2', b'f' | b'F', ..])
+                    || (cfg!(windows) && matches!(rest, [b'5', b'c' | b'C', ..]));
                 if encoded_separator {
                     break;
                 }

@@ -642,10 +642,8 @@ impl WindowsNamedPipe {
         );
 
         // SAFETY: as above.
-        if let Err(e) = server
-            .accept(unsafe { &mut *pipe })
-            .to_result(bun_sys::Tag::accept)
-        {
+        let rc = server.accept(unsafe { &mut *pipe });
+        if let Err(e) = rc.to_result(bun_sys::Tag::accept) {
             self.discard_unadopted_pipe();
             return Err(e);
         }
@@ -743,10 +741,9 @@ impl WindowsNamedPipe {
         // the connect callback fires (this struct outlives that).
         unsafe { (*req).data = ctx.cast::<c_void>() };
         // SAFETY: `pipe` is live (see above) and `req`/`pipe` are disjoint.
-        if let Some(err) =
-            unsafe { (*pipe).connect(&mut *req, path, ctx.cast::<c_void>(), Self::uv_on_connect) }
-                .to_error(bun_sys::Tag::connect2)
-        {
+        let rc =
+            unsafe { (*pipe).connect(&mut *req, path, ctx.cast::<c_void>(), Self::uv_on_connect) };
+        if let Some(err) = rc.to_error(bun_sys::Tag::connect2) {
             self.discard_unadopted_pipe();
             return Err(err);
         }

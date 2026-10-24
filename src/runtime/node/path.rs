@@ -456,6 +456,13 @@ fn is_absolute(
 /// # Safety
 /// `rhs_ptr[..rhs_len]` must be a valid readable slice. Called only from C++.
 #[unsafe(no_mangle)]
+#[cfg_attr(
+    windows,
+    expect(
+        clippy::large_stack_frames,
+        reason = "`fixed` holds two max-length paths, 96 KiB each on Windows"
+    )
+)]
 unsafe extern "C" fn Bun__Node__Path_joinWTF(
     lhs: &bun_core::String,
     rhs_ptr: *const u8,

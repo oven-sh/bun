@@ -78,7 +78,9 @@ pub fn which_for_spawn<'a>(
             && !has_sep
             && !is_absolute(bin)
             && !cwd.is_empty()
-            && std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_none()
+            && bun_core::env_var::NO_DEFAULT_CURRENT_DIRECTORY_IN_EXE_PATH
+                .get()
+                .is_none()
         {
             // One more `$PATH` directory: .exe/.cmd/.bat before the walk, .com after it.
             let mut convert_buf = w_path_buffer_pool::get();

@@ -254,7 +254,7 @@ impl File {
         debug_assert!(file.state == FileState::Closing);
         file.fs.deinit();
         // SAFETY: file was allocated via Box::new in open_file(); reclaim and drop.
-        drop(unsafe { bun_core::heap::take(file as *mut File) });
+        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<File>(file)) });
     }
 }
 
@@ -388,7 +388,9 @@ impl Source {
         bun_core::scoped_log!(PipeSource, "openPipe (fd = {})", fd);
         let mut pipe: Box<Pipe> = Box::new(bun_core::ffi::zeroed::<Pipe>());
         // we should never init using IPC here
-        if let Some(err) = pipe.init(loop_, false).to_error(bun_sys::Tag::pipe) {
+        // SAFETY: callers pass their thread's live loop, and the Box keeps the handle in place.
+        let rc = unsafe { pipe.init(loop_, false) };
+        if let Some(err) = rc.to_error(bun_sys::Tag::pipe) {
             drop(pipe);
             return bun_sys::Result::Err(err);
         }
@@ -422,7 +424,9 @@ impl Source {
             uv: bun_core::ffi::zeroed(),
             read_scratch: Vec::new(),
         });
-        if let Some(err) = tty.init(loop_, uv_fd).to_error(bun_sys::Tag::open) {
+        // SAFETY: callers pass their thread's live loop, and the Box keeps the handle in place.
+        let rc = unsafe { tty.init(loop_, uv_fd) };
+        if let Some(err) = rc.to_error(bun_sys::Tag::open) {
             drop(tty);
             return bun_sys::Result::Err(err);
         }
@@ -440,7 +444,7 @@ impl Source {
     pub fn open_file(fd: Fd) -> Box<File> {
         debug_assert!(fd.is_valid() && fd.uv() != -1);
         bun_core::scoped_log!(PipeSource, "openFile (fd = {})", fd);
-        let mut file: Box<File> = Box::new(File::default());
+        let mut file: Box<File> = Box::default();
         file.file = fd.uv();
         file
     }

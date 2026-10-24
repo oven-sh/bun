@@ -291,11 +291,10 @@ impl Stdio {
     }
 
     pub(crate) fn is_piped(&self) -> bool {
-        match self {
-            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
-            Self::Ipc => cfg!(windows),
-            _ => false,
-        }
+        matches!(
+            self,
+            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_)
+        ) || (cfg!(windows) && matches!(self, Self::Ipc))
     }
 
     #[cfg(not(windows))]

@@ -63,6 +63,13 @@ impl EncodedPattern {
         }
     }
 
+    #[cfg_attr(
+        windows,
+        expect(
+            clippy::large_stack_frames,
+            reason = "`stack_space` holds two max-length paths, 96 KiB each on Windows"
+        )
+    )]
     pub(crate) fn effective_url_hash(&self) -> usize {
         // The strategy is to write all bytes, then hash them. Avoiding
         // multiple hash calls on small chunks. Allocation is not needed

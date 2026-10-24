@@ -779,7 +779,7 @@ impl RuntimeTranspilerCache {
         if !sys::S::ISREG(stat.st_mode as _) {
             return Err(crate::CrateError::NotARegularFile);
         }
-        let stat_size = u64::try_from(stat.st_size).map_err(|_| crate::CrateError::MissingData)?;
+        let stat_size = sys::stat_size(&stat);
 
         let metadata_bytes = file.pread_all(&mut metadata_bytes_buf, 0)?;
         #[cfg(windows)]

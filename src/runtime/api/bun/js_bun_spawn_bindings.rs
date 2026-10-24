@@ -1557,9 +1557,10 @@ fn spawn_maybe_sync(
             // for the pipe's lifetime, so it must be the allocation root
             // (write provenance), never one re-derived from `&SendQueue`.
             // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
-            if let Err(err) =
-                unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
-            {
+            let configured = unsafe {
+                IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe)
+            };
+            if let Err(err) = configured {
                 let err_js = err.to_js(cx.global());
                 subprocess.deref();
                 return Err(cx.global().throw_value(err_js));

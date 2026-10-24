@@ -1879,6 +1879,13 @@ pub const ARES_SOCKET_BAD: ares_socket_t = -1;
 /// # Returns
 ///
 /// This function returns 0 on success.
+#[cfg_attr(
+    windows,
+    expect(
+        clippy::cast_ptr_alignment,
+        reason = "`sa` is a view of the caller's `sockaddr_storage`, which is aligned for every family"
+    )
+)]
 pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     const BUF_SIZE: usize = 128;
 

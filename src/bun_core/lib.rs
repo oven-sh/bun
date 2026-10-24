@@ -218,11 +218,13 @@ pub mod os {
     pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
         // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
         // under rust_2024_compatibility, and we never need a borrow here.
+        // SAFETY: the caller guarantees no other thread can touch `ENVIRON`.
         unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
     }
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
     /// elements for the process lifetime (leaked allocation).
     pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
+        // SAFETY: the caller guarantees no other thread can touch `ENVIRON`.
         unsafe {
             core::ptr::write(&raw mut ENVIRON, (ptr, len));
         }
@@ -230,6 +232,8 @@ pub mod os {
     /// Borrowed view of the current envp slice (read side of the `ENVIRON` global).
     /// SAFETY: caller must not race with `set_environ`.
     pub unsafe fn environ() -> &'static [*mut c_char] {
+        // SAFETY: the caller guarantees no concurrent `set_environ`, whose contract makes a
+        // non-null `p` valid for `n` elements for the rest of the process.
         unsafe {
             let (p, n) = core::ptr::read(&raw const ENVIRON);
             if p.is_null() {
@@ -1346,6 +1350,7 @@ pub(crate) mod strings_impl {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
         }
         // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
+        // SAFETY: a.len() <= b.len() here; _strnicmp reads at most a.len() bytes from each.
         #[cfg(all(not(miri), windows))]
         unsafe {
             unsafe extern "C" {
@@ -2707,46 +2712,67 @@ pub mod ffi {
     // Windows POD — `bun_windows_sys` `#[repr(C)]` out-param structs that are
     // zero-init before the kernel fills them. All fields are integers / raw
     // pointers / nested POD; audited against the Win32 SDK headers (S016).
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::IO_STATUS_BLOCK {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_ALL_INFORMATION {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FIND_DATAW {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::OBJECT_ATTRIBUTES {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::UNICODE_STRING {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in6 {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::addrinfo {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::IO_COUNTERS {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_BASIC_LIMIT_INFORMATION {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::OVERLAPPED {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::PROCESS_INFORMATION {}
 

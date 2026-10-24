@@ -1141,7 +1141,7 @@ impl<'a> CopyFileWindows<'a> {
         let rc = unsafe {
             libuv::uv_fs_read(
                 loop_,
-                &mut self.io_request,
+                &raw mut self.io_request,
                 source_fd.uv(),
                 core::ptr::from_mut(&mut self.read_write_loop.uv_buf),
                 1,
@@ -1243,7 +1243,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     let rc2 = unsafe {
         libuv::uv_fs_write(
             event_loop.uv_loop(),
-            &mut this.io_request,
+            &raw mut this.io_request,
             destination_fd.uv(),
             core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
             1,
@@ -1308,7 +1308,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         let rc2 = unsafe {
             libuv::uv_fs_write(
                 this.event_loop.uv_loop(),
-                &mut this.io_request,
+                &raw mut this.io_request,
                 destination_fd.uv(),
                 core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
                 1,
@@ -1342,7 +1342,7 @@ impl<'a> CopyFileWindows<'a> {
         self.event_loop.unref_keep_alive();
 
         if let Some(err) = self.err.take() {
-            self.throw(err);
+            self.throw(&err);
             return;
         }
 
@@ -1449,7 +1449,7 @@ impl<'a> CopyFileWindows<'a> {
                     return;
                 }
 
-                self.throw(err);
+                self.throw(&err);
                 return;
             }
         };
@@ -1463,14 +1463,14 @@ impl<'a> CopyFileWindows<'a> {
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
-                self.throw(err);
+                self.throw(&err);
                 return;
             }
         };
 
         match self.read_write_loop_start() {
             bun_sys::Result::Err(err) => {
-                self.throw(err);
+                self.throw(&err);
             }
             bun_sys::Result::Ok(()) => {
                 self.event_loop.ref_keep_alive();
@@ -1513,12 +1513,12 @@ impl<'a> CopyFileWindows<'a> {
                     let fd = *fd;
                     match bun_sys::File::borrow(&fd).kind() {
                         bun_sys::Result::Err(err) => {
-                            self.throw(err);
+                            self.throw(&err);
                             return;
                         }
                         bun_sys::Result::Ok(kind) => match kind {
                             bun_sys::FileKind::Directory => {
-                                self.throw(bun_sys::Error::from_code(
+                                self.throw(&bun_sys::Error::from_code(
                                     bun_sys::E::EISDIR,
                                     bun_sys::Tag::open,
                                 ));
@@ -1558,12 +1558,12 @@ impl<'a> CopyFileWindows<'a> {
                     let fd = *fd;
                     match bun_sys::File::borrow(&fd).kind() {
                         bun_sys::Result::Err(err) => {
-                            self.throw(err);
+                            self.throw(&err);
                             return;
                         }
                         bun_sys::Result::Ok(kind) => match kind {
                             bun_sys::FileKind::Directory => {
-                                self.throw(bun_sys::Error::from_code(
+                                self.throw(&bun_sys::Error::from_code(
                                     bun_sys::E::EISDIR,
                                     bun_sys::Tag::open,
                                 ));
@@ -1603,7 +1603,7 @@ impl<'a> CopyFileWindows<'a> {
         let rc = unsafe {
             libuv::uv_fs_copyfile(
                 loop_,
-                &mut self.io_request,
+                &raw mut self.io_request,
                 old_path.as_ptr(),
                 new_path.as_ptr(),
                 0,
@@ -1616,13 +1616,13 @@ impl<'a> CopyFileWindows<'a> {
             if err.get_errno() == bun_sys::E::EPERM {
                 err = bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::copyfile);
             }
-            self.throw(err.with_path(old_path.as_bytes()));
+            self.throw(&err.with_path(old_path.as_bytes()));
             return;
         }
         self.event_loop.ref_keep_alive();
     }
 
-    pub(crate) fn throw(&mut self, err: bun_sys::Error) {
+    pub(crate) fn throw(&mut self, err: &bun_sys::Error) {
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
@@ -1634,7 +1634,7 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
         let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
+            jsc::event_loop::EventLoop::enter_scope(std::ptr::from_ref(self.event_loop).cast_mut())
         };
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
@@ -1684,7 +1684,7 @@ impl<'a> CopyFileWindows<'a> {
                 let rc = unsafe {
                     libuv::uv_fs_chmod(
                         loop_,
-                        &mut self.io_request,
+                        &raw mut self.io_request,
                         path_ptr,
                         i32::try_from(mode).expect("int cast"),
                         Some(on_chmod),
@@ -1697,7 +1697,7 @@ impl<'a> CopyFileWindows<'a> {
                     if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
                         err = err.with_path(p.slice());
                     }
-                    self.throw(err);
+                    self.throw(&err);
                     return;
                 }
                 self.event_loop.ref_keep_alive();
@@ -1717,7 +1717,7 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
         let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
+            jsc::event_loop::EventLoop::enter_scope(std::ptr::from_ref(self.event_loop).cast_mut())
         };
 
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
@@ -1737,7 +1737,7 @@ impl<'a> CopyFileWindows<'a> {
         let _ = node_fs_.truncate(
             &node_fs::args::Truncate {
                 path: self.destination_file_store.data.as_file().pathlike.clone(),
-                len: u64::try_from(self.size).expect("int cast"),
+                len: self.size,
                 flags: 0,
             },
             node_fs::Flavor::Sync,
@@ -1766,7 +1766,7 @@ impl<'a> CopyFileWindows<'a> {
         let path: *const [u8] = {
             let destination = &self.destination_file_store.data.as_file();
             if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
-                self.throw(bun_sys::Error {
+                self.throw(&bun_sys::Error {
                     errno: bun_sys::SystemErrno::EINVAL as u16,
                     syscall: bun_sys::Tag::mkdir,
                     ..Default::default()
@@ -1777,9 +1777,11 @@ impl<'a> CopyFileWindows<'a> {
             // BORROW: not owned — `destination_file_store` (and thus its path) is held in
             // `self`, which outlives the workpool task (completion runs `copyfile`/`throw`
             // on `self` before any `destroy`).
-            bun_paths::dirname(path_slice)
-                // this shouldn't happen
-                .unwrap_or(path_slice) as *const [u8]
+            std::ptr::from_ref::<[u8]>(
+                bun_paths::dirname(path_slice)
+                    // this shouldn't happen
+                    .unwrap_or(path_slice),
+            )
         };
 
         self.event_loop.ref_keep_alive();
@@ -1798,7 +1800,7 @@ impl<'a> CopyFileWindows<'a> {
         if let Some(err) = self.err.take() {
             // `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with
             // `err` inside `throw`.
-            self.throw(err);
+            self.throw(&err);
             return;
         }
 
@@ -1865,7 +1867,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
             }
         }
 
-        this.throw(err);
+        this.throw(&err);
         return;
     }
 
@@ -1880,7 +1882,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     let size = match size {
         Ok(size) => size,
         Err(err) => {
-            this.throw(err);
+            this.throw(&err);
             return;
         }
     };
@@ -1903,7 +1905,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
             err = err.with_path(p.slice());
         }
-        this.throw(err);
+        this.throw(&err);
         return;
     }
 
@@ -1917,10 +1919,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
     // by `mkdirp` above; sole owner on this concurrent path.
     let this = unsafe { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
     debug_assert!(this.err.is_none());
-    this.err = match err_ {
-        bun_sys::Result::Err(e) => Some(e),
-        bun_sys::Result::Ok(()) => None,
-    };
+    this.err = err_.err();
     ticket.post(jsc::ConcurrentTask::create_from(
         std::ptr::from_mut(this).cast::<CopyFileWindowsMkdirp<'_>>(),
     ));

@@ -1050,15 +1050,13 @@ struct RouteBufs {
     #[cfg(windows)]
     normalized_abs_path_buf: bun_sys::windows::PathBuffer,
 }
+// SAFETY: every field is.
+unsafe impl bun_core::ffi::Zeroable for RouteBufs {}
 
 thread_local! {
     // bun.ThreadlocalBuffers: heap-backed so only a Box pointer lives in TLS
     // (keeps PT_TLS MemSiz small — see test/js/bun/binary/tls-segment-size).
-    static ROUTE_BUFS: RefCell<Box<RouteBufs>> = RefCell::new(Box::new(RouteBufs {
-        route_file_buf: PathBuffer::ZEROED,
-        #[cfg(windows)]
-        normalized_abs_path_buf: bun_sys::windows::PathBuffer::ZEROED,
-    }));
+    static ROUTE_BUFS: RefCell<Box<RouteBufs>> = RefCell::new(bun_core::boxed_zeroed());
 }
 
 pub struct Match<'a> {

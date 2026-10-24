@@ -162,7 +162,7 @@ impl Editor {
         line: Option<&[u8]>,
         column: Option<&[u8]>,
     ) -> crate::Result<()> {
-        let mut spawned = Box::new(SpawnedEditorContext::default());
+        let mut spawned = bun_core::boxed_zeroed::<SpawnedEditorContext>();
 
         let mut cursor = std::io::Cursor::new(&mut spawned.file_path_buf[..]);
         // Note: `args_buf` entries borrow both static strings and `file_path_buf`
@@ -375,15 +375,8 @@ pub(super) struct SpawnedEditorContext {
     pub argc: usize,
 }
 
-impl Default for SpawnedEditorContext {
-    fn default() -> Self {
-        Self {
-            file_path_buf: [0; 1024 + MAX_PATH_BYTES],
-            buf: [(core::ptr::null(), 0); 10],
-            argc: 0,
-        }
-    }
-}
+// SAFETY: integers and raw pointers only; all-zero is valid.
+unsafe impl bun_core::ffi::Zeroable for SpawnedEditorContext {}
 
 fn auto_close(spawned: *mut SpawnedEditorContext) {
     // SAFETY: `spawned` came from heap::alloc in `Editor::open`; this thread is the

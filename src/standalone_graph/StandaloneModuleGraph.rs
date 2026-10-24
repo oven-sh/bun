@@ -3051,15 +3051,18 @@ pub fn to_executable(
             // The file has been moved to dest_path
             // SAFETY: full-buffer pointer so provenance includes the NUL at
             // `dest_buf_u16[dest_w_len]` (FFI reads it as a C wide string).
-            if let Err(e) = windows::rescle::set_windows_metadata(
-                dest_buf_u16.as_ptr(),
-                windows_options.icon.as_deref(),
-                windows_options.title.as_deref(),
-                windows_options.publisher.as_deref(),
-                windows_options.version.as_deref(),
-                windows_options.description.as_deref(),
-                windows_options.copyright.as_deref(),
-            ) {
+            let edited = unsafe {
+                windows::rescle::set_windows_metadata(
+                    dest_buf_u16.as_ptr(),
+                    windows_options.icon.as_deref(),
+                    windows_options.title.as_deref(),
+                    windows_options.publisher.as_deref(),
+                    windows_options.version.as_deref(),
+                    windows_options.description.as_deref(),
+                    windows_options.copyright.as_deref(),
+                )
+            };
+            if let Err(e) = edited {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to set Windows metadata: {}",
                     e

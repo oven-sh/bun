@@ -13,6 +13,7 @@ on:
       - "src/codegen/**"
       - "scripts/build/**"
       - "scripts/build.ts"
+      - "scripts/rust-clippy.ts"
       - "scripts/rust-miri.ts"
       - "scripts/rust-mordant.ts"
       - "package.json"
@@ -60,12 +61,14 @@ jobs:
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
 
       - name: cargo clippy
+        # scripts/rust-clippy.ts names the targets (Linux, Windows and macOS in
+        # one run) and installs their std.
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: bun run rust:clippy
 
       - name: cargo check --all-targets
-        # Clippy above covers the default targets only (lib and bin). This
+        # Clippy above covers the default cargo targets only (lib and bin). This
         # type-checks what it skips (`#[cfg(test)]` code, `tests/`, `benches/`)
         # so that code keeps compiling: the miri job builds a few crates'
         # tests, nothing builds the rest.

@@ -16,11 +16,10 @@ test("Rust sources linked into Bun do not use the streams of the standard librar
   const banned =
     /(?:(?<![\w:!])|(?<=\bstd::))(?:e?println!|e?print!|dbg!)\s*\(|\bstd::io::(?:stdout|stderr)\s*\(|\bstd::process::exit\s*\(/;
 
-  // Not compiled into a release build: tests, debug output, Windows debug macros, and the message of the allocator.
+  // Not compiled into a release build: tests, debug output, and the message of the allocator.
   const known = new Map([
     ["src/bun_alloc/lib.rs", 1],
     ["src/bun_core/Global.rs", 1],
-    ["src/libuv_sys/libuv.rs", 1],
     ["src/react_compiler/pipeline.rs", 4],
     ["src/router/lib.rs", 4],
   ]);

@@ -997,6 +997,10 @@ pub type Poller = PollerPosix;
 pub type Poller = PollerWindows;
 
 #[cfg(windows)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "libuv keeps the address of the `uv_process_t`, so it lives inline in the heap-allocated `Process`"
+)]
 pub enum PollerWindows {
     Uv(uv::uv_process_t),
     Detached,
@@ -1614,8 +1618,10 @@ impl Default for WindowsSpawnResult {
 }
 
 #[cfg(windows)]
+#[derive(Default)]
 pub enum WindowsStdioResult {
     /// inherit, ignore, path, pipe
+    #[default]
     Unavailable,
     Buffer(Box<uv::Pipe>),
     BufferFd(Fd),
@@ -1625,13 +1631,6 @@ pub enum WindowsStdioResult {
     /// when the slot is downgraded, so nothing here closes this handle. The
     /// counterpart of the POSIX `ExtraPipe::UnownedFd`.
     UnownedFd(Fd),
-}
-
-#[cfg(windows)]
-impl Default for WindowsStdioResult {
-    fn default() -> Self {
-        Self::Unavailable
-    }
 }
 
 #[cfg(windows)]
@@ -2091,10 +2090,9 @@ mod spawn_process_body {
 
             let mut treat_as_dup: bool = false;
 
-            if fd_i == 1 && matches!(stdio_options[2], WindowsStdio::Dup2(_)) {
-                treat_as_dup = true;
-                dup_tgt = Some(u32::try_from(fd_i).expect("int cast"));
-            } else if fd_i == 2 && matches!(stdio_options[1], WindowsStdio::Dup2(_)) {
+            if (fd_i == 1 && matches!(stdio_options[2], WindowsStdio::Dup2(_)))
+                || (fd_i == 2 && matches!(stdio_options[1], WindowsStdio::Dup2(_)))
+            {
                 treat_as_dup = true;
                 dup_tgt = Some(u32::try_from(fd_i).expect("int cast"));
             } else {
@@ -2133,7 +2131,7 @@ mod spawn_process_body {
                         let rc = unsafe {
                             uv::uv_fs_open(
                                 loop_,
-                                &mut req,
+                                &raw mut req,
                                 path_z.as_ptr(),
                                 flag | uv::O::CREAT,
                                 0o644,
@@ -2172,9 +2170,8 @@ mod spawn_process_body {
             if treat_as_dup {
                 if fd_i == 1 {
                     // SAFETY: `dup_fds` is a 2-element out-array; libuv writes both.
-                    if let Some(err) =
-                        unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) }.to_error(bun_sys::Tag::pipe)
-                    {
+                    let rc = unsafe { uv::uv_pipe(&raw mut dup_fds, 0, 0) };
+                    if let Some(err) = rc.to_error(bun_sys::Tag::pipe) {
                         cleanup_uv_files(&uv_files_to_close, loop_);
                         return Ok(Err(err));
                     }
@@ -2212,7 +2209,7 @@ mod spawn_process_body {
                     let rc = unsafe {
                         uv::uv_fs_open(
                             loop_,
-                            &mut req,
+                            &raw mut req,
                             path_z.as_ptr(),
                             flag | uv::O::CREAT,
                             0o644,
@@ -2307,7 +2304,7 @@ mod spawn_process_body {
                 unreachable!()
             };
             uv_proc
-                .spawn(loop_, &mut uv_process_options)
+                .spawn(loop_, &raw const uv_process_options)
                 .to_error(bun_sys::Tag::uv_spawn)
         };
         if let Some(err) = spawn_err {
@@ -2544,7 +2541,7 @@ mod spawn_process_body {
                     argv0: self.argv0,
                     new_process_group,
                     #[cfg(windows)]
-                    windows: self.windows.clone(),
+                    windows: self.windows,
                     ..Default::default()
                 }
             }
@@ -2626,7 +2623,7 @@ mod spawn_process_body {
             ) {
                 // SAFETY: `req.data` was set to `*mut Self` in `start()`.
                 let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
+                    unsafe { &mut *(*req).data.cast::<SyncWindowsPipeReader>() };
                 let buf = Self::on_alloc(this, suggested_size);
                 // SAFETY: `buffer` is a libuv-owned out-parameter. Do NOT route
                 // through `uv_buf_t::init(&[u8])` — that reborrows the `&mut [u8]`
@@ -2648,7 +2645,7 @@ mod spawn_process_body {
             ) {
                 // SAFETY: `req.data` was set to `*mut Self` in `start()`.
                 let this: &mut SyncWindowsPipeReader =
-                    unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
+                    unsafe { &mut *(*req).data.cast::<SyncWindowsPipeReader>() };
                 let nreads = nreads.int();
                 if nreads == 0 {
                     return;
@@ -2771,7 +2768,11 @@ mod spawn_process_body {
             /// Re-deriving a `&mut Process` from the independent `self.process`
             /// root would pop that protected tag under Stacked Borrows, so we
             /// take the already-live pointer instead.
-            pub fn on_process_exit(
+            ///
+            /// # Safety
+            /// `this` is the live allocation `spawn_windows_with_pipes` made, with no
+            /// borrow of it held, and `process` is as described above.
+            pub unsafe fn on_process_exit(
                 this: *mut SyncWindowsProcess,
                 process: *mut Process,
                 status: Status,
@@ -2893,10 +2894,10 @@ mod spawn_process_body {
             // SAFETY: `(*this_ptr).process` was just produced by `to_process` (sole
             // owner, mutable provenance from heap::alloc).
             let _frame_ref = unsafe { RefPtr::init_ref((*this_ptr).process) };
+            // SAFETY: `this_ptr` is the live `SyncWindowsProcess` allocated above;
+            // `p` is owned by it and dropped before return.
             unsafe {
                 let p = &mut *(*this_ptr).process;
-                // SAFETY: `this_ptr` is the live `SyncWindowsProcess` on the
-                // caller's stack; `p` is owned by it and dropped before return.
                 p.set_exit_handler(ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr));
                 p.enable_keeping_event_loop_alive();
             }
@@ -2944,6 +2945,10 @@ mod spawn_process_body {
                 }
             }
 
+            #[expect(
+                clippy::while_immutable_condition,
+                reason = "the callbacks `tick()` runs write the count through `this_ptr`"
+            )]
             // SAFETY: read-only field access between uv ticks; callbacks fired
             // inside `tick()` write through the same `this_ptr` root.
             while unsafe { (*this_ptr).waiting_count } > 0 {

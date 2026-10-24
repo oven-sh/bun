@@ -118,7 +118,8 @@ impl InstallCompletionsCommand {
         let bunx_path = WStr::from_slice_with_nul(&bunx_path_with_z[..]);
         let _ = windows::DeleteFileBun(bunx_path.as_slice(), windows::DeleteFileOptions::default());
 
-        if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), None) == 0 {
+        // SAFETY: `bunx_path` is a `WStr`, and `image_path` is the slice of one (`exe_path_w`).
+        if unsafe { windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), None) } == 0 {
             // if hard link fails, use a cmd script
             const SCRIPT: &[u8] = b"@%~dp0bun.exe x %*\n";
 

@@ -432,6 +432,291 @@ devTest("cannot require a module with top level await", {
     });
   },
 });
+// Pasted into a module of the tests below. `order(run)` calls `run`, which calls import(), runs
+// synchronous code after it, and returns the order of events. A module under test logs to `globalThis.log`.
+const importOrderProbe = `
+  const log = (globalThis.log = []);
+  let lastError;
+  async function order(run) {
+    log.length = 0;
+    log.push("start");
+    let promise;
+    try {
+      promise = run();
+    } catch (e) {
+      return "threw in the call: " + e.message;
+    }
+    if (typeof promise?.then !== "function") return "returned " + promise;
+    log.push("end");
+    try {
+      const ns = await promise;
+      log.push("then " + ns.value);
+    } catch (e) {
+      log.push((e === lastError ? "caught the same " : "caught ") + e.message);
+      lastError = e;
+    }
+    return log.join(", ");
+  }
+`;
+devTest("import() runs a bundled module after the current code", {
+  framework: minimalFramework,
+  files: {
+    "targets/esm.ts": `
+      globalThis.log.push("esm ran");
+      export const value = "esm";
+    `,
+    "targets/cjs.ts": `
+      globalThis.log.push("cjs ran");
+      module.exports = { value: "cjs" };
+    `,
+    "targets/data.json": `{ "value": "json" }`,
+    "targets/tla.ts": `
+      globalThis.log.push("tla start");
+      await 0;
+      globalThis.log.push("tla end");
+      export const value = "tla";
+    `,
+    "targets/computed.ts": `
+      globalThis.log.push("computed ran");
+      export const value = "computed";
+    `,
+    "targets/object.ts": `
+      globalThis.log.push("object ran");
+      export const value = "object";
+    `,
+    "targets/required.ts": `
+      globalThis.log.push("required ran");
+      export const value = "required";
+    `,
+    "targets/plugin.ts": `
+      export const value = globalThis.config ? globalThis.config.mode : "no config yet";
+    `,
+    "targets/cycle-a.ts": `
+      export const a = 1;
+      export const b = import("./cycle-b");
+    `,
+    "targets/cycle-b.ts": `
+      import { a } from "./cycle-a";
+      export const value = "b saw a = " + a;
+    `,
+    "targets/self.ts": `
+      export const value = "self";
+      export const self = import("./self");
+    `,
+    "routes/index.ts": `
+      ${importOrderProbe}
+      // Never runs. It puts the modules that the computed specifiers below name into the bundle.
+      if (globalThis.never) import("../targets/computed"), import("../targets/object");
+      export default async function () {
+        const results = {};
+        results.esm = await order(() => import("../targets/esm"));
+        results.esmAgain = await order(() => import("../targets/esm"));
+        results.cjs = await order(() => import("../targets/cjs"));
+        results.json = await order(() => import("../targets/data.json"));
+        results.topLevelAwait = await order(() => import("../targets/tla"));
+        const computed = ["targets", "computed.ts"].join("/");
+        results.computed = await order(() => import(computed));
+        const object = () => ({ toString: () => ["targets", "object.ts"].join("/") });
+        results.object = await order(() => import(object()));
+        results.objectAgain = await order(() => import(object()));
+        results.importThenRequire = await order(() => {
+          const promise = import("../targets/required");
+          log.push("require " + require("../targets/required").value);
+          return promise;
+        });
+        results.setUpAfterTheCall = await order(() => {
+          const promise = import("../targets/plugin");
+          globalThis.config = { mode: "fast" };
+          return promise;
+        });
+        results.cycle = await order(() => import("../targets/cycle-a").then(ns => ns.b));
+        results.self = await order(() => import("../targets/self").then(ns => ns.self));
+        return Response.json(results);
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({
+      esm: "start, end, esm ran, then esm",
+      esmAgain: "start, end, then esm",
+      cjs: "start, end, cjs ran, then cjs",
+      json: "start, end, then json",
+      topLevelAwait: "start, end, tla start, tla end, then tla",
+      computed: "start, end, computed ran, then computed",
+      object: "start, end, object ran, then object",
+      objectAgain: "start, end, then object",
+      importThenRequire: "start, required ran, require required, end, then required",
+      setUpAfterTheCall: "start, end, then fast",
+      cycle: "start, end, then b saw a = 1",
+      self: "start, end, then self",
+    });
+  },
+});
+devTest("import() of a module that fails to load rejects", {
+  framework: minimalFramework,
+  files: {
+    "targets/throws.ts": `
+      globalThis.log.push("throws ran");
+      throw new Error("boom esm");
+    `,
+    "targets/throws-cjs.ts": `
+      globalThis.log.push("throws-cjs ran");
+      module.exports = {};
+      throw new Error("boom cjs");
+    `,
+    "targets/imports-thrower.ts": `
+      import "./throws-dep";
+      globalThis.log.push("imports-thrower ran");
+    `,
+    "targets/throws-dep.ts": `
+      globalThis.log.push("throws-dep ran");
+      throw new Error("boom dep");
+    `,
+    "targets/throws-tla.ts": `
+      globalThis.log.push("throws-tla ran");
+      await 0;
+      throw new Error("boom tla");
+    `,
+    "targets/proxy-cjs.ts": `
+      module.exports = new Proxy({}, {
+        ownKeys() {
+          throw new Error("boom ownKeys");
+        },
+      });
+    `,
+    "routes/index.ts": `
+      ${importOrderProbe}
+      export default async function () {
+        const results = {};
+        results.esm = await order(() => import("../targets/throws"));
+        results.esmAgain = await order(() => import("../targets/throws"));
+        results.cjs = await order(() => import("../targets/throws-cjs"));
+        results.cjsAgain = await order(() => import("../targets/throws-cjs"));
+        results.dependency = await order(() => import("../targets/imports-thrower"));
+        results.topLevelAwait = await order(() => import("../targets/throws-tla"));
+        results.topLevelAwaitAgain = await order(() => import("../targets/throws-tla"));
+        results.namespace = await order(() => import("../targets/proxy-cjs"));
+        results.namespaceAgain = await order(() => import("../targets/proxy-cjs"));
+        results.specifier = await order(() => import({ toString() { throw new Error("boom toString"); } }));
+        return Response.json(results);
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({
+      esm: "start, end, throws ran, caught boom esm",
+      // A failed ES module is not run again. The next import() rejects with the error of the first.
+      esmAgain: "start, end, caught the same boom esm",
+      cjs: "start, end, throws-cjs ran, caught boom cjs",
+      // A failed CommonJS module is run again.
+      cjsAgain: "start, end, throws-cjs ran, caught boom cjs",
+      dependency: "start, end, throws-dep ran, caught boom dep",
+      topLevelAwait: "start, end, throws-tla ran, caught boom tla",
+      topLevelAwaitAgain: "start, end, caught the same boom tla",
+      // The module runs. The conversion of its exports to a namespace throws.
+      namespace: "start, end, caught boom ownKeys",
+      // The module is loaded by now, so the conversion throws inside the call.
+      namespaceAgain: "start, end, caught boom ownKeys",
+      specifier: "start, end, caught boom toString",
+    });
+  },
+});
+devTest("import() of a module the dev server did not bundle", {
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      export const value = "bundled";
+    `,
+    "data.json": `{"a":1}`,
+    "routes/index.ts": `
+      import * as path from "node:path";
+      export default async function () {
+        const log = [];
+        const specifier = { toString: () => (log.push("toString"), "node:path") };
+        log.push("start");
+        const fromObject = import(specifier);
+        log.push("end");
+        const builtinWithOptions = import("node:path", { with: {} });
+        // Computed, so the bundler cannot resolve it. type: "text" only applies if the options reach the runtime's import().
+        const computedWithOptions = import(path.join(process.cwd(), "data.json"), { with: { type: "text" } });
+        const bundledWithOptions = import("../dep", { with: {} });
+        return Response.json({
+          specifier: [log.join(", "), (await fromObject) === path],
+          builtinWithOptions: [builtinWithOptions instanceof Promise, (await builtinWithOptions) === path],
+          computedWithOptions: [computedWithOptions instanceof Promise, (await computedWithOptions)?.default],
+          bundledWithOptions: [bundledWithOptions instanceof Promise, (await bundledWithOptions)?.value],
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({
+      // The specifier is converted to a string one time, inside the call.
+      specifier: ["start, toString, end", true],
+      builtinWithOptions: [true, true],
+      computedWithOptions: [true, '{"a":1}'],
+      bundledWithOptions: [true, "bundled"],
+    });
+  },
+});
+devTest("import() in the client runtime", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "esm.ts": `
+      globalThis.log.push("esm ran");
+      export const value = "esm";
+    `,
+    "throws.ts": `
+      globalThis.log.push("throws ran");
+      throw new Error("boom");
+    `,
+    "plugin.ts": `
+      export const value = globalThis.config ? globalThis.config.mode : "no config yet";
+    `,
+    "cycle-a.ts": `
+      export const a = 1;
+      export const b = import("./cycle-b");
+    `,
+    "cycle-b.ts": `
+      import { a } from "./cycle-a";
+      export const value = "b saw a = " + a;
+    `,
+    "index.ts": `
+      ${importOrderProbe}
+      const results = {};
+      results.esm = await order(() => import("./esm"));
+      results.esmAgain = await order(() => import("./esm"));
+      results.throws = await order(() => import("./throws"));
+      results.throwsAgain = await order(() => import("./throws"));
+      results.setUpAfterTheCall = await order(() => {
+        const promise = import("./plugin");
+        globalThis.config = { mode: "fast" };
+        return promise;
+      });
+      results.cycle = await order(() => import("./cycle-a").then(ns => ns.b));
+      // Computed, so the bundler leaves it to the browser. A literal data: URL is bundled like any other module.
+      const dataUrl = "data:text/javascript," + encodeURIComponent("export const value = 'data url';");
+      results.notBundled = await order(() => import(dataUrl));
+      results.notBundledWithOptions = await order(() => import(dataUrl, { with: {} }));
+      console.log(results);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage({
+      esm: "start, end, esm ran, then esm",
+      esmAgain: "start, end, then esm",
+      throws: "start, end, throws ran, caught boom",
+      throwsAgain: "start, end, caught the same boom",
+      setUpAfterTheCall: "start, end, then fast",
+      cycle: "start, end, then b saw a = 1",
+      notBundled: "start, end, then data url",
+      notBundledWithOptions: "start, end, then data url",
+    });
+  },
+});
 devTest("function that is assigned to should become a live binding", {
   files: {
     "index.html": emptyHtmlFile({

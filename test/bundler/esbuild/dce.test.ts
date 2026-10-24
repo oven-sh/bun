@@ -589,6 +589,259 @@ describe("bundler", () => {
       stdout: "this should be kept\nunused import",
     },
   });
+  // The four tests above use a package.json with no "name". These use one with
+  // a "name", as published packages have. The import resolves to the "module"
+  // file, so "sideEffects" is matched against that file and not against "main".
+  itBundled("dce/PackageJsonSideEffectsArrayKeepModuleNamedPackage", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {foo} from "demo-pkg"
+        console.log('unused import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/index-main.js": /* js */ `
+        export const foo = 123
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/index-module.js": /* js */ `
+        export const foo = 123
+        console.log('this should be kept')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "index-main.js",
+          "module": "index-module.js",
+          "sideEffects": ["./index-module.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nunused import",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/8993
+  itBundled("dce/PackageJsonSideEffectsArrayModuleMainBareImport", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log('after import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-module.js": /* js */ `
+        import "./register.js"
+        export const foo = 1
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/register.js": /* js */ `
+        console.log('this should be kept')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-main.js": /* js */ `
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/index-main.js",
+          "module": "dist/index-module.js",
+          "sideEffects": ["./dist/index-module.js", "./dist/register.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nafter import",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobModuleMainBareImport", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log('after import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-module.js": /* js */ `
+        console.log('this should be kept')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/bundle.node.js": /* js */ `
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/bundle.node.js",
+          "module": "dist/index-module.js",
+          "sideEffects": ["./dist/index-*.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nafter import",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsArrayModuleMainBareImportRemove", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log('unused import')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-module.js": /* js */ `
+        export const foo = 'TEST FAILED'
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/index-main.js": /* js */ `
+        console.log('TEST FAILED')
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/index-main.js",
+          "module": "dist/index-module.js",
+          "sideEffects": ["./dist/index-main.js"]
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: "unused import",
+    },
+  });
+  // A named package.json next to the "main" file does not decide for the "module" file.
+  itBundled("dce/PackageJsonSideEffectsModuleMainPackageJsonNextToMain", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "../pkg"
+        console.log('after import')
+      `,
+      "/Users/user/project/pkg/package.json": `{ "module": "./esm/index.js", "main": "./cjs/index.js" }`,
+      "/Users/user/project/pkg/esm/index.js": `console.log('this should be kept')`,
+      "/Users/user/project/pkg/cjs/index.js": `console.log('TEST FAILED')`,
+      "/Users/user/project/pkg/cjs/package.json": `{ "name": "pkg-cjs", "sideEffects": false }`,
+    },
+    dce: true,
+    run: {
+      stdout: "this should be kept\nafter import",
+    },
+  });
+  // "ui/register" holds only a package.json with no "name". Its "module" and
+  // "main" name files outside that directory. The package.json that encloses
+  // those files decides their side effects, as for an import of
+  // "ui/esm/register.js". The "sideEffects" of the proxy does not.
+  const proxyToModuleAndMain = { module: "../esm/register.js", main: "../cjs/register.js" };
+  for (const [id, proxy, rootSideEffects, stdout, target] of [
+    ["ModuleMain", { sideEffects: false, ...proxyToModuleAndMain }, undefined, "register\nentry"],
+    [
+      "ModuleMainRootListsModule",
+      { sideEffects: false, ...proxyToModuleAndMain },
+      ["./esm/register.js"],
+      "register\nentry",
+    ],
+    ["ModuleMainRootListsMain", { sideEffects: false, ...proxyToModuleAndMain }, ["./cjs/register.js"], "entry"],
+    ["ModuleOnly", { sideEffects: false, module: "../esm/register.js" }, undefined, "register\nentry"],
+    ["MainOnly", { sideEffects: false, main: "../esm/register.js" }, undefined, "register\nentry"],
+    ["ModuleMainTargetNode", { sideEffects: false, ...proxyToModuleAndMain }, undefined, "main file\nentry", "node"],
+    // The proxy lists the file and the package does not: the package decides.
+    ["ListsModuleRootFalse", { sideEffects: ["../esm/register.js"], ...proxyToModuleAndMain }, false, "entry"],
+    [
+      "ListsModuleRootFalseModuleOnly",
+      { sideEffects: ["../esm/register.js"], module: "../esm/register.js" },
+      false,
+      "entry",
+    ],
+    [
+      "ListsModuleRootListsMain",
+      { sideEffects: ["../esm/register.js"], ...proxyToModuleAndMain },
+      ["./cjs/register.js"],
+      "entry",
+    ],
+    // "ui/register.esm.js" is not in the directory "ui/register".
+    ["SiblingFile", { sideEffects: false, module: "../register.esm.js" }, undefined, "register\nentry"],
+  ] as const) {
+    itBundled(`dce/PackageJsonSideEffectsNamelessProxy${id}`, {
+      files: {
+        "/Users/user/project/src/entry.js": /* js */ `
+          import "ui/register"
+          console.log("entry")
+        `,
+        "/Users/user/project/node_modules/ui/package.json": JSON.stringify({
+          name: "ui",
+          version: "1.0.0",
+          sideEffects: rootSideEffects,
+        }),
+        "/Users/user/project/node_modules/ui/register/package.json": JSON.stringify(proxy),
+        "/Users/user/project/node_modules/ui/esm/register.js": `console.log("register")`,
+        "/Users/user/project/node_modules/ui/cjs/register.js": `console.log("main file")`,
+        "/Users/user/project/node_modules/ui/register.esm.js": `console.log("register")`,
+      },
+      target,
+      run: { stdout },
+    });
+  }
+  // A proxy package.json with a "name" still decides for files outside its
+  // directory. esbuild reads the package.json that encloses the file, and keeps it.
+  itBundled("dce/PackageJsonSideEffectsNamedProxyModuleMain", {
+    todo: true,
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "ui/register"
+        console.log("entry")
+      `,
+      "/Users/user/project/node_modules/ui/package.json": `{ "name": "ui", "version": "1.0.0" }`,
+      "/Users/user/project/node_modules/ui/register/package.json": JSON.stringify({
+        name: "ui-register",
+        sideEffects: false,
+        ...proxyToModuleAndMain,
+      }),
+      "/Users/user/project/node_modules/ui/esm/register.js": `console.log("register")`,
+      "/Users/user/project/node_modules/ui/cjs/register.js": `console.log("main file")`,
+    },
+    run: { stdout: "register\nentry" },
+  });
+  // "icons/outline" holds a package.json with no "name" and its own files. An
+  // import of the directory reads that package.json. An import of the file by
+  // path does not, and the first import to reach the file decides for both.
+  // esbuild reads it for the path import too, and drops the file in both orders.
+  for (const [id, imports, stdout] of [
+    ["DirectoryFirst", ["icons/outline", "icons/outline/esm/index.js"], "entry"],
+    ["PathFirst", ["icons/outline/esm/index.js", "icons/outline"], "outline\nentry"],
+  ] as const) {
+    itBundled(`dce/PackageJsonSideEffectsNamelessSubPackage${id}`, {
+      files: {
+        "/Users/user/project/src/entry.js": /* js */ `
+          import "${imports[0]}"
+          import "${imports[1]}"
+          console.log("entry")
+        `,
+        "/Users/user/project/node_modules/icons/package.json": `{ "name": "icons", "version": "1.0.0" }`,
+        "/Users/user/project/node_modules/icons/outline/package.json": `{ "sideEffects": false, "module": "./esm/index.js" }`,
+        "/Users/user/project/node_modules/icons/outline/esm/index.js": `console.log("outline")`,
+        "/Users/user/project/node_modules/icons/outline/index.js": `console.log("main file")`,
+      },
+      run: { stdout },
+    });
+  }
+  // The `{ "type": "module" }` package.json next to the "module" file has no
+  // "name" and is not the package.json of the import, so the "sideEffects" of
+  // the package applies. esbuild reads only the nearest one, and keeps the import.
+  itBundled("dce/PackageJsonSideEffectsFalseTypeModuleMarker", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg"
+        console.log("entry")
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          "name": "demo-pkg",
+          "main": "dist/cjs/index.js",
+          "module": "dist/esm/index.js",
+          "sideEffects": false
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/dist/esm/package.json": `{ "type": "module" }`,
+      "/Users/user/project/node_modules/demo-pkg/dist/esm/index.js": `console.log('TEST FAILED')`,
+      "/Users/user/project/node_modules/demo-pkg/dist/cjs/index.js": `console.log('TEST FAILED')`,
+    },
+    dce: true,
+    run: { stdout: "entry" },
+  });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

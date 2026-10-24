@@ -482,7 +482,7 @@ impl S3Credentials {
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
         let mut tmp_buffer = [0u8; 4096];
         // The canonical request goes to the stack buffer unless its values
-        // cannot fit (a long `x-amz-tagging` value can reach 11 KB).
+        // cannot fit (ten URL-encoded `x-amz-tagging` pairs can exceed 20 KB).
         let mut canonical_heap: Vec<u8> = Vec::new();
 
         let authorization: Box<[u8]> = 'brk: {

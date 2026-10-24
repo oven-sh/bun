@@ -269,6 +269,28 @@ mod tests {
     }
 
     #[test]
+    fn a_hash_collision_is_not_a_match() {
+        // Found by search. Another hash needs other pairs.
+        let hash = |seed, bytes: &str| bun_wyhash::hash_with_seed(seed, bytes.as_bytes()) as u32;
+        assert_eq!(hash(0, "n047767"), hash(0, "n055637"));
+        let name_hash = u64::from(hash(0, "x-c"));
+        assert_eq!(hash(name_hash, "024993"), hash(name_hash, "070489"));
+
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        for (name, value, first_byte) in [
+            ("n047767", "a", 0x40),
+            ("n055637", "b", 0x40),
+            ("x-c", "024993", 0x40),
+            ("x-c", "070489", 0x7e),
+        ] {
+            let block = encode(&mut encoder, name, value, Indexing::Add);
+            assert_eq!(block[0], first_byte, "{name}: {value}");
+            let field = (name.as_bytes().to_vec(), value.as_bytes().to_vec(), false);
+            assert_eq!(decode(&mut decoder, &block), Ok(vec![field]));
+        }
+    }
+
+    #[test]
     fn a_field_the_size_of_the_table() {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
         encoder.set_max_capacity(100);

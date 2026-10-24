@@ -54,7 +54,10 @@ public:
     void setPullPromise(JSC::VM& vm, JSC::JSPromise* promise) { internalField(Field::PullPromise).set(vm, this, promise); }
 
     // The consumer is done: iterator.return?.() and never throw(), which a body can catch and outlive.
-    JSC::JSPromise* closeIterator(JSC::JSGlobalObject*);
+    // Nothing waits for what return() gives back, and a rejection of it is not reported.
+    void closeIterator(JSC::JSGlobalObject*);
+    // cancel() only: the stream's cancel promise chains onto what return() gives back.
+    JSC::JSPromise* closeIteratorForCancel(JSC::JSGlobalObject*);
     // The iterator itself failed: nothing more is called on it.
     void abandonIterator() { internalField(Field::Iterator).clear(); }
     void clearPullPromise() { internalField(Field::PullPromise).clear(); }

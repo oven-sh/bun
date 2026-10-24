@@ -4,7 +4,7 @@ use bun_sema::atom::Atom;
 use bun_sema::check::Requested;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, Effect, FileOrigin, effect_of};
 use bun_sema::import_sites::ImportSpecifier;
-use bun_sema::program::{CodeAnswer, FileId, FileRole, Files};
+use bun_sema::program::{CodeAnswer, FileId, FileRole, Files, Sym};
 use bun_sema::resolve::{CodeHost, TypedVersionOrigin};
 
 pub(super) fn compute_origins(
@@ -174,6 +174,7 @@ impl ProgramOrigins<'_, '_> {
             match diagnostic.subject {
                 DiagnosticSubject::MemberContainer(container) => {
                     missing.incomplete_containers.contains(&Some(container))
+                        || self.is_declared_for_browsers(container)
                 }
                 DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_) => false,
             }
@@ -183,6 +184,18 @@ impl ProgramOrigins<'_, '_> {
         } else {
             USES_OF_WHAT_HAS_NO_DECLARATION_CODES.contains(&code)
         }
+    }
+
+    /// TypeScript's libraries for browsers declare classes that Bun has too, without what Bun adds to them.
+    fn is_declared_for_browsers(&self, container: Sym) -> bool {
+        let Some(files) = self.files else {
+            return false;
+        };
+        let path = files.module(container.file).file_name();
+        let name = path.strip_prefix(&files.options.lib_dir[..]);
+        name.is_some_and(|name| {
+            name.starts_with(b"/lib.dom.") || name.starts_with(b"/lib.webworker.")
+        })
     }
 
     /// The checker applies the program's `exactOptionalPropertyTypes` to every file.

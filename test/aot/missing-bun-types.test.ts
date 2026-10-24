@@ -220,6 +220,18 @@ server.stop(true);
     checkSays: [],
     prints: "e\ne\n1\na 1\na\nnull note\nsaid\nGET /b\nexit 0\n",
   },
+  "what Bun adds to classes that TypeScript's library for browsers declares": {
+    files: {
+      "main.ts": `const blob = new Blob(['{"a":1}']);
+const stream = new ReadableStream({ start(controller) { controller.enqueue("x"); controller.close(); } });
+console.log((await blob.json()).a, new Headers({ a: "1" }).toJSON().a, await stream.text());
+console.write("written\\n");
+`,
+      "tsconfig.json": "{}",
+    },
+    checkSays: [],
+    prints: "1 1 x\nwritten\n",
+  },
   "what TypeScript's own libraries declare, with its types": {
     files: {
       "main.ts": `function shout(word: string | undefined): string { if (word === undefined) return "none"; return word.toUpperCase(); }
@@ -565,6 +577,11 @@ const stillErrors: [string, string, string[]][] = [
     ["TS2315"],
   ],
   [
+    "a missing member of the program's own type named Blob",
+    `interface Blob { own: number }\nconst blob: Blob = { own: 1 };\nconsole.log(blob.json);\nexport {};\n`,
+    ["TS2339"],
+  ],
+  [
     "a global that is no class, used as a type",
     `const memory: WebAssembly | undefined = undefined;\nconsole.log(memory);\n`,
     ["TS2749"],
@@ -658,6 +675,22 @@ describe.concurrent("without Bun's type declarations", () => {
     buildTimeout,
   );
 });
+
+test(
+  "a build finds Bun's type declarations where they are installed and tsconfig.json does not list them",
+  () =>
+    slot(async () => {
+      for (const compilerOptions of [{ strict: true }, { strict: true, types: [] }]) {
+        using dir = tempDirWithBunTypes("aot-bun-types", {
+          "main.ts": `const port: number = process.pid;\nconsole.log(typeof Bun.version, typeof port);\n`,
+          "tsconfig.json": JSON.stringify({ compilerOptions }),
+        });
+        expect(await build(String(dir))).toEqual(built);
+        expect(await run(String(dir), "compiled")).toEqual({ stdout: "string number\n", exitCode: 0, signal: null });
+      }
+    }),
+  buildTimeout,
+);
 
 test(
   "a build with Bun's type declarations has nothing to report",

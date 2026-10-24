@@ -295,7 +295,7 @@ const us_system_certs_t &us_get_root_system_certs() {
 #include <pthread/qos.h>
 #endif
 
-extern "C" void us_prefetch_root_system_certs() {
+extern "C" __attribute__((noinline)) void us_prefetch_root_system_certs() {
 #ifdef __APPLE__
   pthread_attr_t attributes;
   pthread_t thread;

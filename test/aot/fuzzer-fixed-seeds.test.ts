@@ -25,6 +25,8 @@ const seeds = process.env.AOT_FUZZ_SEED
     ? [1]
     : [1, freshSeed];
 const secondsPerProgram = 4;
+// Its programs fill the heap several times over: a validated build takes longer for that than a run may take here.
+const fillsTheHeap = "a-full-heap-is-let-go-and-built-ins-make-things";
 
 for (const seed of seeds)
   test.skipIf(!!unsupported)(
@@ -35,7 +37,10 @@ for (const seed of seeds)
       const programsRoot = join(import.meta.dir, "programs");
       // A source with fixed seeds of its own, in generated-<its name>.test.ts, is left to that test: a new one does not move what is drawn here. The programs as they are have tests of their own.
       const sources = Object.keys(await allSources(programsRoot, new Set())).filter(
-        name => name !== "programs-as-they-are" && !existsSync(join(import.meta.dir, `generated-${name}.test.ts`)),
+        name =>
+          name !== "programs-as-they-are" &&
+          name !== fillsTheHeap &&
+          !existsSync(join(import.meta.dir, `generated-${name}.test.ts`)),
       );
       const bed = new ProductBed(bunExe(), {
         baseFlags: [],

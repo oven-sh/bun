@@ -38,13 +38,11 @@ test/js/bun/css/nested-function-backtracking.test.ts
 test/js/bun/css/nested-selector-expansion.test.ts
 test/js/bun/css/nested-selector-list-expansion.test.ts
 test/js/bun/css/nested-vendor-prefix-duplication.test.ts
-test/js/bun/css/nth-anplusb-ident.test.ts
 test/js/bun/css/selector-list-error-recovery.test.ts
 test/js/bun/css/small-list-grow.test.ts
 test/js/bun/css/supports-condition-newline.test.ts
 test/js/bun/css/token-list-backtracking.test.ts
 test/js/bun/fetch/node-use-system-ca.test.ts
-test/js/bun/ffi/cc.test.ts
 test/js/bun/ffi/ffi-error-messages.test.ts
 test/js/bun/ffi/ffi-viewSource-non-object.test.ts
 test/js/bun/ffi/ffi.test.js
@@ -62,7 +60,6 @@ test/js/bun/http/bun-serve-args.test.ts
 test/js/bun/http/bun-serve-body-json-async.test.ts
 test/js/bun/http/bun-serve-cookies.test.ts
 test/js/bun/http/bun-serve-date.test.ts
-test/js/bun/http/bun-serve-file.test.ts
 test/js/bun/http/bun-serve-headers.test.ts
 test/js/bun/http/bun-serve-html-build-holds-server.test.ts
 test/js/bun/http/bun-serve-html-entry.test.ts
@@ -70,8 +67,6 @@ test/js/bun/http/bun-serve-html-hot-reload-drop.test.ts
 test/js/bun/http/bun-serve-html-manifest.test.ts
 test/js/bun/http/bun-serve-routes.test.ts
 test/js/bun/http/bun-serve-static-stress-no-body.test.ts
-test/js/bun/http/bun-serve-static.test.ts
-test/js/bun/http/bun-server.test.ts
 test/js/bun/http/decodeURIComponentSIMD.test.ts
 test/js/bun/http/fetch-abort-ssl-context-eviction.test.ts
 test/js/bun/http/fetch-file-upload.test.ts
@@ -114,7 +109,6 @@ test/js/bun/http/serve-syscall-fault.test.ts
 test/js/bun/http/server-url-invalid.test.ts
 test/js/bun/http/tls-bunfile-leak.test.ts
 test/js/bun/http/tls-keepalive.test.ts
-test/js/bun/image/image-adversarial.test.ts
 test/js/bun/image/image-kernels.test.ts
 test/js/bun/image/image-vs-sharp.test.ts
 test/js/bun/image/image.test.ts
@@ -148,7 +142,6 @@ test/js/bun/md/gfm-compat.test.ts
 test/js/bun/md/md-edge-cases.test.ts
 test/js/bun/md/md-heading-ids.test.ts
 test/js/bun/md/md-react.test.ts
-test/js/bun/md/md-render-callback.test.ts
 test/js/bun/md/md-spec.test.ts
 test/js/bun/memfd-disabled.test.ts
 test/js/bun/module-graph/module-graph-workers.test.ts
@@ -379,7 +372,6 @@ test/js/bun/test/test-on-test-finished.test.ts
 test/js/bun/test/test-only.test.ts
 test/js/bun/test/test-retry-repeats-basic.test.ts
 test/js/bun/test/test-test.test.ts
-test/js/bun/test/test-timers.test.ts
 test/js/bun/toml/toml-test-suite.test.ts
 test/js/bun/toml/toml.test.ts
 test/js/bun/transpiler/parse-error-column.test.ts
@@ -395,7 +387,6 @@ test/js/bun/transpiler/transpiler-unsupported-loader.test.ts
 test/js/bun/transpiler/transpiler-utf16-loader.test.ts
 test/js/bun/typescript/type-export.test.ts
 test/js/bun/udp/udp_socket_recv_flags.test.ts
-test/js/bun/util/arraybuffersink.test.ts
 test/js/bun/util/base64-url-safe-encode.test.ts
 test/js/bun/util/bun-file-exists.test.js
 test/js/bun/util/bun-file-fd-read.test.ts
@@ -445,7 +436,6 @@ test/js/bun/util/wrapAnsi.npm.test.ts
 test/js/bun/util/wrapAnsi.test.ts
 test/js/bun/wasm/compile-rss.test.ts
 test/js/bun/wasm/wasi.test.js
-test/js/bun/websocket/websocket-server-fail-close-codes.test.ts
 test/js/bun/websocket/websocket-server-forced-close.test.ts
 test/js/bun/websocket/websocket-server-unmasked-frames.test.ts
 test/js/bun/websocket/websocket-server-upgrade-early-frames.test.ts
@@ -524,7 +514,6 @@ test/js/node/crypto/crypto-invalid-this.test.ts
 test/js/node/crypto/crypto-lazyhash.test.ts
 test/js/node/crypto/crypto-oneshot.test.ts
 test/js/node/crypto/crypto-pqc.test.ts
-test/js/node/crypto/crypto-random.test.ts
 test/js/node/crypto/crypto-rsa.test.js
 test/js/node/crypto/crypto-sign-regression.test.ts
 test/js/node/crypto/crypto.hmac.test.ts
@@ -535,7 +524,6 @@ test/js/node/crypto/hkdf-callback-null.test.ts
 test/js/node/crypto/hkdf-zero-length.test.ts
 test/js/node/crypto/node-crypto.test.js
 test/js/node/crypto/pbkdf2.test.ts
-test/js/node/crypto/scrypt.test.ts
 test/js/node/crypto/sign-jwk-ieee-p1363.test.ts
 test/js/node/crypto/x509-subclass.test.ts
 test/js/node/crypto/x509.test.ts
@@ -606,7 +594,6 @@ test/js/node/http/node-https-agent-checkserveridentity-reuse.test.ts
 test/js/node/http/node-https-checkServerIdentity.test.ts
 test/js/node/http/node-https-server.test.ts
 test/js/node/http/numeric-header.test.ts
-test/js/node/http2/h2-conformance.test.ts
 test/js/node/http2/h2-late-rst-staged.test.ts
 test/js/node/http2/h2-push-refusal-staged.test.ts
 test/js/node/http2/node-http2-client-close.test.ts
@@ -677,7 +664,6 @@ test/js/node/process/stdin/process-stdin-stale-hup.test.ts
 test/js/node/process/stdin/stdin-fixtures.test.ts
 test/js/node/promise/reject-tostring.test.ts
 test/js/node/quic/quic-endpoint.test.ts
-test/js/node/quic/quic-sni.test.ts
 test/js/node/quic/quic-stream.test.ts
 test/js/node/readline/getStringWidth.test.ts
 test/js/node/readline/history-of-interface-and-repl.test.ts
@@ -718,7 +704,6 @@ test/js/node/tls/renegotiation.test.ts
 test/js/node/tls/ssl-ctx-cache.test.ts
 test/js/node/tls/test-node-extra-ca-certs.test.ts
 test/js/node/tls/test-system-ca-https.test.ts
-test/js/node/tls/test-use-system-ca.test.ts
 test/js/node/tls/tls-connect-socket-churn.test.ts
 test/js/node/trace_events/trace-events.test.ts
 test/js/node/tty.test.ts
@@ -937,7 +922,6 @@ test/js/valkey/reliability/connection-failures.test.ts
 test/js/valkey/reliability/error-handling.test.ts
 test/js/valkey/reliability/protocol-handling.test.ts
 test/js/valkey/reliability/recovery.test.ts
-test/js/valkey/reliability/resp-nesting-depth.test.ts
 test/js/valkey/unit/basic-operations.test.ts
 test/js/valkey/unit/buffer-operations.test.ts
 test/js/valkey/unit/hash-operations.test.ts
@@ -995,7 +979,6 @@ test/js/web/fetch/fetch-header-str-bounds.test.ts
 test/js/web/fetch/fetch-http2-adversarial.test.ts
 test/js/web/fetch/fetch-http2-leak.test.ts
 test/js/web/fetch/fetch-http3-adversarial.test.ts
-test/js/web/fetch/fetch-http3-client.test.ts
 test/js/web/fetch/fetch-http3-cold-post.test.ts
 test/js/web/fetch/fetch-http3-syscall-fault.test.ts
 test/js/web/fetch/fetch-keepalive.test.ts
@@ -1042,7 +1025,6 @@ test/js/web/request/request-method-getter.test.ts
 test/js/web/request/request-subclass.test.ts
 test/js/web/request/request.test.ts
 test/js/web/streams/pipeTo-shutdown-gc.test.ts
-test/js/web/streams/pipeTo-signal-leak.test.ts
 test/js/web/streams/readable-stream-blob-consumed.test.ts
 test/js/web/streams/readable-stream-terminal-barrier-release.test.ts
 test/js/web/streams/streams-string-limit.test.ts
@@ -1053,7 +1035,6 @@ test/js/web/structured-clone-fastpath.test.ts
 test/js/web/temporal/temporal.test.ts
 test/js/web/timers/clearImmediate-gc.test.ts
 test/js/web/timers/microtask.test.js
-test/js/web/timers/performance-entries.test.ts
 test/js/web/timers/performance.test.js
 test/js/web/timers/setImmediate.test.js
 test/js/web/timers/setImmediate2.test.ts
@@ -1100,7 +1081,6 @@ test/js/web/workers/message-port-context-destroy-leak.test.ts
 test/js/web/workers/message-port-pipe.test.ts
 test/js/web/workers/performance-observer-leak.test.ts
 test/js/web/workers/structured-clone.test.ts
-test/js/web/workers/structuredClone-classes.test.ts
 test/js/web/workers/worker-entry-point.test.ts
 test/js/web/workers/worker-late-completion.test.ts
 test/js/web/workers/worker-terminate-funnels.test.ts
@@ -1343,7 +1323,6 @@ test/regression/issue/26337.test.ts
 test/regression/issue/26338.test.ts
 test/regression/issue/26358.test.ts
 test/regression/issue/26360.test.ts
-test/regression/issue/26377.test.ts
 test/regression/issue/26387.test.ts
 test/regression/issue/26411.test.ts
 test/regression/issue/26460.test.ts

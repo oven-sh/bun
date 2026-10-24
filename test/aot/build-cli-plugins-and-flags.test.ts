@@ -153,6 +153,14 @@ const cases: Record<string, Case> = {
     runEnv: { BUN_OPTIONS: "--preload ./register.ts" },
     interprets: true,
     prints: "from the plugin\n",
+  },
+  "a plugin that an executable which loads no file by itself is told to register": {
+    files: {
+      "main.ts": `console.log("main");`,
+      "register.ts": `Bun.plugin({ name: "registered", setup() {} });`,
+    },
+    runEnv: { BUN_OPTIONS: "--preload ./register.ts" },
+    prints: "main\n",
     refusedAtStart: "can't be used with this executable because it only runs code that was compiled into it",
   },
 };

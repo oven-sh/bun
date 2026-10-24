@@ -1211,13 +1211,18 @@ pub(crate) mod command {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
         let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+        #[cfg(target_os = "macos")]
         if graph.flags.contains(
             bun_standalone_graph::StandaloneModuleGraph::Flags::NAMES_SYSTEM_CA_CERTIFICATES,
         ) {
             unsafe extern "C" {
                 safe fn us_prefetch_root_system_certs();
             }
-            us_prefetch_root_system_certs();
+            bun_removable_features::call_removable!(
+                SystemCaCertificates,
+                ReturnDefault,
+                us_prefetch_root_system_certs
+            );
         }
         #[cfg(bun_hardened)]
         if bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some() {

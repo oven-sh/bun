@@ -59,8 +59,7 @@ pub fn load_program<'s>(
     options
         .custom_conditions
         .extend_from_slice(&request.code.custom_conditions);
-    let has_bun_types_installed =
-        choose_libraries(host, options, request.libs, &project.config_path);
+    let has_bun_types_installed = choose_libraries(host, options, request.libs);
     let is_application = request.project_origin != FileOrigin::Runtime;
     // What a file of Bun's own says is the same in every program, whichever of the others the program asks for.
     options.orders_files_as_listed = !is_application;
@@ -428,12 +427,7 @@ fn default_project(
     project
 }
 
-fn choose_libraries(
-    host: &dyn Host,
-    options: &mut Options,
-    libs: Libs<'_>,
-    config_path: &[u8],
-) -> bool {
+fn choose_libraries(host: &dyn Host, options: &mut Options, libs: Libs<'_>) -> bool {
     options.lib_dir = match libs {
         Libs::Bundled(_) => host::BUNDLED_LIBS.to_vec(),
         Libs::Directory(directory) => host::from_native(directory),
@@ -442,8 +436,17 @@ fn choose_libraries(
         .effective_type_roots()
         .iter()
         .any(|root| host.is_file(&[&root[..], b"/bun/package.json"].concat()));
-    if has_bun_types_installed && config_path.is_empty() && options.types.is_none() {
-        options.types = Some(vec![b"bun".to_vec()]);
+    if has_bun_types_installed {
+        name_bun_types(options);
     }
     has_bun_types_installed
+}
+
+// The run time provides what they declare, whatever `types` lists.
+fn name_bun_types(options: &mut Options) {
+    let types = options.types.get_or_insert_default();
+    let is_named = (types.iter()).any(|name| matches!(&name[..], b"bun" | b"bun-types" | b"*"));
+    if !is_named {
+        types.push(b"bun".to_vec());
+    }
 }

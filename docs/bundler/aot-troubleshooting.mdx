@@ -57,6 +57,7 @@ hello.ts(1,1): error TS2584: Cannot find name 'console'. Do you need to change y
 - a global that Bun provides, and `require`, `module`, `exports`, `__filename` and `__dirname`
 - an import of one of Bun's modules, and an import of a file that the build loads, such as `./note.txt`
 - a member of `Bun`, of the module `"bun"` or of `import.meta`
+- a member that Bun adds to a class of TypeScript's DOM library, such as `blob.json()` or `console.write()`
 - in a class that extends a class Bun provides, such as `Event` or `EventEmitter`: arguments for the constructor it inherits, `override` on a member, and an inherited member read as `this.type` under `noPropertyAccessFromIndexSignature`
 - a parameter without a type in a callback that you pass to something Bun provides, as in `process.on("exit", code => {})`
 - in a project without a `tsconfig.json`, a parameter or a variable that's implicitly `any`

@@ -62,3 +62,26 @@ function runRules(payload: any, rules: any) {
 function turn(i: number): number {
   return (globalThis as any).runRules({ value: i & 7, issues: [], failed: false }, (globalThis as any).rules).issues.length;
 }
+//// a-method-of-a-field-of-a-declared-class-beside-two-literals-with-a-member-of-its-name-stored-under-a-key-nobody-knows
+class Shelf { texts: string[] = [" ", "a", "b"]; get(i: number): string { return this.texts[i] ?? " "; } }
+type Ledger = { codes: Int32Array; shelf: Shelf };
+type Entry = { label: string; weight: number };
+const first = { get(path: string) { return path.length; }, port: 80 };
+const second = { get(path: string) { return path.length + 1; }, port: 443, secure: true };
+const pass = new Function("value", process.argv.length > 99 ? "" : "return value") as <T>(value: T) => T;
+function put(target: any, key: string, value: unknown) { target[key] = value; }
+const clients: Record<string, unknown> = {};
+put(clients, pass("http"), first);
+put(clients, pass("https"), second);
+function entryAt(ledger: Ledger, i: number, out: Entry): void {
+  const word = ledger.codes[i | 1]!;
+  out.label = ledger.shelf.get(ledger.codes[i]!);
+  out.weight = word & 3;
+}
+const ledger: Ledger = { codes: new Int32Array(32).fill(1), shelf: new Shelf() };
+put(ledger, pass("shelf"), pass(new Shelf()));
+const out: Entry = { label: "", weight: 0 };
+function turn(i: number): number {
+  entryAt(ledger, i & 15, out);
+  return out.label.length + out.weight;
+}

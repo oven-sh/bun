@@ -1072,10 +1072,23 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         V::unpack(self.put(task, key.file().0, key.index(), value.pack(), false))
     }
 
+    #[inline]
     pub fn rewrite(&self, task: &Task, key: K, value: V, _: Stored) -> V {
-        if key.index() != u32::MAX {
-            self.put(task, key.file().0, key.index(), value.pack(), true);
+        let (file, index, slot, buffer) =
+            (key.file().0, key.index(), self.own_slot(), task.buffer());
+        if index == u32::MAX {
+            return value;
         }
+        // FOR SPEED: what `put` does for nearly every expression.
+        if W::KEEPS_VISITED_FILE_LOCAL
+            && file == buffer.file()
+            && buffer.has_whole_row(slot, file)
+            && !buffer.has_seeds(slot)
+        {
+            *buffer.cell_in_row(slot, index) = value.pack();
+            return value;
+        }
+        self.put(task, file, index, value.pack(), true);
         value
     }
 }

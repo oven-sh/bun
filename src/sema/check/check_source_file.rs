@@ -1722,25 +1722,45 @@ impl<'s> Checker<'_, 's> {
 
     /// `checkExpression`: checks `e`, then the subexpressions that checking `e` didn't need to
     /// visit.
-    pub(super) fn check_expression(&mut self, file: FileId, e: ExprId) {
-        if e.is_none() || self.is_stack_low() {
-            return;
-        }
+    pub(super) fn check_expression(&mut self, file: FileId, mut e: ExprId) {
         let hir = self.hir(file);
-        let ty = self.type_of_expr(file, e);
-        if ty == TypeId::ERROR {
-            cold_path();
-            self.reach_flow_depth_limit_again(file, e);
+        loop {
+            if e.is_none() || self.is_stack_low() {
+                return;
+            }
+            let ty = self.type_of_expr(file, e);
+            if ty == TypeId::ERROR {
+                cold_path();
+                self.reach_flow_depth_limit_again(file, e);
+            }
+            // `checkExpressionEx`
+            let ty = match hir[e].kind {
+                ExprKind::Spread(_) => self.type_of_spread_expression(file, e, ty),
+                _ => ty,
+            };
+            if self.is_const_enum_object(ty) {
+                cold_path();
+                self.check_const_enum_access(file, e, ty);
+            }
+            // FOR SPEED: half of all expressions are one of these.
+            match hir[e].kind {
+                ExprKind::Ident(_)
+                | ExprKind::This
+                | ExprKind::Null
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Number(_)
+                | ExprKind::String(_) => return,
+                ExprKind::Dot { obj: x, .. } | ExprKind::Spread(x) | ExprKind::NonNull(x) => e = x,
+                _ => return self.check_subexpressions(file, e, ty),
+            }
         }
-        // `checkExpressionEx`
-        let ty = match hir[e].kind {
-            ExprKind::Spread(_) => self.type_of_spread_expression(file, e, ty),
-            _ => ty,
-        };
-        if self.is_const_enum_object(ty) {
-            cold_path();
-            self.check_const_enum_access(file, e, ty);
-        }
+    }
+
+    /// The part of `check_expression` after `checkExpressionEx`. `ty` is the type of `e`.
+    #[inline(never)]
+    fn check_subexpressions(&mut self, file: FileId, e: ExprId, ty: TypeId) {
+        let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Template { exprs, .. } | ExprKind::Array(exprs) => {
                 for x in hir.ids(exprs) {
@@ -1841,10 +1861,7 @@ impl<'s> Checker<'_, 's> {
             ExprKind::Super => self.mark_super_property_in_static_initializer(file, e),
             ExprKind::Regex => self.check_grammar_regular_expression_literal(file, e),
             ExprKind::Unary { op: UnOp::Void, .. } => self.check_node_deferred(file, e),
-            ExprKind::Dot { obj: x, .. }
-            | ExprKind::Unary { operand: x, .. }
-            | ExprKind::Spread(x)
-            | ExprKind::NonNull(x) => self.check_expression(file, x),
+            ExprKind::Unary { operand: x, .. } => self.check_expression(file, x),
             // `checkAssertion`
             ExprKind::AsConst(x) => {
                 self.check_type_assertion_syntax(file, e, x);

@@ -57,6 +57,20 @@ pub(super) struct LeftOfPropertyAccess {
     pub(super) any_like: Option<TypeId>,
 }
 
+/// True if the receiver of `call` has a call in it, as in `a.b().c()`.
+fn has_call_in_receiver(hir: &File, call: CallId) -> bool {
+    let mut at = hir[call].callee;
+    while at.is_some() {
+        at = match hir[at].kind {
+            ExprKind::Call(_) => return true,
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::NonNull(x) => x,
+            _ => return false,
+        };
+    }
+    false
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// `getQuickTypeOfExpression`
     pub(super) fn quick_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
@@ -379,7 +393,42 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         is_rechecked: bool,
     ) -> TypeId {
-        let is_checked_once = !is_rechecked && self.is_rechecking();
+        if is_rechecked
+            || self.is_rechecking()
+            || !self.declared_index_infos_in_progress.is_empty()
+            || !self.contextual_binding_patterns.is_empty()
+            || !self.provisional.is_empty()
+            || self.check_in_flow_loop.is_some()
+            || self.is_flow_loop_or_exhaustive_state_in_progress()
+        {
+            cold_path();
+            return self.check_expression_in_any_state(file, e, is_rechecked);
+        }
+        self.check_expression_and_cache::<true>(file, e, false)
+    }
+
+    #[inline(never)]
+    fn check_expression_in_any_state(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_rechecked: bool,
+    ) -> TypeId {
+        self.check_expression_and_cache::<false>(file, e, is_rechecked)
+    }
+
+    /// FOR SPEED: `IS_PLAIN` means that nothing is rechecked and that no pattern's implied type, no
+    /// index signature of a class, no loop and no provisional result is in progress. Nearly every
+    /// expression is checked in that state, and the tests for the other states are compiled out.
+    #[inline(always)]
+    fn check_expression_and_cache<const IS_PLAIN: bool>(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_rechecked: bool,
+    ) -> TypeId {
+        let is_rechecked = !IS_PLAIN && is_rechecked;
+        let is_checked_once = !IS_PLAIN && !is_rechecked && self.is_rechecking();
         // `getTypeFromBindingElement` rechecks a pattern's defaults every time it computes the type
         // the pattern implies for its initializer. The pattern's names are typed as any during
         // that, so the result isn't valid for other callers.
@@ -392,11 +441,11 @@ impl<'p, 's> Checker<'p, 's> {
         // `checkExpression` has no re-entrancy guard. If an expression was being checked when a
         // class's members were requested and their index signatures re-enter it, it's checked
         // again, and this time it finds the members resolved (`resolveDeclaredMembers`).
-        if let Some(&(floor, ..)) = self.declared_index_infos_in_progress.last() {
+        if !IS_PLAIN && let Some(&(floor, ..)) = self.declared_index_infos_in_progress.last() {
             cold_path();
             visible_from = visible_from.max(floor);
         }
-        if !self.contextual_binding_patterns.is_empty() {
+        if !IS_PLAIN && !self.contextual_binding_patterns.is_empty() {
             cold_path();
             if let Some(floor) = self.contextual_pattern_floor(file, e) {
                 is_uncached = true;
@@ -406,7 +455,10 @@ impl<'p, 's> Checker<'p, 's> {
                 return known;
             }
         }
-        if !is_uncached && let Some(raw) = self.provisional(Query::Expr(file, e)) {
+        if !IS_PLAIN
+            && !is_uncached
+            && let Some(raw) = self.provisional(Query::Expr(file, e))
+        {
             return TypeId(raw as u32);
         }
         // Resolving the enclosing calls may already have computed it.
@@ -417,7 +469,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return known;
         }
-        if self.is_flow_loop_or_exhaustive_state_in_progress() {
+        if !IS_PLAIN && self.is_flow_loop_or_exhaustive_state_in_progress() {
             cold_path();
             if let Some(ty) = self.recheck_in_flow_loop(file, e, is_rechecked) {
                 return ty;
@@ -425,7 +477,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let hir = self.hir(file);
         match hir[e].kind {
-            ExprKind::Binary { .. } | ExprKind::Call(_) => {
+            ExprKind::Binary { left, .. }
+                if left.is_some() && matches!(hir[left].kind, ExprKind::Binary { .. }) =>
+            {
+                self.resolve_chain_innermost_first(file, e);
+            }
+            ExprKind::Call(call) if has_call_in_receiver(hir, call) => {
                 self.resolve_chain_innermost_first(file, e);
             }
             // `checkNonNullExpression(expr)`: the object is checked in `CheckModeNormal`.
@@ -444,15 +501,23 @@ impl<'p, 's> Checker<'p, 's> {
                 // `checkExpressionWithContextualType` has no re-entrancy guard. A visit that began
                 // before the pattern's implied type was requested used the declared types of its
                 // names, so this visit takes a different path.
-                let resolution_start = std::mem::replace(&mut self.resolution_start, visible_from);
+                let resolution_start = self.resolution_start;
+                if !IS_PLAIN {
+                    self.resolution_start = visible_from;
+                }
                 // `checkExpressionEx`
                 self.reset_instantiation_count();
-                let entered = self.enter(Query::Expr(file, e));
-                self.resolution_start = resolution_start;
+                let entered = self.enter_inline(|| Query::Expr(file, e));
+                if !IS_PLAIN {
+                    self.resolution_start = resolution_start;
+                }
                 if !entered {
                     return TypeId::UNRESOLVED;
                 }
-                let ty = self.type_of_entered_expr(file, e, is_rechecked);
+                let ty = match hir[e].kind {
+                    ExprKind::Ident(name) if IS_PLAIN => self.type_of_identifier(file, e, name),
+                    _ => self.type_of_entered_expr(file, e, is_rechecked),
+                };
                 if is_checked_once && self.is_reference_to_recheck() {
                     cold_path();
                     let _ = self.leave(Query::Expr(file, e));
@@ -465,7 +530,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.drop_reported();
                 }
                 let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
-                let left = self.leave(Query::Expr(file, e));
+                let left = self.leave_inline();
                 if let Err(open) = left {
                     cold_path();
                     if !is_uncached {
@@ -520,7 +585,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns `e`'s type if it's a literal that doesn't need a query: no cycle can re-enter it,
     /// and no result can become provisional while it's computed. Leaves the same state as `enter`
     /// and `leave` would. Also returns `None` where `enter` would fail.
-    #[inline]
+    #[inline(always)]
     fn type_of_plain_literal(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let hir = self.hir(file);
         let kind = hir[e].kind;
@@ -2258,6 +2323,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `checkIdentifier`
+    #[inline(never)]
     fn type_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> TypeId {
         // `Err` means `Resolve` returned nil, so `getResolvedSymbol` is `unknownSymbol`.
         let Ok(found) = self.resolve_identifier(file, e, name, false) else {

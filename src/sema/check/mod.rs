@@ -2248,12 +2248,18 @@ impl<'p, 's> Checker<'p, 's> {
         self.expected = expected;
     }
 
+    /// Returns how much stack is in use, and records it for `deepest_stack`.
+    #[inline(always)]
+    fn stack_in_use(&self) -> usize {
+        let used = self.stack_base.saturating_sub(stack_pointer());
+        self.deepest_stack.set(used.max(self.deepest_stack.get()));
+        used
+    }
+
     /// True if there's little stack left for recursion.
     #[inline]
     pub(crate) fn is_stack_low(&self) -> bool {
-        let used = self.stack_base.saturating_sub(stack_pointer());
-        self.deepest_stack.set(used.max(self.deepest_stack.get()));
-        if used > self.stack_limit {
+        if self.stack_in_use() > self.stack_limit {
             cold_path();
             self.ran_out_of_stack.set(true);
             self.times_cut_short.set(self.times_cut_short.get() + 1);
@@ -2292,54 +2298,54 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns false if the query is already in progress further down the stack.
-    #[inline]
+    #[inline(never)]
     fn enter(&mut self, q: Query) -> bool {
+        self.enter_inline(|| q)
+    }
+
+    /// FOR SPEED: `enter` as part of its caller. `q` builds the query where it's used, so the entry of `stack` is
+    /// written field by field, not copied from a query that the caller has just written.
+    #[inline(always)]
+    fn enter_inline(&mut self, q: impl Fn() -> Query) -> bool {
         self.work += 1;
         self.found_cycle = false;
-        if (self.work == self.work_trap || self.is_stack_low()) && self.reject_for_lack_of_stack(q)
+        // The stack isn't low while `!is_most_of_stack_in_use`.
+        let is_most_of_stack_in_use = self.stack_in_use() > self.stack_limit - self.stack_limit / 4;
+        if (self.work == self.work_trap || is_most_of_stack_in_use && self.is_stack_low())
+            && self.reject_for_lack_of_stack(q())
         {
             return false;
         }
-        let class = (crate::util::fx_hash(&q) >> 54) as u16;
+        let class = (crate::util::fx_hash(&q()) >> 54) as u16;
         let from = self.resolution_start;
         // `checkExpression` and `checkPropertyAssignment` have no re-entrancy guard, so an uncached
         // check runs again while it's in progress.
-        if !(matches!(q, Query::Expr(..) | Query::LiteralProp(..)) && self.is_rechecking())
+        if !(matches!(q(), Query::Expr(..) | Query::LiteralProp(..)) && self.is_rechecking())
             && self.in_progress[class as usize] != 0
-            && let Some(i) = self.position_in_progress(q, from)
-            && self.on_reentry(q, i + from)
+            && let Some(i) = self.position_in_progress(q(), from)
+            && self.on_reentry(q(), i + from)
         {
             return false;
         }
-        if self.is_most_of_stack_in_use() && self.starts_over_from_lower(q) {
+        if is_most_of_stack_in_use && self.starts_over_from_lower(q()) {
             return false;
         }
         self.last_enter = EnterOutcome::Entered;
         if self.stack.is_empty() {
             self.reset_instantiation_count_if_idle();
         }
-        self.stack.push(q);
+        self.stack.push(q());
         self.in_progress[class as usize] += 1;
-        // A query made under a context that a non-cacheable query has pushed is non-cacheable too.
-        let tainted = !self.inference_contexts.is_empty() && self.is_innermost_tainted();
-        // Diagnostics reported under a loop in progress are kept (`taint_from`).
-        let drops_reported =
-            tainted && self.frames.last().is_some_and(|frame| frame.drops_reported);
-        let incomplete_flow = tainted
-            && self
-                .frames
-                .last()
-                .is_some_and(|frame| frame.incomplete_flow);
         self.frames.push(QueryFrame {
             class,
             serial: self.work,
             entry_depth: self.instantiation_depth,
-            tainted,
+            tainted: false,
             circular: false,
-            drops_reported,
+            drops_reported: false,
             reported_from: self.reported.len() as u32,
             has_result: false,
-            incomplete_flow,
+            incomplete_flow: false,
             is_stored_by_nested_visit: false,
             has_read_members_in_place: false,
             may_substitute_constraints: false,
@@ -2347,6 +2353,16 @@ impl<'p, 's> Checker<'p, 's> {
             source_element: self.current_source_element,
             held_back: self.task.held_back(),
         });
+        // A query made under a context that a non-cacheable query has pushed is non-cacheable too.
+        if !self.inference_contexts.is_empty()
+            && let [.., outer, frame] = &mut self.frames[..]
+            && outer.tainted
+        {
+            frame.tainted = true;
+            // Diagnostics reported under a loop in progress are kept (`taint_from`).
+            frame.drops_reported = outer.drops_reported;
+            frame.incomplete_flow = outer.incomplete_flow;
+        }
         true
     }
 
@@ -3109,7 +3125,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// See `QueryFrame::is_stored_by_nested_visit`.
-    #[inline]
+    #[inline(always)]
     fn note_stored_by_nested_visit(&mut self, q: Query) {
         if !self.may_be_in_flight(q) {
             return;
@@ -3536,10 +3552,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Pops the frame of `q`. Returns `Ok` if the result is final, with a token that permits storing it. Returns
     /// `Err` if the result depends on a frame that's still in progress, so it may only go to `cache_provisionally`.
-    #[inline]
+    #[inline(never)]
     fn leave(&mut self, q: Query) -> Result<Stored, Open> {
-        let popped = self.stack.pop();
-        debug_assert!(popped == Some(q));
+        debug_assert!(self.stack.last() == Some(&q));
+        self.leave_inline()
+    }
+
+    /// FOR SPEED: `leave` as part of its caller.
+    #[inline(always)]
+    fn leave_inline(&mut self) -> Result<Stored, Open> {
+        let q = self.stack.pop().unwrap();
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
         self.in_progress[frame.class as usize] -= 1;

@@ -106,6 +106,15 @@ pub struct EnvironmentConfig {
     /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
     /// is `React`, wherever that comes from.
     pub react_is_known_by_its_module: bool,
+    /// `x = 1`, `x++`, `++x` and `x += 1` print where they stand in their expression. For that, their own value is
+    /// not a constant, which a use could fold away and leave the store to print ahead of an earlier one (#42628),
+    /// and the value of `x += 1` is the store, not a read of `x` after it (#42809). To upstream the value is a
+    /// constant, and a read follows `x += 1`. Off only where no code is generated, which is not all of
+    /// `OutputMode::Lint`: a fixture with that mode goes through codegen.
+    pub stores_print_in_place: bool,
+    /// `x++` is lowered when `x` is a `const`, as in upstream's Rust. Upstream's TypeScript, which the plugin runs,
+    /// reports it like `x = 1`, and the update has no value.
+    pub updates_of_a_const_are_lowered: bool,
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
@@ -167,6 +176,8 @@ impl Default for EnvironmentConfig {
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
+            stores_print_in_place: true,
+            updates_of_a_const_are_lowered: true,
             dependencies_are_sorted_by_bytes: false,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,

@@ -138,6 +138,81 @@ devAndProductionTest("inline script and styles appear", {
   },
 });
 // TODO: revive production
+devAndProductionTest("import() runs the module after the code that called it, and rejects when the module fails", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("start");
+      const first = import("./esm").then(ns => console.log("then " + ns.value));
+      console.log("end");
+      await first;
+      await import("./esm").then(ns => console.log("again " + ns.value));
+
+      const failed = import("./throws").catch(e => console.log("caught " + e.message));
+      console.log("after the call");
+      await failed;
+      await import("./throws").catch(e => console.log("caught again " + e.message));
+
+      const plugin = import("./plugin");
+      globalThis.config = { mode: "fast" };
+      console.log("plugin " + (await plugin).value);
+
+      console.log((await (await import("./cycle-a")).b).value);
+
+      const waits = import("./waits").then(ns => console.log("then " + ns.value));
+      console.log("after the call of waits");
+      await waits;
+    `,
+    "waits.ts": `
+      console.log("waits ran");
+      await 0;
+      export const value = "waits";
+    `,
+    "esm.ts": `
+      console.log("esm ran");
+      export const value = "esm";
+    `,
+    "throws.ts": `
+      console.log("throws ran");
+      throw new Error("boom");
+    `,
+    "plugin.ts": `
+      export const value = globalThis.config ? globalThis.config.mode : "no config yet";
+    `,
+    "cycle-a.ts": `
+      export const a = 1;
+      export const b = import("./cycle-b");
+    `,
+    "cycle-b.ts": `
+      import { a } from "./cycle-a";
+      export const value = "b saw a = " + a;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(
+      "start",
+      "end",
+      "esm ran",
+      "then esm",
+      "again esm",
+      "after the call",
+      "throws ran",
+      "caught boom",
+      "caught again boom",
+      "plugin fast",
+      "b saw a = 1",
+      // A bundle without code splitting starts a module with top-level await inside the call.
+      // The dev server starts it after the code that called import(), as Node does.
+      ...(dev.nodeEnv === "development"
+        ? ["after the call of waits", "waits ran"]
+        : ["waits ran", "after the call of waits"]),
+      "then waits",
+    );
+  },
+});
 devTest("using runtime import", {
   files: {
     "index.html": emptyHtmlFile({

@@ -190,8 +190,10 @@ export class HMRModule {
     }
   }
 
-  /** Lowered from `.e_import` (import(id)) */
-  dynamicImport(id: Id, opts?: ImportCallOptions) {
+  /** Lowered from `.e_import` (import(id)). The load starts one microtask after the call, and a failed load rejects. */
+  async dynamicImport(id: Id, opts?: ImportCallOptions) {
+    id = `${id}`;
+    await 0;
     dynamicLoads++;
     let found: ReturnType<typeof loadModuleAsync<true>>;
     try {
@@ -200,7 +202,7 @@ export class HMRModule {
       dynamicLoads--;
     }
     if (found) {
-      if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
+      if ((found as HMRModule).id === id) return getEsmExports(found as HMRModule);
       return (found as Promise<HMRModule>).then(getEsmExports);
     }
     return opts

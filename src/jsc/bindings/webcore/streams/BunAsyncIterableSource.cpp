@@ -170,8 +170,7 @@ static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIterator
     RELEASE_AND_RETURN(scope, asyncIterFinish(globalObject, op));
 }
 
-// Ends the pump: iterator.return() unless the iterator itself failed, then the pull promise settles in the same turn.
-// NEVER_INLINE: it runs once per body, so it stays out of the per-chunk functions.
+// Ends the pump: iterator.return() unless the iterator itself failed, then the pull promise settles in the same turn. Out of line: it runs once per body.
 static NEVER_INLINE void asyncIterFinish(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

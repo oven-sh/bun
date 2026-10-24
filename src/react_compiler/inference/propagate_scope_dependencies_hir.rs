@@ -2239,7 +2239,8 @@ fn handle_instruction(
         }
         InstructionValue::DeclareLocal { lvalue, .. }
         | InstructionValue::DeclareContext { lvalue, .. } => {
-            if lvalue.kind.unhoisted().is_none() {
+            // Not in upstream: only the `catch` clause binds what is caught, so no scope compares it.
+            if lvalue.kind.unhoisted().is_none() && lvalue.kind != InstructionKind::Catch {
                 ctx.declare(lvalue.place.identifier, id, env);
             }
         }

@@ -802,7 +802,7 @@ impl BlobExt for Blob {
         let mut context = FormDataContext {
             joiner: bun_core::string_joiner::StringJoiner::default(),
             boundary,
-            failed: false,
+            failure: None,
             global_this,
         };
         // Size the node list up front: a file entry pushes at most 13 slices, a
@@ -849,7 +849,7 @@ impl BlobExt for Blob {
         unsafe extern "C" {
             // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
             // stored opaquely and only used synchronously. Module-private with
-            // one call site below — no caller-side precondition remains. Kept
+            // two call sites below — no caller-side precondition remains. Kept
             // `*mut` (not `&mut`) to match the `bun_jsc` decl and avoid
             // `clashing_extern_declarations`.
             safe fn DOMFormData__forEach(
@@ -868,6 +868,43 @@ impl BlobExt for Blob {
                 ),
             );
         }
+        /// A second walk, so that the first one keeps no entry name for this.
+        #[cold]
+        fn throw_for_s3_entry(
+            global_this: &JSGlobalObject,
+            form_data: &mut jsc::DOMFormData,
+            entry: *const Blob,
+        ) {
+            struct Find {
+                entry: *const Blob,
+                name: Option<Vec<u8>>,
+            }
+            extern "C" fn find_thunk(
+                ctx_ptr: *mut c_void,
+                name: *mut EncodedSlice,
+                value_ptr: *mut c_void,
+                _filename: *mut EncodedSlice,
+                is_blob: u8,
+            ) {
+                // SAFETY: `ctx_ptr` is the `&mut Find` passed below.
+                let find = unsafe { bun_ptr::callback_ctx::<Find>(ctx_ptr) };
+                if is_blob != 0
+                    && find.name.is_none()
+                    && core::ptr::eq(value_ptr.cast::<Blob>(), find.entry)
+                {
+                    // SAFETY: `name` is always a valid non-null `*EncodedSlice` for this callback.
+                    find.name = Some(unsafe { *name }.to_utf8().into_vec());
+                }
+            }
+            let mut find = Find { entry, name: None };
+            DOMFormData__forEach(form_data, (&raw mut find).cast::<c_void>(), find_thunk);
+            debug_assert!(find.name.is_some(), "the first walk met this entry");
+            let _ = global_this.throw_type_error(format_args!(
+                "FormData entry {} is an S3 file, which cannot be read while the body is serialized. Pass its bytes instead: new File([await s3file.bytes()], s3file.name, {{ type: s3file.type }})",
+                bun_core::fmt::quote(find.name.as_deref().unwrap_or_default()),
+            ));
+        }
+
         // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
         // past this call.
         DOMFormData__forEach(
@@ -875,7 +912,10 @@ impl BlobExt for Blob {
             (&raw mut context).cast::<c_void>(),
             for_each_thunk,
         );
-        if context.failed {
+        if let Some(failure) = context.failure {
+            if let FormDataFailure::S3Entry(entry) = failure {
+                throw_for_s3_entry(global_this, form_data, entry);
+            }
             // Drop the joiner (Drop runs StringJoiner::deinit) so every
             // heap-owned slice already pushed — escaped names, non-ASCII
             // conversions, NodeFS read_file result buffers — is freed.
@@ -2063,7 +2103,8 @@ impl BlobExt for Blob {
                 }
                 self.size.set(0);
             }
-            store::DataTag::S3 => self.size.set(0),
+            // An S3 object has no size before the download: there is nothing to resolve.
+            store::DataTag::S3 => {}
         }
     }
 
@@ -2106,7 +2147,7 @@ impl BlobExt for Blob {
                 }
                 (self.offset.get(), 0)
             }
-            store::DataTag::S3 => (self.offset.get(), 0),
+            store::DataTag::S3 => (self.offset.get(), self.size.get()),
         }
     }
     fn constructor(
@@ -3450,8 +3491,17 @@ where
 struct FormDataContext<'a> {
     joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
-    failed: bool,
+    failure: Option<FormDataFailure>,
     global_this: &'a JSGlobalObject,
+}
+
+/// Why `FormDataContext::on_entry` stopped serializing.
+#[derive(Clone, Copy)]
+enum FormDataFailure {
+    /// `on_entry` threw.
+    Thrown,
+    /// An S3 entry, known by the address of its Blob (compared, never read). `from_dom_form_data` throws for it after the walk.
+    S3Entry(*const Blob),
 }
 
 /// Which piece of a `multipart/form-data` entry a string is, selecting the
@@ -3541,7 +3591,7 @@ impl FormDataContext<'_> {
     }
 
     fn on_entry(&mut self, name: EncodedSlice, entry: FormDataEntry<'_>) {
-        if self.failed {
+        if self.failure.is_some() {
             return;
         }
         // Copy the borrowed refs out first (disjoint-field reads) so the
@@ -3594,8 +3644,11 @@ impl FormDataContext<'_> {
                         .expect("infallible: store present");
                     match &store.data {
                         store::Data::S3(_) => {
-                            // TODO: s3
-                            // we need to make this async and use download/downloadSlice
+                            // An empty window (`slice(n, n)`) is an empty part.
+                            if blob.size.get() != 0 {
+                                self.failure =
+                                    Some(FormDataFailure::S3Entry(core::ptr::from_ref(blob)));
+                            }
                         }
                         store::Data::File(file) => {
                             // TODO: make this async + lazy
@@ -3612,7 +3665,7 @@ impl FormDataContext<'_> {
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
                             match res {
                                 Err(err) => {
-                                    self.failed = true;
+                                    self.failure = Some(FormDataFailure::Thrown);
                                     let js_err = err.to_js(global_this);
                                     let _ = global_this.throw_value(js_err);
                                 }

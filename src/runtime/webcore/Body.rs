@@ -741,7 +741,7 @@ impl Value {
         }
     }
 
-    /// `None` for a file that does not exist or is not seekable.
+    /// `None` for a file that does not exist or is not seekable, and for an S3 object that is not a slice.
     pub(crate) fn known_size(&mut self) -> Option<usize> {
         match self.size() {
             u64::MAX => None,

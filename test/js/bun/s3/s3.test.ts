@@ -1,10 +1,11 @@
 import type { S3File, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
-import { afterAll, describe, expect, it } from "bun:test";
+import { serialize } from "bun:jsc";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { serve, spawnServer, type S3Server } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -2168,5 +2169,121 @@ describe("presigned url signature", () => {
       const { signature, expected } = verifyPresignedUrl(presigned, credentials);
       expect(signature).toBe(expected);
     }
+  });
+});
+
+// The size of an S3 object is not known before the download. A call that asks
+// for the size has to leave it unknown. A file whose size became 0 asked for one
+// byte (`Range: bytes=0-0`) on each later read, and a copy of it stored that byte.
+describe("an S3 file after a call that asks for its size", () => {
+  const payload = Buffer.alloc(100, "0123456789").toString();
+  // In this process, because only this server has a log of its requests.
+  let server: S3Server;
+  let client: S3Client;
+  beforeAll(() => {
+    server = serve({ buckets: ["bucket"] });
+    client = new S3Client(server.clientOptions("bucket"));
+  });
+  afterAll(() => server.stop());
+
+  /** Stores the payload under a new key. */
+  async function store() {
+    const key = randomUUIDv7();
+    await client.write(key, payload);
+    return key;
+  }
+  /** Each request for the key so far, as `[operation, Range header]`. */
+  const requests = (key: string) =>
+    server.requests
+      .filter(request => request.key === key)
+      .map(request => [request.operation, request.headers.get("range")]);
+
+  /** Makes the call. Whether it throws is not the subject of these tests: the file afterwards is. */
+  async function attempt(call: () => unknown) {
+    try {
+      await call();
+    } catch {}
+  }
+
+  /** Reads the blob and copies it, in each way. */
+  async function readAndCopy(blob: Blob) {
+    using dir = tempDir("s3-file-size", {});
+    const s3Copy = client.file(randomUUIDv7());
+    const localCopy = Bun.file(path.join(String(dir), "copy"));
+    return {
+      size: blob.size,
+      text: await blob.text(),
+      stream: await Bun.readableStreamToText(blob.stream()),
+      slice: await blob.slice(10, 20).text(),
+      s3Copy: [await s3Copy.write(blob), await s3Copy.text()],
+      localCopy: [await Bun.write(localCopy, blob), await localCopy.text()],
+    };
+  }
+  const whole = {
+    size: NaN,
+    text: payload,
+    stream: payload,
+    slice: payload.slice(10, 20),
+    s3Copy: [100, payload],
+    localCopy: [100, payload],
+  };
+  // One request for each read and each copy of `readAndCopy`. Only the slice has a Range header.
+  const requestsOfWhole = [
+    ["GetObject", null],
+    ["GetObject", null],
+    ["GetObject", "bytes=10-19"],
+    ["GetObject", null],
+    ["GetObject", null],
+  ];
+
+  const calls: Record<string, (file: S3File) => unknown> = {
+    "expect().toHaveLength()": file => expect(file).toHaveLength(0),
+    "expect().toBeEmpty()": file => expect(file).toBeEmpty(),
+    "structuredClone()": file => structuredClone(file),
+    "MessagePort.postMessage()": file => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        port1.postMessage(file);
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    },
+    "serialize() of bun:jsc": file => serialize(file),
+  };
+  for (const [name, call] of Object.entries(calls)) {
+    it.concurrent(`${name}, two times`, async () => {
+      const key = await store();
+      const file = client.file(key);
+      await attempt(() => call(file));
+      await attempt(() => call(file));
+      const before = requests(key);
+      expect({ before, ...(await readAndCopy(file)), requests: requests(key).slice(before.length) }).toEqual({
+        before: [["PutObject", null]],
+        ...whole,
+        requests: requestsOfWhole,
+      });
+    });
+  }
+
+  it.concurrent("a FormData body, for the entry that the FormData holds", async () => {
+    const key = await store();
+    const form = new FormData();
+    form.append("file", client.file(key));
+    await attempt(() => new Response(form).arrayBuffer());
+    const before = requests(key);
+    const entry = form.get("file") as Blob;
+    expect({ before, ...(await readAndCopy(entry)), requests: requests(key).slice(before.length) }).toEqual({
+      before: [["PutObject", null]],
+      ...whole,
+      requests: requestsOfWhole,
+    });
+  });
+
+  it.concurrent("expect() does not take the unknown length for 0", async () => {
+    const file = client.file(await store());
+    expect(() => expect(file).toHaveLength(0)).toThrow("Received length");
+    expect(() => expect(file).toBeEmpty()).toThrow("Expected value to be empty");
+    expect(file.slice(10, 30)).toHaveLength(20);
   });
 });

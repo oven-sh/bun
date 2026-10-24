@@ -136,11 +136,6 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        // Process-lifetime inspector thread. The debugger handles SIGINT and
-        // serves the WebSocket protocol up to (and during) `process.exit()`;
-        // joining it from `global_exit` would deadlock when the user is
-        // mid-breakpoint. The thread's stack/Arc are reclaimed by the OS.
-        "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "\0",
     )
     .as_ptr()
@@ -168,6 +163,14 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
+
+    // Everything below calls into simdutf, including the crash handler.
+    if !bun_simdutf_sys::simdutf::has_any_implementation() {
+        unsafe extern "C" {
+            safe fn bun_abort_missing_simd() -> !;
+        }
+        bun_abort_missing_simd();
+    }
 
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();

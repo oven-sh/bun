@@ -421,6 +421,58 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
   expect(exitCode).toBe(0);
 });
 
+// A text body is inlined as the string `.text()` gives for its bytes. Escaping that string is the
+// printer's job, a UTF-8 byte-order mark is not part of the text, and a UTF-16LE one selects that encoding.
+test("a text Response or Blob returned from a macro is inlined as its text", async () => {
+  const body = 'line1\nline2 "quoted" back\\slash \t tab \0 nul é 😀\n';
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(body, { headers: { "content-type": "text/plain" } }),
+  });
+  using dir = tempDir("macro-text-body", {
+    "m.ts": [
+      `const body = ${JSON.stringify(body)};`,
+      `export function blob() {`,
+      `  return new Blob([body], { type: "text/plain" });`,
+      `}`,
+      `export function response() {`,
+      `  return new Response(body, { headers: { "content-type": "text/plain" } });`,
+      `}`,
+      `export function fetched() {`,
+      `  return fetch(process.env.MACRO_TEST_URL!);`,
+      `}`,
+      `export function utf8Bom() {`,
+      `  return new Blob([new Uint8Array([0xef, 0xbb, 0xbf]), body], { type: "text/plain" });`,
+      `}`,
+      `export function utf16Bom() {`,
+      `  return new Blob([new Uint8Array([0xff, 0xfe]), Buffer.from(body, "utf16le")], { type: "text/plain" });`,
+      `}`,
+      `export function malformed() {`,
+      `  return new Blob([new Uint8Array([0x61, 0xff, 0x62])], { type: "text/plain" });`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { blob, response, fetched, utf8Bom, utf16Bom, malformed } from "./m.ts" with { type: "macro" };`,
+      `console.log(JSON.stringify([blob(), response(), fetched(), utf8Bom(), utf16Bom(), malformed()]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: { ...bunEnv, MACRO_TEST_URL: server.url.href },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify([body, body, body, body, body, "a\uFFFDb"]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // The strings of the object that a JSON body parses into point into the JSON text. The Blob that holds the
 // text is collected once the macro call is over, so the text has to be copied out of it first.
 test("a JSON Blob or Response returned from a macro does not have to outlive the macro call", async () => {

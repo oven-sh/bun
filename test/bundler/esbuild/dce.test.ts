@@ -831,6 +831,8 @@ describe("bundler", () => {
     ["BraceCLI", "{old,new}", "cli"],
     ["BraceRange", "{1..3}", "api"],
     ["ExtGlob", "@(client)", "api"],
+    ["ExtGlobInName", "c++(old)", "api"],
+    ["ExtGlobInNameCLI", "c++(old)", "cli"],
   ] as const) {
     itBundled(`dce/PackageJsonSideEffectsGlobUnder${id}Directory`, {
       backend,

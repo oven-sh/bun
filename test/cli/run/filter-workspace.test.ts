@@ -1093,9 +1093,10 @@ describe("selectors", () => {
     });
   });
 
-  // A path selector is resolved against the directory that the command runs in. A `[` or `{` in
-  // the name of that directory is a character of the name and not part of the pattern.
-  describe.each(["[ws]", "{a,b}"])("path selectors under a directory named %s", parent => {
+  // A path selector is resolved against the directory that the command runs in. A `[`, a `{` or
+  // an extglob like `+(old)` in the name of that directory is a character of the name and not
+  // part of the pattern.
+  describe.each(["[ws]", "{a,b}", "c++(old)", "@(scope)"])("path selectors under a directory named %s", parent => {
     const root = join(
       tempDirWithFiles("filter-directory-name", {
         [parent]: {

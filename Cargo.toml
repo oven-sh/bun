@@ -1,3 +1,6 @@
+# For `rustflags` in `[profile.dev]` and `[profile.release]`.
+cargo-features = ["profile-rustflags"]
+
 [workspace]
 resolver = "2"
 members = [
@@ -156,9 +159,51 @@ codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
 panic = "abort"
+# The nightly features the workspace's own crates may enable, as the Linux kernel lists its own. A `#![feature(..)]`
+# that is not here is error E0725. A nightly feature can change or go away with any toolchain bump, so taking on a new
+# one is a decision, made by adding it to this list and to the one in `[profile.dev]`.
+rustflags = ["""-Zallow-features=\
+  adt_const_params,\
+  allocator_api,\
+  arbitrary_self_types_pointers,\
+  const_cmp,\
+  const_trait_impl,\
+  core_intrinsics,\
+  freeze,\
+  generic_const_exprs,\
+  hasher_prefixfree_extras,\
+  inherent_associated_types,\
+  linkage,\
+  optimize_attribute,\
+  rustc_attrs,\
+  thread_local,\
+  type_info,\
+  unsized_const_params"""]
+
+# Dependencies, and std under `-Zbuild-std`, enable features of their own.
+[profile.release.package."*"]
+rustflags = []
 
 [profile.dev]
 panic = "abort"
+# See `[profile.release]`.
+rustflags = ["""-Zallow-features=\
+  adt_const_params,\
+  allocator_api,\
+  arbitrary_self_types_pointers,\
+  const_cmp,\
+  const_trait_impl,\
+  core_intrinsics,\
+  freeze,\
+  generic_const_exprs,\
+  hasher_prefixfree_extras,\
+  inherent_associated_types,\
+  linkage,\
+  optimize_attribute,\
+  rustc_attrs,\
+  thread_local,\
+  type_info,\
+  unsized_const_params"""]
 # Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
 # being packed into the rlibs. Per-crate codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
 # the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
@@ -166,6 +211,9 @@ panic = "abort"
 # (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
 # `dsymutil` already expects.
 split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+rustflags = []
 
 # Release with debuginfo retained for `perf record` / flamegraphs. Same opt
 # level as release; binary is large but profilable.

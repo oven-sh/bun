@@ -33,3 +33,30 @@ test("no crate of the workspace can be published", () => {
   expect(root).toMatch(/^\[workspace\.package\]\n(?:[^\[\n].*\n)*publish = false$/m);
   expect(manifestsWithout(/^publish\.workspace = true$/m)).toEqual([]);
 });
+
+// rustc enforces each profile's `-Zallow-features` list, but only for the profile it is building with: a feature added
+// to `[profile.dev]` alone passes `bun bd`, clippy and miri, then fails every release build. Nothing at all notices an
+// entry whose last `#![feature(..)]` is gone.
+test("both profiles allow exactly the nightly features that are in use", () => {
+  const allowed = (profile: string) => {
+    const table = new RegExp(
+      String.raw`^\[profile\.${profile}\]\n(?:[^\[\n].*\n|\n)*?rustflags = \["""-Zallow-features=([^"]*)"""\]$`,
+      "m",
+    );
+    return (table.exec(root)?.[1] ?? "").split(",").map(it => it.replace(/^\\\n\s*/, ""));
+  };
+
+  const used = new Set<string>();
+  for (const file of new Bun.Glob("src/**/*.rs").scanSync(repoRoot)) {
+    const source = readFileSync(path.join(repoRoot, file), "utf8");
+    if (!source.includes("feature(")) continue;
+    const code = source.replace(/\/\/.*$/gm, "");
+    for (const [, features] of code.matchAll(/#!\[(?:cfg_attr\([^\]]*?,\s*)?feature\(([^)]*)\)/g)) {
+      for (const feature of features.split(",")) if (feature.trim()) used.add(feature.trim());
+    }
+  }
+  expect(used.size).toBeGreaterThan(10);
+
+  expect(allowed("release")).toEqual([...used].sort());
+  expect(allowed("dev")).toEqual([...used].sort());
+});

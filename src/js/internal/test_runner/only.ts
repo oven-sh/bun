@@ -71,8 +71,8 @@ function createOnlyFilter<Node extends TestNode>(shim: Shim<Node>) {
     mode?: Mode,
   ): Promise<undefined> {
     const { name, options: declared, fn } = parseTestArgs(arg0, arg1, arg2);
-    // https://github.com/nodejs/node/blob/bc2e01dcf6acd5cf7d169b5f26cf89abaaeb41f1/lib/internal/test_runner/harness.js#L409-L419
-    const options = mode === "only" ? { ...declared, only: true } : declared;
+    // The merge of https://github.com/nodejs/node/blob/bc2e01dcf6acd5cf7d169b5f26cf89abaaeb41f1/lib/internal/test_runner/harness.js#L409-L419 and test.js#L1052, which has no prototype.
+    const options = mode === "only" ? { __proto__: null, ...declared, only: true } : declared;
     const { only } = options;
     const runningNode = executionParent ?? currentNode();
     if (runningNode !== undefined && runningNode.isRunning()) {

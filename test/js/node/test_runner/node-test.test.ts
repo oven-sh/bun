@@ -329,10 +329,10 @@ describe("node:test", () => {
     );
 
     test.concurrent(
-      "a filtered declaration does not call a Promise.resolve or a then that the file replaced",
+      "a declaration does not use a Promise.resolve, a then or an Object.prototype property that the file set",
       async () => {
         expect(await runFixtures(["--test-only"], ["40-only-replaced-promise.mjs"])).toEqual({
-          counts: { pass: 1, fail: 0 },
+          counts: { pass: 2, fail: 0 },
           exitCode: 0,
           stderr: "",
         });

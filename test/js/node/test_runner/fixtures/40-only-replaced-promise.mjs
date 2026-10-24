@@ -1,9 +1,15 @@
-// Passes as it is under `node --test --test-only`. A declaration that the filter drops does not call a `Promise.resolve` or a `then` that the file replaced.
+// Passes as it is under `node --test --test-only`. A declaration under the flag does not use a `Promise.resolve`, a `then` or an `Object.prototype` property that the file set.
 import assert from "node:assert";
 import { after, test } from "node:test";
 
 let parentEnded = false;
-after(() => assert.ok(parentEnded));
+let ranWithPrototypeProperty = false;
+after(() =>
+  assert.deepStrictEqual(
+    { parentEnded, ranWithPrototypeProperty },
+    { parentEnded: true, ranWithPrototypeProperty: true },
+  ),
+);
 
 const { resolve } = Promise;
 Promise.resolve = () => {
@@ -32,3 +38,13 @@ test.only("a filtered subtest", async t => {
   await filtered;
   parentEnded = true;
 });
+
+// The options of a `.only` declaration have no prototype, so `skip` is not read from Object.prototype.
+Object.prototype.skip = true;
+try {
+  test.only("declared while Object.prototype has a skip property", () => {
+    ranWithPrototypeProperty = true;
+  });
+} finally {
+  delete Object.prototype.skip;
+}

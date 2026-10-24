@@ -133,6 +133,26 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 });
                 return false;
             }
+            // An "@import" that closes a cycle is not loaded, but it still adds its layer to the layer order (css-cascade-5).
+            if matches!(record.kind, ImportKind::At | ImportKind::AtConditional)
+                && self
+                    .visited
+                    .slice()
+                    .iter()
+                    .any(|visited| visited.get() == record.source_index.get())
+                && wrapping_conditions
+                    .slice()
+                    .iter()
+                    .any(|conditions| conditions.layer.is_some())
+            {
+                self.has_cyclic_import_layer = true;
+                self.order.push(CssImportOrder {
+                    kind: CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
+                    // SAFETY: arena-backed `Vec` header; see the same copy for a file's own entry in `visit`.
+                    conditions: unsafe { bitwise_copy(wrapping_conditions) },
+                    condition_import_records: Vec::new(),
+                });
+            }
             self.visit(
                 record.source_index,
                 wrapping_conditions,
@@ -168,20 +188,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         source_index.get(),
                         self.input_file_pretty(source_index),
                     );
-                    // An import that is not loaded still adds its layer to the layer order (css-cascade-5).
-                    if wrapping_conditions
-                        .slice()
-                        .iter()
-                        .any(|conditions| conditions.layer.is_some())
-                    {
-                        self.has_cyclic_import_layer = true;
-                        self.order.push(CssImportOrder {
-                            kind: CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
-                            // SAFETY: arena-backed `Vec` header; see the same copy for the file's own entry below.
-                            conditions: unsafe { bitwise_copy(wrapping_conditions) },
-                            condition_import_records: Vec::new(),
-                        });
-                    }
                     return;
                 }
             }
@@ -449,6 +455,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // overrides all previous instances of that declaration.
     // The positions of the external imports that this pass masks, last one first.
     let mut masked_external_imports: Vec<u32> = Vec::new();
+    // The positions of the file copies that stay where a list of layer names would be wrong, last one first.
+    let mut copies_in_place_of_lists: Vec<u32> = Vec::new();
     {
         let mut source_index_duplicates: ArrayHashMap<u32, Vec<u32>> = ArrayHashMap::new();
         let mut external_path_duplicates: StringArrayHashMap<Vec<u32>> = StringArrayHashMap::new();
@@ -471,20 +479,19 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     if !gop.found_existing {
                         *gop.value_ptr = Vec::<u32>::default();
                     }
-                    // A list of layer names cannot say that the file declares one of them only under "@media".
-                    let keeps_every_copy = layers_matter
-                        && css_asts[idx.get() as usize]
-                            .as_deref()
-                            .unwrap()
-                            .has_conditional_layer_names;
+                    let stylesheet = css_asts[idx.get() as usize].as_deref().unwrap();
+                    // A CSS module with "composes" fails to print inside a wrapper, so its copy under a layer stays a list.
+                    let layers_matter = layers_matter && stylesheet.composes.count() == 0;
                     for &j in gop.value_ptr.slice() {
-                        if keeps_every_copy {
-                            break;
-                        }
                         // SAFETY: j < order.len; see note above.
                         let later = unsafe { &(*order_ptr.add(j as usize)).conditions };
                         if is_conditional_import_redundant(&entry.conditions, later, layers_matter)
                         {
+                            // A list of layer names cannot say that the file declares one of them only under "@media".
+                            if layers_matter && stylesheet.has_conditional_layer_names {
+                                copies_in_place_of_lists.push(i);
+                                continue 'next_backward;
+                            }
                             // This import is redundant, but it might have @layer rules.
                             // So we should keep the @layer rules so that the cascade ordering of layers
                             // is preserved
@@ -512,8 +519,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
                         let later = unsafe { &(*order_ptr.add(j as usize)).conditions };
-                        if is_conditional_import_redundant(&entry.conditions, later, layers_matter)
-                        {
+                        // A duplicate external import keeps esbuild's answer: both copies would have to stay "@import" rules.
+                        if is_conditional_import_redundant(&entry.conditions, later, false) {
                             // Don't remove duplicates entirely. The import conditions may
                             // still introduce layers to the layer order. Represent this as a
                             // file with an empty layer list.
@@ -527,6 +534,28 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 }
                 CssImportOrderKind::Layers(_) => {}
             }
+        }
+    }
+    // Only the first of those copies under each condition list declares a layer that is not declared yet.
+    let mut first_copies: Vec<u32> = Vec::new();
+    for &i in copies_in_place_of_lists.slice().iter().rev() {
+        let is_repeat = first_copies.slice().iter().any(|&first| {
+            let (first, entry) = (order.at(first as usize), order.at(i as usize));
+            matches!(
+                (&first.kind, &entry.kind),
+                (CssImportOrderKind::SourceIndex(a), CssImportOrderKind::SourceIndex(b)) if a.get() == b.get()
+            ) && import_conditions_are_equal(
+                first.conditions.slice_const(),
+                entry.conditions.slice_const(),
+            )
+        });
+        if is_repeat {
+            let entry = order.mut_(i as usize);
+            entry.kind = CssImportOrderKind::Layers(Layers::Owned(Vec::new()));
+            // SAFETY: shrinks to nothing; the conditions are arena-owned, as at the other `set_len` below.
+            unsafe { entry.conditions.set_len(0) };
+        } else {
+            first_copies.push(i);
         }
     }
     debug_css_order(this, &order, CssOrderDebugStep::AfterRemovingDuplicates);
@@ -1003,6 +1032,8 @@ pub(crate) fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportCon
 ///
 /// Note that all of this deliberately ignores the existence of "@layer" because
 /// that is handled separately. All of this is only for handling unlayered styles.
+///
+/// Unlike esbuild, `layers_matter` stops that: a `layer(...)` that only `earlier` has makes it not redundant.
 fn is_conditional_import_redundant(
     earlier: &Vec<ImportConditions>,
     later: &Vec<ImportConditions>,
@@ -1011,11 +1042,17 @@ fn is_conditional_import_redundant(
     if later.len() > earlier.len() {
         return false;
     }
-    // Inside a `layer(...)` that only `earlier` has, its rules and layer names are in other layers.
+    // Inside a `layer(name)` that only `earlier` has, its rules and layer names are in other layers.
+    // A bare `layer` stays as in esbuild: each entry under one prints as a layer of its own.
     if layers_matter
         && earlier.slice()[later.len() as usize..]
             .iter()
-            .any(|conditions| conditions.layer.is_some())
+            .any(|conditions| {
+                conditions
+                    .layer
+                    .as_ref()
+                    .is_some_and(|layer| layer.v.is_some())
+            })
     {
         return false;
     }

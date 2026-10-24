@@ -2660,7 +2660,7 @@ c {
       },
       out: "@layer theme,theme;@layer base,theme;@layer theme;@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer theme{.t{color:red}}@layer base{.t{color:#00f}}",
     },
-    // A copy under "layer(w)" or "layer" is kept when a later copy has no layer: its rules are in another layer.
+    // A copy under "layer(w)" is kept when a later copy has no layer: its rules are in another layer.
     LayeredCopyBehindABareCopy: {
       files: {
         "/entry.css": /* css */ `
@@ -2681,6 +2681,7 @@ c {
       out: "@layer a;@layer c;@layer w{@layer c;@layer a{.t{color:#00f}}}@layer c;@layer a{.t{color:#00f}}@layer c{.t{color:red}}",
     },
     AnonymousCopyBehindABareCopy: {
+      todo: 'the copy of f2.css under a bare "layer" is removed, as in esbuild: bun cannot tell two such layers apart',
       files: {
         "/entry.css": /* css */ `
           @layer a;
@@ -2698,6 +2699,75 @@ c {
         `,
       },
       out: "@layer a;@layer c;@layer{@layer c;@layer a{.t{color:#00f}}}@layer c;@layer a{.t{color:#00f}}@layer c{.t{color:red}}",
+    },
+    // Under a bare "layer" the copies are handled as on main: each entry would print as a layer of its own.
+    FileWithImportsUnderBareLayerAndBare: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer a;
+          @import "./lib.css" layer;
+          @import "./lib.css";
+        `,
+        "/lib.css": /* css */ `
+          @import "./leaf.css";
+          @layer a { @layer c { .t { color: red } } }
+        `,
+        "/leaf.css": `@layer a { .t { color: blue } }`,
+      },
+      out: "@layer a;@layer a{.t{color:#00f}}@layer a{@layer c{.t{color:red}}}",
+    },
+    ImportantUnderBareLayer: {
+      todo: 'the first copy of f2.css under a bare "layer" is removed, as in esbuild, so "a" is declared ahead of every unnamed layer',
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f2.css" layer;
+          @import "./f1.css";
+        `,
+        "/f1.css": /* css */ `
+          @layer a;
+          @import "./f2.css" layer;
+          @layer a { .t { color: red !important } }
+        `,
+        "/f2.css": `.t { color: blue !important }`,
+      },
+      out: "@layer{.t{color:#00f!important}}@layer a;@layer{.t{color:#00f!important}}@layer a{.t{color:red!important}}",
+    },
+    // Of the copies of tokens.css that a later copy replaces, only the first one stays.
+    NameDeclaredOnlyUnderMediaInAFileImportedFourTimes: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./tokens.css";
+          @import "./c1.css";
+          @import "./c2.css";
+          @import "./c3.css";
+        `,
+        "/tokens.css": /* css */ `
+          @media (prefers-color-scheme: dark) { @layer theme { :root { --bg: black } } }
+          :root { --bg: white }
+        `,
+        "/c1.css": /* css */ `
+          @layer base, theme;
+          @import "./tokens.css";
+          @layer theme { .t { color: red } }
+          @layer base { .t { color: blue } }
+        `,
+        "/c2.css": `@import "./tokens.css"; .c2 { color: green }`,
+        "/c3.css": `@import "./tokens.css"; .c3 { color: green }`,
+      },
+      out: "@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer base,theme;@layer theme{.t{color:red}}@layer base{.t{color:#00f}}.c2{color:green}@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}.c3{color:green}",
+    },
+    // A duplicate external import stays one "@import" rule, as on main, also when only the first copy has a layer.
+    DuplicateExternalImportUnderLayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer x;
+          @import "https://example.com/a.css" layer(v);
+          @import "./m.css" layer(w);
+          @import "https://example.com/a.css";
+        `,
+        "/m.css": `.m { color: red }`,
+      },
+      out: '@layer x;@layer v;@import "https://example.com/a.css";@layer w{.m{color:red}}',
     },
     StatementBehindAnEarlierFileWithExternalImport: {
       todo: "only the leading statements of the bundle move ahead of the external imports, as in esbuild",
@@ -2727,6 +2797,29 @@ c {
       },
     });
   }
+
+  // A CSS module with "composes" cannot print inside a layer wrapper, so its copy under "layer(components)"
+  // stays a list of layers, as on main.
+  itBundled("css/CSSAtLayerOrderComposesModuleUnderLayerAndBare", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer x;
+        @import "./dep.css";
+        @import "./Button.module.css" layer(components);
+        @import "./Button.module.css";
+      `,
+      "/dep.css": `.d { color: green }`,
+      "/Button.module.css": /* css */ `
+        .base { color: red }
+        .btn { composes: base; color: blue }
+      `,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.css")).toStartWith("@layer x;.d{color:green}@layer components;.base_");
+    },
+  });
 
   // Random "@import" graphs (css-layer-order.ts). The bundle must give `.t` the rule that the sources give it, and
   // the same order of named layers. bun 1.4.3 is wrong on each of these.

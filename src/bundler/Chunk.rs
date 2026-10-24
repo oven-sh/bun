@@ -1414,7 +1414,7 @@ pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
     Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
     Owned(Vec<bun_css::LayerName>),
-    /// A stylesheet's `layers_pre_import`, borrowed. The order passes keep this entry as it is.
+    /// A stylesheet's `layers_pre_import`, borrowed. The order passes keep or remove this entry, and never change it.
     PreImport(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
 }
 

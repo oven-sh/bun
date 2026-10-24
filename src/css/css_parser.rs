@@ -676,7 +676,7 @@ pub trait CustomAtRuleParser {
         Vec::new()
     }
 
-    /// Called with 1 ahead of the block of `@media`, `@supports`, `@container` or `@-moz-document`, and with -1 after it.
+    /// Called with 1 ahead of the block of `@media`, `@supports` or `@-moz-document`, and with -1 after it.
     fn bump_conditional_depth(_this: &mut Self, _amount: i32) {}
 
     fn has_conditional_layer_names(_this: &mut Self) -> bool {
@@ -1523,6 +1523,17 @@ mod rule_parsers {
             ))
         }
 
+        /// The block of `@media`, `@supports` or `@-moz-document`: a layer in it is declared only when the condition holds.
+        fn parse_conditional_block(
+            &mut self,
+            input: &mut Parser,
+        ) -> CssResult<CssRuleList<T::AtRule>> {
+            T::bump_conditional_depth(self.at_rule_parser, 1);
+            let rules = self.parse_style_block(input);
+            T::bump_conditional_depth(self.at_rule_parser, -1);
+            rules
+        }
+
         pub(crate) fn parse_style_block(
             &mut self,
             input: &mut Parser,
@@ -1748,10 +1759,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Media(query) => {
-                    T::bump_conditional_depth(this.at_rule_parser, 1);
-                    let rules = this.parse_style_block(input);
-                    T::bump_conditional_depth(this.at_rule_parser, -1);
-                    let rules = rules?;
+                    let rules = this.parse_conditional_block(input)?;
                     this.rules
                         .v
                         .push(CssRule::Media(css_rules::media::MediaRule {
@@ -1762,10 +1770,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Supports(condition) => {
-                    T::bump_conditional_depth(this.at_rule_parser, 1);
-                    let rules = this.parse_style_block(input);
-                    T::bump_conditional_depth(this.at_rule_parser, -1);
-                    let rules = rules?;
+                    let rules = this.parse_conditional_block(input)?;
                     this.rules
                         .v
                         .push(CssRule::Supports(css_rules::supports::SupportsRule {
@@ -1776,10 +1781,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Container { name, condition } => {
-                    T::bump_conditional_depth(this.at_rule_parser, 1);
-                    let rules = this.parse_style_block(input);
-                    T::bump_conditional_depth(this.at_rule_parser, -1);
-                    let rules = rules?;
+                    let rules = this.parse_style_block(input)?;
                     this.rules
                         .v
                         .push(CssRule::Container(css_rules::container::ContainerRule {
@@ -1842,10 +1844,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::MozDocument => {
-                    T::bump_conditional_depth(this.at_rule_parser, 1);
-                    let rules = this.parse_style_block(input);
-                    T::bump_conditional_depth(this.at_rule_parser, -1);
-                    let rules = rules?;
+                    let rules = this.parse_conditional_block(input)?;
                     this.rules
                         .v
                         .push(CssRule::MozDocument(css_rules::document::MozDocumentRule {
@@ -2367,7 +2366,7 @@ pub struct StyleSheet<AtRule> {
     pub layer_names: Vec<LayerName>,
     /// The `@layer` names declared before the first `@import`. Empty when there is no `@import`.
     pub layers_pre_import: Vec<LayerName>,
-    /// Whether the file first declares one of its layers inside `@media`, `@supports`, `@container` or `@-moz-document`.
+    /// Whether the file first declares one of its layers inside `@media`, `@supports` or `@-moz-document`.
     pub has_conditional_layer_names: bool,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.

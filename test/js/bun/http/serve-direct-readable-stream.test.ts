@@ -1168,7 +1168,8 @@ describe("jobs of a pull() that ended the response", () => {
     };
     while (!stdout.includes("\n") && (await read()));
     const port = Number(stdout.slice(0, stdout.indexOf("\n")));
-    const body = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    // A fixture that printed no port has failed: the assertion below shows its stderr.
+    const body = port ? await (await fetch(`http://127.0.0.1:${port}/`)).text() : "";
     while (await read());
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect({ body, stdout, stderr }).toEqual({ body: "done", stdout: `${port}\njob of pull()\n`, stderr: "" });
@@ -1216,13 +1217,21 @@ describe("jobs of a pull() that ended the response", () => {
           socket.write("GET /1 HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET /2 HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
         });
         let tail = "";
-        socket.on("data", chunk => {
-          tail = (tail + chunk.toString("latin1")).slice(-6);
-          if (tail !== "second") return;
-          console.log(JSON.stringify(order));
+        let finished = false;
+        // Also ends the fixture when the connection fails or closes early.
+        function finish(...problem) {
+          if (finished) return;
+          finished = true;
+          console.log(JSON.stringify([...problem, ...order]));
           socket.destroy();
           server.stop(true);
+        }
+        socket.on("data", chunk => {
+          tail = (tail + chunk.toString("latin1")).slice(-6);
+          if (tail === "second") finish();
         });
+        socket.on("error", error => finish("socket error: " + error.code));
+        socket.on("close", () => finish("closed before the second response"));
         `,
         ],
         env: bunEnv,

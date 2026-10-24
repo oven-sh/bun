@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, runtimesWithNode } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast } from "harness";
 
 async function responseCorkOracle(mode: string) {
   const assert = require("node:assert/strict");
@@ -498,7 +498,9 @@ async function responseCorkOracle(mode: string) {
   console.log("ok");
 }
 
-const corkRuntimes = runtimesWithNode(24);
+const corkRuntimes: Array<[string, string]> = [["bun", bunExe()]];
+const corkNode = nodeExeAtLeast("24.0.0");
+if (corkNode) corkRuntimes.push(["node", corkNode]);
 describe.each(corkRuntimes)("response cork Node oracle (%s)", (_runtime, executable) => {
   for (const mode of [
     "pipeline",

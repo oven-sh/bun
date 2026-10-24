@@ -2870,8 +2870,7 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
     failed
 }
 
-/// Renamed aside first: a delete that stops midway must not leave the marker the next install checks.
-/// A refused rename keeps the entry whole.
+/// Renamed aside first, so that a delete that stops midway leaves no marker for the next install.
 fn remove_store_entry(dir: &Dir, name: &[u8], staging: Staging) -> sys::Maybe<()> {
     let staged = StagingPath(name, staging).to_string();
     let (from, to) = (zname(name), zname(staged.as_bytes()));

@@ -1602,7 +1602,7 @@ pub(crate) fn to_bytes(
         if seen.found_existing {
             let kept = &mut module_files[seen.index]; // pushed when this path was first seen
             // `require()` opens a database by the loader in its record. A `file` import of the same bytes reads either copy.
-            if matches!(output_file.loader, Loader::Sqlite | Loader::SqliteEmbedded)
+            if output_file.loader == Loader::SqliteEmbedded
                 && kept.hash.value == output_file.hash.value
             {
                 *kept = output_file;

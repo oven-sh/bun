@@ -553,12 +553,14 @@ describe("Bun.serve unix socket url", () => {
         ["sub dir/a:b@c.sock", "unix://sub%20dir/a:b@c.sock"],
         [`${dir}/a b#c%d.sock`, `unix://${dir}/a%20b%23c%25d.sock`],
         [`${dir}/a+b=c@d:e.sock`, `unix://${dir}/a+b=c@d:e.sock`],
-      ]) {
+        // Not a string, so its path is "[object Bun]".
+        [Bun, "unix://%5Bobject%20Bun%5D"],
+      ] as [string, string][]) {
         using server = serve({ unix: path, fetch: () => new Response("ok") });
         const url = server.url;
         expect({ href: url.href, decoded: decodeURIComponent(url.hostname + url.pathname) }).toEqual({
           href,
-          decoded: path,
+          decoded: String(path),
         });
       }
     } finally {

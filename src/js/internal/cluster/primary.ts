@@ -5,7 +5,7 @@ const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const { kHandle } = require("internal/shared");
 
-const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
+const sendHelper = $bindgen("node_cluster_binding.bind.ts", "sendHelperPrimary");
 const onInternalMessage = $bindgen("node_cluster_binding.bind.ts", "onInternalMessagePrimary");
 const { UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 

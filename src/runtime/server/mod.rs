@@ -102,7 +102,7 @@ macro_rules! for_each_mux_app {
 // route setup, …) split out to keep this module declaration file readable.
 
 #[path = "server_body.rs"]
-mod server_body;
+pub(crate) mod server_body;
 pub(crate) use server_body::{GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
@@ -910,12 +910,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             &mut strong_promise,
                             jsc::StrongOptional::empty(),
                         ));
-                        // `#[host_fn(export = ..)]` names its C-ABI shim `__jsc_host_<fn>`.
                         result.then2(
                             global,
                             strong_self,
-                            node_http_response::__jsc_host_node_http_request_on_resolve,
-                            node_http_response::__jsc_host_node_http_request_on_reject,
+                            crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onResolve,
+                            crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onReject,
                         );
                         is_async = true;
 

@@ -15,7 +15,7 @@ const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
   init: initMySQL,
-} = $rust("mysql.rs", "createBinding") as MySQLDotZig;
+} = $bindgen("mysql.bind.ts", "binding") as MySQLDotZig;
 
 initMySQL(function onResolveMySQLQuery(query, result, count, is_last, last_insert_rowid, affected_rows, statement) {
   $assert(result instanceof SQLResultArray, "Invalid result array");

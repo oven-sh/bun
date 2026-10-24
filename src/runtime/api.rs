@@ -117,7 +117,6 @@ pub(crate) mod bun_x509;
 
 pub(crate) mod bun {
     pub(crate) use super::bun_process as process;
-    pub(crate) use super::bun_secure_context as secure_context;
     pub(crate) use super::bun_ssl_context_cache as ssl_context_cache;
     pub(crate) use super::bun_subprocess as subprocess;
     pub(crate) use process::Rusage;

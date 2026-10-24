@@ -1,5 +1,7 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 
+export default b.module({ rustPath: "crate::api::bun_secure_context" });
+
 const fromOptions = { args: { options: b.any }, capability: "js", throws: true } as const;
 
 /** What `node:tls` hands out as `secureContext.context`. */
@@ -24,3 +26,5 @@ export const SecureContext = b.class({
     parsePkcs12: { args: { pfx: b.any, passphrase: b.any }, returns: b.any, capability: "js", throws: true },
   },
 });
+
+export const liveCount = b.fn({ returns: b.f64 });

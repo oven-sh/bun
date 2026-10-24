@@ -7416,6 +7416,227 @@ describe("session teardown", () => {
     }
   });
 
+  it("client session.close() finishes when a GOAWAY with an error code answers it", async () => {
+    let peer;
+    const server = net.createServer(socket => {
+      peer = socket;
+      socket.on("error", () => {});
+      socket.write(new http2utils.SettingsFrame().data);
+      const received = [];
+      socket.on("data", chunk => {
+        received.push(chunk);
+        const bytes = Buffer.concat(received).subarray(http2utils.kClientMagic.length);
+        for (let at = 0; at + 9 <= bytes.length; at += 9 + bytes.readUIntBE(at, 3)) {
+          if (bytes[at + 3] !== 7) continue;
+          // GOAWAY(INTERNAL_ERROR). The connection stays open.
+          socket.write(Buffer.concat([new http2utils.Frame(8, 7, 0, 0).data, Buffer.from([0, 0, 0, 0, 0, 0, 0, 2])]));
+          socket.removeAllListeners("data").resume();
+          return;
+        }
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const errors = [];
+      client.on("error", err => errors.push(err.code));
+      await once(client, "connect");
+      const sawGoaway = once(client, "goaway");
+      const closed = once(client, "close");
+      client.close();
+      await sawGoaway;
+      await closed;
+      expect({ destroyed: client.destroyed, errors }).toEqual({ destroyed: true, errors: [] });
+    } finally {
+      client.destroy();
+      peer?.destroy();
+      server.close();
+    }
+  });
+
+  it("a response that waits for trailers doesn't emit 'wantTrailers' when the connection closes", async () => {
+    const server = http2.createServer();
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.on("error", () => {});
+      const [stream] = await once(server, "stream");
+      const events = [];
+      for (const name of ["aborted", "wantTrailers", "finish", "error"]) stream.on(name, () => events.push(name));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.write("partial");
+      await once(req, "data");
+      const closed = once(stream, "close");
+      client.destroy();
+      await closed;
+      expect(events).toEqual(["aborted", "finish"]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  describe("a stream's 'aborted' listener", () => {
+    const refused = "ERR_HTTP2_INVALID_SESSION";
+    const attempt = call => {
+      try {
+        call();
+        return "accepted";
+      } catch (err) {
+        return err.code;
+      }
+    };
+    const callSession = session => ({
+      ping: attempt(() => session.ping(() => {})),
+      settings: attempt(() => session.settings({})),
+      goaway: attempt(() => session.goaway()),
+      setLocalWindowSize: attempt(() => session.setLocalWindowSize(70000)),
+    });
+    const look = (session, stream) => ({
+      destroyed: session.destroyed,
+      hasSession: stream.session === session,
+      remoteAddress: typeof session.socket.remoteAddress,
+      ...callSession(session),
+    });
+
+    // An open stream on both ends, and the sockets under the two sessions.
+    async function openStream(settings) {
+      const server = http2.createServer({ settings });
+      server.on("sessionError", () => {});
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address();
+      const accepted = once(server, "connection");
+      const clientSocket = net.connect(port, "127.0.0.1");
+      const client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => clientSocket });
+      client.on("error", () => {});
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.on("error", () => {});
+      const [stream] = await once(server, "stream");
+      stream.on("error", () => {});
+      stream.session.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      await once(req, "response");
+      return { server, client, req, stream, clientSocket, serverSocket: (await accepted)[0] };
+    }
+
+    it.each([
+      ["client", "session.destroy()", ({ client }) => client.destroy()],
+      ["client", "session.destroy(err)", ({ client }) => client.destroy(new Error("boom"))],
+      ["client", "a GOAWAY with an error code", ({ stream }) => stream.session.goaway(NGHTTP2_INTERNAL_ERROR, 1)],
+      [
+        "client",
+        "a GOAWAY with an error code and a lower id",
+        ({ stream }) => stream.session.goaway(NGHTTP2_INTERNAL_ERROR, 0),
+      ],
+    ])("sees a destroyed %s session during %s", async (side, _, teardown) => {
+      const pair = await openStream();
+      try {
+        const stream = side === "client" ? pair.req : pair.stream;
+        const session = stream.session;
+        const seen = Promise.withResolvers();
+        stream.on("aborted", () => seen.resolve(look(session, stream)));
+        teardown(pair);
+        expect(await seen.promise).toEqual({
+          destroyed: true,
+          hasSession: true,
+          remoteAddress: "string",
+          ping: refused,
+          settings: refused,
+          goaway: refused,
+          setLocalWindowSize: refused,
+        });
+      } finally {
+        pair.client.destroy();
+        pair.server.close();
+      }
+    });
+
+    it("sees a destroyed client session on a request that waits for a stream slot", async () => {
+      const pair = await openStream({ maxConcurrentStreams: 1 });
+      try {
+        const queued = pair.client.request({ ":path": "/", ":method": "POST" });
+        queued.on("error", () => {});
+        expect(queued.pending).toBe(true);
+        const seen = Promise.withResolvers();
+        queued.on("aborted", () => seen.resolve(pair.client.destroyed));
+        pair.client.destroy();
+        expect(await seen.promise).toBe(true);
+      } finally {
+        pair.client.destroy();
+        pair.server.close();
+      }
+    });
+
+    // Like Node, which closes the streams before it marks the session.
+    it.each([
+      ["client", "an open stream", false],
+      ["client", "a request that waits for a stream slot", true],
+      ["server", "an open stream", false],
+    ])("sees a live %s session on %s when the connection closes", async (side, _, queue) => {
+      const pair = await openStream({ maxConcurrentStreams: 1 });
+      try {
+        let stream = side === "client" ? pair.req : pair.stream;
+        const session = stream.session;
+        if (queue) {
+          stream = pair.client.request({ ":path": "/", ":method": "POST" });
+          stream.on("error", () => {});
+        }
+        const seen = Promise.withResolvers();
+        stream.on("aborted", () =>
+          seen.resolve({ destroyed: session.destroyed, hasSession: stream.session === session }),
+        );
+        (side === "client" ? pair.serverSocket : pair.clientSocket).destroy();
+        expect(await seen.promise).toEqual({ destroyed: false, hasSession: true });
+      } finally {
+        pair.client.destroy();
+        pair.server.close();
+      }
+    });
+
+    // The types of the frames in `bytes`, from the first GOAWAY (7) on.
+    function frameTypesFromGoaway(bytes) {
+      const types = [];
+      for (let at = 0; at + 9 <= bytes.length; at += 9 + bytes.readUIntBE(at, 3)) types.push(bytes[at + 3]);
+      return types.slice(types.indexOf(7));
+    }
+
+    it("can't put a frame behind the GOAWAY of client session.destroy()", async () => {
+      const received = [];
+      const sawRequest = Promise.withResolvers();
+      const closed = Promise.withResolvers();
+      const server = net.createServer(socket => {
+        socket.write(new http2utils.SettingsFrame().data);
+        socket.on("data", chunk => {
+          received.push(chunk);
+          // The preface, SETTINGS and HEADERS (1).
+          const bytes = Buffer.concat(received).subarray(http2utils.kClientMagic.length);
+          for (let at = 0; at + 9 <= bytes.length; at += 9 + bytes.readUIntBE(at, 3)) {
+            if (bytes[at + 3] === 1) sawRequest.resolve();
+          }
+        });
+        socket.on("error", () => {});
+        socket.on("close", closed.resolve);
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        client.on("error", () => {});
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        req.on("error", () => {});
+        await sawRequest.promise;
+        req.on("aborted", () => callSession(client));
+        client.destroy();
+        await closed.promise;
+        expect(frameTypesFromGoaway(Buffer.concat(received).subarray(http2utils.kClientMagic.length))).toEqual([7]);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+  });
+
   it("server session.close() completes when another request arrives after its GOAWAY", async () => {
     // :method GET, :scheme http and :path / from the static table, then a literal :authority.
     const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);

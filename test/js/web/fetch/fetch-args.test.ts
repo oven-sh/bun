@@ -166,7 +166,7 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
   }
 
   const cases: [name: string, code: string, expectedStderr: string][] = [
-    ["no arguments", `fetch()`, "fetch() expects a string but received no arguments"],
+    ["no arguments", `fetch()`, 'The "input" argument must be specified'],
     ["blank url", `fetch("")`, "fetch() URL must not be a blank string"],
     ["number url", `fetch(123)`, "fetch() URL is invalid"],
     ["undefined url", `fetch(undefined)`, "fetch() URL is invalid"],

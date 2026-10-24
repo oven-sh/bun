@@ -1,5 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
+export default b.module({ rustPath: "crate::server::node_http_response" });
+
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 const head = {
   /** `ServerResponse` has checked the range. */
@@ -70,3 +72,8 @@ export const NodeHTTPResponse = b.class({
     },
   },
 });
+
+/** The reactions to the promise that the `node:http` request handler returned. */
+const reaction = { args: { value: b.any, context: NodeHTTPResponse.withValue }, capability: "js" } as const;
+export const onResolve = b.fn({ ...reaction, export: "Bun__NodeHTTPRequest__onResolve" });
+export const onReject = b.fn({ ...reaction, export: "Bun__NodeHTTPRequest__onReject" });

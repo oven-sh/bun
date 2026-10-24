@@ -72,19 +72,6 @@ pub(crate) use windows_named_pipe::WindowsNamedPipe;
 
 pub(crate) use udp_socket::UDPSocket;
 
-/// Codegen path alias.
-///
-/// `generated_js2native.rs` lowers `$rust(socket.rs, fnName)` to
-/// `crate::socket::socket::fn_name(...)` (one path segment per directory plus
-/// the file stem). The Rust port placed the bodies in `socket_body.rs` to keep
-/// `mod.rs` as the wiring layer, so re-export the js2native entry points under
-/// the name the generator expects rather than special-casing the generator.
-pub(crate) mod socket {
-    pub(crate) use super::socket_body::{
-        js_create_socket_pair, js_set_socket_options, testing_ap_is,
-    };
-}
-
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
 // vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`). The

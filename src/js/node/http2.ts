@@ -1841,13 +1841,7 @@ abstract class Http2Session extends EventEmitter {
   }
   goaway(code = NGHTTP2_NO_ERROR, lastStreamID = 0, opaqueData?) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
-
-    if (opaqueData !== undefined) {
-      validateBuffer(opaqueData, "opaqueData");
-    }
-    validateInteger(code, "code", 0, kMaxUint32);
-    validateNumber(lastStreamID, "lastStreamID");
-    this[bunHTTP2Native]?.goaway(code, lastStreamID, opaqueData ?? kNoOpaqueData);
+    sendGoaway(this, code, lastStreamID, opaqueData);
   }
   [EventEmitter.captureRejectionSymbol](err, event, ...args) {
     switch (event) {
@@ -1860,6 +1854,16 @@ abstract class Http2Session extends EventEmitter {
         this.destroy(err);
     }
   }
+}
+
+// goaway() without its check for a destroyed session, which the GOAWAY of destroy() wouldn't pass.
+function sendGoaway(session: Http2Session, code: number, lastStreamID: number, opaqueData?: Buffer) {
+  if (opaqueData !== undefined) {
+    validateBuffer(opaqueData, "opaqueData");
+  }
+  validateInteger(code, "code", 0, kMaxUint32);
+  validateNumber(lastStreamID, "lastStreamID");
+  session[bunHTTP2Native]?.goaway(code, lastStreamID, opaqueData ?? kNoOpaqueData);
 }
 
 function streamErrorFromCode(code: number) {
@@ -2580,9 +2584,9 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   }
 
   get session() {
-    // node detaches the session reference once the session has been destroyed.
+    // The listeners that the session's teardown runs still get it, as in Node, though `session.destroyed` is already true.
     const session = this[bunHTTP2Session];
-    if (session == null || session.destroyed) return undefined;
+    if (session == null || session[bunHTTP2Socket] === null) return undefined;
     return session;
   }
 
@@ -2784,7 +2788,12 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
             // markWritableDone before control returns here: stash the callback there so the
             // writable finishes ('finish' before 'close') instead of being torn down mid-final.
             this[bunHTTP2StreamFinal] = callback;
-            if ((this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0 || this.listenerCount("wantTrailers") === 0) {
+            if (
+              (this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0 ||
+              // Nobody is left to send trailers to.
+              session[kTransportClosed] ||
+              this.listenerCount("wantTrailers") === 0
+            ) {
               // No 'wantTrailers' listener — or the stream was close()d while the last write
               // was still in flight, in which case node never asks for trailers (the compat
               // onStreamTrailersReady would throw ERR_HTTP2_INVALID_STREAM on a closed
@@ -3794,7 +3803,6 @@ function scheduleSettingsAckGraceNT(session) {
 }
 // Every destroy() with no error that the session decides on itself goes through here, so destroy() can tell it from the program's.
 function destroySessionInternally(session: Http2Session) {
-  if (session.destroyed) return;
   session[kInternalDestroy] = true;
   session.destroy();
 }
@@ -5020,6 +5028,8 @@ class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
   #destroying: boolean = false;
+  // An error GOAWAY has arrived. destroy() follows once the streams that the peer left out are rejected.
+  #failedByGoaway: boolean = false;
   /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
   /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
@@ -5307,6 +5317,7 @@ class ClientHttp2Session extends Http2Session {
       // fail over to a fresh connection).
       self[kReceivedGoaway] = true;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
+      if (errorCode !== constants.NGHTTP2_NO_ERROR) self.#failedByGoaway = true;
       // node: streams the peer did not process (id above the GOAWAY's lastStreamId) are
       // destroyed with ERR_HTTP2_GOAWAY_SESSION - clients (grpc) rely on that error class to
       // retry on a fresh connection instead of reporting a cancellation.
@@ -5443,6 +5454,8 @@ class ClientHttp2Session extends Http2Session {
     settleUnreadClosedStreams(unread, err, closedAndIdle, true);
     // Node's socketOnClose calls close() on a session that's still attached to the socket.
     if (!this.destroyed) this.#closeCalled = true;
+    // Like Node's socketOnClose, before the session counts as destroyed.
+    this.#cancelPendingRequests(err, NGHTTP2_NO_ERROR);
     this.destroy(err, NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;
   }
@@ -5489,7 +5502,8 @@ class ClientHttp2Session extends Http2Session {
     return this[bunHTTP2Socket]?.connecting === false;
   }
   get destroyed() {
-    return this[bunHTTP2Socket] === null;
+    // Like Node's flag, true before a teardown reaches the first stream. The socket slot is cleared last.
+    return this.#destroying || this.#failedByGoaway || this[bunHTTP2Socket] === null;
   }
   get encrypted() {
     return this.#encrypted;
@@ -5499,12 +5513,12 @@ class ClientHttp2Session extends Http2Session {
   }
 
   get remoteSettings() {
-    if (this.destroyed || this.connecting) return {};
+    if (this[bunHTTP2Socket] === null || this.connecting) return {};
     return (this.#remoteSettings ??= getDefaultSettings());
   }
 
   get localSettings() {
-    if (this.destroyed || this.connecting) return {};
+    if (this[bunHTTP2Socket] === null || this.connecting) return {};
     return (this.#localSettings ??= getDefaultSettings());
   }
 
@@ -5821,8 +5835,24 @@ class ClientHttp2Session extends Http2Session {
     }
   }
 
+  // Requests that wait for the connect or for a stream slot never reached the wire. Like Node, cancel them with ERR_HTTP2_STREAM_CANCEL, whose cause is the session's error.
+  #cancelPendingRequests(error: Error | null | undefined, code: number | undefined) {
+    const pendingRequests = this.#pendingRequests;
+    this.#pendingRequests = null;
+    if (pendingRequests === null || pendingRequests.size === 0) return;
+    const cancelError = createPendingStreamCancelError(error);
+    const sessionCode = this[kGoawayCode] || code;
+    for (const req of pendingRequests) {
+      if (!req.destroyed) {
+        // Without a code, Http2Stream#_destroy picks NGHTTP2_INTERNAL_ERROR for the cancel error, like Node.
+        if (sessionCode && !req.rstCode) req.rstCode = sessionCode;
+        req.destroy(cancelError);
+      }
+    }
+  }
+
   destroy(error?: Error | number | null, code?: number) {
-    // Idempotent like Node's. Uses a latch because `destroyed` only flips once the socket detaches below.
+    // Idempotent like Node's. `destroyed` reads this latch.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
     if (this.#destroying) {
       return;
@@ -5864,27 +5894,10 @@ class ClientHttp2Session extends Http2Session {
       const endsGracefulClose = this[kInternalDestroy] === true && this.#isClosedAndIdle();
       const unread = unreadClosedStreams(this.#parser);
       this.#closed = true;
-      {
-        // Requests still queued (waiting for connect or for a concurrency slot) never reached the
-        // wire; node cancels them with ERR_HTTP2_STREAM_CANCEL (carrying the session error, if any,
-        // as its cause).
-        const pendingRequests = this.#pendingRequests;
-        this.#pendingRequests = null;
-        if (pendingRequests !== null && pendingRequests.size > 0) {
-          const cancelError = createPendingStreamCancelError(error);
-          const sessionCode = this[kGoawayCode] || code;
-          for (const req of pendingRequests) {
-            if (!req.destroyed) {
-              // Without a code, Http2Stream#_destroy picks NGHTTP2_INTERNAL_ERROR for the cancel error, like Node.
-              if (sessionCode && !req.rstCode) req.rstCode = sessionCode;
-              req.destroy(cancelError);
-            }
-          }
-        }
-      }
+      this.#cancelPendingRequests(error, code);
       if (socket && (!this[kGoawaySent] || code)) {
         // close() already sent GOAWAY(NO_ERROR), so only an error code is worth a second frame.
-        this.goaway(code || constants.NGHTTP2_NO_ERROR);
+        sendGoaway(this, code || constants.NGHTTP2_NO_ERROR, 0);
       }
       const parser = this.#parser;
       if (parser) {

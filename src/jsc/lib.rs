@@ -32,11 +32,10 @@ extern crate self as bun_jsc;
 use core::ffi::{c_char, c_void};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Proc-macro re-exports. `#[bun_jsc::host_fn]` /
-// `#[bun_jsc::host_call]` are implemented in the `bun_jsc_macros` crate
+// Proc-macro re-exports. `#[bun_jsc::host_call]` is implemented in the `bun_jsc_macros` crate
 // (Rust forbids `proc-macro = true` crates from exporting non-macro items).
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc_macros::{JsAffine, host_call, host_fn};
+pub use bun_jsc_macros::{JsAffine, host_call};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
@@ -434,8 +433,6 @@ pub mod bytecode_order_recorder;
 pub mod cached_bytecode;
 #[path = "DOMFormData.rs"]
 pub mod dom_form_data;
-#[path = "host_object.rs"]
-pub mod host_object;
 #[path = "JSArrayIterator.rs"]
 pub mod js_array_iterator;
 #[path = "JSGlobalObject.rs"]
@@ -678,23 +675,8 @@ impl ThrowFmtArgs for core::fmt::Arguments<'_> {
 pub use bun_core::mark_binding;
 
 pub use self::host_fn::{
-    JSHostFn, JSHostFnZig, from_js_host_call, from_js_host_call_generic, to_js_host_call,
-    to_js_host_fn_result,
+    JSHostFn, from_js_host_call, from_js_host_call_generic, to_js_host_call, to_js_host_fn_result,
 };
-pub use self::host_object::{HostFnEntry, create_host_function_object};
-
-// Compile-time smoke test for the `host_fn` proc-macro (no runtime body —
-// just asserts the expansion type-checks against the real
-// `JSGlobalObject`/`CallFrame`/`JSValue`/`JsResult` shapes).
-#[cfg(test)]
-mod __macro_smoke {
-    use super::{CallFrame, JSGlobalObject, JSValue, JsResult};
-
-    #[crate::host_fn(export = "SmokeFree__call")]
-    fn smoke_free(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
-    }
-}
 
 // JSC Classes Bindings — re-exported from their per-type modules (declared
 // above with `#[path = "…"] pub mod …;`). These were previously placeholder

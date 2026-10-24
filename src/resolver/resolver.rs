@@ -1594,9 +1594,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // The `Result` describes one file: the path that `Result::path()` returns.
-            // The "main" twin of a "module" file is only rewritten to its real path
-            // below. It gets its own `Result` when something requires the package.
+            // Only the path that `Result::path()` returns takes attributes.
             if primary {
                 let mut needs_side_effects = true;
                 // if we don't have it here, they might put it in a sideEfffects
@@ -1605,9 +1603,7 @@ impl<'a> Resolver<'a> {
                 if let Some(existing) = Result::deref_package_json(result.package_json) {
                     use crate::package_json::SideEffects as PJSideEffects;
                     let nameless = existing.name.is_empty();
-                    // A package.json with no "name" speaks for the files of its own
-                    // directory. A proxy directory (`{ "module": "../esm/a.js" }`) names
-                    // a file outside of it: the enclosing package.json decides below.
+                    // A nameless package.json decides only for files in its own directory.
                     if !nameless
                         || existing
                             .source

@@ -4649,15 +4649,48 @@ describe("css tests", () => {
     );
     minify_test(
       ".foo { background: linear-gradient(to top, blue, yellow); }",
-      ".foo{background:linear-gradient(#ff0,#00f)}",
+      ".foo{background:linear-gradient(0deg,#00f,#ff0)}",
     );
     minify_test(
       ".foo { background: linear-gradient(to top, blue 10%, yellow 20%); }",
-      ".foo{background:linear-gradient(#ff0 80%,#00f 90%)}",
+      ".foo{background:linear-gradient(0deg,#00f 10%,#ff0 20%)}",
     );
     minify_test(
       ".foo { background: linear-gradient(to top, blue 10px, yellow 20px); }",
       ".foo{background:linear-gradient(0deg,#00f 10px,#ff0 20px)}",
+    );
+    // An upward gradient keeps its stops as written. The same stops in reverse order can paint differently.
+    minify_test(
+      ".foo { background: linear-gradient(to top, green 50%, red 0%); }",
+      ".foo{background:linear-gradient(0deg,green 50%,red 0%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(0deg, #1f1f29 100%, #242430 0%); }",
+      ".foo{background:linear-gradient(0deg,#1f1f29 100%,#242430 0%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(0turn, green 50%, red 0%); }",
+      ".foo{background:linear-gradient(0turn,green 50%,red 0%)}",
+    );
+    minify_test(
+      ".foo { background: repeating-linear-gradient(to top, green 50%, red 0%); }",
+      ".foo{background:repeating-linear-gradient(0deg,green 50%,red 0%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(0deg, #d9d9d9, #d9d9d9 50%, transparent 50%); }",
+      ".foo{background:linear-gradient(0deg,#d9d9d9,#d9d9d9 50%,#0000 50%)}",
+    );
+    minify_test(
+      ".foo { background: repeating-linear-gradient(to top, blue 10%, yellow 20%); }",
+      ".foo{background:repeating-linear-gradient(0deg,#00f 10%,#ff0 20%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, 25%, blue); }",
+      ".foo{background:linear-gradient(0deg,red,25%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, 50%, blue); }",
+      ".foo{background:linear-gradient(0deg,red,#00f)}",
     );
     minify_test(
       ".foo { background: linear-gradient(135deg, yellow, blue); }",
@@ -4684,6 +4717,39 @@ describe("css tests", () => {
       ".foo{background:linear-gradient(#ff0,#00f)}",
     );
     minify_test(
+      ".foo { background: linear-gradient(yellow 0%, 50%, blue 100%); }",
+      ".foo{background:linear-gradient(#ff0 0%,#00f 100%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(yellow, 50%, blue 100%, red); }",
+      ".foo{background:linear-gradient(#ff0,#00f 100%,red)}",
+    );
+    // A `50%` hint stays when its two stops are not known to be at 0% and 100%.
+    minify_test(
+      ".foo { background: linear-gradient(yellow 0%, 50%, blue 60%); }",
+      ".foo{background:linear-gradient(#ff0 0%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(yellow 10%, 50%, blue); }",
+      ".foo{background:linear-gradient(#ff0 10%,50%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(yellow, 50%, blue, red); }",
+      ".foo{background:linear-gradient(#ff0,50%,#00f,red)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red, blue 20%, 50%, green 60%); }",
+      ".foo{background:linear-gradient(red,#00f 20%,50%,green 60%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(green 30%, red 0%, 50%, blue 100%); }",
+      ".foo{background:linear-gradient(green 30%,red 0%,50%,#00f 100%)}",
+    );
+    cssTest(
+      ".foo { background: linear-gradient(yellow 0%, 50%, blue 60%); }",
+      ".foo { background: linear-gradient(#ff0 0%, 50%, #00f 60%); }",
+    );
+    minify_test(
       ".foo { background: linear-gradient(yellow, 20px, blue); }",
       ".foo{background:linear-gradient(#ff0,20px,#00f)}",
     );
@@ -4705,7 +4771,7 @@ describe("css tests", () => {
     );
     minify_test(
       ".foo { background: linear-gradient(0, yellow, blue); }",
-      ".foo{background:linear-gradient(#00f,#ff0)}",
+      ".foo{background:linear-gradient(0deg,#ff0,#00f)}",
     );
     minify_test(
       ".foo { background: -webkit-linear-gradient(yellow, blue) }",
@@ -4772,6 +4838,18 @@ describe("css tests", () => {
       ".foo{background:-o-repeating-linear-gradient(#ff0 10px,#00f 50px)}",
     );
     minify_test(".foo { background: radial-gradient(yellow, blue) }", ".foo{background:radial-gradient(#ff0,#00f)}");
+    minify_test(
+      ".foo { background: radial-gradient(yellow, 50%, blue) }",
+      ".foo{background:radial-gradient(#ff0,#00f)}",
+    );
+    minify_test(
+      ".foo { background: radial-gradient(yellow 0%, 50%, blue 60%) }",
+      ".foo{background:radial-gradient(#ff0 0%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: radial-gradient(circle 50px, red, 50%, blue 100%, 50%, green 200%) }",
+      ".foo{background:radial-gradient(50px,red,#00f 100%,50%,green 200%)}",
+    );
     minify_test(
       ".foo { background: radial-gradient(at top left, yellow, blue) }",
       ".foo{background:radial-gradient(at 0 0,#ff0,#00f)}",
@@ -4865,6 +4943,11 @@ describe("css tests", () => {
       ".foo{background:-webkit-gradient(radial,50% 50%,0,50% 50%,100,from(#00f),to(#ff0))}",
     );
     minify_test(".foo { background: conic-gradient(#f06, gold) }", ".foo{background:conic-gradient(#f06,gold)}");
+    minify_test(".foo { background: conic-gradient(yellow, 50%, blue) }", ".foo{background:conic-gradient(#ff0,#00f)}");
+    minify_test(
+      ".foo { background: conic-gradient(yellow 0%, 50%, blue 60%) }",
+      ".foo{background:conic-gradient(#ff0 0%,50%,#00f 60%)}",
+    );
     minify_test(
       ".foo { background: conic-gradient(at 50% 50%, #f06, gold) }",
       ".foo{background:conic-gradient(#f06,gold)}",

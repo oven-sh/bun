@@ -29,7 +29,7 @@ pub trait GradientPosition: Sized + Clone + PartialEq {
     fn parse(input: &mut Parser) -> Result<Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
     /// `true` iff this is `DimensionPercentage::Percentage(p)` with `p.v == v`.
-    /// Used by `serialize_items` to skip the useless `50%` interpolation hint.
+    /// Used by `serialize_items` and `is_midpoint_hint` to find the useless `50%` interpolation hint.
     fn is_percentage_with_value(&self, v: f32) -> bool;
 }
 
@@ -343,68 +343,6 @@ impl LinearGradient {
         if angle == 180.0 {
             // todo_stuff.depth
             serialize_items::<LengthPercentage>(&self.items, dest)?;
-        }
-        // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
-        // we can flip the gradient the other direction and omit the direction.
-        else if angle == 0.0
-            && dest.minify
-            && 'brk: {
-                for item in self.items.iter() {
-                    match item {
-                        GradientItem::Hint(h) if !matches!(h, LengthPercentage::Percentage(_)) => {
-                            break 'brk false;
-                        }
-                        GradientItem::ColorStop(cs)
-                            if cs
-                                .position
-                                .as_ref()
-                                .is_some_and(|p| !matches!(p, LengthPercentage::Percentage(_))) =>
-                        {
-                            break 'brk false;
-                        }
-                        _ => {}
-                    }
-                }
-                true
-            }
-        {
-            let mut flipped_items: Vec<GradientItem<LengthPercentage>> =
-                Vec::with_capacity(self.items.len());
-
-            let mut i: usize = self.items.len();
-            while i > 0 {
-                i -= 1;
-                let item = &self.items[i];
-                match item {
-                    GradientItem::Hint(h) => match h {
-                        LengthPercentage::Percentage(p) => flipped_items.push(GradientItem::Hint(
-                            LengthPercentage::Percentage(Percentage { v: 1.0 - p.v }),
-                        )),
-                        _ => unreachable!(),
-                    },
-                    GradientItem::ColorStop(cs) => {
-                        flipped_items.push(GradientItem::ColorStop(ColorStop {
-                            color: cs.color.clone(),
-                            position: if let Some(p) = &cs.position {
-                                match p {
-                                    LengthPercentage::Percentage(perc) => {
-                                        Some(LengthPercentage::Percentage(Percentage {
-                                            v: 1.0 - perc.v,
-                                        }))
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            } else {
-                                None
-                            },
-                        }))
-                    }
-                }
-            }
-
-            if serialize_items::<LengthPercentage>(&flipped_items, dest).is_err() {
-                return Err(dest.add_fmt_error());
-            }
         } else {
             if self.direction != LineDirection::Vertical(VerticalPositionKeyword::Bottom)
                 && self.direction != LineDirection::Angle(Angle::Deg(180.0))
@@ -1478,6 +1416,28 @@ pub(crate) fn parse_items<D: GradientPosition>(
     Ok(items)
 }
 
+/// Whether the `50%` hint `hint` of `items` is halfway between its two stops. Without color stop fixup that is only known between a first stop at 0% and a stop at 100%.
+#[cold]
+fn is_midpoint_hint<D: GradientPosition>(items: &[GradientItem<D>], hint: &D) -> bool {
+    let [
+        GradientItem::ColorStop(a),
+        GradientItem::Hint(second),
+        GradientItem::ColorStop(b),
+        rest @ ..,
+    ] = items
+    else {
+        return false;
+    };
+    core::ptr::eq(second, hint)
+        && a.position
+            .as_ref()
+            .is_none_or(|p| p.is_percentage_with_value(0.0))
+        && match &b.position {
+            Some(p) => p.is_percentage_with_value(1.0),
+            None => rest.is_empty(),
+        }
+}
+
 fn serialize_items<D: GradientPosition>(
     items: &[GradientItem<D>],
     dest: &mut Printer,
@@ -1487,7 +1447,7 @@ fn serialize_items<D: GradientPosition>(
     for item in items.iter() {
         // Skip useless hints
         if let GradientItem::Hint(h) = item {
-            if h.is_percentage_with_value(0.5) {
+            if h.is_percentage_with_value(0.5) && is_midpoint_hint(items, h) {
                 continue;
             }
         }

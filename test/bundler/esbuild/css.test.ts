@@ -1263,6 +1263,24 @@ b {
       api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`);
     },
   });
+  itBundled("css/MinifyKeepsUpwardGradientStopsAsWritten", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: linear-gradient(to top, green 50%, red 0%) }
+        .b { background: repeating-linear-gradient(to top, green 50%, red 0%) }
+        .c { background: linear-gradient(0deg, #d9d9d9, #d9d9d9 50%, transparent 50%) }
+      `,
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+        .a{background:linear-gradient(0deg,green 50%,red 0%)}
+        .b{background:repeating-linear-gradient(0deg,green 50%,red 0%)}
+        .c{background:linear-gradient(0deg,#d9d9d9,#d9d9d9 50%,#0000 50%)}
+      `);
+    },
+  });
 
   itBundled("css/IgnoreURLsInAtRulePrelude", {
     // GENERATED

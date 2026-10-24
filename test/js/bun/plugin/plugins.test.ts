@@ -2011,7 +2011,6 @@ it.concurrent("the path passed to onLoad is still valid after the module is free
   });
 });
 
-
 describe.concurrent("bare runtime plugin aliases", () => {
   it.each(["resolved-key-alias", "@scope/alias", "alias/subpath"])("resolves %s to one ESM record", async alias => {
     using dir = tempDir("plugin-bare-alias", {

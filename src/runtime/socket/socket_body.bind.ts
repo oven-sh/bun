@@ -1,5 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
+import { ServerWebSocket } from "../server/server.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::socket_body" });
 
@@ -139,3 +140,77 @@ export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
 export const getBytesRead = b.fn({ args: { socket: SocketHandle }, returns: b.f64 });
+
+// `bun:internal-for-testing`
+export const createSocketPair = b.fn({ ...js, returns: b.array(b.i32) });
+/** `other` is a `WebSocket` or the native handle of a node:http server socket. */
+export const AnySocket = b.union({ tcp: TCPSocket, tls: TLSSocket, serverWebSocket: ServerWebSocket, other: b.any });
+export const setSocketOptions = b.fn({ ...js, args: { socket: AnySocket, option: b.i32, size: b.i32 } });
+const testing = (name: string) => `crate::socket::socket_body::testing_apis::${name}`;
+export const socketFaultInjectionAvailable = b.fn({
+  returns: b.bool,
+  rustPath: testing("socket_fault_injection_available"),
+});
+export const namedPipeLiveCount = b.fn({ returns: b.usize, rustPath: testing("named_pipe_live_count") });
+export const upgradedDuplexLiveCount = b.fn({ returns: b.usize, rustPath: testing("upgraded_duplex_live_count") });
+/** `count` is truncated and clamped to an `i32`. */
+export const sweepSocketTimers = b.fn({
+  ...js,
+  args: { count: b.f64.loose.allowBigInt },
+  rustPath: testing("sweep_socket_timers"),
+});
+export const clearSocketFaults = b.fn({ ...js, rustPath: testing("clear_socket_faults") });
+/** `socket`, `close` and `shutdown` have no hook in bsd.c: a rule for one would never fire. */
+export const SocketFaultSyscall = b.enumeration([
+  "recv",
+  "send",
+  "writev",
+  "sendmsg",
+  "recvmsg",
+  "connect",
+  "accept",
+  "ssl_loop_buffer",
+  "poll_start",
+  "session_buffer",
+  "ssl_write",
+]);
+export const SocketFaultAction = b.enumeration(["errno", "short", "zero", "excess", "none"]);
+export const SocketFaultErrnoName = b.enumeration([
+  "ECONNRESET",
+  "EPIPE",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "EAGAIN",
+  "EWOULDBLOCK",
+  "EINTR",
+  "ENOBUFS",
+  "ENOMEM",
+  "EBADF",
+  "EINVAL",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EPROTOTYPE",
+  "EMFILE",
+  "EPERM",
+]);
+export const SocketFaultErrno = b.union({ name: SocketFaultErrnoName, code: b.i32 });
+const count = b.i32.wrap.emptyStringAsNull;
+export const SocketFaultRule = b.dictionary(
+  {
+    syscall: SocketFaultSyscall,
+    action: SocketFaultAction,
+    /** `errno` is a macro in C++. */
+    errno: { type: SocketFaultErrno.emptyStringAsNull, rustName: "error" },
+    bytes: count,
+    fd: count,
+    after: count,
+    repeat: count,
+  },
+  { reportedAs: "rule" },
+);
+export const setSocketFault = b.fn({
+  ...js,
+  args: { rule: SocketFaultRule },
+  returns: b.bool,
+  rustPath: testing("set_socket_fault"),
+});

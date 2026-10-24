@@ -278,7 +278,7 @@ function lazyBlockList() {
   return (BlockList ??= $bindgen("BlockList.bind.ts", "BlockList"));
 }
 const newDetachedSocket = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
-const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+const doConnect = $bindgen("node_net_binding.bind.ts", "doConnect");
 
 const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const upgradeDuplexToTLS = $bindgen("socket_body.bind.ts", "upgradeDuplexToTLS");

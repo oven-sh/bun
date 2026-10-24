@@ -111,7 +111,7 @@ macro_rules! for_each_mux_app {
 // route setup, …) split out to keep this module declaration file readable.
 
 #[path = "server_body.rs"]
-mod server_body;
+pub(crate) mod server_body;
 pub(crate) use server_body::{GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
@@ -1489,14 +1489,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 &mut strong_promise,
                                 jsc::StrongOptional::empty(),
                             ));
-                            // `#[host_fn(export = …)]` emits its
-                            // C-ABI shim as `__jsc_host_<fn>`; the export name
-                            // is link-only.
                             result.then2(
                                 global,
                                 strong_self,
-                                node_http_response::__jsc_host_node_http_request_on_resolve,
-                                node_http_response::__jsc_host_node_http_request_on_reject,
+                                crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onResolve,
+                                crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onReject,
                             );
                             is_async = true;
                         }
@@ -3773,21 +3770,6 @@ impl AnyServer {
         }
     }
 
-    /// `None` if `value` is not what `Bun.serve` returns. `value` keeps the server alive.
-    pub(crate) fn from_js(value: JSValue) -> Option<AnyServer> {
-        if let Some(server) = value.as_class_ref::<HTTPServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
-        } else if let Some(server) = value.as_class_ref::<HTTPSServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
-        } else if let Some(server) = value.as_class_ref::<DebugHTTPServer>() {
-            Some(Self::from(std::ptr::from_ref(server)))
-        } else {
-            value
-                .as_class_ref::<DebugHTTPSServer>()
-                .map(|server| Self::from(std::ptr::from_ref(server)))
-        }
-    }
-
     /// Re-pack into the tagged-pointer wire format
     /// (`u49` ptr | `u15` tag) for the C++ FFI boundary. Inverse of
     /// [`NodeHTTPResponse::any_server_from_packed`]. Tag values are
@@ -4081,10 +4063,6 @@ impl AnyServer {
 
     pub(crate) fn get_url_as_string(&self) -> Result<bun_core::String, bun_alloc::AllocError> {
         any_server_dispatch!(self, |s| s.get_url_as_string())
-    }
-
-    pub(crate) fn get_all_closed_promise(&self, global: &JSGlobalObject) -> JSValue {
-        any_server_dispatch!(self, |s| s.get_all_closed_promise(global))
     }
 }
 

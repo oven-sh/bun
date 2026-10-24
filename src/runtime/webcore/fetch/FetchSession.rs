@@ -392,7 +392,7 @@ impl FetchSession {
         let target = jsc::JSFunction::create(
             global,
             "fetch",
-            super::__jsc_host_session_fetch,
+            crate::generated_bindgen::fetch::Bun__Fetch__sessionFetch,
             1,
             Default::default(),
         );

@@ -21,12 +21,11 @@
 #include "JSSocketAddressDTO.h"
 #include "node/JSNodeHTTPServerSocket.h"
 #include "node/JSNodeHTTPServerSocketPrototype.h"
+#include "GeneratedHwExports.h"
 namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
-
-BUN_DECLARE_HOST_FUNCTION(Bun__drainMicrotasksFromJS);
 
 // Bit layout must stay in sync with kDispatchBits* in src/js/node/_http_server.ts.
 static constexpr uint32_t kDispatchConnClose = 1 << 0;
@@ -870,7 +869,7 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     obj->putDirectNativeFunction(
         vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "drainMicrotasks"_s)),
-        0, Bun__drainMicrotasksFromJS, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        0, Bun::Bindgen::Generated::HwExports::jsDrainMicrotasks, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
 
     return obj;
 }

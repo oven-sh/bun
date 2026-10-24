@@ -4603,7 +4603,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 /// Materialise an embedded file (`.node`/`.so`/`.dylib`/`.dll` from
 /// `bun build --compile`) to an on-disk path `dlopen(2)` can open. Called
 /// from `resolve_embedded_node_file_hook` (`process.dlopen()`) and
-/// `ffi_body::FFI::open` (`bun:ffi`).
+/// `ffi_body::FFI::dlopen` (`bun:ffi`).
 ///
 /// The filename is a hash of the contents, so every `dlopen()` of the same
 /// embedded library — across calls, Worker VMs, and restarts — shares one

@@ -4,7 +4,9 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
-use crate::generated_bindgen::socket_body::{BunSocket, SocketHandle, js_TCPSocket, js_TLSSocket};
+use crate::generated_bindgen::socket_body::{
+    AnySocket, BunSocket, SocketHandle, js_TCPSocket, js_TLSSocket,
+};
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
@@ -18,7 +20,7 @@ use bun_ptr::RefPtr;
 use bun_boringssl_sys::SSL_CTX;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::SysErrorJsc;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{ServerVerify, UpgradedDuplex};
@@ -119,7 +121,6 @@ mod tls_socket_functions;
 use crate::api::SSLContextCache::SSLContextCache;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
-use crate::server::ServerWebSocket;
 use crate::socket::udp_socket::get_us_error;
 pub(crate) use tls_socket_functions::{NodeHTTPServerSocketTLS, TlsHandle};
 
@@ -3785,12 +3786,9 @@ pub(crate) fn get_bytes_read(socket: SocketHandle<'_>) -> f64 {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_create_socket_pair(
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
     jsc::mark_binding!();
+    let global = cx.global();
 
     #[cfg(windows)]
     {
@@ -3811,10 +3809,7 @@ pub(crate) fn js_create_socket_pair(
         let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[0]), true);
         let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[1]), true);
 
-        let array = JSValue::create_empty_array(global, 2)?;
-        array.put_index(global, 0, JSValue::js_number(fds_[0] as f64))?;
-        array.put_index(global, 1, JSValue::js_number(fds_[1] as f64))?;
-        Ok(array)
+        Ok(fds_)
     }
 }
 
@@ -3826,32 +3821,26 @@ unsafe extern "C" {
 
 /// `setSocketOptions(socket, 1 | 2, size)` of `bun:internal-for-testing`: SO_SNDBUF (1) or
 /// SO_RCVBUF (2).
-#[bun_jsc::host_fn]
-pub(crate) fn js_set_socket_options(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-
-    if arguments.len() < 3 {
-        return Err(global.throw_not_enough_arguments("setSocketOptions", 3, arguments.len()));
-    }
-
-    let target = arguments[0];
-    let socket = if let Some(socket) = target.as_class_ref::<TCPSocket>() {
-        socket.socket.get().socket.get()
-    } else if let Some(socket) = target.as_class_ref::<TLSSocket>() {
-        socket.socket.get().socket.get()
-    } else if let Some(websocket) = target.as_class_ref::<ServerWebSocket>() {
-        websocket.us_socket()
-    } else {
-        NonNull::new(Bun__usSocketForTesting(target)).map(NonNull::as_ptr)
+pub(crate) fn set_socket_options(
+    cx: &mut JsScope<'_>,
+    socket: AnySocket<'_>,
+    option: i32,
+    size: i32,
+) -> JsResult<()> {
+    let global = cx.global();
+    let socket = match socket {
+        AnySocket::Tcp(socket) => socket.socket.get().socket.get(),
+        AnySocket::Tls(socket) => socket.socket.get().socket.get(),
+        AnySocket::ServerWebSocket(websocket) => websocket.us_socket(),
+        AnySocket::Other(other) => {
+            NonNull::new(Bun__usSocketForTesting(other.to_js())).map(NonNull::as_ptr)
+        }
     };
     let Some(socket) = socket else {
         return Err(global.throw(format_args!("Expected a connected socket")));
     };
 
-    let is_recv = match arguments[1].to_int32() {
+    let is_recv = match option {
         1 => false,
         2 => true,
         _ => {
@@ -3862,63 +3851,45 @@ pub(crate) fn js_set_socket_options(
     };
 
     let mut value: c_int = 0;
-    let res = uws::us_socket_t::opaque_mut(socket).buffer_size(
-        is_recv,
-        arguments[2].to_int32(),
-        &mut value,
-    );
+    let res = uws::us_socket_t::opaque_mut(socket).buffer_size(is_recv, size, &mut value);
     if let Some(err) = get_us_error::<true>(res, sys::Tag::setsockopt) {
         return Err(global.throw_value(err.to_js(global)));
     }
 
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 pub(crate) mod testing_apis {
     use super::*;
+    #[cfg(socket_fault_injection)]
+    use crate::generated_bindgen::socket_body::SocketFaultErrnoName;
+    use crate::generated_bindgen::socket_body::SocketFaultRule;
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_socket_fault_injection_available(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::from(cfg!(socket_fault_injection)))
+    pub(crate) fn socket_fault_injection_available() -> bool {
+        cfg!(socket_fault_injection)
     }
 
     /// Live `WindowsNamedPipe`s (one per connected or accepted socket
     /// over a Windows named pipe); always 0 elsewhere.
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_named_pipe_live_count(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn named_pipe_live_count() -> usize {
         #[cfg(windows)]
-        let count = crate::socket::windows_named_pipe::LIVE_COUNT
-            .load(core::sync::atomic::Ordering::Relaxed);
+        {
+            crate::socket::windows_named_pipe::LIVE_COUNT
+                .load(core::sync::atomic::Ordering::Relaxed)
+        }
         #[cfg(not(windows))]
-        let count = 0usize;
-        Ok(JSValue::js_number(count as f64))
+        {
+            0
+        }
     }
 
     /// Live `UpgradedDuplex`es (one per TLS socket over a JS stream).
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_upgraded_duplex_live_count(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let count =
-            crate::socket::upgraded_duplex::LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-        Ok(JSValue::js_number(count as f64))
+    pub(crate) fn upgraded_duplex_live_count() -> usize {
+        crate::socket::upgraded_duplex::LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
     }
 
     /// `sweepSocketTimers` of `bun:internal-for-testing`.
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_sweep_socket_timers(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [count] = frame.arguments_as_array::<1>();
-        let count = count.coerce::<i32>(global)?;
+    pub(crate) fn sweep_socket_timers(cx: &mut JsScope<'_>, count: f64) -> JsResult<()> {
         let loop_ = uws::Loop::get();
         // SAFETY: `loop_` is this thread's live loop; plain field reads.
         let sweeping = unsafe {
@@ -3926,120 +3897,68 @@ pub(crate) mod testing_apis {
                 || !(*loop_).internal_loop_data.low_prio_iterator.is_null()
         };
         if sweeping {
-            return Err(global.throw(format_args!(
+            return Err(cx.global().throw(format_args!(
                 "sweepSocketTimers() cannot be called from a socket timeout handler"
             )));
         }
-        for _ in 0..count {
+        for _ in 0..count as i32 {
             // SAFETY: `loop_` is this thread's live loop and no sweep is running on it.
             unsafe { bun_uws_sys::loop_::us_internal_timer_sweep(loop_) };
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_clear_socket_faults(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn clear_socket_faults(cx: &mut JsScope<'_>) -> JsResult<()> {
         #[cfg(socket_fault_injection)]
         {
-            let _ = global;
+            let _ = cx;
             bun_uws_sys::fault_inject::us_fault_clear_all();
-            Ok(JSValue::UNDEFINED)
+            Ok(())
         }
         #[cfg(not(socket_fault_injection))]
-        Err(global.throw(format_args!(
+        Err(cx.global().throw(format_args!(
             "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
         )))
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_set_socket_fault(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn set_socket_fault(cx: &mut JsScope<'_>, rule: &SocketFaultRule) -> JsResult<bool> {
         jsc::mark_binding!();
+        let global = cx.global();
         #[cfg(not(socket_fault_injection))]
         {
-            let _ = frame;
+            let _ = rule;
             return Err(global.throw(format_args!(
                 "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
             )));
         }
         #[cfg(socket_fault_injection)]
         {
+            use crate::generated_bindgen::socket_body::{
+                SocketFaultAction as Action, SocketFaultErrno as Errno,
+                SocketFaultSyscall as Syscall,
+            };
             use bun_uws_sys::fault_inject as fi;
 
-            let [opts] = frame.arguments_as_array::<1>();
-            if !opts.is_object() {
-                return Err(global.throw_invalid_argument_type_value("rule", "object", opts));
-            }
-
-            let syscall_str = match opts.get_truthy(global, "syscall")? {
-                Some(v) => v.to_bun_string(global)?,
-                None => {
-                    return Err(global.throw_invalid_argument_type_value(
-                        "rule.syscall",
-                        "string",
-                        JSValue::UNDEFINED,
-                    ));
-                }
-            };
-            let syscall: c_int = if syscall_str.eq_ascii(b"recv") {
-                fi::RECV
-            } else if syscall_str.eq_ascii(b"send") {
-                fi::SEND
-            } else if syscall_str.eq_ascii(b"writev") {
-                fi::WRITEV
-            } else if syscall_str.eq_ascii(b"sendmsg") {
-                fi::SENDMSG
-            } else if syscall_str.eq_ascii(b"recvmsg") {
-                fi::RECVMSG
-            } else if syscall_str.eq_ascii(b"connect") {
-                fi::CONNECT
-            } else if syscall_str.eq_ascii(b"accept") {
-                fi::ACCEPT
-            } else if syscall_str.eq_ascii(b"ssl_loop_buffer") {
-                fi::SSL_LOOP_BUFFER
-            } else if syscall_str.eq_ascii(b"poll_start") {
-                fi::POLL_START
-            } else if syscall_str.eq_ascii(b"session_buffer") {
-                fi::SESSION_BUFFER
-            } else if syscall_str.eq_ascii(b"ssl_write") {
-                fi::SSL_WRITE
-            } else {
-                // socket/close/shutdown have enum slots but no bsd.c hooks;
-                // accepting them would arm rules that can never fire.
-                return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, ssl_write"
-                )));
+            let syscall: c_int = match rule.syscall {
+                Syscall::Recv => fi::RECV,
+                Syscall::Send => fi::SEND,
+                Syscall::Writev => fi::WRITEV,
+                Syscall::Sendmsg => fi::SENDMSG,
+                Syscall::Recvmsg => fi::RECVMSG,
+                Syscall::Connect => fi::CONNECT,
+                Syscall::Accept => fi::ACCEPT,
+                Syscall::SslLoopBuffer => fi::SSL_LOOP_BUFFER,
+                Syscall::PollStart => fi::POLL_START,
+                Syscall::SessionBuffer => fi::SESSION_BUFFER,
+                Syscall::SslWrite => fi::SSL_WRITE,
             };
 
-            let action_str = match opts.get_truthy(global, "action")? {
-                Some(v) => v.to_bun_string(global)?,
-                None => {
-                    return Err(global.throw_invalid_argument_type_value(
-                        "rule.action",
-                        "string",
-                        JSValue::UNDEFINED,
-                    ));
-                }
-            };
-            let action: c_int = if action_str.eq_ascii(b"errno") {
-                fi::ACTION_ERRNO
-            } else if action_str.eq_ascii(b"short") {
-                fi::ACTION_SHORT
-            } else if action_str.eq_ascii(b"zero") {
-                fi::ACTION_ZERO
-            } else if action_str.eq_ascii(b"excess") {
-                fi::ACTION_EXCESS
-            } else if action_str.eq_ascii(b"none") {
-                fi::ACTION_NONE
-            } else {
-                return Err(global.throw(format_args!(
-                    "rule.action must be one of: errno, short, zero, excess, none"
-                )));
+            let action: c_int = match rule.action {
+                Action::Errno => fi::ACTION_ERRNO,
+                Action::Short => fi::ACTION_SHORT,
+                Action::Zero => fi::ACTION_ZERO,
+                Action::Excess => fi::ACTION_EXCESS,
+                Action::None => fi::ACTION_NONE,
             };
 
             // "short" clamps a byte count, which only these have; arming it on any other syscall would silently never fire.
@@ -4073,32 +3992,22 @@ pub(crate) mod testing_apis {
                 )));
             }
 
-            let errno_value: c_int = match opts.get_truthy(global, "errno")? {
+            let errno_value: c_int = match rule.error {
                 None if action == fi::ACTION_ERRNO => {
                     return Err(global.throw(format_args!(
                         "rule.errno is required when action is \"errno\""
                     )));
                 }
                 None => 0,
-                Some(v) if v.is_number() => v.coerce_to_i32(global)?,
-                Some(v) => {
-                    let name = v.to_bun_string(global)?;
-                    parse_errno_name(&name).ok_or_else(|| {
-                        global.throw(format_args!(
-                            "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH, EPROTOTYPE)"
-                        ))
-                    })?
-                }
+                Some(Errno::Code(code)) => code,
+                Some(Errno::Name(name)) => errno_by_name(name).ok_or_else(|| {
+                    global.throw(format_args!(
+                        "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH, EPROTOTYPE)"
+                    ))
+                })?,
             };
 
-            let get_i32 = |key: &str, default: i32| -> JsResult<i32> {
-                match opts.get_truthy(global, key)? {
-                    Some(v) => v.coerce_to_i32(global),
-                    None => Ok(default),
-                }
-            };
-
-            let clamp_bytes = get_i32("bytes", 0)?;
+            let clamp_bytes = rule.bytes.unwrap_or(0);
             // A 0-byte clamp makes recv()/send() length-0 syscalls, which read
             // back as EOF/backpressure — silently aliasing action "zero".
             if action == fi::ACTION_SHORT && clamp_bytes <= 0 {
@@ -4110,7 +4019,7 @@ pub(crate) mod testing_apis {
             // ssl_loop_buffer/session_buffer are allocations, not socket
             // operations: their hooks pass fd = -1, so a rule pinned to a
             // descriptor would arm and then silently never fire.
-            let target_fd = get_i32("fd", -1)?;
+            let target_fd = rule.fd.unwrap_or(-1);
             if (syscall == fi::SSL_LOOP_BUFFER || syscall == fi::SESSION_BUFFER) && target_fd != -1
             {
                 return Err(global.throw(format_args!(
@@ -4127,61 +4036,60 @@ pub(crate) mod testing_apis {
                 action,
                 errno_value,
                 clamp_bytes,
-                after_n_calls: get_i32("after", 0)?,
-                repeat: get_i32("repeat", 1)?,
+                after_n_calls: rule.after.unwrap_or(0),
+                repeat: rule.repeat.unwrap_or(1),
                 target_fd,
             };
 
             // SAFETY: rule is a valid stack pointer for the duration of the call.
             unsafe { fi::us_fault_set(syscall, &rule) };
-            Ok(JSValue::TRUE)
+            Ok(true)
         }
     }
 
     #[cfg(socket_fault_injection)]
-    fn parse_errno_name(name: &bun_core::String) -> Option<c_int> {
-        macro_rules! map {
-            ($($s:literal => $v:expr,)*) => {
-                $(if name.eq_ascii($s) { return Some($v as c_int); })*
-            };
-        }
+    fn errno_by_name(name: SocketFaultErrnoName) -> Option<c_int> {
+        use SocketFaultErrnoName as Name;
         #[cfg(unix)]
-        map! {
-            b"ECONNRESET" => libc::ECONNRESET,
-            b"EPIPE" => libc::EPIPE,
-            b"ETIMEDOUT" => libc::ETIMEDOUT,
-            b"ECONNREFUSED" => libc::ECONNREFUSED,
-            b"EAGAIN" => libc::EAGAIN,
-            b"EWOULDBLOCK" => libc::EWOULDBLOCK,
-            b"EINTR" => libc::EINTR,
-            b"ENOBUFS" => libc::ENOBUFS,
-            b"ENOMEM" => libc::ENOMEM,
-            b"EBADF" => libc::EBADF,
-            b"EINVAL" => libc::EINVAL,
-            b"ENETUNREACH" => libc::ENETUNREACH,
-            b"EHOSTUNREACH" => libc::EHOSTUNREACH,
-            b"EPROTOTYPE" => libc::EPROTOTYPE,
-            b"EMFILE" => libc::EMFILE,
-            b"EPERM" => libc::EPERM,
+        {
+            Some(match name {
+                Name::Econnreset => libc::ECONNRESET,
+                Name::Epipe => libc::EPIPE,
+                Name::Etimedout => libc::ETIMEDOUT,
+                Name::Econnrefused => libc::ECONNREFUSED,
+                Name::Eagain => libc::EAGAIN,
+                Name::Ewouldblock => libc::EWOULDBLOCK,
+                Name::Eintr => libc::EINTR,
+                Name::Enobufs => libc::ENOBUFS,
+                Name::Enomem => libc::ENOMEM,
+                Name::Ebadf => libc::EBADF,
+                Name::Einval => libc::EINVAL,
+                Name::Enetunreach => libc::ENETUNREACH,
+                Name::Ehostunreach => libc::EHOSTUNREACH,
+                Name::Eprototype => libc::EPROTOTYPE,
+                Name::Emfile => libc::EMFILE,
+                Name::Eperm => libc::EPERM,
+            })
         }
         #[cfg(windows)]
-        map! {
-            b"ECONNRESET" => 10054,
-            b"EPIPE" => 10054,
-            b"ETIMEDOUT" => 10060,
-            b"ECONNREFUSED" => 10061,
-            b"EAGAIN" => 10035,
-            b"EWOULDBLOCK" => 10035,
-            b"EINTR" => 10004,
-            b"ENOBUFS" => 10055,
-            b"ENOMEM" => 10055,
-            b"EBADF" => 10009,
-            b"EINVAL" => 10022,
-            b"ENETUNREACH" => 10051,
-            b"EHOSTUNREACH" => 10065,
-            b"EPROTOTYPE" => 10041,
+        {
+            Some(match name {
+                Name::Econnreset => 10054,
+                Name::Epipe => 10054,
+                Name::Etimedout => 10060,
+                Name::Econnrefused => 10061,
+                Name::Eagain => 10035,
+                Name::Ewouldblock => 10035,
+                Name::Eintr => 10004,
+                Name::Enobufs => 10055,
+                Name::Enomem => 10055,
+                Name::Ebadf => 10009,
+                Name::Einval => 10022,
+                Name::Enetunreach => 10051,
+                Name::Ehostunreach => 10065,
+                Name::Eprototype => 10041,
+                Name::Emfile | Name::Eperm => return None,
+            })
         }
-        None
     }
 }
-pub(crate) use testing_apis as testing_ap_is;

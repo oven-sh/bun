@@ -24,6 +24,12 @@ export const Listener = b.class({
   },
 });
 
+/** `options` is what `SocketConfig` takes. */
+const fromOptions = { args: { options: b.any }, capability: "js", throws: true } as const;
+/** Returns a promise of the socket. */
+export const connect = b.fn({ ...fromOptions, returns: b.any, rustPath: "crate::socket::Listener::connect" });
+export const listen = b.fn({ ...fromOptions, returns: Listener, rustPath: "crate::socket::Listener::listen" });
+
 /** What accepts the connections of a `tls.Server` (its `_handle`) or an `https.Server`. A cluster worker's `_handle` is neither: JS wraps its connections. */
 export const TLSListener = b.union({
   listener: Listener,

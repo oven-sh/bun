@@ -5,9 +5,6 @@ export default b.module({ rustPath: "crate::dns_jsc::Resolver" });
 export const getRuntimeDefaultResultOrderOption = b.fn({ returns: b.string });
 export const setConnectResultOrder = b.fn({ args: { order: b.string.utf8 } });
 
-/** A non-string means "A". */
-export const RecordTypeArgument = b.union({ label: b.string.utf8, ignored: b.any });
-
 const method = { capability: "js", throws: true } as const;
 
 const query = {
@@ -19,7 +16,8 @@ const query = {
 const getServers = { ...method, returns: b.any } as const;
 const resolve = {
   ...method,
-  args: { name: b.string.utf8, record: RecordTypeArgument },
+  /** A `record` that is not a string means "A". */
+  args: { name: b.string.utf8, record: b.string.utf8.otherAsNull },
   expected: { name: ["string"] },
   returns: b.any,
 } as const;
@@ -51,6 +49,10 @@ export const DNSResolver = b.class({
   },
 });
 
+/** What `validateResolverOptions()` of `node:dns` returns. */
+export const ResolverOptions = b.dictionary({ timeout: b.i32, tries: b.i32 });
+export const newResolver = b.fn({ capability: "js", args: { options: ResolverOptions }, returns: DNSResolver });
+
 // The undocumented `Bun.dns.*` functions: the same queries on the VM's global resolver.
 export const getGlobalServers = b.fn(getServers);
 export const globalResolve = b.fn(resolve);
@@ -72,4 +74,29 @@ export const globalLookupService = b.fn({
   args: { address: b.string.utf8, port: b.f64 },
   expected: { address: ["string"], port: ["number"] },
   returns: b.any,
+});
+
+// `bun:internal-for-testing`
+export const seedCacheForTesting = b.fn({
+  ...method,
+  args: { hostname: b.string.utf8, addresses: b.any },
+  returns: b.array(b.i32),
+  rustPath: "crate::dns_jsc::internal::seed_cache_for_testing",
+});
+export const isLocalhostNameForTesting = b.fn({
+  args: { hostname: b.string.utf8 },
+  returns: b.bool,
+  rustPath: "crate::dns_jsc::internal::is_localhost_name_for_testing",
+});
+export const isAllLoopbackOfOneFamilyForTesting = b.fn({
+  ...method,
+  args: { addresses: b.any },
+  returns: b.bool,
+  rustPath: "crate::dns_jsc::internal::is_all_loopback_of_one_family_for_testing",
+});
+export const getaddrinfoErrorForTesting = b.fn({
+  ...method,
+  args: { code: b.string.utf8, hostname: b.string.utf8 },
+  returns: b.any,
+  rustPath: "crate::dns_jsc::internal::getaddrinfo_error_for_testing",
 });

@@ -370,7 +370,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool, tls_props: Option<SSLCo
         return;
     }
 
-    // Write-before-read: `Bun__fetchPreconnect` reaches here without going
+    // Write-before-read: `fetch.preconnect` reaches here without going
     // through any path that calls `HTTPThread::init`, so `schedule()` below
     // would deref the uninitialized `HTTP_THREAD` static (UB on niche-bearing
     // fields) if `fetch.preconnect()` is the process's first HTTP operation.

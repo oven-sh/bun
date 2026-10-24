@@ -4284,6 +4284,68 @@
     ]
    }
   },
+  "control": {
+   "exit": 1,
+   "files": 2,
+   "diagnostics": {
+    "called-in-try.jsx": [
+     {
+      "code": "react(error-boundaries)",
+      "help": "React does not immediately render components when JSX is constructed, so rendering errors will not be caught by the try/catch. Wrap the component in an error boundary instead",
+      "labels": [
+       {
+        "label": "Avoid constructing JSX within try/catch",
+        "span": {
+         "column": 15,
+         "length": 1,
+         "line": 18,
+         "offset": 356
+        }
+       }
+      ],
+      "message": "Avoid constructing JSX within try/catch",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/error-boundaries",
+      "severity": "error"
+     },
+     {
+      "code": "react(error-boundaries)",
+      "help": "React does not immediately render components when JSX is constructed, so rendering errors will not be caught by the try/catch. Wrap the component in an error boundary instead",
+      "labels": [
+       {
+        "label": "Avoid constructing JSX within try/catch",
+        "span": {
+         "column": 28,
+         "length": 1,
+         "line": 17,
+         "offset": 325
+        }
+       }
+      ],
+      "message": "Avoid constructing JSX within try/catch",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/error-boundaries",
+      "severity": "error"
+     },
+     {
+      "code": "react(error-boundaries)",
+      "help": "React does not immediately render components when JSX is constructed, so rendering errors will not be caught by the try/catch. Wrap the component in an error boundary instead",
+      "labels": [
+       {
+        "label": "Avoid constructing JSX within try/catch",
+        "span": {
+         "column": 30,
+         "length": 3,
+         "line": 6,
+         "offset": 123
+        }
+       }
+      ],
+      "message": "Avoid constructing JSX within try/catch",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/error-boundaries",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "node_modules": {
    "exit": 1,
    "files": 4,

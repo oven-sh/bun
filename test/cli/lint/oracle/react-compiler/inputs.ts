@@ -244,6 +244,64 @@ const writes = `export default function Component(props) {
 }
 `;
 
+/**
+ * Upstream asks only the tests of the blocks right above a block whether what runs is reactive. A throw into a handler
+ * has no test, and the test of this `break` isn't reactive. So `doubled` isn't reactive, and needn't be listed.
+ * `bun build` reads more than that.
+ */
+const decided = `import { useMemo } from "react";
+
+export function AfterATry(props) {
+  let code = 1;
+  try {
+    JSON.parse(props.text);
+  } catch {
+    code = 2;
+  }
+  const doubled = code * 2;
+  const value = useMemo(() => [doubled], []);
+  return <div>{value}</div>;
+}
+
+export function AfterALoop(props) {
+  let count = 0;
+  for (const item of props.items) {
+    if (globalThis.stop) break;
+    count = count + 1;
+  }
+  const doubled = count * 2;
+  const value = useMemo(() => [doubled], []);
+  return <div>{value}</div>;
+}
+`;
+
+/** Upstream puts a function that's called in a `try` into the `try`, with its JSX. `bun build` leaves the call. */
+const calledInTry = `import { useMemo } from "react";
+
+export function Memo(props) {
+  let element = null;
+  try {
+    element = useMemo(() => <div>{props.a}</div>, [props.a]);
+  } catch {
+    element = null;
+  }
+  return element;
+}
+
+export function Called(props) {
+  let element = null;
+  try {
+    element = (() => {
+      if (props.a) return <b>{props.a}</b>;
+      return <i />;
+    })();
+  } catch {
+    element = null;
+  }
+  return <div>{element}</div>;
+}
+`;
+
 /** These aren't React's hooks, despite their names. */
 const ownHooks = `export function Component(props) {
   const f = useCallback(() => [props.a()], [props.a()]);
@@ -644,6 +702,7 @@ function Component(props) {
     "callback-of-map.jsx": callbackOfMap,
   },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
+  control: { ".oxlintrc.json": rc(), "decided.jsx": decided, "called-in-try.jsx": calledInTry },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,

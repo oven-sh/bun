@@ -210,6 +210,18 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  test("what a throw or a nested branch decides isn't reactive, and a function called in a `try` is inlined", async () => {
+    const { diagnostics, exit } = await report(small.control);
+    expect(diagnostics).toEqual(expected.reports.control.diagnostics);
+    expect(diagnostics["decided.jsx"]).toBeUndefined();
+    expect(locationsOf(diagnostics["called-in-try.jsx"])).toEqual([
+      ["react(error-boundaries)", 17, 28],
+      ["react(error-boundaries)", 18, 15],
+      ["react(error-boundaries)", 6, 30],
+    ]);
+    expect(exit).toBe(1);
+  });
+
   test("consecutive loops are visited in the compiler's order", async () => {
     const { diagnostics, exit } = await report(small.order);
     expect(diagnostics).toEqual(expected.reports.order.diagnostics);

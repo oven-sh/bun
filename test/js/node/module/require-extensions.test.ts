@@ -1,7 +1,7 @@
 import assert from "assert";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, tempDir } from "harness";
-import path from "path";
+import path, { join } from "path";
 
 test("require.extensions shape makes sense", () => {
   const extensions = require.extensions;
@@ -349,4 +349,42 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
       signalCode: null,
     });
   });
+});
+
+test.concurrent("native addon loading namespaces the disk path without changing the module cache key", async () => {
+  using dir = tempDir("native-addon-path", {
+    [`${Buffer.alloc(100, "x").toString()}/${Buffer.alloc(100, "y").toString()}/addon.node`]: "",
+    "load.cjs": `
+      const assert = require("node:assert/strict");
+      const path = require("node:path");
+      const filename = path.join(__dirname, Buffer.alloc(100, "x").toString(), Buffer.alloc(100, "y").toString(), "addon.node");
+      const original = process.dlopen;
+      let calls = 0;
+      process.dlopen = (module, nativePath) => {
+        calls++;
+        assert.equal(nativePath, path.toNamespacedPath(filename));
+        assert.equal(module.id, filename);
+        module.exports.loaded = true;
+      };
+      try {
+        const first = require(filename);
+        assert.deepEqual(first, { loaded: true });
+        assert.equal(require(filename), first);
+        assert.equal(require.resolve(filename), filename);
+        assert.equal(require.cache[filename].exports, first);
+        assert.equal(calls, 1);
+      } finally {
+        process.dlopen = original;
+      }
+      console.log("ok");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "load.cjs")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
 });

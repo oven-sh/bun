@@ -1,4 +1,22 @@
+const assert = require("node:assert/strict");
+const assertEmbedded = process.argv[3] === "--assert-embedded";
+const originalDlopen = process.dlopen;
+let embeddedAddonLoads = 0;
+if (assertEmbedded) {
+  process.dlopen = function (...args) {
+    const prefix = process.platform === "win32" ? "B:/~BUN/" : "/$bunfs/";
+    assert.ok(args[1].startsWith(prefix), args[1]);
+    embeddedAddonLoads++;
+    return Reflect.apply(originalDlopen, this, args);
+  };
+}
 const tests = require("./module");
+if (assertEmbedded) {
+  process.dlopen = originalDlopen;
+  assert.equal(embeddedAddonLoads, 5);
+  const filename = require("node:url").fileURLToPath(tests.test_napi_module_filename());
+  assert.equal(require("node:path").dirname(filename), process.env.BUN_TMPDIR);
+}
 if (process.argv[2] === "self") {
   console.log(
     tests(function (str) {

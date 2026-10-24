@@ -126,6 +126,8 @@ pub(crate) mod exec_command;
 pub(crate) mod fuzzilli_command;
 #[path = "install_command.rs"]
 pub(crate) mod install_command;
+#[path = "package_json_pin.rs"]
+pub(crate) mod package_json_pin;
 #[path = "repl_command.rs"]
 pub(crate) mod repl_command;
 #[path = "upgrade_command.rs"]
@@ -2072,6 +2074,9 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
 
   <d>{}<r>
   <b><green>bun upgrade<r> <cyan>--{}<r>
+
+  <d>Upgrade without updating the packageManager pin in package.json<r>
+  <b><green>bun upgrade<r> <cyan>--no-save<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
 ",

@@ -22,6 +22,7 @@ use bun_wyhash::hash;
 use crate::api::bun::process::Status;
 use crate::api::bun::process::sync as spawn_sync;
 use crate::cli::Command;
+use crate::cli::package_json_pin;
 
 // `sync::Options.argv` is `Vec<Box<[u8]>>` (owns its rows). Helper
 // to build it from borrowed slices.
@@ -554,6 +555,14 @@ impl UpgradeCommand {
         };
 
         let use_profile = argv_contains(b"--profile");
+        let dry_run = env_loader.map.get(b"BUN_DRY_RUN").is_some();
+        let pin_write = if argv_contains(b"--no-save") {
+            package_json_pin::Write::NoSave
+        } else if dry_run {
+            package_json_pin::Write::DryRun
+        } else {
+            package_json_pin::Write::Save
+        };
 
         let mut version: Version = if !use_canary {
             // `Progress::start` returns `&mut Node` borrowing `refresher`;
@@ -585,11 +594,12 @@ impl UpgradeCommand {
             unsafe { (*refresher).refresh() };
 
             if !Environment::IS_CANARY {
-                if version.name().is_some() && version.is_current() {
+                if let Some(version_name) = version.name().filter(|_| version.is_current()) {
                     bun_core::pretty_errorln!(
                         "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{})<r>",
-                        bstr::BStr::new(&version.name().unwrap())
+                        bstr::BStr::new(&version_name)
                     );
+                    package_json_pin::refresh(filesystem.top_level_dir(), &version_name, pin_write);
                     Global::exit(0);
                 }
             }
@@ -1232,7 +1242,7 @@ impl UpgradeCommand {
             #[cfg(not(windows))]
             let outdated_filename: Option<()> = None;
 
-            if env_loader.map.get(b"BUN_DRY_RUN").is_none() {
+            if !dry_run {
                 #[cfg(windows)]
                 {
                     // On Windows, we cannot replace the running executable directly.
@@ -1331,6 +1341,10 @@ impl UpgradeCommand {
                         ..Default::default()
                     });
                 }
+            }
+
+            if !use_canary {
+                package_json_pin::refresh(filesystem.top_level_dir(), &version_name, pin_write);
             }
 
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());

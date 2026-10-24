@@ -23,8 +23,7 @@ struct Pass<'a> {
     pinned: &'a DynamicBitSet,
     /// Versions that no dependency may move onto. See `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
-    /// For `collapse_appended`: the dependencies of the root and workspaces don't move, and a
-    /// dependency on a loaded package (ids below this) moves only up, onto an appended package.
+    /// `collapse_appended`: an edge on a loaded package (id below this) only moves up, onto an appended one.
     frozen_below: Option<PackageID>,
     /// Whether a dependency on a loaded package may move at all. `false` under `--depth 0`.
     lift_loaded: bool,
@@ -254,8 +253,6 @@ impl<'a> Pass<'a> {
                 let row = e * n;
 
                 let direct = self.frozen_below.is_some() && is_direct(owner);
-                // Classified by the resolution bun.lock loaded, so a move in an earlier pass does
-                // not turn the edge into one that may move down.
                 let loaded = !direct
                     && self
                         .frozen_below

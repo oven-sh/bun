@@ -283,6 +283,8 @@ public:
     JSWeakMap* moduleSourceValueMap() const { return m_moduleSourceValueMap.getInitializedOnMainThread(this); }
 
     // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
+    // Consumed by the first resolve in requestImportModule, before a plugin can re-enter.
+    bool m_resolvingDynamicImport = false;
     bool hasModuleGraphs() const { return !!m_moduleGraphs; }
     // The shape of an async-context frame that names a Bun.ModuleGraph (ModuleGraph.cpp).
     JSC::Structure* moduleGraphFrameStructure() const { return m_moduleGraphFrameStructure.getInitializedOnMainThread(this); }

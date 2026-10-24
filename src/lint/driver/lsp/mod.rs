@@ -843,7 +843,10 @@ impl<'d> Desk<'d, '_, '_> {
         });
         let (server, of_thread) = (self.server, Arc::clone(&root));
         let thread = std::thread::Builder::new().stack_size(STACK);
-        let spawned = thread.spawn_scoped(self.scope, move || server.work(&of_thread));
+        let spawned = thread.spawn_scoped(self.scope, move || {
+            bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun LSP"));
+            server.work(&of_thread)
+        });
         if spawned.is_err() {
             server.show_error(b"Could not start a thread");
             return None;

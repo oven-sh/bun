@@ -150,6 +150,41 @@ describe("bundler", () => {
     },
   });
 
+  // An entry without "/" lists the file in every directory of the package.
+  for (const [id, entry] of [
+    ["FileName", "effect.js"],
+    ["GlobWithoutSlash", "effect.*"],
+  ]) {
+    itBundled(`barrel/SideEffectsArray${id}KeepsListedReExport`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { plain } from 'effectful';
+          console.log(plain('x'));
+        `,
+        "/node_modules/effectful/package.json": JSON.stringify({
+          name: "effectful",
+          main: "./src/index.js",
+          sideEffects: [entry],
+        }),
+        "/node_modules/effectful/src/index.js": /* js */ `
+          export { plain } from './plain.js';
+          export { TABLE } from './effect.js';
+        `,
+        "/node_modules/effectful/src/plain.js": /* js */ `
+          export const plain = s => s + "!";
+        `,
+        "/node_modules/effectful/src/effect.js": /* js */ `
+          export const TABLE = {};
+          TABLE.marker = "THE_SIDE_EFFECT_RAN";
+        `,
+      },
+      outdir: "/out",
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.js").toContain("THE_SIDE_EFFECT_RAN");
+      },
+    });
+  }
+
   // A module the array does not list is still tree-shaken away.
   itBundled("barrel/SideEffectsArrayDropsUnlistedReExport", {
     files: {

@@ -227,7 +227,7 @@ pub enum SideEffects {
     Unspecified,
     /// "sideEffects": false
     False,
-    /// "sideEffects": ["file.js", "other.js"]
+    /// "sideEffects": ["file.js", "./other.js"]
     Map(ExactEntries),
     /// "sideEffects": ["side_effects/*.js"]
     Glob(GlobList),
@@ -237,22 +237,16 @@ pub enum SideEffects {
 
 type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
-type GlobList = Vec<glob::Prepared<Box<[u8]>>>;
+type GlobList = Box<[glob::Prepared<Box<[u8]>>]>;
 
-/// The entries that have no glob syntax.
+/// The entries that have no glob syntax, as one set of keys: a resolved file costs one lookup, however long the list is.
 #[derive(Default)]
 pub struct ExactEntries {
-    /// Entries with a path separator, joined onto the package directory.
-    paths: SideEffectsMap,
-    /// Entries without one. In a box, so that a `PackageJSON` stays in its allocator size class.
-    names: Option<Box<FileNames>>,
-}
-
-/// Entries that are a file name. Each lists that file in every directory of the package.
-struct FileNames {
-    /// The package directory with its trailing separator, as the keys of `ExactEntries::paths` spell it.
-    directory: Box<[u8]>,
-    names: SideEffectsMap,
+    keys: SideEffectsMap,
+    /// An entry with a path separator is keyed by its path, joined onto the package directory.
+    has_paths: bool,
+    /// An entry without one is keyed as written. It is a file name, and lists that file in every directory.
+    has_names: bool,
 }
 
 pub struct MixedPatterns {
@@ -261,33 +255,13 @@ pub struct MixedPatterns {
 }
 
 impl ExactEntries {
+    #[inline]
     fn contains(&self, path: &[u8]) -> bool {
-        if !self.paths.is_empty()
-            && self
-                .paths
-                .contains_key(&StringHashMapUnownedKey::init(path))
-        {
-            return true;
-        }
-        self.names
-            .as_deref()
-            .is_some_and(|names| names.contains(path))
+        let has = |key: &[u8]| self.keys.contains_key(&StringHashMapUnownedKey::init(key));
+        (self.has_paths && has(path)) || (self.has_names && has(bun_paths::basename(path)))
     }
 }
 
-impl FileNames {
-    // Out of line, so that a list without file names keeps the short lookup it had.
-    #[inline(never)]
-    fn contains(&self, path: &[u8]) -> bool {
-        path.strip_prefix(&*self.directory).is_some_and(|below| {
-            let name = bun_paths::basename(below);
-            self.names
-                .contains_key(&StringHashMapUnownedKey::init(name))
-        })
-    }
-}
-
-/// Returns true if an entry of "sideEffects" has glob syntax.
 fn is_glob(entry: &[u8]) -> bool {
     strings::contains_any(entry, b"*?[{") || glob::has_extglob_prefix(entry)
 }
@@ -307,95 +281,72 @@ fn any_glob_matches(globs: &[glob::Prepared<Box<[u8]>>], path: &[u8]) -> bool {
 
 impl SideEffects {
     pub(crate) fn has_side_effects(&self, path: &[u8]) -> bool {
-        let (exact, globs): (Option<&ExactEntries>, &[glob::Prepared<Box<[u8]>>]) = match self {
-            SideEffects::Unspecified => return true,
-            SideEffects::False => return false,
-            SideEffects::Map(exact) => (Some(exact), &[]),
-            SideEffects::Glob(globs) => (None, globs),
-            SideEffects::Mixed(mixed) => (Some(&mixed.exact), &mixed.globs),
-        };
-        exact.is_some_and(|exact| exact.contains(path)) || any_glob_matches(globs, path)
+        match self {
+            SideEffects::Unspecified => true,
+            SideEffects::False => false,
+            SideEffects::Map(exact) => exact.contains(path),
+            SideEffects::Glob(globs) => any_glob_matches(globs, path),
+            SideEffects::Mixed(mixed) => {
+                mixed.exact.contains(path) || any_glob_matches(&mixed.globs, path)
+            }
+        }
     }
 
-    /// Reads the array that "sideEffects" holds in the package.json in `package_dir`.
-    ///
-    /// An entry without a path separator lists a file in every directory of the package, as in
-    /// webpack and esbuild. Any other entry is a path from `package_dir`.
+    /// An entry without a path separator lists a file in every directory, as in webpack and esbuild. Any other is a path from `package_dir`.
     fn from_array(
         items: &[js_ast::E::JsonValue],
         package_dir: &[u8],
         r_fs: &fs::FileSystem,
     ) -> SideEffects {
         let entries = || items.iter().filter_map(|item| item.as_str());
-        let glob_count = entries().filter(|entry| is_glob(entry)).count();
-        let exact_count = entries().count() - glob_count;
+        let has_globs = entries().any(is_glob);
+        let has_exact = entries().any(|entry| !is_glob(entry));
+        // Only a list without a glob stores its `.css` entries. dce/PackageJsonSideEffectsCSSEntries pins what that changes.
+        let stored =
+            || entries().filter(|entry| !(has_globs && bun_paths::extension(entry) == b".css"));
+        let glob_count = stored().filter(|entry| is_glob(entry)).count();
 
-        let mut exact = ExactEntries::default();
-        let mut globs = GlobList::default();
+        let mut exact = ExactEntries {
+            keys: SideEffectsMap::with_capacity(stored().count() - glob_count),
+            ..Default::default()
+        };
+        let mut globs = Vec::with_capacity(glob_count);
         let mut spill: Vec<u8> = Vec::new();
 
-        for entry in entries() {
-            // A list with a glob has never stored its `.css` entries. The JS that imports the CSS depends on it.
-            if glob_count > 0 && bun_paths::extension(entry) == b".css" {
-                continue;
-            }
-            let is_file_name = !strings::contains_any(entry, b"/\\");
-
-            if is_glob(entry) {
-                let pattern = if is_file_name {
-                    // No directory in the pattern: its name is not glob syntax.
-                    [&b"**/"[..], entry].concat()
+        for entry in stored() {
+            let has_separator = strings::contains_any(entry, b"/\\");
+            if !is_glob(entry) {
+                let key = if has_separator {
+                    r_fs.join(&mut spill, &[package_dir, entry])
                 } else {
-                    let mut joined = r_fs.join(&mut spill, &[package_dir, entry]).to_vec();
-                    // Normalize pattern to use forward slashes for cross-platform compatibility
-                    bun_paths::slashes_to_posix_in_place(&mut joined[..]);
-                    joined
+                    entry
                 };
-                if globs.is_empty() {
-                    globs.reserve(glob_count);
-                }
-                globs.push(glob::Prepared::new(pattern.into_boxed_slice()));
+                exact.has_paths |= has_separator;
+                exact.has_names |= !has_separator;
+                let _ = exact.keys.insert(StringHashMapUnownedKey::init(key), ());
                 continue;
             }
-
-            let joined = r_fs.join(&mut spill, &[package_dir, entry]);
-            // The join resolves `.` and `..`, so those are paths.
-            let directory = joined.strip_suffix(entry).filter(|directory| {
-                is_file_name
-                    && directory
-                        .last()
-                        .is_some_and(|&last| bun_paths::is_sep_native(last))
-            });
-            match directory {
-                Some(directory) => {
-                    let file_names = exact.names.get_or_insert_with(|| {
-                        Box::new(FileNames {
-                            directory: directory.into(),
-                            names: SideEffectsMap::with_capacity(exact_count),
-                        })
-                    });
-                    debug_assert!(*file_names.directory == *directory);
-                    let _ = file_names
-                        .names
-                        .insert(StringHashMapUnownedKey::init(entry), ());
-                }
-                None => {
-                    if exact.paths.is_empty() {
-                        exact.paths.reserve(exact_count);
-                    }
-                    let _ = exact
-                        .paths
-                        .insert(StringHashMapUnownedKey::init(joined), ());
-                }
-            }
+            let pattern = if has_separator {
+                let mut joined = r_fs.join(&mut spill, &[package_dir, entry]).to_vec();
+                // Normalize pattern to use forward slashes for cross-platform compatibility
+                bun_paths::slashes_to_posix_in_place(&mut joined[..]);
+                joined
+            } else {
+                // No directory in the pattern, so the name of a directory is never glob syntax.
+                [&b"**/"[..], entry].concat()
+            };
+            globs.push(glob::Prepared::new(pattern.into_boxed_slice()));
         }
 
-        match (glob_count > 0, exact_count > 0) {
+        match (has_globs, has_exact) {
             // If the array is empty, treat it as false (no side effects)
             (false, false) => SideEffects::False,
             (false, true) => SideEffects::Map(exact),
-            (true, false) => SideEffects::Glob(globs),
-            (true, true) => SideEffects::Mixed(MixedPatterns { exact, globs }),
+            (true, false) => SideEffects::Glob(globs.into_boxed_slice()),
+            (true, true) => SideEffects::Mixed(MixedPatterns {
+                exact,
+                globs: globs.into_boxed_slice(),
+            }),
         }
     }
 }

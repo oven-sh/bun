@@ -3138,23 +3138,31 @@ describe("HPACK (RFC 7541)", () => {
     },
   );
 
-  test("a larger headerTableSize does not grow the decoder's table until the peer's encoder says so", async () => {
-    const { srv, port } = await listen({ settings: { headerTableSize: 65536 } });
-    const sessions: http2.ServerHttp2Session[] = [];
-    srv.on("session", session => sessions.push(session));
-    const client = http2.connect(`http://127.0.0.1:${port}`);
+  // Bun up to 1.4.4 is such a peer. nghttp2, and so Node, waits for the size update and answers with COMPRESSION_ERROR.
+  test("a peer may fill a larger acknowledged headerTableSize without a table size update", async () => {
+    const { srv, seen, port } = await listen({ settings: { headerTableSize: 65536 } });
+    const c = await RawH2.connect(port);
     try {
-      await once(client, "remoteSettings");
-      // About 6 KB of entries through an encoder that stays at 4096.
-      for (let i = 0; i < 10; i++) {
-        const headers: http2.OutgoingHttpHeaders = { ":path": "/" };
-        for (let j = 0; j < 10; j++) headers[`x-header-${i}-${j}`] = `some value ${i} ${j}`;
-        await get(client, headers);
-      }
-      expect(client.state.deflateDynamicTableSize).toBeWithin(3500, 4097);
-      expect(sessions[0].state.inflateDynamicTableSize).toBe(client.state.deflateDynamicTableSize!);
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(isSettings);
+      c.sendSettingsAck();
+      // 60 entries of 100 bytes.
+      const entries = Array.from({ length: 60 }, (_, i) =>
+        Buffer.concat([
+          Buffer.from([0x40]),
+          hpackLiteral(`x-${String(i).padStart(2, "0")}`),
+          hpackLiteral(Buffer.alloc(64, "v").toString()),
+        ]),
+      );
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET", Buffer.concat(entries)));
+      expect((await c.waitFor(headersOrGoaway(1))).type).toBe(FrameType.HEADERS);
+      // The oldest of them.
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", Buffer.from([0x80 | (61 + 60)])));
+      expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
+      expect(seen[1]["x-00"]).toBe(Buffer.alloc(64, "v").toString());
     } finally {
-      client.destroy();
+      c.destroy();
       srv.close();
     }
   });

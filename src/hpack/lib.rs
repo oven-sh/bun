@@ -170,6 +170,27 @@ mod tests {
     }
 
     #[test]
+    fn a_higher_max_capacity_needs_no_size_update() {
+        let mut decoder = Decoder::new();
+        decoder.set_max_capacity(8192);
+        // 60 entries of 100 bytes, then a reference to the oldest.
+        let mut block = Vec::new();
+        for i in 0..60 {
+            block.extend_from_slice(&[0x40, 4]);
+            block.extend_from_slice(format!("x-{i:02}").as_bytes());
+            block.push(64);
+            block.extend_from_slice(&[b'v'; 64]);
+        }
+        block.push(0x80 | (61 + 60));
+        let fields = decode(&mut decoder, &block).unwrap();
+        assert_eq!(fields.last().map(|field| &field.0[..]), Some(&b"x-00"[..]));
+        assert_eq!(decoder.table_size(), 6000);
+
+        decoder.set_max_capacity(4096);
+        assert_eq!(decoder.table_size(), 4000);
+    }
+
+    #[test]
     fn malformed_blocks() {
         for block in [
             "80",                // index 0

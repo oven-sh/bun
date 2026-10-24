@@ -161,7 +161,7 @@ impl ViWait {
         test: Option<RunningEntry>,
     ) -> JsResult<JSValue> {
         Self::begin(
-            &global.js_thread_of_caller_no_frame(),
+            &global.js_thread_of_caller(),
             Kind::Poll,
             attempt,
             interval_ms,

@@ -842,9 +842,6 @@ pub enum BuiltinName {
     toString,
     redirect,
     inspectCustom,
-    highWaterMark,
-    path,
-    stream,
     asyncIterator,
     name,
     message,
@@ -873,9 +870,6 @@ impl BuiltinName {
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
     pub(crate) const InspectCustom: Self = Self::inspectCustom;
-    pub const HighWaterMark: Self = Self::highWaterMark;
-    pub const Path: Self = Self::path;
-    pub const Stream: Self = Self::stream;
     pub const Message: Self = Self::message;
     pub const Error: Self = Self::error;
     pub const Encoding: Self = Self::encoding;

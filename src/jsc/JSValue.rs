@@ -289,18 +289,8 @@ impl JSValue {
     pub fn is_big_int(self) -> bool {
         JSC__JSValue__isBigInt(self)
     }
-    /// `JSValue.isBigInt32()` — true iff this value uses
-    /// JSC's packed BigInt32 immediate representation (vs heap `JSBigInt`).
-    #[inline]
-    pub fn is_big_int32(self) -> bool {
-        unsafe extern "C" {
-            safe fn JSC__JSValue__isBigInt32(this: JSValue) -> bool;
-        }
-        JSC__JSValue__isBigInt32(self)
-    }
     /// `JSValue.isHeapBigInt()` — true iff this is a
-    /// heap-allocated `JSBigInt` cell. Distinct from [`is_big_int`], which
-    /// also returns `true` for the packed `BigInt32` immediate.
+    /// heap-allocated `JSBigInt` cell, as every BigInt is.
     #[inline]
     pub fn is_heap_big_int(self) -> bool {
         unsafe extern "C" {
@@ -2813,11 +2803,11 @@ impl JSValue {
     /// `JSValue.asBigIntCompare` — compare a BigInt against another BigInt or
     /// Number. Returns [`ComparisonResult::InvalidComparison`] if `self` is
     /// not a BigInt or `other` is neither BigInt nor Number.
-    pub fn as_big_int_compare(self, global: &JSGlobalObject, other: JSValue) -> ComparisonResult {
+    pub fn as_big_int_compare(self, other: JSValue) -> ComparisonResult {
         if !self.is_big_int() || (!other.is_big_int() && !other.is_number()) {
             return ComparisonResult::InvalidComparison;
         }
-        JSC__JSValue__asBigIntCompare(self, global, other)
+        JSC__JSValue__asBigIntCompare(self, other)
     }
 
     // ── Object.keys / Object.values. ────────────────
@@ -2920,11 +2910,7 @@ unsafe extern "C" {
         replace_when: bool,
         shown: &mut JSValue,
     ) -> bool;
-    safe fn JSC__JSValue__asBigIntCompare(
-        this: JSValue,
-        global: &JSGlobalObject,
-        other: JSValue,
-    ) -> ComparisonResult;
+    safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__values(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__isInstanceOf(

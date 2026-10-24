@@ -14719,6 +14719,54 @@ declare const i9: P7<number> & { z: 1 }; i9.m();
       expect(exitCode).toBe(1);
     });
 
+    test("an object literal nested in the argument of a generic call stays widened when it's instantiated twice", async () => {
+      using dir = project({
+        "a.ts": `type State<T> = T extends { states: infer S } ? keyof S : "leaf";
+type States<T> = { [K in keyof T]: State<T[K]> };
+declare function widened<T>(config: T): States<T>;
+declare function regular<const T>(config: T): States<T>;
+declare function hold<T>(value: T): { value: T };
+function machine<Q>() {
+  return widened({ idle: {}, busy: { initial: "a", states: { a: {}, b: {} } } });
+}
+function constant<Q>() {
+  return regular({ idle: {}, busy: { initial: "a", states: { a: {}, b: {} } } });
+}
+function held<Q>(q: Q) {
+  return hold({ busy: { initial: q, states: { a: q }, inner: { initial: 1, states: { b: q } } } });
+}
+function once<T>(t: T) {
+  const busy: "a" = machine<T>().busy;
+  const constantBusy: "a" = constant<T[]>().busy;
+  const { value } = held(t);
+  const heldBusy: State<typeof value.busy> = "leaf";
+  const inner: State<typeof value.busy.inner> = "leaf";
+  return value;
+}
+export function twice<U>(u: U) {
+  const value = once([u]);
+  const busy: State<typeof value.busy> = "leaf";
+  const inner: State<typeof value.busy.inner> = "leaf";
+}
+export const closed: "a" = machine<string>().busy;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(16,9): error TS2322: Type '"a" | "b"' is not assignable to type '"a"'.
+          Type '"b"' is not assignable to type '"a"'.
+        a.ts(17,9): error TS2322: Type '"a" | "b"' is not assignable to type '"a"'.
+          Type '"b"' is not assignable to type '"a"'.
+        a.ts(19,9): error TS2322: Type '"leaf"' is not assignable to type '"a"'.
+        a.ts(20,9): error TS2322: Type '"leaf"' is not assignable to type '"b"'.
+        a.ts(25,9): error TS2322: Type '"leaf"' is not assignable to type '"a"'.
+        a.ts(26,9): error TS2322: Type '"leaf"' is not assignable to type '"b"'.
+        a.ts(28,14): error TS2322: Type '"a" | "b"' is not assignable to type '"a"'.
+          Type '"b"' is not assignable to type '"a"'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 for a template literal with `this` in a class that has optional members", async () => {
       using dir = project({
         "a.ts": `export class A1 { x = \`\${this}\` as const; }

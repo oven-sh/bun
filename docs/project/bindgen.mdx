@@ -229,11 +229,13 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
 | `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
 | `b.string.owned`                                 | `bun_core::String`               | as `b.string`                                                 |
+| `b.string.view`                                  | `bun_core::StringView<'a>`       | as `b.string`                                                 |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
 | `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
+| `b.byteSpan`                                     | `&'a [u8]`                       | not a JS value: [bytes from C++](#calls-between-c-and-rust)   |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
 | `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
 | `b.object`                                       | `JsLocal<'a, JSObject>`          | an object                                                     |
@@ -263,7 +265,7 @@ Only the promise calls a reaction, with the context it was given, so nothing tes
 returns: `None` if the pointer was taken back before the promise settled. No argument after it has a conversion that
 throws: nothing would release the pointer. A generic `T` is written as its instantiation.
 
-These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.emptyStringAsNull` and `.ifPassed` apply to it):
+These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.falsyAsNull`, `.emptyStringAsNull` and `.ifPassed` apply to it):
 
 - `.optional`: `undefined` means absent; `Option<T>`.
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
@@ -328,6 +330,11 @@ body that keeps it takes `b.string.owned`, which comes after `.loose` or `.allow
 it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
+
+`b.string.view`, which comes after `.allowStringObject`, is for a body that only reads the
+characters, in Latin-1 or UTF-16: a `bun_core::StringView<'a>`, and a `&bun_core::StringView<'_>` as an argument of this type alone. It takes no reference to the
+storage, and `text.slice(..)` is read in place, where `b.string` would copy it into a new string. The frame holds the JS string, so it is for an argument, alone, in a union or
+with a modifier, and not in an array.
 
 A [class](#classes) is a type too: import it from its `.bind.ts` file. As an argument it is a `&'a` of the struct.
 The argument's slot in the frame holds the instance, so it is only for an argument, alone, in a union, or with one of the modifiers above except `.default()`.
@@ -601,6 +608,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
 | `configurable`   | `true` makes the native properties configurable                                                |
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
+| `writable`       | `false` makes the native functions read-only. It is not the `writable` of a cached getter      |
 | `memoryCost`     | [`fn memory_cost(&self) -> usize`](#memory), for a heap snapshot                               |
 | `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the GC                                     |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
@@ -609,6 +617,8 @@ is collected, make the class [`refCounted`](#refcounted).
 | `internalFields` | JS values the object holds                                                                     |
 | `proto`          | properties of the prototype                                                                    |
 | `static`         | properties of the constructor: native functions and accessors without `cache`                  |
+| `calledFromCpp`  | [member functions of `JSName`](#calls-between-c-and-rust) that are defined in Rust             |
+| `calledFromRust` | [member functions of `JSName`](#calls-between-c-and-rust) that hand-written C++ defines        |
 
 Code that has the global object and no capability makes one with `payload.to_js(global)`, which returns a
 `JSValue`, or `payload.into_js_wrapper(global)`, which returns the `JsWrapper`.
@@ -641,6 +651,7 @@ A property of `proto` is one of these.
 | `{ getter: T, cache: true \| "field", .. }`   | an accessor that returns an [internal field](#internalfields)                              |
 | `{ internalField: "field", setter }`          | an accessor that reads the field, and with `setter` stores any value, without calling Rust |
 | `{ builtin: true, length }`                   | the export of that name in `src/js/builtins/<class name>.ts`                               |
+| `{ constant: 3 }`                             | a read-only integer, like a WebIDL `const`                                                 |
 | `[{ rustName, args, .. }, ..]`                | a native function with [overloads](#overloads)                                             |
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
@@ -650,8 +661,8 @@ a native function of the struct (`close` is `do_close` beside a native `close`).
 also have the same `rustName`. The getter of `x` is `get_x` and its setter is `set_x`, and a leading
 `_` of the property is dropped: `_idleStart` is `get_idle_start`.
 `setter: true` gives the setter the getter's `capability`, and `setter: { capability: "js" }` its own. An
-accessor of `static` ignores its receiver, so a subclass inherits it. `configurable` on a getter overrides the
-class's.
+accessor of `static` ignores its receiver, so a subclass inherits it. `configurable` and `enumerable` on a getter
+or a constant override the class's.
 
 A key that starts with `@@` is a well-known symbol: `"@@dispose"` defines `prototype[Symbol.dispose]`. The function is
 writable, configurable and not enumerable, like the built-in ones, whatever the class says. Its `name` is
@@ -681,7 +692,7 @@ Every member takes `&self`, a setter too, and mutable state is in `Cell` and `Js
 `bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(value)` is the struct if `value`
 is an instance. `js_Glob::from_js_direct(value)` returns `None` for an instance of a subclass or one with own
 properties, either of which may override a member. `wrapper.payload_ptr()` is the address of the struct, which
-never changes.
+never changes, and `payload.wrapper_value()` returns the object that owns the struct.
 
 A member with `mutates: true` takes `&mut self`, and so does every setter of its class. JavaScript that ran
 during another member could call it on the same object, so no member of that class has `capability: "js"`. The class
@@ -700,6 +711,21 @@ is not an argument type, has no `estimatedSize`, and does not implement `JsClass
 
 Every field starts empty. A heap snapshot shows what it holds as a property of its name.
 
+In C++ the field is `m_callback`, a `JSC::WriteBarrier<JSC::Unknown>`. In a record each field names its type: `b.any`
+is what a list declares, and `b.cell(class, header)` is a `JSC::WriteBarrier` of that `JSCell` subclass, which only
+hand-written C++ uses.
+
+```ts
+internalFields: { failReason: b.any, pipeDone: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
+```
+
+```cpp
+JSC::JSPromise* done = sinkController->m_pipeDone.get(); // null if it is empty
+```
+
+`js_Name` has no functions for a `b.cell` field, and no getter or `internalField` property uses one. Rust reaches it
+through a [`calledFromRust`](#calls-between-c-and-rust) member function.
+
 A getter with `cache: true` declares a field of its own name, with the same functions, and
 returns it. While the field is empty the getter calls Rust and stores the result, so emptying
 `tag` makes the next read compute it again.
@@ -707,6 +733,63 @@ returns it. While the field is empty the getter calls Rust and stores the result
 `internalFields`, and fills it from its own Rust function.
 With `writable: true` any value assigned to the property replaces the cached one, without calling Rust.
 With `setter` and `passThis`, `set_tag` replaces the cached value itself, with `tag_set_cached`.
+
+### Calls between C++ and Rust
+
+Hand-written C++ and the class's Rust code call each other through member functions of the generated class, so neither
+side declares an `extern "C"` function for them.
+
+```ts
+export const ReadableSinkController = b.class({
+  proto: {
+    end: { returns: b.any, capability: "js", throws: true, calledFromCpp: true },
+    write: { args: { data: SinkChunk }, returns: b.any, capability: "js", throws: true, calledFromCpp: true },
+  },
+  calledFromCpp: {
+    isDetached: { returns: b.bool },
+    writeBytes: { args: { bytes: b.byteSpan }, returns: b.any, capability: "js", throws: true },
+  },
+  calledFromRust: {
+    onClose: { args: { reason: b.any, sinkClosed: b.bool }, throws: true },
+    setPipeDone: { args: { done: b.any } },
+  },
+});
+```
+
+The generated class declares them:
+
+```cpp
+// Defined in Rust. On exception, a JSValue result is empty.
+JSC::JSValue end(JSC::JSGlobalObject*);
+JSC::JSValue write(JSC::JSGlobalObject*, JSC::JSValue data);
+bool isDetached();
+JSC::JSValue writeBytes(JSC::JSGlobalObject*, std::span<const uint8_t> bytes);
+
+// Defined in hand-written C++, called from Rust.
+void onClose(JSC::JSGlobalObject*, JSC::JSValue reason, bool sinkClosed);
+void setPipeDone(JSC::JSValue done);
+```
+
+In both directions `globalObject` is the first parameter if the function has a `capability` or `throws`.
+
+`calledFromCpp: true` on a function of `proto` also makes it a member function. It takes a `JSC::JSValue` for each
+argument and converts it as a call from JS does, so `sinkController->write(globalObject, chunk)` is
+`controller.write(chunk)` without the property lookup. It has no overloads, `.variadic` or `rejects`.
+
+The class's `calledFromCpp` holds functions that only C++ calls and that are not properties. Nothing is converted: an
+argument is `b.any`, `b.bool`, a number or `b.byteSpan`, and the result is `b.any`, `b.bool`, a number or nothing.
+A function that throws returns `b.any` or nothing.
+
+`b.byteSpan` is bytes that are not in a JS object: a `std::span<const uint8_t>` that Rust gets as `&'a [u8]`.
+
+`calledFromRust` declares member functions that hand-written C++ defines. An argument is `b.any`, `b.bool` or a number, and
+the result is `b.any` or nothing. Rust calls them
+in the module `js_ReadableSinkController`, with the object first, and with `throws: true` gets a `JsResult`.
+
+```rust
+js_ReadableSinkController::on_close(this_value, global, reason, true)?;
+js_ReadableSinkController::set_pipe_done(this_value, done);
+```
 
 ### `refCounted`
 

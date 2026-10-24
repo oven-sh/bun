@@ -1301,7 +1301,7 @@ impl JSTranspiler {
         loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let js_thread = global.js_thread_of_caller_no_frame();
+        let js_thread = global.js_thread_of_caller();
         jsc::mark_binding();
         let code = match code_arg {
             StringOrJsBytes::Bytes(buffer) => {

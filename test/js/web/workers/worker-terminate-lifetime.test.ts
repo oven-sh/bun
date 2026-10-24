@@ -1420,12 +1420,14 @@ test(
     const triggered = Promise.withResolvers<boolean>();
     // The JIT log runs to megabytes. Keep the last part for the assertions and a failure report.
     let stderrTail = "";
+    let compiled = false;
     const stderrDone = (async () => {
       try {
         const decoder = new TextDecoder();
         let sent = false;
         for await (const chunk of proc.stderr) {
           stderrTail = (stderrTail + decoder.decode(chunk, { stream: true })).slice(-65536);
+          compiled ||= stderrTail.includes("[B3] Total OMG compilation took");
           if (sent || !stderrTail.includes(trigger)) continue;
           sent = true;
           proc.stdin.write("go");
@@ -1453,15 +1455,7 @@ test(
       if (exited === "did not exit") proc.kill();
       await stderrDone;
       if (exited !== 0) console.error(stderrTail);
-      expect({
-        stdout: await stdout,
-        exited,
-        compiled: stderrTail.includes("[B3] Total OMG compilation took"),
-      }).toEqual({
-        stdout: "terminated\n",
-        exited: 0,
-        compiled: true,
-      });
+      expect({ stdout: await stdout, exited, compiled }).toEqual({ stdout: "terminated\n", exited: 0, compiled: true });
     } finally {
       proc.kill();
       await stderrDone.catch(() => {});

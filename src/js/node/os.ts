@@ -1,4 +1,6 @@
 // Hardcoded module "node:os"
+const ObjectHasOwn = Object.hasOwn;
+
 var tmpdir = function () {
   var env = Bun.env;
 
@@ -107,7 +109,8 @@ function bound(binding) {
       return binding.getPriority(pid);
     },
     homedir: function () {
-      return binding.homedir();
+      const env = Bun.env;
+      return process.platform !== "win32" && ObjectHasOwn(env, "HOME") ? env.HOME : binding.homedir();
     },
     hostname: function () {
       return binding.hostname();

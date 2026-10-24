@@ -721,7 +721,7 @@ impl Cmd {
             return Ok(None);
         };
 
-        match interp.redirect_target(this, redirect)? {
+        let (redirfd, response) = match interp.redirect_target(this, redirect)? {
             RedirectTarget::Object(global, jsval) => {
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     if flags.stdin() {
@@ -794,6 +794,7 @@ impl Cmd {
                         jsval.fmt_string(global)
                     )));
                 }
+                return Ok(None);
             }
             RedirectTarget::Path(path_buf, response) => {
                 if path_buf.is_empty() {
@@ -836,12 +837,24 @@ impl Cmd {
                         )));
                     }
                 };
-                interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
-                set_stdio_from_redirect(stdio, flags, redirfd);
-                if let Some(response) = response {
-                    response.consume_body();
-                }
+                (redirfd, response)
             }
+            RedirectTarget::Fd(fd, response) => match fd.dup() {
+                Ok(dup) => (dup, response),
+                Err(e) => {
+                    let sys_err = e.to_shell_system_error();
+                    return Ok(Some(Builtin::cmd_write_failing_error(
+                        interp,
+                        this,
+                        format_args!("bun: {}: {}", sys_err.message, fd),
+                    )));
+                }
+            },
+        };
+        interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
+        set_stdio_from_redirect(stdio, flags, redirfd);
+        if let Some(response) = response {
+            response.consume_body();
         }
         Ok(None)
     }

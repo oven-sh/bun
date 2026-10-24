@@ -263,11 +263,41 @@ pub(crate) enum RedirectTarget<'a> {
     /// ambiguous. A `Response` over `Bun.file(path)` is that word too, as the bare
     /// `${Bun.file(path)}` is since template time (`handle_template_value`).
     Path(Vec<u8>, Option<ResponseFile>),
+    /// A `Bun.file(fd)`, bare or as the Blob body of a `Response`.
+    Fd(JsFd, Option<ResponseFile>),
     /// Any other JS object.
     Object(&'a crate::jsc::JSGlobalObject, crate::jsc::JSValue),
 }
 
-/// The `Response` whose body is the file of a [`RedirectTarget::Path`].
+/// The descriptor of a `Bun.file(fd)`. JS owns it, so a redirect reads or writes a duplicate.
+pub(crate) struct JsFd(Fd);
+
+impl JsFd {
+    fn of_blob(blob: &crate::webcore::Blob) -> Option<JsFd> {
+        let store = blob.store.get().as_deref()?;
+        let crate::webcore::blob::store::Data::File(file) = &store.data else {
+            return None;
+        };
+        match &file.pathlike {
+            crate::node::PathOrFileDescriptor::Fd(fd) => Some(JsFd(*fd)),
+            crate::node::PathOrFileDescriptor::Path(_) => None,
+        }
+    }
+
+    /// A duplicate that the caller closes. It shares the offset and the status flags of the descriptor.
+    pub(crate) fn dup(&self) -> bun_sys::Result<Fd> {
+        shell_dup(self.0)
+    }
+}
+
+/// The number that JS passed.
+impl core::fmt::Display for JsFd {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0.uv())
+    }
+}
+
+/// The `Response` whose body is the file of a [`RedirectTarget::Path`] or a [`RedirectTarget::Fd`].
 pub(crate) struct ResponseFile(crate::jsc::JSValue);
 
 impl ResponseFile {
@@ -1141,7 +1171,12 @@ impl Interpreter {
         if jsobj.is_empty() {
             return Err(global.throw(format_args!("Invalid JS object reference in shell")));
         }
-        if let Some(response) = jsobj.as_class_ref::<crate::webcore::Response>()
+        // A buffer is the usual JS object of a redirect, and it is never a file.
+        if jsobj.js_type().is_array_buffer_like() {
+            return Ok(RedirectTarget::Object(global, jsobj));
+        }
+        let response = jsobj.as_class_ref::<crate::webcore::Response>();
+        if let Some(response) = response
             && let Some(store) = response.get_body_value().file_store(global)
             && let Some(path) = crate::shell::shell_body::file_store_path(global, &store)?
         {
@@ -1151,6 +1186,22 @@ impl Interpreter {
                 path.push(0);
             }
             return Ok(RedirectTarget::Path(path, Some(ResponseFile(jsobj))));
+        }
+        // A stream over a `Bun.file(fd)` stays an object: the Blob caches that stream, and taking the body spends it (#45068).
+        let fd = match response {
+            Some(response) => match response.get_body_value() {
+                crate::webcore::body::Value::Blob(blob) => JsFd::of_blob(blob),
+                _ => None,
+            },
+            None => jsobj
+                .as_class_ref::<crate::webcore::Blob>()
+                .and_then(JsFd::of_blob),
+        };
+        if let Some(fd) = fd {
+            return Ok(RedirectTarget::Fd(
+                fd,
+                response.map(|_| ResponseFile(jsobj)),
+            ));
         }
         Ok(RedirectTarget::Object(global, jsobj))
     }
@@ -2189,7 +2240,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
 /// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
 /// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
 /// (non-pollable → synchronous write path), matching Windows behavior.
-fn is_pollable(fd: Fd) -> bool {
+pub(crate) fn is_pollable(fd: Fd) -> bool {
     #[cfg(windows)]
     {
         let _ = fd;

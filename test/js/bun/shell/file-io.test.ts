@@ -1,5 +1,6 @@
+import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
@@ -233,6 +234,401 @@ describe("IOWriter file output redirection", () => {
       .runAsTest("builtin echo with &> redirect");
 
     TestBuilder.command`pwd &>> append_output.txt`.exitCode(0).runAsTest("builtin pwd with &>> append redirect");
+  });
+});
+
+// A command is a builtin or a spawned process, and each sets up its redirect
+// in its own code. `echo` and `basename` are builtins on every platform:
+// `basename` with no operand prints its usage to stderr and exits 1. Each
+// spawned twin writes the same bytes. It is `sh` where there is one, because
+// a debug build of bun takes a second to start.
+describe.concurrent("redirect to a Bun.file(fd)", () => {
+  const usage = "usage: basename string\n";
+  const commands = {
+    builtin: { out: ["echo", "out"], err: ["basename"] },
+    spawned: isWindows
+      ? {
+          out: [bunExe(), "-e", `process.stdout.write("out\\n")`],
+          err: [bunExe(), "-e", `process.stderr.write(${JSON.stringify(usage)}); process.exit(1)`],
+        }
+      : {
+          out: ["sh", "-c", "echo out"],
+          err: ["sh", "-c", `echo '${usage.trimEnd()}' >&2; exit 1`],
+        },
+  };
+  type Route = keyof typeof commands;
+  const routes = Object.keys(commands) as Route[];
+  const immutable = "Cannot redirect stdout/stderr to an immutable blob. Expected a file";
+
+  // Runs a fixture in a fresh bun process and returns the JSON that it prints last.
+  async function runFixture(dir: string, env: Record<string, string | undefined> = bunEnv, stdin?: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      cwd: dir,
+      env,
+      stdin: stdin === undefined ? "ignore" : "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (stdin !== undefined) {
+      proc.stdin!.write(stdin);
+      proc.stdin!.end();
+    }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let printed: unknown = stdout;
+    try {
+      printed = JSON.parse(stdout.trim().split("\n").pop() ?? "");
+    } catch {}
+    return { printed, stderr, exitCode };
+  }
+
+  const descriptor = (fd: number) => Bun.file(fd);
+  const inResponse = (fd: number) => new Response(Bun.file(fd));
+  // The shell opens a path with the flags of the operator. An open descriptor
+  // keeps its own flags, so each test opens it the way the operator would.
+  const redirects = [
+    [">", "w", "out", { exitCode: 0, file: "out\n" }],
+    [">>", "a", "out", { exitCode: 0, file: "old content\nout\n" }],
+    ["2>", "w", "err", { exitCode: 1, file: usage }],
+    ["&>", "w", "out", { exitCode: 0, file: "out\n" }],
+    ["&>", "w", "err", { exitCode: 1, file: usage }],
+  ] as const;
+  const cells = routes.flatMap(route =>
+    (
+      [
+        ["Bun.file(fd)", descriptor],
+        ["new Response(Bun.file(fd))", inResponse],
+      ] as const
+    ).flatMap(([name, wrap]) =>
+      redirects.map(([operator, flags, stream, expected]) => ({
+        route,
+        name,
+        wrap,
+        operator,
+        flags,
+        stream,
+        expected,
+      })),
+    ),
+  );
+
+  test.each(cells)(
+    "$route command: $operator $name takes std$stream",
+    async ({ route, wrap, operator, flags, stream, expected }) => {
+      using dir = tempDir("shell-fd-redirect", { "out.txt": "old content\n" });
+      const path = join(String(dir), "out.txt");
+      const fd = fs.openSync(path, flags);
+      try {
+        const target = wrap(fd);
+        const { exitCode, stdout, stderr } = await $`${commands[route][stream]} ${{ raw: operator }} ${target}`
+          .env(bunEnv)
+          .quiet()
+          .nothrow();
+        expect({
+          exitCode,
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+          file: fs.readFileSync(path, "utf8"),
+          bodyUsed: target instanceof Response ? target.bodyUsed : null,
+        }).toEqual({ ...expected, stdout: "", stderr: "", bodyUsed: target instanceof Response ? true : null });
+      } finally {
+        fs.closeSync(fd);
+      }
+    },
+  );
+
+  test.each(routes)("%s command: a descriptor keeps its offset and stays open", async route => {
+    using dir = tempDir("shell-fd-redirect", { "out.txt": "0123456789\n" });
+    const path = join(String(dir), "out.txt");
+    const fd = fs.openSync(path, "r+");
+    try {
+      // `>` does not truncate an open descriptor, and `>>` does not seek it.
+      await $`${commands[route].out} > ${Bun.file(fd)}`.env(bunEnv).quiet();
+      await $`${commands[route].out} >> ${new Response(Bun.file(fd))}`.env(bunEnv).quiet();
+      expect(fs.readFileSync(path, "utf8")).toBe("out\nout\n89\n");
+      // The shell did not close the descriptor.
+      expect(fs.fstatSync(fd).size).toBe(11);
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  test.each(routes)("%s command: Bun.stdout and Bun.stderr are the streams of the process", async route => {
+    using dir = tempDir("shell-fd-redirect", {
+      "fixture.ts": /* ts */ `
+        import { $ } from "bun";
+        const commands = ${JSON.stringify(commands[route])};
+        await $\`\${commands.out} > \${Bun.stdout}\`.quiet();
+        await $\`\${commands.err} 2> \${Bun.stderr}\`.quiet().nothrow();
+      `,
+    });
+    expect(await runFixture(String(dir))).toEqual({
+      printed: "out\n",
+      stderr: expect.stringContaining(usage),
+      exitCode: 0,
+    });
+  });
+
+  // The descriptor is the blocking write end of a full FIFO, and the reader is
+  // on the same thread. The builtin must wait for room without a blocking write.
+  test.skipIf(!isPosix)("builtin command: a write to a full pipe waits for the reader", async () => {
+    using dir = tempDir("shell-fd-redirect", {
+      "fixture.ts": /* ts */ `
+        import { $ } from "bun";
+        import * as fs from "node:fs";
+        const rfd = fs.openSync("fifo", fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        // A second, nonblocking write end fills the pipe.
+        const fill = fs.openSync("fifo", fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const wfd = fs.openSync("fifo", fs.constants.O_WRONLY);
+        try { while (true) fs.writeSync(fill, Buffer.alloc(4096, "y")); } catch {}
+
+        let tail = "";
+        const buf = Buffer.alloc(65536);
+        const drain = () => {
+          let n = 0;
+          try { n = fs.readSync(rfd, buf); } catch (e: any) { if (e.code !== "EAGAIN") throw e; }
+          if (n > 0) tail = (tail + buf.toString("latin1", 0, n)).slice(-4);
+          return n;
+        };
+        let result: { exitCode: number } | undefined;
+        const pending = $\`echo out > \${Bun.file(wfd)}\`.quiet().nothrow().then(r => (result = r));
+        while (!result) {
+          drain();
+          await new Promise<void>(r => setImmediate(r));
+        }
+        await pending;
+        while (drain() > 0) {}
+        console.log(JSON.stringify({ exitCode: result.exitCode, tail }));
+      `,
+    });
+    await using mkfifo = Bun.spawn({ cmd: [Bun.which("mkfifo")!, join(String(dir), "fifo")], env: bunEnv });
+    expect(await mkfifo.exited).toBe(0);
+    expect(await runFixture(String(dir))).toEqual({
+      printed: { exitCode: 0, tail: "out\n" },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // The write is larger than the pipe, and the reader is on the same thread.
+  async function writeMoreThanThePipeHolds(openFlags: string) {
+    using dir = tempDir("shell-fd-redirect", {
+      "fixture.ts": /* ts */ `
+        import { $ } from "bun";
+        import * as fs from "node:fs";
+        const rfd = fs.openSync("fifo", fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const wfd = fs.openSync("fifo", ${openFlags});
+        const big = Buffer.alloc(200_000, "z").toString();
+
+        let bytes = 0;
+        let last = "";
+        const buf = Buffer.alloc(65536);
+        const drain = () => {
+          let n = 0;
+          try { n = fs.readSync(rfd, buf); } catch (e: any) { if (e.code !== "EAGAIN") throw e; }
+          if (n > 0) last = String.fromCharCode(buf[n - 1]);
+          bytes += n;
+          return n;
+        };
+        let result: { exitCode: number } | undefined;
+        const pending = $\`echo \${big} > \${Bun.file(wfd)}\`.quiet().nothrow().then(r => (result = r));
+        while (!result) {
+          drain();
+          await new Promise<void>(r => setImmediate(r));
+        }
+        await pending;
+        while (drain() > 0) {}
+        console.log(JSON.stringify({ exitCode: result.exitCode, bytes, last }));
+      `,
+    });
+    await using mkfifo = Bun.spawn({ cmd: [Bun.which("mkfifo")!, join(String(dir), "fifo")], env: bunEnv });
+    expect(await mkfifo.exited).toBe(0);
+    expect(await runFixture(String(dir))).toEqual({
+      printed: { exitCode: 0, bytes: 200_001, last: "\n" },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  }
+
+  test.skipIf(!isPosix)("builtin command: a write larger than the pipe arrives on a nonblocking descriptor", () =>
+    writeMoreThanThePipeHolds("fs.constants.O_WRONLY | fs.constants.O_NONBLOCK"),
+  );
+
+  // Linux: the shell does not make the descriptor nonblocking, so this write waits
+  // in write(2) and the reader never runs. The one-slot write of #46307 ends the wait.
+  test.todo("builtin command: a write larger than the pipe arrives on a blocking descriptor", () =>
+    writeMoreThanThePipeHolds("fs.constants.O_WRONLY"),
+  );
+
+  test.skipIf(!isPosix)("builtin command: no descriptor leaks, and each descriptor keeps its flags", async () => {
+    using dir = tempDir("shell-fd-redirect", {
+      "out.txt": "",
+      "fixture.ts": /* ts */ `
+        import { $ } from "bun";
+        import * as fs from "node:fs";
+        const fd = fs.openSync("out.txt", "r+");
+        const rfd = fs.openSync("fifo", fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const blocking = fs.openSync("fifo", fs.constants.O_WRONLY);
+        const nonblocking = fs.openSync("fifo", fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        // Linux shows the file status flags of a descriptor.
+        const flags = () =>
+          ${isLinux}
+            ? [fd, blocking, nonblocking].map(
+                fd => fs.readFileSync("/proc/self/fdinfo/" + fd, "utf8").match(/^flags:\\s*(\\d+)/m)![1],
+              )
+            : [];
+        const opened = flags();
+        const pipe = Buffer.alloc(16);
+        const run = async (count: number) => {
+          for (let i = 0; i < count; i++) {
+            await $\`echo x > \${Bun.file(fd)}\`.quiet();
+            await $\`echo x >> \${new Response(Bun.file(fd))}\`.quiet();
+            await $\`basename 2> \${Bun.file(fd)}\`.quiet().nothrow();
+            await $\`echo x &> \${Bun.file(fd)}\`.quiet();
+            await $\`echo x < \${Bun.file(fd)}\`.quiet();
+            await $\`echo x > \${Bun.file(blocking)}\`.quiet();
+            await $\`echo x > \${Bun.file(nonblocking)}\`.quiet();
+            if (fs.readSync(rfd, pipe) !== 4) throw new Error("the pipe did not get both lines");
+            await $\`echo x > \${Bun.file(0x3fffffff)}\`.quiet().nothrow();
+            await $\`echo x > \${new Response(new Blob(["x"]))}\`.quiet().then(() => {}, () => {});
+          }
+        };
+        // The first runs open what the process opens one time.
+        await run(2);
+        const before = fs.readdirSync("/dev/fd").length;
+        await run(20);
+        console.log(JSON.stringify({
+          leaked: fs.readdirSync("/dev/fd").length - before,
+          flagsChanged: flags().join() !== opened.join(),
+          size: fs.fstatSync(fd).size,
+        }));
+      `,
+    });
+    await using mkfifo = Bun.spawn({ cmd: [Bun.which("mkfifo")!, join(String(dir), "fifo")], env: bunEnv });
+    expect(await mkfifo.exited).toBe(0);
+    expect(await runFixture(String(dir))).toEqual({
+      // Each run writes "x\n" three times and the usage line one time to the file.
+      printed: { leaked: 0, flagsChanged: false, size: 22 * (3 * 2 + usage.length) },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // POSIX only: on Windows the failure comes from another call, and its text was not measured.
+  const notOpen = routes.flatMap(route =>
+    (
+      [
+        [">", "Bun.file(fd)", descriptor],
+        [">", "new Response(Bun.file(fd))", inResponse],
+        ["<", "Bun.file(fd)", descriptor],
+      ] as const
+    ).map(([operator, name, wrap]) => ({ route, operator, name, wrap })),
+  );
+  test.skipIf(!isPosix).each(notOpen)(
+    "$route command: $operator $name fails when the descriptor is not open",
+    async ({ route, operator, wrap }) => {
+      const fd = 0x3fffffff;
+      const target = wrap(fd);
+      const { exitCode, stdout, stderr } = await $`${commands[route].out} ${{ raw: operator }} ${target}`
+        .env(bunEnv)
+        .quiet()
+        .nothrow();
+      expect({
+        exitCode,
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+        bodyUsed: target instanceof Response ? target.bodyUsed : null,
+      }).toEqual({
+        exitCode: 1,
+        stdout: "",
+        stderr: `bun: Bad file descriptor: ${fd}`,
+        bodyUsed: target instanceof Response ? false : null,
+      });
+    },
+  );
+
+  // `cat` is the one builtin that reads its stdin. It is a builtin on Windows,
+  // and on POSIX only with this flag.
+  const builtinCat = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+  const catFixture = (target: string) => ({
+    "fixture.ts": /* ts */ `
+      import { $ } from "bun";
+      import * as fs from "node:fs";
+      const fd = process.env.READ_FILE ? fs.openSync("in.txt", "r") : 0;
+      const result = await $\`cat < \${${target}}\`.quiet().nothrow();
+      console.log(JSON.stringify({ exitCode: result.exitCode, stdout: result.stdout.toString() }));
+    `,
+    "in.txt": "from the file\n",
+  });
+  const stdinTargets = [["Bun.file(fd)"], ["new Response(Bun.file(fd))"]] as const;
+
+  test.each(stdinTargets)("builtin cat < ${%s} reads a pipe", async target => {
+    using dir = tempDir("shell-fd-redirect", catFixture(target));
+    expect(await runFixture(String(dir), builtinCat, "from the pipe\n")).toEqual({
+      printed: { exitCode: 0, stdout: "from the pipe\n" },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // The builtin `cat` cannot read a regular file on POSIX: it exits 1 for `cat < file` too (#35337).
+  test.todoIf(isPosix).each(stdinTargets)("builtin cat < ${%s} reads a regular file", async target => {
+    using dir = tempDir("shell-fd-redirect", catFixture(target));
+    expect(await runFixture(String(dir), { ...builtinCat, READ_FILE: "1" })).toEqual({
+      printed: { exitCode: 0, stdout: "from the file\n" },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // `cat` is a builtin on Windows and a spawned command on POSIX.
+  test.each([
+    ["Bun.file(fd)", descriptor],
+    ["new Response(Bun.file(fd))", inResponse],
+  ] as const)("cat < ${%s} reads the file", async (_name, wrap) => {
+    using dir = tempDir("shell-fd-redirect", { "in.txt": "from the file\n" });
+    const fd = fs.openSync(join(String(dir), "in.txt"), "r");
+    try {
+      const { exitCode, stdout } = await $`cat < ${wrap(fd)}`.env(bunEnv).quiet().nothrow();
+      expect({ exitCode, stdout: stdout.toString() }).toEqual({ exitCode: 0, stdout: "from the file\n" });
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  // A builtin cannot write to bytes in memory. The refusal reads nothing.
+  const inMemory = [
+    ...[">", ">>", "2>", "&>"].map(operator => [operator, "new Response(blob)", false] as const),
+    [">", "a Response whose .body was read", true] as const,
+  ];
+  test.each(inMemory)("builtin command: %s ${%s} is refused and stays unread", async (operator, _name, readBody) => {
+    const response = new Response(new Blob(["in memory"]));
+    const stream = readBody ? response.body! : undefined;
+    let error: unknown;
+    try {
+      await $`echo out ${{ raw: operator }} ${response}`.quiet().nothrow();
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect({
+      message: (error as Error).message,
+      bodyUsed: response.bodyUsed,
+      locked: stream ? stream.locked : false,
+      body: await response.text(),
+    }).toEqual({
+      message: immutable,
+      bodyUsed: false,
+      locked: false,
+      body: "in memory",
+    });
+  });
+
+  // A spawned command refuses too, but with a TypeError that has another text, and after it took the body.
+  test.todo("spawned command: > ${new Response(blob)} is refused the way a builtin refuses it", async () => {
+    const response = new Response(new Blob(["in memory"]));
+    await expect($`${commands.spawned.out} > ${response}`.env(bunEnv).quiet()).rejects.toThrow(immutable);
+    expect(response.bodyUsed).toBe(false);
   });
 });
 

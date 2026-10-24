@@ -139,12 +139,12 @@ fn load_map(
 
 /// `Ok(None)`: not a regular file. The read stops at the size `fstat` reports (the path is untrusted).
 fn read_regular_file(path: &[u8]) -> bun_sys::Maybe<Option<Vec<u8>>> {
-    let file = bun_sys::File::openat(
-        bun_sys::Fd::cwd(),
-        path,
-        bun_sys::O::RDONLY | bun_sys::O::NONBLOCK,
-        0,
-    )?;
+    // ReadFile uses synchronous I/O; NONBLOCK opens an overlapped handle on Windows.
+    #[cfg(windows)]
+    let flags = bun_sys::O::RDONLY;
+    #[cfg(not(windows))]
+    let flags = bun_sys::O::RDONLY | bun_sys::O::NONBLOCK;
+    let file = bun_sys::File::openat(bun_sys::Fd::cwd(), path, flags, 0)?;
     if file.kind()? != bun_core::util::FileKind::File {
         return Ok(None);
     }

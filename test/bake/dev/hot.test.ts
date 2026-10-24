@@ -825,3 +825,57 @@ devTest("namespace imports do not collide with a module's local exports binding 
     await c.expectElemText("h1", "AFTER:local");
   },
 });
+
+for (const [withDispose, asyncDependency] of [
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+] as const) {
+  devTest(
+    `evaluates an accepting importer after all changed dependencies${withDispose ? " and disposes it once" : ""}${asyncDependency ? " with an async dependency" : ""}`,
+    {
+      files: {
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+        "index.ts": `
+      import { a } from './a.ts';
+      import { b } from './b.ts';
+      import { c } from './c.ts';
+      console.log([a, b, c].join('|'));
+      import.meta.hot.accept(() => { globalThis.importerAccepts = (globalThis.importerAccepts ?? 0) + 1; });
+      ${withDispose ? `import.meta.hot.dispose(() => { globalThis.batchDisposals = (globalThis.batchDisposals ?? 0) + 1; });` : ""}
+    `,
+        "a.ts": `globalThis.loadsA = (globalThis.loadsA ?? 0) + 1; export const a = 'A0';`,
+        "b.ts": `
+      globalThis.loadsB = (globalThis.loadsB ?? 0) + 1;
+      export const b = 'B0';
+      import.meta.hot.accept(mod => { (globalThis.acceptedB ??= []).push(['old', mod.b]); });
+    `,
+        "c.ts": `globalThis.loadsC = (globalThis.loadsC ?? 0) + 1; export const c = 'C0';`,
+      },
+      async test(dev) {
+        await using client = await dev.client("/");
+        await client.expectMessage("A0|B0|C0");
+        {
+          await using batch = await dev.batchChanges();
+          await dev.write("a.ts", `globalThis.loadsA = (globalThis.loadsA ?? 0) + 1; export const a = 'A1';`);
+          await dev.write(
+            "b.ts",
+            `globalThis.loadsB = (globalThis.loadsB ?? 0) + 1; ${asyncDependency ? "await Promise.resolve();" : ""} export const b = 'B1';
+         import.meta.hot.accept(mod => { (globalThis.acceptedB ??= []).push(['new', mod.b]); });`,
+          );
+          await dev.write("c.ts", `globalThis.loadsC = (globalThis.loadsC ?? 0) + 1; export const c = 'C1';`);
+        }
+        await client.expectMessage("A1|B1|C1");
+        expect(await client.js`({ accepts: globalThis.importerAccepts, acceptedB: globalThis.acceptedB })`).toEqual({
+          accepts: 1,
+          acceptedB: [["old", "B1"]],
+        });
+        expect(await client.js`[globalThis.loadsA, globalThis.loadsB, globalThis.loadsC]`).toEqual([2, 2, 2]);
+        if (withDispose) {
+          expect(await client.js`globalThis.batchDisposals`).toBe(1);
+        }
+      },
+    },
+  );
+}

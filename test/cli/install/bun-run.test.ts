@@ -10,6 +10,40 @@ const bunEnv: typeof bunEnv_ = {
 };
 
 describe.concurrent("bun run", () => {
+  it.each([false, true])("consumes package script separators with explicit run = %s", async withRun => {
+    using dir = tempDir("package-separator", {
+      "entry.mjs": "console.log(JSON.stringify(process.argv.slice(2)))",
+      "package.json": JSON.stringify({ scripts: { echoargs: `${JSON.stringify(bunExe())} entry.mjs` } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...(withRun ? ["run"] : []), "echoargs", "--", "--", "sentinel"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual(["--", "sentinel"]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("consumes one separator for an explicit bun run file", async () => {
+    using dir = tempDir("run-file-separator", {
+      "entry.mjs": "console.log(JSON.stringify(process.argv.slice(2)))",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "entry.mjs", "--", "--", "sentinel"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual(["--", "sentinel"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   for (let withRun of [false, true]) {
     describe(withRun ? "bun run" : "bun", () => {
       describe("should work with .", () => {

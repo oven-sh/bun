@@ -1,9 +1,12 @@
-//! `bun lint --lsp`: a language server on standard input and output.
+//! `bun lint --lsp` and `bun fmt --no-script --lsp`: a language server on standard input and output.
 //!
 //! The thread that reads the messages keeps the documents. Each workspace folder has a thread that lints and formats what is
 //! in it, with the folder as the working directory and its `bunfig.toml`: as `bun lint` does there. It keeps the
 //! configurations that it has read until one of their files changes. One more thread is for the documents that are in no
 //! folder: nothing of theirs is run.
+//!
+//! Standard output carries the messages and nothing else: what the linter and the formatter have to say goes to the
+//! client as a message, or is an answer.
 //!
 //! - [`rpc`]: the messages.
 //! - [`text`]: places in a document.
@@ -15,15 +18,14 @@ mod rpc;
 mod session;
 mod text;
 
-use crate::bunfig;
 use crate::cli::{Options, UsageError};
+use crate::fmt::Formatted;
+use crate::paths;
 use crate::results::FileResult;
 use crate::run::{Environment, Fatal, Script, Stream};
-use crate::{fs, paths};
 use answers::{FIX_ALL, Places, QUICK_FIX, wants};
 use bun_core::strings;
-use bun_lint::js_plugin::{Engine, Vm};
-use bun_lint::json::Notation;
+use bun_lint::js_plugin::{Engine, Vm, Work};
 use bun_lint::linter::LintMessage;
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
@@ -31,8 +33,25 @@ use bun_threading::{Condition, Guarded};
 use rpc::{ErrorCode, Frame, Incoming, Reader, Writer, dig, number, object};
 use session::{How, Session, Weight};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use text::{Encoding, Lines, Range};
+
+/// What the server does: `bun fmt --lsp` formats, `bun lint --lsp` does both.
+#[derive(Copy, Clone)]
+pub struct Features {
+    pub format: bool,
+    pub lint: bool,
+}
+
+/// The engine of one workspace folder while its configurations stay as they are. Its realms run on threads of their
+/// own.
+pub trait Realms: Engine + Send {
+    /// Ends the threads, and waits for them. Before the process exits.
+    fn end_all(&self);
+    /// Frees the realms. Once the folder has moved on to other configurations, or is closed.
+    fn free_all(&self);
+}
 
 /// What the server takes from the process, beside the [`Environment`].
 pub struct Process<'p> {
@@ -40,18 +59,61 @@ pub struct Process<'p> {
     pub read: &'p (dyn Fn(&mut [u8]) -> usize + Sync),
     /// Writes all of it to the client.
     pub write: &'p (dyn Fn(&[u8]) + Sync),
-    /// Calls the function with an engine that nothing else uses, and frees it afterwards.
-    pub with_engine: &'p (dyn Fn(&mut dyn FnMut(&dyn Engine)) + Sync),
+    /// An engine that nothing else uses, for one workspace folder. `None`: the process has none to give, and the
+    /// folder's plugins don't run.
+    pub engines: &'p (dyn Fn() -> Option<Box<dyn Realms + 'p>> + Sync),
     /// Ends the process at once, whatever its threads are doing.
     pub exit: &'p (dyn Fn(u8) + Sync),
+    pub features: Features,
+    /// The flags of `bun lint` in a directory: those of its `bunfig.toml` and the ones above it, then the arguments.
+    /// `Err`: what is wrong with one of them.
+    pub lint_options: &'p (dyn Fn(&[u8], &[&[u8]]) -> Result<Options, Vec<u8>> + Sync),
+    /// The same for `bun fmt`.
+    pub format_options:
+        &'p (dyn Fn(&[u8], &[&[u8]]) -> Result<crate::fmt::cli::Options, Vec<u8>> + Sync),
 }
 
-/// For what is in no workspace folder.
-struct NoEngine;
+/// For what is in no workspace folder, and for a folder that the process has no engine for.
+struct NoEngine {
+    why: &'static [u8],
+    /// A plugin would have run since this was last looked at.
+    refused: AtomicBool,
+}
+
+impl NoEngine {
+    fn new(why: &'static [u8]) -> NoEngine {
+        NoEngine {
+            why,
+            refused: AtomicBool::new(false),
+        }
+    }
+
+    fn refuse(&self) -> Result<(), Vec<u8>> {
+        self.refused.store(true, Ordering::Relaxed);
+        Err(self.why.to_vec())
+    }
+}
 
 impl Engine for NoEngine {
-    fn with_vm(&self, _: usize, _: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
-        Err(b"Plugins only run for files in a workspace folder".to_vec())
+    fn thread_has_realm(&self) -> bool {
+        false
+    }
+
+    fn with_vm_here(&self, _: usize, _: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+        self.refuse()
+    }
+
+    fn with_vm(&self, _: usize, _: &mut (dyn FnMut(&mut dyn Vm) + Send)) -> Result<(), Vec<u8>> {
+        self.refuse()
+    }
+
+    fn work_off(&self, _: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        meanwhile();
+        self.refuse()
+    }
+
+    fn busy(&self) -> usize {
+        0
     }
 }
 
@@ -145,11 +207,21 @@ struct Settings {
 }
 
 impl Settings {
-    /// `{ lint: { enable, run }, format: { enable } }`. What is not there stays as it is.
-    fn read(&mut self, json: &Json) {
+    /// All that `features` has.
+    fn new(features: Features) -> Settings {
+        Settings {
+            lints: features.lint,
+            formats: features.format,
+            lints_on_type: true,
+        }
+    }
+
+    /// `{ lint: { enable, run }, format: { enable } }`. What is not there stays as it is. What `features` lacks stays
+    /// off.
+    fn read(&mut self, json: &Json, features: Features) {
         let flag = |path: &[&str]| dig(json, path).and_then(Json::as_bool);
-        self.lints = flag(&["lint", "enable"]).unwrap_or(self.lints);
-        self.formats = flag(&["format", "enable"]).unwrap_or(self.formats);
+        self.lints = features.lint && flag(&["lint", "enable"]).unwrap_or(self.lints);
+        self.formats = features.format && flag(&["format", "enable"]).unwrap_or(self.formats);
         match dig(json, &["lint", "run"]).and_then(Json::as_str) {
             Some(b"onType") => self.lints_on_type = true,
             Some(b"onSave") => self.lints_on_type = false,
@@ -168,7 +240,7 @@ struct Known {
 
 /// What all threads share.
 struct Server<'s> {
-    /// What follows `lint` on the command line.
+    /// What follows the command on the command line: flags of `bun lint` when [`Features::lint`], else of `bun fmt`.
     args: &'s [&'s [u8]],
     environment: &'s Environment<'s>,
     process: &'s Process<'s>,
@@ -180,6 +252,8 @@ struct Server<'s> {
     latest: Guarded<FxHashMap<Vec<u8>, u64>>,
     /// The requests that are not answered yet, and whether the client has taken each back.
     pending: Guarded<Vec<(Json, bool)>>,
+    /// The engines of the folders, while their threads use them: to end before the process does.
+    realms: Guarded<Vec<Arc<dyn Realms + 's>>>,
 }
 
 /// The files that say how a file is linted or formatted, or whether it is at all.
@@ -274,23 +348,17 @@ fn name_of(uri: &[u8], language: &[u8]) -> Vec<u8> {
     }
 }
 
-/// What `read` makes of the `bunfig.toml` in `directory`. `Ok(None)`: nothing, or there is no such file.
-fn read_bunfig<T>(directory: &[u8], read: bunfig::Read<T>) -> Result<Option<T>, Vec<u8>> {
-    let Ok(text) = fs::read(&paths::join(directory, b"bunfig.toml")) else {
-        return Ok(None);
-    };
-    let found = bun_lint::json::with_parsed(Notation::Toml, &text, read).map_err(|it| it.message);
-    let found = found.and_then(|it| it.map_err(|refusal| refusal.message));
-    found.map_err(|why| [b"Cannot use bunfig.toml: ", &why[..]].concat())
-}
-
-impl Server<'_> {
+impl<'s> Server<'s> {
     fn client(&self) -> &Client {
         self.client.get_or_init(|| Client {
             encoding: Encoding::Utf16,
             has_versioned_edits: false,
             watches_files: false,
         })
+    }
+
+    fn features(&self) -> Features {
+        self.process.features
     }
 
     /// `type`: 1 for an error, 2 for a warning, 3 for a note.
@@ -301,7 +369,20 @@ impl Server<'_> {
 
     /// Puts an error before the user.
     fn show_error(&self, message: &[u8]) {
-        self.tell("window/showMessage", 1, &[b"bun lint: ", message].concat());
+        let command: &[u8] = match self.features().lint {
+            true => b"bun lint: ",
+            false => b"bun fmt: ",
+        };
+        self.tell("window/showMessage", 1, &[command, message].concat());
+    }
+
+    /// Ends the process with `code`, once the engines have ended their threads.
+    fn exit(&self, code: u8) {
+        let realms: Vec<Arc<dyn Realms + 's>> = std::mem::take(&mut *self.realms.lock());
+        for realms in &realms {
+            realms.end_all();
+        }
+        (self.process.exit)(code);
     }
 
     fn is_in_a_folder(&self, path: &[u8]) -> bool {
@@ -379,45 +460,61 @@ impl Server<'_> {
     }
 
     /// The flags of `bun lint` in `root`.
-    fn options_of(&self, root: &Root) -> Result<Options, Vec<u8>> {
-        let defaults = match root.is_folder {
-            true => read_bunfig(&root.path, bunfig::lint)?,
-            false => None,
-        };
-        match defaults {
-            Some(defaults) => Options::parse_over(defaults, self.args),
-            None => Options::parse(self.args),
+    fn lint_options_of(&self, root: &Root) -> Result<Options, Vec<u8>> {
+        match root.is_folder {
+            true => (self.process.lint_options)(&root.path, self.args),
+            false => Options::parse(self.args).map_err(|UsageError(message)| message),
         }
-        .map_err(|UsageError(message)| message)
     }
 
-    /// What the thread of `root` does.
+    /// The flags of `bun fmt` in `root`. The arguments are its when the server does not lint.
+    fn format_options_of(&self, root: &Root) -> Result<crate::fmt::cli::Options, Vec<u8>> {
+        let args: &[&[u8]] = match self.features().lint {
+            true => &[],
+            false => self.args,
+        };
+        match root.is_folder {
+            true => (self.process.format_options)(&root.path, args),
+            false => crate::fmt::cli::Options::parse(args).map_err(|UsageError(message)| message),
+        }
+    }
+
+    /// What the thread of `root` does. A folder gets an engine per generation, which is freed once the thread is done
+    /// with it.
     fn work(&self, root: &Root) {
         let mut next = root.take();
-        while let Some((first, generation)) = next.take() {
-            let mut first = Some(first);
-            let mut serve = |engine: &dyn Engine| {
-                if let Some(first) = first.take() {
-                    next = self.work_with(root, engine, (first, generation));
-                }
+        while let Some(first) = next.take() {
+            let realms: Option<Arc<dyn Realms + 's>> = match root.is_folder {
+                true => (self.process.engines)().map(Arc::from),
+                false => None,
             };
-            match root.is_folder {
-                true => (self.process.with_engine)(&mut serve),
-                false => serve(&NoEngine),
-            }
+            let Some(realms) = realms else {
+                let why: &[u8] = match root.is_folder {
+                    true => b"Plugins do not run in the editor on this platform",
+                    false => b"Plugins only run for files in a workspace folder",
+                };
+                let no_engine = NoEngine::new(why);
+                next = self.work_with(root, &no_engine, Some(&no_engine), first);
+                continue;
+            };
+            self.realms.lock().push(Arc::clone(&realms));
+            next = self.work_with(root, &*realms, None, first);
+            realms.free_all();
+            self.realms.lock().retain(|it| !Arc::ptr_eq(it, &realms));
         }
     }
 
     /// Does `first` and what follows it, as long as the configurations are those of `generation`. Returns the first job that
-    /// is for later ones.
+    /// is for later ones. `no_engine`: `engine`, if it is one that refuses.
     fn work_with(
         &self,
         root: &Root,
         engine: &dyn Engine,
+        no_engine: Option<&NoEngine>,
         (first, generation): (Job, u64),
     ) -> Option<(Job, u64)> {
         let run_script = |script: &Script| {
-            match self.is_in_a_folder(script.path) {
+            match self.is_in_a_folder(script.cwd) {
             true => (self.environment.run_script)(script),
             false => Err(b"It is outside the workspace folders, so it was not run\n  Open its folder in the editor to use it".to_vec()),
         }
@@ -436,9 +533,14 @@ impl Server<'_> {
             server: self,
             root,
             environment,
+            no_engine,
             known: FxHashMap::default(),
             told: Vec::new(),
         };
+        let options = self.features().lint.then(|| self.lint_options_of(root));
+        if let Some(Err(why)) = &options {
+            worker.tell_once(why.clone(), |why| self.tell("window/logMessage", 1, why));
+        }
         let all = |session: Option<&Session>| {
             let mut job = first;
             loop {
@@ -449,34 +551,33 @@ impl Server<'_> {
                 }
             }
         };
-        match self.options_of(root) {
-            Ok(options) => session::with_session(&options, environment, |session| {
+        match options {
+            Some(Ok(options)) => session::with_session(&options, environment, |session| {
                 let refusal = session.refusal();
                 if let Some(refusal) = &refusal {
                     self.show_error(refusal);
                 }
                 all(refusal.is_none().then_some(session))
             }),
-            Err(why) => {
-                self.show_error(&why);
-                all(None)
-            }
+            _ => all(None),
         }
     }
 }
 
 /// The thread of a [`Root`], while its configurations stay as they are.
-struct Worker<'w> {
-    server: &'w Server<'w>,
+struct Worker<'w, 's> {
+    server: &'w Server<'s>,
     root: &'w Root,
     environment: &'w Environment<'w>,
+    /// The engine, if it is one that refuses.
+    no_engine: Option<&'w NoEngine>,
     /// By URI.
     known: FxHashMap<Vec<u8>, Known>,
     /// What the user has been told, which is not said again.
     told: Vec<Vec<u8>>,
 }
 
-impl Worker<'_> {
+impl Worker<'_, '_> {
     fn tell_once(&mut self, line: Vec<u8>, tell: impl FnOnce(&[u8])) {
         if !self.told.contains(&line) {
             tell(&line);
@@ -496,6 +597,14 @@ impl Worker<'_> {
         for (weight, line) in session.notes() {
             let kind = if weight == Weight::Warning { 2 } else { 3 };
             self.tell_once(line, |line| server.tell("window/logMessage", kind, line));
+        }
+        // Said when a plugin would have run, which is when the user looks for it.
+        if let Some(no_engine) = self.no_engine
+            && self.root.is_folder
+            && no_engine.refused.swap(false, Ordering::Relaxed)
+        {
+            let why = no_engine.why.to_vec();
+            self.tell_once(why, |why| server.tell("window/logMessage", 2, why));
         }
         match linted {
             Ok(result) => Some(result),
@@ -630,7 +739,7 @@ impl Worker<'_> {
             if let Some(fixed) = fixed
                 .as_ref()
                 .filter(|it| it.is_fixed)
-                .and_then(FileResult::written)
+                .and_then(FileResult::text_to_write)
             {
                 let kinds = kinds.iter().filter(|it| it.1);
                 actions.extend(kinds.map(|it| places.fix_all(it.0, fixed)));
@@ -642,14 +751,10 @@ impl Worker<'_> {
     /// The edits that format `document`. `None`: it cannot be formatted, or is not to be.
     fn format(&mut self, document: &Document, range: Option<Range>) -> Option<Vec<Json>> {
         let server = self.server;
-        let defaults = match self.root.is_folder {
-            true => read_bunfig(&self.root.path, bunfig::format),
-            false => Ok(None),
-        };
-        let mut options = match defaults {
-            Ok(defaults) => defaults.unwrap_or_default(),
+        let mut options = match server.format_options_of(self.root) {
+            Ok(options) => options,
             Err(why) => {
-                self.tell_once(why, |why| server.show_error(why));
+                self.tell_once(why, |why| server.tell("window/logMessage", 1, why));
                 return None;
             }
         };
@@ -670,11 +775,14 @@ impl Worker<'_> {
             options.format.push((&b"rangeEnd"[..], index(end)));
         }
         options.stdin_filepath = Some(paths::to_native(document.path.clone()));
-        let outcome = crate::fmt::format_text(&options, self.environment, document.text.clone());
-        if !outcome.stderr.is_empty() {
-            server.tell("window/logMessage", 2, outcome.stderr.trim_ascii_end());
+        match crate::fmt::format_text(&options, self.environment, document.text.clone()) {
+            Formatted::Text(text) => Some(places.edits_to(&text, range)),
+            Formatted::Unchanged => Some(Vec::new()),
+            Formatted::Failed { stderr } => {
+                server.tell("window/logMessage", 2, stderr.trim_ascii_end());
+                None
+            }
         }
-        (outcome.exit_code == 0).then(|| places.edits_to(&outcome.stdout, range))
     }
 }
 
@@ -848,10 +956,14 @@ impl<'d> Desk<'d, '_, '_> {
             }
         }
         if let Some(settings) = params.get(b"initializationOptions") {
-            server.settings.lock().read(settings);
+            server.settings.lock().read(settings, server.features());
         }
         let formats = Json::Bool(server.settings.lock().formats);
         let kinds = [QUICK_FIX, FIX_ALL].map(rpc::text).to_vec();
+        let actions = match server.features().lint {
+            true => object([("codeActionKinds", Json::Array(kinds))]),
+            false => Json::Bool(false),
+        };
         let capabilities = object([
             (
                 "positionEncoding",
@@ -869,10 +981,7 @@ impl<'d> Desk<'d, '_, '_> {
                     ("save", Json::Bool(true)),
                 ]),
             ),
-            (
-                "codeActionProvider",
-                object([("codeActionKinds", Json::Array(kinds))]),
-            ),
+            ("codeActionProvider", actions),
             ("documentFormattingProvider", formats.clone()),
             ("documentRangeFormattingProvider", formats),
             (
@@ -989,7 +1098,7 @@ impl<'d> Desk<'d, '_, '_> {
     fn notification(&mut self, method: &[u8], params: &Json) {
         let server = self.server;
         if method == b"exit" {
-            return (server.process.exit)(u8::from(self.phase != Phase::Down));
+            return server.exit(u8::from(self.phase != Phase::Down));
         }
         if self.phase != Phase::Running {
             return;
@@ -1075,7 +1184,7 @@ impl<'d> Desk<'d, '_, '_> {
             b"workspace/didChangeWatchedFiles" => self.look_again(),
             b"workspace/didChangeConfiguration" => {
                 if let Some(settings) = dig(params, &["settings", "bun"]) {
-                    server.settings.lock().read(settings);
+                    server.settings.lock().read(settings, server.features());
                 }
                 self.look_again();
             }
@@ -1113,7 +1222,7 @@ impl<'d> Desk<'d, '_, '_> {
                     continue;
                 }
                 // The client is gone.
-                Frame::End => return (server.process.exit)(u8::from(self.phase != Phase::Down)),
+                Frame::End => return server.exit(u8::from(self.phase != Phase::Down)),
             };
             match Incoming::parse(&message) {
                 Incoming::Request { id, method, params } => self.request(id, &method, &params),
@@ -1136,7 +1245,8 @@ impl<'d> Desk<'d, '_, '_> {
     }
 }
 
-/// Serves a client until it says `exit` or is gone, which ends the process. `args`: what follows `lint` on the command line.
+/// Serves a client until it says `exit` or is gone, which ends the process. `args`: what follows the command on the
+/// command line, without `--lsp`.
 pub fn serve(args: &[&[u8]], environment: &Environment, process: &Process) {
     let server = &Server {
         args,
@@ -1144,14 +1254,11 @@ pub fn serve(args: &[&[u8]], environment: &Environment, process: &Process) {
         process,
         out: Writer::new(process.write),
         client: OnceLock::new(),
-        settings: Guarded::new(Settings {
-            lints: true,
-            formats: true,
-            lints_on_type: true,
-        }),
+        settings: Guarded::new(Settings::new(process.features)),
         folders: Guarded::default(),
         latest: Guarded::default(),
         pending: Guarded::default(),
+        realms: Guarded::default(),
     };
     std::thread::scope(|scope| {
         let mut desk = Desk {

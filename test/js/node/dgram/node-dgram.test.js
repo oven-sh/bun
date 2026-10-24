@@ -143,3 +143,23 @@ function getInterface() {
 
   return "::%lo";
 }
+
+// A failed bind reports a negative errno, as node does (-EADDRINUSE, not EADDRINUSE).
+test.skipIf(isWindows)("node:dgram bind error carries a negative errno", async () => {
+  const first = dgram.createSocket("udp4");
+  await new Promise(r => first.bind(0, "127.0.0.1", r));
+  const second = dgram.createSocket("udp4");
+  try {
+    const { promise, resolve } = Promise.withResolvers();
+    second.on("error", resolve);
+    second.bind(first.address().port, "127.0.0.1");
+    const e = await promise;
+    const { constants } = require("node:os");
+    expect(e.code).toBe("EADDRINUSE");
+    expect(e.syscall).toBe("bind");
+    expect(e.errno).toBe(-constants.errno.EADDRINUSE);
+  } finally {
+    second.close();
+    first.close();
+  }
+});

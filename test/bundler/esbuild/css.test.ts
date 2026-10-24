@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -1336,6 +1336,304 @@ b {
 c {
   background: url("data:image/png;base64,Yy0z");
 }
+`);
+    },
+  });
+
+  // `packages: "external"` keeps a package out of the bundle. A path in a stylesheet names a file next to that
+  // stylesheet before it names a package, so it stays as written only when no such file is there.
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`css/PackageURLsInCSSPackagesExternal/${backend}`, {
+      backend,
+      packages: "external",
+      files: {
+        "/entry.css": /* css */ `
+          @import "./test.css";
+
+          a { background: url(a/1.png); }
+          b { background: url(b/2.png); }
+          c { background: url(c/3.png); }
+        `,
+        "/test.css": `.css { color: red }`,
+        "/a/1.png": `a-1`,
+        "/node_modules/b/2.png": `b-2-node_modules`,
+        "/c/3.png": `c-3`,
+        "/node_modules/c/3.png": `c-3-node_modules`,
+      },
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* test.css */
+.css {
+  color: red;
+}
+
+/* entry.css */
+a {
+  background: url("data:image/png;base64,YS0x");
+}
+b {
+  background: url("b/2.png");
+}
+c {
+  background: url("data:image/png;base64,Yy0z");
+}
+`);
+      },
+    });
+  }
+
+  const icon = `<svg xmlns="http://www.w3.org/2000/svg"><g id="mark"/></svg>`;
+  const iconDataUrl = `data:image/svg+xml;base64,${Buffer.from(icon).toString("base64")}`;
+  itBundled("css/LocalPathsInCSSPackagesExternal", {
+    packages: "external",
+    files: {
+      "/entry.css": /* css */ `
+        @import "reset.css";
+        @import "theme";
+        @import "layout";
+        @import "sub/deep.css" screen;
+        @import "sheets/dist/x.css";
+        @import "tailwindcss";
+
+        .query { background: url(images/sprite.svg?v=2#mark); }
+        .fragment { background: url(icon.svg#mark); }
+        .dots { background: url(none/../icon.svg); }
+        .missing { background: url(images/missing.svg); }
+      `,
+      "/reset.css": `.reset { color: red }`,
+      "/theme.css": `.theme { color: green }`,
+      "/layout/index.css": `.layout { color: blue }`,
+      "/sub/deep.css": `.deep { color: black }`,
+      "/images/sprite.svg": icon,
+      "/icon.svg": icon,
+      // `packages: "external"` does not look in node_modules, whether or not the file is there.
+      "/node_modules/images/missing.svg": icon,
+      "/node_modules/sheets/dist/x.css": `.sheets { color: pink }`,
+      "/node_modules/tailwindcss/index.css": `.tailwind { color: cyan }`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+@import "sheets/dist/x.css";
+@import "tailwindcss";
+
+/* reset.css */
+.reset {
+  color: red;
+}
+
+/* theme.css */
+.theme {
+  color: green;
+}
+
+/* layout/index.css */
+.layout {
+  color: #00f;
+}
+
+/* sub/deep.css */
+@media screen {
+  .deep {
+    color: #000;
+  }
+}
+
+/* entry.css */
+.query {
+  background: url("${iconDataUrl}#mark");
+}
+.fragment {
+  background: url("${iconDataUrl}#mark");
+}
+.dots {
+  background: url("${iconDataUrl}");
+}
+.missing {
+  background: url("images/missing.svg");
+}
+`);
+    },
+  });
+
+  itBundled("css/ComposesFromLocalFilePackagesExternal", {
+    packages: "external",
+    files: {
+      "/entry.js": `import styles from "./a.module.css"; console.log(styles.a);`,
+      "/a.module.css": `.a { composes: b from "b.module.css"; color: red }`,
+      "/b.module.css": `.b { background: blue }`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const names = api.readFile("/out/entry.js").match(/a: "(b_[\w-]+) (a_[\w-]+)"/);
+      expect(names).not.toBeNull();
+      const css = api.readFile("/out/entry.css");
+      expect(css).toContain(`.${names![1]} {`);
+      expect(css).toContain(`.${names![2]} {`);
+    },
+  });
+
+  // A tsconfig "paths" alias is the answer only when no file is next to the stylesheet, as without
+  // `packages: "external"`.
+  itBundled("css/TsconfigPathsInCSSPackagesExternal", {
+    packages: "external",
+    files: {
+      "/entry.css": /* css */ `
+        .both { background: url(images/both.png); }
+        .alias { background: url(images/alias.png); }
+        .alias-without-directory { background: url(icons/alias.png); }
+        .neither { background: url(images/neither.png); }
+      `,
+      "/tsconfig.json": `{ "compilerOptions": { "paths": { "images/*": ["./assets/*"], "icons/*": ["./assets/*"] } } }`,
+      "/images/both.png": `next to the stylesheet`,
+      "/assets/both.png": `alias`,
+      "/assets/alias.png": `alias`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      const dataUrl = (contents: string) => `data:image/png;base64,${Buffer.from(contents).toString("base64")}`;
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.both {
+  background: url("${dataUrl("next to the stylesheet")}");
+}
+.alias {
+  background: url("${dataUrl("alias")}");
+}
+.alias-without-directory {
+  background: url("${dataUrl("alias")}");
+}
+.neither {
+  background: url("images/neither.png");
+}
+`);
+    },
+  });
+
+  // What the user names with `external`, and a URL that is not a path, stay as written.
+  itBundled("css/ExternalAndURLFormsInCSSPackagesExternal", {
+    packages: "external",
+    external: ["images/*"],
+    files: {
+      "/entry.css": /* css */ `
+        @import "data:text/css,i{color:green}";
+        .external { background: url(images/bg.png); }
+        .fragment { fill: url(#filter); }
+        .http { background: url(http://example.com/images/bg.png); }
+        .protocol-relative { background: url(//example.com/images/bg.png); }
+        .data { background: url(data:application/json,{}); }
+      `,
+      "/images/bg.png": `next to the stylesheet`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+@import "data:text/css,i{color:green}";
+
+/* entry.css */
+.external {
+  background: url("images/bg.png");
+}
+.fragment {
+  fill: url("#filter");
+}
+.http {
+  background: url("http://example.com/images/bg.png");
+}
+.protocol-relative {
+  background: url("//example.com/images/bg.png");
+}
+.data {
+  background: url("data:application/json,{}");
+}
+`);
+    },
+  });
+
+  // The "browser" map can name a file that is not on disk, so the path is resolved like a "./" path.
+  itBundled("css/BrowserMapInCSSPackagesExternal", {
+    packages: "external",
+    files: {
+      "/entry.css": /* css */ `
+        @import "ghost.css";
+        @import "tailwindcss";
+        @import "data:text/css,i{color:green}";
+        .data { background: url(data:application/json,{}); }
+      `,
+      "/package.json": `{ "name": "app", "browser": { "./ghost.css": "./real.css" } }`,
+      "/real.css": `.real { color: red }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+@import "tailwindcss";
+@import "data:text/css,i{color:green}";
+
+/* real.css */
+.real {
+  color: red;
+}
+
+/* entry.css */
+.data {
+  background: url("data:application/json,{}");
+}
+`);
+    },
+  });
+
+  // The resolver also answers for a path that an `onResolve` plugin declines.
+  itBundled("css/LocalPathsInCSSPackagesExternalAfterPlugin", {
+    packages: "external",
+    files: {
+      "/entry.css": /* css */ `
+        @import "reset.css";
+        @import "tailwindcss";
+      `,
+      "/reset.css": `.reset { color: red }`,
+    },
+    plugins(build) {
+      build.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+@import "tailwindcss";
+
+/* reset.css */
+.reset {
+  color: red;
+}
+
+/* entry.css */
+`);
+    },
+  });
+
+  // A stylesheet from a plugin has no directory, so its paths stay as written.
+  itBundled("css/LocalPathsInVirtualCSSPackagesExternal", {
+    packages: "external",
+    files: {
+      "/entry.css": `@import "virtual:sheet";`,
+      "/images/bg.png": `next to the entry point`,
+    },
+    plugins(build) {
+      build.onResolve({ filter: /^virtual:/ }, () => ({ path: "./sheet.css", namespace: "virtual" }));
+      build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+        contents: `a { background: url(images/bg.png); }`,
+        loader: "css",
+      }));
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* virtual:./sheet.css */
+a {
+  background: url("images/bg.png");
+}
+
+/* entry.css */
 `);
     },
   });

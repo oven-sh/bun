@@ -916,6 +916,8 @@ Controls whether package dependencies are included in the bundle. Possible value
   </Tab>
 </Tabs>
 
+A path in a CSS file (`url()`, `@import`, `composes`) or in an HTML file (`src`, `href`) names a file next to that file first. With `packages: "external"`, `url(images/bg.png)` is bundled when `images/bg.png` exists next to the stylesheet. The path stays as written when no such file exists.
+
 ### naming
 
 Customizes the generated file names. Defaults to `[dir]/[name].[ext]`.

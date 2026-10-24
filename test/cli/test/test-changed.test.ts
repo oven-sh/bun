@@ -394,6 +394,28 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A path in a stylesheet names a file next to that stylesheet, with or without "./".
+  test("a stylesheet's @import and url() without ./ are followed when computing the module graph", async () => {
+    using dir = tempDir("test-changed-css-paths", {
+      "package.json": JSON.stringify({ name: "css-paths", type: "module" }),
+      "import.css": `@import "theme.css";\n`,
+      "theme.css": `a { color: red; }\n`,
+      "url.css": `body { background: url(images/bg.svg); }\n`,
+      "images/bg.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>\n`,
+      "import.test.ts": `import { test, expect } from "bun:test";\nimport "./import.css";\ntest("import", () => expect(1).toBe(1));\n`,
+      "url.test.ts": `import { test, expect } from "bun:test";\nimport "./url.css";\ntest("url", () => expect(1).toBe(1));\n`,
+      "unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "theme.css"), "/* touched */\n");
+    appendFileSync(join(String(dir), "images", "bg.svg"), "<!-- touched -->\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    const testNames = ["import.test.ts", "url.test.ts", "unrelated.test.ts"];
+    expect(ranFiles(stderr, testNames)).toEqual(["import.test.ts", "url.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a node:vm timeout can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-vm-timeout", {
       "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),

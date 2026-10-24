@@ -869,6 +869,42 @@ body {
     },
   });
 
+  // `packages: "external"` keeps a package out of the bundle. A URL in a page names a file next to that page
+  // before it names a package, so it stays as written only when no such file is there.
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`html/local-urls-with-packages-external/${backend}`, {
+      outdir: "out/",
+      backend,
+      packages: "external",
+      files: {
+        "/index.html": [
+          `<link rel="manifest" href="site.webmanifest">`,
+          `<img src="images/photo.webp">`,
+          `<img src="photo.jpeg">`,
+          `<img src="images/missing.webp">`,
+        ].join(""),
+        "/site.webmanifest": "manifest bytes",
+        "/images/photo.webp": "webp bytes",
+        "/photo.jpeg": "jpeg bytes",
+      },
+      entryPoints: ["/index.html"],
+      onAfterBundle(api) {
+        const [, manifest, webp, jpeg, missing] = api
+          .readFile("out/index.html")
+          .match(/^<link rel="manifest" href="(.*?)"><img src="(.*?)"><img src="(.*?)"><img src="(.*?)">/)!;
+        expect({ manifest, webp, jpeg, missing }).toEqual({
+          manifest: expect.stringMatching(/^\.\/site-\w+\.webmanifest$/),
+          webp: expect.stringMatching(/^\.\/photo-\w+\.webp$/),
+          jpeg: expect.stringMatching(/^\.\/photo-\w+\.jpeg$/),
+          missing: "images/missing.webp",
+        });
+        expect(api.readFile("out/" + manifest)).toBe("manifest bytes");
+        expect(api.readFile("out/" + webp)).toBe("webp bytes");
+        expect(api.readFile("out/" + jpeg)).toBe("jpeg bytes");
+      },
+    });
+  }
+
   // Test that sourcemap comments are not included in HTML and CSS files
   itBundled("html/no-sourcemap-comments", {
     outdir: "out/",

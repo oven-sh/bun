@@ -973,16 +973,8 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
-        if self.opts.packages == options::Packages::External && is_package_path(import_path) {
-            return true;
-        }
-        self.matches_user_external_pattern(import_path)
-    }
-
     /// True iff `import_path` matches a user-supplied `--external` wildcard
-    /// pattern. Does NOT consider `packages = external`; use
-    /// `isExternalPattern` for the combined check.
+    /// pattern. Does NOT consider `packages = external`.
     pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
         for pattern in self.opts.external.patterns.iter() {
             if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
@@ -1023,6 +1015,108 @@ impl<'a> Resolver<'a> {
             return MatchStatus::NotFound;
         }
         self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
+    }
+
+    /// The result for a path that the output keeps as written.
+    fn implicitly_external(import_path: &'static [u8], kind: ast::ImportKind) -> Result {
+        Result {
+            import_kind: kind,
+            path_pair: PathPair {
+                primary: Path::init(import_path),
+                secondary: None,
+            },
+            module_type: if !kind.is_from_css() {
+                options::ModuleType::Esm
+            } else {
+                options::ModuleType::Unknown
+            },
+            flags: ResultFlags::IS_EXTERNAL,
+            ..Default::default()
+        }
+    }
+
+    /// What `packages = external` answers for the package path `import_path`.
+    /// This ends the resolve, so it also puts `extension_order` back.
+    fn resolve_external_package(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'static [u8],
+        kind: ast::ImportKind,
+        original_order: options::ExtOrder,
+    ) -> ResultUnion {
+        // #29590: a tsconfig `paths` key can look bare (e.g. "@/*") and
+        // otherwise collide with `packages=external + isPackagePath`. Try
+        // the alias first, but only follow it when it actually resolves to
+        // a file on disk. A catch-all `"*": ["./types/*"]` for ambient
+        // .d.ts stubs must still let real bare imports stay external.
+        let mut res = MatchResult::default();
+        let is_alias = self
+            .resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res)
+            .is_success();
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note(if is_alias {
+                b"Resolved via tsconfig.json \"paths\" before applying packages=external".to_vec()
+            } else {
+                b"Marking this path as implicitly external".to_vec()
+            });
+        }
+        let _ = self.flush_debug_logs(FlushMode::Success);
+        self.extension_order = original_order;
+        if is_alias {
+            return ResultUnion::Success(Result {
+                import_kind: kind,
+                path_pair: res.path_pair,
+                package_json: res.package_json,
+                dirname_fd: res.dirname_fd,
+                file_fd: res.file_fd,
+                jsx: self.opts.jsx.clone(),
+                ..Default::default()
+            });
+        }
+        ResultUnion::Success(Self::implicitly_external(import_path, kind))
+    }
+
+    /// `packages = external`: whether the CSS URL `import_path`, as written or
+    /// without its `?#` suffix, can name something beside its importer. When it
+    /// cannot, `check_relative_path` has nothing to find. This reads only
+    /// directory listings that are already cached, so a reference to a package
+    /// costs no syscall.
+    #[cold]
+    #[inline(never)]
+    fn can_be_beside_importer(&mut self, source_dir: &[u8], import_path: &[u8]) -> bool {
+        if !bun_paths::is_absolute(source_dir) || import_path.starts_with(b"data:") {
+            return false;
+        }
+        let Some(dir) = self.read_dir_info_ignore_error(source_dir) else {
+            return false;
+        };
+        // ".." can step back out of a directory that does not exist.
+        if strings::contains(import_path, b"..") {
+            return true;
+        }
+        let without_suffix = strings::index_of_any(import_path, b"?#")
+            .filter(|&suffix| suffix >= 1)
+            .map(|suffix| &import_path[..suffix]);
+        for path in [Some(import_path), without_suffix].into_iter().flatten() {
+            let first_segment = match strings::index_of_any(path, b"/\\") {
+                Some(separator) => &path[..separator],
+                None => path,
+            };
+            if dir.get_entry(self.generation, first_segment).is_some() {
+                return true;
+            }
+            // A lone name also matches with an implicit extension.
+            if first_segment.len() == path.len()
+                && let Some(abs_path) = self
+                    .fs_ref()
+                    .abs_buf_checked(&[source_dir, path], bufs!(relative_abs_path))
+                && self.load_as_file(abs_path, self.extension_order).is_some()
+            {
+                return true;
+            }
+        }
+        // The "browser" map can name a path that is not on disk.
+        self.care_about_browser_field && dir.get_enclosing_browser_scope().is_some()
     }
 
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
@@ -1197,45 +1291,32 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // #29590: a tsconfig `paths` key can look bare (e.g. "@/*") and
-        // otherwise collide with `packages=external + isPackagePath`. Try
-        // the alias first, but only follow it when it actually resolves to
-        // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
-        // .d.ts stubs must still let real bare imports stay external.
+        // `packages = external` keeps a package path as written. A CSS URL names
+        // a file beside its importer before it names a package (see
+        // `resolve_without_symlinks`), so when a file can be there, this answer
+        // waits until that lookup has missed.
+        let mut is_external_unless_beside_importer = false;
         if !kind.is_entry_point()
             && self.opts.packages == options::Packages::External
             && is_package_path(import_path)
             && !self.matches_user_external_pattern(import_path)
         {
-            let mut res = MatchResult::default();
-            if self
-                .resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res)
-                .is_success()
-            {
-                if let Some(debug) = self.debug_logs.as_mut() {
-                    debug.add_note(
-                        b"Resolved via tsconfig.json \"paths\" before applying packages=external"
-                            .to_vec(),
-                    );
-                }
-                let _ = self.flush_debug_logs(FlushMode::Success);
-                self.extension_order = original_order;
-                return ResultUnion::Success(Result {
-                    import_kind: kind,
-                    path_pair: res.path_pair,
-                    package_json: res.package_json,
-                    dirname_fd: res.dirname_fd,
-                    file_fd: res.file_fd,
-                    jsx: self.opts.jsx.clone(),
-                    ..Default::default()
-                });
+            is_external_unless_beside_importer =
+                kind.is_from_css() && self.can_be_beside_importer(source_dir, import_path);
+            if !is_external_unless_beside_importer {
+                return self.resolve_external_package(
+                    source_dir,
+                    import_path,
+                    kind,
+                    original_order,
+                );
             }
         }
 
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
         if !kind.is_entry_point()
-            && (self.is_external_pattern(import_path)
+            && (self.matches_user_external_pattern(import_path)
             // "fill: url(#filter);"
             || (kind.is_from_css() && import_path.starts_with(b"#"))
             // "background: url(http://example.com/images/image.png);"
@@ -1251,20 +1332,7 @@ impl<'a> Resolver<'a> {
             let _ = self.flush_debug_logs(FlushMode::Success);
 
             self.extension_order = original_order;
-            return ResultUnion::Success(Result {
-                import_kind: kind,
-                path_pair: PathPair {
-                    primary: Path::init(import_path),
-                    secondary: None,
-                },
-                module_type: if !kind.is_from_css() {
-                    options::ModuleType::Esm
-                } else {
-                    options::ModuleType::Unknown
-                },
-                flags: ResultFlags::IS_EXTERNAL,
-                ..Default::default()
-            });
+            return ResultUnion::Success(Self::implicitly_external(import_path, kind));
         }
 
         match DataURL::parse(import_path) {
@@ -1450,6 +1518,10 @@ impl<'a> Resolver<'a> {
                 }
                 tmp = result2;
             }
+        }
+
+        if is_external_unless_beside_importer && matches!(tmp, ResultUnion::NotFound) {
+            return self.resolve_external_package(source_dir, import_path, kind, original_order);
         }
 
         let ret = match tmp {
@@ -1913,6 +1985,12 @@ impl<'a> Resolver<'a> {
                     ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                     ResultUnion::NotFound => {}
                 }
+            }
+
+            // `packages = external` does not look a package up. The caller
+            // answers for a CSS URL that is not beside its importer.
+            if check_package && self.opts.packages == options::Packages::External {
+                return ResultUnion::NotFound;
             }
         }
 

@@ -254,6 +254,28 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     let output_format = c.options.output_format;
 
+    // In cjs output the entry point is the output file itself. Its `require`
+    // is the one that every file of the bundle reads, and an application
+    // assigns it there for the whole bundle: `require = createRequire(..)` in
+    // the main script of a Node.js single executable application. So the
+    // entry point prints without its own variable.
+    let entry_point_shares_require = output_format == OutputFormat::Cjs
+        && ast.flags.contains(AstFlags::OWNS_REQUIRE_REF)
+        && chunk.is_entry_point_file(source_index as u32);
+    if entry_point_shares_require {
+        ast.flags.remove(AstFlags::OWNS_REQUIRE_REF);
+    }
+    // The loop over the other parts starts here. The namespace export part
+    // prints ahead of it. The part that declares the variable of such an
+    // entry point does not print.
+    const _: () =
+        assert!(bun_ast::OWN_REQUIRE_PART_INDEX == bun_ast::NAMESPACE_EXPORT_PART_INDEX + 1);
+    let first_other_part_index = if entry_point_shares_require {
+        bun_ast::OWN_REQUIRE_PART_INDEX + 1
+    } else {
+        namespace_export_part_index + 1
+    };
+
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
     if flags.wrap != WrapKind::None
@@ -343,8 +365,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         // SAFETY: index in bounds.
         let part: &Part = unsafe { &(*parts)[index_] };
 
-        if index == namespace_export_part_index {
-            // Skip the namespace export part because we already handled it above
+        if index < first_other_part_index {
+            // Skip the namespace export part because we already handled it above,
+            // and the part that `first_other_part_index` leaves out
             continue;
         }
 

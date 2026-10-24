@@ -9432,7 +9432,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // printer can emit `__require`, `__toESM`, etc. Precompute `require_ref`
         // first since it reads `__require` from the same struct we're taking.
         let require_ref = own_require_ref
-            .or(self.runtime_imports.__require.to_nullable())
+            .or_else(|| self.runtime_imports.__require.to_nullable())
             .unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 

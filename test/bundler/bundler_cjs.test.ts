@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
@@ -1242,7 +1242,8 @@ describe("bundler", () => {
   // In Node and in Bun `require` is a parameter of each CommonJS module's
   // wrapper, so a file that assigns it changes its own `require` and no other
   // file's. A bundle has one `require` for all of its files. In a bundle for
-  // node or bun, the file that assigns gets a variable of its own.
+  // node or bun, the file that assigns gets a variable of its own. The entry
+  // point of a cjs bundle does not: it is the output file itself.
   // ============================================================================
 
   // `/src/loader.cjs` starts like the loader that NAPI-RS generates. Its own
@@ -1380,17 +1381,11 @@ describe("bundler", () => {
     },
   });
 
-  // In cjs output the linker lowers the `import` and the `export * from` of
-  // the entry point to `require()` calls that run before its first statement,
-  // and `import.meta.main` to `require.main == module`. For node in esm output
-  // `import.meta.main` is `__require.main == __require.module`. All of them
-  // are the `require` of the bundle, not the one the file assigns.
-  for (const [target, format] of [
-    ["node", "cjs"],
-    ["node", "esm"],
-    ["bun", "esm"],
-  ] as const) {
-    itBundled(`cjs/require_assignment_keeps_generated_require_calls_${target}_${format}`, {
+  // For node in esm output `import.meta.main` is
+  // `__require.main == __require.module`. That is the `require` of the bundle,
+  // not the one that the entry point assigns.
+  for (const target of ["node", "bun"] as const) {
+    itBundled(`cjs/require_assignment_keeps_generated_require_calls_${target}_esm`, {
       files: {
         "/entry.mjs": /* js */ `
           import ext from "ext";
@@ -1407,28 +1402,101 @@ describe("bundler", () => {
       },
       external: ["ext"],
       target,
-      format,
-      outfile: format === "esm" ? "/out.mjs" : "/out.js",
+      format: "esm",
+      outfile: "/out.mjs",
       run: { runtime: target, stdout: '{"ext":"ext ok","own":"stub a","main":true,"other":"function"}' },
     });
   }
 
-  // In cjs output the entry point has no wrapper: its `require` is the
-  // `require` of the output file. An assignment in it stays in the entry point
-  // all the same.
-  itBundled("cjs/require_assignment_in_entry_point", {
+  // In cjs output the linker lowers the `import` and the `export * from` of
+  // `/writer.mjs` to `require()` calls that run before its first statement.
+  // They are calls of the `require` of the bundle, not of the one that the
+  // file assigns.
+  itBundled("cjs/require_assignment_keeps_lowered_imports", {
     files: {
-      "/entry.cjs": /* js */ `
-        const other = require("./other.cjs");
+      "/entry.mjs": /* js */ `
+        import * as writer from "./writer.mjs";
+        import other from "./other.cjs";
+        console.log(JSON.stringify({ import: writer.fromImport, star: writer.name, own: writer.own, other: other() }));
+      `,
+      "/writer.mjs": /* js */ `
+        import ext from "ext";
+        export * from "ext";
         const id = x => x;
         require = name => "stub " + name;
-        console.log(JSON.stringify({ own: require(id("a")), other: other() }));
+        export const fromImport = ext.name;
+        export const own = require(id("a"));
       `,
       "/other.cjs": readsPath,
     },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": /* js */ `exports.name = "ext ok";`,
+    },
+    external: ["ext"],
     target: "node",
     format: "cjs",
-    run: { runtime: "node", stdout: '{"own":"stub a","other":"function"}' },
+    run: { runtime: "node", stdout: '{"import":"ext ok","star":"ext ok","own":"stub a","other":"function"}' },
+  });
+
+  // In cjs output the entry point is the output file itself: its `require` is
+  // the one that every file of the bundle reads. The main script of a Node.js
+  // single executable application gets a `require` for built-in modules only,
+  // and assigns a real one there for the whole bundle.
+  itBundled("cjs/require_assignment_in_cjs_entry_point_reaches_every_file", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const { createRequire } = require("node:module");
+        require = createRequire(__filename);
+        console.log(require("./other.cjs")());
+      `,
+      "/other.cjs": /* js */ `
+        module.exports = () => require("ext");
+      `,
+      "/run.js": /* js */ `
+        const { isBuiltin } = require("node:module");
+        const source = require("node:fs").readFileSync(__dirname + "/out.js", "utf8");
+        const builtinsOnly = name => {
+          if (!isBuiltin(name)) throw new Error("not a built-in module: " + name);
+          return require(name);
+        };
+        new Function("require", "module", "exports", source)(builtinsOnly, { exports: {} }, {});
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": /* js */ `module.exports = "ext ok";`,
+    },
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    run: { file: "/run.js", runtime: "node", stdout: "ext ok" },
+  });
+
+  // `/a.js` is the entry point of its own output file only. In the output
+  // file of `/b.js` it is a file like any other, with its own variable.
+  itBundled("cjs/require_assignment_in_entry_point_of_another_output_file", {
+    files: {
+      "/a.js": /* js */ `
+        const readPath = require("./other.cjs");
+        const id = x => x;
+        require = name => "stub " + name;
+        module.exports = { own: require(id("a")), other: readPath() };
+      `,
+      "/b.js": /* js */ `
+        console.log(JSON.stringify(require("./a.js")));
+      `,
+      "/other.cjs": readsPath,
+      "/run-a.js": /* js */ `
+        console.log(JSON.stringify(require("./out/a.js")));
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    target: "node",
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/b.js", runtime: "node", stdout: '{"own":"stub a","other":"function"}' },
+      { file: "/run-a.js", runtime: "node", stdout: '{"own":"stub a","other":"undefined"}' },
+    ],
   });
 
   // A banner is the place for a `require` that every file of a cjs bundle
@@ -1456,10 +1524,13 @@ describe("bundler", () => {
   itBundled("cjs/require_assignment_without_ambient_require", {
     files: {
       "/entry.js": /* js */ `
-        export function setRequire(value) {
-          require = value;
-        }
+        import "./writer.cjs";
         console.log("loaded");
+      `,
+      "/writer.cjs": /* js */ `
+        exports.setRequire = value => {
+          require = value;
+        };
       `,
       "/run.js": /* js */ `
         const source = require("node:fs").readFileSync(__dirname + "/out.js", "utf8");
@@ -1617,13 +1688,14 @@ describe("bundler", () => {
   };
 
   // Each program prints the same from its source and from its bundle. With
-  // `node`, Node.js runs the source and a bundle for node too. `todo` says why
-  // a bundle prints something else.
+  // `node`, Node.js runs the source and a bundle for node too. `bun: false`
+  // leaves Bun out. `todo` says why a bundle prints something else.
   type RequireAssignmentProgram = {
     files: Record<string, string>;
     external?: string[];
     formats?: readonly ("esm" | "cjs")[];
     node?: boolean;
+    bun?: false;
     todo?: string;
   };
   const requireAssignmentPrograms: Record<string, RequireAssignmentProgram> = {
@@ -1903,17 +1975,25 @@ describe("bundler", () => {
       node: true,
       files: {
         "entry.cjs": /* js */ `
+          require("./writer.cjs");
+        `,
+        "writer.cjs": /* js */ `
           const id = x => x;
           require = name => "stub " + name;
           console.log(eval("id")("evaluated"), require(id("a")));
         `,
       },
     },
+    // Bun folds it when it runs the source too. Node.js prints "number".
     "typeof after the assignment": {
       todo: 'the bundler folds `typeof require` to "function"',
       node: true,
+      bun: false,
       files: {
         "entry.cjs": /* js */ `
+          require("./writer.cjs");
+        `,
+        "writer.cjs": /* js */ `
           require = 1;
           console.log(typeof require);
         `,
@@ -1924,6 +2004,9 @@ describe("bundler", () => {
       node: true,
       files: {
         "entry.cjs": /* js */ `
+          require("./writer.cjs");
+        `,
+        "writer.cjs": /* js */ `
           require = name => "stub " + name;
           console.log(eval("require") === require);
         `,
@@ -1934,6 +2017,9 @@ describe("bundler", () => {
       node: true,
       files: {
         "entry.cjs": /* js */ `
+          require("./writer.cjs");
+        `,
+        "writer.cjs": /* js */ `
           const id = x => x;
           require = name => "first " + name;
           eval('require = name => "second " + name');
@@ -1947,6 +2033,9 @@ describe("bundler", () => {
       formats: ["cjs"],
       files: {
         "entry.cjs": /* js */ `
+          require("./writer.cjs");
+        `,
+        "writer.cjs": /* js */ `
           require = name => "stub " + name;
           with ({}) {
             console.log(require("a"));
@@ -1974,13 +2063,21 @@ describe("bundler", () => {
     return { stdout, stderr, exitCode };
   };
   const node = nodeExe();
+  const programDirs: ReturnType<typeof tempDir>[] = [];
+  afterAll(() => {
+    for (const dir of programDirs) dir[Symbol.dispose]();
+  });
   for (const [name, program] of Object.entries(requireAssignmentPrograms)) {
     const entry = Object.keys(program.files)[0];
-    for (const [target, exe] of [["bun", bunExe()], ...(program.node && node ? [["node", node]] : [])] as const) {
+    for (const [target, exe] of [
+      ...(program.bun === false ? [] : [["bun", bunExe()]]),
+      ...(program.node && node ? [["node", node]] : []),
+    ] as const) {
       // One directory and one run of the source for both formats.
       let source: Promise<{ dir: ReturnType<typeof tempDir>; printed: Awaited<ReturnType<typeof run>> }> | undefined;
       const runSource = async () => {
         const dir = tempDir("require-assignment", program.files);
+        programDirs.push(dir);
         return { dir, printed: await run([exe, entry], String(dir)) };
       };
       for (const format of program.formats ?? (["esm", "cjs"] as const)) {

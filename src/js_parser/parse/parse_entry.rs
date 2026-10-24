@@ -1359,7 +1359,7 @@ impl<'a> Parser<'a> {
             // After the part that the bundler reserves and ahead of the
             // imports: in an import cycle another file can call a function of
             // this file before the statements of this file run.
-            before.insert(1, part);
+            before.insert(js_ast::OWN_REQUIRE_PART_INDEX as usize, part);
             Some(ref_)
         } else {
             None

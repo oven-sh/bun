@@ -113,6 +113,8 @@ Configure the output stream by passing one of the following values to `stdout/st
 | `Bun.file()` | Write to the specified file                                                                         |
 | `number`     | Write to the file with the given file descriptor                                                    |
 
+Pass one `Bun.file()` to both `stdout` and `stderr` to write both streams to that file.
+
 ## Exit handling
 
 Use the `onExit` callback to listen for the process exiting or being killed.

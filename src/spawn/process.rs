@@ -2079,6 +2079,7 @@ mod spawn_process_body {
         let mut dup_fds: [uv::uv_file; 2] = [-1, -1];
         let mut dup_src: Option<u32> = None;
         let mut dup_tgt: Option<u32> = None;
+        let mut stdout_path_file: Option<uv::uv_file> = None;
 
         for fd_i in 0..3usize {
             let pipe_flags = uv::UV_CREATE_PIPE | uv::UV_READABLE_PIPE | uv::UV_WRITABLE_PIPE;
@@ -2116,6 +2117,14 @@ mod spawn_process_body {
                     WindowsStdio::Ignore => {
                         stdio.flags = uv::UV_IGNORE;
                     }
+                    // A second open of stdout's path would have its own file pointer, and each stream would overwrite the other.
+                    WindowsStdio::Path(path)
+                        if let Some(stdout_file) = stdout_path_file
+                            && matches!(stdio_options[1], WindowsStdio::Path(stdout) if stdout == path) =>
+                    {
+                        stdio.flags = uv::UV_INHERIT_FD;
+                        stdio.data.fd = stdout_file;
+                    }
                     WindowsStdio::Path(path) => {
                         let mut req = uv::fs_t::uninitialized();
                         // Cleanup is via manual calls at each exit path, so `?` here
@@ -2149,6 +2158,9 @@ mod spawn_process_body {
                         let fd = rc.int();
                         uv_files_to_close.push(fd);
                         stdio.data.fd = fd;
+                        if fd_i == 1 {
+                            stdout_path_file = Some(fd);
+                        }
                     }
                     WindowsStdio::Buffer(my_pipe) => {
                         // SAFETY: `my_pipe` is a non-null heap allocation from

@@ -2071,6 +2071,115 @@ describe.skipIf(!isPosix)("stdio source fds that are also slot numbers", () => {
   );
 });
 
+// Two opens of one path have two file offsets that both start at 0, so each stream overwrites
+// the other. One path at stdout and stderr is opened once, and both streams share the offset.
+describe.each(["spawn", "spawnSync"] as const)("Bun.file(path) at stdout and stderr of Bun.%s", method => {
+  // spawnSync blocks this process until the child exits, so its rows do not run beside other rows.
+  const row = method === "spawnSync" ? it : it.concurrent;
+
+  // The lines differ in length. With two file offsets the log is a byte mix of both streams.
+  const writeBothStreams = `
+    const fs = require("fs");
+    for (let i = 0; i < 3; i++) {
+      fs.writeSync(1, "stdout line " + i + "\\n");
+      fs.writeSync(2, "err " + i + "\\n");
+    }
+  `;
+  const stdoutLines = "stdout line 0\nstdout line 1\nstdout line 2\n";
+  const stderrLines = "err 0\nerr 1\nerr 2\n";
+  const bothStreams = "stdout line 0\nerr 0\nstdout line 1\nerr 1\nstdout line 2\nerr 2\n";
+
+  // Writes one line to each stream, reads the log back through `fd`, and reports what it read on stdout.
+  const writeThenReadThrough = (fd: number) => `
+    const fs = require("fs");
+    fs.writeSync(1, "stdout line\\n");
+    fs.writeSync(2, "err\\n");
+    const buf = Buffer.alloc(64);
+    const n = fs.readSync(${fd}, buf);
+    fs.writeSync(1, "fd ${fd} read " + JSON.stringify(buf.toString("utf8", 0, n)) + "\\n");
+  `;
+
+  async function run(options: { stdin?: any; stdout?: any; stderr?: any; stdio?: any }, script = writeBothStreams) {
+    const cmd = [bunExe(), "-e", script];
+    if (method === "spawnSync") {
+      const { exitCode, stdout } = spawnSync({ cmd, env: bunEnv, stdin: "ignore", ...options });
+      return { exitCode, stdout: stdout?.toString() };
+    }
+    await using proc = spawn({ cmd, env: bunEnv, stdin: "ignore", ...options });
+    const [stdout, exitCode] = await Promise.all([proc.stdout?.text(), proc.exited]);
+    return { exitCode, stdout };
+  }
+
+  row("one Bun.file object receives both streams in write order", async () => {
+    using dir = tempDir("spawn-one-log-object", {});
+    const path = join(String(dir), "log.txt");
+    const log = Bun.file(path);
+
+    const result = await run({ stdout: log, stderr: log });
+
+    expect(readFileSync(path, "utf8")).toBe(bothStreams);
+    expect(result).toEqual({ exitCode: 0, stdout: undefined });
+  });
+
+  row("two Bun.file objects for one path receive both streams in write order", async () => {
+    using dir = tempDir("spawn-one-log-path", {});
+    const path = join(String(dir), "log.txt");
+
+    const result = await run({ stdio: ["ignore", Bun.file(path), Bun.file(path)] });
+
+    expect(readFileSync(path, "utf8")).toBe(bothStreams);
+    expect(result).toEqual({ exitCode: 0, stdout: undefined });
+  });
+
+  row("two different paths each receive their own stream", async () => {
+    using dir = tempDir("spawn-two-logs", {});
+    const out = join(String(dir), "out.txt");
+    const err = join(String(dir), "err.txt");
+
+    const result = await run({ stdout: Bun.file(out), stderr: Bun.file(err) });
+
+    expect({ out: readFileSync(out, "utf8"), err: readFileSync(err, "utf8") }).toEqual({
+      out: stdoutLines,
+      err: stderrLines,
+    });
+    expect(result).toEqual({ exitCode: 0, stdout: undefined });
+  });
+
+  row("a path at stderr alone receives stderr only", async () => {
+    using dir = tempDir("spawn-stderr-log", {});
+    const path = join(String(dir), "log.txt");
+
+    const result = await run({ stdout: "pipe", stderr: Bun.file(path) });
+
+    expect(readFileSync(path, "utf8")).toBe(stderrLines);
+    expect(result).toEqual({ exitCode: 0, stdout: stdoutLines });
+  });
+
+  // stdin and the slots from 3 on can be read from. A read through one of them starts at
+  // offset 0 of the log, so they do not share the file offset of stdout and stderr.
+  row("the same path at stdin keeps a file offset of its own", async () => {
+    using dir = tempDir("spawn-one-log-stdin", { "log.txt": "" });
+    const path = join(String(dir), "log.txt");
+    const log = Bun.file(path);
+
+    const result = await run({ stdin: log, stdout: log, stderr: log }, writeThenReadThrough(0));
+
+    expect(readFileSync(path, "utf8")).toBe('stdout line\nerr\nfd 0 read "stdout line\\nerr\\n"\n');
+    expect(result).toEqual({ exitCode: 0, stdout: undefined });
+  });
+
+  row("the same path at stdio[3] keeps a file offset of its own", async () => {
+    using dir = tempDir("spawn-one-log-extra", { "log.txt": "" });
+    const path = join(String(dir), "log.txt");
+    const log = Bun.file(path);
+
+    const result = await run({ stdio: ["ignore", log, log, log] }, writeThenReadThrough(3));
+
+    expect(readFileSync(path, "utf8")).toBe('stdout line\nerr\nfd 3 read "stdout line\\nerr\\n"\n');
+    expect(result).toEqual({ exitCode: 0, stdout: undefined });
+  });
+});
+
 // A descriptor gets the lowest free number, which is 0, 1 or 2 once user code has closed one of
 // them. bun never closes its own descriptor at such a number, and a child that inherits the slot
 // gets that descriptor as its stdio. So a socketpair, memfd, pidfd or eventfd that bun creates

@@ -1077,26 +1077,26 @@ fn compatible_font_family(
         return Some(families);
     };
 
-    // Unlike lightningcss, only the inserted names are deduped. Dropping any other repeated
-    // family can change rendering: https://github.com/parcel-bundler/lightningcss/issues/1221
-    let mut listed = [false; DEFAULT_SYSTEM_FONTS.len()];
+    // Unlike lightningcss, only a later copy of an inserted name is dropped. Dropping any other
+    // repeat can change rendering: https://github.com/parcel-bundler/lightningcss/issues/1221
+    let mut inserted = [true; DEFAULT_SYSTEM_FONTS.len()];
     let mut expanded = Vec::with_capacity(families.len() + DEFAULT_SYSTEM_FONTS.len());
     for (i, entry) in families.into_iter().enumerate() {
         let fallback = DEFAULT_SYSTEM_FONTS
             .iter()
             .position(|&name| entry == system_font(name));
         if let Some(fallback) = fallback {
-            if listed[fallback] {
+            if i < system_ui {
+                inserted[fallback] = false;
+            } else if inserted[fallback] {
                 continue;
             }
-            listed[fallback] = true;
         }
         expanded.push(entry);
 
         if i == system_ui {
-            for (&name, is_listed) in DEFAULT_SYSTEM_FONTS.iter().zip(&mut listed) {
-                if !*is_listed {
-                    *is_listed = true;
+            for (fallback, &name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
+                if inserted[fallback] {
                     expanded.push(system_font(name));
                 }
             }

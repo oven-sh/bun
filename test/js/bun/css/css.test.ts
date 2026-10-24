@@ -5076,11 +5076,20 @@ describe("css tests", () => {
       },
     );
 
-    // Each name added after `system-ui` is listed once. Every other family stays as written.
+    // A later copy of a name added after `system-ui` is dropped. Every other family stays as written.
     for (const [source, expected] of [
       [
+        "system-ui, Arial, Roboto",
+        "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, Arial",
+      ],
+      // `Roboto` comes before `system-ui`, so it is not added, and no copy of it is dropped.
+      [
         "Roboto, system-ui, Roboto",
-        "Roboto, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Noto Sans, Ubuntu, Cantarell, Helvetica Neue",
+        "Roboto, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, Roboto",
+      ],
+      [
+        "Roboto, Roboto, system-ui",
+        "Roboto, Roboto, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Noto Sans, Ubuntu, Cantarell, Helvetica Neue",
       ],
       [
         "system-ui, system-ui",

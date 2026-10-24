@@ -1158,6 +1158,8 @@ describe("jobs of a pull() that ended the response", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
+    // Read from the start, so that a fixture that fills its stderr does not block.
+    const errors = proc.stderr.text();
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
     let stdout = "";
@@ -1171,7 +1173,7 @@ describe("jobs of a pull() that ended the response", () => {
     // A fixture that printed no port has failed: the assertion below shows its stderr.
     const body = port ? await (await fetch(`http://127.0.0.1:${port}/`)).text() : "";
     while (await read());
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([errors, proc.exited]);
     expect({ body, stdout, stderr }).toEqual({ body: "done", stdout: `${port}\njob of pull()\n`, stderr: "" });
     expect(exitCode).toBe(0);
   });

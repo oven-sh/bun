@@ -4655,7 +4655,14 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            // A name that is too long for the filesystem is not there either.
+                            if !matches!(
+                                err,
+                                crate::Error::Sys(
+                                    bun_errno::SystemErrno::ENOENT
+                                        | bun_errno::SystemErrno::ENAMETOOLONG
+                                )
+                            ) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
@@ -5983,7 +5990,8 @@ impl<'a> Resolver<'a> {
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                | crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,

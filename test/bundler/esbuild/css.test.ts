@@ -1264,6 +1264,50 @@ b {
     },
   });
 
+  // No file has a name of more than 255 bytes, so the path with the query is "not found" and the path
+  // without the query is the file.
+  for (const packages of ["bundle", "external"] as const) {
+    itBundled(`css/URLQueryLongerThanAFileName/${packages}`, {
+      packages,
+      files: {
+        "/entry.css": /* css */ `
+          .a { background: url(./images/small.svg?v=${Buffer.alloc(300, "v").toString()}) }
+          .b { background: url(images/small.svg?v=${Buffer.alloc(300, "v").toString()}) }
+        `,
+        "/images/small.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+      },
+      outdir: "/out",
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=");
+}
+.b {
+  background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=");
+}
+`);
+      },
+    });
+  }
+
+  itBundled("css/URLDirectoryLongerThanAFileNamePackagesExternal", {
+    packages: "external",
+    files: {
+      "/entry.css": `.a { background: url(images/${Buffer.alloc(300, "d").toString()}/small.svg) }`,
+      "/images/small.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  background: url("images/${Buffer.alloc(300, "d").toString()}/small.svg");
+}
+`);
+    },
+  });
+
   itBundled("css/IgnoreURLsInAtRulePrelude", {
     // GENERATED
     files: {

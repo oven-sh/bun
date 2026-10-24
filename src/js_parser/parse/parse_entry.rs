@@ -150,8 +150,9 @@ pub struct Options<'a> {
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
     /// Keeps every directive in its original position and with its original text, and keeps
-    /// `"use asm"`. Otherwise a directive has its string value, an escaped spelling of
-    /// `"use strict"` is dropped, and the prologue of the file moves to `Ast.directives`.
+    /// `"use asm"`. The string that starts a block is kept the same way. Otherwise a directive
+    /// has its string value, an escaped spelling of `"use strict"` is dropped, and the prologue
+    /// of the file moves to `Ast.directives`.
     pub keep_directives: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,

@@ -855,6 +855,15 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
       "b/x.min.js": banner + `"use strict";` + spaced(2),
     });
     expect(reformatted.text).toMatch(/\nx\.min\.js ─+ formatting only\n/);
+    // A string at the start of a block is kept too, and it does not make the block strict code.
+    const block = await pretty({
+      "a/sloppy.js": `{ "use strict"; var yield = 1; }\nexports.value = yield;\n`,
+      "b/sloppy.js": `{\n  "use strict";\n  var yield = 1;\n}\nexports.value = yield;\n`,
+      "a/with.js": `{ "use strict"; with (exports) { value = 1; } }\n`,
+      "b/with.js": `{\n  "use strict";\n  with (exports) {\n    value = 1;\n  }\n}\n`,
+    });
+    expect(block.text).toMatch(/\nsloppy\.js ─+ formatting only\n/);
+    expect(block.text).toMatch(/\nwith\.js ─+ formatting only\n/);
     // A string statement that is not a directive is shown as it is written.
     const added = await pretty({
       "a/README.md": "x\n",

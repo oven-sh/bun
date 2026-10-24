@@ -1482,15 +1482,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// What the string literal statement at `loc`, a member of a directive prologue, becomes:
     /// an `S::Directive`, or an `S::Empty` when it is dropped. `None` leaves it as it is.
+    /// `is_prologue` is false for the string that `keep_directives` keeps at the start of a
+    /// list that has no prologue: it does not make the code strict.
     #[cold]
     fn directive_data(
         &mut self,
         loc: bun_ast::Loc,
         string: &E::String,
+        is_prologue: bool,
     ) -> Option<js_ast::stmt::Data> {
         let p = self;
         let dropped = Some(js_ast::stmt::Data::SEmpty(S::Empty {}));
-        let is_use_strict = p.is_use_strict_token(loc);
+        let is_use_strict = is_prologue && p.is_use_strict_token(loc);
 
         if is_use_strict {
             // Track "use strict" directives
@@ -1553,7 +1556,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut return_without_semicolon_start: i32 = -1;
         opts.lexical_decl = LexicalDecl::AllowAll;
-        let mut is_directive_prologue = core::mem::take(&mut opts.allow_directive_prologue);
+        let is_prologue = core::mem::take(&mut opts.allow_directive_prologue);
+        // `keep_directives` keeps the string that starts any list of statements, as it is written.
+        let mut is_directive_prologue = is_prologue || p.options.keep_directives;
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
@@ -1589,7 +1594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     is_directive_prologue = true;
                     let string = *str_;
-                    if let Some(data) = p.directive_data(stmt.loc, &string) {
+                    if let Some(data) = p.directive_data(stmt.loc, &string, is_prologue) {
                         skip = matches!(data, js_ast::stmt::Data::SEmpty(_));
                         stmt.data = data;
                     }

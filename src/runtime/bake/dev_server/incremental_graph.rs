@@ -993,7 +993,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         key: &[u8],
         mode: EdgeAttachmentMode,
     ) -> Result<EdgeAttachmentResult, crate::Error> {
-        // Duplicated import records are marked unused by `ConvertESMExportsForHmr`.
+        // The parser dropped the import, or barrel optimization deferred it.
         if ir_flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
             return Ok(EdgeAttachmentResult::Stop);
         }

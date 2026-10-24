@@ -3438,10 +3438,18 @@ pub(crate) mod __gated_printer {
                         debug_assert!(
                             self.options.module_type == bundle_opts::Format::InternalBakeDev
                         );
-                        self.print_string_literal_utf8(
-                            self.import_record(*index as usize).path.pretty,
-                            true,
-                        );
+                        let mut record = self.import_record(*index as usize);
+                        // A dropped or deferred import has no module: take the first live one.
+                        if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
+                            let specifier = record.path.text;
+                            if let Some(live) = self.import_records.iter().find(|other| {
+                                !other.flags.contains(ImportRecordFlags::IS_UNUSED)
+                                    && other.original_path == specifier
+                            }) {
+                                record = live;
+                            }
+                        }
+                        self.print_string_literal_utf8(record.path.pretty, true);
                     }
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {

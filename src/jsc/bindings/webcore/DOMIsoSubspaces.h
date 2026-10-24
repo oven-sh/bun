@@ -30,9 +30,6 @@ public:
     IsoSubspace* m_subspaceForNodeSqliteSession { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteLimits { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteTagStore { nullptr };
-    IsoSubspace* m_subspaceForJSSinkConstructor { nullptr };
-    IsoSubspace* m_subspaceForJSSinkController { nullptr };
-    IsoSubspace* m_subspaceForJSSink { nullptr };
     IsoSubspace* m_subspaceForStringDecoder { nullptr };
     IsoSubspace* m_subspaceForPendingVirtualModuleResult { nullptr };
     IsoSubspace* m_subspaceForCallSite { nullptr };

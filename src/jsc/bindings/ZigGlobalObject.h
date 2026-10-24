@@ -208,10 +208,6 @@ public:
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
-    JSC::Structure* FileSinkStructure() const { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* FileSink() const { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue JSReadableFileSinkControllerPrototype() const { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
-
     JSC::JSObject* KeyObject() const { return m_JSKeyObjectClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue KeyObjectPrototype() const { return m_JSKeyObjectClassStructure.prototypeInitializedOnMainThread(this); }
 
@@ -219,28 +215,6 @@ public:
     JSC::JSValue JSBufferPrototype() const { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::Structure* JSBufferSubclassStructure() const { return m_JSBufferSubclassStructure.getInitializedOnMainThread(this); }
     JSC::Structure* JSResizableOrGrowableSharedBufferSubclassStructure() const { return m_JSResizableOrGrowableSharedBufferSubclassStructure.getInitializedOnMainThread(this); }
-
-    JSC::Structure* ArrayBufferSinkStructure() const { return m_JSArrayBufferSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* ArrayBufferSink() { return m_JSArrayBufferSinkClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue JSReadableArrayBufferSinkControllerPrototype() const { return m_JSArrayBufferControllerPrototype.getInitializedOnMainThread(this); }
-
-    JSC::Structure* HTTPResponseSinkStructure() const { return m_JSHTTPResponseSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* HTTPResponseSink() { return m_JSHTTPResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::Structure* JSReadableHTTPResponseSinkController() { return m_JSHTTPResponseController.getInitializedOnMainThread(this); }
-
-    JSC::Structure* HTTPSResponseSinkStructure() const { return m_JSHTTPSResponseSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* HTTPSResponseSink() { return m_JSHTTPSResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() const { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
-
-    JSC::Structure* NetworkSinkStructure() const { return m_JSNetworkSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* NetworkSink() { return m_JSNetworkSinkClassStructure.constructorInitializedOnMainThread(this); }
-
-    JSC::Structure* FetchRequestBodySinkStructure() const { return m_JSFetchRequestBodySinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* FetchRequestBodySink() { return m_JSFetchRequestBodySinkClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
-
-    JSC::Structure* HTMLRewriterSinkStructure() const { return m_JSHTMLRewriterSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* HTMLRewriterSink() { return m_JSHTMLRewriterSinkClassStructure.constructorInitializedOnMainThread(this); }
 
     JSC::Structure* JSStringDecoderStructure() const { return m_JSStringDecoderClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSStringDecoder() const { return m_JSStringDecoderClassStructure.constructorInitializedOnMainThread(this); }
@@ -354,7 +328,6 @@ public:
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
-    JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
@@ -569,14 +542,7 @@ public:
                                                                                                              \
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
     /* However, we'd like it better if they could be protected. */                                           \
-    V(private, LazyClassStructure, m_JSArrayBufferSinkClassStructure)                                        \
     V(private, LazyClassStructure, m_JSFFIFunctionStructure)                                                 \
-    V(private, LazyClassStructure, m_JSFileSinkClassStructure)                                               \
-    V(private, LazyClassStructure, m_JSHTTPResponseSinkClassStructure)                                       \
-    V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
-    V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
-    V(private, LazyClassStructure, m_JSFetchRequestBodySinkClassStructure)                                   \
-    V(private, LazyClassStructure, m_JSHTMLRewriterSinkClassStructure)                                       \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
     V(private, LazyClassStructure, m_JSModuleGraphClassStructure)                                            \
@@ -626,12 +592,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
     V(private, WebCore::JSStreamsRuntime, m_streamsRuntime)                                                  \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
-    V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
-    V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \
-    V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFetchTaskletChunkedRequestControllerPrototype)      \
-    V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFileSinkControllerPrototype)                        \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_subtleCryptoObject)                                   \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSHTTPResponseController)                            \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSBufferSubclassStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSResizableOrGrowableSharedBufferSubclassStructure)  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_vmModuleContextMap)                                  \

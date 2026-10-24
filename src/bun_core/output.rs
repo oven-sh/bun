@@ -2831,8 +2831,7 @@ mod stdin_unix {
     pub(super) fn line_source(fd: c_int) -> (LineSource, libc::off_t) {
         if super::is_stdin_tty() {
             let source = match is_canonical(fd) {
-                // Linux gives every line that was typed in raw mode to the first read in line mode.
-                Some(true) if !has_input(fd) => LineSource::TerminalLine,
+                Some(true) if !holds_raw_mode_input(fd) => LineSource::TerminalLine,
                 Some(false) => LineSource::RawTerminal,
                 _ => LineSource::Bytes,
             };
@@ -2856,10 +2855,17 @@ mod stdin_unix {
         Some(termios.c_lflag & libc::ICANON != 0)
     }
 
-    fn has_input(fd: c_int) -> bool {
+    /// Linux gives every line that was typed in raw mode to the first read in line mode.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn holds_raw_mode_input(fd: c_int) -> bool {
         let mut queued: c_int = 0;
         // SAFETY: FIONREAD writes one `int` through the pointer.
         unsafe { libc::ioctl(fd, libc::FIONREAD as _, &raw mut queued) != 0 || queued != 0 }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    fn holds_raw_mode_input(_: c_int) -> bool {
+        false
     }
 
     fn regular_file_offset(fd: c_int) -> Option<libc::off_t> {

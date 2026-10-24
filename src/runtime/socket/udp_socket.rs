@@ -565,8 +565,10 @@ impl UDPSocket {
         unsafe { &*user.cast::<UDPSocket>() }
     }
 
-    pub(crate) fn udp_socket(cx: &bun_jsc::JsThread<'_>, options: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn udp_socket(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
+        let cx = &cx.js_thread();
+        let options = options.to_js();
 
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
         // A socket that is closed from the queue can send before that: it is not bound at all.

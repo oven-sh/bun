@@ -121,6 +121,22 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
+Scalar string targets in package `imports` may name a recognized Bun built-in such as `bun:test` or `bun:sqlite`. Inside fallback arrays, including nested arrays and conditional targets within an array, `bun:` URLs remain invalid package targets under Node 24.21 rules, so the next alternative is tried. For example, `["bun:sqlite", "./fallback.cjs"]` selects `./fallback.cjs`. A valid relative target that names a missing file still produces a missing-module error; arrays do not retry after filesystem resolution fails. The Bun-specific scalar exception does not allow unknown `bun:` names, other URL schemes (including `node:`), or built-in targets in `exports`; those keep Node's `ERR_INVALID_PACKAGE_TARGET` validation.
+
+Runtime package resolution follows Node 24.21's `package.json` validation. Failures in the metadata reader, non-string `name` or `type` fields, and invalid exports condition objects throw `ERR_INVALID_PACKAGE_CONFIG` with the package path and Node's resolution context. Unselected metadata and explicit `.mjs`/`.cjs` formats remain deferred, and values Node ignores are not rejected.
+
+Package-format inference rejects empty metadata and JSONC syntax, including leading comments, trailing commas, and single-quoted properties. These files can still be imported as JSONC data from an explicit `.mjs` entry. The data loader and bundler retain their existing parsing behavior.
+
+Stdin and eval scripts report malformed ancestor package metadata only when an import or `require()` call needs that scope.
+
+Reading a selected dependency package materializes both `exports` and `imports`. ESM format inference for `.js`, `.ts`, and extensionless files also materializes both maps, including `import.meta.resolve()` for existing files. Invalid JSON in either map throws `SyntaxError` with Node's JSON diagnostic. CommonJS parent-scope lookup reads `exports` even for relative requests; CommonJS `#imports` reads `imports` before entering ESM scope resolution. CommonJS type-only scope lookups defer map errors. String fields beginning with `{` or `[` are parsed as JSON maps, matching Node's package reader.
+
+Unreadable selected package metadata also throws `ERR_INVALID_PACKAGE_CONFIG`, rather than falling through to an index file. This deliberately follows Node 24.21; Node 24.19 treated these read failures as absent metadata. Missing files, non-directory path components, and a `package.json` directory remain absence cases.
+
+`Bun.resolve()`, `Bun.resolveSync()`, and `import.meta.resolveSync()` preserve external URL specifiers without reading filesystem package metadata, including protocol-relative `//` specifiers on Windows. Local file resolution still validates the applicable package scope.
+
+`import.meta.resolve()` validates the package scope of existing `.js`, `.ts`, and extensionless files. Missing-file URLs and `require.resolve()` defer that scope validation. Loading an already-resolved CommonJS file through the ESM loader preserves the original resolution mode.
+
 🟡 Missing `Module#load()`, `registerHooks`, `findPackageJSON`, `stripTypeScriptTypes`, `getSourceMapsSupport`/`setSourceMapsSupport`. Overriding `require.cache`, `require.extensions` and `module._resolveFilename` is supported. `syncBuiltinESMExports`, `module._load`, `module._pathCache` and `module.register` are no-ops (we recommend [`Bun.plugin`](/runtime/plugins) instead). `findSourceMap` always returns `undefined`.
 
 ### [`node:net`](https://nodejs.org/api/net.html)

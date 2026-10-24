@@ -3,7 +3,7 @@ use core::fmt;
 use bun_alloc::Arena;
 
 use crate as css;
-use crate::css_rules::{CssRuleList, Location};
+use crate::css_rules::{CssRule, CssRuleList, Location};
 use crate::{PrintErr, Printer, SmallList};
 
 /// A CSS cascade layer name. Stored as a list of segments because dot
@@ -104,6 +104,45 @@ impl fmt::Display for LayerName {
         }
         Ok(())
     }
+}
+
+/// The cascade layers that a style sheet names, in source order.
+pub enum LayerNames<R> {
+    /// The style sheet declares each name wherever it applies.
+    Unconditional(Vec<LayerName>),
+    /// `@layer` statements. One for a layer that exists only under a condition is inside a copy of its `@media`, `@supports` or `@-moz-document` rule.
+    Conditional(CssRuleList<R>),
+}
+
+impl<R> Default for LayerNames<R> {
+    fn default() -> Self {
+        LayerNames::Unconditional(Vec::new())
+    }
+}
+
+/// Whether two `LayerNames::Conditional` rule lists declare the same layers under the same conditions.
+pub fn conditional_layers_eql<R>(a: &CssRuleList<R>, b: &CssRuleList<R>) -> bool {
+    a.v.len() == b.v.len()
+        && a.v.iter().zip(&b.v).all(|rules| match rules {
+            (CssRule::LayerStatement(a), CssRule::LayerStatement(b)) => {
+                a.names.len() == b.names.len()
+                    && a.names
+                        .slice()
+                        .iter()
+                        .zip(b.names.slice())
+                        .all(|(a, b)| a.eql(b))
+            }
+            (CssRule::Media(a), CssRule::Media(b)) => {
+                a.query.eql(&b.query) && conditional_layers_eql(&a.rules, &b.rules)
+            }
+            (CssRule::Supports(a), CssRule::Supports(b)) => {
+                a.condition.eql(&b.condition) && conditional_layers_eql(&a.rules, &b.rules)
+            }
+            (CssRule::MozDocument(a), CssRule::MozDocument(b)) => {
+                conditional_layers_eql(&a.rules, &b.rules)
+            }
+            _ => false,
+        })
 }
 
 /// A [@layer block](https://drafts.csswg.org/css-cascade-5/#layer-block) rule.

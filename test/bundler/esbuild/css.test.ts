@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunExe } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { checkGraph } from "../css-layer-order";
 import { itBundled } from "../expectBundled";
@@ -2619,7 +2620,7 @@ c {
       },
       out: "@media print{@layer a{.g{color:green}}}@layer a;@layer u;@layer a{.t{color:red}}@layer u{.t{color:#00f}}",
     },
-    // A list of layer names cannot say that "theme" is only declared in dark mode, so both copies of tokens.css print.
+    // The list for the first copy of tokens.css declares "theme" only in dark mode, as the file does.
     NameDeclaredOnlyUnderMediaInAFileImportedTwice: {
       files: {
         "/entry.css": /* css */ `
@@ -2637,7 +2638,7 @@ c {
           @layer base { .t { color: blue } }
         `,
       },
-      out: "@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer base,theme;@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer theme{.t{color:red}}@layer base{.t{color:#00f}}",
+      out: "@media (prefers-color-scheme:dark){@layer theme;}@layer base,theme;@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer theme{.t{color:red}}@layer base{.t{color:#00f}}",
     },
     // tokens.css declares "theme" outside "@media" first, so a list of its layers stands for its first copy.
     NameDeclaredOutsideMediaFirstInAFileImportedTwice: {
@@ -2732,7 +2733,7 @@ c {
       },
       out: "@layer{.t{color:#00f!important}}@layer a;@layer{.t{color:#00f!important}}@layer a{.t{color:red!important}}",
     },
-    // Of the copies of tokens.css that a later copy replaces, only the first one stays.
+    // Of the lists for the copies of tokens.css that a later copy replaces, only the first one stays.
     NameDeclaredOnlyUnderMediaInAFileImportedFourTimes: {
       files: {
         "/entry.css": /* css */ `
@@ -2754,7 +2755,7 @@ c {
         "/c2.css": `@import "./tokens.css"; .c2 { color: green }`,
         "/c3.css": `@import "./tokens.css"; .c3 { color: green }`,
       },
-      out: "@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}@layer base,theme;@layer theme{.t{color:red}}@layer base{.t{color:#00f}}.c2{color:green}@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}.c3{color:green}",
+      out: "@media (prefers-color-scheme:dark){@layer theme;}@layer base,theme;@layer theme{.t{color:red}}@layer base{.t{color:#00f}}.c2{color:green}@media (prefers-color-scheme:dark){@layer theme{:root{--bg:black}}}:root{--bg:white}.c3{color:green}",
     },
     // A duplicate external import stays one "@import" rule, as on main, also when only the first copy has a layer.
     DuplicateExternalImportUnderLayer: {
@@ -2966,6 +2967,546 @@ c {
     },
     outfile: "/out.css",
   });
+
+  // A layer that a file declares inside "@media", "@supports" or "@-moz-document" is in the layer order only while that
+  // condition holds (css-cascade-5, "Layer Ordering"; WPT css/css-cascade/layer-media-query.html). Such a file does
+  // not stand for a list of its layer names, and the list that stands for an earlier copy of the file keeps the rule
+  // around each name. In Chrome, `.t` gets the same color from each `out` as from its source files. A `todo` has the
+  // right output and says why bun prints another.
+  type ConditionalLayerCase = { files: Record<string, string>; out: string; todo?: string };
+  // x.css is imported twice. The list for its first copy declares "a" ahead of "u", unless g.css declares "a".
+  const listBehind = (g: string, out: string): ConditionalLayerCase => ({
+    files: {
+      "/entry.css": /* css */ `
+        @import "./g.css";
+        @import "./x.css";
+        @import "./y.css";
+        @import "./x.css";
+      `,
+      "/g.css": g,
+      "/x.css": `@layer a { .t { color: red } }`,
+      "/y.css": `@layer u { .t { color: blue } }`,
+    },
+    out: out + "@layer u{.t{color:#00f}}@layer a{.t{color:red}}",
+  });
+  // g.css is imported twice, so its first copy prints as its layers alone.
+  const importedTwice = (g: string, out: string, entry?: string): ConditionalLayerCase => ({
+    files: {
+      "/entry.css":
+        entry ??
+        /* css */ `
+          @import "./g.css";
+          @import "./other.css";
+          @import "./g.css";
+        `,
+      "/g.css": g,
+      "/other.css": /* css */ `
+        @layer base { .t { color: blue } }
+        @layer theme { .t { color: red } }
+      `,
+    },
+    out,
+  });
+  const other = "@layer base{.t{color:#00f}}@layer theme{.t{color:red}}";
+  const conditionalLayerCases: Record<string, ConditionalLayerCase> = {
+    ListBehindAFileWithTheLayerUnderMedia: listBehind(
+      `@media print { @layer a { .g { color: green } } }`,
+      "@media print{@layer a{.g{color:green}}}@layer a;",
+    ),
+    ListBehindAFileWithTheLayerUnderSupports: listBehind(
+      `@supports (display: no-such-value) { @layer a { .g { color: green } } }`,
+      "@supports (display: no-such-value){@layer a{.g{color:green}}}@layer a;",
+    ),
+    // "@media all" is no condition: g.css declares "a", and the list is not needed.
+    ListBehindAFileWithTheLayerUnderMediaAll: listBehind(
+      `@media all { @layer a { .g { color: green } } }`,
+      "@layer a{.g{color:green}}",
+    ),
+    Media: importedTwice(
+      `@media print { @layer theme { .g { color: green } } }`,
+      `@media print{@layer theme;}${other}@media print{@layer theme{.g{color:green}}}`,
+    ),
+    Supports: importedTwice(
+      `@supports (display: no-such-value) { @layer theme { .g { color: green } } }`,
+      `@supports (display: no-such-value){@layer theme;}${other}@supports (display: no-such-value){@layer theme{.g{color:green}}}`,
+    ),
+    MozDocument: importedTwice(
+      `@-moz-document url-prefix() { @layer theme { .g { color: green } } }`,
+      `@-moz-document url-prefix(){@layer theme;}${other}@-moz-document url-prefix(){@layer theme{.g{color:green}}}`,
+    ),
+    // The list has to print the query that the rule of the file prints.
+    MediaFeatures: importedTwice(
+      `@media (min-resolution: 2dppx) and (width >= 600px) { @layer theme { .g { color: green } } }`,
+      `@media (min-resolution:2dppx) and (min-width:600px){@layer theme;}${other}@media (min-resolution:2dppx) and (min-width:600px){@layer theme{.g{color:green}}}`,
+    ),
+    Statement: importedTwice(
+      /* css */ `
+        @media print { @layer theme, print; }
+        .g { color: green }
+      `,
+      `@media print{@layer theme,print;}${other}@media print{@layer theme,print;}.g{color:green}`,
+    ),
+    NestedConditions: importedTwice(
+      /* css */ `
+        @media print {
+          @supports (display: grid) { @layer theme { .g { color: green } } }
+          @layer print { .g { color: black } }
+        }
+      `,
+      `@media print{@supports (display: grid){@layer theme;}@layer print;}${other}@media print{@supports (display: grid){@layer theme{.g{color:green}}}@layer print{.g{color:#000}}}`,
+    ),
+    TwoRules: importedTwice(
+      /* css */ `
+        @media print { @layer theme { .g { color: green } } }
+        @supports (display: grid) { @layer late { .g { color: black } } }
+      `,
+      `@media print{@layer theme;}@supports (display: grid){@layer late;}${other}@media print{@layer theme{.g{color:green}}}@supports (display: grid){@layer late{.g{color:#000}}}`,
+    ),
+    // The first rule declares "theme" only in print, so the second rule declares it too.
+    SameLayerUnderTwoConditions: importedTwice(
+      /* css */ `
+        @media print { @layer theme { .g { color: green } } }
+        @media screen { @layer theme { .g { color: black } } }
+      `,
+      `@media print{@layer theme;}@media screen{@layer theme;}${other}@media print{@layer theme{.g{color:green}}}@media screen{@layer theme{.g{color:#000}}}`,
+    ),
+    // "base" is declared in every case, "base.theme" only in print.
+    Sublayer: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./sublayers.css";
+          @import "./g.css";
+        `,
+        "/g.css": /* css */ `
+          @layer base {
+            .g { color: green }
+            @media print { @layer theme { .g { color: black } } }
+          }
+        `,
+        "/sublayers.css": /* css */ `
+          @layer base.reset { .t { color: blue } }
+          @layer base.theme { .t { color: red } }
+        `,
+      },
+      out: "@layer base;@media print{@layer base.theme;}@layer base.reset{.t{color:#00f}}@layer base.theme{.t{color:red}}@layer base{.g{color:green}@media print{@layer theme{.g{color:#000}}}}",
+    },
+    InsideAStyleRule: importedTwice(
+      `.g { @media print { @layer theme { color: green } } }`,
+      `@media print{@layer theme;}${other}@media print{@layer theme{.g{color:green}}}`,
+    ),
+    // "@container" does not make a layer conditional, but the "@media" inside it does.
+    InsideContainer: importedTwice(
+      `@container (min-width: 1px) { @media print { @layer theme { .g { color: green } } } }`,
+      `@media print{@layer theme;}${other}@container (width>=1px){@media print{@layer theme{.g{color:green}}}}`,
+    ),
+    // On a screen g.css declares "print" ahead of "theme".
+    DeclaredAgainOutsideLater: importedTwice(
+      /* css */ `
+        @media print { @layer theme { .g { color: green } } }
+        @layer print { .g { color: black } }
+        @layer theme { .g { color: gray } }
+      `,
+      `@media print{@layer theme;}@layer print,theme;${other}@media print{@layer theme{.g{color:green}}}@layer print{.g{color:#000}}@layer theme{.g{color:gray}}`,
+    ),
+    // g.css declares "theme" outside "@media" first, so the layer is there in every case.
+    DeclaredOutsideFirst: importedTwice(
+      /* css */ `
+        @layer theme { .g { color: green } }
+        @media print { @layer theme { .g { color: black } } }
+      `,
+      `@layer theme,theme;${other}@layer theme{.g{color:green}}@media print{@layer theme{.g{color:#000}}}`,
+    ),
+    // "theme.dark" declares "theme" too.
+    SublayerDeclaredOutsideFirst: importedTwice(
+      /* css */ `
+        @layer theme.dark { .g { color: green } }
+        @media print { @layer theme { .g { color: black } } }
+      `,
+      `@layer theme.dark,theme;${other}@layer theme.dark{.g{color:green}}@media print{@layer theme{.g{color:#000}}}`,
+    ),
+    MediaThatNeverMatches: importedTwice(
+      /* css */ `
+        @media not all { @layer theme { .g { color: green } } }
+        .g { color: black }
+      `,
+      `${other}.g{color:#000}`,
+    ),
+    MediaInsideAMediaThatNeverMatches: importedTwice(
+      /* css */ `
+        @media not all { @media print { @layer theme { .g { color: green } } } }
+        @layer late { .g { color: black } }
+      `,
+      `@layer late;${other}@layer late{.g{color:#000}}`,
+    ),
+    // The file declares the same layers at the same place, so no list is needed.
+    DirectlyAheadOfItsFile: importedTwice(
+      `@media print { @layer theme { .g { color: green } } }`,
+      `${other}@media print{@layer theme{.g{color:green}}}`,
+      /* css */ `
+        @import "./other.css";
+        @import "./g.css";
+        @import "./g.css";
+      `,
+    ),
+    // The second copy declares nothing that the list for the first copy does not declare.
+    ThreeCopies: importedTwice(
+      `@media print { @layer theme { .g { color: green } } }`,
+      `@media print{@layer theme;}${other}@media print{@layer theme{.g{color:green}}}`,
+      /* css */ `
+        @import "./g.css";
+        @import "./other.css";
+        @import "./g.css";
+        @import "./g.css";
+      `,
+    ),
+    // The statement of entry.css prints ahead of the imported files. It declares "theme" ahead of "base" in every
+    // case, and the list of g.css is behind it.
+    StatementAheadOfTheImports: importedTwice(
+      `@media print { @layer theme { .g { color: green } } }`,
+      `@layer theme,base;@media print{@layer theme;}${other}@media print{@layer theme{.g{color:green}}}`,
+      /* css */ `
+        @layer theme, base;
+        @import "./g.css";
+        @import "./other.css";
+        @import "./g.css";
+      `,
+    ),
+    ImportUnderLayer: importedTwice(
+      `@media print { @layer theme { .g { color: green } } }`,
+      `@layer ui{@media print{@layer theme;}}@layer ui{${other}}@layer ui{@media print{@layer theme{.g{color:green}}}}`,
+      /* css */ `
+        @import "./g.css" layer(ui);
+        @import "./other.css" layer(ui);
+        @import "./g.css" layer(ui);
+      `,
+    ),
+    // Inside an anonymous layer no other file can name "theme", so there is no list.
+    ImportUnderAnonymousLayer: importedTwice(
+      `@media print { @layer theme { .g { color: green } } }`,
+      `${other}@layer{@media print{@layer theme{.g{color:green}}}}`,
+      /* css */ `
+        @import "./g.css" layer;
+        @import "./other.css";
+        @import "./g.css" layer;
+      `,
+    ),
+    ImportUnderMedia: importedTwice(
+      `@supports (display: no-such-value) { @layer theme { .g { color: green } } }`,
+      `@media screen{@supports (display: no-such-value){@layer theme;}}${other}@media screen{@supports (display: no-such-value){@layer theme{.g{color:green}}}}`,
+      /* css */ `
+        @import "./g.css" screen;
+        @import "./other.css";
+        @import "./g.css" screen;
+      `,
+    ),
+    // h.css has the rules of g.css. One list stands for the first copies of both files.
+    EqualRulesInTwoFiles: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./h.css";
+          @import "./other.css";
+          @import "./g.css";
+          @import "./h.css";
+        `,
+        "/g.css": `@media print { @layer theme { .g { color: green } } }`,
+        "/h.css": `@media print { @layer theme { .h { color: black } } }`,
+        "/other.css": /* css */ `
+          @layer base { .t { color: blue } }
+          @layer theme { .t { color: red } }
+        `,
+      },
+      out: `@media print{@layer theme;}${other}@media print{@layer theme{.g{color:green}}}@media print{@layer theme{.h{color:#000}}}`,
+    },
+    // The copy under "layer(ui)" has its rules in other layers than the bare copies, so it stays whole. The list for
+    // the first bare copy does not stand for it.
+    LayeredCopyBetweenBareCopies: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./g.css" layer(ui);
+          @import "./late.css";
+          @import "./g.css";
+        `,
+        "/g.css": /* css */ `
+          @media print { @layer theme { .g { color: green } } }
+          @layer base { .g { color: black } }
+        `,
+        "/late.css": /* css */ `
+          @layer late { .t { color: blue } }
+          @layer ui { .t { color: red } }
+        `,
+      },
+      out: "@media print{@layer theme;}@layer base;@layer ui{@media print{@layer theme{.g{color:green}}}@layer base{.g{color:#000}}}@layer late{.t{color:#00f}}@layer ui{.t{color:red}}@media print{@layer theme{.g{color:green}}}@layer base{.g{color:#000}}",
+    },
+    // Both lists for the first copy of f.css stay. The list of g.css alone would put "a" ahead of "b" inside "v".
+    LayeredCopiesOfTwoFiles: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./h.css";
+          @import "./g.css";
+          @import "./f.css";
+          @import "./f.css";
+        `,
+        "/f.css": /* css */ `
+          @import "./h.css" layer(v);
+          @import "./g.css" layer(v);
+        `,
+        "/g.css": `@media screen { @layer a { .t { color: blue } } }`,
+        "/h.css": `@layer b { .t { color: red } }`,
+      },
+      out: "@layer b{.t{color:red}}@media screen{@layer a{.t{color:#00f}}}@layer v{@layer b;}@layer v{@media screen{@layer a;}}@layer v{@layer b{.t{color:red}}}@layer v{@media screen{@layer a{.t{color:#00f}}}}",
+    },
+    // The list for the first import of b.css would print as a block between the two "@import" rules, and an "@import"
+    // behind a block is not valid. So it is dropped, as on main.
+    ExternalImports: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/a.css";
+          @import "https://example.com/b.css" layer(x) print;
+          @import "https://example.com/b.css";
+          @import "./g.css";
+        `,
+        "/g.css": `@media print { @layer theme { .g { color: green } } }`,
+      },
+      out: '@import "https://example.com/a.css";@import "https://example.com/b.css";@media print{@layer theme{.g{color:green}}}',
+    },
+    // A browser declares a layer inside these rules in every case, so the list is a plain list, as on main.
+    Container: importedTwice(
+      `@container (min-width: 1px) { @layer theme { .g { color: green } } }`,
+      `@layer theme;${other}@container (width>=1px){@layer theme{.g{color:green}}}`,
+    ),
+    Scope: importedTwice(
+      `@scope (.g) { @layer theme { .g { color: green } } }`,
+      `@layer theme;${other}@scope(.g){@layer theme{.g{color:green}}}`,
+    ),
+    StartingStyle: importedTwice(
+      `@starting-style { @layer theme { .g { color: green } } }`,
+      `@layer theme;${other}@starting-style{@layer theme{.g{color:green}}}`,
+    ),
+    StyleRule: importedTwice(
+      `.g { @layer theme { color: green } }`,
+      `@layer theme;${other}@layer theme{.g{color:green}}`,
+    ),
+    // In the sources the first layer is the unnamed one of the first copy of f2.css, so `.t` is green. A list cannot
+    // declare an unnamed layer, and the list under "layer(v)" keeps the bare list away from its file.
+    UnnamedBlockWithImportant: {
+      todo: 'the lists for the first copies of f2.css declare "a" ahead of its unnamed layer: main and esbuild print no list here, and have the same defect when another file is between the copies',
+      files: {
+        "/entry.css": /* css */ `
+          @import "./f1.css";
+          @import "./f1.css";
+        `,
+        "/f1.css": /* css */ `
+          @import "./f2.css";
+          @import "./f2.css" layer(v);
+        `,
+        "/f2.css": /* css */ `
+          @layer { .t { color: green !important } }
+          @media (min-width: 1px) { @layer a { .t { color: blue !important } } }
+        `,
+      },
+      out: "@layer{.t{color:green!important}}@media (min-width:1px){@layer a{.t{color:#00f!important}}}@layer v{@layer{.t{color:green!important}}@media (min-width:1px){@layer a{.t{color:#00f!important}}}}",
+    },
+    // "@namespace" is valid only ahead of every rule but "@import" and "@layer" statements. A list under a condition
+    // prints as a block, as a list under import conditions does on main.
+    ListAheadOfNamespace: {
+      todo: 'the list is a block ahead of "@namespace", so a browser drops that rule (#46232 moves "@namespace" to the top)',
+      files: {
+        "/entry.css": /* css */ `
+          @import "./g.css";
+          @import "./ns.css";
+          @import "./g.css";
+        `,
+        "/g.css": `@media print { @layer theme { .g { color: green } } }`,
+        "/ns.css": /* css */ `
+          @namespace svg url(http://www.w3.org/2000/svg);
+          @layer base { svg|a { color: blue } }
+          @layer theme { .t { color: red } }
+        `,
+      },
+      out: '@namespace svg "http://www.w3.org/2000/svg";@media print{@layer theme;}@layer base{svg|a{color:#00f}}@layer theme{.t{color:red}}@media print{@layer theme{.g{color:green}}}',
+    },
+  };
+  for (const [name, { files, out, todo }] of Object.entries(conditionalLayerCases)) {
+    itBundled(`css/CSSAtLayerConditional${name}`, {
+      todo: !!todo,
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+      },
+    });
+  }
+  for (const name of ["ListBehindAFileWithTheLayerUnderMedia", "Media"]) {
+    const { files, out } = conditionalLayerCases[name];
+    itBundled(`css/CSSAtLayerConditional${name}CLI`, {
+      backend: "cli",
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+      },
+    });
+  }
+
+  // Both entry points have y.css, print.css, x.css and both.css behind one list. a.js needs the list of print.css,
+  // which declares "x" only in print. b.js needs the list of x.css, which declares it in every case. So the two
+  // cannot share one CSS file.
+  itBundled("css/CSSAtLayerConditionalTwoEntryPoints", {
+    files: {
+      "/a.js": /* js */ `
+        import "./print.css";
+        import "./y.css";
+        import "./both.css";
+        console.log("a");
+      `,
+      "/b.js": /* js */ `
+        import "./x.css";
+        import "./y.css";
+        import "./both.css";
+        console.log("b");
+      `,
+      "/print.css": `@media print { @layer x { .p { color: green } } }`,
+      "/x.css": `@layer x { .t { color: red } }`,
+      "/y.css": `@layer y { .t { color: blue } }`,
+      "/both.css": /* css */ `
+        @import "./print.css";
+        @import "./x.css";
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const files = "@layer y{.t{color:#00f}}@media print{@layer x{.p{color:green}}}@layer x{.t{color:red}}\n";
+      api.expectFile("/out/a.css").toBe("@media print{@layer x;}" + files);
+      api.expectFile("/out/b.css").toBe("@layer x;" + files);
+    },
+  });
+
+  // The two import orders differ only in the file that the first list stands for: p1.css for a.js, p2.css for b.js.
+  // Both lists declare the same layer under the same condition, so the entry points share one CSS file, as on main.
+  // With a name from the hash of the content, two files with these bytes would have one output path.
+  itBundled("css/CSSAtLayerConditionalTwoEntryPointsWithEqualLists", {
+    files: {
+      "/a.js": /* js */ `
+        import "./p1.css";
+        import "./y.css";
+        import "./both.css";
+        console.log("a");
+      `,
+      "/b.js": /* js */ `
+        import "./p2.css";
+        import "./y.css";
+        import "./both.css";
+        console.log("b");
+      `,
+      "/p1.css": `@media print { @layer x { .p1 { color: green } } }`,
+      "/p2.css": `@media print { @layer x { .p2 { color: green } } }`,
+      "/y.css": `@layer y { .t { color: blue } }`,
+      "/both.css": /* css */ `
+        @import "./p1.css";
+        @import "./p2.css";
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    entryNaming: "[hash].[ext]",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const css = readdirSync(api.outdir).filter(file => file.endsWith(".css"));
+      expect(css).toHaveLength(1);
+      api
+        .expectFile("/out/" + css[0])
+        .toBe(
+          "@media print{@layer x;}@layer y{.t{color:#00f}}@media print{@layer x{.p1{color:green}}}@media print{@layer x{.p2{color:green}}}\n",
+        );
+    },
+  });
+
+  // Both import orders have the lists of p1.css and p2.css, in the order in which the entry point imports the two
+  // files. The lists declare different layers, so the entry points cannot share one CSS file.
+  itBundled("css/CSSAtLayerConditionalTwoEntryPointsWithListsInAnotherOrder", {
+    files: {
+      "/a.js": /* js */ `
+        import "./p1.css";
+        import "./p2.css";
+        import "./y.css";
+        import "./both.css";
+        console.log("a");
+      `,
+      "/b.js": /* js */ `
+        import "./p2.css";
+        import "./p1.css";
+        import "./y.css";
+        import "./both.css";
+        console.log("b");
+      `,
+      "/p1.css": `@media print { @layer a { .p { color: green } } }`,
+      "/p2.css": `@media print { @layer b { .p { color: black } } }`,
+      "/y.css": `@layer y { .t { color: blue } }`,
+      "/both.css": /* css */ `
+        @import "./p1.css";
+        @import "./p2.css";
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const files =
+        "@layer y{.t{color:#00f}}@media print{@layer a{.p{color:green}}}@media print{@layer b{.p{color:#000}}}\n";
+      api.expectFile("/out/a.css").toBe("@media print{@layer a;}@media print{@layer b;}" + files);
+      api.expectFile("/out/b.css").toBe("@media print{@layer b;}@media print{@layer a;}" + files);
+    },
+  });
+
+  // lib.css gives "theme" and "late" their places with import conditions, and the bundle of lib.css does it with
+  // "@media" and "@supports" rules. An app that imports the library twice gets the same bundle from both forms.
+  {
+    const app = {
+      "entry.css": /* css */ `
+        @import "./lib.css";
+        @import "./other.css";
+        @import "./lib.css";
+      `,
+      "other.css": /* css */ `
+        @layer base { .t { color: blue } }
+        @layer theme { .t { color: red } }
+        @layer late { .t { color: gray } }
+      `,
+    };
+    itBundled("css/CSSAtLayerConditionalBundleOfABundle", {
+      files: {
+        "/src/entry.css": app["entry.css"],
+        "/src/other.css": app["other.css"],
+        "/src/lib.css": /* css */ `
+          @import "./a.css" layer(theme) print;
+          @import "./b.css" layer(late) supports(display: grid);
+        `,
+        "/src/a.css": `.g { color: green }`,
+        "/src/b.css": `.g { color: black }`,
+        "/dist/entry.css": app["entry.css"],
+        "/dist/other.css": app["other.css"],
+      },
+      entryPoints: ["/src/entry.css", "/src/lib.css"],
+      outdir: "/out",
+      minifyWhitespace: true,
+      async onAfterBundle(api) {
+        const lib = api.readFile("/out/lib.css");
+        expect(lib).toBe(
+          "@media print{@layer theme{.g{color:green}}}@supports (display:grid){@layer late{.g{color:#000}}}\n",
+        );
+        api.writeFile("/dist/lib.css", lib);
+        const again = await Bun.build({ entrypoints: [api.join("dist/entry.css")], minify: { whitespace: true } });
+        expect(await again.outputs[0].text()).toBe(api.readFile("/out/entry.css"));
+      },
+    });
+  }
 
   // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {

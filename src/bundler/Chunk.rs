@@ -1416,15 +1416,42 @@ pub enum Layers {
     Owned(Vec<bun_css::LayerName>),
     /// A stylesheet's `layers_pre_import`, borrowed. The order passes keep or remove this entry, and never change it.
     PreImport(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
+    /// The `LayerNames::Conditional` rules of a stylesheet, borrowed. `source_index` is the lowest one in the order with equal rules.
+    Conditional {
+        source_index: Index,
+        rules: bun_ptr::BackRef<bun_css::css_parser::BundlerCssRuleList>,
+    },
+}
+
+/// What a `Layers` entry declares.
+pub(crate) enum LayersContent<'a> {
+    Names(&'a Vec<bun_css::LayerName>),
+    Conditional {
+        source_index: Index,
+        rules: &'a bun_css::css_parser::BundlerCssRuleList,
+    },
 }
 
 impl Layers {
     #[inline]
-    pub(crate) fn inner(&self) -> &Vec<bun_css::LayerName> {
+    pub(crate) fn content(&self) -> LayersContent<'_> {
         match self {
-            Layers::Borrowed(p) | Layers::PreImport(p) => p.get(),
-            Layers::Owned(b) => b,
+            Layers::Borrowed(p) | Layers::PreImport(p) => LayersContent::Names(p.get()),
+            Layers::Owned(b) => LayersContent::Names(b),
+            Layers::Conditional {
+                source_index,
+                rules,
+            } => LayersContent::Conditional {
+                source_index: *source_index,
+                rules: rules.get(),
+            },
         }
+    }
+
+    /// Whether this is a list with no name in it.
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        matches!(self.content(), LayersContent::Names(names) if names.is_empty())
     }
 
     /// Cow::Borrowed constructor.
@@ -1435,7 +1462,7 @@ impl Layers {
     /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
     /// The pointee is arena-owned storage that outlives the chunk pipeline
     /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
-    /// invariant so `inner()`/`to_owned()` deref sites are safe.
+    /// invariant so `content()`/`to_owned()` deref sites are safe.
     #[inline]
     pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
         Layers::Borrowed(bun_ptr::BackRef::from(p))
@@ -1456,12 +1483,14 @@ impl Layers {
 
     /// If borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
-    pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
+    /// `None` for `Conditional`, which is not a list of names.
+    pub(crate) fn to_owned(&mut self) -> Option<&mut Vec<bun_css::LayerName>> {
         if let Layers::Borrowed(p) | Layers::PreImport(p) = *self {
             *self = Layers::Owned(p.deep_clone_with(|l| l.clone()));
         }
         match self {
-            Layers::Owned(b) => b,
+            Layers::Owned(b) => Some(b),
+            Layers::Conditional { .. } => None,
             Layers::Borrowed(_) | Layers::PreImport(_) => unreachable!(),
         }
     }
@@ -1473,10 +1502,13 @@ impl CssImportOrder {
         let CssImportOrderKind::Layers(layers) = &self.kind else {
             return false;
         };
+        let LayersContent::Names(names) = layers.content() else {
+            return false;
+        };
         match self.conditions.slice() {
             [] => true,
             [only] => {
-                layers.inner().is_empty()
+                names.is_empty()
                     && only.layer.as_ref().is_some_and(|layer| layer.v.is_some())
                     && only.supports.is_none()
                     && only.media.media_queries.is_empty()
@@ -1490,26 +1522,33 @@ impl CssImportOrder {
 
         // core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 tag instead.
         let tag: u8 = match &self.kind {
+            // Not 0: two entry points share a chunk when their orders hash alike, and this entry prints rules, not a list of names.
+            CssImportOrderKind::Layers(Layers::Conditional { .. }) => 3,
             CssImportOrderKind::Layers(_) => 0,
             CssImportOrderKind::ExternalPath(_) => 1,
             CssImportOrderKind::SourceIndex(_) => 2,
         };
         bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
-            CssImportOrderKind::Layers(layers) => {
-                for layer in layers.inner().slice() {
-                    for (i, layer_name) in layer.v.slice().iter().enumerate() {
-                        let is_last = i == layers.inner().len() as usize - 1;
-                        if is_last {
-                            hasher.update(layer_name);
-                        } else {
-                            hasher.update(layer_name);
-                            hasher.update(b".");
+            CssImportOrderKind::Layers(layers) => match layers.content() {
+                LayersContent::Names(names) => {
+                    for layer in names.slice() {
+                        for (i, layer_name) in layer.v.slice().iter().enumerate() {
+                            let is_last = i == names.len() as usize - 1;
+                            if is_last {
+                                hasher.update(layer_name);
+                            } else {
+                                hasher.update(layer_name);
+                                hasher.update(b".");
+                            }
                         }
                     }
+                    hasher.update(b"\x00");
                 }
-                hasher.update(b"\x00");
-            }
+                LayersContent::Conditional { source_index, .. } => {
+                    bun_core::write_any_to_hasher(hasher, source_index.get())
+                }
+            },
             CssImportOrderKind::ExternalPath(path) => hasher.update(path.text),
             // Note: `Index` is a `#[repr(transparent)]` u32 newtype but
             // doesn't impl `AsBytes`; hash the inner u32.
@@ -1544,18 +1583,22 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(writer, "{} = ", <&'static str>::from(&self.inner.kind))?;
         match &self.inner.kind {
-            CssImportOrderKind::Layers(layers) => {
-                write!(writer, "[")?;
-                let l = layers.inner();
-                for (i, layer) in l.slice_const().iter().enumerate() {
-                    if i > 0 {
-                        write!(writer, ", ")?;
+            CssImportOrderKind::Layers(layers) => match layers.content() {
+                LayersContent::Names(l) => {
+                    write!(writer, "[")?;
+                    for (i, layer) in l.slice_const().iter().enumerate() {
+                        if i > 0 {
+                            write!(writer, ", ")?;
+                        }
+                        write!(writer, "\"{}\"", layer)?;
                     }
-                    write!(writer, "\"{}\"", layer)?;
-                }
 
-                write!(writer, "]")?;
-            }
+                    write!(writer, "]")?;
+                }
+                LayersContent::Conditional { source_index, .. } => {
+                    write!(writer, "conditional layers of {}", source_index.get())?;
+                }
+            },
             CssImportOrderKind::ExternalPath(path) => {
                 write!(writer, "\"{}\"", bstr::BStr::new(&path.pretty))?;
             }

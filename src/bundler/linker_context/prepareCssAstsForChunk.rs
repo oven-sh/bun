@@ -17,7 +17,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_resolver::DataURL;
 
-use crate::chunk::{Content, CssImportOrder, CssImportOrderKind, Layers};
+use crate::chunk::{Content, CssImportOrder, CssImportOrderKind, Layers, LayersContent};
 
 use super::find_imported_files_in_css_order::import_conditions_are_equal;
 
@@ -112,7 +112,21 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
             // entry.conditions / entry.condition_import_records relies on disjoint field borrows.
             match &mut entry.kind {
                 CssImportOrderKind::Layers(layers) => {
-                    let inner = layers.inner();
+                    let inner = match layers.content() {
+                        LayersContent::Names(names) => names,
+                        LayersContent::Conditional { rules, .. } => {
+                            let mut ast = BundlerStyleSheet {
+                                // SAFETY: bitwise copy of the list header. It aliases the
+                                // buffer of the source stylesheet, which outlives the chunk,
+                                // and is never dropped or grown (`CssChunk::Drop`).
+                                rules: unsafe { core::ptr::read(rules) },
+                                ..BundlerStyleSheet::empty()
+                            };
+                            wrap_rules_with_conditions(&mut ast, bump, &entry.conditions);
+                            css_chunk.asts[i] = ast;
+                            continue;
+                        }
+                    };
                     let len = inner.len();
                     let rules = if len > 0 {
                         // The `Chunk::Layers` payload is the lifetime-erased shadow

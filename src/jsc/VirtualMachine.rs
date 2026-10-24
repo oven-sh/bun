@@ -314,6 +314,8 @@ pub struct VirtualMachine {
     pub(crate) remap_stack_frames_mutex: bun_threading::Mutex,
 
     pub argv: Vec<Box<[u8]>>,
+    /// CLI entry path before module resolution follows symlinks.
+    pub argv1: Option<Box<[u8]>>,
 
     pub origin_timer: std::time::Instant,
     pub(crate) origin_timestamp: u64,
@@ -3341,6 +3343,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).handle)
                 .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
+            addr_of_mut!((*vm).argv1).write(None);
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -5700,6 +5703,7 @@ impl VirtualMachine {
 
         drop(core::mem::take(&mut self.main_resolved_path));
         drop(self.sampling_profiler_directory.take());
+        drop(self.argv1.take());
 
         self.overridden_main.deinit();
         self.bake_config_plugins.deinit();

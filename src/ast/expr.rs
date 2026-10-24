@@ -1131,6 +1131,20 @@ impl Expr {
         matches!(self.data, Data::EDot(_) | Data::EIndex(_))
     }
 
+    /// What a fold leaves when it replaces `(0, x)`, `true && x` or `true ? x : y`
+    /// by the operand `x`. A call or a tagged template passes the object of a
+    /// property access as `this`, so there the operand stays `(0, x)`.
+    pub fn unwrapped_by_fold(self, is_callee_or_tag: bool, zero_loc: Loc) -> Expr {
+        if is_callee_or_tag && self.has_value_for_this_in_call() {
+            let zero = Expr {
+                data: Data::ENumber(E::Number::new(0.0)),
+                loc: zero_loc,
+            };
+            return zero.join_with_comma(self);
+        }
+        self
+    }
+
     /// The given "expr" argument should be the operand of a "!" prefix operator
     /// (i.e. the "x" in "!x"). This returns a simplified expression for the
     /// whole operator (i.e. the "!x") if it can be simplified, or false if not.

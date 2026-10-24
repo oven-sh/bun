@@ -202,6 +202,13 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = [y][0]()", "x = y()");
       ts.expectPrintedMin_("x = [() => y][0]()", "x = (() => y)()");
 
+      // A tagged template passes `this` like a call.
+      ts.expectPrintedMin_("x = [obj.m][0]`t`", "x = (0, obj.m)`t`");
+      ts.expectPrintedMin_("x = [y][0]`t`", "x = y`t`");
+      ts.expectPrintedMin_("x = ({ f: g }).f()", "x = { f: g }.f()");
+      ts.expectPrintedMin_("x = ({ f: g }).f`t`", "x = { f: g }.f`t`");
+      ts.expectPrintedMin_('x = ({ f: g })["f"]`t`', "x = { f: g }.f`t`");
+
       // `[x][0] = v` writes into the temporary, not `x`. Same for `"s"[n]`.
       ts.expectPrintedMin_("[obj.p][0] = 5", "[obj.p][0] = 5");
       ts.expectPrintedMin_("[obj.p][0] += 5", "[obj.p][0] += 5");
@@ -4763,6 +4770,110 @@ console.log(foo, array);
       expectPrinted("(0, obj.method)", "obj.method");
       expectPrinted("(0, obj[key])", "obj[key]");
       expectPrinted("(0, func())", "func()");
+    });
+
+    // `a.b()` and `a.b`t`` pass `a` as `this`. `(0, a.b)()` and `(0, a.b)`t`` do not.
+    const wrappersAroundOperand = {
+      and: x => `(true && ${x})`,
+      or: x => `(false || ${x})`,
+      nullish: x => `(null ?? ${x})`,
+      ternary: x => `(true ? ${x} : 0)`,
+      falseTest: x => `(false ? 0 : ${x})`,
+      pureTest: x => `([] ? ${x} : 0)`,
+      typeofTest: x => `(typeof zz ? ${x} : 0)`,
+      nullishAssign: x => `(({}).p ??= ${x})`,
+      orAssign: x => `(({}).p ||= ${x})`,
+      nested: x => `(true && (true && ${x}))`,
+      callInLeft: x => `((() => id()) && ${x})`,
+    };
+
+    it("a fold that leaves a property access keeps `(0, x)` for a callee and for a tag", () => {
+      for (const wrap of Object.values(wrappersAroundOperand)) {
+        for (const expectPrinted of [ts.expectPrinted_, ts.expectPrintedMin_]) {
+          for (const operand of ["o.f", "o[k]", "a?.b"]) {
+            expectPrinted(`x = ${wrap(operand)}\`t\``, `x = (0, ${operand})\`t\``);
+            expectPrinted(`x = ${wrap(operand)}()`, `x = (0, ${operand})()`);
+            // Nothing calls this one, so it needs no comma.
+            expectPrinted(`x = ${wrap(operand)}`, `x = ${operand}`);
+          }
+          // An identifier has no `this` to pass.
+          expectPrinted(`x = ${wrap("fn")}\`t\``, "x = fn`t`");
+          expectPrinted(`x = ${wrap("fn")}()`, "x = fn()");
+        }
+      }
+
+      // The comma itself is folded under minify.syntax only.
+      for (const operand of ["o.f", "o[k]", "a?.b"]) {
+        ts.expectPrintedMin_(`x = (0, ${operand})\`t\``, `x = (0, ${operand})\`t\``);
+        ts.expectPrintedMin_(`x = (0, ${operand})()`, `x = (0, ${operand})()`);
+        ts.expectPrintedMin_(`x = (/* @__PURE__ */ f(), ${operand})\`t\``, `x = (0, ${operand})\`t\``);
+        ts.expectPrintedMin_(`x = (/* @__PURE__ */ f(), ${operand})()`, `x = (0, ${operand})()`);
+        ts.expectPrintedMin_(`x = (0, ${operand})`, `x = ${operand}`);
+      }
+      ts.expectPrintedMin_("x = (0, fn)`t`", "x = fn`t`");
+
+      // A single-use local is not moved into a tag when that gives the tag a `this`.
+      ts.expectPrintedMin_(
+        "function h() { let x = o.f; return x`t`; }",
+        "function h() {\n  let x = o.f;\n  return x`t`;\n}",
+      );
+      ts.expectPrintedMin_(
+        "function h() { let x = a?.b; return x`t`; }",
+        "function h() {\n  let x = a?.b;\n  return x`t`;\n}",
+      );
+      ts.expectPrintedMin_("function h() { let x = fn; return x`t`; }", "function h() {\n  return fn`t`;\n}");
+      ts.expectPrintedMin_("function h() { let x = o.f; return x.g`t`; }", "function h() {\n  return o.f.g`t`;\n}");
+    });
+
+    it("a call or a tagged template gets the same `this` after a fold", async () => {
+      const rows = {
+        tag: "o.f`t`",
+        call: "o.f()",
+        objectTag: "({ f: o.f }).f`t`",
+        viaConst: "(() => { const t = o.f; return t`t`; })()",
+        commaTag: "(0, o.f)`t`",
+        commaCall: "(0, o.f)()",
+      };
+      const expected = { tag: "o", call: "o", objectTag: "object", viaConst: "undefined" };
+      expected.commaTag = expected.commaCall = "undefined";
+      for (const [name, wrap] of Object.entries(wrappersAroundOperand)) {
+        rows[name + "Tag"] = wrap("o.f") + "`t`";
+        rows[name + "Call"] = wrap("o.f") + "()";
+        rows[name + "LiteralTag"] = wrap("({ f() { return this; } }).f") + "`t`";
+        expected[name + "Tag"] = expected[name + "Call"] = expected[name + "LiteralTag"] = "undefined";
+      }
+      // A module is strict code, so an unbound `this` is undefined.
+      const source = `
+        const o = { f() { return this; } };
+        const id = x => x;
+        const show = v => (v === undefined ? "undefined" : v === o ? "o" : v === globalThis ? "globalThis" : typeof v);
+        console.log(JSON.stringify({ ${Object.entries(rows)
+          .map(([name, expr]) => `${name}: show(${expr})`)
+          .join(", ")} }));
+      `;
+      using dir = tempDir("fold-keeps-this", { "t.mjs": source });
+      const run = async (...args) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const runBundle = async (out, ...flags) => {
+        const build = await run("build", "t.mjs", "--outfile=" + out, ...flags);
+        expect({ exitCode: build.exitCode, stderr: build.stderr }).toMatchObject({ exitCode: 0 });
+        return run(out);
+      };
+      // bun transpiles a file again when it runs it, unless `bun build --target=bun` made it.
+      const lanes = await Promise.all([
+        run("t.mjs"),
+        runBundle("plain.mjs"),
+        runBundle("target-bun.mjs", "--target=bun"),
+        runBundle("minify.mjs", "--minify"),
+      ]);
+      for (const { stdout, stderr, exitCode } of lanes) {
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual(expected);
+        expect(exitCode).toBe(0);
+      }
     });
 
     it("constant folding", () => {

@@ -9,9 +9,9 @@ pub(crate) mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    ExprIn, ExprParent, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
+    PrependTempRefsOpts, Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature,
+    StringVoidMap, VisitArgsOpts, VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -361,7 +361,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
-                        is_immediately_assigned_to_decl: true,
+                        parent: ExprParent::Declaration,
                         // `const { a } = x` reads `x.a` and drops `x`.
                         is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
                         ..Default::default()

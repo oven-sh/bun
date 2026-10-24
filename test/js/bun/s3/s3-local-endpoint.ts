@@ -9,6 +9,7 @@ export function s3LocalEndpoint(object: string | Uint8Array) {
   const bytes = Buffer.from(object);
   const ranges: (string | null)[] = [];
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     fetch(req) {
       const range = req.headers.get("range");

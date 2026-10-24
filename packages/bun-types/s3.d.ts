@@ -473,6 +473,16 @@ declare module "bun" {
    * Represents a file in an S3-compatible storage service.
    * Extends the Blob interface for compatibility with web APIs.
    *
+   * Bun downloads the object only when you read it. A `FormData` body is
+   * built at once, so a `FormData` body with an `S3File` entry throws a
+   * `TypeError`. Read the bytes first and append a `File`.
+   *
+   * @example
+   * ```ts
+   * const formData = new FormData();
+   * formData.append("report", new File([await file.bytes()], file.name, { type: file.type }));
+   * ```
+   *
    * @category Cloud Storage
    */
   interface S3File extends Blob {

@@ -2220,13 +2220,11 @@ describe("s3 file size stays unknown", () => {
     ).toEqual(untouched);
   });
 
-  it("for a FormData entry after the FormData became a body", async () => {
+  it("for a FormData entry after the FormData was refused as a body", async () => {
     using endpoint = s3LocalEndpoint(payload);
     const form = new FormData();
     form.append("file", endpoint.file());
-    try {
-      await new Response(form).arrayBuffer();
-    } catch {}
+    expect(() => new Response(form)).toThrow(TypeError);
     const entry = form.get("file") as Blob;
     expect({ size: entry.size, text: await entry.text(), ranges: endpoint.ranges }).toEqual({
       size: NaN,

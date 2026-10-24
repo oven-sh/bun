@@ -850,7 +850,7 @@ impl BlobExt for Blob {
         unsafe extern "C" {
             // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
             // stored opaquely and only used synchronously. Module-private with
-            // one call site below — no caller-side precondition remains. Kept
+            // two call sites below — no caller-side precondition remains. Kept
             // `*mut` (not `&mut`) to match the `bun_jsc` decl and avoid
             // `clashing_extern_declarations`.
             safe fn DOMFormData__forEach(
@@ -882,29 +882,29 @@ impl BlobExt for Blob {
                 _filename: *mut EncodedSlice,
                 is_blob: u8,
             ) {
-                // SAFETY: `ctx_ptr` is the `&JSGlobalObject` passed below.
-                let global_this = unsafe { &*ctx_ptr.cast::<JSGlobalObject>() };
-                if is_blob == 0 || global_this.has_exception() {
+                // SAFETY: `ctx_ptr` is the `&mut Option<Vec<u8>>` passed below.
+                let found = unsafe { bun_ptr::callback_ctx::<Option<Vec<u8>>>(ctx_ptr) };
+                if is_blob == 0 || found.is_some() {
                     return;
                 }
-                // SAFETY: when `is_blob != 0`, `value_ptr` is the C++
-                // `JSBlob::m_ctx` (`*mut Blob`), valid for this callback.
+                // SAFETY: when `is_blob != 0`, `value_ptr` is the entry's
+                // `*mut Blob`, valid for this callback.
                 let blob = unsafe { &*value_ptr.cast::<Blob>() };
-                if !blob.is_s3() || blob.size.get() == 0 {
-                    return;
+                if blob.is_s3() && blob.size.get() != 0 {
+                    // SAFETY: `name` is always a valid non-null `*EncodedSlice` for this callback.
+                    *found = Some(unsafe { *name }.to_utf8().into_vec());
                 }
-                // SAFETY: `name` is always a valid non-null `*EncodedSlice` for this callback.
-                let entry_name = unsafe { *name }.to_utf8();
-                let _ = global_this.throw_type_error(format_args!(
-                    "FormData entry {} is an S3 file, which cannot be read while the body is serialized. Pass its bytes instead: new File([await s3file.bytes()], s3file.name, {{ type: s3file.type }})",
-                    bun_core::fmt::quote(entry_name.slice()),
-                ));
             }
+            let mut entry_name: Option<Vec<u8>> = None;
             DOMFormData__forEach(
                 form_data,
-                std::ptr::from_ref(global_this).cast_mut().cast::<c_void>(),
+                (&raw mut entry_name).cast::<c_void>(),
                 find_thunk,
             );
+            let _ = global_this.throw_type_error(format_args!(
+                "FormData entry {} is an S3 file, which cannot be read while the body is serialized. Pass its bytes instead: new File([await s3file.bytes()], s3file.name, {{ type: s3file.type }})",
+                bun_core::fmt::quote(entry_name.as_deref().unwrap_or_default()),
+            ));
         }
 
         // C++ invokes the callback synchronously and does not retain `ctx`/`cb`

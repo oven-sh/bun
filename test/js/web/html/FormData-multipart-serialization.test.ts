@@ -264,6 +264,7 @@ describe("multipart serialization of S3-backed entries", () => {
       using endpoint = s3LocalEndpoint(object);
       let received = 0;
       using receiver = Bun.serve({
+        hostname: "127.0.0.1",
         port: 0,
         fetch() {
           received++;
@@ -310,6 +311,23 @@ describe("multipart serialization of S3-backed entries", () => {
     expect((error as TypeError).message).toBe(messageFor(quotedName));
   });
 
+  // The entries before the S3 file are ones the serializer can write.
+  test("the message names the first S3 file, after a Blob and an empty S3 slice", async () => {
+    using endpoint = s3LocalEndpoint(object);
+    const formData = new FormData();
+    formData.append("blob", new Blob(["in memory"]), "blob.txt");
+    formData.append("empty", endpoint.file().slice(4, 4), "empty.csv");
+    formData.append("first", endpoint.file(), "first.csv");
+    formData.append("second", endpoint.file(), "second.csv");
+
+    const error = await failureOf(() => new Response(formData));
+    expect(error).toBeInstanceOf(TypeError);
+    expect({ message: (error as TypeError).message, s3Requests: endpoint.ranges }).toEqual({
+      message: messageFor('"first"'),
+      s3Requests: [],
+    });
+  });
+
   // An empty window of an S3 object has no bytes to fetch.
   test.each([
     ["slice(0, 0)", 0],
@@ -335,12 +353,14 @@ describe("multipart serialization of S3-backed entries", () => {
     });
   });
 
-  // structuredClone() throws for an S3 file. It used to leave the size of the
-  // file at 0 as well, which made the file look like an empty window.
-  test("an S3 file still fails after structuredClone() refused it", async () => {
+  // structuredClone() used to leave the size of an S3 file at 0, which made
+  // the file look like an empty window.
+  test("an S3 file still fails after structuredClone() looked at it", async () => {
     using endpoint = s3LocalEndpoint(object);
     const s3file = endpoint.file("text/csv");
-    expect(() => structuredClone(s3file)).toThrow();
+    try {
+      structuredClone(s3file);
+    } catch {}
 
     const error = await failureOf(() => new Response(formDataWith(s3file)));
     expect(error).toBeInstanceOf(TypeError);

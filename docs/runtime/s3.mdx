@@ -601,7 +601,16 @@ Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US
 | `s3File.stream()`            | `ReadableStream` |
 | `await s3File.arrayBuffer()` | `ArrayBuffer`    |
 
-Because `S3File` extends `Blob`, `S3File` instances work with `fetch()`, `Response`, and other web APIs that accept `Blob` instances.
+Because `S3File` extends `Blob`, you can pass an `S3File` to `fetch()`, `Response`, and other web APIs that read a `Blob` asynchronously.
+
+A `FormData` body is the exception. Bun builds that body at once, and it downloads an S3 object only when you read it. A `FormData` body with an `S3File` entry throws a `TypeError`. Read the bytes first and append a `File`:
+
+```ts s3.ts icon="/icons/typescript.svg"
+const formData = new FormData();
+formData.append("report", new File([await s3file.bytes()], s3file.name, { type: s3file.type }));
+
+await fetch("https://example.com/upload", { method: "POST", body: formData });
+```
 
 ### Partial reads with `slice`
 

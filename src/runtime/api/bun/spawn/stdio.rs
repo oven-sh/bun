@@ -626,10 +626,8 @@ impl Stdio {
         let in_memory_len = blob.in_memory_view().map(<[u8]>::len);
 
         // Nothing to write: treat an empty blob the same as "ignore"
-        // (/dev/null at fds 0-2, left closed at extra slots). A Blob whose
-        // bytes `new Response([blob])` moved out keeps its size: stdin ignores
-        // it too, or its pipe never closes, and an extra slot refuses it below.
-        if in_memory_len == Some(0) && (i == 0 || blob.fast_size() == 0) {
+        // (/dev/null at fds 0-2, left closed at extra slots).
+        if in_memory_len == Some(0) && blob.fast_size() == 0 {
             *self = Stdio::Ignore;
             return Ok(());
         }
@@ -645,6 +643,12 @@ impl Stdio {
             return Err(global.throw_invalid_arguments(format_args!(
                 "An S3-backed Blob cannot be used as stdin. Pass await blob.bytes() instead"
             )));
+        }
+
+        // No bytes, whatever the size says: a stdin with nothing to write never closes.
+        if in_memory_len == Some(0) {
+            *self = Stdio::Ignore;
+            return Ok(());
         }
 
         *self = Stdio::Blob(blob);

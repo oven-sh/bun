@@ -17,8 +17,9 @@ test("an S3-backed Blob in a command throws", async () => {
   using server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
-    fetch(request) {
-      requests.push(`${request.method} ${new URL(request.url).pathname}`);
+    async fetch(request) {
+      const body = request.method === "PUT" ? ` ${JSON.stringify(await request.text())}` : "";
+      requests.push(`${request.method} ${new URL(request.url).pathname}${body}`);
       return new Response("hello from s3\n");
     },
   });
@@ -48,7 +49,8 @@ test("an S3-backed Blob in a command throws", async () => {
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
     message:
-      "An S3-backed Blob is not supported in a shell command yet. To redirect from it, pass its bytes: `< ${await blob.bytes()}`",
+      "An S3-backed Blob is not supported in a shell command yet. To redirect from it, pass its bytes: `< ${await blob.bytes()}`. " +
+      "To redirect to it, write the output of the command: `await Bun.write(blob, output)`",
   };
   const outcomes: Record<string, unknown> = {};
   const expected: Record<string, unknown> = { "echo hi > an S3File": refusal, "echo an S3File": refusal };
@@ -62,9 +64,10 @@ test("an S3-backed Blob in a command throws", async () => {
   outcomes["echo an S3File"] = thrown(() => $`echo ${file()}`);
   expect(outcomes).toEqual(expected);
 
-  // The bytes, as the message says. A request that a call above started is in the list before this one.
+  // The bytes and the output, as the message says. A request that a call above started is in the list before these.
   expect(await $`cat < ${await file().bytes()}`.text()).toBe("hello from s3\n");
-  expect(requests).toEqual(["GET /bucket/key"]);
+  expect(await Bun.write(file(), await $`echo hi`.arrayBuffer())).toBe(3);
+  expect(requests).toEqual(["GET /bucket/key", 'PUT /bucket/key "hi\\n"']);
 });
 
 test("redirect from Bun.file(fd) reaches the command", async () => {

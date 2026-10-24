@@ -360,7 +360,7 @@ pub(crate) fn handle_template_value(
                     }
                     Data::S3(_) => {
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "An S3-backed Blob is not supported in a shell command yet. To redirect from it, pass its bytes: `< ${{await blob.bytes()}}`"
+                            "An S3-backed Blob is not supported in a shell command yet. To redirect from it, pass its bytes: `< ${{await blob.bytes()}}`. To redirect to it, write the output of the command: `await Bun.write(blob, output)`"
                         )));
                     }
                     Data::Bytes(_) => {}

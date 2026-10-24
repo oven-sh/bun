@@ -154,10 +154,20 @@ devTest("html references a json file that is cached as a module", {
     });
     await c.expectMessage("app");
 
-    // The dev server can only treat a file as one kind of module, so it serves the page without the link.
+    // The link is the file and the import is the json module: two modules of one file.
     const html = await (await dev.fetch("/")).text();
     expect(html).toInclude("<script");
-    expect(html).not.toInclude('rel="manifest"');
+    const manifestLink = /<link rel="manifest" href="([^"]+)">/;
+    const href = html.match(manifestLink)?.[1];
+    expect(href).toMatch(/^\/_bun\/asset\/[0-9a-f]{16}\.json$/);
+    expect(await dev.fetch(href!).text()).toBe(`{ "name": "app" }`);
+
+    // The next bundle of the page takes the file from the dev server's cache.
+    await c.expectReload(async () => {
+      await dev.writeNoChanges("index.html");
+    });
+    await c.expectMessage("app");
+    expect((await (await dev.fetch("/")).text()).match(manifestLink)?.[1]).toBe(href);
   },
 });
 devTest("import then create", {

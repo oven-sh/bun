@@ -75,6 +75,16 @@ impl<'a> HotUpdateContext<'a> {
             self.key_loaders[i],
         )
     }
+
+    /// The incremental graph key of the module that `record` imports.
+    pub(crate) fn import_record_key(&self, record: &bun_ast::ImportRecord) -> ModuleKey<'a> {
+        // If the import went through an `onResolve` plugin, `record.path` is still the specifier.
+        if record.source_index.is_valid() {
+            self.module_key(record.source_index)
+        } else {
+            ModuleKey::new(record.path.key_for_incremental_graph(), record.key_loader)
+        }
+    }
 }
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
@@ -1316,14 +1326,21 @@ impl DevServer {
             return Ok(JSValue::NULL);
         }
         let arr = jsc::JSArray::create_empty(global, items.len())?;
-        let names = self.server_graph.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
+            let key = self.server_graph.bundled_files.key_at(item.get() as usize);
             let mut buf = paths::path_buffer_pool::get();
-            let s = self.relative_path(&mut *buf, &names[item.get() as usize]);
+            let rel = self.relative_path(&mut *buf, key.path());
+            // The module's id is the pretty path the bundler gave it: that names a key loader.
+            let id = match key.key_loader() {
+                Some(loader) => {
+                    std::borrow::Cow::Owned(bundler::pretty_with_key_loader(rel, loader))
+                }
+                None => std::borrow::Cow::Borrowed(rel),
+            };
             arr.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                bun_string_jsc::create_utf8_for_js(global, s)?,
+                bun_string_jsc::create_utf8_for_js(global, &id)?,
             )?;
         }
         Ok(arr)

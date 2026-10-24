@@ -190,11 +190,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 source_ref.path.pretty.as_ptr(),
             ) {
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
+                let key_loader = c.parse_graph().input_files.items_key_loader()[source_index];
                 let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
                     &source_ref.path,
                     c.options.target,
                     top_level_dir,
                     arena,
+                    key_loader.filter(|_| c.dev_server.is_some()),
                 ));
                 source_storage = bun_ast::Source {
                     path: new_path,

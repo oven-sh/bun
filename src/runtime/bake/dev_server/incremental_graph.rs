@@ -921,13 +921,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             // takes `&mut ctx`.
             let (flags, src, key) = {
                 let ir = &ctx.import_records[index.get() as usize].as_slice()[i];
-                // If an `onResolve` plugin resolved the import, `ir.path` is still the specifier.
-                let key = if ir.source_index.is_valid() {
-                    ctx.module_key(ir.source_index)
-                } else {
-                    ModuleKey::new(ir.path.key_for_incremental_graph(), ir.key_loader)
-                };
-                (ir.flags, ir.source_index, key)
+                (ir.flags, ir.source_index, ctx.import_record_key(ir))
             };
             let _ = self.process_edge_attachment(
                 ctx,
@@ -964,11 +958,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             for i in 0..records_len {
                 let (flags, src, key) = {
                     let ir = &ctx.import_records[idx.get() as usize].as_slice()[i];
-                    (
-                        ir.flags,
-                        ir.source_index,
-                        ModuleKey::new(ir.path.key_for_incremental_graph(), ir.key_loader),
-                    )
+                    (ir.flags, ir.source_index, ctx.import_record_key(ir))
                 };
                 let result = self.process_edge_attachment(
                     ctx,

@@ -14,8 +14,43 @@ use allocators::{NOT_FOUND, UNASSIGNED};
 
 pub type Index = IndexType;
 
+/// The configuration files that the fill of a [`DirInfo`] reads. Each mode has its own [`HashMap`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct LoadMode(u8);
+
+impl LoadMode {
+    const PACKAGE_JSON: u8 = 1 << 0;
+    const TSCONFIG_JSON: u8 = 1 << 1;
+    const COUNT: usize = 4;
+
+    /// Every resolver, except those of a `bun build --compile` executable's own VMs.
+    pub const ALL: LoadMode = LoadMode(Self::PACKAGE_JSON | Self::TSCONFIG_JSON);
+
+    #[inline]
+    pub const fn new(package_json: bool, tsconfig_json: bool) -> LoadMode {
+        let mut files = 0;
+        if package_json {
+            files |= Self::PACKAGE_JSON;
+        }
+        if tsconfig_json {
+            files |= Self::TSCONFIG_JSON;
+        }
+        LoadMode(files)
+    }
+
+    #[inline]
+    pub const fn package_json(self) -> bool {
+        self.0 & Self::PACKAGE_JSON != 0
+    }
+
+    #[inline]
+    pub const fn tsconfig_json(self) -> bool {
+        self.0 & Self::TSCONFIG_JSON != 0
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// DirInfoRef — arena handle into the DirInfo BSSMap singleton.
+// DirInfoRef — arena handle into a DirInfo BSSMap (one per `LoadMode`).
 //
 // Resolver code threads `*mut DirInfo` pervasively and
 // open-coded `unsafe { &*dir_info }` at ~50 read sites. The BSSMap backing
@@ -31,7 +66,7 @@ pub type Index = IndexType;
 // (the `dir_info_uncached` fill path and `MatchResult.dir_info` round-trip).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Non-owning, `Copy` handle to a `DirInfo` slot in the BSSMap singleton.
+/// Non-owning, `Copy` handle to a `DirInfo` slot in a BSSMap of `hash_map_for`.
 /// `Deref<Target = DirInfo>` so call sites read `dir.abs_path` instead of
 /// `unsafe { &*dir }.abs_path`.
 ///
@@ -94,21 +129,19 @@ impl core::fmt::Debug for DirInfoRef {
 pub struct DirInfo {
     // These objects are immutable, so we can just point to the parent directory
     // and avoid having to lock the cache again
-    pub(crate) parent: Index,
+    pub(crate) parent: Option<DirInfoRef>,
 
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
-    pub(crate) enclosing_browser_scope: Index,
+    pub(crate) enclosing_browser_scope: Option<DirInfoRef>,
     // lifetime — `&'static` borrows below are ARENA-backed (the
     // resolver-owned PackageJSON/TSConfigJSON caches outlive every DirInfo).
-    // Read-only fields (`package_json_for_browser_field`,
-    // `enclosing_tsconfig_json`) are `Option<&'static T>`.
+    // Read-only fields (`enclosing_tsconfig_json`) are `Option<&'static T>`.
     // Fields with write sites are `Option<NonNull<T>>` so
     // mut-provenance from the allocation site is preserved through to the
     // write/drop sites (a `*const→*mut` cast there would be UB under Stacked
     // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()` /
     // `.package_json_for_dependencies()` accessors.
-    pub(crate) package_json_for_browser_field: Option<&'static PackageJSON>,
     pub(crate) enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
     /// package.json used for bundling
@@ -148,12 +181,14 @@ pub struct DirInfo {
     pub(crate) flags: Flags,
 }
 
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<DirInfo>() == 104);
+
 impl Default for DirInfo {
     fn default() -> Self {
         Self {
-            parent: NOT_FOUND,
-            enclosing_browser_scope: NOT_FOUND,
-            package_json_for_browser_field: None,
+            parent: None,
+            enclosing_browser_scope: None,
             enclosing_tsconfig_json: None,
             enclosing_package_json: None,
             package_json_for_module_type: None,
@@ -282,7 +317,7 @@ impl DirInfo {
 
     #[inline]
     pub(crate) fn get_parent(&self) -> Option<DirInfoRef> {
-        ref_at_index(self.parent)
+        self.parent
     }
 
     /// Handle to the enclosing browser-scope `DirInfo` slot. Frequently
@@ -290,69 +325,64 @@ impl DirInfo {
     /// `Copy` arena handle (not `&mut`) is returned — overlapping shared
     /// reads through `DirInfoRef::deref` are sound.
     pub(crate) fn get_enclosing_browser_scope(&self) -> Option<DirInfoRef> {
-        ref_at_index(self.enclosing_browser_scope)
+        self.enclosing_browser_scope
     }
 }
 
 // `BSSMapInner<DirInfo, ..>` cannot host a
-// per-generic-instantiation static on stable, so the singleton pointer lives here at
+// per-generic-instantiation static on stable, so the map pointers live here at
 // the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
-// PORTING.md §Global mutable state: lazy singleton. `AtomicCell` over the
+// PORTING.md §Global mutable state: lazy singleton per `LoadMode`. `AtomicCell` over the
 // `Option<NonNull<_>>` because resolver-pool threads race on first access;
 // the load/CAS below makes the publish itself data-race-free. (The map's
 // *contents* are still guarded by the resolver mutex.)
-static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
-    bun_core::AtomicCell::new(None);
+static DIR_INFO_MAPS: [bun_core::AtomicCell<Option<NonNull<HashMap>>>; LoadMode::COUNT] =
+    [const { bun_core::AtomicCell::new(None) }; LoadMode::COUNT];
 
-/// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
+/// Raw pointer to the lazy DirInfo BSSMap singleton of `mode`. Callers reborrow
 /// per-access under the resolver mutex — PORTING.md §Global mutable state.
-#[inline(always)]
-pub(crate) fn hash_map_instance() -> *mut HashMap {
-    if let Some(p) = DIR_INFO_MAP.load() {
+#[inline]
+pub(crate) fn hash_map_for(mode: LoadMode) -> *mut HashMap {
+    if let Some(p) = DIR_INFO_MAPS[mode.0 as usize].load() {
         return p.as_ptr();
     }
-    hash_map_instance_init()
+    hash_map_init(mode)
 }
 
 #[cold]
 #[inline(never)]
-fn hash_map_instance_init() -> *mut HashMap {
+fn hash_map_init(mode: LoadMode) -> *mut HashMap {
     // First access: initialize and publish. Resolver init is single-threaded
     // in practice, but use CAS so a race (if it ever happens) doesn't tear
     // the pointer; the loser's `init()` result is leaked, which is fine for
     // a process-lifetime BSS-backed singleton.
     let new = HashMap::init();
-    match DIR_INFO_MAP.compare_exchange(None, Some(new)) {
+    match DIR_INFO_MAPS[mode.0 as usize].compare_exchange(None, Some(new)) {
         Ok(_) => new.as_ptr(),
         Err(existing) => existing.unwrap().as_ptr(),
     }
 }
 
-/// Look up a `DirInfo` slot in the process-lifetime BSSMap singleton by index
-/// and wrap it as a [`DirInfoRef`]. Single `unsafe` deref site for
-/// `hash_map_instance()` index reads; `get_parent` /
-/// `get_enclosing_browser_scope` route through here so callers stay safe.
-#[inline]
-fn ref_at_index(index: Index) -> Option<DirInfoRef> {
-    // SAFETY: ARENA — `hash_map_instance()` is the never-null BSSMap singleton
-    // (process-lifetime; never freed). Resolver mutex held by caller serializes
-    // mutation. `at_index` yields a slot satisfying `DirInfoRef`'s invariant.
-    unsafe { (*hash_map_instance()).at_index(index) }.map(DirInfoRef::from_slot)
+/// The maps that exist: one per `LoadMode` that a resolver of this process has.
+pub(crate) fn created_hash_maps() -> impl Iterator<Item = *mut HashMap> {
+    DIR_INFO_MAPS
+        .iter()
+        .filter_map(|map| Some(map.load()?.as_ptr()))
 }
 
 /// Slot pointer for `index`, derived from the raw singleton so its provenance
-/// is rooted in the `DIR_INFO_MAP` static — it survives later `&mut HashMap`
+/// is rooted in the `DIR_INFO_MAPS` static — it survives later `&mut HashMap`
 /// retags that would pop a pointer projected through a transient borrow.
 /// Returns `None` for the `NOT_FOUND` / `UNASSIGNED` sentinels.
 ///
 /// # Safety
-/// A non-sentinel `index` must have been assigned by `put` (slot initialized),
+/// A non-sentinel `index` must have been assigned by `put` on `map`, a [`hash_map_for`] map,
 /// and the caller must hold the resolver mutex.
-pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
+pub(crate) unsafe fn slot_ptr_at(map: *mut HashMap, index: Index) -> Option<*mut DirInfo> {
     if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
         return None;
     }
-    let raw = hash_map_instance();
+    let raw = map;
     if index.is_overflow() {
         // SAFETY: assigned overflow index; resolver mutex held.
         Some(std::ptr::from_mut::<DirInfo>(unsafe {
@@ -369,7 +399,7 @@ pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
             index.index(),
         );
         // SAFETY: in-bounds initialized slot; raw place projection keeps the
-        // static's root provenance.
+        // map pointer's root provenance.
         Some(unsafe {
             core::ptr::addr_of_mut!((*raw).backing_buf)
                 .cast::<DirInfo>()
@@ -412,20 +442,17 @@ pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 /// through the singleton's root tag.
 ///
 /// # Safety
-/// `map` must be the live `hash_map_instance()` singleton and the caller must
+/// `map` must be a live `hash_map_for()` singleton and the caller must
 /// hold the resolver mutex.
 pub(crate) unsafe fn put_slot(
     map: *mut HashMap,
     result: &mut allocators::Result,
     value: DirInfo,
 ) -> core::result::Result<*mut DirInfo, crate::Error> {
-    debug_assert!(core::ptr::eq(
-        map.cast_const(),
-        hash_map_instance().cast_const()
-    ));
-    // SAFETY: `map` is the live singleton; resolver mutex held. The auto-ref
+    debug_assert!(created_hash_maps().any(|created| core::ptr::eq(created, map)));
+    // SAFETY: `map` is a live map; resolver mutex held. The auto-ref
     // `&mut *map` ends when `put` returns, before `slot_ptr_at` runs.
     unsafe { (*map).put(result, value) }.map_err(crate::Error::from)?;
     // SAFETY: `put` just assigned a non-sentinel, initialized index.
-    Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
+    Ok(unsafe { slot_ptr_at(map, result.index) }.expect("put assigned a non-sentinel index"))
 }

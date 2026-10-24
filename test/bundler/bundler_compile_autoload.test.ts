@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { isDebug } from "harness";
 import { itBundled } from "./expectBundled";
 
 // Not describe.concurrent: the backend:"cli" cases each spawn a full
@@ -607,5 +608,383 @@ console.log("PRELOAD");
       stdout: "tsconfig-helper package-utils",
       setCwd: true,
     },
+  });
+
+  // The autoload flags are for the executable's own module resolution. A build that the
+  // executable runs (Bun.build(), a macro of Bun.Transpiler, a page of Bun.serve()) reads
+  // tsconfig.json and package.json like any other build. Neither side gets what the other
+  // read from a directory, whichever of the two reads it first.
+  //
+  // The arguments of a run are steps. A step names a resolver and what it resolves, and prints
+  // the file it got. "worker:" runs the step in a Worker.
+  const buildInsideExecutable = {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { rmSync, writeFileSync } from "node:fs";
+        import inspector from "node:inspector";
+        import { join } from "node:path";
+        import { isMainThread, parentPort, workerData } from "node:worker_threads";
+
+        const cwd = process.cwd();
+        // Not literals, so that only the executable resolves them, when it runs.
+        const alias = "@lib/" + "thing";
+        const packageName = "dual-" + "pkg";
+
+        const marker = (text: string) => text.match(/from-[a-z-]+/)?.[0] ?? text;
+
+        async function build(entry: string, options: Partial<Bun.BuildConfig> = { target: "bun" }) {
+          const result = await Bun.build({ entrypoints: [join(cwd, entry)], throw: false, ...options });
+          if (!result.success) return "failed: " + result.logs.map(log => log.message).join("; ");
+          return await result.outputs[0].text();
+        }
+
+        // The script of a page that Bun.serve() bundles.
+        async function servePage(development: boolean) {
+          const page = await import(join(cwd, "page.html"));
+          await using server = Bun.serve({ port: 0, development, routes: { "/": page.default } });
+          const html = await (await fetch(server.url)).text();
+          const script = await fetch(new URL(html.match(/src="([^"]+)"/)![1], server.url));
+          return marker(await script.text());
+        }
+
+        const macro = 'import { marker } from "macro-pkg" with { type: "macro" }; export default marker();';
+
+        const steps: Record<string, () => unknown> = {
+          // The executable's own resolver.
+          "require-file": () => require(join(cwd, "node_modules/dual-pkg/main.js")),
+          "require-package": () => require(join(cwd, "node_modules/dual-pkg")),
+          "import-package": () => import(packageName).then(mod => mod.default),
+          "import-alias": () =>
+            import(alias).then(
+              mod => mod.default,
+              error => (error.code === "ERR_MODULE_NOT_FOUND" ? "not found" : Promise.reject(error)),
+            ),
+          "require-browser-file": () => require(join(cwd, "node_modules/browser-pkg/main.js")),
+          "require-late-file": () => require(join(cwd, "node_modules/late-pkg/main.js")),
+          "require-macro-file": () => require(join(cwd, "node_modules/macro-pkg/main.js")).marker(),
+          // A failed lookup drops the directory from the cache.
+          "require-missing": () => {
+            try {
+              return require(join(cwd, "node_modules/dual-pkg/missing.js"));
+            } catch (error) {
+              if (error.code === "MODULE_NOT_FOUND") return "not found";
+              throw error;
+            }
+          },
+          // It returns when the debugger's VM runs.
+          "open-inspector": () => (inspector.open(0, "127.0.0.1"), "listening"),
+
+          // Changes after the executable read the directory.
+          "edit-package": () => {
+            const edited = JSON.stringify({ name: "dual-pkg", main: "./edited-main.js" });
+            writeFileSync(join(cwd, "node_modules/dual-pkg/package.json"), edited);
+            return "done";
+          },
+          "add-late-package": () => {
+            const added = JSON.stringify({ name: "late-pkg", main: "./main.js" });
+            writeFileSync(join(cwd, "node_modules/late-pkg/package.json"), added);
+            return "done";
+          },
+          "remove-tsconfig": () => (rmSync(join(cwd, "tsconfig.json")), "done"),
+
+          // The resolvers of the builds that the executable runs.
+          "build-package": async () => marker(await build("uses-package.ts")),
+          "build-late-package": async () => marker(await build("uses-late-package.ts")),
+          "build-alias": async () => marker(await build("uses-alias.ts")),
+          "build-imports": async () => marker(await build("uses-imports.ts")),
+          "build-jsx": async () => marker(await build("uses-jsx.tsx")),
+          // For a browser, the default target.
+          "build-browser": async () => marker(await build("uses-browser-package.ts", {})),
+          "build-decorator": async () => {
+            const built = join(cwd, "built-decorator.mjs");
+            writeFileSync(built, await build("uses-decorator.ts"));
+            return (await import(built)).default;
+          },
+          "transform-macro": () => marker(new Bun.Transpiler().transformSync(macro)),
+          "transform-macro-async": async () => marker(await new Bun.Transpiler().transform(macro)),
+          "serve-page": () => servePage(false),
+          "serve-page-dev": () => servePage(true),
+        };
+
+        if (isMainThread) {
+          for (const step of process.argv.slice(2)) {
+            if (step.startsWith("worker:")) {
+              const worker = new Worker(import.meta.url, { workerData: step.slice("worker:".length) });
+              const { promise, resolve, reject } = Promise.withResolvers();
+              worker.addEventListener("message", event => resolve(event.data), { once: true });
+              worker.addEventListener("error", event => reject(new Error(event.message)), { once: true });
+              worker.addEventListener("close", () => reject(new Error(step + ": no message")), { once: true });
+              console.log(step + ": " + (await promise));
+              await worker.terminate();
+            } else {
+              console.log(step + ": " + (await steps[step]()));
+            }
+          }
+        } else {
+          parentPort!.postMessage(await steps[workerData]());
+        }
+      `,
+    },
+    runtimeFiles: {
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: {
+            "@lib/*": ["./lib/*"],
+          },
+          jsx: "react-jsx",
+          jsxImportSource: "my-jsx",
+          experimentalDecorators: true,
+        },
+      }),
+      "/package.json": JSON.stringify({ name: "project", imports: { "#imported": "./lib/imported.ts" } }),
+      "/lib/thing.ts": `export default "from-tsconfig-paths";`,
+      "/lib/imported.ts": `export default "from-package-imports";`,
+      // A resolver that does not read package.json takes index.js.
+      "/node_modules/dual-pkg/package.json": JSON.stringify({ name: "dual-pkg", main: "./main.js" }),
+      "/node_modules/dual-pkg/main.js": `module.exports = "from-package-main";`,
+      "/node_modules/dual-pkg/index.js": `module.exports = "from-index";`,
+      "/node_modules/dual-pkg/edited-main.js": `module.exports = "from-edited-main";`,
+      // "add-late-package" writes its package.json.
+      "/node_modules/late-pkg/main.js": `module.exports = "from-package-main";`,
+      "/node_modules/late-pkg/index.js": `module.exports = "from-index";`,
+      "/node_modules/macro-pkg/package.json": JSON.stringify({ name: "macro-pkg", main: "./main.js" }),
+      "/node_modules/macro-pkg/main.js": `exports.marker = () => "from-package-main";`,
+      "/node_modules/macro-pkg/index.js": `exports.marker = () => "from-index";`,
+      "/node_modules/browser-pkg/package.json": JSON.stringify({
+        name: "browser-pkg",
+        main: "./main.js",
+        browser: { "./main.js": "./browser.js", "bare-dep": "./bare-dep.js" },
+      }),
+      "/node_modules/browser-pkg/main.js": `module.exports = "from-package-main";`,
+      "/node_modules/browser-pkg/browser.js": `module.exports = require("bare-dep");`,
+      "/node_modules/browser-pkg/bare-dep.js": `module.exports = "from-browser-field";`,
+      "/node_modules/my-jsx/jsx-runtime.js": `export const jsx = () => "from-tsconfig-jsx";`,
+      "/node_modules/my-jsx/jsx-dev-runtime.js": `export const jsxDEV = () => "from-tsconfig-jsx";`,
+      "/uses-package.ts": `import pkg from "dual-pkg"; console.log(pkg);`,
+      "/uses-late-package.ts": `import pkg from "late-pkg"; console.log(pkg);`,
+      "/uses-browser-package.ts": `import pkg from "browser-pkg"; console.log(pkg);`,
+      "/uses-alias.ts": `import thing from "@lib/thing"; console.log(thing);`,
+      "/uses-imports.ts": `import imported from "#imported"; console.log(imported);`,
+      "/uses-jsx.tsx": `console.log(<div />);`,
+      // A decorator gets one argument with "experimentalDecorators", and two without it.
+      "/uses-decorator.ts": `
+        let marker = "";
+        function mark(...args: unknown[]) {
+          marker = args.length === 1 ? "from-legacy-decorators" : "from-standard-decorators";
+        }
+        @mark
+        class Marked {}
+        export default marker;
+      `,
+      "/page.html": `<!doctype html><script type="module" src="./uses-alias.ts"></script>`,
+    },
+  };
+
+  itBundled("compile/AutoloadDisabledBunBuildReadsConfigFiles", {
+    compile: true,
+    ...buildInsideExecutable,
+    run: [
+      // The executable reads the working directory when it starts, to find .env files.
+      {
+        args: ["build-alias", "import-alias"],
+        stdout: "build-alias: from-tsconfig-paths\nimport-alias: not found",
+        setCwd: true,
+      },
+      {
+        args: ["build-jsx", "build-decorator", "build-imports"],
+        stdout:
+          "build-jsx: from-tsconfig-jsx\nbuild-decorator: from-legacy-decorators\nbuild-imports: from-package-imports",
+        setCwd: true,
+      },
+      // The executable reads the package's directory first.
+      {
+        args: ["require-file", "build-package"],
+        stdout: "require-file: from-package-main\nbuild-package: from-package-main",
+        setCwd: true,
+      },
+      {
+        args: ["require-browser-file", "build-browser"],
+        stdout: "require-browser-file: from-package-main\nbuild-browser: from-browser-field",
+        setCwd: true,
+      },
+      // A build reads it first.
+      {
+        args: ["build-package", "require-package", "import-package"],
+        stdout: "build-package: from-package-main\nrequire-package: from-index\nimport-package: from-index",
+        setCwd: true,
+      },
+      {
+        args: ["worker:require-file", "build-package"],
+        stdout: "worker:require-file: from-package-main\nbuild-package: from-package-main",
+        setCwd: true,
+      },
+      {
+        args: ["build-package", "worker:require-package"],
+        stdout: "build-package: from-package-main\nworker:require-package: from-index",
+        setCwd: true,
+      },
+      {
+        args: ["require-file", "worker:build-package"],
+        stdout: "require-file: from-package-main\nworker:build-package: from-package-main",
+        setCwd: true,
+      },
+      // The first build of a directory reads it as it is then.
+      {
+        args: ["require-late-file", "add-late-package", "build-late-package"],
+        stdout: "require-late-file: from-package-main\nadd-late-package: done\nbuild-late-package: from-package-main",
+        setCwd: true,
+      },
+      // The next build reads a directory again after the executable dropped it from the cache.
+      // The last two runs, because they change the files.
+      {
+        args: ["build-package", "edit-package", "require-missing", "build-package"],
+        stdout:
+          "build-package: from-package-main\nedit-package: done\nrequire-missing: not found\nbuild-package: from-edited-main",
+        setCwd: true,
+      },
+      {
+        args: ["remove-tsconfig", "build-imports"],
+        stdout: "remove-tsconfig: done\nbuild-imports: from-package-imports",
+        setCwd: true,
+      },
+    ],
+  });
+
+  // A debug build prints each macro call.
+  const macroCall = isDebug ? "[macro] call marker\n" : "";
+
+  itBundled("compile/AutoloadDisabledMacrosAndPagesReadConfigFiles", {
+    compile: true,
+    ...buildInsideExecutable,
+    run: [
+      {
+        args: ["require-macro-file", "transform-macro", "transform-macro-async"],
+        stdout: `require-macro-file: from-package-main\n${macroCall}transform-macro: from-package-main\n${macroCall}transform-macro-async: from-package-main`,
+        setCwd: true,
+      },
+      // The async form runs the macro in a VM of its own.
+      {
+        args: ["transform-macro-async", "transform-macro", "require-package"],
+        stdout: `${macroCall}transform-macro-async: from-package-main\n${macroCall}transform-macro: from-package-main\nrequire-package: from-index`,
+        setCwd: true,
+      },
+      {
+        args: ["serve-page", "import-alias"],
+        stdout: "serve-page: from-tsconfig-paths\nimport-alias: not found",
+        setCwd: true,
+      },
+      { args: ["serve-page-dev"], stdout: "serve-page-dev: from-tsconfig-paths", setCwd: true },
+    ],
+  });
+
+  itBundled("compile/AutoloadDisabledBunBuildReadsConfigFilesCLI", {
+    compile: true,
+    backend: "cli",
+    ...buildInsideExecutable,
+    run: [
+      {
+        args: ["build-alias", "import-alias"],
+        stdout: "build-alias: from-tsconfig-paths\nimport-alias: not found",
+        setCwd: true,
+      },
+      {
+        args: ["require-file", "build-package", "require-package"],
+        stdout: "require-file: from-package-main\nbuild-package: from-package-main\nrequire-package: from-index",
+        setCwd: true,
+      },
+    ],
+  });
+
+  // Without .env files the executable does not read the working directory when it starts.
+  itBundled("compile/AutoloadDisabledBunBuildReadsConfigFilesWithoutDotenv", {
+    compile: {
+      autoloadDotenv: false,
+    },
+    ...buildInsideExecutable,
+    run: [
+      {
+        args: ["build-alias", "import-alias"],
+        stdout: "build-alias: from-tsconfig-paths\nimport-alias: not found",
+        setCwd: true,
+      },
+      {
+        args: ["require-file", "build-package"],
+        stdout: "require-file: from-package-main\nbuild-package: from-package-main",
+        setCwd: true,
+      },
+      // A debugger does not change what the executable resolves.
+      {
+        args: ["open-inspector", "import-alias"],
+        stdout: "open-inspector: listening\nimport-alias: not found",
+        setCwd: true,
+      },
+    ],
+  });
+
+  itBundled("compile/AutoloadPackageJsonOnlyBunBuildReadsTsconfig", {
+    compile: {
+      autoloadPackageJson: true,
+    },
+    ...buildInsideExecutable,
+    run: [
+      {
+        args: ["build-alias", "import-alias"],
+        stdout: "build-alias: from-tsconfig-paths\nimport-alias: not found",
+        setCwd: true,
+      },
+      {
+        args: ["build-package", "require-package"],
+        stdout: "build-package: from-package-main\nrequire-package: from-package-main",
+        setCwd: true,
+      },
+    ],
+  });
+
+  itBundled("compile/AutoloadTsconfigOnlyBunBuildReadsPackageJson", {
+    compile: {
+      autoloadTsconfig: true,
+    },
+    ...buildInsideExecutable,
+    run: [
+      {
+        args: ["require-file", "build-package", "require-package"],
+        stdout: "require-file: from-package-main\nbuild-package: from-package-main\nrequire-package: from-index",
+        setCwd: true,
+      },
+      {
+        args: ["import-alias", "build-alias"],
+        stdout: "import-alias: from-tsconfig-paths\nbuild-alias: from-tsconfig-paths",
+        setCwd: true,
+      },
+    ],
+  });
+
+  // A resolver that reads these files reports that they end too early. The executable's own
+  // VMs do not read them, and its debugger's VM does not either.
+  itBundled("compile/AutoloadDisabledReadsNoConfigFiles", {
+    compile: true,
+    files: buildInsideExecutable.files,
+    runtimeFiles: {
+      "/package.json": `{"name": "truncated", "main": `,
+      "/tsconfig.json": `{"compilerOptions": {"paths": `,
+      "/uses-alias.ts": `console.log("from-no-config");`,
+    },
+    run: [
+      { stdout: "", stderr: "", setCwd: true },
+      {
+        args: ["open-inspector"],
+        stdout: "open-inspector: listening",
+        setCwd: true,
+        validate({ stderr }) {
+          expect(stderr.replace(/ws:\/\/\S+/, "<url>")).toBe("Debugger listening on <url>\n");
+        },
+      },
+      {
+        args: ["build-alias"],
+        stdout: "build-alias: failed: Unexpected end of file; Unexpected end of file",
+        setCwd: true,
+      },
+    ],
   });
 });

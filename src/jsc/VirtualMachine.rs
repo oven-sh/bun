@@ -96,6 +96,8 @@ pub struct InitOptions {
     /// Overrides `env_loader`. The VM owns it and frees it with its runtime state.
     pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    /// `Some` for a VM of a `bun build --compile` executable: `StandaloneModuleGraph::load_mode`.
+    pub load_mode: Option<bun_resolver::LoadMode>,
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
@@ -123,6 +125,7 @@ impl Default for InitOptions {
             env_loader: None,
             owned_env_loader: None,
             graph: None,
+            load_mode: None,
             global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,
             eval_mode: false,
@@ -4893,6 +4896,7 @@ impl VirtualMachine {
         let init_opts = InitOptions {
             transform_options: opts.args,
             graph: Some(graph),
+            load_mode: Some(graph.load_mode()),
             log: opts.log,
             env_loader: opts.env_loader,
             smol: opts.smol,
@@ -4923,6 +4927,7 @@ impl VirtualMachine {
         let init_opts = InitOptions {
             transform_options: opts.args,
             graph: opts.graph,
+            load_mode: opts.graph.map(|graph| graph.load_mode()),
             log: opts.log,
             env_loader: opts.env_loader,
             smol: opts.smol,

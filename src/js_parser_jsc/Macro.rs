@@ -455,6 +455,8 @@ impl Macro {
                 transform_options,
                 log: Some(NonNull::from(&mut *log)),
                 owned_env_loader,
+                // Like the build that runs the macro, also inside a standalone executable.
+                load_mode: None,
                 is_main_thread: false,
                 ..Default::default()
             })?;

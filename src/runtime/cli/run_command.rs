@@ -598,7 +598,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// transpiles anything through this `Transpiler` (it shells out / boots a
     /// fresh VM with its own transpiler), so it should call
     /// [`Self::configure_env_for_run_without_linker`] instead — that skips the
-    /// `configure_linker()` + `load_tsconfig_json` work, which is the single
+    /// `configure_linker()` work, which is the single
     /// largest block of bundler/linker code otherwise faulted in by `bun run`.
     pub(crate) fn configure_env_for_run(
         ctx: &mut ContextData,
@@ -610,7 +610,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     /// Like [`Self::configure_env_for_run`] but does **not** construct the
-    /// bundler linker or enable `load_tsconfig_json` — for callers that only
+    /// bundler linker — for callers that only
     /// use the returned `Transpiler` for module resolution / env / `$PATH`
     /// lookup (the `bun run <script>` dispatch path), never for transpiling.
     pub(crate) fn configure_env_for_run_without_linker(
@@ -622,7 +622,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, false)
     }
 
-    /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
+    /// `configure_linker()`, factored into a
     /// `#[cold]` callee so the bundler-linker/JSX-runtime code it pulls in does
     /// not share `.text` pages with the hot `bun run <script>` dispatch path.
     #[cold]
@@ -632,8 +632,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         unsafe(link_section = ".text.unlikely")
     )]
     fn configure_run_transpiler_linker(this_transpiler: &mut Transpiler<'static>) {
-        this_transpiler.resolver.opts.load_tsconfig_json = true;
-        this_transpiler.options.load_tsconfig_json = true;
         this_transpiler.configure_linker();
     }
 
@@ -669,8 +667,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
-        // auto-JSX step reads the cwd `DirInfo` (and, with `load_tsconfig_json`
-        // on, its `tsconfig.json`) — keep it ahead of the `read_dir_info` below
+        // auto-JSX step reads the cwd `DirInfo` — keep it ahead of the `read_dir_info` below
         // so that read populates/uses the same cache entry.
         if with_linker {
             Self::configure_run_transpiler_linker(this_transpiler);

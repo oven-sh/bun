@@ -1040,8 +1040,6 @@ fn resolver_bundle_options_subset(
         // Both sides store
         // `Option<NonNull<api::BunInstall>>`, so this is a straight copy.
         install: src.install,
-        load_package_json: src.load_package_json,
-        load_tsconfig_json: src.load_tsconfig_json,
         main_field_extension_order: ropts::owned_string_list(src.main_field_extension_order),
         // `auto_main` is projected as a
         // bool: it's "default" iff the user did not pass `--main-fields`
@@ -1086,8 +1084,19 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
+        Self::init_with_load_mode(arena, log, opts, env_loader_, resolver::LoadMode::ALL)
+    }
+
+    /// [`Self::init`] for a VM of a `bun build --compile` executable, which has its own load mode.
+    pub fn init_with_load_mode(
+        arena: &'a Arena,
+        log: *mut bun_ast::Log,
+        opts: api::TransformOptions,
+        env_loader_: Option<*mut dot_env::Loader>,
+        load_mode: resolver::LoadMode,
+    ) -> crate::Result<Transpiler<'a>> {
         let mut slot = core::mem::MaybeUninit::<Transpiler<'a>>::uninit();
-        Self::init_in_place(&mut slot, arena, log, opts, env_loader_)?;
+        Self::init_in_place(&mut slot, arena, log, opts, env_loader_, load_mode)?;
         // SAFETY: `init_in_place` returned `Ok`, so every field of `slot` was
         // written exactly once.
         Ok(unsafe { slot.assume_init() })
@@ -1108,6 +1117,7 @@ impl<'a> Transpiler<'a> {
         log: *mut bun_ast::Log,
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
+        load_mode: resolver::LoadMode,
     ) -> crate::Result<()> {
         // Caller contract: `log` is the freshly-boxed per-VM `Log` from
         // `VirtualMachine::init` and is never null. Validate up front so the
@@ -1221,6 +1231,7 @@ impl<'a> Transpiler<'a> {
                 log_nn,
                 fs,
                 resolver_opts,
+                load_mode,
             ));
             core::ptr::addr_of_mut!((*p).fs).write(fs);
             core::ptr::addr_of_mut!((*p).output_files).write(Vec::new());

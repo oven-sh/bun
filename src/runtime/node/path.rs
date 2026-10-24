@@ -1,20 +1,21 @@
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
-    JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
+    JSGlobalObject, JSStringView, JSValue, JsError, JsResult, StringJsc as _, SysErrorJsc as _,
     bun_string_jsc,
 };
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
-use bun_core::Utf8Bytes;
 use bun_core::strings::CodeUnits;
+use bun_core::{Utf8Bytes, strings};
 use bun_node_path::{
     CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, CHAR_STR_DOT, PathCharCwd, PathParsed,
     basename_posix_t, basename_windows_t, dirname_posix_t, dirname_windows_t, extname_posix_t,
     extname_windows_t, format_t, is_absolute_posix_t, is_absolute_windows_t, join_buf_len,
     join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_t, normalize_windows_t,
     parse_posix_t, parse_windows_t, path_size, relative_buf_len, relative_posix_t,
-    relative_windows_t, resolve_buf_len, resolve_posix_t, resolve_windows_t,
-    to_namespaced_path_buf_len, to_namespaced_path_windows_t,
+    relative_windows_t, resolve_buf_len, resolve_posix_t, resolve_posix_with_cwd,
+    resolve_windows_t, resolve_windows_with_cwd, to_namespaced_path_buf_len,
+    to_namespaced_path_windows_t,
 };
 use bun_paths::MAX_PATH_BYTES;
 
@@ -730,49 +731,161 @@ fn relative(
     )
 }
 
-#[cfg(unix)]
 unsafe extern "C" {
-    safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
+    safe fn Process__getPathCwd(global: &JSGlobalObject, posix: bool) -> JSValue;
+    safe fn Process__isCwdObservable(global: &JSGlobalObject) -> bool;
+    #[cfg(unix)]
+    safe fn Process__getDefaultCwd(global: &JSGlobalObject) -> JSValue;
 }
 
-fn resolve_posix_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    paths: &[&[T]],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    match resolve_posix_t(paths, buf, buf2) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
+enum ResolveJsError {
+    System(bun_sys::Error),
+    JavaScript(JsError),
+    CwdRequired,
+    CwdBufferTooSmall(usize),
+}
+
+impl From<bun_sys::Error> for ResolveJsError {
+    fn from(error: bun_sys::Error) -> Self {
+        Self::System(error)
     }
 }
 
-fn resolve_windows_js_t<T: PathCharCwd>(
-    global_object: &JSGlobalObject,
-    paths: &[&[T]],
-    buf: &mut [T],
-    buf2: &mut [T],
-) -> JsResult<JSValue> {
-    match resolve_windows_t(paths, buf, buf2) {
-        Ok(r) => create_js_string_t::<T>(global_object, r),
-        Err(e) => Ok(e.to_js(global_object)),
+impl From<JsError> for ResolveJsError {
+    fn from(error: JsError) -> Self {
+        Self::JavaScript(error)
     }
 }
 
-fn resolve_js_t<T: PathCharCwd>(
+fn copy_cached_cwd<'a>(
+    cached: &Option<Utf8Bytes<'static>>,
+    buf: &'a mut [u8],
+    cwd_capacity: usize,
+) -> Result<&'a mut [u8], ResolveJsError> {
+    let Some(bytes) = cached else {
+        return Err(ResolveJsError::CwdRequired);
+    };
+    if bytes.len() > cwd_capacity {
+        return Err(ResolveJsError::CwdBufferTooSmall(bytes.len()));
+    }
+    if bytes.len() > buf.len() {
+        return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::TODO).into());
+    }
+    buf[..bytes.len()].copy_from_slice(bytes.slice());
+    let cwd = &mut buf[..bytes.len()];
+
+    Ok(cwd)
+}
+
+fn js_string_to_wtf8(
     global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
+    value: JSValue,
+) -> JsResult<Utf8Bytes<'static>> {
+    let view = value.to_js_string_view(global_object)?;
+    if view.is_8bit() {
+        return Ok(view.to_utf8().into_owned());
+    }
+
+    let units = view.utf16();
+    let mut bytes = Vec::with_capacity(units.len() * 3);
+    let mut index = 0;
+    while index < units.len() {
+        let (codepoint, width) = strings::decode_wtf16_raw(&units[index..]);
+        index += usize::from(width);
+        let mut encoded = [0u8; 4];
+        let encoded_len = strings::encode_wtf8_rune(&mut encoded, codepoint);
+        bytes.extend_from_slice(&encoded[..encoded_len]);
+    }
+    Ok(Utf8Bytes::Owned(bytes))
+}
+
+fn path_cwd_to_wtf8(global_object: &JSGlobalObject, posix: bool) -> JsResult<Utf8Bytes<'static>> {
+    let value = crate::jsc::call_zero_is_throw(global_object, || {
+        Process__getPathCwd(global_object, posix)
+    })?;
+    js_string_to_wtf8(global_object, value)
+}
+
+fn create_wtf8_path_string(global_object: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
+    match strings::wtf8_to_utf16_alloc(bytes) {
+        Some(utf16) => bun_core::String::clone_utf16(&utf16).into_js(global_object),
+        None => create_js_string_t::<u8>(global_object, bytes),
+    }
+}
+
+fn resolve_native(
+    global_object: &JSGlobalObject,
     is_windows: bool,
-    paths: &[&[T]],
+    paths: &[&[u8]],
 ) -> JsResult<JSValue> {
-    // Carve buf/buf2 from one pooled slab.
     let buf_len = resolve_buf_len(is_windows, paths);
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
+    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    let mut scratch = PathScratch::<u8>::new(pool, buf_len * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
-    if is_windows {
-        resolve_windows_js_t(global_object, paths, buf, buf2)
+    let path = if is_windows {
+        resolve_windows_t(paths, buf, buf2)
     } else {
-        resolve_posix_js_t(global_object, paths, buf, buf2)
+        resolve_posix_t(paths, buf, buf2)
+    };
+    match path {
+        Ok(path) => create_js_string_t::<u8>(global_object, path),
+        Err(error) => Ok(error.to_js(global_object)),
+    }
+}
+
+fn resolve_js(
+    global_object: &JSGlobalObject,
+    is_windows: bool,
+    paths: &[&[u8]],
+    cached_cwd: Option<Utf8Bytes<'static>>,
+) -> JsResult<JSValue> {
+    let mut cwd_capacity = MAX_PATH_BYTES;
+    let mut cached_cwd = cached_cwd;
+    loop {
+        // Adding 8 bytes when Windows for the possible UNC root.
+        let mut buf_len: usize = if is_windows { 8 } else { 0 };
+        for path in paths {
+            buf_len += if buf_len > 0 && !path.is_empty() {
+                path.len() + 1
+            } else {
+                path.len()
+            };
+        }
+        buf_len += cwd_capacity + 1;
+        buf_len = buf_len.max(path_size::<u8>());
+        // +2 to account for separator and null terminator during path resolution.
+        // Carve buf/buf2 from one pooled slab.
+        let resolved = {
+            let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+            let mut scratch = PathScratch::<u8>::new(pool, (buf_len + 2) * 2);
+            let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 2);
+            let path = if is_windows {
+                resolve_windows_with_cwd(paths, buf, buf2, cwd_capacity, |cwd| {
+                    copy_cached_cwd(&cached_cwd, cwd, cwd_capacity)
+                })
+            } else {
+                resolve_posix_with_cwd(paths, buf, buf2, cwd_capacity, |cwd| {
+                    copy_cached_cwd(&cached_cwd, cwd, cwd_capacity)
+                })
+            };
+            match path {
+                Ok(path) => {
+                    create_wtf8_path_string(global_object, path).map_err(ResolveJsError::JavaScript)
+                }
+                Err(error) => Err(error),
+            }
+        };
+        match resolved {
+            Ok(path) => return Ok(path),
+            Err(ResolveJsError::CwdRequired) => {
+                let cwd = path_cwd_to_wtf8(global_object, !is_windows)?;
+                cwd_capacity = cwd_capacity.max(cwd.len());
+                cached_cwd = Some(cwd);
+            }
+            Err(ResolveJsError::CwdBufferTooSmall(required)) => cwd_capacity = required,
+            Err(ResolveJsError::System(e)) => return Ok(e.to_js(global_object)),
+            Err(ResolveJsError::JavaScript(e)) => return Err(e),
+        }
     }
 }
 
@@ -782,6 +895,15 @@ fn resolve(
     args: &[JSValue],
 ) -> JsResult<JSValue> {
     let args_len = args.len();
+    #[cfg(unix)]
+    if !is_windows && args.is_empty() {
+        let value = crate::jsc::call_zero_is_throw(global_object, || {
+            Process__getDefaultCwd(global_object)
+        })?;
+        if !value.is_undefined() {
+            return Ok(value);
+        }
+    }
     // Lazily-allocated RareData buffer replaces the old stack_fallback_size_large
     // on the stack; `PathScratch` spills to the heap for very long paths.
 
@@ -816,22 +938,61 @@ fn resolve(
     let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
 
+    if resolved_root {
+        return resolve_native(global_object, is_windows, &paths);
+    }
     #[cfg(unix)]
+    if !is_windows
+        && (paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")))
     {
-        if !is_windows {
-            // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
-            // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
-            if paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")) {
-                // Throws when `getcwd` fails (for example, a deleted cwd).
-                return crate::jsc::call_zero_is_throw(global_object, || {
-                    Process__getCachedCwd(global_object)
-                });
+        let value = crate::jsc::call_zero_is_throw(global_object, || {
+            Process__getDefaultCwd(global_object)
+        })?;
+        if !value.is_undefined() {
+            return Ok(value);
+        }
+    }
+    if !Process__isCwdObservable(global_object) {
+        return resolve_native(global_object, is_windows, &paths);
+    }
+
+    let current_directory_arg =
+        args_len == 0 || (args_len == 1 && (paths.is_empty() || paths[0] == b"."));
+    let mut cached_cwd = None;
+    if current_directory_arg {
+        let value = crate::jsc::call_zero_is_throw(global_object, || {
+            Process__getPathCwd(global_object, !is_windows)
+        })?;
+        let view = value.to_js_string_view(global_object)?;
+        let bytes = view.to_utf8();
+        if is_windows {
+            let starts_with_separator = bytes
+                .slice()
+                .first()
+                .is_some_and(|byte| *byte == CHAR_FORWARD_SLASH || *byte == CHAR_BACKWARD_SLASH);
+            if args_len == 0 || starts_with_separator {
+                #[cfg(windows)]
+                return Ok(value);
+                #[cfg(not(windows))]
+                {
+                    let mut cwd = js_string_to_wtf8(global_object, value)?.into_vec();
+                    for byte in &mut cwd {
+                        if *byte == CHAR_FORWARD_SLASH {
+                            *byte = CHAR_BACKWARD_SLASH;
+                        }
+                    }
+                    return create_wtf8_path_string(global_object, &cwd);
+                }
+            }
+            cached_cwd = Some(js_string_to_wtf8(global_object, value)?);
+        } else {
+            if bytes.slice().first() == Some(&CHAR_FORWARD_SLASH) {
+                return Ok(value);
             }
         }
     }
 
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    resolve_js_t::<u8>(global_object, pool, is_windows, &paths)
+    resolve_js(global_object, is_windows, &paths, cached_cwd)
 }
 
 fn to_namespaced_path_windows_js_t<T: PathCharCwd>(

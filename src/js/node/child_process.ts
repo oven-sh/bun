@@ -681,7 +681,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   }
   if (exitedDueToMaxBuffer && error == null) {
     result.error = new SystemError(
-      "spawnSync " + options.file + " ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)",
+      "spawnSync " + options.file + " ENOBUFS",
       options.file,
       "spawnSync " + options.file,
       enobufsErrorCode(),

@@ -148,9 +148,10 @@ describe("a pipe at stdio index >= 3 of a sync spawn", () => {
           const three = maxBuffer - out - err + over;
           const result = spawnSync(exe, ["-e", writer(out, err, three)], { stdio, env, maxBuffer });
           assert.deepStrictEqual(
-            { error: code(result.error), output: result.output },
+            { error: code(result.error), message: result.error?.message, output: result.output },
             {
               error: over ? "ENOBUFS" : undefined,
+              message: over ? `spawnSync ${exe} ENOBUFS` : undefined,
               output: [
                 null,
                 stdio[1] === "pipe" ? Buffer.alloc(out, "a") : null,

@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/5828
-test.if(isPosix)("bun bun.lockb handles BrokenPipe gracefully", async () => {
+test("bun bun.lockb handles BrokenPipe gracefully", async () => {
   // Use an existing lockfile that has enough content to trigger the BrokenPipe
   // The sharp integration test has a lockfile with many dependencies
   const lockfilePath = join(import.meta.dir, "../../integration/sharp/bun.lockb");

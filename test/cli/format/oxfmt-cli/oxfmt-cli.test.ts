@@ -3,7 +3,7 @@
 // `--list-different` list.
 // `cases.json` is written by `test/cli/lint/oracle/driver/oxfmt-fixtures.mjs --record`.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../../children";
@@ -21,7 +21,7 @@ describe.concurrent("bun fmt behaves like oxfmt", () => {
   for (const it of cases) {
     const files = { ...(fixtures as Record<string, Files>)[it.name], ...it.gitignore } as Files;
     const links = Object.entries(files).filter(([, file]) => typeof file !== "string") as [string, { link: string }][];
-    test.skipIf(isWindows && links.length > 0)(`${it.name}/${it.index}: ${it.args.join(" ")}`, async () => {
+    test(`${it.name}/${it.index}: ${it.args.join(" ")}`, async () => {
       const texts = Object.entries(files).filter(([, file]) => typeof file === "string") as [string, string][];
       // Without a configuration file, `bun fmt` behaves like Prettier. An empty one above the fixtures makes it behave
       // like oxfmt.

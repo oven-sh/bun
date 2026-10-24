@@ -200,7 +200,7 @@ describe("timeout kills the process", () => {
     ["timeout", () => ({ timeout: 200 })],
     ["AbortSignal", () => ({ signal: AbortSignal.timeout(200) })],
   ] as const)("via %s", (_, opt) => {
-    test.skipIf(isWindows)("Bun.spawn stdout does not hang when a grandchild outlives the kill", async () => {
+    test("Bun.spawn stdout does not hang when a grandchild outlives the kill", async () => {
       // `sh` spawns `sleep` before the stdout marker so the assertion proves a
       // grandchild holds the pipe's write end when the kill signal reaches `sh`.
       await using proc = Bun.spawn({

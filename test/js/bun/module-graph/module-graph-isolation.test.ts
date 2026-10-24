@@ -3666,15 +3666,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("a global agent the host put in place of node's is what a graph's requests without an agent go through", async () => {
     expect(await runsFixture("host-replaced-the-global-agent.mjs")).toEqual({ stdout: `{"status":200}`, exitCode: 0 });
   });
-  test.skipIf(isWindows)(
-    "a child its leftover script spawns and writes to is not started: nothing fails, in it or in the host",
-    async () => {
-      expect(await runsFixture("spawns-after-it-was-disposed.mjs")).toEqual({
-        stdout: `{"hostStillRuns":true}`,
-        exitCode: 0,
-      });
-    },
-  );
+  test("a child its leftover script spawns and writes to is not started: nothing fails, in it or in the host", async () => {
+    expect(await runsFixture("spawns-after-it-was-disposed.mjs")).toEqual({
+      stdout: `{"hostStillRuns":true}`,
+      exitCode: 0,
+    });
+  });
   test("a server it was disposed in the turn it listened is not announced to it: its listen callback cannot fail the host", async () => {
     expect(await runsFixture("disposed-in-the-turn-it-listens.mjs")).toEqual({ stdout: `{"heard":[]}`, exitCode: 0 });
   });

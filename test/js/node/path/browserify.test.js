@@ -33,9 +33,8 @@ describe("browserify path tests", () => {
       ];
       for (const [input, expected] of fixtures) {
         expect(path.posix.dirname(input)).toBe(expected);
-        if (!isWindows) {
-          expect(path.dirname(input)).toBe(expected);
-        }
+
+        expect(path.dirname(input)).toBe(expected);
       }
     });
     it("path.posix.dirname", () => {

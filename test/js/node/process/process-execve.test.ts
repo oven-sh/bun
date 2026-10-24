@@ -42,7 +42,7 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("throws ERR_WORKER_UNSUPPORTED_OPERATION in a worker", async () => {
+  test("throws ERR_WORKER_UNSUPPORTED_OPERATION in a worker", async () => {
     using dir = tempDir("process-execve-worker", {
       "index.js": `
         const { Worker, isMainThread, parentPort } = require("worker_threads");

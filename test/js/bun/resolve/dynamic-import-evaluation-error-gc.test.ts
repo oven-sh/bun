@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // computeErrorInfoWrapperToString (src/jsc/bindings/FormatStackTraceForJS.cpp,
 // installed via vm.setOnComputeErrorInfo) runs from
@@ -21,14 +21,8 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 // and GC cycles of a long loop; a single iteration does not fire, 100 fire on
 // about 1 run in 6, 300 on essentially every run of the unfixed assert build.
 // The fixture runs twice and a single crash fails the test.
-//
-// Skipped on Windows: two runs of a 300-iteration loop that writes 2100 files
-// and evaluates 1200 module graphs are several times slower under
-// Windows + ASAN in CI, and the fixed C++ path is not platform-specific.
-test.skipIf(isWindows)(
-  "import() of a module whose evaluation throws survives a GC stack-trace finalizer",
-  async () => {
-    const fixture = `
+test("import() of a module whose evaluation throws survives a GC stack-trace finalizer", async () => {
+  const fixture = `
     import { mkdirSync, writeFileSync } from "node:fs";
     import { join } from "node:path";
 
@@ -52,21 +46,17 @@ test.skipIf(isWindows)(
     console.log("ok");
   `;
 
-    using dir = tempDir("dynamic-import-eval-error-gc", { "fixture.mjs": fixture });
+  using dir = tempDir("dynamic-import-eval-error-gc", { "fixture.mjs": fixture });
 
-    for (let i = 0; i < 2; i++) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "fixture.mjs"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
-      void stderr;
-    }
-  },
-  // Two runs of a 300-iteration loop on a debug+ASAN build take well over the
-  // default 5s.
-  120_000,
-);
+  for (let i = 0; i < 2; i++) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
+    void stderr;
+  }
+}, 120_000); // Two runs of a 300-iteration loop on a debug+ASAN build take well over the default 5s.

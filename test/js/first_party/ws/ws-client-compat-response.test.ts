@@ -1,7 +1,7 @@
 // Tests how a `ws` client reads the body of a non-101 response, and how the server's response to a `perMessageDeflate`
 // offer with parameters affects the frames the client sends. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { tls as harnessTls, isWindows } from "harness";
+import { tls as harnessTls } from "harness";
 import crypto from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import zlib from "node:zlib";
@@ -114,7 +114,7 @@ describe.each(implementations)("ws client handshake response ($name)", row => {
           if (sent !== lastSent) idle = 0;
           lastSent = sent;
         }
-        if (!isWindows) expect(sent).toBeLessThan(limit);
+        expect(sent).toBeLessThan(limit);
         // At most the high water mark plus one socket read.
         expect(response.readableLength).toBeLessThan(2 * 1024 * 1024);
 

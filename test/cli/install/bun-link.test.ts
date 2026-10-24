@@ -1026,7 +1026,7 @@ describe("global bin dir", () => {
       "elsewhere.txt": "",
     });
     const binDir = join(String(bunInstall), "bin");
-    if (!isWindows) await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
+    await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
     // Bins are linked in map order: the taken names first, then the free one.
     using pkg = tempDir(
       "link-pkg",
@@ -1040,7 +1040,7 @@ describe("global bin dir", () => {
     expect(await readFile(join(binDir, binEntry("bun")), "utf8")).toBe("the bun binary");
     if (isWindows) expect(await exists(join(binDir, "bun.bunx"))).toBeFalse();
     expect(await readFile(join(binDir, binEntry("adir"), "inner.txt"), "utf8")).toBe("keep");
-    if (!isWindows) expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
+    expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
     expect(exitCode).toBe(1);
   });
 
@@ -1126,7 +1126,7 @@ describe("global bin dir", () => {
     await writeFile(join(binDir, binEntry("bun")), "the bun binary");
     await mkdir(join(binDir, binEntry("adir")));
     await writeFile(join(binDir, binEntry("adir"), "inner.txt"), "keep");
-    if (!isWindows) await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
+    await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
     await writeFile(
       join(String(pkg), "package.json"),
       pkgFiles("own-bin", { "own-bin": "cli.js", bun: "cli.js", adir: "cli.js", foreign: "cli.js" })["package.json"],
@@ -1139,7 +1139,7 @@ describe("global bin dir", () => {
     if (isWindows) expect(await exists(join(binDir, "own-bin.bunx"))).toBeFalse();
     expect(await readFile(join(binDir, binEntry("bun")), "utf8")).toBe("the bun binary");
     expect(await readFile(join(binDir, binEntry("adir"), "inner.txt"), "utf8")).toBe("keep");
-    if (!isWindows) expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
+    expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
     expect(result.exitCode).toBe(0);
   });
 });

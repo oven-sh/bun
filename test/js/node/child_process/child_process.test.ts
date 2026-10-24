@@ -191,7 +191,7 @@ describe("fork() IPC", () => {
   // libuv maps an inherited stdio slot the parent has closed to /dev/null. Registering a plain
   // inherit instead captured whichever fd was created next: the ipc socketpair's parent end, which the
   // child then held open as its stdin, so the parent's disconnect() never reached it.
-  it.skipIf(isWindows)("inherits a closed stdin as /dev/null, so disconnect() still reaches the child", async () => {
+  it("inherits a closed stdin as /dev/null, so disconnect() still reaches the child", async () => {
     const dir = tmpdirSync();
     await write(
       path.join(dir, "parent.js"),
@@ -1014,7 +1014,7 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
 // OS's name for the number the child died from, as in node.
 const platformSignals = (["SIGUSR1", "SIGUSR2", "SIGSTKFLT"] as const).filter(name => name in os.constants.signals);
 
-describe.skipIf(!isPosix)("exit signals are named with the OS's own numbering", () => {
+describe("exit signals are named with the OS's own numbering", () => {
   it.concurrent.each(platformSignals)("child.kill(%s) exits with that signal", async name => {
     const child = spawn("sleep", ["1000"], { stdio: "ignore" });
     try {
@@ -1086,7 +1086,7 @@ it("spawnSync(does-not-exist)", () => {
 // run that produced no output. The spawn must fail with EBADF, matching
 // node. On other POSIX platforms the child-side dup2 of an fd that is not
 // open fails with EBADF, so the observable behavior is the same.
-it.if(!isWindows)("spawn with an fd number at Darwin OPEN_MAX in stdio reports EBADF", () => {
+it("spawn with an fd number at Darwin OPEN_MAX in stdio reports EBADF", () => {
   // Precondition: fd 10240 is not open in this process, so the fd is
   // invalid on every platform (on Darwin it is invalid by number alone).
   expect(() => fs.fstatSync(10240)).toThrow();
@@ -1180,7 +1180,7 @@ it.if(isLinux)("spawn still works with more than 10240 fds open", async () => {
 // GC'd, finalize_streams does not close the fd a second time (EBADF, or
 // worse, closing a reused fd number). Before the fix, Fd::close()'s
 // debug_assert!(err.is_none()) panicked under debug_assertions builds.
-it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () => {
+it("extra stdio pipes are not double-closed on GC", async () => {
   // Run in a subprocess so GC/finalize timing is isolated from the test
   // runner's own state, and so the assert abort surfaces as a non-zero
   // exit rather than taking the whole test runner down.
@@ -1426,7 +1426,7 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 // 'exit' fired the autoResume path discarded the entire buffered output, so a
 // late reader received 0 bytes. With kernel backpressure the child blocks at
 // the pipe buffer until JS starts reading, matching Node.
-describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
+describe("stdout pipe backpressure", () => {
   it("blocks the child until a reader attaches and delivers every byte", async () => {
     const SIZE = 1024 * 1024;
     const c = spawn("sh", ["-c", `head -c ${SIZE} /dev/zero`], {

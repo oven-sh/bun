@@ -113,7 +113,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   // bytes with the GC a second time). transfer() mid-write therefore detaches,
   // as in Node, but it moves the storage rather than freeing it, so the bytes
   // still to be written reach the client intact.
-  test.skipIf(isWindows)("a plain Buffer transferred while its write is pending still arrives intact", async () => {
+  test("a plain Buffer transferred while its write is pending still arrives intact", async () => {
     const payload = makePayload(CHUNK_SIZE);
     const expectedHash = sha1(payload);
     let detachedWhilePending: boolean | undefined;
@@ -358,7 +358,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     server.close();
   `;
 
-  test.skipIf(isWindows)("a resizable ArrayBuffer is copied into backpressure, not held by reference", async () => {
+  test("a resizable ArrayBuffer is copied into backpressure, not held by reference", async () => {
     // resize() mprotect()s trimmed pages PROT_NONE and pin() doesn't block
     // it, so a retained raw slice faults on spill / EFAULT-spins on drain.
     // Run in a child so the crash is observed as exit != 0.
@@ -378,7 +378,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("resizing a resizable ArrayBuffer after write() does not wedge drain", async () => {
+  test("resizing a resizable ArrayBuffer after write() does not wedge drain", async () => {
     // Drain path: send() on PROT_NONE pages returns EFAULT -> 0 consumed ->
     // onWritable re-arms forever. `await using` kills the child on timeout.
     await using proc = Bun.spawn({
@@ -458,28 +458,23 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     server.close();
   `;
 
-  test.skipIf(isWindows)(
-    "write() copies a WebAssembly.Memory's bytes, so growing the memory afterwards doesn't corrupt the body",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", wasmMemoryChild],
-        // Without fast memory, `grow()` moves the block on every platform. With system malloc, the freed block
-        // is unmapped.
-        env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+  test("write() copies a WebAssembly.Memory's bytes, so growing the memory afterwards doesn't corrupt the body", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", wasmMemoryChild],
+      // Without fast memory, `grow()` moves the block on every platform. With system malloc, the freed block
+      // is unmapped.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr }).toEqual({
-        stdout: JSON.stringify({ detachedAfterGrow: true, bodyLength: WASM_PAGES * 64 * 1024, bodyMatches: true }),
-        stderr: expect.any(String),
-      });
-      expect(exitCode).toBe(0);
-    },
-    // Sending 32 MB on a debug build can exceed the default 5 s timeout.
-    30_000,
-  );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ detachedAfterGrow: true, bodyLength: WASM_PAGES * 64 * 1024, bodyMatches: true }),
+      stderr: expect.any(String),
+    });
+    expect(exitCode).toBe(0);
+  }, 30_000); // Sending 32 MB on a debug build can exceed the default 5 s timeout.
 
   test("a second write before drain releases the pin on the first buffer", async () => {
     let detachedAfterSecondWrite: boolean | undefined;

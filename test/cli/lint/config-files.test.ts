@@ -6597,7 +6597,7 @@ describe.skipIf(!hasRunner)("Windows paths, on every platform", () => {
 
 // This is what ESLint 10.12.0, ESLint 8.57.1 and oxlint 1.87.0 do with the same files. Without a config file, bun lint
 // behaves like oxlint.
-describe.skipIf(isWindows).concurrent("a symlink that's dangling or points to itself or a parent directory", () => {
+describe.concurrent("a symlink that's dangling or points to itself or a parent directory", () => {
   const flavors: Record<string, Record<string, string>> = {
     "eslint.config.js": { "eslint.config.js": `export default [${JSON.stringify(noVar)}];` },
     ".eslintrc.json": { ".eslintrc.json": rc(noVar) },

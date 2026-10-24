@@ -1544,7 +1544,7 @@ describe("SQL adapter environment variable precedence", () => {
       },
     );
 
-    test.skipIf(isWindows)("postgres: a directory gets the name of the socket file, with the resolved port", () => {
+    test("postgres: a directory gets the name of the socket file, with the resolved port", () => {
       using dir = tempDir("sql-pg-socket-dir", { "custom.sock": "" });
       expect(new SQL({ path: String(dir) }).options.path).toBe(`${dir}/.s.PGSQL.5432`);
       expect(new SQL({ path: String(dir), port: 5433 }).options.path).toBe(`${dir}/.s.PGSQL.5433`);

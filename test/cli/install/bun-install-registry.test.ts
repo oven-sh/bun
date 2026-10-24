@@ -20,7 +20,6 @@ import {
   bunEnv,
   bunExe,
   isDebug,
-  isFlaky,
   isLinux,
   isMacOS,
   isRoot,
@@ -4005,7 +4004,7 @@ describe.concurrent("binaries", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a stale link, a file and a directory in .bin are replaced", async () => {
+  test("a stale link, a file and a directory in .bin are replaced", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     const binDir = join(packageDir, "node_modules", ".bin");
     await Promise.all([
@@ -7862,7 +7861,7 @@ describe.concurrent("hoisting", async () => {
     });
   });
 
-  test.serial.todoIf(isFlaky && isWindows)("text lockfile is hoisted", async () => {
+  test.serial("text lockfile is hoisted", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     // Each dependency depends on 'hoist-lockfile-shared'.
     // 1 - "*"

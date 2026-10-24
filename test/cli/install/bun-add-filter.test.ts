@@ -2408,7 +2408,7 @@ test.concurrent("remove --filter --dry-run touches nothing", async () => {
   expect(await exists(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
 });
 
-test.concurrent.skipIf(isWindows || isRoot)(
+test.concurrent.skipIf(isRoot)(
   "an unwritable target is reported by name, the rest is still written, exit code 1",
   async () => {
     const dir = await makeMonorepo();

@@ -464,8 +464,7 @@ test.concurrent.each([
   expect(response).toBe("200 1");
 });
 
-// Creating a symlink on Windows needs a privilege that CI does not have.
-test.concurrent.skipIf(isWindows)("bun bake serves pages that are symlinks or in a symlinked folder", async () => {
+test.concurrent("bun bake serves pages that are symlinks or in a symlinked folder", async () => {
   using dir = tempDir("bake-command-symlink", {
     "shared/page.html": `<!doctype html><html><body><h1>Shared</h1></body></html>`,
     "shared/docs/intro.html": `<!doctype html><html><body><h1>Intro</h1></body></html>`,
@@ -792,9 +791,8 @@ test.concurrent("bun bake runs the SIGTERM handlers before it starts again for b
   await output.waitFor(/SIGTERM before restart/);
 });
 
-// On a terminal, `bun bake` adds its own SIGTERM listener, which exits. Bun.spawn's `terminal` is
-// POSIX only.
-test.concurrent.skipIf(isWindows)(
+// On a terminal, `bun bake` adds its own SIGTERM listener, which exits.
+test.concurrent(
   "on a terminal, bun bake runs every SIGTERM listener before it starts again for bake.config.ts",
   async () => {
     const server = (version: string) => `

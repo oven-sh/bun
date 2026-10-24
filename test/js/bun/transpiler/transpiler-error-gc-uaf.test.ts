@@ -10,7 +10,7 @@
 // manifests deterministically; collectContinuously races the collector against
 // the allocation loop so it reliably sweeps mid-loop.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const fixture = `
 const src = Array.from({ length: 300 }, () => "a b").join("\\n");
@@ -41,7 +41,7 @@ test("Log.to_js roots BuildMessage cells across allocation", async () => {
     ...bunEnv,
     BUN_JSC_useZombieMode: "1",
   };
-  if (!isWindows) gcEnv.BUN_JSC_collectContinuously = "1";
+  gcEnv.BUN_JSC_collectContinuously = "1";
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.js"],

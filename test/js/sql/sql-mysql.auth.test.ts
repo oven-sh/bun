@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { expect, test } from "bun:test";
-import { describeWithContainer, isWindows, tempDir } from "harness";
+import { describeWithContainer, tempDir } from "harness";
 import { constants, createHash, generateKeyPairSync, privateDecrypt } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
@@ -353,7 +353,7 @@ function authScript(name: keyof typeof scripts, packets: string[]) {
 }
 
 const longPassword = "a-password-of-more-than-20-bytes";
-test.skipIf(isWindows).each([
+test.each([
   // [plugin, allowPublicKeyRetrieval, outcome, auth packets]
   ["caching_sha2_password", false, "ok", [`clear ${JSON.stringify(longPassword + "\0")}`]],
   // The server's sha256_password takes nothing but TLS for a secure transport.

@@ -36,7 +36,7 @@ test.skipIf(isWindows)("Bun.Terminal data callback works inside AsyncLocalStorag
   expect(new TextDecoder().decode(result.data!)).toContain("Hello");
 });
 
-test.skipIf(isWindows)("Bun.Terminal preserves async context inside callbacks", async () => {
+test("Bun.Terminal preserves async context inside callbacks", async () => {
   const storage = new AsyncLocalStorage<{ id: number }>();
 
   async function terminalTest() {

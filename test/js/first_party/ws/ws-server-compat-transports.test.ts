@@ -3,7 +3,7 @@
 import fastifyWebsocket from "@fastify/websocket";
 import { describe, expect, test } from "bun:test";
 import Fastify from "fastify";
-import { tls as certificate, isWindows, tempDir } from "harness";
+import { tls as certificate, tempDir } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import http2 from "node:http2";
@@ -73,7 +73,7 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
     expect(secure).toEqual([true]);
   });
 
-  test.skipIf(isWindows)("http.Server on a unix socket: address() returns the path", async () => {
+  test("http.Server on a unix socket: address() returns the path", async () => {
     using dir = tempDir("ws-server-unix", {});
     const socketPath = path.join(String(dir), "ws.sock");
     const server = http.createServer();

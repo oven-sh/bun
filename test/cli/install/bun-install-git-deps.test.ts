@@ -675,7 +675,7 @@ function expectOneStoreEntry(project: string, aliases: string[]) {
 // folder taken moves it away (`move_to_cache_directory` in extract_tarball.rs) while another one is still reading its
 // package.json. Occasionally that one creates a package with no name and no dependencies.
 for (const linker of ["isolated", "hoisted"] as const) {
-  test.concurrent.skipIf(isWindows)(
+  test.concurrent(
     `${linker} linker installs github: refs that point to one commit as one package`,
     async () => {
       using dir = tempDir(`github-one-commit-${linker}`, {});
@@ -739,7 +739,7 @@ for (const linker of ["isolated", "hoisted"] as const) {
 
 // The same for a repository whose package.json has no name, or that has no package.json. The package is named after the
 // repository, for every ref.
-test.concurrent.skipIf(isWindows).each([
+test.concurrent.each([
   ["a package.json without a name", { "package.json": JSON.stringify({ version: "1.0.0" }) }],
   ["no package.json", {}],
 ])(
@@ -2826,7 +2826,7 @@ test.concurrent.each([
 });
 
 // It's neither a URL nor an scp-style path, so git would read it as a directory in the project and clone that.
-test.concurrent.skipIf(isWindows)("does not hand a bare word to git clone", async () => {
+test.concurrent("does not hand a bare word to git clone", async () => {
   const { calls, stderr, exitCode } = await failingGitCalls("git+:latest");
   expect(calls).toEqual([]);
   // It's a git dependency, so the registry wasn't asked for a `git+:latest` tag.
@@ -3495,7 +3495,7 @@ test.concurrent("bun update moves a git dependency without a committish to the n
 });
 
 // Ubuntu 22.04 has git 2.34, Debian 11 has 2.30.
-test.concurrent.skipIf(isWindows)("clones with a git older than 2.39, which refuses --bare with --origin", async () => {
+test.concurrent("clones with a git older than 2.39, which refuses --bare with --origin", async () => {
   using dir = tempDir("git-dep-old-git", {
     "bin/git": `#!/bin/sh
 for arg in "$@"; do
@@ -3932,7 +3932,7 @@ test.concurrent("a git dependency with a submodule, under the user's own setting
 });
 
 // How git fails when it can't use the clone depends on its version.
-test.concurrent.skipIf(isWindows)("clones again after a git fetch that did not fail at the remote", async () => {
+test.concurrent("clones again after a git fetch that did not fail at the remote", async () => {
   using dir = tempDir("git-dep-fetch-exit-code", {});
   const root = String(dir);
   const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);

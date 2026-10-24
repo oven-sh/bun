@@ -440,7 +440,7 @@ test("setBroadcast()/setMulticastLoopback() before bind() throw EBADF", () => {
 
 // An oversized datagram fails send(2) with EMSGSIZE; on the connected path no
 // address/port is known, so the error must match Node's bare `send <code>`.
-test.skipIf(isWindows)("connected send() failure reports Node's error shape", async () => {
+test("connected send() failure reports Node's error shape", async () => {
   const receiver = createSocket("udp4");
   const { promise: receiverBound, resolve: onReceiverBound } = Promise.withResolvers<void>();
   receiver.bind(0, "127.0.0.1", onReceiverBound);
@@ -500,7 +500,7 @@ test("connect() with a custom lookup that yields a name that cannot be a hostnam
 // Every send callback must fire with (null, byteLength) — never (null, 0) or
 // EAGAIN — even if the kernel refuses some writes (they queue and drain like
 // libuv's uv_udp_try_send → uv_udp_send fallback).
-test.skipIf(isWindows)("send() reports (null, byteLength) for every callback under a burst", async () => {
+test("send() reports (null, byteLength) for every callback under a burst", async () => {
   const receiver = createSocket("udp4");
   await new Promise<void>(resolve => receiver.bind(0, "127.0.0.1", resolve));
   const port = receiver.address().port;

@@ -1,7 +1,7 @@
 import { CryptoHasher, MD4, MD5, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc } from "bun";
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import path from "path";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
@@ -166,7 +166,7 @@ describe("createHash outputLength", () => {
     ).toBe("5881092d");
   });
 
-  it.skipIf(isWindows)("shake128 outputLength >= 2**31 does not abort the process", async () => {
+  it("shake128 outputLength >= 2**31 does not abort the process", async () => {
     // options.outputLength is validated against the full uint32 range, so 2**31
     // must either produce a digest or throw a catchable error, never terminate
     // the process.

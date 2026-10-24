@@ -1572,7 +1572,7 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", () => {
+  test("--elide-lines on the CLI wins over [run] elide-lines", () => {
     using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 15\n");
     const r = run(String(dir), ["run", "--elide-lines", "0", "--filter", "dep0", "lines"], {
       FORCE_COLOR: "1",

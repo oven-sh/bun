@@ -103,7 +103,7 @@ describe("Bun.Terminal platform behaviour", () => {
       },
     });
     // POSIX: enable ECHO so the line discipline reflects writes back.
-    if (!isWindows) terminal.localFlags = terminal.localFlags | 0x8;
+    terminal.localFlags = terminal.localFlags | 0x8;
     terminal.write("ping\n");
     await Promise.race([got.promise, Bun.sleep(200)]);
 

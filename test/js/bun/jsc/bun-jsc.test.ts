@@ -26,7 +26,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createHash, type webcrypto } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -245,7 +245,7 @@ describe("bun:jsc", () => {
     Bun.gc(true);
   });
 
-  it.todoIf(isBuildKite && isWindows)("profile async", async () => {
+  it("profile async", async () => {
     const { promise, resolve } = Promise.withResolvers<object>();
     const result = await profile(
       async function hey(arg1: number) {
@@ -259,7 +259,7 @@ describe("bun:jsc", () => {
     expect({ ...input }).toStrictEqual({ "0": 2 });
   });
 
-  it.todoIf(isBuildKite && isWindows)("profile can be called multiple times", () => {
+  it("profile can be called multiple times", () => {
     // Fibonacci generates deep stacks and is CPU-intensive
     function fib(n: number): number {
       if (n <= 1) return n;

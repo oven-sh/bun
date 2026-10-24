@@ -127,7 +127,7 @@ test.concurrent("the archive is not padded to a full tar record", async () => {
 
 // pack only reads package.json, so a file that is readable but not writable (a read-only
 // checkout, a file owned by another user) must not stop it.
-test.concurrent.skipIf(isWindows)("read-only package.json", async () => {
+test.concurrent("read-only package.json", async () => {
   using dir = tempDir("pack-read-only", {
     "package.json": JSON.stringify({ name: "pack-read-only", version: "1.2.3" }),
     "index.js": "console.log('hello ./index.js')",
@@ -1243,7 +1243,7 @@ describe.concurrent("something already exists at the tarball's destination", () 
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  test.serial.skipIf(isWindows)("a writable file in a read-only folder", async () => {
+  test.serial("a writable file in a read-only folder", async () => {
     using dir = tempDir("pack-over-locked", { ...files, "pkg/out/pack-over-1.0.0.tgz": "an earlier tarball" });
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     await chmod(join(dir, "pkg", "out"), 0o555);
@@ -2984,7 +2984,7 @@ describe.concurrent("bundledDependencies", () => {
 
   // The isolated linker's layout: node_modules has links into a store, where a package's dependencies are links next to
   // it. `y` goes next to `x`, unless the packed package has its own `y` that it doesn't bundle.
-  test.skipIf(isWindows).each([
+  test.each([
     { name: "x", own: {}, y: "node_modules/y" },
     { name: "@s/x", own: {}, y: "node_modules/y" },
     { name: "x", own: { y: "2.0.0" }, y: "node_modules/x/node_modules/y" },
@@ -3028,7 +3028,7 @@ describe.concurrent("bundledDependencies", () => {
   });
 
   // Like npm: a link to a folder that is no installed copy is packed by that folder's own rules.
-  test.skipIf(isWindows).each([
+  test.each([
     ["", "project"],
     [", also below a folder named node_modules", "node_modules/project"],
   ])("a bundled workspace is packed with its own files and .npmignore%s", async (_, project) => {
@@ -3416,7 +3416,7 @@ describe.concurrent("bundledDependencies", () => {
   });
 
   // The layout of pnpm and of the isolated linker: each package is next to links to its dependencies.
-  describe.skipIf(isWindows)("two versions of two packages that depend on each other", () => {
+  describe("two versions of two packages that depend on each other", () => {
     async function packLinked(graph: Record<string, Record<string, string>>) {
       const tree: Record<string, string> = {
         "package.json": JSON.stringify({
@@ -3501,7 +3501,7 @@ describe.concurrent("bundledDependencies", () => {
     ]);
   });
 
-  test.skipIf(isWindows)("bundled dependencies that link to each other end the lookup", async () => {
+  test("bundled dependencies that link to each other end the lookup", async () => {
     using dir = tempDir("pack-bundled-dep-cycle", {
       "package.json": JSON.stringify({
         name: "pack-bundled-dep-cycle",
@@ -3537,7 +3537,7 @@ describe.concurrent("bundledDependencies", () => {
   });
 
   // This is what `bun install` creates for a workspace that's a dependency.
-  test.skipIf(isWindows)("a scoped bundled dependency that is a link is followed", async () => {
+  test("a scoped bundled dependency that is a link is followed", async () => {
     using dir = tempDir("pack-bundled-dep-scoped-link", {
       "package.json": JSON.stringify({
         name: "pack-bundled-dep-scoped-link",
@@ -3561,7 +3561,7 @@ describe.concurrent("bundledDependencies", () => {
   });
 
   // The lookup used to keep every directory it found open.
-  test.skipIf(isWindows)("more dependencies than file descriptors", async () => {
+  test("more dependencies than file descriptors", async () => {
     const names = Array.from({ length: 299 }, (_, i) => `d${i}`);
     using dir = tempDir("pack-bundled-dep-emfile", {
       "package.json": JSON.stringify({

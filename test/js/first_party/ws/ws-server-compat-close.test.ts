@@ -1,7 +1,7 @@
 // Tests close(), terminate(), the closing handshake, wss.close() and wss.clients on a `ws` server, using a raw TCP
 // client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { tls as certificate, isWindows } from "harness";
+import { tls as certificate } from "harness";
 import http from "node:http";
 import https from "node:https";
 import type { TLSSocket } from "node:tls";
@@ -417,7 +417,7 @@ describe.each(implementations)("ws server close ($name)", ({ ws: implementation,
   });
 
   // Winsock buffers any amount of loopback data, so the process never sees backpressure.
-  describe.skipIf(isWindows)("under backpressure", () => {
+  describe("under backpressure", () => {
     const size = 64 * 1024;
 
     // Sends until three messages in a row have left something unwritten. The client runs on this thread, so it can't

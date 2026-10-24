@@ -4,7 +4,6 @@ import {
   bunExe,
   gc,
   getMaxFD,
-  isBroken,
   isDebug,
   isGlibc,
   isIntelMacOS,
@@ -3499,7 +3498,7 @@ describe("readlink encoding option", () => {
 // stack PathBuffer in that case. We can't create a >= PATH_MAX target on a
 // normal filesystem, but we can exercise the longest-possible target to make
 // sure the bounds check in sys.readlink doesn't fire early.
-it.skipIf(isWindows)("readlink with PATH_MAX-1 target", () => {
+it("readlink with PATH_MAX-1 target", () => {
   const dir = tmpdirSync();
   // Find the longest target the local filesystem will accept for symlink(2).
   // On Linux this is 4095, on macOS 1023. Bun's own path validation silently
@@ -4483,7 +4482,7 @@ describe("fs.ReadStream", () => {
 });
 
 describe("createWriteStream", () => {
-  it.todoIf(isBroken && isWindows)("simple write stream finishes", async () => {
+  it("simple write stream finishes", async () => {
     const streamPath = join(tmpdirSync(), "create-write-stream.txt");
     const { promise: done, resolve, reject } = Promise.withResolvers();
 
@@ -5366,8 +5365,7 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  // TODO: make this work on Windows
-  it.skipIf(isWindows)("works after 2038", () => {
+  it("works after 2038", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
     const prevStats = fs.statSync(tmp);
@@ -5933,7 +5931,7 @@ it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestam
   expect(st2.atimeNs / 1_000_000n).toBe(st2.atimeMs);
 });
 
-it.skipIf(isWindows)("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
+it("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
   using dir = tempDir("bigintstats-far-future", { "f.txt": "x" });
   const f = join(String(dir), "f.txt");
 
@@ -6296,39 +6294,35 @@ it("fs.statfsSync should work", () => {
   // back as 0 and the remaining fields were shifted. Any real filesystem
   // has a positive block size and at least one block — asserting that here
   // catches the misaligned-struct case without depending on absolute values.
-  if (isPosix) {
-    expect(stats.bsize).toBeGreaterThan(0);
-    expect(stats.blocks).toBeGreaterThan(0);
-  }
+
+  expect(stats.bsize).toBeGreaterThan(0);
+  expect(stats.blocks).toBeGreaterThan(0);
 
   const bigIntStats = statfsSync(import.meta.path, { bigint: true });
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
     expect(bigIntStats).toHaveProperty(k);
     expect(bigIntStats[k]).toBeTypeOf("bigint");
   });
-  if (isPosix) {
-    expect(bigIntStats.bsize > 0n).toBe(true);
-    expect(bigIntStats.blocks > 0n).toBe(true);
-  }
+
+  expect(bigIntStats.bsize > 0n).toBe(true);
+  expect(bigIntStats.blocks > 0n).toBe(true);
 });
 
 it("fs.promises.statfs should work", async () => {
   const stats = await fs.promises.statfs(import.meta.path);
   expect(stats).toBeDefined();
   // See "fs.statfsSync should work" above — same regression gate for #31133.
-  if (isPosix) {
-    expect(stats.bsize).toBeGreaterThan(0);
-    expect(stats.blocks).toBeGreaterThan(0);
-  }
+
+  expect(stats.bsize).toBeGreaterThan(0);
+  expect(stats.blocks).toBeGreaterThan(0);
 });
 
 it("fs.promises.statfs should work with bigint", async () => {
   const stats = await fs.promises.statfs(import.meta.path, { bigint: true });
   expect(stats).toBeDefined();
-  if (isPosix) {
-    expect(stats.bsize > 0n).toBe(true);
-    expect(stats.blocks > 0n).toBe(true);
-  }
+
+  expect(stats.bsize > 0n).toBe(true);
+  expect(stats.blocks > 0n).toBe(true);
 });
 
 it("fs.statfs (callback) should work with bigint", async () => {
@@ -6344,10 +6338,9 @@ it("fs.statfs (callback) should work with bigint", async () => {
     expect(stats[k]).toBeTypeOf("bigint");
   }
   // See "fs.statfsSync should work" above — same regression gate for #31133.
-  if (isPosix) {
-    expect(stats.bsize > 0n).toBe(true);
-    expect(stats.blocks > 0n).toBe(true);
-  }
+
+  expect(stats.bsize > 0n).toBe(true);
+  expect(stats.blocks > 0n).toBe(true);
 });
 
 // Regression for oven-sh/bun#31510: the non-bigint statfs path stored block
@@ -7665,7 +7658,7 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
 
   it.each(cases)("%s", async (_name, start) => {
     using dir = tempDir("fs-callback-order", { "file.txt": "hello", "empty": {} });
-    if (!isWindows) symlinkSync(join(String(dir), "file.txt"), join(String(dir), "symlink"));
+    symlinkSync(join(String(dir), "file.txt"), join(String(dir), "symlink"));
     await tickQueueExists();
 
     const { promise, resolve } = Promise.withResolvers<string[]>();

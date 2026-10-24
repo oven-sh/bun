@@ -61,44 +61,40 @@ test.if(isDebug && isLinux && hasSymbolizer)(
 // JS listener's backing sigaction enqueues to the JS thread and returns;
 // without the reset the process would survive the raise and fall through to
 // the trap fallback, which on aarch64 (brk → SIGTRAP) used to spin forever.
-test.if(isPosix)(
-  "panic terminates the process even when JS registered trap-signal listeners",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `process.on("SIGTRAP", () => {});
+test("panic terminates the process even when JS registered trap-signal listeners", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.on("SIGTRAP", () => {});
          process.on("SIGILL", () => {});
          process.on("SIGABRT", () => {});
          require("bun:internal-for-testing").crash_handler.panic();`,
-        // Make debug builds take the fast trace-string path instead of
-        // spawning llvm-symbolizer, which can take tens of seconds.
-        "--debug-crash-handler-use-trace-string",
-      ],
-      env: noReportEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+      // Make debug builds take the fast trace-string path instead of
+      // spawning llvm-symbolizer, which can take tens of seconds.
+      "--debug-crash-handler-use-trace-string",
+    ],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
-    // Without the fix the child never exits — it loops SIGTRAP delivery on the
-    // trap instruction. Bound the wait and fail explicitly rather than hanging
-    // the test runner and leaking a core-pinning process.
-    const exited = await Promise.race([proc.exited, Bun.sleep(8_000).then(() => "spinning" as const)]);
-    if (exited === "spinning") {
-      proc.kill("SIGKILL");
-    }
+  // Without the fix the child never exits — it loops SIGTRAP delivery on the
+  // trap instruction. Bound the wait and fail explicitly rather than hanging
+  // the test runner and leaking a core-pinning process.
+  const exited = await Promise.race([proc.exited, Bun.sleep(8_000).then(() => "spinning" as const)]);
+  if (exited === "spinning") {
+    proc.kill("SIGKILL");
+  }
 
-    const stderr = await proc.stderr.text();
-    expect(exited, `process should have died from the trap, stderr:\n${stderr}`).not.toBe("spinning");
+  const stderr = await proc.stderr.text();
+  expect(exited, `process should have died from the trap, stderr:\n${stderr}`).not.toBe("spinning");
 
-    // It went through the crash handler...
-    expect(stderr).toContain("invoked crashByPanic() handler");
-    // ...and died from the trap's default action, not a clean exit, and not a
-    // JS-observed SIGTRAP (the JS listener must never swallow the crash).
-    expect(proc.signalCode === null ? proc.exitCode : proc.signalCode).not.toBe(0);
-  },
-  20_000,
-);
+  // It went through the crash handler...
+  expect(stderr).toContain("invoked crashByPanic() handler");
+  // ...and died from the trap's default action, not a clean exit, and not a
+  // JS-observed SIGTRAP (the JS listener must never swallow the crash).
+  expect(proc.signalCode === null ? proc.exitCode : proc.signalCode).not.toBe(0);
+}, 20_000);
 
 // After printing the crash report the handler must terminate with a signal
 // that reflects the crash cause: panics abort (SIGABRT), a caught fault is

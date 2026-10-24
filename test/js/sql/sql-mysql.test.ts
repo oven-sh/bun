@@ -1,6 +1,6 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, describeWithContainer, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, describeWithContainer, tempDirWithFiles } from "harness";
 import path from "path";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 import {
@@ -275,7 +275,7 @@ console.log(JSON.stringify({ outcome, closed }));`,
         },
       );
 
-      test.skipIf(isWindows || image.image === "mysql_tls")(
+      test.skipIf(image.image === "mysql_tls")(
         "connects through the unix socket that `path`, `socket` or the URL names",
         async () => {
           await container.ready;

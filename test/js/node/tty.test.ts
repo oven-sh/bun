@@ -324,7 +324,7 @@ describe("WriteStream.prototype.getColorDepth", () => {
   });
 
   // Bun recognizes these truecolor terminals on top of Node's list.
-  it.skipIf(isWindows)("reports 24-bit color for ghostty and WezTerm", () => {
+  it("reports 24-bit color for ghostty and WezTerm", () => {
     expect(getColorDepth({ TERM_PROGRAM: "ghostty" })).toBe(24);
     expect(getColorDepth({ TERM_PROGRAM: "WezTerm" })).toBe(24);
   });

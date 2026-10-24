@@ -300,7 +300,7 @@ registry = http://localhost:${registry.port}/
       expect(result.exitCode).toBe(0);
     });
 
-    it.skipIf(isWindows)("bun install prints nothing when $NPM_CONFIG_USERCONFIG is a directory", async () => {
+    it("bun install prints nothing when $NPM_CONFIG_USERCONFIG is a directory", async () => {
       using dir = tempDir("npmrc-userconfig-directory", { ...pkg, "home/.keep": "", "elsewhere/ci.npmrc/.keep": "" });
       const directory = join(String(dir), "elsewhere", "ci.npmrc");
       const result = await bun(String(dir), { NPM_CONFIG_USERCONFIG: directory }, "install");
@@ -5235,7 +5235,7 @@ describe.concurrent("`ca` and `cafile` are one setting: a layer that sets either
 
 // Like npm, Bun skips a config file that it can't read, e.g. a root-owned ~/.npmrc in a Docker image that runs as another
 // user. Not concurrent: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-describe.skipIf(isWindows)("unreadable config files are skipped", () => {
+describe("unreadable config files are skipped", () => {
   /** Runs bun in `<dir>/project` with `<dir>/home` as the home directory, as a user that file modes apply to. */
   async function run(
     cmd: string[],

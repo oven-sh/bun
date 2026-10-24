@@ -271,7 +271,7 @@ it("chrome: screenshot encoding options", async () => {
   // shm internally, we create one after decoding). Name uses the
   // bun-chrome- prefix to disambiguate from WebKit's child-created
   // segments.
-  if (process.platform !== "win32") {
+  {
     const shm = await view.screenshot({ encoding: "shmem" });
     expect(typeof shm.name).toBe("string");
     expect(shm.name.startsWith("/bun-chrome-")).toBe(true);

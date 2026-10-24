@@ -1,9 +1,9 @@
 import type { Socket } from "bun";
 import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isPosix } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
-describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
+describe("HTTP server handles chunked transfer encoding", () => {
   test.concurrentIf(!isASAN)("handles fragmented chunk terminators", async () => {
     const script = `
       const server = Bun.serve({
@@ -108,7 +108,7 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
   });
 });
 
-describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
+describe("HTTP server handles split chunk-size CRLF", () => {
   test.concurrentIf(!isASAN)("handles lone CR at end of chunk-size line across TCP segments", async () => {
     // Regression test: when a TCP segment boundary falls between the \r and \n
     // of a chunk-size line (e.g. "5\r" in one segment, "\n..." in the next),
@@ -530,7 +530,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
   });
 });
 
-describe.if(isPosix)("HTTP server handles fragmented requests", () => {
+describe("HTTP server handles fragmented requests", () => {
   test.concurrentIf(!isASAN)("handles requests with tiny send buffer (regression test)", async () => {
     using server = Bun.serve({
       hostname: "127.0.0.1",

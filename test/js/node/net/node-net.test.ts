@@ -1235,19 +1235,17 @@ it.if(isWindows)("should not leak when connect({path}) fails asynchronously whil
 // On Windows, unix paths route through the named-pipe codepath which reports
 // failure asynchronously; this test targets the synchronous-failure branch in
 // Listener.connectInner.
-it.skipIf(isWindows)(
-  "should not leak when connect({path}) fails synchronously on a reused handle",
-  async () => {
-    // node:net creates a detached native socket (`_handle`) and passes it as
-    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
-    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
-    // synchronously while the socket is still `.detached`, so
-    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
-    // fire — the ref taken here must be released by the caller for reused
-    // sockets too, not only freshly-allocated ones. Without that, every
-    // failed reconnect leaks one native TCPSocket struct + its connection
-    // string.
-    const script = `
+it("should not leak when connect({path}) fails synchronously on a reused handle", async () => {
+  // node:net creates a detached native socket (`_handle`) and passes it as
+  // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
+  // before `doConnect`. A nonexistent unix path makes `doConnect` throw
+  // synchronously while the socket is still `.detached`, so
+  // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
+  // fire — the ref taken here must be released by the caller for reused
+  // sockets too, not only freshly-allocated ones. Without that, every
+  // failed reconnect leaks one native TCPSocket struct + its connection
+  // string.
+  const script = `
       const net = require("node:net");
       const { heapStats } = require("bun:jsc");
       const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
@@ -1289,23 +1287,21 @@ it.skipIf(isWindows)(
       const after = pageCount();
       console.log(JSON.stringify({ before, after, delta: after - before }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref: +25 pages (release) / +163 (debug+ASAN).
-    // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
-    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
-    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+  // Without the balancing deref: +25 pages (release) / +163 (debug+ASAN).
+  // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
+  // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
+  expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 // node only reaches readStart() from _read(), and read(0) never calls _read once
 // the readable side has ended, so a `readable: false` client leaves the peer's
@@ -2907,9 +2903,7 @@ it("onread: a swallowed throw does not drop the rest of the current native read"
   expect(exitCode).toBe(0);
 });
 
-// On Windows the native layer does not report fatal send errors yet (the WSA
-// error translation is a follow-up), so the write error never surfaces there.
-it.skipIf(isWindows)("a write after the peer reset the connection fails with a write error", async () => {
+it("a write after the peer reset the connection fails with a write error", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   // resetAndDestroy() sends an RST (not a FIN); allowHalfOpen keeps the client's
   // writable side open like Node, so the failure must surface from the write
@@ -3067,9 +3061,8 @@ describe("a write that fails at once", () => {
 // libuv's uv__tcp_bind always sets SO_REUSEADDR on Unix, so Node can bind a
 // client localPort that still has earlier connections in TIME_WAIT. Bun used
 // to call bind() bare here and fail with EADDRINUSE, which made
-// sequential/test-net-localport.js order-dependent in CI. Windows is skipped
-// because libuv intentionally does not set SO_REUSEADDR there.
-it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TIME_WAIT sockets", async () => {
+// sequential/test-net-localport.js order-dependent in CI.
+it("connect({ localPort }) succeeds when the local port has TIME_WAIT sockets", async () => {
   // Reserve a port and release it so nothing else is listening on it.
   const probe = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -3400,7 +3393,7 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
 describe("net.Server.listen({ fd })", () => {
   // node's createServerHandle only accepts TCP / pipe descriptors and reports anything else as EINVAL;
   // the raw listen(2) failure for a datagram socket is EOPNOTSUPP.
-  it.skipIf(isWindows)("reports a datagram descriptor as EINVAL, like node", async () => {
+  it("reports a datagram descriptor as EINVAL, like node", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

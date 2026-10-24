@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 // When a child process exits while its stdout/stderr pipe still has pending
 // activity, onProcessExit keeps the Subprocess JSRef Strong. The pipe later
@@ -17,10 +17,8 @@ import { bunEnv, bunExe, isWindows } from "harness";
 // loop — the path that leaked.
 //
 // Windows uses a different pipe/process model; the scenario is POSIX-shaped.
-test.skipIf(isWindows)(
-  "Subprocess is collectable when stdout pipe drains asynchronously after process exit",
-  async () => {
-    const script = /* js */ `
+test("Subprocess is collectable when stdout pipe drains asynchronously after process exit", async () => {
+  const script = /* js */ `
       let collected = 0;
       const registry = new FinalizationRegistry(() => {
         collected++;
@@ -68,29 +66,27 @@ test.skipIf(isWindows)(
       console.log(JSON.stringify({ collected, iters: ITERS }));
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const stderrLines = stderr
-      .split("\n")
-      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-    expect(stderrLines).toBe("");
-    const { collected, iters } = JSON.parse(stdout.trim());
-    // Without the fix, ZERO Subprocess wrappers are collected because their
-    // JSRef is never downgraded. With the fix they are all collectable. We
-    // accept any nonzero count as proof the mechanism works — under release-
-    // ASAN each grandchild's LSan-exit can outlast the poll window, so an
-    // exact-10 assertion is a wall-clock race, not a correctness check.
-    expect(collected).toBeGreaterThan(0);
-    expect(iters).toBe(10);
-    expect(exitCode).toBe(0);
-  },
-  120_000,
-);
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+  const { collected, iters } = JSON.parse(stdout.trim());
+  // Without the fix, ZERO Subprocess wrappers are collected because their
+  // JSRef is never downgraded. With the fix they are all collectable. We
+  // accept any nonzero count as proof the mechanism works — under release-
+  // ASAN each grandchild's LSan-exit can outlast the poll window, so an
+  // exact-10 assertion is a wall-clock race, not a correctness check.
+  expect(collected).toBeGreaterThan(0);
+  expect(iters).toBe(10);
+  expect(exitCode).toBe(0);
+}, 120_000);

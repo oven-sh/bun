@@ -2911,7 +2911,7 @@ export const a: number[] = [file, one, two];
     });
 
     // Opening such a pipe blocks until a writer opens it. package.json is opened to look for a "check" script.
-    test.skipIf(isWindows)("doesn't hang when package.json is a symlink to a named pipe with no writer", async () => {
+    test("doesn't hang when package.json is a symlink to a named pipe with no writer", async () => {
       using dir = project({ "a.ts": `export {};\n` });
       expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe")]).exitCode).toBe(0);
       symlinkSync("pipe", join(String(dir), "package.json"));
@@ -3035,7 +3035,7 @@ export const a: number[] = [file, one, two];
       expect(exitCode).toBe(1);
     });
 
-    test.skipIf(process.platform === "win32")("ignores a named pipe in the project directory", async () => {
+    test("ignores a named pipe in the project directory", async () => {
       using dir = project({ "a.ts": `export const a: string = 1;\n` });
       // Reading a pipe without a writer blocks forever.
       expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe.ts")]).exitCode).toBe(0);
@@ -24276,28 +24276,25 @@ describe.concurrent("--check", () => {
   });
 
   // The path is compared as `bun run` spells it.
-  test.skipIf(isWindows)(
-    "`bun check` type checks in a `check` script started by a Bun that sets only BUN_INTERNAL_CHECK_SCRIPTS",
-    async () => {
-      using dir = project({
-        "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
-        "tsconfig.json": tsconfig,
-        "a.ts": `export const a: number = "1";\n`,
-      });
-      const cwd = String(dir);
-      const results = await Promise.all([
-        run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `${Buffer.byteLength(cwd)}:${cwd}` }),
-        // Another package's path.
-        run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `2:/x` }),
-      ]);
-      expect(
-        results.map(it => [it.stdout.includes("TS2322"), it.stdout.includes("the script ran"), it.exitCode]),
-      ).toEqual([
-        [true, false, 1],
-        [false, true, 0],
-      ]);
-    },
-  );
+  test("`bun check` type checks in a `check` script started by a Bun that sets only BUN_INTERNAL_CHECK_SCRIPTS", async () => {
+    using dir = project({
+      "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
+      "tsconfig.json": tsconfig,
+      "a.ts": `export const a: number = "1";\n`,
+    });
+    const cwd = String(dir);
+    const results = await Promise.all([
+      run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `${Buffer.byteLength(cwd)}:${cwd}` }),
+      // Another package's path.
+      run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `2:/x` }),
+    ]);
+    expect(
+      results.map(it => [it.stdout.includes("TS2322"), it.stdout.includes("the script ran"), it.exitCode]),
+    ).toEqual([
+      [true, false, 1],
+      [false, true, 0],
+    ]);
+  });
 
   test("--check with --filter, --parallel or --sequential checks the project before the scripts", async () => {
     using dir = project({

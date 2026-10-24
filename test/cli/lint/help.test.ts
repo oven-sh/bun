@@ -491,7 +491,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
       },
     );
 
-    test.skipIf(isWindows)("`..` after a symlink resolves to the directory that contains the symlink", async () => {
+    test("`..` after a symlink resolves to the directory that contains the symlink", async () => {
       const files = { "project/package.json": script["package.json"], "else/where/deep/b.ts": source };
       const before = (dir: string) => symlinkSync("../else/where/deep", join(dir, "project/link"));
       expect(await whatRan(files, ["--cwd=link/..", command], "project", { before })).toBe("the script");
@@ -685,7 +685,7 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
     });
   });
 
-  test.skipIf(isWindows)("a backslash in a directory name isn't a separator", async () => {
+  test("a backslash in a directory name isn't a separator", async () => {
     const { stdout, exitCode } = await bun(
       { "a\\b/package.json": script["package.json"] },
       [command, "--help"],
@@ -697,7 +697,7 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
 
   // Skipped for `bun check`. Like TypeScript, it treats a backslash as a separator everywhere, so it can't find files
   // in a directory like this.
-  describe.skipIf(isWindows || command === "check")("a backslash in a directory name with --cwd", () => {
+  describe.skipIf(command === "check")("a backslash in a directory name with --cwd", () => {
     // The directory that `a\b` would resolve to if the backslash were a separator.
     const other = { "a/b/other.ts": source, "a/b/sub/other.ts": source };
 

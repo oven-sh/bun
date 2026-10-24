@@ -1568,7 +1568,7 @@ describe.concurrent("--dry-run", () => {
 
   // publish only reads package.json, so a file that is readable but not writable (a
   // read-only checkout, a file owned by another user) must not stop it.
-  test.skipIf(isWindows)("read-only package.json", async () => {
+  test("read-only package.json", async () => {
     using dir = tempDir("publish-read-only", {
       "package.json": JSON.stringify({ name: "dry-run-read-only", version: "4.4.4" }),
       "index.js": "",

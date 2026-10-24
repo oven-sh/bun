@@ -2093,24 +2093,21 @@ describe.concurrent("test file discovery (scanner)", () => {
     );
   }
 
-  test.skipIf(isWindows)(
-    "a path argument longer than MAX_PATH_BYTES is skipped like a missing path when other arguments match",
-    async () => {
-      using dir = tempDir("scanner-long-arg-mixed", { "exists.test.ts": existsTest });
-      const longArg = "/" + Buffer.alloc(5000, "a").toString() + ".test.ts";
+  test("a path argument longer than MAX_PATH_BYTES is skipped like a missing path when other arguments match", async () => {
+    using dir = tempDir("scanner-long-arg-mixed", { "exists.test.ts": existsTest });
+    const longArg = "/" + Buffer.alloc(5000, "a").toString() + ".test.ts";
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "./exists.test.ts", longArg],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./exists.test.ts", longArg],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toContain("Ran 1 test across 1 file.");
-      expect(exitCode).toBe(0);
-    },
-  );
+    expect(stderr).toContain("Ran 1 test across 1 file.");
+    expect(exitCode).toBe(0);
+  });
 
   // The directory walk joins parent + entry name for every directory it
   // descends into and every candidate test file. With pathIgnorePatterns

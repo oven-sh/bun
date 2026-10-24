@@ -266,7 +266,7 @@ describe.concurrent.each([
   { via: "--no-orphans", argv: ["--no-orphans"], bunfig: false, env: {} },
   { via: "bunfig [run] noOrphans = true", argv: [], bunfig: true, env: {} },
 ])("clean exit reaps descendants", ({ via, argv, bunfig, env: extraEnv }) => {
-  test.concurrent.skipIf(!isPosix)(via, async () => {
+  test.concurrent(via, async () => {
     using dir = tempDir("no-orphans-clean-exit", {
       ...(bunfig && { "bunfig.toml": "[run]\nnoOrphans = true\n" }),
       "grandchild.js": `process.stdout.write("r"); setInterval(()=>{}, 1000);`,

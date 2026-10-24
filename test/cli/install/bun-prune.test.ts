@@ -1156,7 +1156,7 @@ test.concurrent(
   },
 );
 
-test.concurrent.skipIf(isWindows)("a symlinked .bin directory is never cleaned through", async () => {
+test.concurrent("a symlinked .bin directory is never cleaned through", async () => {
   const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
   const nm = join(dir, "node_modules");
   expect(existsSync(join(nm, ".bin"))).toBeFalse();

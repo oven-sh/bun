@@ -120,7 +120,7 @@ describe.concurrent("native binlink optimization", () => {
 
     // bunx takes the bin of a package from that package's own package.json. Here the entry in `.bin` leads into
     // the platform package, and the file of the main package keeps the mode of its tarball.
-    test.skipIf(isWindows).each(["a folder", "a link to another folder"])(
+    test.each(["a folder", "a link to another folder"])(
       `bunx runs the platform-specific bin with linker ${linker} and node_modules %s`,
       async nodeModules => {
         let env = { ...bunEnv };
@@ -294,7 +294,7 @@ describe.concurrent("native binlink optimization", () => {
   }
 
   // The link leaves node_modules, so its text depends on where node_modules really is.
-  test.skipIf(isWindows)("in a workspace whose node_modules is a link to another folder", async () => {
+  test("in a workspace whose node_modules is a link to another folder", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir();
     const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
     const app = join(packageDir, "packages", "app");

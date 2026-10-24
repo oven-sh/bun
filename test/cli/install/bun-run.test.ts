@@ -378,8 +378,7 @@ describe.concurrent("bun run", () => {
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
         expect(stderr).toContain(`Could not change directory to "${cwdArg}"`);
-        // Windows leaves the verdict on a path this long to SetCurrentDirectoryW.
-        if (!isWindows) expect(stderr).toContain("ENAMETOOLONG");
+        expect(stderr).toContain("ENAMETOOLONG");
         expect(stdout).toBe("");
         expect(proc.signalCode).toBeNull();
         expect(exitCode).toBe(1);
@@ -772,7 +771,7 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    it.skipIf(isWindows)("doesn't change an `npm run` that's only quoted text", async () => {
+    it("doesn't change an `npm run` that's only quoted text", async () => {
       const { dir, stdout, exitCode } = await runStart("echo 'step: npm run build -w app' && echo 'ok; done'");
       using _ = dir;
       expect(stdout).toContain("-w app");

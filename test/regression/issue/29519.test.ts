@@ -7,13 +7,11 @@
 // crashing visitChildren walks) in each new global.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
-// collectContinuously is very slow under Windows + ASAN in CI; the code path
-// is identical on Linux/macOS, so skip Windows to keep duration reasonable.
 // Both tests spawn independent subprocesses with no shared state, so run them
 // concurrently to halve wall-clock.
-describe.skipIf(isWindows).concurrent("Zig::GlobalObject creation on a warm VM under concurrent GC", () => {
+describe.concurrent("Zig::GlobalObject creation on a warm VM under concurrent GC", () => {
   test("bun test --isolate survives concurrent GC while swapping globals", async () => {
     const files: Record<string, string> = {};
     // Six files is enough to recycle the Zig::GlobalObject IsoSubspace slot

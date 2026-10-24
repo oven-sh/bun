@@ -1679,7 +1679,7 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
     expect(Buffer.compare(got, ref)).toBe(0);
   });
 
-  if (!isMacOS && !isWindows) {
+  if (!isMacOS) {
     test("TIFF on Linux throws UnsupportedOnPlatform", async () => {
       const tiff = Buffer.from("II*\x00\x08\x00\x00\x00", "binary");
       await expect(new Bun.Image(tiff).png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_FORMAT_UNSUPPORTED" });

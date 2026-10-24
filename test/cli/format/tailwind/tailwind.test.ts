@@ -5,7 +5,7 @@
 //
 // The order comes from the project's `tailwindcss` package. Here that's a stub that knows the classes in order.json.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../../children";
@@ -163,7 +163,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
   });
 
   // As with Nix, an image layer owned by root, or a sandbox. Skipped as root, which can write anywhere.
-  test.skipIf(isWindows || process.getuid?.() === 0)("works with read-only packages", async () => {
+  test.skipIf(process.getuid?.() === 0)("works with read-only packages", async () => {
     using dir = tempDir("bun-format-tailwind", {
       ...version4,
       ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n',

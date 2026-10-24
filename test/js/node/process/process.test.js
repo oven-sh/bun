@@ -40,15 +40,12 @@ it("process", () => {
 
   // process.title defaults to argv[0] as invoked, matching Node
   // (uv_get_process_title semantics), so it is the executable path here.
-  if (!isNode && process.platform !== "win32" && typeof process.title !== "string")
-    throw new Error("process.title is not a string");
-  if (!isNode && process.platform !== "win32" && process.title.length === 0) throw new Error("process.title is empty");
+  if (!isNode && typeof process.title !== "string") throw new Error("process.title is not a string");
+  if (!isNode && process.title.length === 0) throw new Error("process.title is empty");
 
-  if (process.platform !== "win32" && typeof process.env.USER !== "string")
-    throw new Error("process.env is not an object");
+  if (typeof process.env.USER !== "string") throw new Error("process.env is not an object");
 
-  if (process.platform !== "win32" && process.env.USER.length === 0)
-    throw new Error("process.env is missing a USER property");
+  if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
 
   if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32")
     throw new Error("process.platform is invalid");
@@ -1473,8 +1470,7 @@ describe.concurrent(() => {
       ).toThrow("The property 'prevValue.system' is invalid. Received -1");
     });
 
-    // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
-    it.skipIf(process.platform === "win32")("works with diff", () => {
+    it("works with diff", () => {
       const init = process.cpuUsage();
       init.system = 0;
       init.user = 0;
@@ -1483,7 +1479,7 @@ describe.concurrent(() => {
       expect(delta.system).toBeGreaterThanOrEqual(0);
     });
 
-    it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
+    it("works with diff of different structure", () => {
       const init = {
         system: 0,
         user: 0,
@@ -2744,7 +2740,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", async () => {
+  it("zeroExitWithUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {
@@ -2765,7 +2761,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("changeCodeInUncaughtHandler", async () => {
+  it("changeCodeInUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {

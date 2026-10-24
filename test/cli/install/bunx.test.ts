@@ -3033,8 +3033,7 @@ describe("a package in node_modules", () => {
     });
   });
 
-  // On Windows the entry is no link, so it does not say whose it is.
-  it.concurrent.skipIf(isWindows).each([[["@corp/tool"]], [["-p", "@corp/tool", "tool"]]])(
+  it.concurrent.each([[["@corp/tool"]], [["-p", "@corp/tool", "tool"]]])(
     "bunx %j runs the bin of that package where another one has the entry in .bin",
     async args => {
       using box = sandbox();
@@ -3126,7 +3125,7 @@ describe("flags", () => {
     const expected = { stdout: `local ${flags}\n`, stderr: "", exitCode: 0, requests: [] };
 
     expect(await box.run([...flags.split(" "), "local-tool", ...flags.split(" ")])).toEqual(expected);
-    if (isWindows) return;
+
     symlinkSync(bunExe(), join(box.dir, isDebug ? "bun-debug" : "bun"));
     const env = { ...box.env, PATH: box.dir + delimiter + box.env.PATH };
     expect(await box.run(["run", "--silent", "tool"], { env, bunx: [bunExe()] })).toEqual(expected);

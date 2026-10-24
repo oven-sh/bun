@@ -1334,11 +1334,7 @@ pub struct Options<'a> {
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
-    /// Set when `require_ref` is a variable of this file
-    /// (`Ast::owns_require_ref`): what `require_ref` is for every other file
-    /// of the bundle. A call that the bundler writes itself prints this one.
-    /// `Some(None)` is cjs and dev server output, where the `require` of the
-    /// bundle has no symbol.
+    /// The bundle's `require` when `require_ref` is the file's variable. `Some(None)`: no symbol.
     pub bundle_require_ref: Option<Option<Ref>>,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
@@ -1408,9 +1404,7 @@ impl<'a> Options<'a> {
         self.bundle_require_ref.unwrap_or(self.require_ref)
     }
 
-    /// `require_ref` as the object of `.main` or `.resolve`. In dev server
-    /// output a file's own variable starts as a bound `hmr.require`, which has
-    /// neither property, so both keep the dev server's spelling.
+    /// For `.main` and `.resolve`. In dev server output the bound `hmr.require` has neither.
     #[inline]
     pub(crate) fn require_ref_for_property(&self) -> Option<Ref> {
         if self.module_type == bundle_opts::Format::InternalBakeDev {
@@ -3002,10 +2996,7 @@ pub(crate) mod __gated_printer {
                     {
                         self.options.require_ref
                     } else {
-                        // The linker lowered an `import` or an `export from`
-                        // to this call. It is not a call of the file's own
-                        // `require`, and it runs before that variable has
-                        // its value.
+                        // A lowered `import` runs before the file's own variable has its value.
                         self.options.bundle_require_ref()
                     };
                     match require_ref {

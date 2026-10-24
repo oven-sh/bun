@@ -2435,8 +2435,7 @@ impl<'a> LinkerContext<'a> {
             Format::Cjs => None, // use unbounded global
             _ => runtime_require_ref,
         };
-        // A file that assigns `require` assigns its own variable, so that the
-        // other files of the bundle keep `bundle_require_ref`.
+        // A file that assigns `require` prints its own variable in place of `bundle_require_ref`.
         let owns_require_ref = ast.flags.contains(AstFlags::OWNS_REQUIRE_REF);
 
         let print_options = js_printer::Options {

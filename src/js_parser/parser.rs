@@ -211,10 +211,7 @@ pub mod Runtime {
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
-        /// A file that assigns the free `require` gets a `require` variable
-        /// of its own (`P::declare_own_require`). The bundler turns this on
-        /// where each module has its own `require`: not for a browser, where
-        /// `require` is a global that scripts share, and not in iife output.
+        /// A file that assigns the free `require` gets its own variable (`P::declare_own_require`).
         pub per_file_require: bool,
 
         pub replace_exports: ReplaceableExportMap,

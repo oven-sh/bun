@@ -493,8 +493,7 @@ impl<T: core::fmt::Debug> core::fmt::Debug for StoreSlice<T> {
 /// although it may contain no statements if there is nothing to export.
 pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 
-/// The index of the part that declares the `require` variable of a file with
-/// `Ast::owns_require_ref`. No other file has this part.
+/// The part that declares the `require` variable of a file with `Ast::owns_require_ref`.
 pub const OWN_REQUIRE_PART_INDEX: u32 = 1;
 
 // There are three types.

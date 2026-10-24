@@ -1352,13 +1352,10 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // In a CommonJS module `require` is a parameter of the module's own
-        // wrapper, so `require = x` changes it for that module alone.
+        // Node gives each CommonJS module its own `require`: an assignment is for that file alone.
         let own_require_ref = if p.assigns_free_require && p.options.features.per_file_require {
             let (ref_, part) = p.declare_own_require()?;
-            // After the part that the bundler reserves and ahead of the
-            // imports: in an import cycle another file can call a function of
-            // this file before the statements of this file run.
+            // Ahead of the imports: in an import cycle another file can call into this one first.
             before.insert(js_ast::OWN_REQUIRE_PART_INDEX as usize, part);
             Some(ref_)
         } else {

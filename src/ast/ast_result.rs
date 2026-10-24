@@ -72,9 +72,7 @@ pub struct Ast<'a> {
     /// wrappers in a variable.
     pub wrapper_ref: Ref,
     pub require_ref: Ref,
-    /// The file assigns the free `require`, so `require_ref` is a variable the
-    /// file declares. The assignment then stays out of the `require` that the
-    /// other files of a bundle share.
+    /// The file assigns the free `require`, so `require_ref` is a variable that the file declares.
     pub owns_require_ref: bool,
 
     // These are used when bundling. They are filled in during the parser pass

@@ -306,10 +306,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) has_called_runtime: bool,
 
-    /// Code that can run stores into the free `require`, and the store prints
-    /// as `ERequireCallTarget`. Unlike `has_been_assigned_to` of `require_ref`,
-    /// not set by a store in dead code, in a `with` body, or that a `define`
-    /// replaced.
+    /// A store into the free `require` that can run: not dead code, a `with` body, or a `define`.
     pub(crate) assigns_free_require: bool,
 
     /// The current part's symbol uses, built from `part_uses` when the part
@@ -6014,12 +6011,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A bundle has one `require` for all of its files. A file that assigns
-    /// the free `require` gets a variable of its own instead, and the printer
-    /// spells every `ERequireCallTarget` of that file as the variable.
-    ///
-    /// Returns the variable and the part `var <variable> = <the bundle's require>;`.
-    /// The part is not removable: no other part lists the variable as a use.
+    /// Declares `var <variable> = <the bundle's require>;` in a file that assigns `require`.
     #[cold]
     pub(crate) fn declare_own_require(&mut self) -> Result<(Ref, js_ast::Part), crate::Error> {
         debug_assert!(self.options.features.per_file_require);
@@ -6033,8 +6025,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                 )
             }
-            // `typeof require === "undefined" ? undefined : require`: the
-            // output can run where there is no `require`.
+            // cjs output can run where there is no `require`, so a `typeof` test guards the read.
             options::Format::Cjs => {
                 let require = Expr::init_identifier(self.require_ref, loc);
                 let test = self.check_if_defined_helper(require)?;

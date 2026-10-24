@@ -2564,8 +2564,7 @@ pub mod parse_worker {
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
         opts.features.auto_polyfill_require =
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
-        // Node and Bun give each module its own `require`. For a browser it
-        // is a global that scripts share.
+        // For a browser `require` is a global that scripts share, so a browser target stays out.
         opts.features.per_file_require = !task.source_index.is_runtime()
             && match output_format {
                 // `hmr.require` also loads the bundled imports of the module.

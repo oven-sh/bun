@@ -2496,7 +2496,7 @@ pub mod bv2_impl {
             false
         }
 
-        fn wait_for_parse(&mut self) {
+        pub(crate) fn wait_for_parse(&mut self) {
             // `tick_raw` (not `tick`) — `is_done` reborrows `*ctx` as
             // `&mut BundleV2`, and `BundleV2` (via `linker.r#loop`) owns the
             // `AnyEventLoop` slot, so holding `&mut AnyEventLoop` across the
@@ -2521,18 +2521,6 @@ pub mod bv2_impl {
                 self.graph.input_files.len(),
                 self.graph.ast.len()
             );
-        }
-
-        /// Runs one of the `enqueue_entry_points_*` variants and drains what it
-        /// scheduled, also when it failed: the runtime's parse task is on the pool
-        /// before anything in them can fail, and an error leads to the teardown.
-        fn enqueue_and_wait_for_parse(
-            &mut self,
-            enqueue: impl FnOnce(&mut Self) -> Result<(), Error>,
-        ) -> Result<(), Error> {
-            let enqueued = enqueue(self);
-            self.wait_for_parse();
-            enqueued
         }
 
         /// Callers require an entry point, so none after parsing means one was dropped without an error.
@@ -4478,12 +4466,13 @@ pub mod bv2_impl {
 
                 let entry_points: *const [Box<[u8]>] =
                     &raw const *this.transpiler.options.entry_points;
-                this.enqueue_and_wait_for_parse(|bundle| {
-                    // SAFETY: `transpiler.options.entry_points` is borrowed only for the duration
-                    // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
-                    // sidestep for the `&mut self` overlap.
-                    bundle.enqueue_entry_points_normal(unsafe { &*entry_points })
-                })?;
+                // SAFETY: `transpiler.options.entry_points` is borrowed only for the duration
+                // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
+                // sidestep for the `&mut self` overlap.
+                this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
+
+                // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
+                this.wait_for_parse();
                 this.dump_pool_stats("parse");
 
                 *minify_duration = (((bun_core::time::nano_timestamp() as i64)
@@ -4608,18 +4597,22 @@ pub mod bv2_impl {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
 
-            // The caller tears down a returned bundle; an error exit has to do it here.
-            let scanned = if this.transpiler.log().has_errors() {
-                Err(crate::Error::BuildFailed)
-            } else {
-                this.enqueue_and_wait_for_parse(|bundle| {
-                    bundle.enqueue_entry_points_normal(entry_points)
-                })
-            };
-            if let Err(err) = scanned {
-                this.deinit_without_freeing_arena();
+            if this.transpiler.log().has_errors() {
+                return Err(crate::Error::BuildFailed);
+            }
+
+            // enqueueEntryPoints schedules the runtime task before any fallible
+            // allocation. If a later allocation fails we must still drain the
+            // pool so workers aren't left holding pointers into the caller's
+            // stack-allocated Transpiler.
+            if let Err(err) = this.enqueue_entry_points_normal(entry_points) {
+                this.wait_for_parse();
                 return Err(err);
             }
+
+            // Even if entry point resolution produced errors we still wait for
+            // all enqueued parse tasks to finish so the graph is consistent.
+            this.wait_for_parse();
 
             Ok(this)
         }
@@ -4649,9 +4642,10 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
 
-                this.enqueue_and_wait_for_parse(|bundle| {
-                    bundle.enqueue_entry_points_bake_production(entry_points)
-                })?;
+                this.enqueue_entry_points_bake_production(entry_points)?;
+
+                // Drain the pool, then report entry point errors (as `generate_from_cli` does).
+                this.wait_for_parse();
 
                 if this.transpiler.log().has_errors() {
                     return Err(crate::Error::BuildFailed);
@@ -5711,9 +5705,10 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            self.enqueue_and_wait_for_parse(|bundle| {
-                bundle.enqueue_entry_points_normal(entry_points)
-            })?;
+            self.enqueue_entry_points_normal(entry_points)?;
+
+            // We must wait for all the parse tasks to complete, even if there are errors.
+            self.wait_for_parse();
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 

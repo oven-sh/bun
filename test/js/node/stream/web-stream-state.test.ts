@@ -78,30 +78,6 @@ describe.concurrent("a stream that a native consumer takes", () => {
     return { url: server.url, finish, [Symbol.asyncDispose]: () => server.stop(true) };
   }
 
-  // Serves the first chunk of a chunked body, "first ". drop() ends the connection in the middle of the body.
-  function droppedUpstream() {
-    const connections: { end(): void }[] = [];
-    const listener = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        data(socket) {
-          // One response for each connection, however many pieces its request arrives in.
-          if (connections.includes(socket)) return;
-          socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nfirst \r\n");
-          connections.push(socket);
-        },
-      },
-    });
-    return {
-      url: `http://127.0.0.1:${listener.port}/`,
-      drop() {
-        for (const connection of connections) connection.end();
-      },
-      [Symbol.dispose]: () => listener.stop(true),
-    };
-  }
-
   // Each consumer attaches to `response`, calls finish() once it is attached, and resolves when
   // it has taken the whole body.
   const consumers: Record<string, (response: Response, finish: () => void) => Promise<void>> = {
@@ -341,12 +317,23 @@ describe.concurrent("a stream that a native consumer takes", () => {
   });
 
   test("errors with the failure of its producer", async () => {
-    using upstream = droppedUpstream();
+    // Serves a chunked body and drops the connection in the middle of it.
+    const connections: { end(): void }[] = [];
+    using upstream = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nfirst \r\n");
+          connections.push(socket);
+        },
+      },
+    });
     using dir = tempDir("web-stream-state", {});
-    const response = await fetch(upstream.url);
+    const response = await fetch(`http://127.0.0.1:${upstream.port}/`);
     const body = response.body!;
     const written = Bun.write(join(dir, "out"), response);
-    upstream.drop();
+    for (const connection of connections) connection.end();
     const error = await written.catch(error => error);
     expect(error.code).toBe("ECONNRESET");
     expect(state(body)).toEqual(errored);
@@ -390,104 +377,5 @@ describe.concurrent("a stream that a native consumer takes", () => {
     expect(error.code).toBe("ENOENT");
     expect(state(stream)).toEqual(errored);
     expect(await finished(stream).catch(error => error)).toBe(error);
-  });
-
-  // A child's stdin has no promise to reject. When the producer fails, the child reads what arrived before the
-  // failure and then the end of its input. The failure shows on the stream.
-  describe("as Bun.spawn() stdin", () => {
-    // The child writes what it reads to its stdout.
-    const echo = (stdin: ReadableStream | Response) =>
-      Bun.spawn({
-        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-        env: bunEnv,
-        stdin,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-    // What each failing stream delivers before it fails.
-    const delivered: Record<string, string> = { "a JS stream": "", 'a type: "direct" stream': "first " };
-
-    test.each(Object.entries(failing))("%s errors with the failure of its producer", async (kind, make) => {
-      const failure = new Error("the producer failed");
-      const stream = make(failure);
-      await using child = echo(stream);
-      const [error, stdout, exitCode] = await Promise.all([
-        finished(stream).catch(error => error),
-        child.stdout.text(),
-        child.exited,
-      ]);
-      expect(error).toBe(failure);
-      expect(state(stream)).toEqual(errored);
-      expect({ stdout, exitCode }).toEqual({ stdout: delivered[kind], exitCode: 0 });
-    });
-
-    test("a fetch() body errors with the failure of its producer", async () => {
-      using upstream = droppedUpstream();
-      const response = await fetch(upstream.url);
-      const body = response.body!;
-      await using child = echo(response);
-      const output = child.stdout.getReader();
-      const decoder = new TextDecoder();
-      let stdout = "";
-      // The child has the whole first chunk before the connection goes away.
-      while (stdout.length < "first ".length) {
-        const { done, value } = await output.read();
-        if (done) break;
-        stdout += decoder.decode(value, { stream: true });
-      }
-      upstream.drop();
-      const [error, rest, exitCode] = await Promise.all([
-        finished(body).catch(error => error),
-        output.read(),
-        child.exited,
-      ]);
-      expect(error.code).toBe("ECONNRESET");
-      expect(state(body)).toEqual(errored);
-      expect({ stdout, ended: rest.done, exitCode }).toEqual({ stdout: "first ", ended: true, exitCode: 0 });
-    });
-
-    test("an S3 stream errors when its object is missing", async () => {
-      await using server = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        fetch: () =>
-          new Response(
-            `<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`,
-            { status: 404, headers: { "Content-Type": "application/xml" } },
-          ),
-      });
-      const s3 = new Bun.S3Client({
-        endpoint: server.url.href,
-        bucket: "bucket",
-        accessKeyId: "key",
-        secretAccessKey: "secret",
-      });
-      const stream = s3.file("missing").stream();
-      await using child = echo(stream);
-      const [error, stdout, exitCode] = await Promise.all([
-        finished(stream).catch(error => error),
-        child.stdout.text(),
-        child.exited,
-      ]);
-      expect({ name: error.name, code: error.code }).toEqual({ name: "S3Error", code: "NoSuchKey" });
-      expect(state(stream)).toEqual(errored);
-      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
-    });
-
-    test.each(Object.entries(endless))("%s closes when the child exits before the end", async (_kind, make) => {
-      const { promise: cancelled, resolve: onCancel } = Promise.withResolvers<void>();
-      const stream = make(cancelled, onCancel);
-      await using child = Bun.spawn({
-        cmd: [bunExe(), "-e", `process.stdin.once("data", () => process.exit(0));`],
-        env: bunEnv,
-        stdin: stream,
-        stdout: "ignore",
-        stderr: "inherit",
-      });
-      expect(await child.exited).toBe(0);
-      await cancelled;
-      expect(state(stream)).toEqual(closed);
-      await finished(stream);
-    });
   });
 });

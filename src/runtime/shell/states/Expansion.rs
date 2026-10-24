@@ -726,7 +726,10 @@ impl Expansion {
                     }
                 }
                 ast::SimpleAtom::CmdSubst(sub) => {
-                    return Self::start_cmd_subst(interp, this, sub, Some(Box::new(words)));
+                    // A script with no statement ends inside `Script::start`. `child_done` would then continue this walk inside this call.
+                    if !sub.script.stmts.is_empty() {
+                        return Self::start_cmd_subst(interp, this, sub, Some(Box::new(words)));
+                    }
                 }
                 _ => {
                     let shell = me.base.shell();

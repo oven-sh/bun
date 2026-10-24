@@ -2351,7 +2351,7 @@ pub struct LexError {
 struct LexPass<'bump> {
     /// `Err`: the lexer stopped before the end of the script.
     result: Result<LexResult<'bump>, LexerError>,
-    /// The pass read a `${NAME}` or a `${NAME<op>word}`, and no `${NAME:?word}` or `${NAME?word}`.
+    /// The pass read the whole script, with a `${NAME}` or a `${NAME<op>word}` and no `${NAME:?word}` or `${NAME?word}`.
     can_be_text: bool,
 }
 
@@ -2375,7 +2375,7 @@ fn lex_pass<'bump>(
         lexer.param_heads = param_heads;
         let result = lexer.lex();
         LexPass {
-            can_be_text: lexer.forms_read == FormsRead::NoGuard,
+            can_be_text: result.is_ok() && lexer.forms_read == FormsRead::NoGuard,
             result: result.map(|()| lexer.get_result()),
         }
     }
@@ -3775,15 +3775,19 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         } else {
             return Ok(false);
         };
-        // Set before the depth error below: `parse_script` reads it when this pass fails.
-        if op.is_some_and(|op| op.action == ast::ParamAction::Error) {
+        let is_guard = op.is_some_and(|op| op.action == ast::ParamAction::Error);
+        if op.is_some() && self.subshell_depth >= MAX_SUBSHELL_DEPTH {
+            // Past the nesting limit of `$(...)` a form is text. A guard is not: as text it stops nothing.
+            if !is_guard {
+                return Ok(false);
+            }
+            self.add_error(b"Subshell nesting depth exceeded");
+            return Err(LexerError::SubshellDepthExceeded);
+        }
+        if is_guard {
             self.forms_read = FormsRead::Guard;
         } else if self.forms_read == FormsRead::None {
             self.forms_read = FormsRead::NoGuard;
-        }
-        if op.is_some() && self.subshell_depth >= MAX_SUBSHELL_DEPTH {
-            self.add_error(b"Subshell nesting depth exceeded");
-            return Err(LexerError::SubshellDepthExceeded);
         }
 
         if let Some(op) = op {

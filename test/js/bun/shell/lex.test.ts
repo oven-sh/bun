@@ -1215,11 +1215,21 @@ describe("lex shell", () => {
       const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
       const nested = (depth: number) => repeat("${A:-", depth) + "x" + repeat("}", depth);
       expect(forms(nested(128))).toHaveLength(128);
-      expect(forms(nested(129))).toHaveLength(0);
+      expect(forms(nested(129))).toHaveLength(128);
       // A form counts as one level of $(...).
       const inSubst = (depth: number) => repeat("$(echo ", depth) + "${A:-x}" + repeat(")", depth);
       expect(forms(inSubst(127))).toHaveLength(1);
       expect(forms(inSubst(128))).toHaveLength(0);
+      // The forms after a form that is text are read.
+      expect(forms(nested(129) + ' "${X:?}"')).toHaveLength(129);
+    });
+
+    // The lexer stopped before the end, so a guard can follow. The script is not lexed again with every `${` as text.
+    test("a $(...) past the nesting limit in the word of a form is an error", () => {
+      const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+      const tooDeep = repeat("${A:-", 128) + "$(echo x)" + repeat("}", 128);
+      expect(() => lex({ raw: [tooDeep] })).toThrow("SubshellDepthExceeded");
+      expect(() => lex({ raw: [tooDeep + '; true "${X:?}" && echo RAN'] })).toThrow("SubshellDepthExceeded");
     });
 
     // An interpolated value is data. It never supplies the name, the operator

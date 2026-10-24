@@ -70,8 +70,7 @@ pub struct Summary {
 
     pub(crate) offline_misses: OfflineMisses,
 
-    /// The download of a `Lockfile::unread` package failed. Only the isolated linker gets to a
-    /// save after a failed download.
+    /// Set by the isolated linker: the download of a `Lockfile::unread` package failed.
     pub(crate) unread_not_downloaded: bool,
 }
 

@@ -33,6 +33,7 @@ typedef union BunStringImpl {
 namespace WTF {
 class StringImpl;
 class String;
+class URL;
 }
 
 typedef union BunStringImpl {
@@ -363,6 +364,9 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // This creates a detached string view, which cannot be ref/unref.
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString toStringView(WTF::StringView view);
+
+WTF::String moduleKeyFromFileURL(const WTF::URL&);
+WTF::String resolvedModuleKeyFromFileURL(const WTF::URL&, const WTF::String&);
 }
 
 typedef struct {
@@ -402,6 +406,7 @@ extern "C" JSC::JSPromise* Bun__transpileFile(
     bool allowPromise,
     bool isCommonJSRequire,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     // The JSModuleLoader that is fetching when it is not the global object's, else empty.
     JSC::EncodedJSValue moduleLoader = {});
 

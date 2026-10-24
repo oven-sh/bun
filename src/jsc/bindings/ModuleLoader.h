@@ -90,7 +90,8 @@ JSValue fetchESMSourceCodeSync(
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
-    BunString* typeAttribute);
+    BunString* typeAttribute,
+    bool preservePathDelimiters = false);
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
@@ -99,7 +100,8 @@ JSValue fetchESMSourceCodeAsync(
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
-    BunString* typeAttribute);
+    BunString* typeAttribute,
+    bool preservePathDelimiters = false);
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -122,6 +124,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     JSC::ThrowScope& scope);
 
 JSValue resolveAndFetchBuiltinModule(

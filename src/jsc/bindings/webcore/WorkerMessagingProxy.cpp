@@ -466,7 +466,9 @@ void WorkerMessagingProxy::deliverErrorToWorkerObject(Worker& workerObject, Scri
     if (!error) {
         // The thrown value stayed on the worker's thread; what the worker printed of it did not.
         auto& name = workerObject.name();
-        error = JSC::ErrorInstance::create(globalObject, name.isEmpty() ? makeString("Uncaught error in worker\n"_s, message) : makeString("Uncaught error in worker \""_s, name, "\"\n"_s, message), JSC::ErrorType::Error, {}, String(), String());
+        auto text = name.isEmpty() ? makeString("Uncaught error in worker\n"_s, message) : makeString("Uncaught error in worker \""_s, name, "\"\n"_s, message);
+        auto stack = makeString("Error: "_s, text);
+        error = JSC::ErrorInstance::create(globalObject, WTF::move(text), JSC::ErrorType::Error, {}, String(), WTF::move(stack));
     }
     Bun::ModuleGraphContextScope ownerContext(*workerObject.scriptExecutionContext());
     Bun__reportUnhandledError(globalObject, JSC::JSValue::encode(error));

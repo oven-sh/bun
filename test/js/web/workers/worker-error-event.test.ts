@@ -69,7 +69,7 @@ describe("Worker 'error' event", () => {
 
     test("the parent's process.on('uncaughtException') takes it", async () => {
       const { stdout, stderr, exitCode } = await runParent(
-        `process.on("uncaughtException", (err, origin) => console.log(JSON.stringify({ origin, name: err.constructor.name, lines: err.message.split("\\n").filter(line => /^[A-Za-z]/.test(line)), stack: typeof err.stack })));
+        `process.on("uncaughtException", (err, origin) => console.log(JSON.stringify({ origin, name: err.constructor.name, lines: err.message.split("\\n").filter(line => /^[A-Za-z]/.test(line)), stack: err.stack === "Error: " + err.message })));
          const worker = new Worker(${JSON.stringify(dataUrl(`throw new TypeError("WEB-WORKER-UNCAUGHT")`))});
          worker.addEventListener("close", event => console.log("worker closed", event.code));`,
       );
@@ -79,7 +79,7 @@ describe("Worker 'error' event", () => {
           origin: "uncaughtException",
           name: "Error",
           lines: ["Uncaught error in worker", "TypeError: WEB-WORKER-UNCAUGHT"],
-          stack: "undefined",
+          stack: true,
         }),
         "worker closed 1",
         "",
@@ -157,18 +157,24 @@ describe("Worker 'error' event", () => {
       }).toEqual({ stdout: "", reports: 1, webWorkerReport: false, exitCode: 1 });
     });
 
-    // The worker's 'exit' listener runs after its error was posted. The parent has not turned its
-    // event loop since, so the error is still queued when terminate() is called.
+    // The worker's 'exit' listener runs after its error was posted. The parent blocks until then with
+    // no turn of its event loop, so the error is still queued when terminate() is called.
     test("an error still queued when terminate() is called is not reported", async () => {
+      const worker = dataUrl(
+        `import { workerData } from "node:worker_threads";
+         process.on("exit", () => { Atomics.store(workerData, 0, 1); Atomics.notify(workerData, 0); });
+         throw new Error("POST-TERMINATE");`,
+      );
       const result = await runParent(
         `process.on("uncaughtException", err => console.log("reported", err.message));
          const posted = new Int32Array(new SharedArrayBuffer(4));
-         const worker = new Worker(${JSON.stringify(dataUrl(`import { workerData } from "node:worker_threads"; process.on("exit", () => Atomics.store(workerData, 0, 1)); throw new Error("POST-TERMINATE");`))}, { workerData: posted });
+         const worker = new Worker(${JSON.stringify(worker)}, { workerData: posted });
          worker.addEventListener("close", () => console.log("closed"));
-         while (Atomics.load(posted, 0) === 0);
-         worker.terminate();`,
+         const signal = Atomics.wait(posted, 0, 0, 4000);
+         worker.terminate();
+         console.log(signal === "timed-out" ? "the worker posted no error" : "terminated");`,
       );
-      expect(result).toEqual({ stdout: "closed\n", stderr: "", exitCode: 0 });
+      expect(result).toEqual({ stdout: "terminated\nclosed\n", stderr: "", exitCode: 0 });
     });
 
     // The first thread to read sub/ logs the warning of its tsconfig.json: here that is a worker.

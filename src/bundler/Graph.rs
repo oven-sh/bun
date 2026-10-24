@@ -244,6 +244,20 @@ impl<'a> Graph<'a> {
     }
 }
 
+impl Graph<'_> {
+    /// The page of a server-side HTML import, looked up by the path of its stand-in source.
+    pub(crate) fn html_import_page(&self, stand_in: IndexInt) -> Option<IndexInt> {
+        let path = &self.input_files.items_source()[stand_in as usize].path;
+        self.build_graphs[options::Target::Browser].get_path(path)
+    }
+
+    /// `(stand-in, page)` for each server-side HTML import whose page is in the graph.
+    pub fn html_import_pages(&self) -> impl Iterator<Item = (IndexInt, IndexInt)> + '_ {
+        let stand_ins = self.html_imports.server_source_indices.iter();
+        stand_ins.filter_map(|&stand_in| Some((stand_in, self.html_import_page(stand_in)?)))
+    }
+}
+
 // The resolver
 // crate re-exports the canonical enum from `bun_options_types`; re-export it
 // here so `InputFile` and the derived `items_side_effects()` SoA accessor share

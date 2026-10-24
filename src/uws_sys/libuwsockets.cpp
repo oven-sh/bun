@@ -434,17 +434,17 @@ extern "C"
     }
   }
 
-  void uws_app_close(int ssl, uws_app_t *app)
+  void uws_app_close(int ssl, uws_app_t *app, int thread_ends)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->close();
+      uwsApp->close(thread_ends);
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->close();
+      uwsApp->close(thread_ends);
     }
   }
 

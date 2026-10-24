@@ -114,11 +114,15 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
     while (group->iterator) {
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
-        us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        /* A thread that ends reads nothing more, so it asks the peer for nothing: a close_notify
+         * is answered, and an answer that arrives ahead of the close makes the kernel reset the
+         * connection over the unread bytes. */
+        us_socket_close(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         /* A TLS socket may have *deferred* that: us_internal_ssl_close with
          * code==0 sends close_notify and, on WANT_READ, waits for the peer's
-         * reply. Callers (e.g. Listener.deinit) free the embedding storage
-         * next, which would leave s->group dangling. */
+         * reply, and either code waits for spilled ciphertext. Callers (e.g.
+         * Listener.deinit) free the embedding storage next, which would leave
+         * s->group dangling. */
         if (!us_socket_is_closed(s)) {
             us_internal_socket_close_raw(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
         }

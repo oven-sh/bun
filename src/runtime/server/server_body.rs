@@ -2376,7 +2376,7 @@ where
                 && !self.flags.get().contains(ServerFlags::TERMINATED)
                 && !self.deinit_running.get())
         {
-            self.stop(abrupt);
+            self.stop(abrupt, false);
         }
 
         rc
@@ -2386,7 +2386,7 @@ where
         if self.has_listener()
             || (!self.flags.get().contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
         {
-            self.stop(true);
+            self.stop(true, false);
         }
     }
 

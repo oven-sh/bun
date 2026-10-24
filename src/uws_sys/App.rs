@@ -95,7 +95,12 @@ impl<const SSL: bool> App<SSL> {
     }
 
     pub fn close(&mut self) {
-        c::uws_app_close(Self::SSL_FLAG, self.as_raw())
+        c::uws_app_close(Self::SSL_FLAG, self.as_raw(), 0)
+    }
+
+    /// [`close`](Self::close) for a thread that ends: see `thread_ends` in libusockets.h.
+    pub fn close_as_thread_ends(&mut self) {
+        c::uws_app_close(Self::SSL_FLAG, self.as_raw(), 1)
     }
 
     /// Close every HTTP connection that is idle (no request being received, no
@@ -500,7 +505,7 @@ pub mod c {
     pub(crate) type uws_filter_handler = Option<extern "C" fn(*mut us_socket_t, i32, *mut c_void)>;
 
     unsafe extern "C" {
-        pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
+        pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s, thread_ends: i32);
         pub(crate) safe fn uws_app_close_idle(
             ssl: i32,
             app: &mut uws_app_s,

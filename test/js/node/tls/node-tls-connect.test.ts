@@ -4621,9 +4621,10 @@ describe.each([
     proc.stdin.end();
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
-    // 21 is an alert: a socket that its thread closes sends the close_notify ahead of the FIN.
-    const sentLast = protocol === "tls" && (kind === "worker" || kind === "teardown") ? [21] : [];
-    expect(result).toEqual({ events: ["end", "close false"], sentLast });
+    // A thread that ends sends what a process that exits sends: no close_notify (an alert, type 21) ahead of the
+    // FIN. The peer answers a close_notify, and an answer that arrives before the close makes the kernel reset
+    // the connection over the unread bytes.
+    expect(result).toEqual({ events: ["end", "close false"], sentLast: [] });
     expect(exitCode).toBe(0);
   });
 });
@@ -4736,6 +4737,84 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
     const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+// The connections a server accepted end with its thread too, whichever kind of server it is.
+// The relay sees how the TCP connection to the server ends, and what the server sent after its reply.
+describe("an idle TLS connection of a server in a Worker", () => {
+  const servers = {
+    "Bun.listen": `Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data(socket) {
+          socket.write("pong");
+        },
+      },
+    })`,
+    "Bun.serve": `Bun.serve({ hostname: "127.0.0.1", port: 0, tls, fetch: () => new Response("pong") })`,
+  };
+
+  it.each(Object.entries(servers))("%s: ends with a FIN when the Worker ends", async (_, listen) => {
+    const url = URL.createObjectURL(
+      new Blob([`const tls = ${JSON.stringify(COMMON_CERT_)}; postMessage(${listen}.port);`]),
+    );
+    const worker = new Worker(url);
+    const failed = Promise.withResolvers<never>();
+    worker.addEventListener("error", event => failed.reject(event.error ?? new Error(event.message)));
+    let client: TLSSocket | undefined;
+    try {
+      const [{ data: port }] = await Promise.race([once(worker, "message"), failed.promise]);
+
+      const seen = Promise.withResolvers<{ events: string[]; sentLast: number[] }>();
+      let replied = false;
+      await using relay = net.createServer(downstream => {
+        const events: string[] = [];
+        const sentLast: Buffer[] = [];
+        const server = net.connect(port, "127.0.0.1");
+        downstream.on("error", () => {});
+        downstream.on("data", chunk => server.write(chunk));
+        // The client must not answer the server's last record: the server's socket is closed by then.
+        server.on("data", chunk => void (replied ? sentLast.push(chunk) : downstream.write(chunk)));
+        server.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+        server.on("end", () => events.push("end"));
+        server.on("close", hadError => {
+          events.push(`close ${hadError}`);
+          downstream.destroy();
+          seen.resolve({ events, sentLast: tlsRecords(Buffer.concat(sentLast)).map(record => record.type) });
+        });
+      });
+      await once(relay.listen(0, "127.0.0.1"), "listening");
+
+      // A TLS 1.2 record shows its type.
+      client = tls.connect({
+        port: (relay.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        servername: "localhost",
+        ca: COMMON_CERT_.cert,
+        maxVersion: "TLSv1.2",
+      });
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      // Once the reply is read, so is everything the client sent, and the kernel has no reason of its own to reset.
+      let reply = "";
+      const got = Promise.withResolvers<void>();
+      client.on("data", chunk => {
+        reply += chunk;
+        if (reply.endsWith("pong")) got.resolve();
+      });
+      await got.promise;
+      replied = true;
+
+      worker.terminate();
+      expect(await seen.promise).toEqual({ events: ["end", "close false"], sentLast: [] });
+    } finally {
+      client?.destroy();
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
   });
 });
 

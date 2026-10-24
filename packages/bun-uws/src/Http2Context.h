@@ -785,12 +785,13 @@ struct Http2Context {
     }
 
     /* GOAWAY every connection and close it. Streams still in flight get
-     * onAborted, as TemplatedApp::close() does for HTTP/1 sockets. */
-    void closeAll() {
-        forEachConnection([](Http2Connection *conn) {
+     * onAborted, as TemplatedApp::close() does for HTTP/1 sockets.
+     * `thread_ends`: see us_socket_group_close_all_ex. */
+    void closeAll(int thread_ends = 0) {
+        forEachConnection([thread_ends](Http2Connection *conn) {
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
-            us_socket_close(conn->s, 0, nullptr);
+            us_socket_close(conn->s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, nullptr);
         });
     }
 

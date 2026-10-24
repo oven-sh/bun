@@ -42,6 +42,14 @@ fn is_macro_path(str: &[u8]) -> bool {
 // MacroContext
 // ══════════════════════════════════════════════════════════════════════════
 
+/// A macro resolver that no `MacroContext` uses now, with the options of the build that it was made for.
+type IdleMacroResolver = (Arc<TransformOptions>, Box<Resolver<'static>>);
+
+thread_local! {
+    // A `MacroContext` lasts one module in a transpile job and one call of `Bun.Transpiler`: its resolver waits here for the next.
+    static IDLE_MACRO_RESOLVER: Cell<Option<IdleMacroResolver>> = const { Cell::new(None) };
+}
+
 // All three are modelled as raw pointers because the referents live
 // inside the owning `Transpiler` and are also reachable through other aliases
 // (`Transpiler.resolver`, `Transpiler.env`, `Transpiler.options`); a `&'a mut`
@@ -55,6 +63,8 @@ pub(crate) struct MacroContext {
     pub(crate) macros: MacroMap,
     pub(crate) remap: bun_ptr::BackRef<MacroRemap>,
     pub(crate) javascript_object: JSValue,
+    /// Resolves the imports of macros: `resolver` made over for the environment a macro runs in. Lazy like `bump`.
+    pub(crate) macro_resolver: Option<Box<Resolver<'static>>>,
     /// The AST takes lifetime-erased `&[u8]` arena slices (property keys /
     /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
     /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
@@ -95,9 +105,38 @@ impl MacroContext {
             transform_options: Arc::clone(&transpiler.options.transform_options),
             remap: bun_ptr::BackRef::new(&transpiler.options.macro_remap),
             javascript_object: JSValue::ZERO,
+            macro_resolver: None,
             // Deferred until `call()` — see field doc.
             bump: None,
         }
+    }
+
+    /// Resolves the import of a macro for Bun, where the macro runs, and not for the output of the importing build.
+    fn resolve(
+        &mut self,
+        source_dir: &[u8],
+        specifier: &[u8],
+    ) -> crate::Result<bun_resolver::Result> {
+        // SAFETY: `resolver` outlives `self` (see struct comment), and nothing resolves with it during this call.
+        let importer = unsafe { &*self.resolver };
+        let resolver = match &mut self.macro_resolver {
+            Some(resolver) => resolver,
+            // The address of the options says which build made the idle resolver.
+            slot @ None => slot.insert(match IDLE_MACRO_RESOLVER.take() {
+                Some((options, idle)) if Arc::ptr_eq(&options, &self.transform_options) => idle,
+                _ => Transpiler::macro_resolver(importer, &self.transform_options)?,
+            }),
+        };
+        // What the importing resolver can get after its first macro: a log per module, the auto-installer, `require.extensions`.
+        resolver.log = importer.log;
+        resolver.package_manager = importer.package_manager;
+        if resolver.opts.extra_cjs_extensions != importer.opts.extra_cjs_extensions {
+            resolver
+                .opts
+                .extra_cjs_extensions
+                .clone_from(&importer.opts.extra_cjs_extensions);
+        }
+        Ok(resolver.resolve(source_dir, specifier, bun_ast::ImportKind::Stmt)?)
     }
 
     pub(crate) fn call(
@@ -130,26 +169,19 @@ impl MacroContext {
 
         debug_assert!(!is_macro_path(import_record_path_without_macro_prefix));
 
-        // SAFETY: `resolver` outlives `self` (see struct comment); uniquely
-        // accessed for the duration of this resolve call.
-        let resolver = unsafe { &mut *self.resolver };
-
         let input_specifier: &[u8] = 'brk: {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
-                import_record_path,
+                import_record_path_without_macro_prefix,
                 bun_ast::Target::Bun,
                 Default::default(),
             ) {
                 break 'brk replacement.path.as_bytes();
             }
 
-            let resolve_result = match resolver.resolve(
-                source_dir,
-                import_record_path_without_macro_prefix,
-                bun_ast::ImportKind::Stmt,
-            ) {
+            let resolved = self.resolve(source_dir, import_record_path_without_macro_prefix);
+            let resolve_result = match resolved {
                 Ok(r) => r,
-                Err(bun_resolver::Error::ModuleNotFound) => {
+                Err(crate::Error::Resolver(bun_resolver::Error::ModuleNotFound)) => {
                     log.add_resolve_error(
                         Some(source),
                         import_range,
@@ -173,7 +205,7 @@ impl MacroContext {
                             bstr::BStr::new(import_record_path)
                         ),
                     );
-                    return Err(e.into());
+                    return Err(e);
                 }
             };
             // The resolver's `Result` owns its path strings via the global `DirnameStore`
@@ -255,6 +287,16 @@ impl MacroContext {
         });
         Ok(ret?)
         // this.macros.getOrPut(key: K)
+    }
+}
+
+impl Drop for MacroContext {
+    fn drop(&mut self) {
+        if let Some(resolver) = self.macro_resolver.take() {
+            let idle = (Arc::clone(&self.transform_options), resolver);
+            // The slot is gone when the thread exits. Then the resolver is dropped here.
+            let _ = IDLE_MACRO_RESOLVER.try_with(|slot| slot.set(Some(idle)));
+        }
     }
 }
 

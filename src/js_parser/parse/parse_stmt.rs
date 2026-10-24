@@ -14,7 +14,7 @@ use js_lexer::T;
 use crate::parser::fs;
 use crate::parser::{
     AwaitOrYield, DeferredTsDecorators, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
-    StatementScope, StmtList,
+    StatementScope, StmtList, StructKind,
 };
 use crate::typescript;
 use bun_ast::{ImportKind, ImportRecordFlags, ImportRecordTag};
@@ -1756,6 +1756,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Self::parse_labeled_stmt(p, opts, loc, expr.loc, ident.ref_);
                 }
 
+                if (name == b"struct" || name == b"shared")
+                    && p.lexer.token == T::TIdentifier
+                    && !p.lexer.has_newline_before
+                {
+                    if let Some(stmt) = Self::parse_struct_stmt(p, opts, loc, expr.loc, name)? {
+                        return Ok(stmt);
+                    }
+                }
+
                 if Self::IS_TYPESCRIPT_ENABLED {
                     if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
                         // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
@@ -1779,6 +1788,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         ))
+    }
+
+    /// `struct Foo {}` and `shared struct Foo {}` (https://github.com/tc39/proposal-structs).
+    /// Reached with the leading `struct` / `shared` identifier already parsed as an
+    /// expression and the next token being an identifier on the same line. Returns
+    /// `None` when the text turns out not to be a struct declaration.
+    #[cold]
+    #[inline(never)]
+    fn parse_struct_stmt(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions<'a>,
+        loc: bun_ast::Loc,
+        keyword_loc: bun_ast::Loc,
+        name: &[u8],
+    ) -> Result<Option<Stmt>> {
+        let mut kind = StructKind::Struct;
+        let mut keyword = bun_ast::Range {
+            loc: keyword_loc,
+            len: i32::try_from(name.len()).expect("int cast"),
+        };
+        if name == b"shared" {
+            if p.lexer.raw() != b"struct" {
+                return Ok(None);
+            }
+            kind = StructKind::Shared;
+            keyword = p.lexer.range();
+            p.lexer.next()?;
+            if p.lexer.token != T::TIdentifier || p.lexer.has_newline_before {
+                p.lexer.expected(T::TIdentifier)?;
+            }
+        }
+        if opts.lexical_decl != LexicalDecl::AllowAll {
+            p.forbid_lexical_decl(loc);
+        }
+        Ok(Some(p.parse_class_stmt_after_keyword(
+            loc, opts, keyword, kind,
+        )?))
     }
 
     /// Cold TS-only statement keywords reached from `parse_stmt_fallthrough` once the

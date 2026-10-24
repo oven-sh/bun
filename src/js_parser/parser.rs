@@ -1466,8 +1466,19 @@ pub enum LexicalDecl {
     AllowFnInsideLabel = 3,
 }
 
+/// `struct` / `shared struct` declarations (https://github.com/tc39/proposal-structs)
+/// are parsed as classes and lowered to `class X extends __structBase(...)`.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum StructKind {
+    #[default]
+    None,
+    Struct,
+    Shared,
+}
+
 #[derive(Default)]
 pub struct ParseClassOptions<'a> {
+    pub(crate) struct_kind: StructKind,
     pub(crate) ts_decorators: &'a [Expr],
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_type_script_declare: bool,

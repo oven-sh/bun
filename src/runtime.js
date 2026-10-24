@@ -360,3 +360,135 @@ export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
       configurable: true,
     });
 };
+
+// TC39 structs (https://github.com/tc39/proposal-structs), unshared and shared.
+// `struct S extends P { a; b }` lowers to `class S extends __structBase(P, ["a", "b"], false)`.
+// The returned class defines every declared field of the whole chain as
+// `undefined` before any subclass code runs, then makes the instance
+// non-extensible. The first construction of each struct also locks down its
+// prototype chain and constructor and brands its methods.
+var __structInfo = /* @__PURE__ */ new WeakMap();
+var __structLayout = /* @__PURE__ */ new WeakMap();
+var __structLocked = /* @__PURE__ */ new WeakSet();
+
+var __structSharedInstances = /* @__PURE__ */ new WeakSet();
+var __structSharedInstances = /* @__PURE__ */ new WeakSet();
+var __structIsShareable = v => (v !== null && typeof v === "object" ? __structSharedInstances.has(v) : typeof v !== "function");
+var __structIsShareable = v => (v !== null && typeof v === "object" ? __structSharedInstances.has(v) : typeof v !== "function");
+
+var __structBrandMethods = proto => {
+  for (var key of Reflect.ownKeys(proto)) {
+    if (key === "constructor") continue;
+    var desc = Object.getOwnPropertyDescriptor(proto, key);
+    var wrap = fn => {
+      var wrapped = function (...args) {
+        if (this === null || (typeof this !== "object" && typeof this !== "function") || !proto.isPrototypeOf(this))
+          throw new TypeError("Method called on an incompatible receiver; struct methods are not generic");
+        return Reflect.apply(fn, this, args);
+      };
+      __defProp(wrapped, "name", { value: fn.name, configurable: true });
+      __defProp(wrapped, "length", { value: fn.length, configurable: true });
+      return wrapped;
+    };
+    if (typeof desc.value === "function") desc.value = wrap(desc.value);
+    if (desc.get) desc.get = wrap(desc.get);
+    if (desc.set) desc.set = wrap(desc.set);
+    desc.configurable = false;
+    if ("writable" in desc) desc.writable = false;
+    __defProp(proto, key, desc);
+  }
+  Object.preventExtensions(proto);
+};
+
+var __structLockdown = ctor => {
+  var chain = [];
+  for (var c = ctor; typeof c === "function" && c !== Function.prototype; c = Object.getPrototypeOf(c)) chain.push(c);
+  for (var c of chain) {
+    if (__structLocked.has(c)) continue;
+    __structLocked.add(c);
+    if (c.prototype && !__structInfo.get(c)?.root) __structBrandMethods(c.prototype);
+    Object.preventExtensions(c);
+  }
+};
+
+var __structLayoutFor = ctor => {
+  var layout = __structLayout.get(ctor);
+  if (layout) return layout;
+  var names = [];
+  var shared = false;
+  var chain = [];
+  for (var c = ctor; typeof c === "function"; c = Object.getPrototypeOf(c)) {
+    var info = __structInfo.get(c);
+    if (info) {
+      chain.push(info);
+      shared = info.shared;
+    }
+  }
+  for (var i = chain.length; i--; ) for (var n of chain[i].fields) names.push(n);
+  __structLayout.set(ctor, (layout = { names, shared }));
+  if (shared) {
+    // Shared structs have a null prototype and no instance methods.
+    for (var c = ctor; typeof c === "function" && c !== Function.prototype; c = Object.getPrototypeOf(c)) {
+      if (__structInfo.get(c)?.root) break;
+      if (c.prototype) {
+        for (var key of Reflect.ownKeys(c.prototype))
+          if (key !== "constructor") throw new TypeError("Shared structs cannot have instance methods");
+      }
+    }
+  }
+  __structLockdown(ctor);
+  return layout;
+};
+
+export var __structBase = (parent, fields, shared) => {
+  var parentInfo;
+  for (var c = parent; typeof c === "function" && !parentInfo; c = Object.getPrototypeOf(c)) parentInfo = __structInfo.get(c);
+  if (parent != null && !parentInfo)
+    throw new TypeError("A " + (shared ? "shared struct" : "struct") + " can only extend another struct");
+  if (parentInfo && parentInfo.shared !== shared)
+    throw new TypeError("A " + (shared ? "shared struct" : "struct") + " can only extend a " + (shared ? "shared struct" : "struct"));
+  if (parentInfo) {
+    for (var f of fields)
+      if (parentInfo.all.includes(f)) throw new TypeError("Duplicate struct field '" + String(f) + "'");
+  }
+  var all = parentInfo ? parentInfo.all.concat(fields) : fields.slice();
+  if (new Set(all).size !== all.length) throw new TypeError("Duplicate struct field");
+  var Base;
+  if (parentInfo) {
+    Base = class extends parent {};
+  } else {
+    Base = class {
+      constructor() {
+        if (new.target === undefined) throw new TypeError("Struct constructors must be called with new");
+        var layout = __structLayoutFor(new.target);
+        var self = this;
+        if (layout.shared) {
+          // Shared structs have a null prototype.
+          Object.setPrototypeOf(self, null);
+          __structSharedInstances.add(self);
+          for (var name of layout.names) {
+            (function (name) {
+              var value;
+              __defProp(self, name, {
+                get: () => value,
+                set: v => {
+                  if (!__structIsShareable(v))
+                    throw new TypeError("Shared struct fields can only hold primitives or shared structs");
+                  value = v;
+                },
+                enumerable: true,
+                configurable: false,
+              });
+            })(name);
+          }
+        } else {
+          for (var name of layout.names)
+            __defProp(self, name, { value: undefined, writable: true, enumerable: true, configurable: false });
+        }
+        Object.preventExtensions(self);
+      }
+    };
+  }
+  __structInfo.set(Base, { fields: fields.slice(), all, shared, root: !parentInfo });
+  return Base;
+};

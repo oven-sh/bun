@@ -24,7 +24,7 @@ use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
     FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
-    ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
+    ParseClassOptions, ParseStatementOptions, StructKind, ParsedPath, PropertyOpts, SkipTypeParameterResult,
     StmtList, TypeParameterFlag,
 };
 use bun_ast as js_ast;
@@ -204,7 +204,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut opts = PropertyOpts {
                 is_class: true,
                 allow_ts_decorators: class_opts.allow_ts_decorators,
-                class_has_extends: extends.is_some(),
+                class_has_extends: extends.is_some()
+                    || class_opts.struct_kind != StructKind::None,
                 has_argument_decorators: false,
                 ..Default::default()
             };
@@ -276,6 +277,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let close_brace_loc = p.lexer.loc();
         p.lexer.expect(T::TCloseBrace)?;
 
+        if class_opts.struct_kind != StructKind::None {
+            extends = Some(p.lower_struct_class(
+                class_keyword.loc,
+                class_opts.struct_kind,
+                extends,
+                &mut properties,
+            ));
+        }
+
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
         // `Expr: Copy` — safe arena-slice → owned Vec (one memcpy, no double-drop).
         let ts_decorators = ExprNodeList::from_arena_slice(class_opts.ts_decorators);
@@ -292,6 +302,126 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (has_any_decorators || has_auto_accessor),
             inner_class_ref: js_ast::Ref::NONE,
         })
+    }
+
+    /// Lowers the body of a `struct` / `shared struct` declaration: declared fields are
+    /// removed from the class body and handed to `__structBase(parent, fields, shared)`,
+    /// which becomes the class's `extends` clause. A constructor that does not call
+    /// `super()` gets one prepended, since struct constructors may omit it.
+    fn lower_struct_class(
+        &mut self,
+        loc: bun_ast::Loc,
+        kind: StructKind,
+        extends: Option<Expr>,
+        properties: &mut BumpVec<'a, G::Property>,
+    ) -> Expr {
+        let p = self;
+        let mut names = BumpVec::<Expr>::new_in(p.arena);
+        let mut kept = BumpVec::<G::Property>::with_capacity_in(properties.len(), p.arena);
+        for prop in properties.drain(..) {
+            let is_field = prop.kind == js_ast::g::PropertyKind::Normal
+                && prop.value.is_none()
+                && prop.class_static_block.is_none()
+                && !prop.flags.contains(Flags::Property::IsMethod)
+                && !prop.flags.contains(Flags::Property::IsStatic);
+            if !is_field {
+                kept.push(prop);
+                continue;
+            }
+            let key = prop.key.expect("class field has a key");
+            if prop.flags.contains(Flags::Property::IsComputed) {
+                p.log().add_error(
+                    Some(p.source),
+                    key.loc,
+                    b"Struct fields cannot have computed names",
+                );
+            } else if !matches!(key.data, js_ast::ExprData::EString(_)) {
+                p.log().add_error(
+                    Some(p.source),
+                    key.loc,
+                    b"Struct fields must be named by an identifier",
+                );
+            } else {
+                names.push(key);
+            }
+            if let Some(init) = prop.initializer {
+                p.log().add_error(
+                    Some(p.source),
+                    init.loc,
+                    b"Struct fields cannot have initializers",
+                );
+            }
+        }
+        *properties = kept;
+
+        for prop in properties.iter_mut() {
+            let is_ctor = prop.flags.contains(Flags::Property::IsMethod)
+                && !prop.flags.contains(Flags::Property::IsStatic)
+                && matches!(&prop.key, Some(k) if matches!(&k.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"constructor")));
+            if !is_ctor {
+                continue;
+            }
+            let Some(value) = prop.value else { continue };
+            let js_ast::ExprData::EFunction(func) = &value.data else {
+                continue;
+            };
+            let mut func = *func;
+            let has_super_call = func.func.body.stmts.slice().iter().any(|stmt| {
+                matches!(&stmt.data, js_ast::StmtData::SExpr(e) if matches!(&e.value.data,
+                    js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
+            });
+            if has_super_call {
+                continue;
+            }
+            let stmt_loc = func.func.body.loc;
+            let target = p.new_expr(E::Super {}, stmt_loc);
+            let call = p.new_expr(
+                E::Call {
+                    target,
+                    ..Default::default()
+                },
+                stmt_loc,
+            );
+            let super_stmt = p.s(
+                S::SExpr {
+                    value: call,
+                    ..Default::default()
+                },
+                stmt_loc,
+            );
+            let mut stmts =
+                BumpVec::<Stmt>::with_capacity_in(func.func.body.stmts.len() + 1, p.arena);
+            stmts.push(super_stmt);
+            stmts.extend_from_slice(func.func.body.stmts.slice());
+            func.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+        }
+
+        let parent = match extends {
+            Some(e) => e,
+            None => p.new_expr(E::Null {}, loc),
+        };
+        let fields = p.new_expr(
+            E::Array {
+                items: ExprNodeList::from_arena_slice(names.into_bump_slice()),
+                ..Default::default()
+            },
+            loc,
+        );
+        let shared = p.new_expr(
+            E::Boolean {
+                value: kind == StructKind::Shared,
+            },
+            loc,
+        );
+        let mut args = BumpVec::<Expr>::with_capacity_in(3, p.arena);
+        args.push(parent);
+        args.push(fields);
+        args.push(shared);
+        p.call_runtime(
+            loc,
+            b"__structBase",
+            ExprNodeList::from_arena_slice(args.into_bump_slice()),
+        )
     }
 
     pub(crate) fn parse_template_parts(
@@ -681,15 +811,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions<'a>,
     ) -> Result<Stmt, Error> {
+        let class_keyword = self.lexer.range();
+        if self.lexer.token == T::TClass {
+            //marksyntaxfeature
+            self.lexer.next()?;
+        } else {
+            self.lexer.expected(T::TClass)?;
+        }
+        self.parse_class_stmt_after_keyword(loc, opts, class_keyword, StructKind::None)
+    }
+
+    /// Parses the rest of a class statement once the `class` (or, for structs,
+    /// the `struct`) keyword has been consumed.
+    pub(crate) fn parse_class_stmt_after_keyword(
+        &mut self,
+        loc: bun_ast::Loc,
+        opts: &mut ParseStatementOptions<'a>,
+        class_keyword: bun_ast::Range,
+        struct_kind: StructKind,
+    ) -> Result<Stmt, Error> {
         let p = self;
         let mut name: Option<js_ast::LocRef> = None;
-        let class_keyword = p.lexer.range();
-        if p.lexer.token == T::TClass {
-            //marksyntaxfeature
-            p.lexer.next()?;
-        } else {
-            p.lexer.expected(T::TClass)?;
-        }
 
         let is_identifier = p.lexer.token == T::TIdentifier;
 
@@ -738,6 +880,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
         }
         let mut class_opts = ParseClassOptions {
+            struct_kind,
             allow_ts_decorators: true,
             is_type_script_declare: opts.is_typescript_declare,
             ..Default::default()

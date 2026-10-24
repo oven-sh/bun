@@ -970,24 +970,23 @@ pub(crate) struct CommandLineReporter {
     pub(crate) timings: Option<Timings>,
 }
 
-/// `Bun__Process__exit` on the main thread of `bun test`.
+/// `Bun__Process__exit` on the main thread of `bun test`. It does not return when the exit ends a run that has failed.
 #[cold]
 pub(crate) fn on_process_exit(
     runner: core::ptr::NonNull<jest::TestRunner<'static>>,
     vm: &mut VirtualMachine,
 ) {
+    // `end_early` has started, and one of the 'exit' listeners that it runs exits.
+    if vm.exit_handler.exits_nonzero {
+        return;
+    }
     // SAFETY: `RUNNER` is only accessed on the main thread, which the caller checked. `exec` publishes it as
-    // `&raw mut reporter.jest`, so the pointer is valid for the whole reporter. `run_all_tests`, `run` and
-    // `end_early` hold `&mut CommandLineReporter` below this call. None of them runs again: this function
-    // ends the process, or its caller does.
+    // `&raw mut reporter.jest`, so the pointer is valid for the whole reporter. `run_all_tests` and `run` hold
+    // `&mut CommandLineReporter` below this call, as they do below `handle_test_completed`. They do not run
+    // again after `end_by_process_exit`.
     unsafe {
         let reporter = bun_core::from_field_ptr!(CommandLineReporter, jest, runner.as_ptr());
-        if (*reporter).jest.ended_early {
-            // One of the 'exit' listeners that `end_early` runs calls `process.exit(0)`.
-            if vm.exit_handler.exit_code == 0 {
-                vm.exit_handler.exit_code = 1;
-            }
-        } else if (*reporter).jest.reports_process_exit && (*reporter).jest.has_observed_failure() {
+        if (*reporter).jest.reports_process_exit && (*reporter).jest.has_observed_failure() {
             CommandLineReporter::end_by_process_exit(reporter, vm);
         }
     }
@@ -1667,8 +1666,8 @@ impl CommandLineReporter {
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
 
-        self.jest.ended_early = true;
         vm.exit_handler.exit_code = exit_code;
+        vm.exit_handler.exits_nonzero = true;
         vm.exit_handler.requested = true;
         let vm_ptr: *mut VirtualMachine = vm;
         // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
@@ -2113,7 +2112,6 @@ impl TestCommand {
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
-                ended_early: false,
                 max_concurrency: ctx.test_options.max_concurrency,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
                 // options_types::context); cast back to a typed `NonNull` —

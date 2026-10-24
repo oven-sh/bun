@@ -776,6 +776,8 @@ pub struct ExitHandler {
     /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
+    /// `bun test` sets this when it ends a run that has failed before the tail of `exec`: a `process.exit(0)` in an 'exit' listener of that run exits 1.
+    pub exits_nonzero: bool,
 }
 
 impl ExitHandler {

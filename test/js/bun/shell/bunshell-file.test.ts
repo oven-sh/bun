@@ -39,17 +39,23 @@ test("an S3-backed Blob in a command throws", async () => {
       script();
       return "did not throw";
     } catch (error) {
-      return (error as Error).message;
+      const { name, code, message } = error as Error & { code?: string };
+      return { name, code, message };
     }
   };
-  const message =
-    "An S3-backed Blob is not supported in a shell command yet. To redirect from it, pass its bytes: `< ${await blob.bytes()}`";
-  const outcomes: Record<string, string> = {};
-  const expected: Record<string, string> = { "echo hi > an S3File": message, "echo an S3File": message };
+  // The same name and code as the refusal of this Blob as the stdin of Bun.spawn.
+  const refusal = {
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message:
+      "An S3-backed Blob is not supported in a shell command yet. To redirect from it, pass its bytes: `< ${await blob.bytes()}`",
+  };
+  const outcomes: Record<string, unknown> = {};
+  const expected: Record<string, unknown> = { "echo hi > an S3File": refusal, "echo an S3File": refusal };
   for (const cmd of ["cat", "echo", "true && cat", `${BUN} -e "process.stdin.pipe(process.stdout)"`]) {
     for (const [name, input] of Object.entries(inputs)) {
       outcomes[`${cmd} < ${name}`] = thrown(() => $`${{ raw: cmd }} < ${input()}`);
-      expected[`${cmd} < ${name}`] = message;
+      expected[`${cmd} < ${name}`] = refusal;
     }
   }
   outcomes["echo hi > an S3File"] = thrown(() => $`echo hi > ${file()}`);

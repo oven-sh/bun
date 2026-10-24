@@ -195,4 +195,13 @@ describe("an S3-backed Blob as stdin", () => {
       });
     },
   );
+
+  // An extra slot refuses a Blob that has a size, so it does not take this one for an empty Blob.
+  test("a Blob is refused for stdio[3] after its bytes moved out", () => {
+    const blob = new Blob(["0123456789"]);
+    new Response([blob] as any);
+    const options = { cmd: [bunExe(), "-e", ""], env: bunEnv, stdio: ["ignore", "ignore", "ignore", blob] } as any;
+    expect(() => Bun.spawn(options)).toThrow("Blob cannot be used for stdio[3] yet");
+    expect(() => Bun.spawnSync(options)).toThrow("Blob cannot be used for stdio[3] yet");
+  });
 });

@@ -359,7 +359,7 @@ pub(crate) fn handle_template_value(
                         }
                     }
                     Data::S3(_) => {
-                        return Err(global.throw(format_args!(
+                        return Err(global.throw_invalid_arguments(format_args!(
                             "An S3-backed Blob is not supported in a shell command yet. To redirect from it, pass its bytes: `< ${{await blob.bytes()}}`"
                         )));
                     }

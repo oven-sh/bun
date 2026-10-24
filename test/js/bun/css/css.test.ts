@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -7912,7 +7912,176 @@ describe("css tests", () => {
       "@container style((--a:1) or (--b:2)) and style(--c:3){a{color:red}}",
     );
 
+    // The rows that lightningcss adds to its container tests in 22846530a008
+    // (a style feature without a value) and 0e7301a03635 (a name without a query).
+    minify_test(
+      `
+      @container style(--test) {
+        .foo {
+          color: red;
+        }
+      }
+    `,
+      "@container style(--test){.foo{color:red}}",
+    );
+    minify_test(
+      `
+      @container style(width) {
+        .foo {
+          color: red;
+        }
+      }
+    `,
+      "@container style(width){.foo{color:red}}",
+    );
+    minify_test(
+      `
+      @container foo {
+        .inner {
+          background: green;
+        }
+      }
+    `,
+      "@container foo{.inner{background:green}}",
+    );
+
+    // A style feature can omit its value. style(--a) is true when --a is not
+    // at its initial value.
+    minify_test("@container style(--a) { a { color: red } }", "@container style(--a){a{color:red}}");
+    minify_test("@container style(COLOR) { a { color: red } }", "@container style(color){a{color:red}}");
+    minify_test(
+      "@container style(-webkit-transition) { a { color: red } }",
+      "@container style(-webkit-transition){a{color:red}}",
+    );
+    minify_test("@container style( --a /* c */ ) { a { color: red } }", "@container style(--a){a{color:red}}");
+    minify_test("@container card style(--a) { a { color: red } }", "@container card style(--a){a{color:red}}");
+    minify_test("@container not style(--a) { a { color: red } }", "@container not style(--a){a{color:red}}");
+    minify_test(
+      "@container (width > 100px) and style(--a) { a { color: red } }",
+      "@container (width>100px) and style(--a){a{color:red}}",
+    );
+    minify_test(
+      "@container style(--a) or style(--b: 1) { a { color: red } }",
+      "@container style(--a) or style(--b:1){a{color:red}}",
+    );
+    minify_test("@container style((--a)) { a { color: red } }", "@container style(--a){a{color:red}}");
+    minify_test("@container (style(--a)) { a { color: red } }", "@container style(--a){a{color:red}}");
+    minify_test("@container style(not (--a)) { a { color: red } }", "@container style(not (--a)){a{color:red}}");
+    minify_test(
+      "@container style((--a) and (--b)) { a { color: red } }",
+      "@container style((--a) and (--b)){a{color:red}}",
+    );
+    minify_test(
+      "@container style(((--a) or (--b: 1)) and (--c)) { a { color: red } }",
+      "@container style(((--a) or (--b:1)) and (--c)){a{color:red}}",
+    );
+    minify_test(".a { @container style(--a) { color: red } }", ".a{@container style(--a){&{color:red}}}");
+    // An empty value is still a value.
+    minify_test("@container style(--a:) { a { color: red } }", "@container style(--a:){a{color:red}}");
+
+    // The query is optional after a container name.
+    minify_test("@container sidebar { a { color: red } }", "@container sidebar{a{color:red}}");
+    minify_test("@container --x { a { color: red } }", "@container --x{a{color:red}}");
+    minify_test("@container sidebar /* c */ { a { color: red } }", "@container sidebar{a{color:red}}");
+    minify_test(".a { @container sidebar { color: red } }", ".a{@container sidebar{&{color:red}}}");
+    minify_test(
+      "@media screen { @container sidebar { a { color: red } } }",
+      "@media screen{@container sidebar{a{color:red}}}",
+    );
+    minify_test(
+      "@container sidebar { @container card { a { color: red } } }",
+      "@container sidebar{@container card{a{color:red}}}",
+    );
+
+    // A selector list that old targets split makes a copy of the nested rule.
+    prefix_test(
+      ".a, .b:focus-visible { @container sidebar { color: red } }",
+      "@container sidebar { .b:focus-visible { color: red; } } @container sidebar { .a { color: red; } }",
+      { safari: 13 << 16 },
+    );
+    prefix_test(
+      ".a, .b:focus-visible { @container card style(not (--a)) { color: red } }",
+      "@container card style(not (--a)) { .b:focus-visible { color: red; } } @container card style(not (--a)) { .a { color: red; } }",
+      { safari: 13 << 16 },
+    );
+    // Range syntax in a container query is never lowered to min- or max-.
+    prefix_test(
+      "@container sidebar (width > 100px) { a { color: red } }",
+      "@container sidebar (width > 100px) { a { color: red; } }",
+      { chrome: 90 << 16 },
+    );
+
+    // A name or a query is required, and only a colon can follow a feature
+    // name. The first four rows are the error rows of lightningcss 0e7301a03635.
+    // It reports "The brackets cannot be empty" for `()`. That message is not ported.
+    test.each([
+      ["@container {}", "Unexpected end of input"],
+      ["@container () {}", "Invalid media query"],
+      ["@container foo () {}", "Invalid media query"],
+      ["@container foo bar {}", "Unexpected token: bar"],
+      ["@container not {}", "Unexpected end of input"],
+      ["@container sidebar not {}", "Unexpected end of input"],
+      ["@container sidebar (width > 100px) and {}", "Unexpected end of input"],
+      ["@container none {}", "Unexpected token: none"],
+      ["@container sidebar;", "Unexpected token: ;"],
+      ["@container style() {}", "Unexpected end of input"],
+      ["@container style(--a --b) {}", "Unexpected token: --b"],
+      ["@container style(--a and --b) {}", "Unexpected token: and"],
+      ["@container style(--a !important) {}", "Unexpected token: !"],
+      ["@container style(--a) card {}", "Unexpected token: card"],
+    ])("ERROR: %s", (css, message) => {
+      expect(() => minify_test_with_options(css, "")).toThrow(message);
+    });
+
+    test("bun build keeps a name-only @container and a style() feature with no value", async () => {
+      using dir = tempDir("css-container-query", {
+        "a.css": `
+@container sidebar { a { color: red } }
+@container style(--a) { b { color: green } }
+.c { @container card { color: blue } }
+d { color: black }
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "a.css"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`/* a.css */
+@container sidebar {
+  a {
+    color: red;
+  }
+}
+
+@container style(--a) {
+  b {
+    color: green;
+  }
+}
+
+@container card {
+  .c {
+    color: #00f;
+  }
+}
+
+d {
+  color: #000;
+}
+`);
+      expect(exitCode).toBe(0);
+    });
+
     // The minified forms parse back to themselves.
+    minify_test("@container sidebar{a{color:red}}", "@container sidebar{a{color:red}}");
+    minify_test("@container card style(not (--a)){a{color:red}}", "@container card style(not (--a)){a{color:red}}");
+    minify_test("@container style((--a) and (--b)){a{color:red}}", "@container style((--a) and (--b)){a{color:red}}");
     minify_test(
       "@container not ((width>100px) and (height>100px)){a{color:red}}",
       "@container not ((width>100px) and (height>100px)){a{color:red}}",

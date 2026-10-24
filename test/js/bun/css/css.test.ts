@@ -3559,6 +3559,11 @@ describe("css tests", () => {
           defaults,
         );
         prefix_test(
+          `.a { background: #1e5799; background: ${moz}; background: ${legacy}; background: ${webkit}; background: ${opera}; background: -ms-linear-gradient(red, green); background: ${std}; }`,
+          `.a { background: ${std}; }`,
+          defaults,
+        );
+        prefix_test(
           `.a { background: red; background-image: ${moz}; background-image: ${std}; }`,
           `.a { background: red ${std}; }`,
           defaults,

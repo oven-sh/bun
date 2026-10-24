@@ -128,6 +128,15 @@ struct IDLLooseUTF8String : IDLStrictUTF8String {};
 // The values IDLStrictUTF8String takes, as the WTF::String.
 struct IDLStrictStringOrStringObject : WebCore::IDLDOMString {};
 
+// Bytes that C++ passes to Rust. Nothing converts a JS value to it.
+struct IDLByteSpan : WebCore::IDLType<std::span<const uint8_t>> {};
+
+// The characters of a string where they are: no reference is taken, and those of a substring stay in its base.
+template<bool allowStringObject>
+struct IDLStringView : WebCore::IDLType<JSC::GCOwnedDataScope<WTF::StringView>> {
+    using SequenceStorageType = void;
+};
+
 // `b.bytes`: which values it takes.
 struct BytesOptions {
     // Without `ToString`. A string: what IDLStrictUTF8String takes. A buffer: a BufferSource, shared or not.

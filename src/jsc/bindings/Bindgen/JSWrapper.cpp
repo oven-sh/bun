@@ -23,10 +23,10 @@ NEVER_INLINE GCClient::IsoSubspace* createSubspaceForClass(VM& vm, unsigned clas
         nullptr);
 }
 
-void analyzeInternalField(JSCell* cell, HeapAnalyzer& analyzer, const WriteBarrier<Unknown>& field, ASCIILiteral name)
+void analyzeInternalField(JSCell* cell, HeapAnalyzer& analyzer, JSValue field, ASCIILiteral name)
 {
-    if (JSValue value = field.get(); value && value.isCell())
-        analyzer.analyzePropertyNameEdge(cell, value.asCell(), Identifier::fromString(cell->vm(), name).impl());
+    if (field && field.isCell())
+        analyzer.analyzePropertyNameEdge(cell, field.asCell(), Identifier::fromString(cell->vm(), name).impl());
 }
 
 const ClassInfo JSClassConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClassConstructor) };

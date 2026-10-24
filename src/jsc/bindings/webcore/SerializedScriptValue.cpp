@@ -1370,8 +1370,7 @@ private:
                 write(WasmMemoryTag);
                 write(agentClusterIDFromGlobalObject(*m_lexicalGlobalObject));
                 write(index);
-                // The shared contents do not record the address type, and a memory with a maximum of zero has none.
-                // The record indexes m_wasmMemoryHandles, which never leaves the process, so CurrentVersion stays.
+                // This record only indexes m_wasmMemoryHandles and never leaves the process, so CurrentVersion stays.
                 write(memory->memory().addressType().is64Bit());
                 return true;
             }

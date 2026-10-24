@@ -583,7 +583,6 @@ impl BackgroundProperty {
 pub struct BackgroundHandler {
     pub(crate) color: Option<CssColor>,
     pub(crate) images: Option<SmallList<Image, 1>>,
-    pub(crate) has_prefix: bool,
     pub(crate) x_positions: Option<SmallList<HorizontalPosition, 1>>,
     pub(crate) y_positions: Option<SmallList<VerticalPosition, 1>>,
     pub(crate) repeats: Option<SmallList<BackgroundRepeat, 1>>,
@@ -591,6 +590,9 @@ pub struct BackgroundHandler {
     pub(crate) attachments: Option<SmallList<BackgroundAttachment, 1>>,
     pub(crate) origins: Option<SmallList<BackgroundOrigin, 1>>,
     pub(crate) clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
+    /// The declarations that a prefixed image keeps apart from the fields
+    /// above, in source order: each prefixed value, and the values before it.
+    /// They come before the fields in the output.
     // TODO(perf): should be `bun_alloc::ArenaVec<'bump, Property>`; threading
     // `'bump` through BackgroundHandler would avoid the heap alloc.
     pub(crate) decls: Vec<Property>,
@@ -644,13 +646,14 @@ impl BackgroundHandler {
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let arena = dest.bump();
+        let mut has_prefix = false;
         match property {
             Property::BackgroundColor(val) => {
                 flush_helper!(self, color, val, dest, context);
                 self.color = Some(val.deep_clone(arena));
             }
             Property::BackgroundImage(val) => {
-                self.background_helper(val, property, dest, context);
+                has_prefix = self.images_helper(val, false, dest, context);
                 self.images = Some(val.deep_clone(arena));
             }
             Property::BackgroundPosition(val) => {
@@ -718,7 +721,7 @@ impl BackgroundHandler {
                 for b in val.slice() {
                     images.append_assume_capacity(b.image.deep_clone(arena));
                 }
-                self.background_helper(&images, property, dest, context);
+                has_prefix = self.images_helper(&images, true, dest, context);
                 let arena = dest.bump();
                 let color = val.last().unwrap().color.deep_clone(arena);
                 flush_helper!(self, color, &color, dest, context);
@@ -801,30 +804,76 @@ impl BackgroundHandler {
         }
 
         self.has_any = true;
+        if has_prefix {
+            self.hold(dest, context);
+        }
         true
     }
 
-    fn background_helper(
+    /// Runs before `val` is stored. Returns whether `val` has a vendor prefix.
+    ///
+    /// A browser that does not know the prefix skips the declaration. So a
+    /// prefixed value is never merged with the other values: the caller holds
+    /// it once it is stored, and the values before it are held here.
+    fn images_helper(
         &mut self,
         val: &SmallList<Image, 1>,
-        property: &Property,
+        is_shorthand: bool,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
-    ) {
-        flush_helper!(self, images, val, dest, context);
-
-        // Store prefixed properties. Clear if we hit an unprefixed property and we have
-        // targets. In this case, the necessary prefixes will be generated.
-        self.has_prefix = val.any(|item: &Image| item.has_vendor_prefix());
-        if self.has_prefix {
-            let arena = dest.bump();
-            self.decls.push(property.deep_clone(arena));
-        } else if context.targets.browsers.is_some() {
-            self.decls.clear();
+    ) -> bool {
+        if val.any(|item: &Image| item.has_vendor_prefix()) {
+            self.hold(dest, context);
+            return true;
         }
+
+        if !self.decls.is_empty() {
+            if let Some(browsers) = context.targets.browsers {
+                if crate::generic::is_compatible(val, &browsers) {
+                    // Every target reads `val`, and the necessary prefixes will be
+                    // generated, so `val` replaces the held declarations that set
+                    // only what it sets.
+                    if is_shorthand {
+                        self.decls.clear();
+                    } else {
+                        self.decls
+                            .retain(|decl| !matches!(decl, Property::BackgroundImage(_)));
+                    }
+                } else {
+                    // The held declarations are the fallbacks of `val`.
+                    self.flush(dest, context);
+                    self.flushed_properties.insert(if is_shorthand {
+                        BackgroundProperty::BACKGROUND
+                    } else {
+                        BackgroundProperty::BACKGROUND_IMAGE
+                    });
+                }
+            }
+        }
+
+        flush_helper!(self, images, val, dest, context);
+        false
+    }
+
+    /// Moves the buffered values to the end of `decls`.
+    fn hold(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+        if !self.has_any {
+            return;
+        }
+        let decls = core::mem::take(&mut self.decls);
+        let flushed_properties = self.flushed_properties;
+        let mut held = DeclarationList::new_in(dest.bump());
+        self.flush(&mut held, context);
+        self.flushed_properties = flushed_properties;
+        self.decls = decls;
+        self.decls.extend(held.drain(..));
     }
 
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+        for decl in self.decls.drain(..) {
+            dest.push(decl);
+        }
+
         if !self.has_any {
             return;
         }
@@ -1136,20 +1185,6 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // If the last declaration is prefixed, pop the last value
-        // so it isn't duplicated when we flush.
-        if self.has_prefix {
-            let _ = self.decls.pop();
-            // Drop handles deinit.
-        }
-
-        let arena = dest.bump();
-        for decl in self.decls.drain(..) {
-            // `Property` is not `Clone` here, so move out via drain.
-            let _ = arena;
-            dest.push(decl);
-        }
-
         self.flush(dest, context);
         self.flushed_properties = BackgroundProperty::empty();
     }

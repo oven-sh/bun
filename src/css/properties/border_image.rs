@@ -497,7 +497,9 @@ impl BorderImageHandler {
 
         macro_rules! property_helper {
             ($self:expr, $field:ident, $val:expr, $d:expr, $ctx:expr) => {{
-                if $self.vendor_prefix != VendorPrefix::NONE {
+                if $self.vendor_prefix != VendorPrefix::NONE
+                    || $self.keeps_prefixed_source(property)
+                {
                     $self.flush($d, $ctx);
                 }
 
@@ -518,6 +520,10 @@ impl BorderImageHandler {
             Property::BorderImage(_val) => {
                 let val = &_val.0;
                 let vp = _val.1;
+
+                if self.keeps_prefixed_source(property) {
+                    self.flush(dest, context);
+                }
 
                 flush_helper!(self, dest, context, source, &val.source);
                 flush_helper!(self, dest, context, slice, &val.slice);
@@ -589,10 +595,29 @@ impl BorderImageHandler {
             | Property::BorderImageSlice(_)
             | Property::BorderImageWidth(_)
             | Property::BorderImageOutset(_)
-            | Property::BorderImageRepeat(_) => self.vendor_prefix != VendorPrefix::NONE,
+            | Property::BorderImageRepeat(_) => {
+                self.vendor_prefix != VendorPrefix::NONE || self.keeps_prefixed_source(property)
+            }
+            Property::BorderImage(_) => self.keeps_prefixed_source(property),
             Property::Unparsed(val) => is_border_image_property(val.property_id.tag()),
             _ => false,
         }
+    }
+
+    /// A browser that does not know the prefix of a source skips the whole
+    /// declaration. So a prefixed source stays apart: it does not replace the
+    /// source before it, and the values after it are not merged with it.
+    fn keeps_prefixed_source(&self, property: &Property) -> bool {
+        let Some(buffered) = &self.source else {
+            return false;
+        };
+        let source = match property {
+            Property::BorderImageSource(source) => source,
+            Property::BorderImage(border_image) => &border_image.0.source,
+            _ => return buffered.has_vendor_prefix(),
+        };
+        // The same browsers read two sources that are equal.
+        !buffered.eql(source) && (buffered.has_vendor_prefix() || source.has_vendor_prefix())
     }
 
     fn flush(

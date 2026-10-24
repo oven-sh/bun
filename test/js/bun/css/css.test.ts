@@ -1718,6 +1718,110 @@ describe("css tests", () => {
         chrome: 99 << 16,
       },
     );
+
+    // A browser that does not know the prefix of an image skips the whole declaration.
+    describe("a prefixed border-image-source stays apart from the other values", () => {
+      // The targets that `bun build` uses for `--target=browser`.
+      const bundlerDefaults = {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      };
+
+      // The declarations of one rule, then the declarations that the minifier prints, with and without targets.
+      const rows: [source: string[], output: string[]][] = [
+        // It does not replace the source before it.
+        [
+          ["border-image-source: linear-gradient(red, blue)", "border-image-source: -moz-linear-gradient(red, blue)"],
+          ["border-image-source:linear-gradient(red,#00f)", "border-image-source:-moz-linear-gradient(red,#00f)"],
+        ],
+        [
+          ["border-image: linear-gradient(red, blue) 1", "border-image: -moz-linear-gradient(red, blue) 1"],
+          ["border-image:linear-gradient(red,#00f) 1", "border-image:-moz-linear-gradient(red,#00f) 1"],
+        ],
+        [
+          [
+            "border-image-source: radial-gradient(circle at 30% 107%, red, blue)",
+            "border-image-source: -moz-radial-gradient(30% 107%, circle, red, blue)",
+          ],
+          [
+            "border-image-source:radial-gradient(circle at 30% 107%,red,#00f)",
+            "border-image-source:-moz-radial-gradient(30% 107%,circle,red,#00f)",
+          ],
+        ],
+        [
+          ["border-image: linear-gradient(green, blue) 2", "border-image-source: -moz-linear-gradient(red, blue)"],
+          ["border-image:linear-gradient(green,#00f) 2", "border-image-source:-moz-linear-gradient(red,#00f)"],
+        ],
+        [
+          [
+            "border: 1px solid red",
+            "border-image-source: linear-gradient(red, blue)",
+            "border-image-source: -moz-linear-gradient(red, blue)",
+          ],
+          [
+            "border:1px solid red",
+            "border-image-source:linear-gradient(red,#00f)",
+            "border-image-source:-moz-linear-gradient(red,#00f)",
+          ],
+        ],
+        // A later source does not replace it.
+        [
+          [
+            "border-image-source: -webkit-linear-gradient(red, blue)",
+            "border-image-source: -moz-linear-gradient(red, blue)",
+          ],
+          [
+            "border-image-source:-webkit-linear-gradient(red,#00f)",
+            "border-image-source:-moz-linear-gradient(red,#00f)",
+          ],
+        ],
+        [
+          ["border-image: -moz-linear-gradient(red, blue) 1", "border-image: linear-gradient(red, blue) 1"],
+          ["border-image:-moz-linear-gradient(red,#00f) 1", "border-image:linear-gradient(red,#00f) 1"],
+        ],
+        [
+          [
+            "-webkit-border-image: -webkit-linear-gradient(red, blue) 1",
+            "-moz-border-image: -moz-linear-gradient(red, blue) 1",
+            "border-image: linear-gradient(red, blue) 1",
+          ],
+          [
+            "-webkit-border-image:-webkit-linear-gradient(red,#00f) 1",
+            "-moz-border-image:-moz-linear-gradient(red,#00f) 1",
+            "border-image:linear-gradient(red,#00f) 1",
+          ],
+        ],
+        // The values after it are not merged into its declaration.
+        [
+          [
+            "border-image: linear-gradient(green, blue) 1",
+            "border-image: -moz-linear-gradient(red, blue) 1",
+            "border-image-slice: 2",
+          ],
+          [
+            "border-image:linear-gradient(green,#00f) 1",
+            "border-image:-moz-linear-gradient(red,#00f) 1",
+            "border-image-slice:2",
+          ],
+        ],
+        // The same source two times is one declaration.
+        [
+          [
+            "border-image-source: -moz-linear-gradient(red, blue)",
+            "border-image-source: -moz-linear-gradient(red, blue)",
+          ],
+          ["border-image-source:-moz-linear-gradient(red,#00f)"],
+        ],
+      ];
+      for (const [source, output] of rows) {
+        const rule = `.foo { ${source.join("; ")} }`;
+        minify_test(rule, `.foo{${output.join(";")}}`);
+        prefix_test(rule, `.foo { ${output.join("; ")}; }`, bundlerDefaults);
+      }
+    });
   });
 
   describe("box-shadow", () => {
@@ -3419,6 +3523,270 @@ describe("css tests", () => {
         chrome: 99 << 16,
       },
     );
+
+    // A browser that does not know the prefix of an image skips the whole declaration.
+    describe("a prefixed image stays apart from the other values", () => {
+      // The targets that `bun build` uses for `--target=browser`.
+      const bundlerDefaults = {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      };
+      type Targets = typeof bundlerDefaults | { chrome: number };
+
+      // The declarations of one rule, then the declarations that the minifier prints.
+      function handler_test(source: string[], output: string[], targets?: Targets) {
+        const rule = `.foo { ${source.join("; ")} }`;
+        if (targets) {
+          prefix_test(rule, `.foo { ${output.join("; ")}; }`, targets);
+        } else {
+          minify_test(rule, `.foo{${output.join(";")}}`);
+        }
+      }
+
+      // With and without targets, the output has every declaration of these rules.
+      const kept: [source: string[], output: string[]][] = [
+        // It does not replace the value before it.
+        [
+          ["background: linear-gradient(red, blue)", "background: -moz-linear-gradient(red, blue)"],
+          ["background:linear-gradient(red,#00f)", "background:-moz-linear-gradient(red,#00f)"],
+        ],
+        [
+          ["background: linear-gradient(red, blue)", "background: -webkit-linear-gradient(green, yellow)"],
+          ["background:linear-gradient(red,#00f)", "background:-webkit-linear-gradient(green,#ff0)"],
+        ],
+        [
+          ["background: red", "background: -o-linear-gradient(red, blue)"],
+          ["background:red", "background:-o-linear-gradient(red,#00f)"],
+        ],
+        [
+          ["background-color: red", "background: -o-linear-gradient(red, blue)"],
+          ["background-color:red", "background:-o-linear-gradient(red,#00f)"],
+        ],
+        [
+          ["background-image: linear-gradient(red, blue)", "background-image: -moz-linear-gradient(red, blue)"],
+          ["background-image:linear-gradient(red,#00f)", "background-image:-moz-linear-gradient(red,#00f)"],
+        ],
+        [
+          ["background: radial-gradient(circle, red, blue)", "background: -moz-radial-gradient(circle, red, blue)"],
+          ["background:radial-gradient(circle,red,#00f)", "background:-moz-radial-gradient(circle,red,#00f)"],
+        ],
+        [
+          [
+            "background: linear-gradient(red, blue)",
+            "background: -moz-linear-gradient(red, blue)",
+            "background: -webkit-linear-gradient(red, blue)",
+          ],
+          [
+            "background:linear-gradient(red,#00f)",
+            "background:-moz-linear-gradient(red,#00f)",
+            "background:-webkit-linear-gradient(red,#00f)",
+          ],
+        ],
+        [
+          [
+            "background: linear-gradient(red, blue) !important",
+            "background: -moz-linear-gradient(red, blue) !important",
+          ],
+          ["background:linear-gradient(red,#00f)!important", "background:-moz-linear-gradient(red,#00f)!important"],
+        ],
+        // The values after it are not merged into its declaration.
+        [
+          ["background: -moz-linear-gradient(red, blue)", "background-color: lime"],
+          ["background:-moz-linear-gradient(red,#00f)", "background-color:#0f0"],
+        ],
+        [
+          ["background: -webkit-linear-gradient(red, blue)", "background-repeat: no-repeat"],
+          ["background:-webkit-linear-gradient(red,#00f)", "background-repeat:no-repeat"],
+        ],
+        [
+          ["background-position: 0 0", "background: -webkit-linear-gradient(red, blue)", "background-size: cover"],
+          ["background-position:0 0", "background:-webkit-linear-gradient(red,#00f)", "background-size:cover"],
+        ],
+        [
+          [
+            "background: -webkit-linear-gradient(red, blue)",
+            "background-color: red",
+            "background: -moz-linear-gradient(red, blue)",
+          ],
+          [
+            "background:-webkit-linear-gradient(red,#00f)",
+            "background-color:red",
+            "background:-moz-linear-gradient(red,#00f)",
+          ],
+        ],
+        [
+          ["background: -webkit-linear-gradient(red, blue) red", "background-image: linear-gradient(green, blue)"],
+          ["background:red -webkit-linear-gradient(red,#00f)", "background-image:linear-gradient(green,#00f)"],
+        ],
+        // It stays before an unparsed value that follows it.
+        [
+          [
+            "background: -webkit-linear-gradient(red, blue)",
+            "background: -moz-linear-gradient(red, blue)",
+            "background: var(--bg)",
+          ],
+          [
+            "background:-webkit-linear-gradient(red,#00f)",
+            "background:-moz-linear-gradient(red,#00f)",
+            "background:var(--bg)",
+          ],
+        ],
+      ];
+      for (const [source, output] of kept) {
+        handler_test(source, output);
+        handler_test(source, output, bundlerDefaults);
+      }
+
+      // When every target reads a later unprefixed image, it replaces the prefixed images and the values
+      // before them. With no targets, the output has every declaration.
+      const replaced: [source: string[], output: string[], withoutTargets: string[]][] = [
+        [
+          [
+            "background: -moz-linear-gradient(red, blue)",
+            "background: -webkit-linear-gradient(red, blue)",
+            "background: linear-gradient(red, blue)",
+          ],
+          ["background:linear-gradient(red,#00f)"],
+          [
+            "background:-moz-linear-gradient(red,#00f)",
+            "background:-webkit-linear-gradient(red,#00f)",
+            "background:linear-gradient(red,#00f)",
+          ],
+        ],
+        [
+          [
+            "background: #1e5799",
+            "background: -moz-linear-gradient(#1e5799 0%, #7db9e8 100%)",
+            "background: -webkit-linear-gradient(#1e5799 0%, #7db9e8 100%)",
+            "background: linear-gradient(#1e5799 0%, #7db9e8 100%)",
+          ],
+          ["background:linear-gradient(#1e5799 0%,#7db9e8 100%)"],
+          [
+            "background:#1e5799",
+            "background:-moz-linear-gradient(#1e5799 0%,#7db9e8 100%)",
+            "background:-webkit-linear-gradient(#1e5799 0%,#7db9e8 100%)",
+            "background:linear-gradient(#1e5799 0%,#7db9e8 100%)",
+          ],
+        ],
+        [
+          [
+            "background-image: linear-gradient(red, blue)",
+            "background-image: -webkit-linear-gradient(red, blue)",
+            "background-image: linear-gradient(green, blue)",
+          ],
+          ["background-image:linear-gradient(green,#00f)"],
+          [
+            "background-image:linear-gradient(red,#00f)",
+            "background-image:-webkit-linear-gradient(red,#00f)",
+            "background-image:linear-gradient(green,#00f)",
+          ],
+        ],
+        // `background-image` replaces only the images. The other values before them stay.
+        [
+          [
+            "background-color: #337ab7",
+            "background-image: -webkit-linear-gradient(#337ab7 0%, #265a88 100%)",
+            "background-image: -o-linear-gradient(#337ab7 0%, #265a88 100%)",
+            "background-image: linear-gradient(#337ab7 0%, #265a88 100%)",
+            "background-repeat: repeat-x",
+          ],
+          [
+            "background-color:#337ab7",
+            "background-image:linear-gradient(#337ab7 0%,#265a88 100%)",
+            "background-repeat:repeat-x",
+          ],
+          [
+            "background-color:#337ab7",
+            "background-image:-webkit-linear-gradient(#337ab7 0%,#265a88 100%)",
+            "background-image:-o-linear-gradient(#337ab7 0%,#265a88 100%)",
+            "background-image:linear-gradient(#337ab7 0%,#265a88 100%)",
+            "background-repeat:repeat-x",
+          ],
+        ],
+        [
+          [
+            "background: red",
+            "background-image: -webkit-linear-gradient(red, blue)",
+            "background-image: linear-gradient(red, blue)",
+          ],
+          ["background:red", "background-image:linear-gradient(red,#00f)"],
+          [
+            "background:red",
+            "background-image:-webkit-linear-gradient(red,#00f)",
+            "background-image:linear-gradient(red,#00f)",
+          ],
+        ],
+        [
+          [
+            "background-image: -webkit-linear-gradient(red, blue)",
+            "background-repeat: no-repeat",
+            "background-image: linear-gradient(red, blue)",
+          ],
+          ["background-image:linear-gradient(red,#00f)", "background-repeat:no-repeat"],
+          [
+            "background-image:-webkit-linear-gradient(red,#00f)",
+            "background-image:linear-gradient(red,#00f)",
+            "background-repeat:no-repeat",
+          ],
+        ],
+      ];
+      for (const [source, output, withoutTargets] of replaced) {
+        handler_test(source, output, bundlerDefaults);
+        handler_test(source, withoutTargets);
+      }
+
+      // They are the fallbacks of an unprefixed image that a target does not read.
+      handler_test(
+        [
+          "background: -webkit-linear-gradient(red, blue)",
+          "background: -moz-linear-gradient(red, blue)",
+          "background: linear-gradient(lch(50% 132 50), blue)",
+        ],
+        [
+          "background:-webkit-linear-gradient(red,#00f)",
+          "background:-moz-linear-gradient(red,#00f)",
+          "background:linear-gradient(lch(50% 132 50),#00f)",
+        ],
+        { chrome: 99 << 16 },
+      );
+      handler_test(
+        [
+          "background-image: -webkit-linear-gradient(red, blue)",
+          "background-image: -moz-linear-gradient(red, blue)",
+          "background-image: linear-gradient(lch(50% 132 50), blue)",
+        ],
+        [
+          "background-image:-webkit-linear-gradient(red,#00f)",
+          "background-image:-moz-linear-gradient(red,#00f)",
+          "background-image:linear-gradient(lch(50% 132 50),#00f)",
+        ],
+        { chrome: 99 << 16 },
+      );
+
+      // An unparsed value between them does not repeat the prefixed value.
+      handler_test(
+        [
+          "background: -webkit-linear-gradient(red, blue)",
+          "background: var(--bg)",
+          "background: linear-gradient(red, blue)",
+        ],
+        [
+          "background:-webkit-linear-gradient(red,#00f)",
+          "background:var(--bg)",
+          "background:linear-gradient(red,#00f)",
+        ],
+      );
+
+      // A color that the targets do not read is still converted inside a prefixed value.
+      handler_test(
+        ["background: -webkit-linear-gradient(lab(50% 40 30), blue)"],
+        ["background:-webkit-linear-gradient(#bb5846,#00f)"],
+        bundlerDefaults,
+      );
+    });
   });
 
   describe("flex", () => {

@@ -3609,8 +3609,11 @@ declare module "bun" {
      *
      * A key that starts with `./` or `../` names the file at that path from
      * the current working directory of the `Bun.build()` call. In a key, `\`
-     * is the same as `/`. If such a key and another key name the same path
-     * with different contents, `Bun.build()` throws a `TypeError`.
+     * is the same as `/`: `.\a.ts` and `./a.ts` are one key, and the last one
+     * wins. If two keys name one file in different ways (`./a.ts` and
+     * `./lib/../a.ts`) and have different contents, `Bun.build()` throws a
+     * `TypeError`. Bun uses an absolute key as written, so write it the way
+     * `path.resolve()` returns it.
      *
      * File contents can be provided as:
      * - `string` - The source code as a string

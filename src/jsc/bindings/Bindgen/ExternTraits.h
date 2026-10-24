@@ -7,6 +7,7 @@
 #include <utility>
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/NativeFunction.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
 #include "Bindgen/JSBytesView.h"
@@ -171,6 +172,9 @@ inline JSC::ArgList variadicArguments(JSC::CallFrame* callFrame, unsigned startI
 {
     return { callFrame, static_cast<int>(std::min<size_t>(startIndex, callFrame->argumentCount())) };
 }
+
+// What `$bindgen` returns for a function.
+JSC::EncodedJSValue createFunction(JSC::JSGlobalObject*, unsigned length, ASCIILiteral name, JSC::NativeFunction);
 
 // A converted argument and the argument itself.
 template<typename T>

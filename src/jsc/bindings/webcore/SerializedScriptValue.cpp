@@ -925,13 +925,6 @@ private:
                 write(FalseTag);
             return;
         }
-#if USE(BIGINT32)
-        if (value.isBigInt32()) {
-            write(BigIntTag);
-            dumpBigIntData(value);
-            return;
-        }
-#endif
 
         // Make any new primitive extension safe by throwing an error.
         code = SerializationReturnCode::DataCloneError;
@@ -960,30 +953,8 @@ private:
     void dumpBigIntData(JSValue value)
     {
         ASSERT(value.isBigInt());
-#if USE(BIGINT32)
-        if (value.isBigInt32()) {
-            dumpBigInt32Data(value.bigInt32AsInt32());
-            return;
-        }
-#endif
         dumpHeapBigIntData(uncheckedDowncast<JSBigInt>(value));
     }
-
-#if USE(BIGINT32)
-    void dumpBigInt32Data(int32_t integer)
-    {
-        write(static_cast<uint8_t>(integer < 0));
-        if (!integer) {
-            write(static_cast<uint32_t>(0)); // Length-in-uint64_t
-            return;
-        }
-        write(static_cast<uint32_t>(1)); // Length-in-uint64_t
-        int64_t value = static_cast<int64_t>(integer);
-        if (value < 0)
-            value = -value;
-        write(static_cast<uint64_t>(value));
-    }
-#endif
 
     void dumpHeapBigIntData(JSBigInt* bigInt)
     {
@@ -3544,9 +3515,6 @@ private:
             return JSValue();
 
         if (!lengthInUint64) {
-#if USE(BIGINT32)
-            return jsBigInt32(0);
-#else
             JSBigInt* bigInt = JSBigInt::tryCreateZero(m_lexicalGlobalObject->vm());
             if (!bigInt) [[unlikely]] {
                 fail();
@@ -3554,7 +3522,6 @@ private:
             }
             m_gcBuffer.appendWithCrashOnOverflow(bigInt);
             return bigInt;
-#endif
         }
 
         if (lengthInUint64 > static_cast<uint64_t>(m_end - m_ptr) / sizeof(uint64_t)) {
@@ -3562,36 +3529,6 @@ private:
             return JSValue();
         }
 
-#if USE(BIGINT32)
-        static_assert(sizeof(JSBigInt::Digit) == sizeof(uint64_t));
-        if (lengthInUint64 == 1) {
-            uint64_t digit64 = 0;
-            if (!read(digit64))
-                return JSValue();
-            if (sign) {
-                if (digit64 <= static_cast<uint64_t>(-static_cast<int64_t>(INT32_MIN)))
-                    return jsBigInt32(static_cast<int32_t>(-static_cast<int64_t>(digit64)));
-            } else {
-                if (digit64 <= INT32_MAX)
-                    return jsBigInt32(static_cast<int32_t>(digit64));
-            }
-            ASSERT(digit64 != 0);
-            JSBigInt* bigInt = JSBigInt::tryCreateWithLength(m_lexicalGlobalObject->vm(), 1);
-            if (!bigInt) {
-                fail();
-                return JSValue();
-            }
-            bigInt->setDigit(0, digit64);
-            bigInt->setSign(sign);
-            bigInt = bigInt->tryRightTrim(m_lexicalGlobalObject->vm());
-            if (!bigInt) {
-                fail();
-                return JSValue();
-            }
-            m_gcBuffer.appendWithCrashOnOverflow(bigInt);
-            return tryConvertToBigInt32(bigInt);
-        }
-#endif
         Vector<JSBigInt::Digit, 16> digits;
         if constexpr (sizeof(JSBigInt::Digit) == sizeof(uint64_t)) {
             digits.reserveInitialCapacity(lengthInUint64);
@@ -3619,7 +3556,7 @@ private:
             return JSValue();
         }
         m_gcBuffer.appendWithCrashOnOverflow(bigInt);
-        return tryConvertToBigInt32(bigInt);
+        return bigInt;
     }
 
     JSValue readTerminal()

@@ -1694,6 +1694,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_shared_struct"
+version = "0.0.0"
+
+[[package]]
 name = "bun_shell_parser"
 version = "0.0.0"
 dependencies = [

@@ -32,17 +32,13 @@ impl Expect {
             );
         }
 
-        let mut pass = received_object.jest_deep_match(expected, global)?;
-
-        if not {
-            pass = !pass;
-        }
-        if pass {
+        // Under `.not` a match is the failure.
+        let Some(diff_formatter) = received_object.jest_deep_match(expected, global, Some(not), |_| {
+            DiffFormatter::new(global, received_object, expected, not)
+        })?
+        else {
             return Ok(JSValue::UNDEFINED);
-        }
-
-        // handle failure
-        let diff_formatter = DiffFormatter::new(global, received_object, expected, not)?;
+        };
 
         if not {
             let signature: &str = get_signature("toMatchObject", "<green>expected<r>", true);

@@ -2719,23 +2719,42 @@ impl JSValue {
         })
     }
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
-    /// snapshot-property-matcher subset comparison. Mutates neither side.
-    pub fn jest_deep_match(self, subset: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jestDeepMatch(self, subset, global)
-        })
-    }
-    /// Clone of `self` with the matchers a passing [`Self::jest_deep_match`]
-    /// checked put in place of the properties they matched; what
-    /// `toMatchSnapshot(matchers)` serializes. Both arguments must be objects.
-    pub fn jest_substitute_asymmetric_matchers(
+    /// snapshot-property-matcher subset comparison.
+    /// If the result is `format_if` (`None`: either way), runs `format` with each matcher that passed put over the property it matched, then puts the properties back.
+    pub fn jest_deep_match<R, F: FnOnce(bool) -> JsResult<R>>(
         self,
-        matchers: JSValue,
+        subset: JSValue,
         global: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || {
-            Bun__JSValue__substituteAsymmetricMatchers(self, matchers, global)
-        })
+        format_if: Option<bool>,
+        format: F,
+    ) -> JsResult<Option<R>> {
+        struct Context<R, F> {
+            format: Option<F>,
+            result: Option<JsResult<R>>,
+        }
+        extern "C" fn call<R, F: FnOnce(bool) -> JsResult<R>>(ctx: *mut c_void, matched: bool) {
+            // SAFETY: `ctx` is the `Context<R, F>` below, which outlives the call and is not otherwise borrowed during it.
+            let ctx = unsafe { &mut *ctx.cast::<Context<R, F>>() };
+            if let Some(format) = ctx.format.take() {
+                ctx.result = Some(format(matched));
+            }
+        }
+        let mut ctx = Context {
+            format: Some(format),
+            result: None,
+        };
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__jestDeepMatch(
+                self,
+                subset,
+                global,
+                format_if != Some(false),
+                format_if != Some(true),
+                (&raw mut ctx).cast(),
+                call::<R, F>,
+            )
+        })?;
+        ctx.result.transpose()
     }
 
     // ── BigInt ordering. ────────────────────────────────
@@ -2846,12 +2865,11 @@ unsafe extern "C" {
         this: JSValue,
         subset: JSValue,
         global: &JSGlobalObject,
+        format_if_matched: bool,
+        format_if_not_matched: bool,
+        ctx: *mut c_void,
+        format: extern "C" fn(ctx: *mut c_void, matched: bool),
     ) -> bool;
-    safe fn Bun__JSValue__substituteAsymmetricMatchers(
-        value: JSValue,
-        matchers: JSValue,
-        global: &JSGlobalObject,
-    ) -> JSValue;
     safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__values(global: &JSGlobalObject, value: JSValue) -> JSValue;

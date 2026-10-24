@@ -34,171 +34,202 @@ test("ArrayBuffer values are serialized like typed arrays", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/3521
-test("property matchers do not mutate the received object", () => {
-  const date = new Date(0);
-  const obj = { id: 42, when: date, nested: { name: "abc" }, list: [1, "two", 3] };
-  expect(obj).toMatchSnapshot({
-    id: expect.any(Number),
-    when: expect.any(Date),
-    nested: { name: expect.any(String) },
-    list: [1, expect.any(String), 3],
-  });
-  expect(obj.id).toBe(42);
-  expect(obj.when).toBe(date);
-  expect(obj.nested.name).toBe("abc");
-  expect(obj.list[1]).toBe("two");
-});
+describe("property matchers leave the received value as it was", () => {
+  // Every own property descriptor reachable from `roots`, as text: toEqual would accept a matcher that was left behind.
+  function ownState(...roots: object[]) {
+    const ids = new Map<object, number>();
+    const queue: object[] = [];
+    const show = (value: unknown) => {
+      if (value === null || (typeof value !== "object" && typeof value !== "function")) return String(value);
+      if (!ids.has(value)) {
+        ids.set(value, ids.size);
+        queue.push(value);
+      }
+      return `#${ids.get(value)}`;
+    };
+    roots.forEach(show);
+    const lines: string[] = [];
+    for (const object of queue) {
+      const properties = Reflect.ownKeys(object).map(key => {
+        const { value, get, set, ...flags } = Reflect.getOwnPropertyDescriptor(object, key)!;
+        return `${String(key)} ${JSON.stringify(flags)} ${show(value)} ${show(get)} ${show(set)}`;
+      });
+      lines.push(
+        [`#${ids.get(object)} frozen=${Object.isFrozen(object)} sealed=${Object.isSealed(object)}`, ...properties].join(
+          "\n  ",
+        ),
+      );
+    }
+    return lines.join("\n");
+  }
 
-test("property matchers preserve class name and handle shared references", () => {
+  const any = expect.any;
   class User {
-    id: number;
-    name: string;
-    constructor() {
-      this.id = 1;
-      this.name = "alice";
-    }
-  }
-  const user = new User();
-  expect(user).toMatchSnapshot({ id: expect.any(Number) });
-  expect(user.id).toBe(1);
-  expect(user).toBeInstanceOf(User);
-
-  const shared = { x: 1 };
-  const dag = { a: shared, b: shared };
-  expect(dag).toMatchSnapshot({
-    a: { x: expect.any(Number) },
-    b: { x: expect.any(Number) },
-  });
-  expect(dag.a).toBe(shared);
-  expect(dag.b).toBe(shared);
-  expect(shared.x).toBe(1);
-
-  const cyclic: any = { id: 1 };
-  cyclic.self = cyclic;
-  expect(cyclic).toMatchSnapshot({ id: expect.any(Number) });
-  expect(cyclic.id).toBe(1);
-  expect(cyclic.self).toBe(cyclic);
-
-  const err: any = new Error("boom");
-  err.code = "E_FOO";
-  expect(err).toMatchSnapshot({ code: expect.any(String) });
-  expect(err.code).toBe("E_FOO");
-
-  let getterCalls = 0;
-  const withGetter = {
-    id: 1,
-    get ts() {
-      getterCalls++;
-      return Date.now();
-    },
-  };
-  expect(withGetter).toMatchSnapshot({ id: expect.any(Number) });
-  expect(withGetter.id).toBe(1);
-  expect(getterCalls).toBe(0);
-
-  const inner: any = { id: 1 };
-  const outer: any = { inner };
-  inner.parent = outer;
-  expect(outer).toMatchSnapshot({ inner: { id: expect.any(Number) } });
-  expect(inner.id).toBe(1);
-  expect(inner.parent).toBe(outer);
-});
-
-// The recorded snapshot must show exactly the matchers the property-matcher
-// check looked at, in the same places they were looked at.
-test("snapshot records the matchers that were checked", () => {
-  // The propertyMatchers argument itself is never matched against the
-  // received value, so it must not replace the snapshot.
-  const plain = { a: 1 };
-  expect(plain).toMatchSnapshot(expect.any(Object));
-  expect(plain).toMatchSnapshot(expect.any(Array));
-
-  // One received object checked through two properties, with a different
-  // matcher at each: it is a single object, so it records the same everywhere.
-  const shared = { x: 1, y: "s" };
-  expect({ a: shared, b: shared }).toMatchSnapshot({
-    a: { x: expect.any(Number) },
-    b: { y: expect.any(String) },
-  });
-  expect(shared.x).toBe(1);
-  expect(shared.y).toBe("s");
-
-  // A matcher on a key the received object implements as a getter.
-  const withGetter = {
+    #id = 3;
+    name = "alice";
+    profile = { age: 30 };
     get id() {
-      return 7;
-    },
-  };
-  expect(withGetter).toMatchSnapshot({ id: expect.any(Number) });
-  expect(withGetter.id).toBe(7);
-
-  // Errors render as [Name: message], so a matcher on message is visible
-  // through the message's string form.
-  const err = new TypeError("boom");
-  expect(err).toMatchSnapshot({ message: expect.any(String) });
-  expect(err.message).toBe("boom");
-
-  // Instances of native classes render by own properties like plain objects.
-  const headers = new Headers({ "x-a": "1" });
-  expect(headers).toMatchSnapshot({ append: expect.any(Function) });
-  expect(Object.hasOwn(headers, "append")).toBe(false);
-  expect(headers.get("x-a")).toBe("1");
-
-  const event = new Event("x");
-  expect(event).toMatchSnapshot({ timeStamp: expect.any(Number) });
-  expect(Object.hasOwn(event, "timeStamp")).toBe(false);
-  expect(typeof event.timeStamp).toBe("number");
-
-  // Events with a dedicated rendering (message/error) fall back to the
-  // by-properties rendering once a matcher is recorded on them.
-  const message = new MessageEvent("message", { data: "hi" });
-  expect(message).toMatchSnapshot({ data: expect.any(String) });
-  expect(message.data).toBe("hi");
-
-  // A received value that is itself a matcher still prints as that matcher.
-  expect(expect.any(String)).toMatchSnapshot({});
-
-  // A shared object referenced again from inside an object the matchers did
-  // not walk keeps its real values there (as in Jest; the in-place mutation
-  // used to show the matcher at both places).
-  const user = { id: 7 };
-  expect({ current: user, log: [{ user }] }).toMatchSnapshot({ current: { id: expect.any(Number) } });
-  expect(user.id).toBe(7);
-
-  // A cyclic received object is checked against every matcher object it is
-  // paired with, so a matcher one lap into the cycle is checked and recorded.
-  const ring: any = { id: 1 };
-  ring.self = ring;
-  expect(ring).toMatchSnapshot({ self: { self: { id: expect.any(Number) } } });
-  expect(ring.id).toBe(1);
-});
-
-// The matcher is recorded on the object the getter returns, which the snapshot
-// shows under the field that holds it; the getter itself is left as it was.
-test("a matcher object checked through a getter is recorded on the object behind it", () => {
-  class Wrapper {
-    _user: { name: string };
-    constructor() {
-      this._user = { name: "alice" };
+      return this.#id;
     }
-    get user() {
-      return this._user;
+    get self() {
+      return this.profile;
     }
   }
-  const wrapper = new Wrapper();
-  expect(wrapper).toMatchSnapshot({ user: { name: expect.any(String) } });
-  expect(wrapper._user.name).toBe("alice");
-  expect(Object.hasOwn(wrapper, "user")).toBe(false);
-
-  const withOwnGetter = {
-    _user: { name: "bob" },
-    get user() {
-      return this._user;
-    },
+  const deepFreeze = <T extends object>(object: T): T => {
+    Object.values(object).forEach(value => typeof value === "object" && deepFreeze(value));
+    return Object.freeze(object);
   };
-  expect(withOwnGetter).toMatchSnapshot({ user: { name: expect.any(String) } });
-  expect(withOwnGetter._user.name).toBe("bob");
-  expect(Object.getOwnPropertyDescriptor(withOwnGetter, "user")!.get).toBeFunction();
+  const symbol = Symbol("key");
+
+  const cases: Record<string, () => [received: any, matchers: any]> = {
+    "objects, arrays and dates": () => [
+      { id: 42, when: new Date(0), nested: { name: "abc" }, list: [1, "two", 3.5], rows: [{ id: 1 }, { id: 2 }] },
+      {
+        id: any(Number),
+        when: any(Date),
+        nested: { name: any(String) },
+        list: [1, any(String), any(Number)],
+        rows: [{ id: any(Number) }, { id: 2 }],
+      },
+    ],
+    "a class instance": () => [new User(), { name: any(String) }],
+    "a getter on the prototype": () => [new User(), { id: any(Number) }],
+    "an object reached through a getter": () => [new User(), { self: { age: any(Number) } }],
+    "an inherited property": () => [Object.create({ inherited: 1 }), { inherited: any(Number) }],
+    "an own getter": () => [
+      {
+        a: 0,
+        get id() {
+          return 7;
+        },
+        z: 1,
+      },
+      { id: any(Number) },
+    ],
+    "an own getter and setter that cannot be redefined": () => [
+      Object.defineProperty({ a: 0 }, "id", { get: () => 7, set() {}, enumerable: true }),
+      { id: any(Number) },
+    ],
+    "a symbol key": () => [{ [symbol]: 1, a: 2 }, { [symbol]: any(Number) }],
+    "a read-only and a hidden property": () => [
+      Object.defineProperties(
+        { a: 1 },
+        { readOnly: { value: 5, enumerable: true }, hidden: { value: 6, writable: true, configurable: true } },
+      ),
+      { readOnly: any(Number), hidden: any(Number) },
+    ],
+    "a frozen object": () => [Object.freeze({ foo: "foo", bar: "bar" }), { bar: any(String) }],
+    "a sealed object": () => [Object.seal({ foo: "foo", bar: "bar" }), { bar: any(String) }],
+    "a frozen tree": () => [
+      deepFreeze({ id: "x", items: [{ id: 1 }, { id: 2 }] }),
+      { id: any(String), items: [{ id: any(Number) }, { id: 2 }] },
+    ],
+    "a frozen instance with a getter on the prototype": () => [
+      Object.freeze(new User()),
+      { id: any(Number), name: any(String) },
+    ],
+    "an object that appears twice": () => {
+      const shared = { x: 1, y: "s" };
+      return [{ a: shared, b: shared, log: [{ shared }] }, { a: { x: any(Number) } }];
+    },
+    "cycles": () => {
+      const inner: any = { id: 1 };
+      const outer: any = { id: 2, inner };
+      inner.parent = outer;
+      outer.self = outer;
+      return [outer, { id: any(Number), inner: { id: any(Number) } }];
+    },
+    "an array with a read-only element and an accessor element": () => {
+      const array = [1, 2, 3];
+      Object.defineProperty(array, 1, { get: () => 2, enumerable: true, configurable: true });
+      Object.defineProperty(array, 2, { writable: false });
+      return [array, [any(Number), any(Number), any(Number)]];
+    },
+    "an Error": () => [Object.assign(new TypeError("boom"), { code: "E_FOO" }), { code: any(String) }],
+    "a matcher on the received side": () => [{ a: any(Number), b: 1 }, { a: 5 }],
+  };
+
+  for (const [name, make] of Object.entries(cases)) {
+    test(name, () => {
+      const [received, matchers] = make();
+      const before = ownState(received, matchers);
+      expect(received).toMatchSnapshot(matchers);
+      expect(ownState(received, matchers)).toBe(before);
+    });
+  }
+
+  test("inline snapshots", () => {
+    const received = { id: 42, name: "abc" };
+    expect(received).toMatchInlineSnapshot(
+      { id: expect.any(Number) },
+      `
+      {
+        "id": Any<Number>,
+        "name": "abc",
+      }
+    `,
+    );
+    expect(received.id).toBe(42);
+  });
+
+  test("when they do not match", () => {
+    const received = Object.freeze({ id: 42, name: "abc" });
+    const matchers = { id: expect.any(Number), name: expect.any(Number) };
+    const before = ownState(received, matchers);
+    expect(() => expect(received).toMatchSnapshot(matchers)).toThrow("to match properties from received object");
+    expect(ownState(received, matchers)).toBe(before);
+  });
+
+  test("when two matchers pass on one property", () => {
+    const received: any = { x: 1 };
+    received.self = received;
+    const matchers: any = { x: expect.any(Number) };
+    matchers.self = matchers;
+    expect(received).toMatchInlineSnapshot(
+      matchers,
+      `
+      {
+        "self": [Circular],
+        "x": Any<Number>,
+      }
+    `,
+    );
+    expect(received.x).toBe(1);
+  });
+
+  test("when printing the value throws", () => {
+    const readOnly = Object.defineProperty([1, 2], 0, { writable: false });
+    const received = {
+      id: 42,
+      list: [1, 2],
+      readOnly,
+      bytes: new Uint8Array([1, 2]),
+      broken: new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw new Error("thrown while printing");
+          },
+        },
+      ),
+    };
+    const matchers = {
+      id: expect.any(Number),
+      list: [expect.any(Number), 2],
+      readOnly: [expect.any(Number), 2],
+      bytes: { 0: expect.any(Number) },
+    };
+    expect(() => expect(received).toMatchSnapshot(matchers)).toThrow("thrown while printing");
+    expect(received.id).toBe(42);
+    expect(received.list[0]).toBe(1);
+    expect(Object.getOwnPropertyDescriptor(readOnly, 0)).toEqual({
+      value: 1,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(received.bytes[0]).toBe(1);
+  });
 });
 
 describe("toMatchSnapshot errors", () => {

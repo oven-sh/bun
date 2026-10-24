@@ -1103,17 +1103,17 @@ impl Expect {
         pretty_value: &mut impl bun_io::Write,
         fn_name: &'static str,
     ) -> JsResult<()> {
-        let mut snapshot_value = value;
+        let Some(prop_matchers) = property_matchers else {
+            return value.jest_snapshot_pretty_format(pretty_value, global_this);
+        };
 
-        if let Some(_prop_matchers) = property_matchers {
-            if !value.is_object() {
-                let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(drop);
-            }
+        if !value.is_object() {
+            let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
+            return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(drop);
+        }
 
-            let prop_matchers = _prop_matchers;
-
-            if !value.jest_deep_match(prop_matchers, global_this)? {
+        value.jest_deep_match(prop_matchers, global_this, None, |matched| {
+            if !matched {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
@@ -1124,10 +1124,8 @@ impl Expect {
                 ).map(drop);
             }
 
-            snapshot_value = value.jest_substitute_asymmetric_matchers(prop_matchers, global_this)?;
-        }
-
-        snapshot_value.jest_snapshot_pretty_format(pretty_value, global_this)
+            value.jest_snapshot_pretty_format(pretty_value, global_this)
+        }).map(drop)
     }
 
     pub(crate) fn snapshot(

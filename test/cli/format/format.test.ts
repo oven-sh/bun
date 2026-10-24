@@ -6008,6 +6008,19 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
+  test("prettier-plugin-ember-template-tag only adds .gjs and .gts", async () => {
+    const files = {
+      ".prettierrc": '{ "plugins": ["prettier-plugin-ember-template-tag"] }\n',
+      "a.js": ugly,
+      "b.gjs": "<template>b</template>\n",
+      "c.gts": "<template>c</template>\n",
+    };
+    const result = await format(files, [], { reads: ["a.js", "b.gjs", "c.gts"] });
+    expect(result.files).toEqual({ "a.js": formatted, "b.gjs": files["b.gjs"], "c.gts": files["c.gts"] });
+    expect(result.stderr).toContain("does not support their language yet: 1 .gjs, 1 .gts\n");
+    expect(result.exitCode).toBe(2);
+  });
+
   test("recognizes the file names that Prettier does, or with an .oxfmtrc.json those that oxfmt does, which is case-sensitive", async () => {
     const script = "a  ;\n";
     const json = '{"a":   1}\n';

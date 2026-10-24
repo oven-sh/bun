@@ -605,8 +605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             },
                                             loc,
                                         );
-                                        // A function takes "this" from its call. Keep the read a
-                                        // value, as the inlined function was.
+                                        // "this" comes from the call: keep the read a value.
                                         if matches!(value.data, js_ast::ExprData::EFunction(_)) {
                                             return Some(
                                                 p.new_expr(E::Number::new(0.0), loc)

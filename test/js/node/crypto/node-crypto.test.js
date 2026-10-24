@@ -1,3 +1,4 @@
+import bluebirdES5 from "bluebird/js/release/es5.js";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -1114,35 +1115,161 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   expect(dhg.verifyError).toBe(8);
 });
 
-// bluebird's promisifyAll(require("crypto")) does this walk on its pre-ES5 path.
+// bluebird's promisifyAll(require("crypto")) walks each class prototype with for..in and reads each key,
+// because bun drops the function-level "use strict" that bluebird's ES5 test needs (#14251).
 // https://github.com/oven-sh/bun/issues/29533
-it("for..in then read over the prototype of every crypto class does not throw", async () => {
-  // In a child: the read of `_readableState` on Hash.prototype sets up a stream on that prototype, as in Node.
-  const script = `
-    import crypto from "node:crypto";
-    const walked = [];
-    const failures = [];
-    for (const name in crypto) {
-      const proto = typeof crypto[name] === "function" ? crypto[name].prototype : undefined;
-      if (proto === null || typeof proto !== "object") continue;
-      walked.push(name);
-      for (const key in proto) {
-        try {
-          void proto[key];
-        } catch (e) {
-          failures.push(name + ".prototype." + key + ": " + e.code);
+describe("a walk over the prototypes of the crypto classes", () => {
+  // report() prints, at exit, the stream state of the four classes that are lazy Transform streams.
+  const prelude = `
+    const crypto = require("node:crypto");
+    const classes = ["Hash", "Hmac", "Cipheriv", "Decipheriv"];
+    const secret = Buffer.alloc(32, 1);
+    const iv = Buffer.alloc(16, 2);
+    const make = {
+      Hash: () => crypto.createHash("sha256"),
+      Hmac: () => crypto.createHmac("sha256", secret),
+      Cipheriv: () => crypto.createCipheriv("aes-256-ctr", secret, iv),
+      Decipheriv: () => crypto.createDecipheriv("aes-256-ctr", secret, iv),
+    };
+    const ownsStreamState = object =>
+      Object.hasOwn(object, "_events") ||
+      ["_readableState", "_writableState"].some(
+        key => "value" in (Object.getOwnPropertyDescriptor(object, key) ?? {}),
+      );
+    function report(extra) {
+      const result = {
+        ...extra,
+        prototypesWithStreamState: classes.filter(name => ownsStreamState(crypto[name].prototype)),
+        classesWithSharedState: classes.filter(name => make[name]()._readableState === make[name]()._readableState),
+        cipherOutput: { a: [], b: [] },
+        hashStreamsEnded: [],
+      };
+      process.on("exit", () => console.log(JSON.stringify(result)));
+      const a = make.Cipheriv();
+      const b = make.Cipheriv();
+      a.on("data", chunk => result.cipherOutput.a.push(chunk.toString("hex")));
+      b.on("data", chunk => result.cipherOutput.b.push(chunk.toString("hex")));
+      a.write(Buffer.alloc(4));
+      b.write(Buffer.alloc(8));
+      const hashStream = (n, next) => {
+        const hash = make.Hash();
+        hash.on("end", () => {
+          result.hashStreamsEnded.push(n);
+          next?.();
+        });
+        hash.resume();
+        hash.end("x");
+      };
+      hashStream(1, () => hashStream(2));
+    }
+  `;
+  // What report() prints, in bun and in Node, when no stream getter ran on a class prototype.
+  const ownStatePerStream = {
+    prototypesWithStreamState: [],
+    classesWithSharedState: [],
+    cipherOutput: { a: ["62ae12f3"], b: ["62ae12f324bfea08"] },
+    hashStreamsEnded: [1, 2],
+  };
+
+  // In a child: a read that builds a stream on a class prototype changes every later stream of the process.
+  async function run(script) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  // Node differs in the next three tests. Its getter (lib/internal/streams/lazy_transform.js) builds the stream on
+  // the prototype, and the streams that report() makes then share it. bun's getter in
+  // src/js/internal/streams/lazy_transform.ts builds no stream on a class prototype.
+  it.concurrent("for..in with a read of each key throws nothing and builds no stream on a prototype", async () => {
+    const result = await run(`${prelude}
+      const walked = [];
+      const failures = [];
+      for (const name in crypto) {
+        const proto = typeof crypto[name] === "function" ? crypto[name].prototype : undefined;
+        if (proto === null || typeof proto !== "object") continue;
+        walked.push(name);
+        for (const key in proto) {
+          try {
+            void proto[key];
+          } catch (e) {
+            failures.push(name + ".prototype." + key + ": " + e.code);
+          }
         }
       }
-    }
-    const expected = walked.filter(name => name === "KeyObject" || name === "X509Certificate").sort();
-    console.log(JSON.stringify({ failures, walked: expected }));
-  `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
-    stdout: { failures: [], walked: ["KeyObject", "X509Certificate"] },
-    stderr: "",
-    exitCode: 0,
+      report({ failures, walked: walked.filter(name => name === "KeyObject" || name === "X509Certificate").sort() });
+    `);
+    expect(result).toEqual({
+      stdout: { failures: [], walked: ["KeyObject", "X509Certificate"], ...ownStatePerStream },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a read of _readableState or _writableState on a class prototype gives undefined", async () => {
+    const result = await run(`${prelude}
+      const reads = classes.map(name => {
+        const proto = crypto[name].prototype;
+        return [typeof proto._readableState, typeof proto._writableState];
+      });
+      // Only a class prototype gets no stream. An object made from one builds its own, as on Node.
+      const child = Object.create(crypto.Hash.prototype);
+      report({ reads, childBuildsOwnState: typeof child._readableState === "object" && ownsStreamState(child) });
+    `);
+    expect(result).toEqual({
+      stdout: { reads: Array(4).fill(["undefined", "undefined"]), childBuildsOwnState: true, ...ownStatePerStream },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The four classes inherit the two getters from LazyTransform.prototype, which node:crypto does not export.
+  it.concurrent("a read of the same getters on LazyTransform.prototype gives undefined", async () => {
+    const result = await run(`${prelude}
+      const LazyTransform = Object.getPrototypeOf(crypto.Hash.prototype).constructor;
+      const reads = [typeof LazyTransform.prototype._readableState, typeof LazyTransform.prototype._writableState];
+      const instance = new LazyTransform();
+      report({
+        name: LazyTransform.name,
+        reads,
+        prototypeOwnsState: ownsStreamState(LazyTransform.prototype),
+        instanceBuildsOwnState: typeof instance._readableState === "object" && ownsStreamState(instance),
+      });
+    `);
+    expect(result).toEqual({
+      stdout: {
+        name: "LazyTransform",
+        reads: ["undefined", "undefined"],
+        prototypeOwnsState: false,
+        instanceBuildsOwnState: true,
+        ...ownStatePerStream,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("node:crypto loads when user code replaced the global Set", async () => {
+    const result = await run(`
+      globalThis.Set = class {
+        add() {}
+        has() {
+          return false;
+        }
+      };
+      const crypto = require("node:crypto");
+      console.log(JSON.stringify({
+        sha256: crypto.createHash("sha256").update("x").digest("hex").slice(0, 8),
+        prototypeRead: typeof crypto.Hash.prototype._readableState,
+      }));
+    `);
+    expect(result).toEqual({ stdout: { sha256: "2d711642", prototypeRead: "undefined" }, stderr: "", exitCode: 0 });
+  });
+
+  // The getter in src/js/internal/streams/lazy_transform.ts refuses a class prototype because this is false in bun.
+  // When this test starts to pass (#14251), decide again whether the getter keeps that check.
+  it.failing("bluebird takes its ES5 path", () => {
+    expect(bluebirdES5.isES5).toBe(true);
   });
 });
 

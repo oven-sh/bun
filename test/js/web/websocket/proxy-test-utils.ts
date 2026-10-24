@@ -412,7 +412,8 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
             socket.on("error", () => {});
             const renegotiate = then =>
               socket.renegotiate({ rejectUnauthorized: false }, err => (err ? socket.destroy(err) : then()));
-            const send = payload => socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), Buffer.from(payload)]));
+            const send = (payload, then) =>
+              socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), Buffer.from(payload)]), then);
             const closeOnNextFrame = () => socket.once("data", () => socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
             const greet = () => {
               send("after renegotiation");
@@ -441,10 +442,9 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
                 socket.once("data", greet);
                 renegotiate(answer);
               } else if (process.env.WHEN === "behind a message") {
-                socket.once("data", () => {
-                  send("renegotiating");
-                  renegotiate(greetThenEcho);
-                });
+                // Node buffers a write made before the callback of the previous one, here the 101. A renegotiate()
+                // right behind send() would then put its request on the wire before the message.
+                socket.once("data", () => send("renegotiating", () => renegotiate(greetThenEcho)));
                 answer();
               } else {
                 socket.once("data", () => renegotiate(greet));

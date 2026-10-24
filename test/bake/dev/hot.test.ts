@@ -789,8 +789,9 @@ devTest("an ES module that is printed as CommonJS updates in place on each save"
 });
 
 // tsc 6.0.2 output for `export { helper } from "./helper"; export const value = 1;`.
-// On the second run `helper` is already a getter on `exports`, so the write of
-// `void 0` throws in strict code. This closure must stay sloppy.
+// The dev server drops the file's own "use strict", so its closure is sloppy. It
+// must stay sloppy: on the second run `helper` is already a getter on `exports`,
+// and the write of `void 0` throws in strict code.
 const tscNamedReexport = (value: number) => `
   "use strict";
   Object.defineProperty(exports, "__esModule", { value: true });

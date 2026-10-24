@@ -709,7 +709,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     JSC::JSValue strict = callFrame->argument(2);
     JSC::JSValue skipPrototype = callFrame->argument(3);
 
-    Vector<std::pair<JSValue, JSValue>, 16> stack;
+    DeepEqualsStack stack;
     MarkedArgumentBuffer gcBuffer;
 
     if (strict.isBoolean() && strict.asBoolean()) {

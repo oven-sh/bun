@@ -17,6 +17,7 @@
 #include "JSEventTarget.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "_NativeModule.h"
+#include "headers-handwritten.h"
 
 #include "napi_external.h"
 #include "webcrypto/JSCryptoKey.h"
@@ -878,6 +879,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepStrictEqual,
     bool result = skipPrototype
         ? Bun__deepEqualsNodeStrictSkipProto(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject)
         : Bun__deepEqualsNodeStrict(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(result));
+}
+
+// assert.deepEqual / assert.notDeepEqual: Bun.deepEquals(a, b) plus node's rule for the `errors` of an Error.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepEqual,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Bun::DeepEqualsStack stack;
+    stack.nodeLegacy = true;
+    JSC::MarkedArgumentBuffer gcBuffer;
+    bool result = Bun__deepEquals<false, false, false>(globalObject, callframe->argument(0), callframe->argument(1), gcBuffer, stack, scope, true);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(result));
 }

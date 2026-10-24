@@ -1923,6 +1923,20 @@ describe("expect()", () => {
     expect({ x: detached() }).not.toEqual({ x: new ArrayBuffer(0) });
   });
 
+  test("toEqual and toStrictEqual on AggregateErrors with different errors", () => {
+    const make = (/** @type {string} */ message) => new AggregateError([new Error(message)], "m");
+    expect(make("a")).toEqual(make("a"));
+    expect(make("a")).toStrictEqual(make("a"));
+    // Jest compares only the message of two errors. Vitest also compares `errors`.
+    if (isVitest) {
+      expect(make("a")).not.toEqual(make("b"));
+      expect(make("a")).not.toStrictEqual(make("b"));
+    } else {
+      expect(make("a")).toEqual(make("b"));
+      expect(make("a")).toStrictEqual(make("b"));
+    }
+  });
+
   test("symbol based keys in arrays are processed correctly", () => {
     const mySymbol = Symbol("test");
 

@@ -2,6 +2,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::timer::timer::internal_bindings" });
 
+export const newAsyncHooksId = b.fn({ returns: b.f64 });
 export const timerClockMs = b.fn({ returns: b.f64 });
 export const monotonicNowMs = b.fn({ returns: b.f64 });
 export const setNextTimerId = b.fn({ args: { id: b.u64.optional }, length: 1, capability: "heap", throws: true });

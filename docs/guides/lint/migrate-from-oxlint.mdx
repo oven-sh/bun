@@ -138,7 +138,7 @@ If the project also has an ESLint config, Bun uses the oxlint config. Pick the o
 
 ---
 
-Your editor's oxc extension can use Bun too: set its server command to `bun lint --lsp`. For formatting alone, `bun fmt --no-script --lsp` works in every build of Bun, not only canary.
+Your editor's oxc extension can use Bun too: set its server command to `bun lint --no-script --lsp`. `--no-script` keeps a `lint` script in `package.json` from running instead. For formatting alone, `bun fmt --no-script --lsp` works in every build of Bun, not only canary.
 
 ---
 

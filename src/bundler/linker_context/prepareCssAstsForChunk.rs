@@ -17,7 +17,9 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_resolver::DataURL;
 
-use crate::chunk::{Content, CssImportOrderKind};
+use crate::chunk::{Content, CssImportOrder, CssImportOrderKind, Layers};
+
+use super::find_imported_files_in_css_order::import_conditions_are_equal;
 
 // Raw pointers rather than `&mut` / `&` so that
 // (a) the container_of `container_of` recovery of `*mut BundleV2` from
@@ -97,9 +99,15 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
             unreachable!()
         };
         let mut i: usize = css_chunk.imports_in_chunk_in_order.len() as usize;
+        // Built for the first file that has "@layer" statements ahead of an "@import".
+        let mut pre_import_entries: Option<Vec<(usize, u32)>> = None;
         while i != 0 {
             i -= 1;
-            let entry = css_chunk.imports_in_chunk_in_order.mut_(i);
+            let (earlier, rest) = css_chunk
+                .imports_in_chunk_in_order
+                .slice_mut()
+                .split_at_mut(i);
+            let entry = &mut rest[0];
             // Reshaped for borrowck — match on entry.kind while also touching
             // entry.conditions / entry.condition_import_records relies on disjoint field borrows.
             match &mut entry.kind {
@@ -326,16 +334,42 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                 }
                 CssImportOrderKind::SourceIndex(source_index) => {
                     let source_index = *source_index;
+                    // asts[idx] is Some for source_index entries (invariant of imports_in_chunk_in_order).
+                    let original_stylesheet: &BundlerStyleSheet = asts[source_index.get() as usize]
+                        .as_deref()
+                        .expect("css ast present");
+                    let pre_import_layers_printed_earlier = !original_stylesheet
+                        .layers_pre_import
+                        .is_empty()
+                        // Each "@layer {}" wrapper is a layer of its own.
+                        && !entry
+                            .conditions
+                            .slice()
+                            .iter()
+                            .any(ImportConditions::has_anonymous_layer)
+                        && {
+                            let list =
+                                core::ptr::from_ref(&original_stylesheet.layers_pre_import).addr();
+                            let index = pre_import_entries
+                                .get_or_insert_with(|| pre_import_entries_by_list(earlier));
+                            let first = index.partition_point(|&(other, _)| other < list);
+                            index[first..]
+                                .iter()
+                                .take_while(|&&(other, position)| {
+                                    other == list && (position as usize) < i
+                                })
+                                .any(|&(_, position)| {
+                                    import_conditions_are_equal(
+                                        earlier[position as usize].conditions.slice(),
+                                        entry.conditions.slice(),
+                                    )
+                                })
+                        };
                     // Multiple imports may refer to the same file/AST, but they
                     // may wrap or modify the AST in different ways. So we need
                     // to make a shallow copy and be careful not to modify shared
                     // references.
                     let ast: &mut BundlerStyleSheet = 'ast: {
-                        // asts[idx] is Some for source_index entries (invariant of imports_in_chunk_in_order).
-                        let original_stylesheet: &BundlerStyleSheet = asts
-                            [source_index.get() as usize]
-                            .as_deref()
-                            .expect("css ast present");
                         // SAFETY: bitwise shallow copy of the
                         // stylesheet header. All interior allocations are arena-owned and never
                         // freed via this view, so the duplicated `Vec`/`Vec` headers are
@@ -365,17 +399,32 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         // Regression: #28914
                         let original_rules = ast.rules.v.as_slice();
                         let mut layer_count: usize = 0;
+                        let mut layers_ahead_of_imports: usize = 0;
+                        let mut seen_import = false;
                         let mut prefix_end: usize = original_rules.len();
                         'prefix_scan: for (idx, rule) in original_rules.iter().enumerate() {
                             match rule {
-                                BundlerCssRule::Import(_) | BundlerCssRule::Ignored => {}
-                                BundlerCssRule::LayerStatement(_) => layer_count += 1,
+                                BundlerCssRule::Import(_) => seen_import = true,
+                                BundlerCssRule::Ignored => {}
+                                BundlerCssRule::LayerStatement(_) => {
+                                    layer_count += 1;
+                                    layers_ahead_of_imports += usize::from(!seen_import);
+                                }
                                 _ => {
                                     prefix_end = idx;
                                     break 'prefix_scan;
                                 }
                             }
                         }
+                        // Unlike esbuild, the statements ahead of the first "@import" leave only when an earlier entry prints them.
+                        let mut stripped = if pre_import_layers_printed_earlier
+                            && !has_import_behind_unknown_at_rules(&original_rules[prefix_end..])
+                        {
+                            layers_ahead_of_imports
+                        } else {
+                            0
+                        };
+                        layer_count -= stripped;
                         let dropped = prefix_end - layer_count;
 
                         if dropped == 0 {
@@ -393,6 +442,10 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 );
                             for rule in &original_rules[0..prefix_end] {
                                 if matches!(rule, BundlerCssRule::LayerStatement(_)) {
+                                    if stripped > 0 {
+                                        stripped -= 1;
+                                        continue;
+                                    }
                                     // SAFETY: bitwise duplicate of a rule. The copy goes into
                                     // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
                                     // whose elements never run `Drop` (see `arena_rule_list` /
@@ -427,6 +480,34 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
             }
         }
     }
+}
+
+/// The `Layers::PreImport` entries of `order` as (address of the list, position), sorted.
+fn pre_import_entries_by_list(order: &[CssImportOrder]) -> Vec<(usize, u32)> {
+    let mut entries = Vec::new();
+    for (position, entry) in order.iter().enumerate() {
+        if let CssImportOrderKind::Layers(Layers::PreImport(list)) = &entry.kind {
+            entries.push((core::ptr::from_ref(list.get()).addr(), position as u32));
+        }
+    }
+    entries.sort_unstable();
+    entries
+}
+
+/// Whether an "@import" is behind the unknown at-rule statements that `rules` starts with. The parser accepts one there, and it stays in the body.
+fn has_import_behind_unknown_at_rules(rules: &[BundlerCssRule]) -> bool {
+    rules
+        .iter()
+        .take_while(|rule| {
+            matches!(
+                rule,
+                BundlerCssRule::Unknown(_)
+                    | BundlerCssRule::Import(_)
+                    | BundlerCssRule::LayerStatement(_)
+                    | BundlerCssRule::Ignored
+            )
+        })
+        .any(|rule| matches!(rule, BundlerCssRule::Import(_)))
 }
 
 /// Builds a `BundlerCssRuleList` whose backing storage is arena-owned.

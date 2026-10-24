@@ -36,17 +36,9 @@ describe("issue #20546 - CSS @layer declarations should be stripped from source 
     // @import statements should NOT appear in the output (they've been inlined)
     expect(outCss).not.toContain("@import");
 
-    // The bare @layer declarations should not be duplicated at the bottom
-    // They should either be hoisted to the top or removed entirely since
-    // the layer blocks establish the same ordering
-    const layerOneStatements = outCss.match(/@layer one;/g);
-    const layerTwoStatements = outCss.match(/@layer two;/g);
-    const layerThreeStatements = outCss.match(/@layer three;/g);
-
-    // Each @layer declaration should appear at most once (hoisted)
-    expect((layerOneStatements ?? []).length).toBeLessThanOrEqual(1);
-    expect((layerTwoStatements ?? []).length).toBeLessThanOrEqual(1);
-    expect((layerThreeStatements ?? []).length).toBeLessThanOrEqual(1);
+    // The statements come first, once, and no copy stays behind the imported files.
+    expect(outCss).toStartWith("@layer one, two, three;\n");
+    expect(outCss.match(/@layer [a-z, ]+;/g)).toEqual(["@layer one, two, three;"]);
 
     // The actual layer block content should be present
     expect(outCss).toContain("margin: 0");
@@ -86,6 +78,9 @@ describe("issue #20546 - CSS @layer declarations should be stripped from source 
 
     // @import statements should NOT appear in the output
     expect(outCss).not.toContain("@import");
+
+    expect(outCss).toStartWith("@layer one, two, three;\n");
+    expect(outCss.match(/@layer [a-z, ]+;/g)).toEqual(["@layer one, two, three;"]);
 
     // The actual layer block content should be present
     expect(outCss).toContain("margin: 0");

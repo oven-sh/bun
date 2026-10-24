@@ -1396,6 +1396,7 @@ pub enum CssImportOrderKind {
     /// We don't want to redundantly print the rules of these redundant imports
     /// BUT, the imports may include layers.
     /// We'll just print layer name declarations so that the original ordering is preserved.
+    /// `Layers::PreImport` is the other producer: the statements a file has ahead of its first "@import".
     #[strum(serialize = "layers")]
     Layers(Layers),
     #[strum(serialize = "external_path")]
@@ -1413,13 +1414,15 @@ pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
     Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
     Owned(Vec<bun_css::LayerName>),
+    /// A stylesheet's `layers_pre_import`, borrowed. The order passes keep or remove this entry, and never change it.
+    PreImport(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
 }
 
 impl Layers {
     #[inline]
     pub(crate) fn inner(&self) -> &Vec<bun_css::LayerName> {
         match self {
-            Layers::Borrowed(p) => p.get(),
+            Layers::Borrowed(p) | Layers::PreImport(p) => p.get(),
             Layers::Owned(b) => b,
         }
     }
@@ -1438,6 +1441,12 @@ impl Layers {
         Layers::Borrowed(bun_ptr::BackRef::from(p))
     }
 
+    /// `borrow()` for a stylesheet's `layers_pre_import`.
+    #[inline]
+    pub(crate) fn pre_import(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
+        Layers::PreImport(bun_ptr::BackRef::from(p))
+    }
+
     /// Drop owned (arena-backed, so no-op) and
     /// install a fresh owned value.
     #[inline]
@@ -1448,17 +1457,34 @@ impl Layers {
     /// If borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
     pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
-        if let Layers::Borrowed(p) = *self {
+        if let Layers::Borrowed(p) | Layers::PreImport(p) = *self {
             *self = Layers::Owned(p.deep_clone_with(|l| l.clone()));
         }
         match self {
             Layers::Owned(b) => b,
-            Layers::Borrowed(_) => unreachable!(),
+            Layers::Borrowed(_) | Layers::PreImport(_) => unreachable!(),
         }
     }
 }
 
 impl CssImportOrder {
+    /// Whether this entry prints only "@layer" statements, which may precede an "@import".
+    pub(crate) fn prints_as_layer_statements(&self) -> bool {
+        let CssImportOrderKind::Layers(layers) = &self.kind else {
+            return false;
+        };
+        match self.conditions.slice() {
+            [] => true,
+            [only] => {
+                layers.inner().is_empty()
+                    && only.layer.as_ref().is_some_and(|layer| layer.v.is_some())
+                    && only.supports.is_none()
+                    && only.media.media_queries.is_empty()
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // TODO: conditions, condition_import_records
 

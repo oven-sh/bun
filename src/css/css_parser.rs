@@ -671,6 +671,17 @@ pub trait CustomAtRuleParser {
     fn take_layer_names(_this: &mut Self) -> Vec<LayerName> {
         Vec::new()
     }
+
+    fn take_layers_pre_import(_this: &mut Self) -> Vec<LayerName> {
+        Vec::new()
+    }
+
+    /// Called with 1 ahead of the block of `@media`, `@supports` or `@-moz-document`, and with -1 after it.
+    fn bump_conditional_depth(_this: &mut Self, _amount: i32) {}
+
+    fn has_conditional_layer_names(_this: &mut Self) -> bool {
+        false
+    }
 }
 
 /// At rules are rules that have the `@` symbol.
@@ -707,6 +718,11 @@ pub struct BundlerAtRuleParser<'a> {
     /// soundly under Stacked Borrows.
     pub(crate) import_records: *mut Vec<ImportRecord>,
     pub(crate) layer_names: Vec<LayerName>,
+    /// `layer_names` as it was when the first `@import` was parsed.
+    pub(crate) layers_pre_import: Option<Vec<LayerName>>,
+    pub(crate) conditional_depth: u32,
+    /// Whether a name in `layer_names` has its first mention inside a conditional group rule.
+    pub(crate) has_conditional_layer_names: bool,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
     pub(crate) anon_layer_count: u32,
@@ -756,6 +772,15 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         if !this.track_layers_and_imports {
             return;
         }
+        // Unlike esbuild, `layer_names` keeps these names as well.
+        if this.layers_pre_import.is_none() {
+            let mut names = Vec::new();
+            names.ensure_unused_capacity(this.layer_names.len() as usize);
+            for name in this.layer_names.slice() {
+                names.append_assume_capacity(name.deep_clone(this.arena));
+            }
+            this.layers_pre_import = Some(names);
+        }
         // SAFETY: `import_records` shares raw-pointer provenance with
         // `Parser.import_records` (see field doc / `parse_bundler`). This hook
         // runs synchronously between parser accesses, so the fresh `&mut`
@@ -793,7 +818,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         this.layer_names
             .ensure_unused_capacity(layers.len() as usize);
         for layer in layers.slice() {
-            if this.enclosing_layer.v.len() > 0 {
+            let name = if this.enclosing_layer.v.len() > 0 {
                 let mut cloned = LayerName {
                     v: SmallList::default(),
                 };
@@ -801,11 +826,19 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
                 // calls each grow once.
                 cloned.v.append_slice(this.enclosing_layer.v.slice());
                 cloned.v.append_slice(layer.v.slice());
-                this.layer_names.append_assume_capacity(cloned);
+                cloned
             } else {
-                this.layer_names
-                    .append_assume_capacity(layer.deep_clone(this.arena));
+                layer.deep_clone(this.arena)
+            };
+            // A name that the file also declares earlier, outside a condition, is in the order either way.
+            if this.conditional_depth > 0 && !this.has_conditional_layer_names {
+                this.has_conditional_layer_names = !this
+                    .layer_names
+                    .slice()
+                    .iter()
+                    .any(|known| known.eql(&name));
             }
+            this.layer_names.append_assume_capacity(name);
         }
     }
 
@@ -822,6 +855,18 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
     fn take_layer_names(this: &mut Self) -> Vec<LayerName> {
         core::mem::take(&mut this.layer_names)
+    }
+
+    fn take_layers_pre_import(this: &mut Self) -> Vec<LayerName> {
+        this.layers_pre_import.take().unwrap_or_default()
+    }
+
+    fn bump_conditional_depth(this: &mut Self, amount: i32) {
+        this.conditional_depth = this.conditional_depth.wrapping_add_signed(amount);
+    }
+
+    fn has_conditional_layer_names(this: &mut Self) -> bool {
+        this.has_conditional_layer_names
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
@@ -1478,6 +1523,17 @@ mod rule_parsers {
             ))
         }
 
+        /// The block of `@media`, `@supports` or `@-moz-document`: a layer in it is declared only when the condition holds.
+        fn parse_conditional_block(
+            &mut self,
+            input: &mut Parser,
+        ) -> CssResult<CssRuleList<T::AtRule>> {
+            T::bump_conditional_depth(self.at_rule_parser, 1);
+            let rules = self.parse_style_block(input);
+            T::bump_conditional_depth(self.at_rule_parser, -1);
+            rules
+        }
+
         pub(crate) fn parse_style_block(
             &mut self,
             input: &mut Parser,
@@ -1703,7 +1759,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Media(query) => {
-                    let rules = this.parse_style_block(input)?;
+                    let rules = this.parse_conditional_block(input)?;
                     this.rules
                         .v
                         .push(CssRule::Media(css_rules::media::MediaRule {
@@ -1714,7 +1770,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Supports(condition) => {
-                    let rules = this.parse_style_block(input)?;
+                    let rules = this.parse_conditional_block(input)?;
                     this.rules
                         .v
                         .push(CssRule::Supports(css_rules::supports::SupportsRule {
@@ -1788,7 +1844,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::MozDocument => {
-                    let rules = this.parse_style_block(input)?;
+                    let rules = this.parse_conditional_block(input)?;
                     this.rules
                         .v
                         .push(CssRule::MozDocument(css_rules::document::MozDocumentRule {
@@ -2308,6 +2364,10 @@ pub struct StyleSheet<AtRule> {
     /// [`ParserOptions::flags`] of the parse.
     pub flags: ParserFlags,
     pub layer_names: Vec<LayerName>,
+    /// The `@layer` names declared before the first `@import`. Empty when there is no `@import`.
+    pub layers_pre_import: Vec<LayerName>,
+    /// Whether the file first declares one of its layers inside `@media`, `@supports` or `@-moz-document`.
+    pub has_conditional_layer_names: bool,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
     pub local_scope: LocalScope,
@@ -2329,6 +2389,8 @@ impl<AtRule> StyleSheet<AtRule> {
             css_modules: None,
             flags: ParserFlags::default(),
             layer_names: Vec::new(),
+            layers_pre_import: Vec::new(),
+            has_conditional_layer_names: false,
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
             composes: ComposesMap::default(),
@@ -2551,6 +2613,9 @@ mod stylesheet_impl {
                 track_layers_and_imports: false,
                 import_records: core::ptr::null_mut(),
                 layer_names: Vec::new(),
+                layers_pre_import: None,
+                conditional_depth: 0,
+                has_conditional_layer_names: false,
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };
@@ -2650,6 +2715,8 @@ mod stylesheet_impl {
             // (default = empty; `BundlerAtRuleParser` overrides to move its list
             // out) so the accumulated layer ordering isn't silently dropped.
             let layer_names = P::take_layer_names(at_rule_parser);
+            let layers_pre_import = P::take_layers_pre_import(at_rule_parser);
+            let has_conditional_layer_names = P::has_conditional_layer_names(at_rule_parser);
 
             Ok((
                 Self {
@@ -2661,6 +2728,8 @@ mod stylesheet_impl {
                     css_modules: options.css_modules,
                     flags: options.flags,
                     layer_names,
+                    layers_pre_import,
+                    has_conditional_layer_names,
                     local_scope: parser_extra.local_scope,
                     local_properties,
                     composes,
@@ -2763,6 +2832,9 @@ mod stylesheet_impl {
                 track_layers_and_imports: true,
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
+                layers_pre_import: None,
+                conditional_depth: 0,
+                has_conditional_layer_names: false,
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };

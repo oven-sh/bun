@@ -180,10 +180,32 @@ impl DeclarationBlock<'static> {
             }
         }
 
+        if input.flags.css_modules() {
+            make_animation_names_local(&mut declarations, &mut important_declarations, input);
+        }
+
         Ok(DeclarationBlock {
             important_declarations,
             declarations,
         })
+    }
+}
+
+/// Makes the keyframes names in the `animation` and `animation-name`
+/// declarations of a finished list symbols of the CSS module. A name is final
+/// only here: the value parsers run speculatively, and a list that fails is
+/// dropped.
+#[cold]
+pub(crate) fn make_animation_names_local(
+    declarations: &mut DeclarationList<'_>,
+    important_declarations: &mut DeclarationList<'_>,
+    input: &mut css::Parser,
+) {
+    for property in declarations
+        .iter_mut()
+        .chain(important_declarations.iter_mut())
+    {
+        crate::css_properties::animation::make_names_local(property, input);
     }
 }
 

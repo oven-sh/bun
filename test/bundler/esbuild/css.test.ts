@@ -223,6 +223,75 @@ describe("bundler", () => {
   //   minifyIdentifiers: true,
   // });
 
+  // The `:global` and `:local` blocks of the esbuild fixture are left out: Bun does not parse them.
+  // Two results differ from esbuild:
+  // - esbuild renames `local_name1` and `local_name2` in the list with CSS-wide keywords. That
+  //   list is not a valid value, so Bun prints it as written and gives the two names no key.
+  // - esbuild renames `@keyframes "none"` to `styles_none`. Bun keeps the quoted name global.
+  itBundled("css/ImportCSSFromJSLocalAtKeyframes", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./styles.module.css"
+        console.log(styles)
+      `,
+      "/styles.module.css": /* css */ `
+        @keyframes local_name { to { color: red } }
+
+        div { animation-name: none }
+
+        div { animation-name: local_name }
+
+        div { animation-name: local_name1, none, local_name2, Inherit, INITIAL, revert, revert-layer, unset }
+
+        div { animation: 2s infinite local_name }
+
+        /* Someone wanted to be able to name their animations "none" */
+        @keyframes "none" { to { color: red } }
+        div { animation-name: "none" }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          local_name: "local_name_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        @keyframes local_name_-MSaAA {
+          to {
+            color: red;
+          }
+        }
+
+        div {
+          animation-name: none;
+          animation-name: local_name_-MSaAA;
+          animation-name: local_name1, none, local_name2, Inherit, INITIAL, revert, revert-layer, unset;
+          animation: 2s infinite local_name_-MSaAA;
+        }
+
+        @keyframes "none" {
+          to {
+            color: red;
+          }
+        }
+
+        div {
+          animation-name: "none";
+        }
+        "
+      `);
+    },
+  });
+
   // TODO: some classes are commented out bc we don't support :global or :local yet
   itBundled("css/ImportCSSFromJSComposes", {
     files: {

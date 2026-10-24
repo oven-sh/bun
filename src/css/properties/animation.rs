@@ -1,7 +1,9 @@
 use crate as css;
 use crate::CSSString;
+use crate::css_properties::Property;
+use crate::css_rules::keyframes::is_reserved_keyframes_name;
 use crate::css_values::easing::EasingFunction;
-use crate::css_values::ident::{CustomIdent, DashedIdent, is_reserved_custom_ident};
+use crate::css_values::ident::{CustomIdent, DashedIdent};
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::time::Time;
 use crate::generics::CssEql;
@@ -135,12 +137,17 @@ impl Animation {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Extract the inner string slice up front so both the ident and
-        // string variants share one code path.
+        // string variants share one code path. The keyword checks below read
+        // the name as written, so a local name comes from its symbol.
         let name_str: Option<&[u8]> = match &self.name {
             AnimationName::None => None,
             AnimationName::Ident(ident) => Some(ident.v()),
             // SAFETY: arena-owned slice lives for the parse session.
             AnimationName::String(s) => Some(unsafe { crate::arena_str(*s) }),
+            AnimationName::Local { ref_, .. } => match dest.symbols.get_const(*ref_) {
+                Some(symbol) => Some(symbol.original_name.slice()),
+                None => return Err(dest.add_fmt_error()),
+            },
         };
 
         // Unlike lightningcss — which only emits the components when a name is
@@ -261,6 +268,10 @@ pub enum AnimationName {
     Ident(CustomIdent),
     /// A `<string>` name of a `@keyframes` rule.
     String(CSSString),
+    /// A name that is local to a CSS module: a symbol in `local_scope`.
+    /// `quoted` keeps a `<string>` apart from the same name as an ident, as
+    /// `eql` does for the two plain forms.
+    Local { ref_: bun_ast::Ref, quoted: bool },
 }
 
 impl AnimationName {
@@ -278,6 +289,16 @@ impl AnimationName {
                 // SAFETY: arena-owned slices live for the parse session.
                 unsafe { bun_core::strings::eql(&**a, &**b) }
             }
+            (
+                AnimationName::Local {
+                    ref_: a,
+                    quoted: a_quoted,
+                },
+                AnimationName::Local {
+                    ref_: b,
+                    quoted: b_quoted,
+                },
+            ) => a == b && a_quoted == b_quoted,
             _ => false,
         }
     }
@@ -294,6 +315,11 @@ impl AnimationName {
                 // SAFETY: arena-owned slice.
                 hasher.update(unsafe { crate::arena_str(*s) });
             }
+            AnimationName::Local { ref_, quoted } => {
+                hasher.update(&3u32.to_ne_bytes());
+                hasher.update(&ref_.to_raw_bits().to_ne_bytes());
+                hasher.update(&[u8::from(*quoted)]);
+            }
         }
     }
 
@@ -304,6 +330,7 @@ impl AnimationName {
             AnimationName::None => AnimationName::None,
             AnimationName::Ident(i) => AnimationName::Ident(*i),
             AnimationName::String(s) => AnimationName::String(*s),
+            AnimationName::Local { .. } => *self,
         }
     }
 
@@ -327,50 +354,54 @@ impl AnimationName {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
-            css_module.config.animation
-        } else {
-            false
-        };
-
         match self {
-            AnimationName::None => return dest.write_str("none"),
-            AnimationName::Ident(s) => {
-                // SAFETY: arena-owned slice valid for 'bump.
-                let name: &[u8] = unsafe { crate::arena_str(s.v) };
-                if css_module_animation_enabled {
-                    // reshaped for borrowck — capture arena/source_index
-                    // before borrowing dest.css_module mutably.
-                    let arena = dest.arena;
-                    let source_index = dest.loc.source_index;
-                    if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(arena, name, source_index);
-                    }
-                }
-                return s.to_css_with_options(dest, css_module_animation_enabled);
-            }
+            AnimationName::None => dest.write_str("none"),
+            AnimationName::Ident(ident) => dest.serialize_identifier(ident.v()),
             AnimationName::String(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(*s) };
-                if css_module_animation_enabled {
-                    // reshaped for borrowck
-                    let arena = dest.arena;
-                    let source_index = dest.loc.source_index;
-                    if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(arena, name, source_index);
-                    }
+                if is_reserved_keyframes_name(name) {
+                    dest.serialize_string(name)
+                } else {
+                    dest.serialize_identifier(name)
                 }
+            }
+            AnimationName::Local { ref_, .. } => dest.write_local_symbol(*ref_),
+        }
+    }
 
-                // CSS-wide keywords and `none` cannot remove quotes
-                if strings::eql_case_insensitive_ascii_check_length(name, b"none")
-                    || is_reserved_custom_ident(name)
-                {
-                    return dest.serialize_string(name);
-                }
+    /// Makes the name a symbol of the CSS module. `none` and a `<string>`
+    /// that has to keep its quotes stay global.
+    pub(crate) fn make_local(&mut self, input: &mut Parser) {
+        let (name, quoted): (&[u8], bool) = match self {
+            AnimationName::Ident(ident) => (ident.v(), false),
+            // SAFETY: arena-owned slice valid for 'bump.
+            AnimationName::String(s) => (unsafe { crate::arena_str(*s) }, true),
+            AnimationName::None | AnimationName::Local { .. } => return,
+        };
+        if is_reserved_keyframes_name(name) {
+            return;
+        }
+        let ref_ = input.add_symbol_for_keyframes_name(name);
+        *self = AnimationName::Local { ref_, quoted };
+    }
+}
 
-                return dest.write_ident(name, css_module_animation_enabled);
+/// Makes the keyframes names of an `animation` or `animation-name`
+/// declaration symbols of the CSS module.
+pub(crate) fn make_names_local(property: &mut Property, input: &mut Parser) {
+    match property {
+        Property::Animation((animations, _)) => {
+            for animation in animations.slice_mut() {
+                animation.name.make_local(input);
             }
         }
+        Property::AnimationName((names, _)) => {
+            for name in names.slice_mut() {
+                name.make_local(input);
+            }
+        }
+        _ => {}
     }
 }
 

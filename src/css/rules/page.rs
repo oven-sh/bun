@@ -224,6 +224,14 @@ impl PageRule {
             }
         }
 
+        if input.flags.css_modules() {
+            css::declaration::make_animation_names_local(
+                &mut declarations.declarations,
+                &mut declarations.important_declarations,
+                input,
+            );
+        }
+
         Ok(PageRule {
             selectors,
             declarations,

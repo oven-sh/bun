@@ -932,6 +932,26 @@ This outputs:
 
 The class names are unique to each file, so they don't collide.
 
+The object also maps each `@keyframes` name to its unique identifier. Use the identifier to start the animation from JavaScript:
+
+```css title="styles.module.css" icon="file-code"
+@keyframes spin {
+  to {
+    rotate: 1turn;
+  }
+}
+```
+
+```tsx title="app.tsx" icon="/icons/typescript.svg"
+import styles from "./styles.module.css";
+
+export default function Spinner() {
+  return <div style={{ animation: `${styles.spin} 1s linear infinite` }} />;
+}
+```
+
+Bun scopes a name in an `animation` or `animation-name` declaration to the file in the same way, and the object has a key for it. To use keyframes from another stylesheet, pass the name through a custom property, as in `animation-name: var(--name)`.
+
 ### Composition
 
 CSS modules can compose class selectors together to reuse style rules across multiple classes.

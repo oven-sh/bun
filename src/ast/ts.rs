@@ -223,7 +223,7 @@ pub enum TypeReferenceKind {
     Unknown,
     /// The name is a class, or a variable that can be constructed.
     TypeWithConstructSignatureAndValue,
-    VoidNullableOrNever,
+    VoidNullableOrNeverType,
     /// `Number` for `NumberLikeType`
     Global(&'static [u8]),
 }

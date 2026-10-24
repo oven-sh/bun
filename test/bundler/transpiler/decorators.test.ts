@@ -1,11 +1,13 @@
 // @ts-nocheck
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { longLimit } from "../../cli/children";
+import { endChildren, longLimit } from "../../cli/children";
 import { canCompareWithTypeScript, differencesFromTypeScript } from "./decorator-differential";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 import { cases } from "./decorator-lowering-cases";
+
+afterAll(endChildren);
 
 test("decorator order of evaluation", () => {
   let counter = 0;

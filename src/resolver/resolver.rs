@@ -1632,12 +1632,14 @@ impl<'a> Resolver<'a> {
                 result.flags.set_experimental_decorators(
                     result.flags.experimental_decorators() || tsconfig.experimental_decorators(),
                 );
-                result
-                    .flags
-                    .set_use_define_for_class_fields(tsconfig.use_define_for_class_fields());
-                result
-                    .flags
-                    .set_strict_null_checks(tsconfig.strict_null_checks());
+                if primary {
+                    result
+                        .flags
+                        .set_use_define_for_class_fields(tsconfig.use_define_for_class_fields());
+                    result
+                        .flags
+                        .set_strict_null_checks(tsconfig.strict_null_checks());
+                }
             }
 
             // Probe the listing in one `entries_mutex` critical section: a

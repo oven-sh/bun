@@ -7,7 +7,8 @@ pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
 
 use crate::lexer as js_lexer;
-use crate::lower::lower_class::has_experimental_class_decorators;
+use crate::lower::lower_class::class_or_constructor_parameter_is_decorated;
+use crate::lower::lower_decorators::is_constructor;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
@@ -255,7 +256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         for arg in args.iter_mut() {
             if arg.ts_decorators.len_u32() > 0 {
-                // They run outside of the method, like those of the method.
+                // The scope of a parameter decorator is the one that the method's own decorators have.
                 let function_args = self.current_scope;
                 self.current_scope = function_args
                     .parent
@@ -1051,7 +1052,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let is_rebound = if class.should_lower_standard_decorators {
                 class.ts_decorators.len_u32() > 0
             } else {
-                Self::IS_TYPESCRIPT_ENABLED && !is_expr && has_experimental_class_decorators(class)
+                Self::IS_TYPESCRIPT_ENABLED
+                    && !is_expr
+                    && class_or_constructor_parameter_is_decorated(class)
             };
             let body_ref = if is_rebound {
                 let inner_ref = self.generate_temp_var(self.bump_name3(b"_", original_name, b""));
@@ -1095,6 +1098,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
+
+            let super_shim = if Self::IS_TYPESCRIPT_ENABLED {
+                self.super_shim_of(class)
+            } else {
+                Ref::NONE
+            };
+            let mut constructor_args: Option<js_ast::StoreRef<js_ast::Scope>> = None;
+            let outer_initializer_uses = self.field_initializer_uses.len();
 
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
@@ -1180,6 +1191,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                let outer_super_shim = self.super_shim;
+                if is_constructor(property) {
+                    self.super_shim = super_shim;
+                    constructor_args = self.scope_order_to_visit.first().map(|it| it.scope_ref());
+                }
+
                 if let Some(val) = property.value {
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
@@ -1200,6 +1217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.visit_expr(property.value.as_mut().unwrap());
                     }
                 }
+                self.super_shim = outer_super_shim;
 
                 if let Some(val) = property.initializer {
                     let class_body = self.current_scope;
@@ -1231,7 +1249,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                self.lower_class_fields(class);
+                self.capture_decorated_class(class);
+                self.lower_class_fields(class, super_shim);
+                let uses = outer_initializer_uses..self.field_initializer_uses.len();
+                if let Some(constructor_args) = constructor_args {
+                    self.rename_constructor_variables(constructor_args, uses);
+                }
+                // The initializer that this class is in uses them too.
+                if self.field_init_class_bodies.is_empty() {
+                    self.field_initializer_uses.truncate(outer_initializer_uses);
+                }
             }
 
             // manual restore for the block-level `defer`

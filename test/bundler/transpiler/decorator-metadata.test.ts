@@ -1,8 +1,10 @@
 import { bunEnv, bunExe, tempDir } from "harness";
 import "reflect-metadata";
-import { longLimit } from "../../cli/children";
+import { endChildren, longLimit, spawn } from "../../cli/children";
 import { canCompareWithTypeScript, differencesFromTypeScript } from "./decorator-differential";
 import { cases } from "./decorator-metadata-cases";
+
+afterAll(endChildren);
 
 describe("decorator metadata", () => {
   test("type serialization", () => {
@@ -571,10 +573,11 @@ test.concurrent(
       const d: any = () => {};
       type T0 = string;
       ${aliases}
-      class A { @d x: T20000; }
+      class A { @d x: T20000; @d y: T0${"[]".repeat(20_000)}; }
     `,
     });
-    await using build = Bun.spawn({
+    await using build = spawn({
+      timeout: longLimit,
       cmd: [bunExe(), "build", "index.ts", "--outfile=out.js"],
       env: bunEnv,
       cwd: String(dir),
@@ -582,9 +585,9 @@ test.concurrent(
       stderr: "pipe",
     });
     expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: "", exitCode: 0 });
-    await using proc = Bun.spawn({ cmd: [bunExe(), "out.js"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    await using proc = spawn({ cmd: [bunExe(), "out.js"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "String\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "String\nArray\n", stderr: "", exitCode: 0 });
   },
   longLimit,
 );

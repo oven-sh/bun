@@ -46,13 +46,13 @@ impl<'p, 's> Checker<'p, 's> {
         classes.dedup();
         let mut references: Vec<TypeNodeId> = Vec::new();
         for m in classes.into_iter().flat_map(|c| hir[c].members.iter()) {
-            reachable_type_references(hir, hir[m].ty, &mut references);
+            collect_type_references(hir, hir[m].ty, &mut references);
             let f = hir[m].func;
             if f.is_some() {
                 for p in hir[f].params.iter() {
-                    reachable_type_references(hir, hir[p].ty, &mut references);
+                    collect_type_references(hir, hir[p].ty, &mut references);
                 }
-                reachable_type_references(hir, hir[f].ret, &mut references);
+                collect_type_references(hir, hir[f].ret, &mut references);
             }
         }
         let mut found: Vec<DecoratorMetadataReference> = Vec::with_capacity(references.len());
@@ -106,14 +106,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let value_symbol =
             self.resolve_entity_name(file, location, type_name, SymFlags::VALUE, true);
-        let resolved_value_symbol = value_symbol.map(|it| self.resolve_alias_if_alias(it));
+        let resolved_value_symbol = value_symbol.map(|it| self.resolve_if_alias(it));
         is_type_only |= value_symbol
-            .is_some_and(|it| self.get_type_only_alias_declaration_ex(it, SymFlags::VALUE));
+            .is_some_and(|it| self.has_type_only_alias_declaration(it, SymFlags::VALUE));
 
         let type_symbol = self.resolve_entity_name(file, location, type_name, SymFlags::TYPE, true);
-        let resolved_type_symbol = type_symbol.map(|it| self.resolve_alias_if_alias(it));
-        is_type_only |= type_symbol
-            .is_some_and(|it| self.get_type_only_alias_declaration_ex(it, SymFlags::TYPE));
+        let resolved_type_symbol = type_symbol.map(|it| self.resolve_if_alias(it));
+        is_type_only |=
+            type_symbol.is_some_and(|it| self.has_type_only_alias_declaration(it, SymFlags::TYPE));
 
         if let (Some(AliasTarget::Symbol(value)), Some(AliasTarget::Symbol(ty))) =
             (resolved_value_symbol, resolved_type_symbol)
@@ -171,7 +171,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn resolve_alias_if_alias(&mut self, symbol: Sym) -> AliasTarget {
+    fn resolve_if_alias(&mut self, symbol: Sym) -> AliasTarget {
         if self.files().flags(symbol).contains(SymFlags::ALIAS) {
             self.resolve_alias(symbol)
         } else {
@@ -180,7 +180,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getTypeOnlyAliasDeclarationEx(symbol, include) != nil`
-    fn get_type_only_alias_declaration_ex(&mut self, symbol: Sym, include: SymFlags) -> bool {
+    fn has_type_only_alias_declaration(&mut self, symbol: Sym, include: SymFlags) -> bool {
         let files = self.files();
         if !files.flags(symbol).contains(SymFlags::ALIAS)
             || files.alias_links(symbol).type_only_declaration.is_none()
@@ -196,7 +196,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `isTypeAssignableToKind`, for the kinds above.
+    /// `isTypeAssignableToKind`, for the kinds that `type_reference_serialization_kind` asks about.
     fn is_type_assignable_to_kind(&mut self, source: TypeId, kind: u32) -> bool {
         if self.flags(source) & kind != 0 {
             return true;
@@ -268,30 +268,32 @@ impl<'p, 's> Checker<'p, 's> {
 }
 
 /// Adds the type references in `ty` that `serializeTypeNode` or `GetRestParameterElementType` can reach.
-fn reachable_type_references(hir: &File, ty: TypeNodeId, references: &mut Vec<TypeNodeId>) {
+fn collect_type_references(hir: &File, mut ty: TypeNodeId, references: &mut Vec<TypeNodeId>) {
     if ty.is_none() {
         return;
+    }
+    // The parser needs no stack for `T[][]`, so it can be deeper than the stack here.
+    while let TypeNodeKind::Array(inner) = hir[ty].kind {
+        ty = inner;
     }
     match hir[ty].kind {
         TypeNodeKind::Ref { args, .. } => {
             references.push(ty);
             if !args.is_empty() {
-                reachable_type_references(hir, hir.id_at(args, 0), references);
+                collect_type_references(hir, hir.id_at(args, 0), references);
             }
         }
-        TypeNodeKind::Array(inner)
-        | TypeNodeKind::Readonly(inner)
-        | TypeNodeKind::JSDoc { ty: inner, .. } => {
-            reachable_type_references(hir, inner, references);
+        TypeNodeKind::Readonly(inner) | TypeNodeKind::JSDoc { ty: inner, .. } => {
+            collect_type_references(hir, inner, references);
         }
         TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
             for part in hir.ids(types) {
-                reachable_type_references(hir, part, references);
+                collect_type_references(hir, part, references);
             }
         }
         TypeNodeKind::Cond { yes, no, .. } => {
-            reachable_type_references(hir, yes, references);
-            reachable_type_references(hir, no, references);
+            collect_type_references(hir, yes, references);
+            collect_type_references(hir, no, references);
         }
         _ => {}
     }

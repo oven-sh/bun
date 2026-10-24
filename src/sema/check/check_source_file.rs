@@ -37,7 +37,7 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `begin_stack_budget` for a caller that is deep in a recursion of its own.
-    pub fn begin_stack_budget_with_what_is_left(&mut self) {
+    pub fn begin_stack_budget_from_remaining(&mut self) {
         self.stack_base = stack_pointer();
         self.stack_limit = bun_core::StackCheck::init().remaining().min(TASK_STACK);
     }

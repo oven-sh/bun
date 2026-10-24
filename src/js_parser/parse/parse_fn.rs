@@ -226,7 +226,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators && p.lexer.token == T::TAt {
-                // They run outside of the method, like those of the method.
+                // The scope of a parameter decorator is the one that the method's own decorators have.
                 let function_args = p.current_scope;
                 p.current_scope = function_args
                     .parent

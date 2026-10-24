@@ -244,9 +244,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let Some(reference) = self.entity_name_for_decorator_metadata(ty) else {
             return;
         };
-        let (checked, root) = self.check_type_reference(&reference);
-        if checked.keeps_import && !root.is_empty() {
-            self.record_usage(root);
+        if let (_, Some(import)) = self.check_type_reference(&reference) {
+            self.record_usage(import);
         }
     }
 
@@ -287,30 +286,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         common
     }
 
-    /// `GetTypeReferenceSerializationKind`, and the symbol of the first identifier as a value, if it has one.
-    fn check_type_reference(&mut self, reference: &TypeReference) -> (CheckedTypeReference, Ref) {
+    /// `GetTypeReferenceSerializationKind`, and the import that the metadata keeps.
+    fn check_type_reference(
+        &mut self,
+        reference: &TypeReference,
+    ) -> (TypeReferenceKind, Option<Ref>) {
         let names = reference.name.slice();
         let first = names[0];
         let root = self
             .find_symbol_with_record_usage::<false>(first.loc, first.text.slice())
-            .map_or(Ref::NONE, |found| found.r#ref);
-        let value = (!root.is_empty()).then(|| self.symbols[root.inner_index() as usize].kind);
-        let answer = |kind: TypeReferenceKind, keeps_import: bool| CheckedTypeReference {
-            loc: first.loc,
-            kind,
-            keeps_import,
-        };
+            .map_or(None, |found| found.r#ref.to_nullable());
+        let value = root.map(|root| self.symbols[root.inner_index() as usize].kind);
         use js_ast::symbol::Kind;
         // A name that only one declaration can mean has an answer that needs no types.
-        let checked = match (self.type_name_declarations.get(first.text.slice()), value) {
-            (None, None | Some(Kind::Unbound)) => answer(TypeReferenceKind::Unknown, false),
-            (None, Some(Kind::Import)) => answer(TypeReferenceKind::Unknown, true),
+        match (self.type_name_declarations.get(first.text.slice()), value) {
+            (None, None | Some(Kind::Unbound)) => (TypeReferenceKind::Unknown, None),
+            (None, Some(Kind::Import)) => (TypeReferenceKind::Unknown, root),
             (None, Some(Kind::Class)) if names.len() == 1 => {
-                answer(TypeReferenceKind::TypeWithConstructSignatureAndValue, false)
+                (TypeReferenceKind::TypeWithConstructSignatureAndValue, None)
             }
-            (None, Some(Kind::Class)) => answer(TypeReferenceKind::Unknown, false),
+            (None, Some(Kind::Class)) => (TypeReferenceKind::Unknown, None),
             (Some(TypeNameDeclaration::TypeOnlyImport), None | Some(Kind::Unbound)) => {
-                answer(TypeReferenceKind::Global(b"Object"), false)
+                (TypeReferenceKind::Global(b"Object"), None)
             }
             _ => {
                 let strict_null_checks = self.options.features.strict_null_checks;
@@ -319,12 +316,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     __bun_check_decorator_metadata(text, is_tsx, strict_null_checks)
                 });
                 match checked.binary_search_by_key(&first.loc.start, |it| it.loc.start) {
-                    Ok(at) => checked[at],
-                    Err(_) => answer(TypeReferenceKind::Unknown, false),
+                    Ok(at) => (checked[at].kind, root.filter(|_| checked[at].keeps_import)),
+                    Err(_) => (TypeReferenceKind::Unknown, None),
                 }
             }
-        };
-        (checked, root)
+        }
     }
 
     /// `SerializeParameterTypesOfNode`
@@ -364,13 +360,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Metadata::MBigint => Serialized::Global(b"BigInt"),
             Metadata::MSymbol => Serialized::Global(b"Symbol"),
             // `serializeTypeReferenceNode`
-            Metadata::MReference(reference) => match self.check_type_reference(&reference).0.kind {
+            Metadata::MReference(reference) => match self.check_type_reference(&reference).0 {
                 TypeReferenceKind::Unknown if in_conditional_type => OBJECT,
                 TypeReferenceKind::Unknown => Serialized::NameIfFunction(reference.name),
                 TypeReferenceKind::TypeWithConstructSignatureAndValue => {
                     Serialized::Name(reference.name)
                 }
-                TypeReferenceKind::VoidNullableOrNever => Serialized::Undefined,
+                TypeReferenceKind::VoidNullableOrNeverType => Serialized::Undefined,
                 TypeReferenceKind::Global(name) => Serialized::Global(name),
             },
             Metadata::MIntersection(types) => self.serialize_union_or_intersection(
@@ -448,7 +444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             // `serializeEntityNameAsExpressionFallback`: `typeof A !== "undefined" && (_a = A.B) !== void 0 && _a.C`
             let root = self.entity_name_to_expr(first, &[]);
-            let mut test = self.type_of_is(root, js_ast::OpCode::BinStrictNe, b"undefined");
+            let mut test = self.typeof_compare(root, js_ast::OpCode::BinStrictNe, b"undefined");
             let mut value = self.entity_name_to_expr(first, &names[1..2]);
             for name in &names[2..] {
                 let temp = self.declared_temp(b"_a");
@@ -491,7 +487,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.use_ref(temp, Loc::EMPTY),
             )
         };
-        let test = self.type_of_is(tested, js_ast::OpCode::BinStrictEq, b"function");
+        let test = self.typeof_compare(tested, js_ast::OpCode::BinStrictEq, b"function");
         let no = self.entity_name_to_expr(b"Object", &[]);
         self.new_expr(
             E::If {
@@ -504,7 +500,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `typeof value === "type"`
-    fn type_of_is(&mut self, value: Expr, op: js_ast::OpCode, ty: &'static [u8]) -> Expr {
+    fn typeof_compare(&mut self, value: Expr, op: js_ast::OpCode, ty: &'static [u8]) -> Expr {
         let flags = if matches!(value.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
         } else {

@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { tsc } from "../../cli/check/differential";
+import { longLimit, spawn } from "../../cli/children";
 
 export type Case = {
   name: string;
@@ -47,7 +48,7 @@ export async function differencesFromTypeScript(
   // Bun takes these options from the tsconfig.json of the directory it runs in, so each set of them has its own.
   const groups = [...new Set(cases.map(it => JSON.stringify(it.compilerOptions ?? {})))];
   const groupOf = (it: Case) => `${groups.indexOf(JSON.stringify(it.compilerOptions ?? {}))}`;
-  const optionsOf = groups.map(group => ({
+  const options = groups.map(group => ({
     target: "esnext",
     module: "esnext",
     moduleResolution: "bundler",
@@ -58,7 +59,7 @@ export async function differencesFromTypeScript(
     ...compilerOptions,
     ...JSON.parse(group),
   }));
-  optionsOf.forEach((compilerOptions, group) => {
+  options.forEach((compilerOptions, group) => {
     write(join(root, "src", `${group}`, "tsconfig.json"), JSON.stringify({ compilerOptions }));
   });
   write(join(root, "out", "package.json"), `{ "type": "module" }`);
@@ -85,11 +86,17 @@ export async function differencesFromTypeScript(
       write(
         config,
         JSON.stringify({
-          compilerOptions: { ...optionsOf[+group], ...isolated, rootDir: "src", outDir: "out" },
+          compilerOptions: { ...options[+group], ...isolated, rootDir: "src", outDir: "out" },
           files,
         }),
       );
-      await using proc = Bun.spawn({ cmd: [tsc!, "-p", config], cwd: root, stdout: "ignore", stderr: "pipe" });
+      await using proc = spawn({
+        timeout: longLimit,
+        cmd: [tsc!, "-p", config],
+        cwd: root,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
       // The exit code says whether the program has errors, and some cases do.
       expect(await proc.stderr.text()).toBe("");
     }),
@@ -97,7 +104,8 @@ export async function differencesFromTypeScript(
 
   /** What each of `numbers`, which are of one group, logs. */
   async function run(exe: string, directory: string, extension: string, numbers: number[]) {
-    await using proc = Bun.spawn({
+    await using proc = spawn({
+      timeout: longLimit,
       cmd: [
         exe,
         join(import.meta.dir, "decorator-differential-fixture.js"),
@@ -116,7 +124,8 @@ export async function differencesFromTypeScript(
   }
   async function runBundled(group: string, numbers: number[]) {
     const [source, bundled] = [join(root, "src", group), join(root, "bundled", group)];
-    await using proc = Bun.spawn({
+    await using proc = spawn({
+      timeout: longLimit,
       cmd: [bunExe(), "build", "--target=bun", `--root=${source}`, `--outdir=${bundled}`].concat(
         numbers.map(n => join(source, `${n}`, "main.ts")),
       ),

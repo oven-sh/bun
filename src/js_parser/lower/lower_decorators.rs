@@ -86,7 +86,7 @@ pub(crate) fn is_constructor(prop: &Property) -> bool {
 /// A key whose evaluation cannot be observed, so it can be repeated.
 pub(crate) fn is_constant_key(key: &Expr) -> bool {
     matches!(
-        key.data,
+        key.unwrap_inlined().data,
         js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
     )
 }
@@ -104,7 +104,7 @@ fn initializer_group(prop: &Property) -> Option<usize> {
     }
 }
 
-fn insert_stmts<'a>(
+pub(crate) fn insert_stmts<'a>(
     body: &mut js_ast::StmtNodeList,
     index: usize,
     inserted: &[Stmt],
@@ -836,37 +836,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return value;
         }
 
-        self.with_own_bindings(value, &[class.inner_class_ref])
-    }
-
-    /// `((a, b) => value)()`: own `bindings` per evaluation. Only for where `await` and `yield` are not allowed.
-    pub(crate) fn with_own_bindings(&mut self, value: Expr, bindings: &[Ref]) -> Expr {
-        let mut args = BumpVec::<G::Arg>::with_capacity_in(bindings.len(), self.arena);
-        for &r#ref in bindings {
-            args.push(G::Arg {
-                binding: self.b(B::Identifier { r#ref }, value.loc),
-                ..Default::default()
-            });
-        }
-        let body = self.s(S::Return { value: Some(value) }, value.loc);
+        // `((_C) => value)()` gives each evaluation its own binding. Neither
+        // position allows `await` or `yield`, which an arrow would break.
+        let binding = self.b(
+            B::Identifier {
+                r#ref: class.inner_class_ref,
+            },
+            expr.loc,
+        );
+        let args = js_ast::StoreSlice::new_mut(self.arena.alloc_slice_fill_iter([G::Arg {
+            binding,
+            ..Default::default()
+        }]));
+        let body = self.s(S::Return { value: Some(value) }, expr.loc);
         let target = self.new_expr(
             E::Arrow {
-                args: js_ast::StoreSlice::from_bump(args),
+                args,
                 body: G::FnBody {
-                    loc: value.loc,
+                    loc: expr.loc,
                     stmts: self.arena.alloc_slice_copy(&[body]).into(),
                 },
                 prefer_expr: true,
                 ..Default::default()
             },
-            value.loc,
+            expr.loc,
         );
         self.new_expr(
             E::Call {
                 target,
                 ..Default::default()
             },
-            value.loc,
+            expr.loc,
         )
     }
 
@@ -1466,7 +1466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Moves `effects` into the key of `prop` so they run where the member is
     /// defined. Returns the key as `__decorateElement` names it; `reuse_key`
     /// keeps a computed key in a temporary for that, which is also returned.
-    fn host_key_effects(
+    pub(crate) fn host_key_effects(
         &mut self,
         prop: &mut Property,
         effects: &mut BumpVec<'a, Expr>,
@@ -1477,7 +1477,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             !prop.flags.contains(Flags::Property::IsComputed) || is_constant_key(&key);
         if !is_constant && reuse_key {
             let key_ref = self.declared_temp(b"_computedKey");
-            effects.push(self.assign_to(key_ref, key, key.loc));
+            effects.push(self.assign_key_to(key_ref, key));
             prop.key = Some(Expr::join_all_with_comma(effects));
             effects.clear();
             let key_temp = self.use_ref(key_ref, key.loc);
@@ -1490,6 +1490,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             effects.clear();
         }
         (key, None)
+    }
+
+    /// `temp = key`, which doesn't name a class or function that has no name.
+    pub(crate) fn assign_key_to(&mut self, temp: Ref, key: Expr) -> Expr {
+        let value = if key.is_anonymous_named() {
+            self.new_expr(E::Number::new(0.0), key.loc)
+                .join_with_comma(key)
+        } else {
+            key
+        };
+        self.assign_to(temp, value, key.loc)
     }
 
     /// The key of `prop` as the expression a computed key needs. The visit pass

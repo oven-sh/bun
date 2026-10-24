@@ -50,7 +50,7 @@ fn ts_import_equals(st: &S::Local) -> Option<(Ref, Ref)> {
 
 impl<'a> ImportScanner<'a> {
     /// True if the caller is to remove `st`, an `import a = b.c` that nothing uses. Then `b` has one use fewer.
-    fn remove_if_unused_ts_import_equals<const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    fn should_remove_ts_import_equals<const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         &mut self,
         p: &mut P<'_, TYPESCRIPT, SCAN_ONLY>,
         st: &S::Local,
@@ -80,7 +80,7 @@ impl<'a> ImportScanner<'a> {
         for i in 0..stmts.len() {
             let stmt = stmts[i];
             if let js_ast::StmtData::SLocal(st) = stmt.data
-                && scanner.remove_if_unused_ts_import_equals(p, &st)
+                && scanner.should_remove_ts_import_equals(p, &st)
             {
                 continue;
             }
@@ -725,7 +725,7 @@ impl<'a> ImportScanner<'a> {
 
                     // Remove unused import-equals statements, since those likely
                     // correspond to types instead of values
-                    if scanner.remove_if_unused_ts_import_equals(p, &st) {
+                    if scanner.should_remove_ts_import_equals(p, &st) {
                         continue;
                     }
                 }

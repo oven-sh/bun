@@ -72,7 +72,7 @@ impl Host for OneFile<'_> {
 
 /// The type references in the signatures of decorated classes, sorted by position. For `bun_js_parser`.
 #[unsafe(no_mangle)]
-pub fn __bun_check_decorator_metadata(
+fn __bun_check_decorator_metadata(
     text: &[u8],
     is_tsx: bool,
     strict_null_checks: bool,
@@ -100,7 +100,7 @@ pub fn __bun_check_decorator_metadata(
     let files = session.arena().alloc(files);
     let program = session.arena().alloc(Program::new(&session, files));
     let mut checker = program.checker();
-    checker.begin_stack_budget_with_what_is_left();
+    checker.begin_stack_budget_from_remaining();
     let references = checker.decorator_metadata_references(FileId(0));
     drop(checker);
     program.release();
@@ -113,7 +113,7 @@ pub fn __bun_check_decorator_metadata(
             Kind::TypeWithConstructSignatureAndValue => {
                 TypeReferenceKind::TypeWithConstructSignatureAndValue
             }
-            Kind::VoidNullableOrNeverType => TypeReferenceKind::VoidNullableOrNever,
+            Kind::VoidNullableOrNeverType => TypeReferenceKind::VoidNullableOrNeverType,
             Kind::NumberLikeType => TypeReferenceKind::Global(b"Number"),
             Kind::BigIntLikeType => TypeReferenceKind::Global(b"BigInt"),
             Kind::StringLikeType => TypeReferenceKind::Global(b"String"),

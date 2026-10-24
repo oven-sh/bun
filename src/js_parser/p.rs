@@ -561,6 +561,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// may move the initializer into the constructor, so its uses count as
     /// uses anywhere in the class body.
     pub(crate) field_init_class_bodies: Vec<js_ast::StoreRef<Scope>>,
+    /// The symbols (by inner index) that those initializers use, for `rename_constructor_variables`.
+    pub(crate) field_initializer_uses: Vec<u32>,
+    /// What stands for `super` in a call, in a constructor that `super_shim_of` has an answer for.
+    pub(crate) super_shim: Ref,
     /// Becomes `Ast::scope_uses`.
     pub(crate) scope_uses: Vec<js_ast::ast_result::ScopeUse>,
     /// `(class body scope, symbol)`; becomes `Ast::scope_uses.spans` once the
@@ -2116,6 +2120,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.part_use(ref_).add_scoped(1);
             if scope_use {
                 self.record_scope_use(ref_);
+            }
+            if TYPESCRIPT
+                && !self.field_init_class_bodies.is_empty()
+                && !self.options.use_define_for_class_fields
+                && !self.will_use_renamer()
+            {
+                self.field_initializer_uses.push(ref_.inner_index());
             }
         }
 
@@ -4122,13 +4133,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.scopes_in_order.truncate(scope_index);
 
         // The scopes in the decorators of its parameters are later children of the parent.
-        if !parent
-            .children
-            .slice()
-            .iter()
-            .rev()
-            .any(|&child| child == to_discard)
-        {
+        if !parent.children.slice().contains(&to_discard) {
             self.panic("Internal error", format_args!(""));
         }
 
@@ -6092,8 +6097,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for property in class.properties.iter() {
             if property.kind == js_ast::g::PropertyKind::ClassStaticBlock {
                 let csb = property.class_static_block_ref().unwrap();
-                if !self.stmts_can_be_removed_if_unused_without_dce_check(csb.stmts.slice()) {
-                    return false;
+                for stmt in csb.stmts.slice() {
+                    // `static x = 1` with `useDefineForClassFields: false`. A base class can have a setter for it.
+                    let value =
+                        (stmt.assigned_to_member_of_this()).filter(|_| class.extends.is_none());
+                    let can_be_removed = match value {
+                        Some(value) => self.expr_can_be_removed_if_unused_without_dce_check(&value),
+                        None => self.stmts_can_be_removed_if_unused_without_dce_check(
+                            core::slice::from_ref(stmt),
+                        ),
+                    };
+                    if !can_be_removed {
+                        return false;
+                    }
                 }
                 continue;
             }
@@ -7593,14 +7609,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name: &'a [u8] = if self.will_use_renamer() {
             name
         } else {
-            self.temp_ref_count += 1;
-            bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
-                .into_bump_str()
-                .as_bytes()
+            self.numbered_name(name)
         };
         let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);
         self.declare_temp_var(ref_);
         ref_
+    }
+
+    /// `name$1`, with a number that no other has.
+    pub(crate) fn numbered_name(&mut self, name: &[u8]) -> &'a [u8] {
+        self.temp_ref_count += 1;
+        bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
+            .into_bump_str()
+            .as_bytes()
     }
 
     /// Nested scopes are renamed from `Scope::generated`, a file's top level from `Part::declared_symbols`.
@@ -8976,6 +8997,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             track_scope_uses,
             visit_scope_count: 0,
             field_init_class_bodies: Vec::new(),
+            field_initializer_uses: Vec::new(),
+            super_shim: Ref::NONE,
             scope_uses: Vec::new(),
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // With `useDefineForClassFields: false` TypeScript lowers instance fields to
 // `this.x = init` in the constructor, after parameter-property assignments.
@@ -17,6 +18,32 @@ async function run(dir: string, entry = "index.ts") {
 }
 
 describe("tsconfig compilerOptions.useDefineForClassFields", () => {
+  test.concurrent("false: an unused class with a static field is not bundled", async () => {
+    using dir = tempDir("udfcf-tree-shaking", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        import { used } from "./lib";
+        console.log(used);
+      `,
+      "lib.ts": `
+        export const used = "used";
+        export class Unused { static a = 1; static b = [() => Unused]; c = 2; }
+        class Base { static set s(value: number) { console.log("set s", value); } }
+        export class CallsSetter extends Base { static s = 1; }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "index.ts", "--outfile=out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    expect({ stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await Bun.file(join(String(dir), "out.js")).text()).not.toContain("Unused");
+    expect(await run(String(dir), "out.js")).toEqual({ stdout: "set s 1\nused\n", stderr: "", exitCode: 0 });
+  });
+
   test.concurrent("false: field initializers see parameter properties (#10961)", async () => {
     using dir = tempDir("udfcf-param-prop", {
       "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),

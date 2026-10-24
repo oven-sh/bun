@@ -2414,6 +2414,32 @@ describe("bundler", () => {
     cjs2esm: { unhandled: ["/lib.cjs"] },
     run: { stdout: "true 1 3" },
   });
+  itBundled("cjs2esm/DefaultImportOfFunctionHeldByDecoratorMetadata", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import Lib from "./lib.cjs";
+        const seen: any[] = [];
+        (Reflect as any).metadata = (key: string, value: any) => () => { seen.push(value); };
+        function dec(..._args: any[]) {}
+        class A {
+          @dec prop: Lib;
+        }
+        Object.defineProperty(seen[0], "x", { value: 65 });
+        console.log(Lib.x, Lib.sum());
+      `,
+      "/tsconfig.json": /* json */ `
+        { "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }
+      `,
+      "/lib.cjs": /* js */ `
+        module.exports = function () {};
+        module.exports.x = 1;
+        module.exports.y = 2;
+        module.exports.sum = function () { return module.exports.x + module.exports.y; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: { stdout: "65 67" },
+  });
   // The shape of react-dom/index.js. The wrapped file assigns the namespace
   // object of "./main", as in 1.4.0, and every read goes through that object.
   itBundled("cjs2esm/DefaultImportHeldAsValueOfModuleExportsEqualsRequire", {

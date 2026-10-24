@@ -2296,6 +2296,10 @@ impl<'p, 's> Checker<'p, 's> {
                         // A new `IndexInfo`.
                         info.is_enum_number_index_info = false;
                     }
+                    // tsgo instantiates the widened type, so that's the `t.target` of the next instantiation.
+                    shape.instantiation_target = shape
+                        .instantiation_target
+                        .map(|target| self.get_widened_type(target));
                     self.intern(TypeData::Synth(shape))
                 }
                 _ => ty,

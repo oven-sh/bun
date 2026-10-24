@@ -36,7 +36,7 @@
 //! • number → immediate double/int32 or HeapBigInt
 //! • boolean → immediate true/false
 //! • symbol → Symbol
-//! • bigint → HeapBigInt or BigInt32 (immediate)
+//! • bigint → HeapBigInt
 //! • null/undefined → immediate values
 //!
 //! JavaScript Objects → JSType:

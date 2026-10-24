@@ -607,6 +607,16 @@ pub(crate) struct DevServer {
     pub(crate) emit_memory_visualizer_events: u32,
     pub(crate) memory_visualizer_timer: EventLoopTimer,
 
+    /// Perfect incremental bundling implies that there are zero bugs in the
+    /// code that bundles, watches, and rebuilds routes and client side code.
+    ///
+    /// More specifically, when this is false, DevServer will run a full rebundle
+    /// when a user force-refreshes an error page. In a perfect system, a rebundle
+    /// could not possibly fix the build. But since builds are NOT perfect, this
+    /// could very well be the case.
+    ///
+    /// DISABLED in releases, ENABLED in debug.
+    /// `BUN_ASSUME_PERFECT_INCREMENTAL=1` or `=0` overrides it.
     pub(crate) assume_perfect_incremental_bundling: bool,
 
     /// If true, console logs from the browser will be echoed to the server console.

@@ -1105,14 +1105,8 @@ pub(super) fn finalize_bundle(
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let resp: AnyResponse = match &mut req.handler {
-                Handler::Aborted => continue,
-                Handler::ServerHandler(saved) => 'brk: {
-                    let resp = saved.response;
-                    saved.deinit();
-                    break 'brk resp;
-                }
-                Handler::BundledHtmlPage(ram) => ram.response,
+            let Some(resp) = req.response_for_failure_page() else {
+                continue;
             };
 
             // SAFETY: see Note on `failures` above; `dev_ptr` is live and
@@ -1306,16 +1300,9 @@ pub(super) fn finalize_bundle(
         if let Some(failures) = failures_for(req.route_bundle_index) {
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let resp: AnyResponse = match &mut req.handler {
-                Handler::Aborted => continue,
-                Handler::ServerHandler(saved) => 'brk: {
-                    let resp = saved.response;
-                    saved.deinit();
-                    break 'brk resp;
-                }
-                Handler::BundledHtmlPage(ram) => ram.response,
-            };
-            dev.send_serialized_failures(resp, failures, None)?;
+            if let Some(resp) = req.response_for_failure_page() {
+                dev.send_serialized_failures(resp, failures, None)?;
+            }
             continue;
         }
         rb.server_state = route_bundle::State::Loaded;

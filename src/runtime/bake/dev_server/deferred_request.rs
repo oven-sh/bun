@@ -73,6 +73,21 @@ impl DeferredRequest {
         self.deref_();
     }
 
+    /// The response that gets the build failure page, or `None` when the client is gone. A
+    /// framework request doesn't run its handler, so this releases
+    /// `prepare_and_save_js_request_context`'s ref. `deref_` releases `defer_request`'s.
+    pub(super) fn response_for_failure_page(&mut self) -> Option<AnyResponse> {
+        match &mut self.handler {
+            Handler::Aborted => None,
+            Handler::ServerHandler(saved) => {
+                let response = saved.response;
+                saved.deinit();
+                Some(response)
+            }
+            Handler::BundledHtmlPage(ram) => Some(ram.response),
+        }
+    }
+
     pub(crate) fn weak_ref(&mut self) {
         debug_assert!(!self.weakly_referenced_by_requestcontext);
         self.weakly_referenced_by_requestcontext = true;

@@ -877,6 +877,12 @@ const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGra
     },
   });
 }
+// The status of a page with its <title>, or with its body when it has no title. The build failure page has a title.
+async function statusAndTitle(dev: Dev, path: string) {
+  const response = await dev.fetch(path);
+  const text = await response.text();
+  return [response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text] as const;
+}
 // The bundle of the second route doesn't parse shared.ts again, so it doesn't visit broken.ts.
 devTest("a route shows the build error of a file it reaches through a module another route already bundled", {
   framework: minimalFramework,
@@ -907,9 +913,7 @@ devTest("a route shows the build error of a file it reaches through a module ano
   async test(dev) {
     const responses: [string, number, string][] = [];
     for (const path of ["/", "/other", "/fine", "/other"]) {
-      const response = await dev.fetch(path);
-      const text = await response.text();
-      responses.push([path, response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text]);
+      responses.push([path, ...(await statusAndTitle(dev, path))]);
     }
     expect(responses).toEqual([
       ["/", 500, "Bun - Build Failed"],
@@ -956,15 +960,10 @@ devTest("a route shows the build error after a save makes its client component i
     `,
   },
   async test(dev) {
-    const title = async (path: string) => {
-      const response = await dev.fetch(path);
-      const text = await response.text();
-      return [response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text];
-    };
-    expect(await title("/failed")).toEqual([500, "Bun - Build Failed"]);
+    expect(await statusAndTitle(dev, "/failed")).toEqual([500, "Bun - Build Failed"]);
     await dev.fetch("/edited").equals("edited object");
     await dev.write("leaf.ts", `import "./shared";\nexport const leaf = 2;`, { errors: null });
-    expect(await title("/edited")).toEqual([500, "Bun - Build Failed"]);
+    expect(await statusAndTitle(dev, "/edited")).toEqual([500, "Bun - Build Failed"]);
     await dev.write("broken.ts", `export const broken = 1;`);
     await dev.fetch("/edited").equals("edited object");
   },
@@ -993,17 +992,12 @@ devTest("a route shows the build error after a save makes its server module impo
     `,
   },
   async test(dev) {
-    const title = async (path: string) => {
-      const response = await dev.fetch(path);
-      const text = await response.text();
-      return [response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text];
-    };
-    expect(await title("/failed")).toEqual([500, "Bun - Build Failed"]);
+    expect(await statusAndTitle(dev, "/failed")).toEqual([500, "Bun - Build Failed"]);
     await dev.fetch("/edited").equals("edited leaf");
     await dev.write("leaf.ts", `import { shared } from "./shared";\nexport const leaf = "leaf " + shared;`, {
       errors: null,
     });
-    expect(await title("/edited")).toEqual([500, "Bun - Build Failed"]);
+    expect(await statusAndTitle(dev, "/edited")).toEqual([500, "Bun - Build Failed"]);
     await dev.write("broken.ts", `export const broken = 1;`);
     await dev.fetch("/edited").equals("edited leaf shared 1");
   },
@@ -1043,12 +1037,7 @@ devTest("routes show the build error after a save makes their layout import a mo
     `,
   },
   async test(dev) {
-    const title = async (path: string) => {
-      const response = await dev.fetch(path);
-      const text = await response.text();
-      return [response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text];
-    };
-    expect(await title("/failed")).toEqual([500, "Bun - Build Failed"]);
+    expect(await statusAndTitle(dev, "/failed")).toEqual([500, "Bun - Build Failed"]);
     await dev.fetch("/child").equals("child");
     await dev.fetch("/dir/nested").equals("nested");
     await dev.write(
@@ -1056,7 +1045,7 @@ devTest("routes show the build error after a save makes their layout import a mo
       `import { shared } from "../shared";\nexport default function Layout() {\n  return "layout " + shared;\n}`,
       { errors: null },
     );
-    expect([await title("/child"), await title("/dir/nested")]).toEqual([
+    expect([await statusAndTitle(dev, "/child"), await statusAndTitle(dev, "/dir/nested")]).toEqual([
       [500, "Bun - Build Failed"],
       [500, "Bun - Build Failed"],
     ]);
@@ -1119,9 +1108,7 @@ devTest("a route keeps the build error of a file that its router's server entry 
     const answers = async (paths: string[]) => {
       const responses: [string, number, string][] = [];
       for (const path of paths) {
-        const response = await dev.fetch(path);
-        const text = await response.text();
-        responses.push([path, response.status, text.match(/<title>(.*?)<\/title>/)?.[1] ?? text]);
+        responses.push([path, ...(await statusAndTitle(dev, path))]);
       }
       return responses;
     };

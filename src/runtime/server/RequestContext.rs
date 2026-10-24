@@ -7,6 +7,7 @@ use bun_sys::FdExt as _;
 use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
@@ -124,7 +125,7 @@ pub(crate) struct RequestContext<
     /// BACKREF to the embedding `Server` — the server owns this request
     /// context (allocated from its `HiveArray` pool) and outlives it, so the
     /// pointee is live for the holder's entire lifetime. `None` once detached.
-    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer, bun_ptr::Mut>>>,
+    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer>>>,
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
@@ -274,10 +275,9 @@ mod NativePromiseContext {
     pub(super) use npc::take_held;
 }
 use crate::node::types::PathLikeExt as _;
-use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
-use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
+use crate::webcore::{Blob, ReadableStream, body as Body};
 use bun_jsc::SysErrorJsc as _;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
@@ -364,6 +364,16 @@ where
 #[inline]
 fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
+}
+
+/// Reports an error that no `error()` handled. The server keeps running, so a
+/// Worker prints it like the main thread does. Its own handler ends the Worker.
+fn report_unhandled_error(vm: &mut jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    if vm.worker.is_some() {
+        jsc::VirtualMachine::default_on_unhandled_rejection(vm, global, value);
+    } else {
+        (vm.on_unhandled_rejection)(vm, global, value);
+    }
 }
 
 /// Release the body's hold on a stream the sink is done with, and mark a
@@ -468,16 +478,7 @@ bun_core::declare_scope!(ReadableStream, visible);
 macro_rules! ctx_log { ($($t:tt)*) => { bun_core::scoped_log!(RequestContext, $($t)*) }; }
 macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream, $($t)*) }; }
 
-/// Per-monomorphization C-ABI shim table for the four promise-reaction host
-/// fns. The value passed to `then_with_value` must be identical to the
-/// `Bun__HTTPRequestContext*__on*` symbol that C++'s
-/// `GlobalObject::promiseHandlerID` compares against.
-///
-/// The `#[no_mangle]` exports cannot live on a generic fn, so they are
-/// emitted as concrete wrappers by `request_ctx_exports!` below. The trait
-/// impls — also emitted by that macro — point at those *exported* wrappers
-/// (not the inner generic shims), so `Self::ON_RESOLVE` and the C++ side agree
-/// on the function-pointer identity and `promiseHandlerID` resolves.
+/// One instantiation's `Bun__HTTPRequestContext*__on*`, which C++'s `promiseHandlerID` knows by address.
 ///
 /// NOTE (layering): expressed as a trait (not inherent consts) so
 /// downstream `where`-clauses that already name it keep type-checking.
@@ -488,83 +489,11 @@ pub(crate) trait RequestContextHostFns {
     const ON_REJECT_STREAM: bun_jsc::JSHostFn;
 }
 
-// Plain safe Rust helpers — only ever called Rust→Rust by the `#[no_mangle]`
-// ABI wrappers in `request_ctx_exports!`, so they need no `extern` ABI and
-// have no caller preconditions (bodies use safe `opaque_deref`). The wrappers
-// carry `#[bun_jsc::host_call]` for the C++-visible symbol.
-fn host_on_resolve<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
-    g: *mut JSGlobalObject,
-    f: *mut CallFrame,
-) -> JSValue
-where
-    ThisServer: ServerLike + 'static,
-{
-    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
-    bun_jsc::to_js_host_fn_result(
-        g,
-        RequestContext::<ThisServer, SSL, DBG, MUX>::on_resolve(g, f),
-    )
-}
-fn host_on_reject<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
-    g: *mut JSGlobalObject,
-    f: *mut CallFrame,
-) -> JSValue
-where
-    ThisServer: ServerLike + 'static,
-{
-    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
-    bun_jsc::to_js_host_fn_result(
-        g,
-        RequestContext::<ThisServer, SSL, DBG, MUX>::on_reject(g, f),
-    )
-}
-fn host_on_resolve_stream<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
-    g: *mut JSGlobalObject,
-    f: *mut CallFrame,
-) -> JSValue
-where
-    ThisServer: ServerLike + 'static,
-{
-    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
-    bun_jsc::to_js_host_fn_result(
-        g,
-        RequestContext::<ThisServer, SSL, DBG, MUX>::on_resolve_stream(g, f),
-    )
-}
-fn host_on_reject_stream<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
-    g: *mut JSGlobalObject,
-    f: *mut CallFrame,
-) -> JSValue
-where
-    ThisServer: ServerLike + 'static,
-{
-    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
-    bun_jsc::to_js_host_fn_result(
-        g,
-        RequestContext::<ThisServer, SSL, DBG, MUX>::on_reject_stream(g, f),
-    )
-}
-
 impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> RequestContextHostFns
     for RequestContext<ThisServer, SSL, DBG, MUX>
 where
     ThisServer: ServerLike + 'static,
 {
-    // These consts must resolve to the *exported* `#[no_mangle]` symbols
-    // (`Bun__HTTPRequestContext*__on*`), not the inner generic
-    // `host_on_*::<..>` shims: the function-pointer value is what C++'s
-    // `GlobalObject::promiseHandlerID` compares against (ZigGlobalObject.cpp),
-    // and the exported wrapper has a different address from the generic it
-    // forwards to. We route through a const-fn lookup keyed on the
-    // (SSL, DEBUG, MUX) tuple so the blanket impl can name concrete exports.
     const ON_RESOLVE: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, MUX).0;
     const ON_REJECT: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, MUX).1;
     const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, MUX).2;
@@ -597,7 +526,7 @@ where
                 .server
                 .get()
                 .expect("infallible: server bound")
-                .as_ptr()
+                .as_const_ptr()
         }
     }
 
@@ -722,24 +651,27 @@ where
         ));
     }
 
-    pub(crate) fn on_resolve(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_resolve(
+        cx: &mut JsScope<'_>,
+        result: JsLocal<'_>,
+        context: Option<NonNull<Self>>,
+    ) {
         ctx_log!("onResolve");
 
-        let arguments = callframe.arguments_as_array::<2>();
-        let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
+        let global = cx.global();
+        let result = result.to_js();
+        let Some(ctx) = context else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone.
-            Self::discard_response_body(global, arguments[0]);
-            return Ok(JSValue::UNDEFINED);
+            Self::discard_response_body(global, result);
+            return;
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
         ctx.ctx().promise_cell.set(JSValue::ZERO);
 
-        let result = arguments[0];
         result.ensure_still_alive();
 
         ctx.ctx().handle_resolve(global, result);
-        Ok(JSValue::UNDEFINED)
     }
 
     /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
@@ -810,6 +742,8 @@ where
 
     fn render_missing_invalid_response(&self, value: JSValue) {
         let class_name = value.get_class_info_name().unwrap_or(b"");
+        // Inspecting `value` can run user code (`[inspect.custom]`, `toString`), which can throw.
+        let mut inspect_error: Option<JSValue> = None;
 
         if let Some(server) = self.server.get() {
             // server is a BACKREF — valid while this RequestContext is alive
@@ -825,10 +759,17 @@ where
             } else if !value.is_empty() && !global_this.has_exception() {
                 let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
                 formatter.quote_strings = true;
-                bun_core::err_generic!(
-                    "Expected a Response object, but received '{}'",
-                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
-                );
+                let mut received: Vec<u8> = Vec::new();
+                match formatter.format_value::<false>(value, &mut received) {
+                    Ok(()) => bun_core::err_generic!(
+                        "Expected a Response object, but received '{}'",
+                        bstr::BStr::new(&received),
+                    ),
+                    Err(err) => {
+                        bun_core::err_generic!("Expected a Response object");
+                        inspect_error = Some(global_this.take_error(err));
+                    }
+                }
                 // `formatter` drops here.
             } else {
                 bun_core::err_generic!("Expected a Response object");
@@ -847,6 +788,11 @@ where
         // allocation alive across the re-entry; re-check the request state so
         // we never render onto a response that was ended underneath us.
         if self.is_aborted_or_ended() {
+            return;
+        }
+        if let Some(error) = inspect_error {
+            // Report it as if the handler threw it.
+            self.run_error_handler(error);
             return;
         }
         self.render_missing();
@@ -1011,9 +957,7 @@ where
 
         if let Some(server) = self.server.take() {
             server.release_request_context(self.as_ctx_ptr().cast::<c_void>(), MUX);
-            // SAFETY: `&mut` through the backref — the server outlives this
-            // context and no other borrow of it is live here.
-            unsafe { (*server.as_ptr()).on_request_complete() };
+            server.on_request_complete();
         }
     }
 
@@ -1111,36 +1055,38 @@ where
             unhandled = err;
         }
         let vm = global.bun_vm().as_mut();
-        (vm.on_unhandled_rejection)(vm, global, unhandled);
+        report_unhandled_error(vm, global, unhandled);
     }
 
-    pub(crate) fn on_reject(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_reject(
+        cx: &mut JsScope<'_>,
+        reason: JsLocal<'_>,
+        (context, cell): (Option<NonNull<Self>>, JsLocal<'_>),
+    ) {
         ctx_log!("onReject");
 
-        let arguments = callframe.arguments_as_array::<2>();
         // Pass the rejection reason through verbatim (including `null` and
         // `undefined`) so `error()` sees the same value the already-settled
         // path delivers. Only an empty JSValue is normalized.
-        let err = if arguments[0].is_empty() {
+        let err = if reason.to_js().is_empty() {
             JSValue::UNDEFINED
         } else {
-            arguments[0]
+            reason.to_js()
         };
-        let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
+        let Some(ctx) = context else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone. Only an upgrade leaves
             // the server wrapper in the cell to report the error through.
-            let server_js = NativePromiseContext::take_held(arguments[1]);
+            let server_js = NativePromiseContext::take_held(cell.to_js());
             if !server_js.is_empty() {
-                Self::report_error_after_upgrade(global, server_js, err);
+                Self::report_error_after_upgrade(cx.global(), server_js, err);
             }
-            return Ok(JSValue::UNDEFINED);
+            return;
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
         ctx.ctx().promise_cell.set(JSValue::ZERO);
 
         ctx.ctx().handle_reject(err);
-        Ok(JSValue::UNDEFINED)
     }
 
     fn handle_reject(&self, value: JSValue) {
@@ -1278,7 +1224,7 @@ where
 
         let bb = DevErrorPage {
             message,
-            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
             exceptions,
             log: Some(log),
         }
@@ -1411,6 +1357,41 @@ where
         }
     }
 
+    /// Answers 500 with no body, for a request that was saved to run later and now never will.
+    /// A request that got an answer while it waited (a 413) has detached its response, so
+    /// nothing more is written to it.
+    pub(crate) fn end_with_internal_server_error(&self) {
+        if let Some(resp) = self.resp.get() {
+            self.flags.set_has_written_status(true);
+            resp.write_status(b"500 Internal Server Error");
+            resp.write_header_int(b"Content-Length", 0);
+        }
+        self.end_without_body(true);
+    }
+
+    /// Answers 413 to a request whose body outgrew `maxRequestBodySize`, after that body has failed.
+    fn end_with_payload_too_large(&self) {
+        let Some(resp) = self.resp.get() else { return };
+        // A dev server bundle that this request waits for must not answer it later.
+        if let Some(abort) = self.additional_on_abort.replace(None) {
+            (abort.cb)(abort.data.as_ptr());
+            abort.deref();
+        }
+        // Failing the body runs JS, which can answer with a file. The file stream
+        // owns the response from then on, and it hears the close as an abort.
+        if self.flags.has_sendfile_ctx() {
+            resp.force_close();
+            return;
+        }
+        if !resp.has_responded() {
+            self.flags.set_has_written_status(true);
+            resp.write_status(b"413 Payload Too Large");
+        }
+        // The normal end path detaches `self.resp` and releases the base ref. uWS
+        // markDone() clears onAborted, so no abort would ever do either.
+        self.end_without_body(!MUX);
+    }
+
     pub(crate) fn force_close(&self) {
         if let Some(resp) = self.resp.get() {
             self.detach_response();
@@ -1497,7 +1478,7 @@ where
                 req: Cell::new(Some(req)),
                 method: resolved_method,
                 server: Cell::new(
-                    NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
+                    NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw(p.as_ptr())),
                 ),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range,
@@ -2537,6 +2518,10 @@ where
         self.request_body_buf.set(Vec::new());
 
         if let Some(resp) = self.resp.take() {
+            // The sink writes through its own handle to the response.
+            if let Some(wrapper) = self.sink_mut() {
+                wrapper.sink.revoke_response();
+            }
             if self.flags.request_body_paused() {
                 self.flags.set_request_body_paused(false);
                 resp.resume();
@@ -2558,49 +2543,6 @@ where
             || self.flags.aborted()
             || self.server.get().is_none()
             || self.server().terminated()
-    }
-
-    fn do_render_head_response_after_s3_size_resolved(
-        pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
-    ) {
-        // SAFETY: `pair` is the live stack-local threaded through the
-        // synchronous cork call.
-        let pair = unsafe { &*pair };
-        let this = pair.this;
-        this.render_metadata();
-
-        if let Some(resp) = this.resp.get() {
-            // SAFETY: FFI handle
-            resp.write_header_int(b"content-length", pair.size as u64);
-        }
-        this.end_without_body(this.should_close_connection());
-        // `end_without_body` released the base ref; the caller
-        // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
-    }
-
-    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsResult<()>`.
-    fn on_s3_size_resolved_thunk(
-        result: S3::simple_request::S3StatResult<'_>,
-        this: *mut c_void,
-    ) -> JsResult<()> {
-        let stat_ref = RequestContextRef::adopt(this.cast::<Self>());
-        stat_ref.ctx().on_s3_size_resolved(result);
-        Ok(())
-    }
-
-    pub(crate) fn on_s3_size_resolved(&self, result: S3::simple_request::S3StatResult<'_>) {
-        if let Some(resp) = self.resp.get() {
-            let size = match result {
-                S3::simple_request::S3StatResult::Failure(_)
-                | S3::simple_request::S3StatResult::NotFound(_) => 0,
-                S3::simple_request::S3StatResult::Success(stat) => stat.size,
-            };
-            let mut pair = HeaderResponseSizePair { this: self, size };
-            resp.run_corked_with_type(
-                |p| Self::do_render_head_response_after_s3_size_resolved(p),
-                &raw mut pair,
-            );
-        }
     }
 
     fn do_render_head_response(
@@ -2708,36 +2650,17 @@ where
             }
 
             Body::Value::Blob(blob) => {
-                if shim::blob_is_s3(blob) {
-                    // we need to read the size asynchronously
-                    // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                    // Ref for the S3 stat; adopted and released by
-                    // `on_s3_size_resolved_thunk`.
-                    this.ref_();
-
-                    let crate::webcore::blob::store::Data::S3(s3) =
-                        &blob.store.get().as_ref().unwrap().data
-                    else {
-                        unreachable!()
-                    };
-                    let credentials = s3.get_credentials();
-                    let path = s3.path();
-                    let _ = S3::client::stat(
-                        credentials,
-                        this.script_context(),
-                        path,
-                        Self::on_s3_size_resolved_thunk,
-                        this.as_ctx_ptr().cast::<c_void>(),
-                        s3.request_payer,
-                    ); // TODO: properly propagate exception upwards
-                    return;
-                }
                 // Size the blob *before* `render_metadata()`: it re-fetches the
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
-                blob.resolve_size();
-                let blob_size = blob.size.get();
+                let blob_size = if shim::blob_is_s3(blob) {
+                    // Match the body GET sends (`render_bytes`). `resolve_size()` would set the blob's size to 0.
+                    blob.shared_view().len() as BlobSizeType
+                } else {
+                    blob.resolve_size();
+                    blob.size.get()
+                };
                 this.render_metadata();
 
                 if blob_size == crate::webcore::blob::MAX_SIZE {
@@ -3023,35 +2946,32 @@ where
     }
 
     pub(crate) fn on_resolve_stream(
-        _global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        _: &mut JsScope<'_>,
+        _: JsLocal<'_>,
+        context: Option<NonNull<Self>>,
+    ) {
         stream_log!("onResolveStream");
-        let args = callframe.arguments();
-        let Some(req) = NativePromiseContext::take::<Self>(args[args.len() - 1]) else {
-            return Ok(JSValue::UNDEFINED);
+        let Some(req) = context else {
+            return;
         };
         let req = RequestContextRef::adopt(req.as_ptr());
         req.ctx().promise_cell.set(JSValue::ZERO);
         req.ctx().handle_resolve_stream();
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn on_reject_stream(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        cx: &mut JsScope<'_>,
+        err: JsLocal<'_>,
+        context: Option<NonNull<Self>>,
+    ) {
         stream_log!("onRejectStream");
-        let args = callframe.arguments();
-        let Some(req) = NativePromiseContext::take::<Self>(args[args.len() - 1]) else {
-            return Ok(JSValue::UNDEFINED);
+        let Some(req) = context else {
+            return;
         };
-        let err = args[0];
         let req = RequestContextRef::adopt(req.as_ptr());
         req.ctx().promise_cell.set(JSValue::ZERO);
 
-        req.ctx().handle_reject_stream(global_this, err);
-        Ok(JSValue::UNDEFINED)
+        req.ctx().handle_reject_stream(cx.global(), err.to_js());
     }
 
     pub(crate) fn handle_reject_stream(&self, global_this: &JSGlobalObject, err: JSValue) {
@@ -3140,7 +3060,7 @@ where
 
         let bb = DevErrorPage {
             message: b"Stream error during server-side rendering",
-            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
             exceptions: &exception_list,
             log: None,
         }
@@ -3273,10 +3193,7 @@ where
                         }
 
                         readable_stream::Source::Bytes(byte_stream_ptr) => {
-                            // BACKREF: `Source::Bytes` stores a live non-null
-                            // `*mut ByteStream` (the JS wrapper's `m_ctx` heap
-                            // payload, kept alive by `stream`). R-2: all touched
-                            // ByteStream methods/fields are `&self`/interior-mutable.
+                            // BACKREF: `stream` keeps its `ByteStream` alive.
                             let byte_stream_nn = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
                             let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
@@ -3698,7 +3615,7 @@ where
             let mut exception_list: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
             vm.on_unhandled_rejection_exception_list = Some(NonNull::from(&mut exception_list));
-            (vm.on_unhandled_rejection)(vm, global_this, value);
+            report_unhandled_error(vm, global_this, value);
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
             let log = vm.log_mut().unwrap();
@@ -3713,7 +3630,7 @@ where
             return;
         }
         if status != 404 {
-            (vm.on_unhandled_rejection)(vm, global_this, value);
+            report_unhandled_error(vm, global_this, value);
         }
         self.render_production_error(status);
         vm.log_mut().unwrap().reset();
@@ -3905,13 +3822,19 @@ where
         }
 
         if let Some(mut cookies) = self.cookies.replace(None) {
-            let global_this = self.server().global_this();
+            let server = self.server();
+            let global_this = server.global_this();
             let resp = self.resp.get().expect("infallible: resp bound");
-            let r = cookies.write(global_this, uws::ResponseKind::of(resp), resp.as_ptr());
+            // The status line is already written, so report the error and send the response
+            // without that Set-Cookie header.
+            if let Err(err) = cookies.write(global_this, uws::ResponseKind::of(resp), resp.as_ptr())
+            {
+                server
+                    .vm()
+                    .as_mut()
+                    .run_error_handler(global_this.take_exception(err), None);
+            }
             // `cookies` drops here, releasing the ref taken in `set_cookies`.
-            if r.is_err() {
-                return;
-            } // TODO: properly propagate exception upwards
         }
         let blob = self.blob.get();
 
@@ -4194,17 +4117,7 @@ where
                     }
                 }
 
-                // Route through the normal end path so this.resp is detached
-                // and the base ref released (see the buffering branch below).
-                // SAFETY: FFI handle
-                if let Some(resp) = this.resp.get() {
-                    if !resp.has_responded() {
-                        this.flags.set_has_written_status(true);
-                        // SAFETY: FFI handle
-                        resp.write_status(b"413 Payload Too Large");
-                    }
-                }
-                this.end_without_body(!MUX);
+                this.end_with_payload_too_large();
                 return;
             }
 
@@ -4217,8 +4130,7 @@ where
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
                 };
-                // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
-                // heap `ByteStream` kept alive by `readable` for this call.
+                // BACKREF: `readable` keeps its `ByteStream` alive for this call.
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
@@ -4247,8 +4159,7 @@ where
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
                 };
-                // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
-                // heap `ByteStream` kept alive by `readable` for this call.
+                // BACKREF: `readable` keeps its `ByteStream` alive for this call.
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
@@ -4295,22 +4206,7 @@ where
                     global_this,
                 );
 
-                // Route through the normal end path so this.resp is
-                // detached and the base ref released. Writing directly on
-                // the raw uWS response left this.resp pointing at a
-                // completed (and soon freed) response — uWS markDone()
-                // clears onAborted so no abort ever fires to release the
-                // ref, and a later handleResolve()/handleReject() from an
-                // async handler would dereference the stale pointer.
-                // SAFETY: FFI handle
-                if let Some(resp) = this.resp.get() {
-                    if !resp.has_responded() {
-                        this.flags.set_has_written_status(true);
-                        // SAFETY: FFI handle
-                        resp.write_status(b"413 Payload Too Large");
-                    }
-                }
-                this.end_without_body(!MUX);
+                this.end_with_payload_too_large();
                 return;
             }
 
@@ -4561,123 +4457,73 @@ const MUX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 64 * 1024;
 /// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
 const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
 
-// ─── per-monomorphization C-ABI exports ──────────────────────────────────────
-// The exported symbol name is "Bun__HTTPRequestContext" + (debug ? "Debug" : "")
-// + (mux ? "Mux" : "") + (ssl ? "TLS" : "") + "__on*".
-// Rust generics cannot own `#[no_mangle]` symbols, so each of the 8 concrete
-// instantiations × 4 callbacks is spelled out via `request_ctx_exports!`. The
-// generic body lives on the `impl<ThisServer, ..> RequestContext` block above
-// (`on_resolve` / `on_reject` / `on_resolve_stream` / `on_reject_stream`); each
-// shim is the result-mapping (`JsResult<JSValue>` → raw `JSValue`,
-// `.zero` on error) over the monomorphic associated fn.
-macro_rules! request_ctx_exports {
-    ($(
-        ($srv:ty, $ssl:literal, $dbg:literal, $mux:literal) =>
-        $on_resolve:ident, $on_reject:ident, $on_resolve_stream:ident, $on_reject_stream:ident
-    );* $(;)?) => {$(
-        // Named C-ABI symbols for the C++ side. The bodies forward to the
-        // generic `host_on_*` shims monomorphized at this tuple — `#[no_mangle]`
-        // pins the link name.
-        #[unsafe(no_mangle)]
-        #[bun_jsc::host_call]
-        pub(crate) fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            host_on_resolve::<$srv, $ssl, $dbg, $mux>(g, f)
-        }
-        #[unsafe(no_mangle)]
-        #[bun_jsc::host_call]
-        pub(crate) fn $on_reject(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            host_on_reject::<$srv, $ssl, $dbg, $mux>(g, f)
-        }
-        #[unsafe(no_mangle)]
-        #[bun_jsc::host_call]
-        pub(crate) fn $on_resolve_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            host_on_resolve_stream::<$srv, $ssl, $dbg, $mux>(g, f)
-        }
-        #[unsafe(no_mangle)]
-        #[bun_jsc::host_call]
-        pub(crate) fn $on_reject_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            host_on_reject_stream::<$srv, $ssl, $dbg, $mux>(g, f)
-        }
-    )*
-
-    /// Map the `(SSL, DEBUG, MUX)` const-generic tuple to the concrete
-    /// `#[no_mangle]` promise-reaction exports above. Used by the blanket
-    /// `RequestContextHostFns` impl so `Self::ON_*` resolves to the *same*
-    /// address C++'s `GlobalObject::promiseHandlerID` compares against.
-    const fn exported_host_fns(
-        ssl: bool,
-        debug: bool,
-        mux: bool,
-    ) -> (
-        bun_jsc::JSHostFn,
-        bun_jsc::JSHostFn,
-        bun_jsc::JSHostFn,
-        bun_jsc::JSHostFn,
-    ) {
-        match (ssl, debug, mux) {
-            $(
-                ($ssl, $dbg, $mux) => (
-                    $on_resolve,
-                    $on_reject,
-                    $on_resolve_stream,
-                    $on_reject_stream,
-                ),
-            )*
-        }
+/// `RequestContext.bind.ts` has one set of reactions for each instantiation.
+const fn exported_host_fns(
+    ssl: bool,
+    debug: bool,
+    mux: bool,
+) -> (
+    bun_jsc::JSHostFn,
+    bun_jsc::JSHostFn,
+    bun_jsc::JSHostFn,
+    bun_jsc::JSHostFn,
+) {
+    use crate::generated_bindgen::request_context::*;
+    match (ssl, debug, mux) {
+        (false, false, false) => (
+            Bun__HTTPRequestContext__onResolve,
+            Bun__HTTPRequestContext__onReject,
+            Bun__HTTPRequestContext__onResolveStream,
+            Bun__HTTPRequestContext__onRejectStream,
+        ),
+        (true, false, false) => (
+            Bun__HTTPRequestContextTLS__onResolve,
+            Bun__HTTPRequestContextTLS__onReject,
+            Bun__HTTPRequestContextTLS__onResolveStream,
+            Bun__HTTPRequestContextTLS__onRejectStream,
+        ),
+        (false, true, false) => (
+            Bun__HTTPRequestContextDebug__onResolve,
+            Bun__HTTPRequestContextDebug__onReject,
+            Bun__HTTPRequestContextDebug__onResolveStream,
+            Bun__HTTPRequestContextDebug__onRejectStream,
+        ),
+        (true, true, false) => (
+            Bun__HTTPRequestContextDebugTLS__onResolve,
+            Bun__HTTPRequestContextDebugTLS__onReject,
+            Bun__HTTPRequestContextDebugTLS__onResolveStream,
+            Bun__HTTPRequestContextDebugTLS__onRejectStream,
+        ),
+        (false, false, true) => (
+            Bun__HTTPRequestContextMux__onResolve,
+            Bun__HTTPRequestContextMux__onReject,
+            Bun__HTTPRequestContextMux__onResolveStream,
+            Bun__HTTPRequestContextMux__onRejectStream,
+        ),
+        (true, false, true) => (
+            Bun__HTTPRequestContextMuxTLS__onResolve,
+            Bun__HTTPRequestContextMuxTLS__onReject,
+            Bun__HTTPRequestContextMuxTLS__onResolveStream,
+            Bun__HTTPRequestContextMuxTLS__onRejectStream,
+        ),
+        (false, true, true) => (
+            Bun__HTTPRequestContextDebugMux__onResolve,
+            Bun__HTTPRequestContextDebugMux__onReject,
+            Bun__HTTPRequestContextDebugMux__onResolveStream,
+            Bun__HTTPRequestContextDebugMux__onRejectStream,
+        ),
+        (true, true, true) => (
+            Bun__HTTPRequestContextDebugMuxTLS__onResolve,
+            Bun__HTTPRequestContextDebugMuxTLS__onReject,
+            Bun__HTTPRequestContextDebugMuxTLS__onResolveStream,
+            Bun__HTTPRequestContextDebugMuxTLS__onRejectStream,
+        ),
     }
-    };
-}
-request_ctx_exports! {
-    (crate::server::HTTPServer,       false, false, false) =>
-        Bun__HTTPRequestContext__onResolve,
-        Bun__HTTPRequestContext__onReject,
-        Bun__HTTPRequestContext__onResolveStream,
-        Bun__HTTPRequestContext__onRejectStream;
-    (crate::server::HTTPSServer,      true,  false, false) =>
-        Bun__HTTPRequestContextTLS__onResolve,
-        Bun__HTTPRequestContextTLS__onReject,
-        Bun__HTTPRequestContextTLS__onResolveStream,
-        Bun__HTTPRequestContextTLS__onRejectStream;
-    (crate::server::DebugHTTPServer,  false, true,  false) =>
-        Bun__HTTPRequestContextDebug__onResolve,
-        Bun__HTTPRequestContextDebug__onReject,
-        Bun__HTTPRequestContextDebug__onResolveStream,
-        Bun__HTTPRequestContextDebug__onRejectStream;
-    (crate::server::DebugHTTPSServer, true,  true,  false) =>
-        Bun__HTTPRequestContextDebugTLS__onResolve,
-        Bun__HTTPRequestContextDebugTLS__onReject,
-        Bun__HTTPRequestContextDebugTLS__onResolveStream,
-        Bun__HTTPRequestContextDebugTLS__onRejectStream;
-    (crate::server::HTTPServer,       false, false, true)  =>
-        Bun__HTTPRequestContextMux__onResolve,
-        Bun__HTTPRequestContextMux__onReject,
-        Bun__HTTPRequestContextMux__onResolveStream,
-        Bun__HTTPRequestContextMux__onRejectStream;
-    (crate::server::HTTPSServer,      true,  false, true)  =>
-        Bun__HTTPRequestContextMuxTLS__onResolve,
-        Bun__HTTPRequestContextMuxTLS__onReject,
-        Bun__HTTPRequestContextMuxTLS__onResolveStream,
-        Bun__HTTPRequestContextMuxTLS__onRejectStream;
-    (crate::server::DebugHTTPServer,  false, true,  true)  =>
-        Bun__HTTPRequestContextDebugMux__onResolve,
-        Bun__HTTPRequestContextDebugMux__onReject,
-        Bun__HTTPRequestContextDebugMux__onResolveStream,
-        Bun__HTTPRequestContextDebugMux__onRejectStream;
-    (crate::server::DebugHTTPSServer, true,  true,  true)  =>
-        Bun__HTTPRequestContextDebugMuxTLS__onResolve,
-        Bun__HTTPRequestContextDebugMuxTLS__onReject,
-        Bun__HTTPRequestContextDebugMuxTLS__onResolveStream,
-        Bun__HTTPRequestContextDebugMuxTLS__onRejectStream;
 }
 
 struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
     pub stream: WebCore::ReadableStream,
-}
-
-struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
-    pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
-    pub(crate) size: usize,
 }
 
 struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {

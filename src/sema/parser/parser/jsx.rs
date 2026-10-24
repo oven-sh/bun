@@ -1,7 +1,7 @@
 //! JSX.
 
 use super::{ListKind, Parser, oxc, take_span};
-use crate::Refusal;
+use crate::Rejection;
 use crate::token::T;
 use bun_core::lexer::{
     char_and_size, end_of_run, is_type_script_identifier_part, is_white_space_single_line,
@@ -10,7 +10,7 @@ use bun_core::lexer::{
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
-/// From `start` to `end`, as the range of a diagnostic.
+/// Returns `start` to `end` as a diagnostic's range.
 fn range(start: u32, end: u32) -> (u32, u32) {
     match start == end {
         true => (start, Diagnostic::NO_LENGTH),
@@ -18,7 +18,7 @@ fn range(start: u32, end: u32) -> (u32, u32) {
     }
 }
 
-/// The text from `start` to `end`. Nothing, if the end is before the start.
+/// Returns the text from `start` to `end`, or nothing if the end is before the start.
 fn text_between(src: &[u8], (start, end): (u32, u32)) -> &[u8] {
     src.get(start as usize..end as usize).unwrap_or_default()
 }
@@ -28,7 +28,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     pub(crate) fn jsx_element_or_fragment(&mut self) -> ExprId {
         if self.recovers() && !self.is_at_jsx_element() {
             return match self.is_ecmascript {
-                // There an element is a primary expression, and this is none.
+                // In ECMAScript a JSX element is a primary expression, and this isn't one.
                 true => self.missing_expression(1109),
                 false => self.update_expression_at_less_than(),
             };
@@ -38,7 +38,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `nextTokenIsIdentifierOrKeywordOrGreaterThan`, at a `<`.
     fn is_at_jsx_element(&mut self) -> bool {
-        // Most often nothing is between the `<` and the name.
+        // Usually the name directly follows the `<`.
         let next = self.lx.src.get(self.lx.end as usize);
         if next.is_some_and(|&c| c.is_ascii_alphabetic() || c == b'>') {
             return true;
@@ -47,7 +47,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         token == T::GreaterThan || token.is_identifier_or_keyword()
     }
 
-    /// `parseUpdateExpression`, at a `<` that starts no element.
+    /// `parseUpdateExpression`, at a `<` that doesn't start an element.
     #[cold]
     #[inline(never)]
     fn update_expression_at_less_than(&mut self) -> ExprId {
@@ -79,7 +79,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn jsx_elements_without_parent(&mut self, first: ExprId) -> ExprId {
         if !self.recovers() {
-            self.refuse(Refusal::Unsupported);
+            self.reject(Rejection::Unsupported);
             return first;
         }
         let base = self.s.ids.len();
@@ -91,7 +91,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let end = self.prev_end();
         let top = self.first_operand_pos(first);
         self.error(2657, range(top, end), &[]);
-        // Each is the left operand of a comma, and the rest the right one.
+        // Each element becomes the left operand of a comma expression, with the rest as the right operand.
         let mut rest = ExprId::NONE;
         while self.s.ids.len() > base {
             let Some(left) = self.s.ids.pop().map(ExprId) else {
@@ -112,8 +112,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         rest
     }
 
-    /// Consumes the `>` that ends a tag of the element with the name `tag`, which a fragment does
-    /// not have. Returns the end of the tag.
+    /// Consumes the `>` that ends a tag. `tag` is the element's name, or `NONE` for a fragment. Returns the end of the
+    /// tag.
     #[inline(always)]
     fn end_of_jsx_tag(&mut self, is_in_expression: bool, tag: ExprId) -> u32 {
         if self.token() != T::GreaterThan {
@@ -142,8 +142,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         end
     }
 
-    /// `ReScanJsxToken`, which `parseJsxChildren` calls before each child, at a token of an
-    /// expression.
+    /// `ReScanJsxToken`, which `parseJsxChildren` calls before each child. The current token was scanned as an
+    /// expression token.
     #[cold]
     #[inline(never)]
     fn rescan_jsx_child(&mut self) {
@@ -152,36 +152,38 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let from = self.full_start();
         let before = self.token();
-        // What was read as a comment is text.
-        let kept = self.lx.comments.partition_point(|it| it.pos < from);
-        self.lx.comments.truncate(kept);
+        // What was scanned as a comment is JSX text.
+        let keep_len = self.lx.comments.partition_point(|it| it.pos < from);
+        self.lx.comments.truncate(keep_len);
         self.lx.end = from;
         self.lx.next_jsx_child();
-        // `parseJsxChildren` of the native parser asks the scanner and leaves `p.token` as it was: a `<<` or a `<=`.
+        // The native parser's `parseJsxChildren` reads the scanner's token and leaves `p.token` as it was: a `<<` or a
+        // `<=`.
         if self.token() == T::LessThan
             && before != T::LessThan
             && self.options.dialect == Default::default()
         {
-            self.jsx_child_after_other_token = self.pos();
+            self.jsx_child_with_stale_token = self.pos();
         }
     }
 
-    /// `parseJsxElementOrSelfClosingElementOrFragment`, at the `<`. `parent`: the name of
-    /// `openingTag`, if that is an element. Returns whether the closing tag is the one of `parent`.
+    /// `parseJsxElementOrSelfClosingElementOrFragment`, at the `<`. `parent` is the name of `openingTag`, if that's an
+    /// element. The returned flag is true if the closing tag belongs to `parent`.
     fn jsx_element(&mut self, is_in_expression: bool, parent: ExprId) -> (ExprId, bool) {
         if self.is_too_deep() {
             return (ExprId::NONE, false);
         }
         let start = self.pos();
-        // `nodePos()`: nothing but text is between the children.
+        // `nodePos()`: there's nothing between children except text, which is a child itself.
         let full_start = match is_in_expression {
             true => self.full_start(),
             false => start,
         };
-        match self.recovers() && !is_in_expression && self.jsx_child_after_other_token == start {
-            // `parseExpected(KindLessThanToken)` fails, and `scanJsxIdentifier` finds the `<`: type arguments start there.
+        match self.recovers() && !is_in_expression && self.jsx_child_with_stale_token == start {
+            // `parseExpected(KindLessThanToken)` fails, and `scanJsxIdentifier` finds the `<`, so type arguments start
+            // there.
             true => {
-                self.jsx_child_after_other_token = u32::MAX;
+                self.jsx_child_with_stale_token = u32::MAX;
                 self.error_at_token(1005, &[b"<"]);
             }
             false => self.next(),
@@ -208,7 +210,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             jsx.attrs = self.jsx_attributes();
             if self.token() != T::GreaterThan {
-                // The scanner never joins a `>` with what follows it.
+                // The scanner never merges a `>` with what follows it.
                 if !self.eat(T::Slash) {
                     self.error_at_token(1005, &[b"/"]);
                 }
@@ -232,7 +234,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     child
                 }
                 T::OpenBrace => self.jsx_expression_child(start),
-                // For acorn and oxc `<` and `/` are two tokens.
+                // For acorn and oxc, `<` and `/` are two tokens.
                 T::LessThan
                     if (self.is_ecmascript || self.options.dialect.oxc)
                         && self.peek() == T::Slash =>
@@ -277,11 +279,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             jsx.close_tag = self.jsx_element_name();
             // `tagNamesAreEquivalent`
             let src = self.lx.src;
-            let written = |range: (u32, u32)| src.get(range.0 as usize..range.1 as usize);
-            if written(name) != written((closing, self.prev_end()))
+            let text_at = |range: (u32, u32)| src.get(range.0 as usize..range.1 as usize);
+            if text_at(name) != text_at((closing, self.prev_end()))
                 && !self.are_tag_names_equivalent(jsx.tag, jsx.close_tag)
             {
-                return self.jsx_element_with_other_closing_tag(
+                return self.jsx_element_with_mismatched_closing_tag(
                     jsx,
                     start,
                     name,
@@ -295,8 +297,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         (self.add_expr(ExprKind::Jsx(id), start, jsx.end), false)
     }
 
-    /// What `parseJsxElementOrSelfClosingElementOrFragment` does with a last child that has the
-    /// closing tag of the element: the tag is moved, and the one of `child` is missing.
+    /// What `parseJsxElementOrSelfClosingElementOrFragment` does when the last child has the element's closing tag: the
+    /// tag moves to the element, and `child` gets a missing closing tag.
     #[cold]
     #[inline(never)]
     fn jsx_element_closed_by_child(
@@ -333,7 +335,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         (self.add_expr(ExprKind::Jsx(id), start, jsx.end), false)
     }
 
-    /// `parseJsxChild` at a token that is no child and no `</`, and what follows the children. The
+    /// `parseJsxChild` at a token that's neither a child nor `</`, plus everything that comes after the children. The
     /// element starts at `start`, its node at `full_start`, and its name is at `name`.
     #[cold]
     #[inline(never)]
@@ -351,19 +353,19 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.s.ids.truncate(base);
             return (ExprId::NONE, false);
         }
-        let written = text_between(self.lx.src, name);
+        let tag_text = text_between(self.lx.src, name);
         if self.token() == T::Eof {
             match jsx.tag.is_some() {
-                true => self.error(17008, range(name.0.min(name.1), name.1), &[written]),
+                true => self.error(17008, range(name.0.min(name.1), name.1), &[tag_text]),
                 false => self.error(17014, range(full_start, jsx.opening_end), &[]),
             }
         }
         jsx.children = self.take_ids(base);
-        // `parseJsxClosingElement`, `parseJsxClosingFragment`: the name and the `>` are missed at
-        // the same place, where no second error is reported.
+        // `parseJsxClosingElement`, `parseJsxClosingFragment`: the name and the `>` are missing at the same position,
+        // where a second error isn't reported.
         let at = self.pos();
         self.error_at_token(1005, &[b"</"]);
-        // `ScanJsxToken`: `TokenFullStart()` is the start of the token, which stays.
+        // `ScanJsxToken`: `TokenFullStart()` is the start of the token, which isn't consumed.
         self.lx.full_start = at;
         jsx.close_pos = at;
         jsx.end = at;
@@ -374,18 +376,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 && !self.are_tag_names_equivalent(jsx.tag, jsx.close_tag)
                 && self.are_tag_names_equivalent(jsx.close_tag, parent);
             if closes_parent {
-                self.error(17008, range(start + 1, name.1), &[written]);
+                self.error(17008, range(start + 1, name.1), &[tag_text]);
             }
         }
         let id = self.f.add_jsx(jsx);
         (self.add_expr(ExprKind::Jsx(id), start, at), closes_parent)
     }
 
-    /// The end of `parseJsxClosingElement`, and what follows it, after a name that is not the one
-    /// of the opening tag, which is at `name`.
+    /// The end of `parseJsxClosingElement`, and what follows it, after a name that differs from the opening tag's name,
+    /// which is at `name`.
     #[cold]
     #[inline(never)]
-    fn jsx_element_with_other_closing_tag(
+    fn jsx_element_with_mismatched_closing_tag(
         &mut self,
         mut jsx: Jsx,
         start: u32,
@@ -394,7 +396,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         is_in_expression: bool,
     ) -> (ExprId, bool) {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return (ExprId::NONE, false);
         }
         let end_of_name = self.prev_end();
@@ -403,13 +405,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             _ => self.expected(T::GreaterThan),
         }
         jsx.end = self.full_start();
-        let written = text_between(self.lx.src, name);
+        let tag_text = text_between(self.lx.src, name);
         let closes_parent =
             parent.is_some() && self.are_tag_names_equivalent(jsx.close_tag, parent);
         // `TagName().Loc` starts where the `<` or the `</` ends.
         match closes_parent {
-            true => self.error(17008, range(start + 1, name.1), &[written]),
-            false => self.error(17002, range(jsx.close_pos + 2, end_of_name), &[written]),
+            true => self.error(17008, range(start + 1, name.1), &[tag_text]),
+            false => self.error(17002, range(jsx.close_pos + 2, end_of_name), &[tag_text]),
         }
         if !closes_parent && !is_in_expression {
             self.rescan_jsx_child();
@@ -421,7 +423,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         )
     }
 
-    /// `tagNamesAreEquivalent`, for names that are not written the same.
+    /// `tagNamesAreEquivalent`, for names whose source text differs.
     #[cold]
     fn are_tag_names_equivalent(&self, mut a: ExprId, mut b: ExprId) -> bool {
         loop {
@@ -461,15 +463,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.lx.scan_jsx_identifier();
     }
 
-    /// `ScanJsxIdentifier` for a name that `Lexer::scan_jsx_identifier` does not read, and the
-    /// error of `parseIdentifierNameErrorOnUnicodeEscapeSequence`.
+    /// `ScanJsxIdentifier` for a name that `Lexer::scan_jsx_identifier` doesn't handle, plus the error of
+    /// `parseIdentifierNameErrorOnUnicodeEscapeSequence`.
     #[cold]
     #[inline(never)]
     fn unusual_jsx_identifier(&mut self) {
-        // For oxc the name is the text as it's written: `<X\u0065 />` doesn't refer to `Xe`. It rejects an escape in a keyword.
+        // For oxc the name is the source text as is: `<X\u0065 />` doesn't refer to `Xe`. It rejects an escape in a
+        // keyword.
         let is_escaped_keyword = self.lx.has_escape && self.token() != T::Identifier;
-        let is_as_written = self.options.dialect.oxc && !is_escaped_keyword;
-        if !self.recovers() && !(is_as_written && self.lx.has_escape) {
+        let keeps_source_text = self.options.dialect.oxc && !is_escaped_keyword;
+        if !self.recovers() && !(keeps_source_text && self.lx.has_escape) {
             return self.report();
         }
         let src = self.lx.src;
@@ -493,7 +496,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     is_past_dash = true;
                     (i32::from(b'-'), 1)
                 }
-                Some(b'\\') if is_as_written && is_past_dash => break,
+                Some(b'\\') if keeps_source_text && is_past_dash => break,
                 Some(b'\\') => match peek_unicode_escape(src, end) {
                     Some(escaped) if is_type_script_identifier_part(escaped.0) => {
                         self.lx.has_escape = true;
@@ -513,25 +516,25 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             end += len;
         }
-        if is_as_written {
-            let written = (self.lx.start as usize)..end;
-            text = src.get(written).unwrap_or_default().to_vec();
+        if keeps_source_text {
+            let source_range = (self.lx.start as usize)..end;
+            text = src.get(source_range).unwrap_or_default().to_vec();
         }
-        if end > from || is_as_written {
+        if end > from || keeps_source_text {
             self.lx.atom = self.atom(&text);
             self.lx.end = end as u32;
         }
         self.lx.token = T::Identifier;
-        if self.lx.has_escape && !is_as_written {
+        if self.lx.has_escape && !keeps_source_text {
             self.error_at_token(17021, &[]);
         }
     }
 
-    /// `parseIdentifierNameErrorOnUnicodeEscapeSequence`, at a token that `scan_jsx_identifier` has
-    /// not made an identifier of.
+    /// `parseIdentifierNameErrorOnUnicodeEscapeSequence`, at a token that `scan_jsx_identifier` didn't turn into an
+    /// identifier.
     #[cold]
     #[inline(never)]
-    fn jsx_identifier_at_another_token(&mut self) -> Atom {
+    fn jsx_identifier_at_non_identifier(&mut self) -> Atom {
         if !self.recovers() {
             self.fail();
             return Atom::NONE;
@@ -539,19 +542,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.token() != T::PrivateIdentifier {
             return self.missing_identifier(0, 0).0;
         }
-        // `ScanJsxIdentifier` makes an identifier of it, whose text has the `#`.
+        // `ScanJsxIdentifier` turns it into an identifier whose text includes the `#`.
         self.unusual_jsx_identifier();
         let name = self.lx.atom;
         self.next();
         name
     }
 
-    /// `parseJsxTagName`, `parseJsxAttributeName`: the text of the name, which may have a
-    /// namespace, its start and whether it is anything but an identifier.
+    /// `parseJsxTagName`, `parseJsxAttributeName`. Returns the name's text, which may include a namespace, its start,
+    /// and true if it's anything but a plain identifier.
     #[inline(never)]
     fn jsx_name(&mut self) -> (Atom, u32, bool) {
         let name = self.jsx_name_without_comments();
-        // The two names of `a:b` are finished one by one, so that a comment next to the `:` is between two names and not in one.
+        // The two names of `a:b` are finished separately, so that a comment next to the `:` is between two names
+        // instead of inside one.
         if !self.has_finished_name_that_ends_at(self.prev_end()) {
             self.finish_name(name.1, self.prev_end());
         }
@@ -563,10 +567,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let end = self.lx.end;
         self.scan_jsx_identifier();
         if self.token() != T::Identifier {
-            return self.jsx_name_at_another_token();
+            return self.jsx_name_at_non_identifier();
         }
         let (name, start) = (self.lx.atom, self.pos());
-        // It is a name of JavaScript then, which has neither a `-` nor a `:`.
+        // If so, it's a JavaScript name, which has neither a `-` nor a `:`.
         let is_as_scanned = self.lx.end == end;
         self.next();
         if is_as_scanned && self.token() != T::Colon {
@@ -576,12 +580,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.rest_of_jsx_name(name, start)
     }
 
-    /// `jsx_name`, where no identifier is. A name that is missing is empty, and no identifier.
+    /// `jsx_name`, at a token that isn't an identifier. A missing name is empty and doesn't count as an identifier.
     #[cold]
     #[inline(never)]
-    fn jsx_name_at_another_token(&mut self) -> (Atom, u32, bool) {
+    fn jsx_name_at_non_identifier(&mut self) -> (Atom, u32, bool) {
         let start = self.pos();
-        let name = self.jsx_identifier_at_another_token();
+        let name = self.jsx_identifier_at_non_identifier();
         if name.is_none() {
             return (name, start, false);
         }
@@ -608,7 +612,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         (name, start, !is_plain)
     }
 
-    /// The text of a `JsxNamespacedName`, which has no blanks around the colon.
+    /// Returns the text of a `JsxNamespacedName`, without any whitespace around the colon.
     fn jsx_namespaced_name(&mut self, namespace: Atom, local: Atom) -> Atom {
         let text = [self.lx.text_of(namespace), b":", self.lx.text_of(local)].concat();
         self.atom(&text)
@@ -618,7 +622,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn jsx_name_without_local_name(&mut self, namespace: Atom, start: u32) -> (Atom, u32, bool) {
-        let local = self.jsx_identifier_at_another_token();
+        let local = self.jsx_identifier_at_non_identifier();
         if local.is_none() {
             return (local, start, false);
         }
@@ -633,7 +637,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true if name == known::empty => {
                 self.add_expr(ExprKind::Missing, start, self.full_start())
             }
-            // oxc takes `a-b.c`.
+            // oxc accepts `a-b.c`.
             true if self.token() == T::Dot
                 && self.options.dialect.oxc
                 && !bun_core::strings::contains_char(self.lx.text_of(name), b':') =>
@@ -657,13 +661,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     self.identifier_name()
                 }
             };
-            let kind = ExprKind::Dot {
-                obj: expression,
-                name,
-                name_pos,
-                chain: Chain::No,
-            };
-            expression = self.finish_expr(kind, start);
+            expression = self.finish_dot((expression, Chain::No), (name, name_pos), start);
         }
         expression
     }
@@ -673,16 +671,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn jsx_member_name(&mut self) -> (Atom, u32) {
         let token = self.token();
-        let is_of_next_statement = token.is_identifier_or_keyword()
+        let belongs_to_next_statement = token.is_identifier_or_keyword()
             && self.newline_before()
             && self.look_ahead(|p| {
                 p.next();
                 p.token().is_identifier_or_keyword() && !p.newline_before()
             });
-        if token == T::PrivateIdentifier && !is_of_next_statement {
+        if token == T::PrivateIdentifier && !belongs_to_next_statement {
             self.next();
         }
-        if token == T::PrivateIdentifier || is_of_next_statement {
+        if token == T::PrivateIdentifier || belongs_to_next_statement {
             let at = self.full_start();
             self.error(1003, (at, Diagnostic::NO_LENGTH), &[]);
             return (known::empty, at);
@@ -694,7 +692,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.lx.has_escape && !self.options.dialect.oxc {
             self.error_at_token(17021, &[]);
         }
-        if self.is_before(b"-") && self.is_for_oxc() {
+        if self.is_followed_by(b"-") && self.is_for_oxc() {
             self.scan_jsx_identifier();
             let at = (self.lx.start, self.lx.end);
             oxc::hyphen_in_jsx_member_name(&mut self.f.diagnostics, at);
@@ -788,24 +786,24 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         take_span!(self, props, base)
     }
 
-    /// `ScanJsxAttributeValue` leaves what is no string to `Scan`, after the blanks that follow the
-    /// `=`: `TokenFullStart()` is there.
-    fn skip_blanks_after_equals(&mut self) {
-        let is_blank =
+    /// `ScanJsxAttributeValue` skips the whitespace after the `=` and leaves anything but a string to `Scan`, so
+    /// `TokenFullStart()` is after that whitespace.
+    fn skip_whitespace_after_equals(&mut self) {
+        let is_whitespace =
             |c| is_white_space_single_line(c) || matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029);
         let from = self.lx.full_start as usize;
-        self.lx.full_start = end_of_run(self.lx.src, from, is_blank) as u32;
+        self.lx.full_start = end_of_run(self.lx.src, from, is_whitespace) as u32;
     }
 
     /// `parseJsxAttributeValue`, at the `<` of an element.
     #[cold]
     #[inline(never)]
     fn jsx_elements_after_equals(&mut self) -> ExprId {
-        self.skip_blanks_after_equals();
+        self.skip_whitespace_after_equals();
         self.jsx_elements(false)
     }
 
-    /// `parseJsxAttributeValue`, at a token that starts no value.
+    /// `parseJsxAttributeValue`, at a token that can't start a value.
     #[cold]
     #[inline(never)]
     fn missing_jsx_attribute_value(&mut self) {
@@ -813,16 +811,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return self.fail();
         }
         self.error_at_token(1145, &[]);
-        self.skip_blanks_after_equals();
+        self.skip_whitespace_after_equals();
     }
 
-    /// `parseJsxExpression` for `name={}`, which the checker reports. The missing expression is
-    /// placed at the opening brace.
+    /// `parseJsxExpression` for `name={}`, which the checker reports. The missing expression is positioned at the
+    /// opening brace.
     #[cold]
     #[inline(never)]
     fn empty_jsx_attribute_value(&mut self, open: u32) -> ExprId {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return ExprId::NONE;
         }
         if self.is_for_oxc() {
@@ -850,10 +848,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     ) {
         let node = NodeData::Expr(expression);
         match self.f.exprs.get(expression.idx()).map(|e| e.kind) {
-            // `{/* comment */}`: the `JSXEmptyExpression` of ESTree is everything between the braces. Here it is a missing
-            // expression without a width, so a comment would not be inside it.
+            // `{/* comment */}`: ESTree's `JSXEmptyExpression` spans everything between the braces. Here it's a
+            // zero-width missing expression, so a comment wouldn't be inside it.
             Some(ExprKind::Missing) => self.finish_node(node, open + 1, end.saturating_sub(1)),
-            // `{...a /* comment */}`: the `JSXSpreadChild` of ESTree includes the braces.
+            // `{...a /* comment */}`: ESTree's `JSXSpreadChild` includes the braces.
             Some(ExprKind::Spread(_)) => {
                 self.unfinish_node(node);
                 self.finish_node(node, open, end);
@@ -862,7 +860,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The expression between braces. `parseJsxExpression` stays in the context of the element.
+    /// Parses the expression between braces. `parseJsxExpression` stays in the element's context.
     fn jsx_expression(&mut self) -> ExprId {
         match self.is_ecmascript {
             true => self.expression_allowing_in(),
@@ -875,7 +873,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let open = self.pos();
         self.next();
         let expression = if self.token() == T::CloseBrace {
-            // The missing expression is placed at the opening brace.
+            // The missing expression is positioned at the opening brace.
             self.add_expr(ExprKind::Missing, open, open)
         } else if self.eat(T::DotDotDot) {
             let operand = self.jsx_expression();

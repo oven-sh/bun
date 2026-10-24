@@ -10,15 +10,15 @@ pub struct ReactInJsxScope;
 const NOT_IN_SCOPE: Message = Message::new("notInScope", "'{{name}}' must be in scope when using JSX");
 const REACT_IN_JSX_SCOPE: Message = Message::new("", "`React` must be in scope when using JSX.");
 
-/// What has to be in scope.
+/// The name that has to be in scope.
 pub struct Pragma<'a> {
     name: Name<'a>,
-    /// Whether the file has the name in it.
+    /// True if the file mentions the name.
     is_mentioned: bool,
 }
 
 impl<'a> Pragma<'a> {
-    /// What the configuration declares does not count.
+    /// Globals declared by the configuration don't count.
     fn is_declared_in(&self, scope: Scope<'a>) -> bool {
         scope.resolve_name(self.name).is_some_and(|it| it.declarations().next().is_some())
     }
@@ -27,7 +27,7 @@ impl<'a> Pragma<'a> {
         if !self.is_mentioned {
             return false;
         }
-        // oxlint asks what the name means there.
+        // oxlint resolves the name from the node's scope.
         if is_oxlint { self.is_declared_in(node.scope()) } else { get_variable_from_context(node, self.name).is_some() }
     }
 }
@@ -46,11 +46,11 @@ impl Rule for ReactInJsxScope {
         if (is_oxlint && !is_jsx(file)) || !file.has_exprs([ExprTag::Jsx]) {
             return None;
         }
-        // oxlint knows no pragma.
+        // oxlint has no pragma setting.
         let name = if is_oxlint { "React" } else { std::str::from_utf8(get_from_context(file)).ok()? };
-        // Every function that is no arrow function has a variable `arguments`.
+        // Every non-arrow function has an `arguments` variable.
         let pragma = Pragma { name: file.name_of(name), is_mentioned: file.mentions(name) || name == "arguments" };
-        // For ESLint what the configuration defines is a variable of the global scope.
+        // For ESLint, globals defined by the configuration are variables in the global scope.
         if (!is_oxlint && file.global_named(pragma.name).is_some())
             || (pragma.is_mentioned && pragma.is_declared_in(file.top_level_scope()))
         {
@@ -67,7 +67,7 @@ impl Rule for ReactInJsxScope {
         if cx.state.is_in_scope_of(Node::Expr(e), is_oxlint) {
             return;
         }
-        // oxlint points at the name of the element.
+        // oxlint reports at the element's name.
         if is_oxlint {
             cx.report(jsx.tag().map_or_else(|| jsx.opening_span(), Expr::span), REACT_IN_JSX_SCOPE);
         } else {

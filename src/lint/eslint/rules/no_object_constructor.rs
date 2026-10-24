@@ -11,21 +11,20 @@ const USE_LITERAL_AFTER_SEMICOLON: Message = Message::new(
     "Replace with '{{replacement}}', add preceding semicolon.",
 );
 
-/// The message of each suggestion, its `replacement`, and the text that replaces the call.
+/// Each suggestion's message, its `replacement` value, and the text that replaces the call.
 const SUGGESTIONS: [(Message, &str, &str); 3] = [
     (USE_LITERAL, "{}", "{}"),
     (USE_LITERAL, "({})", "({})"),
     (USE_LITERAL_AFTER_SEMICOLON, "({})", ";({})"),
 ];
 
-/// ESLint's `needsParentheses`: whether an object literal in the place of `e` would be taken for a
-/// block.
+/// ESLint's `needsParentheses`: true if an object literal in place of `e` would parse as a block.
 fn needs_parentheses(e: Expr) -> bool {
     ast_utils::is_start_of_expression_statement(e)
         || e.file().token_before(e).is_some_and(|it| ast_utils::is_arrow_token(&it))
 }
 
-/// The text that replaces `e`.
+/// Returns the text that replaces `e`.
 fn fix_text(e: Expr) -> &'static str {
     if !needs_parentheses(e) {
         "{}"
@@ -56,7 +55,7 @@ impl Rule for NoObjectConstructor {
         if !call.args().is_empty() || !call.callee().is_ident("Object") {
             return;
         }
-        // For oxc `(Object)` is no name.
+        // oxc doesn't treat `(Object)` as an identifier.
         if cx.language().is_oxlint && call.callee().is_parenthesized() {
             return;
         }

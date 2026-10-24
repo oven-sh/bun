@@ -10,14 +10,14 @@ const UNUSED: Message = Message::new("unused", "'{{name}}:' is defined but never
 #[derive(Default)]
 pub struct Labels<'a> {
     all: Vec<Stmt<'a>>,
-    /// Where the `break` and `continue` statements with a label start, each with its label.
+    /// The start offset of each labeled `break` and `continue`, with its label.
     jumps: Vec<(u32, Name<'a>)>,
 }
 
-/// Whether the label of `statement` can be removed: no comment is lost, `body` does not become a
-/// directive, and it does not continue the statement before.
+/// True if `statement`'s label can be removed: no comment is lost, `body` doesn't become a directive, and it doesn't
+/// continue the previous statement.
 ///
-/// `known`: whether what is around a statement and its labels can have directives.
+/// `known` remembers whether the parent of a statement and its labels can have directives.
 fn is_fixable<'a>(
     statement: Stmt<'a>,
     label: Ident<'a>,
@@ -88,19 +88,19 @@ impl Rule for NoUnusedLabels {
             StmtKind::Labeled { label, .. } => Some(label),
             _ => None,
         };
-        // One pass through the labeled statements and the jumps, in the order of the source.
+        // One pass over the labeled statements and the jumps, in source order.
         let mut is_used = vec![false; all.len()];
-        // The indexes of the labeled statements around the place, the outermost first, and of
-        // those of them with each label.
-        let mut around: Vec<usize> = Vec::new();
+        // `enclosing` has the indexes of the labeled statements enclosing the current position, outermost first.
+        // `with_label` has the same indexes, by label.
+        let mut enclosing: Vec<usize> = Vec::new();
         let mut with_label: FxHashMap<Name<'a>, Vec<usize>> = FxHashMap::default();
         let mut rest = all.iter().copied().enumerate().peekable();
         for (jump, name) in jumps {
             loop {
                 let next = rest.next_if(|it| it.1.span().start <= jump);
-                let place = next.map_or(jump, |it| it.1.span().start);
-                while let Some(ended) = around.last().and_then(|&it| all.get(it)).filter(|it| it.span().end <= place) {
-                    around.pop();
+                let position = next.map_or(jump, |it| it.1.span().start);
+                while let Some(ended) = enclosing.last().and_then(|&it| all.get(it)).filter(|it| it.span().end <= position) {
+                    enclosing.pop();
                     if let Some(same) = label_of(*ended).and_then(|it| with_label.get_mut(&it)) {
                         same.pop();
                     }
@@ -108,7 +108,7 @@ impl Rule for NoUnusedLabels {
                 let Some((index, statement)) = next else {
                     break;
                 };
-                around.push(index);
+                enclosing.push(index);
                 if let Some(label) = label_of(statement) {
                     with_label.entry(label).or_default().push(index);
                 }
@@ -127,7 +127,7 @@ impl Rule for NoUnusedLabels {
                 continue;
             };
             cx.report(label, UNUSED).data("name", label).fix(|fixer| {
-                // oxlint always puts the body in the place of the statement.
+                // oxlint always replaces the statement with its body.
                 if fixer.file().language().is_oxlint {
                     return Some(fixer.replace(statement, body.text()));
                 }

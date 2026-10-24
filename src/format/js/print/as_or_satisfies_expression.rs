@@ -5,20 +5,19 @@ use crate::js::utils::typecast::comments_of_expression;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// Prettier 3.9 writes `new (⏎ a as T⏎)()` like `(⏎ a as T⏎)()`. oxfmt follows 3.8, in which only `T`
-/// can break.
-fn breaks_around_the_callee_of_new(f: &Formatter<'_>) -> bool {
+/// Prettier 3.9 prints `new (⏎ a as T⏎)()` like `(⏎ a as T⏎)()`. oxfmt follows 3.8, in which only `T` can break.
+fn breaks_around_new_callee(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// For oxfmt the comments around `as` and `satisfies` stay on the side of the operator that they are
-/// on, and start a line if they do in the source. Prettier attaches them to the expression or to the
-/// type.
+/// For oxfmt the comments around `as` and `satisfies` stay on their side of the operator, and start a line if they do
+/// in the source. Prettier attaches them to the expression or to the type.
 fn comments_stay_around_cast_operator(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// See [`comments_stay_around_cast_operator`]. `cast`: the whole expression. `type_annotation`: `None` for `const`.
+/// See [`comments_stay_around_cast_operator`]. `cast` is the whole expression. `type_annotation` is `None` for
+/// `as const`.
 #[cold]
 #[inline(never)]
 fn write_with_comments_in_place<'a>(
@@ -32,7 +31,7 @@ fn write_with_comments_in_place<'a>(
     let after_expression = comments_of_expression(expression, f).trailing;
     let before_type = match type_node {
         Some(ty) => f.comments().of_node(ty).leading,
-        // `const` is not a node. A comment of several lines before it trails the whole expression.
+        // `const` isn't a node. A multiline comment before it trails the whole expression.
         None => {
             let comments = f.comments().of_node(cast.as_ast_nodes()).trailing;
             let count = (comments.iter())
@@ -42,7 +41,7 @@ fn write_with_comments_in_place<'a>(
         }
     };
     let is_ignored = type_node.is_some_and(|ty| f.comments().is_ignored(ty));
-    // A union places the comments before it itself.
+    // A union prints its own leading comments.
     let is_union =
         !is_ignored && type_annotation.is_some_and(|ty| matches!(ty.kind(), TypeKind::Union(_)));
 
@@ -51,8 +50,8 @@ fn write_with_comments_in_place<'a>(
         .take_while(|comment| comment.prev_token_end() <= expression_end)
         .count();
     let (before_operator, after_operator) = after_expression.split_at(before_operator_count);
-    // No line break can be before the operator: only block comments on the line of the expression stay
-    // there. A line comment is written behind the operator anyway.
+    // There can't be a line break before the operator, so only block comments on the expression's line stay there. A
+    // line comment is printed after the operator anyway.
     // `(a /* prettier-ignore */⏎) as T` is `a as /* prettier-ignore */ T`.
     let has_ignore_comment =
         (before_operator.iter()).any(|comment| f.comments().is_suppression_comment(comment));
@@ -63,7 +62,7 @@ fn write_with_comments_in_place<'a>(
         })
         .count();
     let (glued_before, moved) = before_operator.split_at(glued_before_count);
-    // Those on the line of the operator.
+    // The comments on the operator's line.
     let is_glued_after = |comment: &Comment<'_>| {
         !(comment.has_newline_before()
             || (comment.is_multiline_block() && comment.has_newline_after()))
@@ -79,7 +78,7 @@ fn write_with_comments_in_place<'a>(
         false => 0,
     };
     let (glued_before_type, leading_type) = before_type.split_at(glued_before_type_count);
-    let is_on_lines_of_its_own = |comment: Comment<'_>| {
+    let is_on_its_own_lines = |comment: Comment<'_>| {
         comment.has_newline_after()
             && (comment.has_newline_before() || comment.is_multiline_block())
     };
@@ -88,7 +87,7 @@ fn write_with_comments_in_place<'a>(
         .chain(glued_before_type)
         .any(|comment| comment.is_line())
         || (!is_union
-            && (moved.iter().chain(leading).chain(leading_type)).any(is_on_lines_of_its_own))
+            && (moved.iter().chain(leading).chain(leading_type)).any(is_on_its_own_lines))
         // `a as // prettier-ignore⏎T`
         || (is_ignored && leading_type.iter().any(|comment| comment.has_newline_after()));
 
@@ -125,7 +124,8 @@ fn write_with_comments_in_place<'a>(
     }
 }
 
-/// Not inlined: `a as b as c` is nested as deep as it is long, and what this needs of the stack would be taken at each level.
+/// Not inlined, because `a as b as c` nests as deep as it is long, and inlining would add this function's stack usage
+/// to every level.
 #[inline(never)]
 fn ends_with_line_comment<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     (comments_of_expression(expression, f).trailing.last()).is_some_and(|comment| comment.is_line())
@@ -145,8 +145,8 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
             return write_with_comments_in_place(e, expression, operation, type_annotation, f);
         }
         write!(f, [expression, space(), operation]);
-        // Prettier's space is text. It shows before a line comment that trails the expression if the type starts on the
-        // next line: `a as  // comment`.
+        // Prettier's space is text, so it's still printed before a line comment that trails the expression when the
+        // type starts on the next line: `a as  // comment`.
         match !f.is_quiet() && ends_with_line_comment(expression, f) {
             true => write!(f, " "),
             false => write!(f, space()),
@@ -161,7 +161,7 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
     let is_callee_or_object = match parent {
         AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
         AstNodes::ComputedMemberExpression(member) => member.object() == Some(e),
-        AstNodes::NewExpression(_) if !breaks_around_the_callee_of_new(f) => false,
+        AstNodes::NewExpression(_) if !breaks_around_new_callee(f) => false,
         _ => parent.is_call_like_callee(e),
     };
     match is_callee_or_object {

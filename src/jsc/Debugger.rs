@@ -16,7 +16,7 @@ use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
-use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
+use crate::{self as jsc, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);
@@ -801,14 +801,13 @@ pub enum TestType {
 
 bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 
-// SAFETY (safe fn): `TestReporterHandle` and `CallFrame` are `opaque_ffi!`
-// ZST handles (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
+// SAFETY (safe fn): `TestReporterHandle` is an `opaque_ffi!`
+// ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
 // in/out-param the C++ side reads/consumes in-place. Remaining args are
 // by-value scalars.
 unsafe extern "C" {
     safe fn Bun__TestReporterAgentReportTestFound(
         agent: &mut TestReporterHandle,
-        call_frame: &CallFrame,
         test_id: c_int,
         name: &BunString,
         item_type: TestType,
@@ -835,15 +834,12 @@ unsafe extern "C" {
 impl TestReporterHandle {
     pub(crate) fn report_test_found(
         &mut self,
-        call_frame: &CallFrame,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {
-        Bun__TestReporterAgentReportTestFound(
-            self, call_frame, test_id, name, item_type, parent_id,
-        );
+        Bun__TestReporterAgentReportTestFound(self, test_id, name, item_type, parent_id);
     }
 
     pub fn report_test_found_with_location(
@@ -926,9 +922,10 @@ impl TestReporterAgent {
     /// Caller must ensure that it is enabled first.
     ///
     /// Since we may have to call .deinit on the name string.
+    ///
+    /// The test's location is that of the caller of the host function that is running.
     pub fn report_test_found(
         &self,
-        call_frame: &CallFrame,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
@@ -936,7 +933,7 @@ impl TestReporterAgent {
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
         self.handle_mut()
-            .report_test_found(call_frame, test_id, name, item_type, parent_id);
+            .report_test_found(test_id, name, item_type, parent_id);
     }
 
     /// Caller must ensure that it is enabled first.

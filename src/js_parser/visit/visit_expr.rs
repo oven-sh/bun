@@ -42,6 +42,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            // The caller assumes `e` was visited, so replace it. Don't mutate it on a revisit
+            // because it can be part of a shared `define` value.
+            if !self.is_revisit_for_substitution {
+                e.data = Data::EMissing(E::Missing {});
+            }
             self.report_stack_overflow(e.loc);
             return;
         }
@@ -197,6 +202,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
+            // A write to the name of a class with lowered class decorators goes to
+            // the class's own immutable binding, not to `inner_class_ref`.
+            if let Some(&(inner_ref, name_ref)) = p
+                .decorated_class_names
+                .iter()
+                .find(|(inner, _)| *inner == result.r#ref)
+            {
+                p.ignore_usage(inner_ref);
+                p.record_usage(name_ref);
+                e_.ref_ = name_ref;
+            }
+
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
             {
                 // TODO: silence this for runtime transpiler
@@ -470,12 +487,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None
                     };
 
-                    // `props` may be reassigned to point inside a spread object's
-                    // properties. Track it as a `StoreRef` (safe `Deref`/`DerefMut`) so
-                    // the spread-collapse walk and the `push`/`take` calls below stay
-                    // in safe code.
-                    let mut props_handle = js_ast::StoreRef::from_bump(&mut e_.properties);
-
                     // arguments needs to be like
                     // {
                     //    ...props,
@@ -508,34 +519,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // ->
                     // <div {{...foo}} />
                     // jsx("div", {...foo})
+                    let mut spread_object: Option<js_ast::StoreRef<E::Object>> = None;
                     loop {
-                        // `StoreRef<PropertyList>: Deref` — safe arena-backed read.
-                        if !(props_handle.len_u32() == 1
-                            && props_handle.slice()[0].kind == G::PropertyKind::Spread
-                            && matches!(
-                                props_handle.slice()[0].value.unwrap().data,
-                                Data::EObject(..)
-                            ))
-                        {
-                            break;
-                        }
-                        // Compute the next handle in a block so the `DerefMut`
-                        // borrow of `props_handle` ends before reassignment.
-                        let next = {
-                            let inner = props_handle.slice_mut()[0]
-                                .value
-                                .as_mut()
-                                .unwrap()
-                                .data
-                                .e_object_mut()
-                                .unwrap();
-                            js_ast::StoreRef::from_bump(&mut inner.properties)
+                        let properties = match &spread_object {
+                            Some(object) => &object.properties,
+                            None => &e_.properties,
                         };
-                        props_handle = next;
+                        let [
+                            G::Property {
+                                kind: G::PropertyKind::Spread,
+                                value:
+                                    Some(Expr {
+                                        data: Data::EObject(inner),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ] = properties.slice()
+                        else {
+                            break;
+                        };
+                        spread_object = Some(*inner);
                     }
-                    // `StoreRef: DerefMut` — safe arena-backed handle; no aliasing
-                    // `&mut` outstanding for the remainder of this arm.
-                    let props = &mut *props_handle;
+                    let mut props: G::PropertyList = match spread_object {
+                        // Another expression can reference the same spread object (e.g. a macro result), so copy its list.
+                        Some(object) => {
+                            let mut props = G::PropertyList::init_capacity(
+                                object.properties.len() + usize::from(!e_.children.is_empty()),
+                            );
+                            props.extend(object.properties.iter().map(G::Property::shallow_clone));
+                            props
+                        }
+                        None => bun_alloc::AstAlloc::take(&mut e_.properties),
+                    };
 
                     // Typescript defines static jsx as children.len > 1 or single spread
                     // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
@@ -582,7 +598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         &mut args,
                         p.new_expr(
                             E::Object {
-                                properties: bun_alloc::AstAlloc::take(props),
+                                properties: props,
                                 ..Default::default()
                             },
                             expr.loc,
@@ -689,7 +705,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(ref_) = ref_
                     && !p.options.features.is_macro_runtime
                 {
-                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied() {
+                    // After a stack overflow, part of the template wasn't visited, so don't run the macro.
+                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied()
+                        && !p.reported_stack_overflow.get()
+                    {
                         p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
@@ -1856,14 +1875,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Data::EImport(nt) if core::ptr::eq(&raw const *e_, &raw const *nt)
                     ),
                 import_options: e_.options,
-                loc: e_.expr.loc,
+                loc: e.loc,
                 import_loader: e_.import_record_loader(),
                 ..Default::default()
             };
 
             p.should_fold_typescript_constant_expressions =
                 prev_should_fold_typescript_constant_expressions;
-            *e = p.maybe_transpose_if_import(e_.expr, &state);
+            if let Some(transposed) = p.maybe_transpose_if_import(e_.expr, &state) {
+                *e = transposed;
+            }
             return;
         }
         p.should_fold_typescript_constant_expressions =
@@ -2171,6 +2192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let state = TransposeState {
                     is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
                         && matches!(first.data, Data::EString(..)),
+                    loc: expr.loc,
                     ..Default::default()
                 };
                 match &first.data {
@@ -2182,7 +2204,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Data::EIf(..) => {
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                         // This makes static analysis later easier
-                        *e = p.transpose_known_to_be_if_require(first, &state);
+                        if let Some(transposed) = p.maybe_transpose_if_require(first, &state) {
+                            *e = transposed;
+                        }
                         return;
                     }
                     _ => {}
@@ -2232,7 +2256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Data::EString(..) => {
                         // require.resolve(FOO) => require.resolve(FOO)
                         // (this will register dependencies)
-                        *e = p.transpose_require_resolve_known_string(first);
+                        *e = p.transpose_require_resolve_known_string(first, expr.loc);
                         return;
                     }
                     Data::EIf(..) => {
@@ -2240,7 +2264,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //  =>
                         // FOO ? require.resolve('123') : require.resolve('456')
                         // This makes static analysis later easier
-                        *e = p.transpose_known_to_be_if_require_resolve(first, e_.target);
+                        if let Some(transposed) =
+                            p.maybe_transpose_if_require_resolve(first, e_.target)
+                        {
+                            *e = transposed;
+                        }
                         return;
                     }
                     _ => {}
@@ -2273,7 +2301,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if Self::ALLOW_MACROS {
-            if is_macro_ref && !p.options.features.is_macro_runtime {
+            // After a stack overflow, some arguments weren't visited, so don't run the macro.
+            if is_macro_ref
+                && !p.options.features.is_macro_runtime
+                && !p.reported_stack_overflow.get()
+            {
                 let ref_ = match &e_.target.data {
                     Data::EImportIdentifier(ident) => ident.ref_,
                     Data::EDot(dot) => {
@@ -2790,6 +2822,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if e_.should_lower_standard_decorators {
             *e = p.lower_standard_decorators_expr(expr, &mut e_, decorator_name_from_context);
             return;
+        }
+
+        // Only `lower_class` removes decorated `declare` and `abstract` fields, and it only runs for
+        // class statements. Remove them here because the printer can't print them.
+        if TYPESCRIPT && e_.has_decorators {
+            let properties = e_.properties.slice_mut();
+            let mut end: usize = 0;
+            for i in 0..properties.len() {
+                if matches!(
+                    properties[i].kind,
+                    G::PropertyKind::Declare | G::PropertyKind::Abstract
+                ) {
+                    continue;
+                }
+                properties.swap(end, i);
+                end += 1;
+            }
+            e_.properties.truncate(end);
         }
 
         // Remove unused class names when minifying (only when bundling is enabled)

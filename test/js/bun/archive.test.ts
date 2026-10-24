@@ -153,6 +153,19 @@ function paxSparseEntry(name: string, realSize: number, chunks: SparseChunk[]): 
 
 describe("Bun.Archive", () => {
   describe("new Archive()", () => {
+    test("reads new.target.prototype before it looks for the realm of new.target", () => {
+      const { proxy, revoke } = Proxy.revocable(function () {}, {});
+      revoke();
+      const keys: PropertyKey[] = [];
+      const newTarget = new Proxy(proxy, {
+        get(target, key) {
+          keys.push(key);
+        },
+      });
+      expect(() => Reflect.construct(Bun.Archive, [{}], newTarget)).toThrow(TypeError);
+      expect(keys).toEqual(["prototype"]);
+    });
+
     test("creates archive from object with string values", async () => {
       const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",

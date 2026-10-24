@@ -8,8 +8,8 @@ use crate::fix::{Fix, Fixer};
 use crate::span::{Span, Spanned};
 use crate::tokens::skip_trivia;
 
-/// ESLint's `FixTracker`. Makes a fix whose range is wider than what it changes, so that no other
-/// fix changes the rest of the range in the same pass.
+/// ESLint's `FixTracker`. Creates a fix whose range is wider than what it changes, so that no other fix changes the
+/// rest of the range in the same pass.
 ///
 /// `new FixTracker(fixer, sourceCode).retainRange(range).remove(node)` is
 /// `FixTracker::new(fixer).retain_range(range).remove(node)`.
@@ -29,15 +29,15 @@ impl<'a> FixTracker<'a> {
         }
     }
 
-    /// ESLint's `retainRange`. Replaces what was retained before.
+    /// ESLint's `retainRange`. Replaces the previously retained range.
     #[inline]
     pub fn retain_range(mut self, range: Span) -> Self {
         self.retained = Some(range);
         self
     }
 
-    /// ESLint's `retainEnclosingFunction`. Retains the innermost function that `node` is or is in,
-    /// or else the whole program.
+    /// ESLint's `retainEnclosingFunction`. Retains `node` if it's a function, otherwise the innermost function around
+    /// it, or else the whole program.
     pub fn retain_enclosing_function(self, node: impl Into<Node<'a>>) -> Self {
         self.retain_range(match get_upper_function(node) {
             Some(function) => estree_span(function.into()),

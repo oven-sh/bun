@@ -21,9 +21,9 @@ const OXLINT_IN_CLASS_PROPERTY: Message = Message::new("", "State initialization
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// As oxlint finds it.
+    /// oxlint's search for an enclosing component class.
     in_es6_component: AncestorMemo<'a, ()>,
-    /// Whether the innermost method around something is a constructor, for oxlint.
+    /// For oxlint: true if the innermost enclosing method is a constructor.
     in_constructor: AncestorMemo<'a, bool>,
     pragmas: OnceCell<Pragmas<'a>>,
 }
@@ -45,7 +45,7 @@ impl Rule for StateInConstructor {
         if !file.has_classes() || !file.mentions_any(&["state", "#state"]) {
             return None;
         }
-        // What oxlint takes for a component extends one of these.
+        // Anything oxlint treats as a component extends one of these.
         if file.language().is_oxlint && file.find_name("Component").or_else(|| file.find_name("PureComponent")).is_none() {
             return None;
         }
@@ -57,7 +57,7 @@ impl Rule for StateInConstructor {
         let Some(left) = e.left() else {
             return;
         };
-        // oxlint also takes `this.state.a = b`, upstream `this[state] = a` and `this.#state = a`.
+        // oxlint also matches `this.state.a = b`. Upstream also matches `this[state] = a` and `this.#state = a`.
         let is_state = if is_oxlint {
             get_outer_member_expression(left).is_some_and(react::is_state_member_expression)
         } else {
@@ -67,7 +67,7 @@ impl Rule for StateInConstructor {
             return;
         }
         let node = Node::Expr(e);
-        // oxlint asks the innermost method, upstream every function around.
+        // oxlint checks the innermost method, upstream every enclosing function.
         let is_in_constructor = if is_oxlint {
             let as_method = |node: Node<'a>| as_method_definition(node).map(Member::is_constructor);
             cx.state.in_constructor.find(node, |_, ancestor| as_method(ancestor)) == Some(true)
@@ -81,7 +81,7 @@ impl Rule for StateInConstructor {
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint also takes `"state"` and an abstract field, upstream `[state]`.
+        // oxlint also matches `"state"` and an abstract field. Upstream also matches `[state]`.
         let is_state = if is_oxlint {
             as_property_definition(Node::Member(member)).is_some()
                 && member.key().and_then(Key::name).is_some_and(|name| name.is_any(&["state", "#state"]))
@@ -95,7 +95,7 @@ impl Rule for StateInConstructor {
     }
 }
 
-/// oxlint takes any class around, upstream the innermost one.
+/// oxlint accepts any enclosing class, upstream only the innermost one.
 fn has_parent_es6_component<'a>(node: Node<'a>, state: &mut State<'a>, is_oxlint: bool) -> bool {
     if is_oxlint {
         return state.in_es6_component.find(node, |_, ancestor| is_es6_component(ancestor).then_some(())).is_some();

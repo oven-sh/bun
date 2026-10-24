@@ -593,6 +593,18 @@ describe("util", () => {
       });
     }
 
+    it("reports a number that no int32 holds as it is", () => {
+      expect(util.getSystemErrorName(-4294967297)).toBe("Unknown system error -4294967297");
+      expect(util.getSystemErrorName(-2147483649)).toBe("Unknown system error -2147483649");
+      expect(util.getSystemErrorName(Number.MIN_SAFE_INTEGER)).toBe("Unknown system error -9007199254740991");
+    });
+
+    it("reports -0 with its sign", () => {
+      expect(() => util.getSystemErrorName(-0)).toThrow(
+        'The value of "err" is out of range. It must be a negative integer. Received -0',
+      );
+    });
+
     // Batch all node lookups into a single subprocess instead of one per code (was 74 spawns).
     const negativeSpaceCodes = [];
     for (let i = -4095; i <= -4023; i++) negativeSpaceCodes.push(i);
@@ -676,6 +688,21 @@ it("inspect() does not use isMapIterator and isSetIterator of the writable node:
 describe("util.parseEnv", () => {
   it("accepts a String object without crashing", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
+  });
+
+  it.each([
+    [undefined, "undefined"],
+    [null, "null"],
+    [1, "type number (1)"],
+    [{}, "an instance of Object"],
+  ])("says what Node says of %p", (content, received) => {
+    expect(() => util.parseEnv(content)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "content" argument must be of type string. Received ${received}`,
+      }),
+    );
   });
 
   it("stores array-index keys as indexed properties", () => {

@@ -15,22 +15,37 @@ declare module "bun" {
       : never;
 
     type Adapter = NonNullable<Bun.SQL.Options["adapter"]>;
+    type ChannelBinding = "disable" | "prefer" | "require";
+
+    type AnyOptions = Omit<Bun.SQL.PostgresOrMySQLOptions, "adapter"> &
+      Omit<Bun.SQL.SQLiteOptions, "adapter"> & {
+        adapter?: Adapter;
+        socket?: unknown;
+        channelBinding?: ChannelBinding;
+        foundRows?: boolean;
+        transform?: any;
+      };
 
     /**
      * Represents the result of the `parseOptions()` function in the sqlite path
      */
-    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions, "filename">;
+    type DefinedSQLiteOptions = Define<Bun.SQL.SQLiteOptions> & {
+      filename: string;
+      transform?: import("internal/sql/shared").Transform;
+    };
 
     /**
      * Represents the result of the `parseOptions()` function in the postgres, mysql or mariadb path
      */
-    type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare" | "max"> & {
-      sslMode: import("internal/sql/shared").SSLMode;
+    type DefinedPostgresOrMySQLOptions = Define<Bun.SQL.PostgresOrMySQLOptions, "max" | "prepare"> & {
+      sslMode: import("internal/sql/options").SSLMode;
+      channelBinding: ChannelBinding;
+      foundRows: boolean;
       query: string;
+      transform?: import("internal/sql/shared").Transform;
     };
 
     type DefinedOptions = DefinedSQLiteOptions | DefinedPostgresOrMySQLOptions;
-    type OptionsWithDefinedAdapter = Define<Bun.SQL.Options, "adapter">;
   }
 }
 
@@ -211,8 +226,6 @@ type RequireMap = Map<string, JSCommonJSModule>;
 interface JSCommonJSModule {
   /** The require cache the module reads and writes: the global one, or its Bun.ModuleGraph's. */
   readonly $requireMap: RequireMap;
-  $require(id: string, mod: any, args_count: number, args: Array): any;
-  $requireNativeModule(id: string): any;
   children: JSCommonJSModule[];
   exports: any;
   id: string;
@@ -233,7 +246,7 @@ interface JSCommonJSModule {
  *
  * Binding files are located in `src/jsc/bindings`
  *
- * @see {@link $rust} for native Rust bindings.
+ * @see {@link $bindgen} for native Rust bindings.
  * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
  *
  * @param filename name of the c++ file containing the function. Do not pass a path.
@@ -243,36 +256,13 @@ interface JSCommonJSModule {
  * @returns whatever the binding function returns.
  */
 declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
-/**
- * Call a native Rust binding function, getting whatever it returns.
- *
- * This is more like a macro; it is replaced with a WebKit intrisic during
- * codegen. Passing a template parameter will break codegen. Prefer `$rust(...)
- * as Foo` instead.
- *
- * @see {@link $cpp} for native c++ bindings.
- * @see `src/codegen/replacements.ts` for the script that performs replacement of this funciton.
- *
- * @param filename identifier of the Rust module containing the function (see
- *                 `rustIdentifierPaths` in `src/codegen/generate-js2native.ts`).
- * @param symbol   The name of the binding function. Use `dot.notation` to access
- *                 member symbols.
- *
- * @returns whatever the binding function returns.
- */
-declare function $rust<T = any>(filename: NativeFilenameRust, symbol: string): T;
 declare function $newCppFunction<T = (...args: any) => any>(
   filename: NativeFilenameCPP,
   symbol: string,
   argCount: number,
 ): T;
-declare function $newRustFunction<T = (...args: any) => any>(
-  filename: NativeFilenameRust,
-  symbol: string,
-  argCount: number,
-): T;
 /**
- * Retrieves a handle to a function or class defined in native code, defined in a
+ * Retrieves a handle to a function, namespace or class defined in native code, defined in a
  * `.bind.ts` file. For more information on how to define bindgen functions, see
  * [bindgen's documentation](https://bun.com/docs/project/bindgen).
  * `undefined` for a `*_test.bind.ts` file in a build without assertions.
@@ -283,6 +273,10 @@ declare function $bindgen<File extends keyof $Bindgen.Exports, Name extends keyo
   filename: File,
   name: Name,
 ): $Bindgen.Exports[File][Name];
+declare function $bindgen<File extends keyof $Bindgen.Namespaces, Name extends keyof $Bindgen.Namespaces[File]>(
+  filename: File,
+  name: Name,
+): $Bindgen.Namespaces[File][Name];
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
 
 declare module "node:stream" {

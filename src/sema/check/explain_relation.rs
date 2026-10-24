@@ -1,17 +1,16 @@
 //! Elaboration of a failed type relation: the lines under "Type 'A' is not assignable to type 'B'."
 //!
-//! The relation is in `relate.rs`, where `REPORT` is the `reportErrors` of `relater.go`. This file
-//! holds the error-only code: the entry points (`checkTypeRelatedToEx`), the error chain
+//! The relation itself is in `relate.rs`, where `REPORT` is `relater.go`'s `reportErrors`. This
+//! file has the error-only code: the entry points (`checkTypeRelatedToEx`), the error chain
 //! (`reportError`), and the reporting functions (`reportErrorResults`, `reportRelationError`,
 //! `reportUnmatchedProperty`). A pair that fails the non-reporting run is compared again with
-//! reporting. The result of that run is the error: its code, its node, its text
-//! (`relation_diagnostic`). That run can succeed, and then there is no error. None of its results
-//! enter the relation cache.
+//! reporting on. That second run produces the error's code, node and text (`relation_diagnostic`).
+//! If it succeeds, no error is reported. None of its results are written to the relation cache.
 
 use super::explain::Line;
 use super::explain::NOWHERE;
-use super::relate::{REC_BOTH, Relater, Relation, STACK_DEPTH_OVERFLOW, STATE_NONE, Ternary};
-use super::related::Place;
+use super::relate::{REC_BOTH, Relater, Relation, STATE_NONE, Ternary};
+use super::related::FileSpan;
 use super::*;
 use std::rc::Rc;
 
@@ -22,7 +21,7 @@ pub(super) struct ErrorChain {
     args: Box<[Box<[u8]>]>,
 }
 
-/// The most recently reported line comes first: it is the outermost.
+/// The most recently reported line comes first because it's the outermost.
 pub(super) type Chain = Option<Rc<ErrorChain>>;
 
 /// `errorState`
@@ -48,7 +47,7 @@ impl Relater {
         self.related_info.truncate(saved.related);
     }
 
-    /// `errorChain` without its first `count` lines.
+    /// Returns `errorChain` without its first `count` lines.
     fn chain_after(&self, count: usize) -> Chain {
         let mut at = self.error_chain.clone();
         for _ in 0..count {
@@ -139,8 +138,9 @@ pub(super) fn chain_depth(chain: &Chain) -> usize {
     depth
 }
 
-/// `createDiagnosticChainFromErrorChain`: the first line at `level`, each following line one level
-/// deeper. The return type markers are `ElidedInCompatibilityPyramid`.
+/// `createDiagnosticChainFromErrorChain`. The first line is at `level` and each following line is
+/// one level deeper. The return type markers are skipped because they're
+/// `ElidedInCompatibilityPyramid`.
 fn lines_of(chain: &Chain, level: u32) -> Vec<Line> {
     let mut lines = Vec::new();
     let mut at = chain.as_ref();
@@ -207,8 +207,8 @@ pub(super) fn visibility_to_string(flags: Flags) -> &'static [u8] {
 
 /// `createDiagnosticChainFromErrorChain(r.errorChain, r.errorNode, r.relatedInfo)`
 pub(super) struct RelationDiagnostic {
-    pub(super) at: Place,
-    /// The first, at level 0, is the message.
+    pub(super) at: FileSpan,
+    /// The first line, at level 0, is the main message.
     pub(super) lines: Vec<Line>,
     pub(super) related: Vec<Reported>,
 }
@@ -236,7 +236,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         head_message: Option<u32>,
     ) -> bool {
         self.check_type_assignable_to_ex(source, target, error_node, head_message, None)
@@ -247,7 +247,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         head_message: Option<u32>,
         diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
@@ -267,39 +267,35 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         head_message: Option<u32>,
     ) -> bool {
         let relation = Relation::Comparable;
         self.check_type_related_to_ex(source, target, relation, error_node, head_message, None)
     }
 
-    /// `checkTypeRelatedToEx`: at most one diagnostic, to `diagnostic_output` or else to the sink.
-    /// A non-reporting run comes first, because most pairs are related. tsgo has no such run, so it
-    /// caches no failure. Without an `error_node` it is the only run, as in tsgo. An undetermined
-    /// result counts as related, and nothing is reported.
+    /// `checkTypeRelatedToEx`. Reports at most one diagnostic, to `diagnostic_output` if given,
+    /// otherwise to the sink. Most pairs are related, so a non-reporting run comes first. tsgo has
+    /// no such run, so this one doesn't cache failures. Without an `error_node` it's the only run,
+    /// as in tsgo. An undetermined result counts as related and reports nothing.
     pub(super) fn check_type_related_to_ex(
         &mut self,
         source: TypeId,
         target: TypeId,
         relation: Relation,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         head_message: Option<u32>,
         diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let is_outermost = self.begin_comparison(error_node);
-        // `isRelatedToEx` calls `getNormalizedType` before any rule that `isTypeRelatedTo` begins
-        // with, and `getReducedType` asks for the types of properties.
+        // `isRelatedToEx` calls `getNormalizedType` before any of the rules `isTypeRelatedTo`
+        // starts with, and `getReducedType` resolves property types.
         if source != target {
             self.reduced(source);
             self.reduced(target);
         }
         let is_trial = error_node.is_some();
-        // What the run with `reportErrors` prints and then discards is numbered too.
-        let is_related = match is_trial && self.hands_out_symbol_ids() {
-            true => Ok(false),
-            false => self.try_is_type_related_to(source, target, relation, is_trial),
-        };
+        let is_related = self.try_is_type_related_to(source, target, relation, is_trial);
         let (is_related, diagnostic) = match (is_related, error_node) {
             (Ok(true), _) | (_, None) => {
                 self.end_comparison(is_outermost);
@@ -325,8 +321,8 @@ impl<'p, 's> Checker<'p, 's> {
         is_related
     }
 
-    /// `isTypeRelatedTo`. `Err(code)`: the comparison overflowed (`r.overflow`); `code` is 2859 (complexity) or 2321 (stack depth).
-    /// `is_trial`: tsgo has no comparison at this point, see `Relater::caches_failures`.
+    /// `isTypeRelatedTo`. Returns `Err(2859)` if the comparison overflowed (`r.overflow`).
+    /// `is_trial` means tsgo doesn't compare at this point, see `Relater::stores_failures_locally`.
     pub(super) fn try_is_type_related_to(
         &mut self,
         source: TypeId,
@@ -334,23 +330,14 @@ impl<'p, 's> Checker<'p, 's> {
         relation: Relation,
         is_trial: bool,
     ) -> Result<bool, u32> {
-        self.relation_too_deep = false;
         let too_complex_before = std::mem::replace(&mut self.relation_too_complex, false);
         self.is_trial_comparison = is_trial;
         let is_related = self.related(source, target, relation);
         self.is_trial_comparison = false;
         let is_too_complex = std::mem::replace(&mut self.relation_too_complex, too_complex_before);
-        let mut is_too_deep = self.relation_too_deep;
-        // "such that we don't attempt the overflowing operation again"
-        if !is_related && !is_too_deep && !is_trial {
-            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
-            let entry = self.p.relations.get(&self.task, &key);
-            is_too_deep = entry.is_some_and(|entry| entry & STACK_DEPTH_OVERFLOW != 0);
-        }
-        match () {
-            _ if is_too_complex => Err(2859),
-            _ if is_too_deep => Err(2321),
-            _ => Ok(is_related),
+        match is_too_complex {
+            true => Err(2859),
+            false => Ok(is_related),
         }
     }
 
@@ -368,33 +355,33 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The run of `checkTypeRelatedToEx` with `reportErrors`: whether the two are related, and the
-    /// diagnostic if they are not. `head`: the code of `headMessage`.
+    /// The `reportErrors` run of `checkTypeRelatedToEx`. Returns whether the two types are related,
+    /// and the diagnostic if they aren't. `head` is `headMessage`'s code.
     pub(super) fn relation_diagnostic(
         &mut self,
         source: TypeId,
         target: TypeId,
         relation: Relation,
-        error_node: Place,
+        error_node: FileSpan,
         head: Option<u32>,
     ) -> (bool, Option<RelationDiagnostic>) {
         let mut r = Relater::new(relation, self.cycles);
         r.error_node = error_node;
-        r.relation_count = self.initial_relation_count(relation);
+        r.set_relation_count(self.initial_relation_count(relation));
         let is_outermost = self.begin_comparison(Some(error_node).filter(|at| at.2 != 0));
-        // These two are never a `headMessage`: they are the defaults `reportRelationError` reports
-        // without one.
+        // These two are never a `headMessage`. They're the defaults `reportRelationError` uses when
+        // there isn't one.
         let head = head.filter(|&code| code != 2322 && code != 2678);
-        // State left behind by nested comparisons is for the caller of a query, and there is none
-        // here.
+        // Nested comparisons leave this state for a query's caller. There's no such caller here, so
+        // it's restored below.
         let too_complex = self.relation_too_complex;
         let reliability = self.reliability;
         r.head_message = head;
         let mut result =
             self.is_related_to_ex::<true>(&mut r, source, target, REC_BOTH, STATE_NONE);
-        // typescript-go has this run alone, and the overflow is what it reports. The run without
-        // `reportErrors` before this one can end sooner: `relateVariances` goes on to a structural
-        // comparison, for its elaboration, only with `reportErrors`.
+        // typescript-go only has this run, so an overflow here is what it reports. The earlier run
+        // without `reportErrors` can finish sooner, because `relateVariances` only continues to a
+        // structural comparison (for its elaboration) with `reportErrors`.
         let mut overflow = None;
         if r.overflow {
             result = Ternary::FALSE;
@@ -402,7 +389,7 @@ impl<'p, 's> Checker<'p, 's> {
             r.related_info.clear();
             overflow = self.record_overflow(&r, source, target);
             if overflow.is_none() {
-                self.report_error_results_alone(&mut r, source, target, head);
+                self.report_error_results_for_pair(&mut r, source, target, head);
             }
         }
         // "Likely an incorrect import."
@@ -439,19 +426,16 @@ impl<'p, 's> Checker<'p, 's> {
         (result.holds(), diagnostic)
     }
 
-    /// The message `reportErrorResults` reports for the pair itself, without elaboration.
-    pub(super) fn relation_error_without_reasons(
+    /// Returns the message `reportErrorResults` reports for the pair itself under 2684, without elaboration.
+    pub(super) fn relation_error_without_elaboration(
         &mut self,
         source: TypeId,
         target: TypeId,
-        relation: Relation,
-        error_node: Place,
-        head: u32,
+        error_node: FileSpan,
     ) -> RelationDiagnostic {
-        let mut r = Relater::new(relation, self.cycles);
+        let mut r = Relater::new(Relation::Assignable, self.cycles);
         r.error_node = error_node;
-        let head = Some(head).filter(|&code| code != 2322 && code != 2678);
-        self.report_error_results_alone(&mut r, source, target, head);
+        self.report_error_results_for_pair(&mut r, source, target, Some(2684));
         RelationDiagnostic {
             at: error_node,
             lines: lines_of(&r.error_chain, 0),
@@ -459,7 +443,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn report_error_results_alone(
+    fn report_error_results_for_pair(
         &mut self,
         r: &mut Relater,
         source: TypeId,
@@ -472,20 +456,20 @@ impl<'p, 's> Checker<'p, 's> {
         self.report_error_results(r, original_source, original_target, source, target, head);
     }
 
-    /// All the lines of the error `checkTypeRelatedToEx(source, target, relation, node, head)`
-    /// reports, the first at `level`, and its `relatedInfo`. `head`: the code of `headMessage`.
-    /// Nothing if the two are related, or if the comparison overflows.
+    /// Returns every line of the error that
+    /// `checkTypeRelatedToEx(source, target, assignableRelation, node, head)` reports, the first at `level`,
+    /// plus its `relatedInfo`. `head` is `headMessage`'s code. Returns nothing if the two are
+    /// related or the comparison overflows.
     pub(super) fn relation_lines_with_related(
         &mut self,
         source: TypeId,
         target: TypeId,
-        relation: Relation,
         head: Option<u32>,
         level: u32,
     ) -> (Vec<Line>, Vec<Reported>) {
-        // No node: only the lines are requested.
+        // There's no node because the caller only wants the lines.
         let nowhere = (self.task.file.unwrap_or(FileId(0)), 0, 0);
-        match self.relation_diagnostic(source, target, relation, nowhere, head) {
+        match self.relation_diagnostic(source, target, Relation::Assignable, nowhere, head) {
             (_, Some(mut diagnostic)) => {
                 for line in &mut diagnostic.lines {
                     line.level += level;
@@ -500,20 +484,20 @@ impl<'p, 's> Checker<'p, 's> {
 // ───────────────────────────── names ─────────────────────────────
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `getParameterNameAtPosition` for a caller that has the parameters of a signature and not the
-    /// signature. The name of a rest parameter stands in for its declaration.
+    /// `getParameterNameAtPosition` for callers that have a signature's parameters but not the
+    /// signature. A rest parameter's name is used in place of its declaration.
     pub(super) fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> Atom {
         self.parameter_name_at(None, params, pos)
     }
 
-    /// `getParameterNameAtPosition`. `params`: the parameters of `sig`.
+    /// `getParameterNameAtPosition`. `params` are `sig`'s parameters.
     pub(super) fn labeled_parameter_name_at_position(
         &self,
         mut sig: SigId,
         params: &[SigParam],
         pos: usize,
     ) -> Atom {
-        // The function whose parameters are the `ValueDeclaration` of the parameter symbols.
+        // Find the function whose parameters are the parameter symbols' `ValueDeclaration`s.
         let declaration = loop {
             sig = match *self.types().sig(sig) {
                 SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } => {
@@ -529,7 +513,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.parameter_name_at(declaration, params, pos)
     }
 
-    /// `declaration`: the function that declares `params`, if the caller has it.
+    /// `declaration` is the function that declares `params`, if the caller has it.
     fn parameter_name_at(
         &self,
         declaration: Option<(FileId, FnId)>,
@@ -584,7 +568,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getTupleElementLabelFromBindingElement`. `pat`: `node.Name()`.
+    /// `getTupleElementLabelFromBindingElement`. `pat` is `node.Name()`.
     pub(super) fn tuple_element_label_from_binding_element(
         &self,
         file: FileId,
@@ -670,7 +654,7 @@ impl<'p, 's> Checker<'p, 's> {
         text
     }
 
-    /// `valueToString` of the value of an enum member.
+    /// `valueToString` of an enum member's value.
     pub(super) fn enum_value_text(&self, value: EnumValue) -> Vec<u8> {
         match value {
             EnumValue::String(text) => {
@@ -681,10 +665,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getPropertiesOfType`: for a union, the properties that all its members have.
+    /// `getPropertiesOfType`. For a union, returns the properties every member has.
     pub(super) fn properties_of_type(&mut self, ty: TypeId) -> &'p [Prop<'p>] {
         let ty = self.reduced_apparent_type_as_object(ty);
-        match self.listed_members(ty) {
+        match self.members(ty) {
             Some(members) => &members.shape().props,
             None => &[],
         }
@@ -720,7 +704,7 @@ impl<'p, 's> Checker<'p, 's> {
 impl<'p, 's> Checker<'p, 's> {
     /// `t.alias != nil`
     pub(super) fn has_alias(&mut self, t: TypeId) -> bool {
-        self.alias_for_display(t).is_some()
+        self.alias_symbol_of_type(t).is_some()
     }
 
     /// `getSingleBaseForNonAugmentingSubtype`
@@ -733,9 +717,11 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.equivalent_base_types.get(&self.task, &ty) {
             return known;
         }
-        // `ObjectFlagsIdenticalBaseTypeCalculated` is set before the base types are requested, so a recursive query gets nil.
+        // `ObjectFlagsIdenticalBaseTypeCalculated` is set before the base types are requested, so a
+        // recursive query gets nil.
         let mut in_progress = self.identical_base_types_in_progress.iter();
-        if in_progress.any(|it| it.0 == ty) {
+        if let Some(&(_, height)) = in_progress.find(|it| it.0 == ty) {
+            self.close_cycle_above(height);
             return None;
         }
         let (mut has_heritage_clause, mut extends_entity_name, mut has_members) =
@@ -745,7 +731,8 @@ impl<'p, 's> Checker<'p, 's> {
             match decl {
                 Decl::Class(c) => {
                     let class = &hir[c];
-                    // `getMembersOfSymbol`: type parameters, the constructor, whatever is not static.
+                    // `getMembersOfSymbol`: type parameters, the constructor, and every non-static
+                    // member.
                     has_members |= !class.type_params.is_empty()
                         || class.members.iter().any(|m| {
                             !hir[m].flags.contains(Flags::STATIC)
@@ -778,10 +765,19 @@ impl<'p, 's> Checker<'p, 's> {
             self.identical_base_types_in_progress
                 .push((ty, self.stack.len()));
             let was_resolving = self.is_resolving(Query::Bases(target));
-            // With one checker they are resolved by now, and this is that resolution over again. Whether it began here, with the flag
-            // set, only the task of the declaring file knows, which reports 2310 if not. `checkClassLikeDeclaration` begins here: it
-            // checks the type arguments of the heritage clause first. So this is taken for a recursive query.
+            // A single checker would have resolved the base types already, so this task is
+            // repeating that resolution. Only the declaring file's task knows whether the original
+            // resolution started here with the flag set, and it reports 2310 if it didn't.
+            // `checkClassLikeDeclaration` does start here, because it checks the heritage clause's
+            // type arguments first, so treat this as a recursive query.
             let is_repeated = was_resolving && self.are_base_types_resolved_by_check(target);
+            // That file's task may not have reached this point yet. It would then read what this
+            // task stores and never report 2310.
+            if is_repeated
+                && let Some(from) = self.stack.iter().position(|&q| q == Query::Bases(target))
+            {
+                self.close_cycle(from);
+            }
             let bases = if is_repeated {
                 List::default()
             } else {
@@ -806,8 +802,9 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => None,
             };
             self.identical_base_types_in_progress.pop();
-            // Where `pushTypeResolution` fails, `getBaseTypes` returns `resolvedBaseTypes` as it is, and what follows from that stays.
-            // Otherwise `base` is final only if it was computed from the cached base types.
+            // When `pushTypeResolution` fails, `getBaseTypes` returns `resolvedBaseTypes` as is,
+            // and results derived from it are final. Otherwise `base` is final only if it was
+            // computed from the cached base types.
             let cached = self.p.base_types.get_ref(&self.task, &target);
             let is_final =
                 has_members || found_cycle || cached.map(|it| &it[..]) == Some(&bases[..]);
@@ -850,7 +847,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else if self.is_reference_to_global(source, known::Object, 0) {
             self.report_error(r, 2696, &[]);
         } else if is_jsx && self.is_intersection(target) {
-            let (file, location) = (r.error_node.0, self.jsx_element_around(r.error_node));
+            let (file, location) = (r.error_node.0, self.enclosing_jsx_element(r.error_node));
             if let TypeData::Intersection(parts) = self.data(target)
                 && let (Some(a), Some(b)) = (
                     self.jsx_type(file, location, known::IntrinsicAttributes),
@@ -869,49 +866,49 @@ impl<'p, 's> Checker<'p, 's> {
         self.report_relation_error(r, head, source, target);
         if let TypeData::TypeParam(file, tp, _) = *self.data(source)
             && self.constraint_of(source).is_none()
-            && self.copy_may_extend(source, (file, tp), target)
+            && self.synthetic_param_has_non_circular_constraint(source, (file, tp), target)
         {
             let constraint = self.type_to_string(target);
-            let at = self.place_of_type_parameter_declaration(file, tp);
+            let at = self.span_of_type_parameter_declaration(file, tp);
             r.related_info
                 .push(self.new_diagnostic(at, 2208, &[Arg::Bytes(&constraint)]));
         }
     }
 
-    /// `error_node` as the location that `getJsxNamespaceAt` resolves a name from: the opening of
-    /// the innermost JSX element around it. `Node::FILE`: there is none.
-    fn jsx_element_around(&mut self, error_node: Place) -> Node {
+    /// Returns the location `getJsxNamespaceAt` resolves names from for `error_node`: the opening
+    /// of the innermost enclosing JSX element, or `Node::FILE` if there is none.
+    fn enclosing_jsx_element(&mut self, error_node: FileSpan) -> Node {
         let (file, start, end) = error_node;
         if end == 0 {
             return Node::FILE;
         }
         let (hir, by_kind) = (self.hir(file), self.exprs_by_kind(file));
         let elements = by_kind.of(ExprTag::Jsx).iter().copied();
-        let around = elements.filter(|&e| hir[e].pos <= start && start < hir[e].end);
-        match around.max_by_key(|&e| hir[e].pos) {
+        let enclosing_elements = elements.filter(|&e| hir[e].pos <= start && start < hir[e].end);
+        match enclosing_elements.max_by_key(|&e| hir[e].pos) {
             Some(element) => self.jsx_opening_like(file, element),
             None => Node::FILE,
         }
     }
 
-    /// `hasNonCircularBaseConstraint` of the `syntheticParam` of `reportErrorResults`: a clone of
-    /// the type parameter `source`, declared as `declared`, whose constraint is `target` with
+    /// `hasNonCircularBaseConstraint` of `reportErrorResults`'s `syntheticParam`. That's a clone of
+    /// the type parameter `source` (declared at `declared`) whose constraint is `target` with
     /// `source` replaced by the clone.
-    fn copy_may_extend(
+    fn synthetic_param_has_non_circular_constraint(
         &mut self,
         source: TypeId,
         declared: (FileId, TypeParamId),
         target: TypeId,
     ) -> bool {
-        // `cloneTypeParameter`. Results computed for a clone are cached, so each target has its own
-        // clone.
-        let around = self.mapper_from(&[source], &[target]);
-        let copy = self.cloned_type_param(declared.0, declared.1, around);
+        // `cloneTypeParameter`. Results computed for a clone are cached, so each target gets its
+        // own clone.
+        let target_mapper = self.mapper_from(&[source], &[target]);
+        let copy = self.cloned_type_param(declared.0, declared.1, target_mapper);
         let to_copy = self.mapper_from(&[source], &[copy]);
-        // A cycle through the clone says nothing about the enclosing resolutions in progress.
+        // A cycle through the clone tells us nothing about the enclosing in-progress resolutions.
         let cycles = (self.cycles, self.cycle_at);
-        // `getIntersectionTypeEx` requests the constraint of the clone in `T & {}`, which has none
-        // yet. That result is cached, in tsgo as here.
+        // `getIntersectionTypeEx` requests the clone's constraint for `T & {}` before the clone has
+        // one. tsgo caches that result, and so do we.
         let scope = self.begin_scope();
         let constraint = self.instantiate(target, to_copy);
         if let Ok(stored) = self.end_scope_as(scope, false) {
@@ -925,9 +922,9 @@ impl<'p, 's> Checker<'p, 's> {
         may_extend
     }
 
-    /// `getErrorRangeForNode` of `symbol.Declarations[0]` of the type parameter `tp` of `file`: the
-    /// whole declaration, starting at `const`, `in` or `out`.
-    pub(super) fn place_of_type_parameter_declaration(
+    /// `getErrorRangeForNode` of `symbol.Declarations[0]` for `file`'s type parameter `tp`. That's
+    /// the whole declaration, including a leading `const`, `in` or `out`.
+    pub(super) fn span_of_type_parameter_declaration(
         &self,
         file: FileId,
         tp: TypeParamId,
@@ -937,7 +934,8 @@ impl<'p, 's> Checker<'p, 's> {
         // Two occurrences of `infer U` declare one type parameter.
         let symbol = bound.type_param_symbol[tp.idx()];
         let first = if symbol.is_some() {
-            bound.symbols[symbol.idx()]
+            bound
+                .symbol(symbol)
                 .decls
                 .iter()
                 .find_map(|&decl| match decl {
@@ -964,8 +962,8 @@ impl<'p, 's> Checker<'p, 's> {
         (file, start as u32, self.end_of_type_param(file, tp))
     }
 
-    /// The property that makes the intersection `ty` uninhabited, and which of 18031 and 18032
-    /// reports it.
+    /// Returns the property that makes the intersection `ty` uninhabited, and the code that reports
+    /// it (18031 or 18032).
     pub(super) fn why_never_intersection(&mut self, ty: TypeId) -> Option<(u32, &'p Prop<'p>)> {
         let members = self.members(ty)?;
         // `isDiscriminantWithNeverType`
@@ -976,10 +974,10 @@ impl<'p, 's> Checker<'p, 's> {
             if prop.flags.contains(PropFlags::OPTIONAL) {
                 continue;
             }
-            // `CheckFlagsNonUniformAndLiteral` without `CheckFlagsHasNeverType`, which
-            // `createUnionOrIntersectionProperty` sets from the types of the constituents'
-            // properties, is tested before `getTypeOfSymbol(prop)`. FOR SPEED too: few properties
-            // that two members share get that far, and the type of each is a new intersection.
+            // tsc tests for `CheckFlagsNonUniformAndLiteral` without `CheckFlagsHasNeverType`
+            // before it calls `getTypeOfSymbol(prop)`. `createUnionOrIntersectionProperty` sets
+            // those flags from the constituents' property types. Also FOR SPEED: few properties
+            // shared by two members get that far, and each one's type is a new intersection.
             let mut list: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
             for part in parts.iter() {
                 list.push(self.type_of_prop(part, MapperId::IDENTITY));
@@ -987,9 +985,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !(list.iter()).any(|&t| t.is_never() && t != TypeId::UNIQUE_LITERAL)
                 && list.iter().any(|&t| t != list[0])
                 && list.iter().any(|&t| {
-                    self.is_boolean(t)
-                        || self.is_pattern_literal(t)
-                        || self.every_type(t, |c, m| c.is_unit(m))
+                    self.is_boolean(t) || self.is_pattern_literal(t) || self.is_every_type_unit(t)
                 })
                 && self.type_of_prop(prop, members.mapper).is_never()
             {
@@ -1034,6 +1030,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `reportRelationError`
+    #[cold]
     pub(super) fn report_relation_error(
         &mut self,
         r: &mut Relater,
@@ -1046,7 +1043,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut generalized_source_type = source_type.clone();
         // `isLiteralType`
         if !target.is_never()
-            && self.every_type(source, |c, m| c.is_unit(m))
+            && self.is_every_type_unit(source)
             && !self.may_have_top_level_singleton_types(target, 0)
         {
             generalized_source = self.base_of_literal(source);
@@ -1054,7 +1051,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let [source_name, generalized_source_name, target_name] =
             [&source_type, &generalized_source_type, &target_type].map(|name| Arg::Bytes(name));
-        // For `T[K]`, unless the source is an indexed access too, `T` is the type tested.
+        // For `T[K]`, test `T` instead, unless the source is an indexed access too.
         let is_type_parameter = match (self.data(target), self.data(source)) {
             (TypeData::IndexedAccess { obj, .. }, s)
                 if !matches!(s, TypeData::IndexedAccess { .. }) =>
@@ -1076,7 +1073,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.report_error(r, 5075, &[source_name, target_name, Arg::Type(constraint)]);
                 }
                 _ => {
-                    // Only this is reported.
+                    // This replaces everything reported so far.
                     r.error_chain = None;
                     self.report_error(r, 5082, &[target_name, generalized_source_name]);
                 }
@@ -1100,12 +1097,12 @@ impl<'p, 's> Checker<'p, 's> {
             Some(message) => message,
         };
         let names = [Some(&generalized_source_type[..]), Some(&target_type[..])];
-        let gives_way = !is_conversion_or_interface_implementation_message(message);
+        let is_replaceable_message = !is_conversion_or_interface_implementation_message(message);
         let is_already_reported = match r.get_chain_message(0) {
             Some(2353 | 2561) => true,
-            Some(2859 | 2321 | 4104) => r.chain_args_match(&names),
-            Some(2741) => gives_way && r.chain_args_match(&[None, names[0], names[1]]),
-            Some(2740 | 2739) => gives_way && r.chain_args_match(&names),
+            Some(2859 | 4104) => r.chain_args_match(&names),
+            Some(2741) => is_replaceable_message && r.chain_args_match(&[None, names[0], names[1]]),
+            Some(2740 | 2739) => is_replaceable_message && r.chain_args_match(&names),
             _ => false,
         };
         if !is_already_reported {
@@ -1159,7 +1156,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The part of `hasExcessProperties` for an `errorNode` in a JSX opening element: 2551 or 2339.
+    /// The part of `hasExcessProperties` that handles an `errorNode` in a JSX opening element.
+    /// Reports 2551 or 2339.
     pub(super) fn report_unknown_jsx_attribute(
         &mut self,
         r: &mut Relater,
@@ -1192,7 +1190,7 @@ impl<'p, 's> Checker<'p, 's> {
 // ───────────────────────────── properties ─────────────────────────────
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `reportUnmatchedProperty`. `unmatched`: `getUnmatchedProperties`, of which there is at least one.
+    /// `reportUnmatchedProperty`. `unmatched` is the non-empty result of `getUnmatchedProperties`.
     pub(super) fn report_unmatched_property(
         &mut self,
         r: &mut Relater,
@@ -1203,19 +1201,19 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         let first = unmatched[0];
         // Two `#x` with the same spelling are distinct members.
-        if self.is_private_name(first.name)
+        if self.atoms().is_private_name(first.name)
             && let TypeData::Ref { target: class, .. } = *self.data(source)
             && self.files().flags(class).contains(SymFlags::CLASS)
         {
-            let written = self.written_name(first.name);
-            let declares_one_itself = sm.shape().props.iter().any(|p| {
-                self.written_name(p.name) == written
+            let private_text = self.written_name(first.name);
+            let declares_same_private_name = sm.shape().props.iter().any(|p| {
+                self.written_name(p.name) == private_text
                     && matches!(p.source, PropSource::Symbol(sym) if members_among(&self.files().decls_of(sym)).iter().any(|&(file, m)| {
                         let bound = self.bound(file);
                         matches!(bound.member_owner[m.idx()], crate::bind::MemberOwner::Class(c) if self.files().sym(file, bound.class_symbol[c.idx()]) == class)
                     }))
             });
-            if declares_one_itself {
+            if declares_same_private_name {
                 let target_name = match *self.data(target) {
                     TypeData::Ref { target: sym, .. } => Arg::Sym(sym),
                     _ => Arg::Type(target),
@@ -1223,7 +1221,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.report_error(
                     r,
                     18015,
-                    &[Arg::Bytes(written), Arg::Sym(class), target_name],
+                    &[Arg::Bytes(private_text), Arg::Sym(class), target_name],
                 );
                 return;
             }
@@ -1233,8 +1231,9 @@ impl<'p, 's> Checker<'p, 's> {
             let name = self.prop_to_string(only);
             let args = [&name, &source_type, &target_type].map(|arg| Arg::Bytes(arg));
             self.report_error(r, 2741, &args);
-            if let Some(place) = self.place_of_first_prop_declaration(only) {
-                r.related_info.push(self.declared_here(place, name));
+            if let Some(declaration_span) = self.span_of_first_prop_declaration(only) {
+                r.related_info
+                    .push(self.declared_here(declaration_span, name));
             }
         } else if self.try_elaborate_array_like_errors(r, source, target, false) {
             let (source_type, target_type) = self.type_names_for_error_display(source, target);

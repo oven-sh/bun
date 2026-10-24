@@ -19,7 +19,7 @@ const env = {
 type Label = { label?: string; span: { offset: number; length: number } };
 type Diagnostic = { filename: string; code?: string; message: string; help?: string; labels: Label[] };
 
-/** What `bun lint -f json` prints for `files` beside an .oxlintrc.json, file by file, in the order in which it is printed. */
+/** Runs `bun lint -f json` on `files` with an .oxlintrc.json. Returns the diagnostics by file, in printed order. */
 async function diagnosticsOf(files: Record<string, string>, config: object, flags: string[] = [], onStderr = "") {
   using dir = tempDir("bun-lint-oxc-errors", { ".oxlintrc.json": JSON.stringify(config), ...files });
   await using proc = spawn({
@@ -38,7 +38,7 @@ async function diagnosticsOf(files: Record<string, string>, config: object, flag
 }
 
 /** "code | message | help | offset+length text of the label | .." */
-const said = ({ code, message, help, labels }: Diagnostic) =>
+const summarize = ({ code, message, help, labels }: Diagnostic) =>
   [
     code ?? "",
     message,
@@ -48,14 +48,14 @@ const said = ({ code, message, help, labels }: Diagnostic) =>
 
 type Row = [extensions: string, code: string, errors: string[]];
 
-/** Everything that is printed about the file of every row, in order. Without a `config` no rule is on. */
+/** Expects exactly each row's errors for its file, in order. Without a `config`, no rule is on. */
 async function expectErrors(rows: Row[], config: object = { categories: { correctness: "off" } }) {
   const cases = rows.flatMap(([extensions, code, errors], i) =>
     extensions.split(" ").map(extension => ({ name: `a${i}.${extension}`, code, errors })),
   );
   const files = Object.fromEntries(cases.map(({ name, code }) => [name, code + "\n"]));
   const found = await diagnosticsOf(files, config);
-  expect(cases.map(({ name, code }) => [name, code, found[name].map(said)])).toEqual(
+  expect(cases.map(({ name, code }) => [name, code, found[name].map(summarize)])).toEqual(
     cases.map(({ name, code, errors }) => [name, code, errors]),
   );
 }
@@ -331,8 +331,8 @@ const rows: Row[] = [
   ["js ts", "for (var a = 1 in b) ;", []],
 ];
 
-// oxc can't parse Flow, and oxlint says nothing about a file with `@flow` in its first comment that oxc's parser has an error
-// for. Where the parser has none, it prints what the pass that builds the scopes finds.
+// oxc can't parse Flow, so oxlint prints nothing for a file with `@flow` in its first comment if oxc's parser reports
+// an error. If the parser doesn't, it prints the errors from oxc's semantic analysis.
 const flow: Row[] = [
   [
     "js",
@@ -385,10 +385,10 @@ const flow: Row[] = [
   ],
 ];
 
-// Each row is what oxlint 1.87 prints with `-f json`, under the config of its table. No config: no rule is on.
+// Each row is what oxlint 1.87 prints with `-f json` and its table's config. Without a config, no rule is on.
 const tables: [title: string, config: object | undefined, rows: Row[]][] = [
   [
-    "errors that oxc's parser recovers from come before the one it stops at",
+    "prints the errors oxc's parser recovers from before the one it stops at",
     undefined,
     [
       [
@@ -698,7 +698,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "declaration lists, import phases and class bodies",
+    "matches oxlint's errors for declaration lists, import phases and class bodies",
     undefined,
     [
       [
@@ -856,7 +856,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "rest elements, index signatures, enum members and private names",
+    "matches oxlint's errors for rest elements, index signatures, enum members and private names",
     undefined,
     [
       [
@@ -1103,7 +1103,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "yield, await and the heads of arrow functions",
+    "matches oxlint's errors for yield, await and arrow function heads",
     undefined,
     [
       ["js ts", "class A { m() { 1 + #x in o; const a; } #x }", [" | Unexpected private identifier |  | 20+2"]],
@@ -1517,7 +1517,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "__proto__, octal escapes, export assignments and nested declare",
+    "matches oxlint's errors for __proto__, octal escapes, export assignments and nested declare",
     undefined,
     [
       ["js", "class A { __proto__ = 1; '__proto__' = 2; }", []],
@@ -1833,7 +1833,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "regular expressions",
+    "matches oxlint's errors for regular expressions",
     undefined,
     [
       [
@@ -2153,7 +2153,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "what the lexer reports",
+    "matches the errors from oxc's lexer",
     undefined,
     [
       [
@@ -2396,7 +2396,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "a regular expression without an end, by what is around it",
+    "matches oxlint's errors for an unterminated regular expression in different contexts",
     undefined,
     [
       ["js ts", "/ {}", [" | Unterminated regular expression |  | 0+5", " | Unexpected token |  | 0+5"]],
@@ -2480,7 +2480,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "await in CommonJS files and in the parameters of a type",
+    "matches oxlint's errors for await in CommonJS files and in a type's parameters",
     undefined,
     [
       [
@@ -2518,7 +2518,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
           " | await expression not allowed in formal parameter |  | 41+9 await expression not allowed in formal parameter",
         ],
       ],
-      // `this` and the key of an index signature are no formal parameters.
+      // `this` and an index signature's key aren't formal parameters.
       ["ts", "function g(this: { [await 1]: 2 }) {}", []],
       ["ts", "let g: (this: { [await 1]: 2 }) => void;", []],
       ["ts", "type T = { [i: { [await 1]: 2 }]: 1 };", []],
@@ -2526,7 +2526,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["ts", "async function f() { let g: { [i: { [await (k)]: 2 }]: 1 }; }", []],
       ["ts", "async function f() { let g: (this: { [await (k)]: 2 }) => void; }", []],
       ["ts", "function* f() { let g: (this: { [yield k]: 2 }) => void; }", []],
-      // The parameter around them is one, and a signature in its type does not end it.
+      // A parameter that contains them is one, and a signature in its type doesn't end it.
       [
         "ts",
         "function g(a: (this: { [await 1]: 2 }) => void) {}",
@@ -2562,7 +2562,8 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
           " | await expression not allowed in formal parameter |  | 32+7 await expression not allowed in formal parameter",
         ],
       ],
-      // In a file that nothing makes a module it is a call of `await`, as beside the type.
+      // In a file that isn't known to be a module, it's a call to a function named `await`, the same as outside the
+      // type.
       ["ts", "let g: (a: { [await (k)]: 2 }) => void;", []],
       ["ts", "let g: { m(a: { [await (k)]: 2 }): void };", []],
       [
@@ -2710,7 +2711,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "JSX",
+    "matches oxlint's errors for JSX",
     undefined,
     [
       [
@@ -2817,7 +2818,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "brackets that are not closed",
+    "matches oxlint's errors for unclosed brackets",
     undefined,
     [
       ["ts", "interface A extends B {", [" | Expected `}` but found `EOF` |  | 24+0 `}` expected | 22+1 Opened here"]],
@@ -3011,7 +3012,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "import attributes",
+    "matches oxlint's errors for import attributes",
     undefined,
     [
       [
@@ -3170,7 +3171,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "class members called constructor and prototype",
+    "matches oxlint's errors for class members called constructor and prototype",
     undefined,
     [
       ["js ts", "class A { static accessor constructor = 1 }", []],
@@ -3239,7 +3240,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "a reserved word where a name is wanted",
+    "matches oxlint's errors for a reserved word where a name is expected",
     undefined,
     [
       ["js ts", "var enum;", [" | Identifier expected. 'enum' is a reserved word that cannot be used here. |  | 4+4"]],
@@ -3354,7 +3355,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "a class without a name",
+    "matches oxlint's errors for a class without a name",
     undefined,
     [
       ["js ts", "class {}", [" | A class name is required. |  | 0+5"]],
@@ -3382,7 +3383,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "findings are printed in the order in which oxlint runs its rules",
+    "prints findings in the order oxlint runs its rules",
     {
       "categories": { "correctness": "off" },
       "plugins": ["jest"],
@@ -3558,7 +3559,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "a rule that is called with a node reports when oxlint comes to the node",
+    "a rule that runs on a node reports when oxlint visits that node",
     {
       "categories": { "correctness": "off" },
       "plugins": ["typescript", "unicorn", "jest", "react"],
@@ -3834,7 +3835,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "several rules about one number report by their numbers, whatever part of it they mark",
+    "several rules on one number literal report in rule order, whatever part of it they label",
     {
       "categories": { "correctness": "off" },
       "plugins": ["unicorn"],
@@ -3899,7 +3900,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "a rule that is called with a body or an opening tag reports after those that are called with the function or the element",
+    "a rule that runs on a body or an opening tag reports after the rules that run on the function or the element",
     {
       "categories": { "correctness": "off" },
       "plugins": ["oxc", "react", "jsx-a11y", "typescript", "unicorn"],
@@ -4030,7 +4031,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "a rule reports when oxlint comes to the node that it calls the rule with, which is not always the one that is marked",
+    "a rule reports when oxlint visits the node it runs on, which isn't always the node it labels",
     {
       "categories": { "correctness": "off" },
       "plugins": ["oxc", "promise", "unicorn", "import", "node"],
@@ -4226,7 +4227,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "import/group-exports reports one sort of export after the other, and those with a source in the order of oxlint's hash table",
+    "import/group-exports reports one kind of export after the other, and exports with a source in oxlint's hash table order",
     {
       "categories": { "correctness": "off" },
       "plugins": ["import"],
@@ -4306,7 +4307,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "jest/no-export goes through oxlint's hash table of what is exported, and comes to the default export last",
+    "jest/no-export reports exports in oxlint's hash table order, with the default export last",
     { "categories": { "correctness": "off" }, "plugins": ["jest"], "rules": { "jest/no-export": "error" } },
     [
       [
@@ -4339,7 +4340,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "a rule that is called with a type annotation reports at its colon",
+    "a rule that runs on a type annotation is ordered by the annotation's colon",
     {
       "categories": { "correctness": "off" },
       "plugins": ["typescript"],
@@ -4400,7 +4401,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "import/newline-after-import reports a statement that requires when oxlint comes to the last call in it",
+    "import/newline-after-import reports a statement with require() when oxlint visits its last call",
     {
       "categories": { "correctness": "off" },
       "plugins": ["import", "typescript", "unicorn"],
@@ -4510,7 +4511,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "react/exhaustive-deps goes through the dependencies that are declared in the order of oxlint's hash table",
+    "react/exhaustive-deps reports declared dependencies in oxlint's hash table order",
     { "categories": { "correctness": "off" }, "plugins": ["react"], "rules": { "react/exhaustive-deps": ["error"] } },
     [
       [
@@ -4548,7 +4549,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "cases of oxlint's own tests that it does not report in the order of the text",
+    "cases from oxlint's own tests that it doesn't report in source order",
     {
       "categories": { "correctness": "off" },
       "plugins": ["jest", "promise", "react", "unicorn", "vitest"],
@@ -5110,7 +5111,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "no-magic-numbers reports the keys of patterns, not those of object literals",
+    "no-magic-numbers reports keys in patterns but not in object literals",
     { "categories": { "correctness": "off" }, "rules": { "no-magic-numbers": "error" } },
     [
       [
@@ -5234,7 +5235,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "no-unused-vars does not count JSX as a use of React",
+    "no-unused-vars doesn't count JSX as a use of React",
     { "categories": { "correctness": "off" }, "rules": { "no-unused-vars": "error" } },
     [
       [
@@ -5301,7 +5302,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "no-shadow passes over what is in a declare of a definition file",
+    "no-shadow skips `declare` declarations in a .d.ts file",
     { "categories": { "correctness": "off" }, "rules": { "no-shadow": "error" } },
     [
       ["d.ts", 'declare module "m" { export function f(): void; export namespace n { function f(): void; } }', []],
@@ -5349,7 +5350,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "a byte order mark is part of the first line and of the program",
+    "a byte order mark counts as part of the first line and of the program",
     {
       "categories": { "correctness": "off" },
       "plugins": ["unicorn"],
@@ -5440,7 +5441,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "vitest/prefer-importing-vitest-globals lists the names in the order of oxlint's hash table",
+    "vitest/prefer-importing-vitest-globals lists the names in oxlint's hash table order",
     {
       "categories": { "correctness": "off" },
       "plugins": ["vitest"],
@@ -5503,94 +5504,10 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
           "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, test, expect` from `vitest` package instead of using globals. | 56+8 Add this global vitest import | 78+4 Add this global vitest import | 96+6 Add this global vitest import",
         ],
       ],
-      [
-        "test.js",
-        'import { describe, test, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+65 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { test, describe, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+65 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { expect, test, describe } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+65 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, expect } from "bun:test";\ndescribe("a", () => { expect(1).toBe(1); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect` from `vitest` package instead of using globals. | 45+43 Add this global vitest import | 67+9 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { test, expect } from "bun:test";\ntest("b", () => { expect(1).toBe(1); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `expect, test` from `vitest` package instead of using globals. | 59+9 Add this global vitest import | 41+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test } from "bun:test";\ndescribe("a", () => { test("b", () => {}); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, test` from `vitest` package instead of using globals. | 43+45 Add this global vitest import | 65+19 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { it, vi, expect, beforeEach } from "bun:test";\nit("a", () => {}); expect(1); vi(); beforeEach(() => {});',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `beforeEach, vi, expect, it` from `vitest` package instead of using globals. | 91+20 Add this global vitest import | 74+9 Add this global vitest import | 55+17 Add this global vitest import | 85+4 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `expect, describe, test` from `vitest` package instead of using globals. | 83+6 Add this global vitest import | 43+57 Add this global vitest import | 65+31 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); test("c", () => {}); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `test, describe, expect` from `vitest` package instead of using globals. | 51+86 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import | 114+19 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); expect(2).toBe(2); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+84 Add this global vitest import | 91+9 Add this global vitest import | 110+9 Add this global vitest import | 73+58 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); }); describe("d", () => {});',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+65 Add this global vitest import | 118+23 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { test, expect } from "bun:test";\ntest("b", () => { expect(1).toBe(1); }); test("c", () => {});',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `expect, test` from `vitest` package instead of using globals. | 59+9 Add this global vitest import | 41+39 Add this global vitest import | 82+19 Add this global vitest import",
-        ],
-      ],
     ],
   ],
   [
-    "react/refs says where a helper gets at the ref",
+    "react/refs labels where a helper accesses the ref",
     { "categories": { "correctness": "off" }, "plugins": ["react"], "rules": { "react/refs": "error" } },
     [
       [
@@ -5729,7 +5646,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "no-unnecessary-parameter-property-assignment asks what the name itself refers to, and for writes before",
+    "no-unnecessary-parameter-property-assignment resolves the name itself, not a type with that name, and looks for earlier writes",
     {
       "categories": { "correctness": "off" },
       "plugins": ["typescript"],
@@ -5957,7 +5874,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
-    "an escape in a name of JSX",
+    "matches oxlint for a Unicode escape in a JSX name",
     {
       "categories": { "correctness": "off" },
       "rules": {
@@ -6056,7 +5973,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
 ];
 
 describe.concurrent("bun lint with .oxlintrc.json", () => {
-  test("has every error of a file that oxc refuses, in oxlint's order and words", async () => {
+  test("prints every error in a file that oxc rejects, in oxlint's order and wording", async () => {
     await expectErrors(rows);
   });
 
@@ -6064,8 +5981,87 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
     await expectErrors(table, config);
   });
 
-  // As oxlint 1.87 prints them: it makes an offset of the line and the column, and a line and a column of that.
-  test("-f unix has what a plugin reports past the end of a line in the line where that is", async () => {
+  // oxlint 1.87 also reports a name that's imported from another package, and its fix imports the name a second time.
+  describe("vitest/prefer-importing-vitest-globals only reports globals", () => {
+    const config = {
+      categories: { correctness: "off" },
+      plugins: ["vitest"],
+      rules: { "vitest/prefer-importing-vitest-globals": "error" },
+    };
+    const body = 'test("b", () => { expect(1).toBe(1); });';
+    const reported = (names: string, ...labels: string[]) =>
+      [
+        "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions",
+        `Import global functions \`${names}\` from \`vitest\` package instead of using globals.`,
+        ...labels.map(it => `${it} Add this global vitest import`),
+      ].join(" | ");
+
+    test("a name the file imports or declares isn't reported", async () => {
+      await expectErrors(
+        [
+          ["test.js test.ts", `import { expect, test } from "bun:test";\n${body}`, []],
+          ["test.js test.ts", `import { expect, test } from "@playwright/test";\n${body}`, []],
+          ["test.js test.ts", `import { expect, test } from "./harness";\n${body}`, []],
+          ["test.js test.ts", `import test, { expect } from "./harness";\n${body}`, []],
+          ["test.js", `const { expect, test } = require("./harness");\n${body}`, []],
+          ["test.js", `const test = (name, run) => run();\nconst expect = require("node:assert");\n${body}`, []],
+          ["test.js", `function test(name, run) { run(); }\nfunction expect() { return { toBe() {} }; }\n${body}`, []],
+          ["test.js", `export function suite(test, expect) { ${body} }`, []],
+        ],
+        config,
+      );
+    });
+
+    test("in a file with both, only the globals are reported", async () => {
+      await expectErrors(
+        [
+          ["test.js test.ts", `import { test } from "@playwright/test";\n${body}`, [reported("expect", "59+6")]],
+          ["test.js", `const test = (name, run) => run();\n${body}`, [reported("expect", "53+6")]],
+          [
+            "test.js",
+            'import { describe, test } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1); }); });',
+            [reported("expect", "83+6")],
+          ],
+        ],
+        config,
+      );
+    });
+
+    test("--fix only imports the globals", async () => {
+      const files = {
+        "bound.test.ts": `import { expect, test } from "./harness";\n${body}\n`,
+        "mixed.test.ts": `import { test } from "@playwright/test";\n${body}\n`,
+        "globals.test.ts": `${body}\n`,
+        "added.test.ts": `import { test } from "vitest";\nimport { vi } from "./harness";\nvi();\n${body}\n`,
+      };
+      using dir = tempDir("bun-lint-oxc-errors", { ".oxlintrc.json": JSON.stringify(config), ...files });
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "--fix", "-f", "json"],
+        env,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const fixed = await Promise.all(
+        Object.keys(files).map(async name => [name, await Bun.file(`${dir}/${name}`).text()]),
+      );
+      expect(Object.fromEntries(fixed)).toEqual({
+        "bound.test.ts": files["bound.test.ts"],
+        "mixed.test.ts": `import { expect } from 'vitest';\n${files["mixed.test.ts"]}`,
+        "globals.test.ts": `import { expect, test } from 'vitest';\n${body}\n`,
+        "added.test.ts": `import { test, expect } from "vitest";\nimport { vi } from "./harness";\nvi();\n${body}\n`,
+      });
+      expect(JSON.parse(stdout).diagnostics).toEqual([]);
+      expect(stderr).toBe("Fixed 3 problems in 3 files\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Matches oxlint 1.87, which converts the line and column to an offset, and then converts the offset back to a line
+  // and column.
+  test("-f unix moves a plugin's report past the end of a line to the line its offset falls on", async () => {
     const plugin = `
       const places = { "a.js": [[2, 6]], "b.js": [[2, 20], [3, 11], [5, 3]] };
       export default { meta: { name: "pl" }, rules: { r: { create(context) { return { Program() {
@@ -6104,15 +6100,15 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
     ]);
   });
 
-  // oxlint sorts all the messages of a file by the range of their fix before it applies the fixes, and prints what is left in that
-  // order. Those without a fix compare equal, so they stay in the order of the run.
-  describe("--fix leaves what has no fix in the order of the run", () => {
+  // Before applying fixes, oxlint sorts all of a file's messages by their fix's range, and prints the remaining ones in
+  // that order. Messages without a fix compare equal, so they stay in the order they were reported.
+  describe("--fix keeps messages without a fix in the order they were reported", () => {
     const config = {
       categories: { correctness: "off" },
       rules: { "no-magic-numbers": "error", "eqeqeq": "error", "id-length": "error" },
     };
-    /** `others` lines with a message that has no fix, and before the line `at` one with a message that has one. */
-    const left = async (others: number, at: number) => {
+    /** Runs --fix on `others` lines with an unfixable message and, at index `at`, one with a fixable message. */
+    const remainingMessages = async (others: number, at: number) => {
       const lines = Array.from({ length: others }, (_, i) => `f(${100 + i});`);
       lines.splice(at, 0, "g(typeof a == 'string');");
       const found = await diagnosticsOf(
@@ -6126,24 +6122,24 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
     const inOrder = (others: number) =>
       Array.from({ length: others }, (_, i) => `eslint(no-magic-numbers) No magic number: ${100 + i}`);
 
-    // As oxlint 1.87 prints them.
-    test.each([0, 15, 31])("32 messages, the one with the fix before line %i", async at => {
-      expect(await left(31, at)).toEqual(inOrder(31));
+    // Matches oxlint 1.87.
+    test.each([0, 15, 31])("32 messages, with the fixable one before line %i", async at => {
+      expect(await remainingMessages(31, at)).toEqual(inOrder(31));
     });
 
-    // oxlint's sort is not stable, which shows from 33 messages on: it prints the lines 1, 3 to 16, 2, 19 to 34, 18. That is an
-    // accident of the sort of its standard library. Here they keep their order.
-    test("34 messages", async () => {
-      expect(await left(33, 16)).toEqual(inOrder(33));
+    // oxlint's sort isn't stable, which shows with 33 or more messages: it prints lines 1, 3 to 16, 2, 19 to 34, 18.
+    // That's an accident of its standard library's sort, so `bun lint` keeps the order instead.
+    test("34 messages stay in order, unlike in oxlint", async () => {
+      expect(await remainingMessages(33, 16)).toEqual(inOrder(33));
     });
   });
 
-  test("prints the errors of oxc's scopes about a file with @flow, and none of its parser", async () => {
+  test("for a file with @flow, prints oxc's semantic errors but not its parser errors", async () => {
     await expectErrors(flow);
   });
 
-  // The labels of oxlint 1.87.
-  test("no-unused-vars labels a name as it is written, with its escapes", async () => {
+  // These are oxlint 1.87's labels.
+  test("no-unused-vars labels a name as written, including its escapes", async () => {
     const files = {
       "a.js": "const X\\u0065 = 1;\n",
       "b.js": "function f\\u0065() {}\n",
@@ -6168,8 +6164,8 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
     ]);
   });
 
-  // The labels of oxlint 1.87, for which a line separator ends no line.
-  test("no-irregular-whitespace lets a line separator pass that ends a // comment", async () => {
+  // These are oxlint 1.87's labels. It doesn't count a line separator as a line break.
+  test("no-irregular-whitespace allows a line separator that ends a // comment", async () => {
     const files = {
       "a.js": "a; // c\u2028b;\n",
       "b.js": "a; // c\u2029b;\n",
@@ -6183,14 +6179,14 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
     const rules = { "no-irregular-whitespace": "error" };
     const found = await diagnosticsOf(files, { categories: { correctness: "off" }, rules });
     type Span = { offset: number; length: number; line: number; column: number };
-    const places = Object.entries(found).map(([name, all]) => [
+    const spans = Object.entries(found).map(([name, all]) => [
       name,
       ...all.map(({ labels: [{ span }] }) => {
         const { offset, length, line, column } = span as Span;
         return `${offset}+${length} ${line}:${column}`;
       }),
     ]);
-    expect(places).toEqual([
+    expect(spans).toEqual([
       ["a.js"],
       ["b.js"],
       ["c.js", "10+3 1:11"],

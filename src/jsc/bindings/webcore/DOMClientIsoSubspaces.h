@@ -18,11 +18,11 @@ public:
     ~DOMClientIsoSubspaces();
 
     /* --- bun --- */
-    GCClient::IsoSubspace* m_clientSubspaceForBunClassConstructor { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFFIFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWrappingFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiClass { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSSQLStatement { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForJSSQLDatabase { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeSqliteDatabaseSync { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeSqliteStatementSync { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeSqliteStatementSyncIterator { nullptr };
@@ -39,7 +39,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForNapiExternal { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBundlerPlugin { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMGlobalObject { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForNodeVMSpecialSandbox { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMScript { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMSourceTextModule { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMSyntheticModule { nullptr };
@@ -61,7 +60,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellmanGroup { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSECDH { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForTTYWrapObject { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForNapiHandleScopeImpl { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForHandleScopeImpl { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStrongRootBlock { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiTypeTag { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNativePromiseContext { nullptr };
@@ -70,7 +69,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSMIMEType { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSMIMEParams { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForV8GlobalInternals { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForHandleScopeBuffer { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFunctionTemplate { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForV8Function { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSNodeHTTPServerSocket { nullptr };
@@ -79,7 +77,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForWasmStreamingCompiler { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSWebView { nullptr };
 
-#include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     GCClient::IsoSubspace* m_clientSubspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /* --- bun --- */
 

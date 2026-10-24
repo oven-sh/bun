@@ -10,6 +10,7 @@ import {
   observe as directObserve,
   shapes as directShapes,
 } from "../../web/streams/direct-stream-contract";
+import { serveBodyJobs } from "./serve-body-jobs";
 import { baseHeaders, frame, RawH2, T } from "./serve-http2-helpers";
 
 test("HTTPResponseSink displays correct message", async () => {
@@ -1191,6 +1192,171 @@ test("sync pull() that writes nothing and ends later still responds", async () =
   const response = await responsePromise;
   expect(await response.text()).toBe("LATER");
   expect(response.status).toBe(200);
+});
+
+// Once the socket has been full, Bun.serve runs a stream's script from the socket's
+// writable callback: the callback resumes the pump, which calls pull(), and it settles
+// what the script awaits. The nextTick callbacks and promise jobs of that script belong to
+// the callback: they run when it returns, and not in the middle of the script. See
+// serve-body-jobs-fixture.ts for the probes.
+describe("jobs of the script that the socket's writable callback runs for a stream body", () => {
+  type Options = Parameters<typeof serveBodyJobs>[0];
+  const completed = (order: string[]) => ({ order, response: "complete", stderr: "", exitCode: 0 });
+  const afterTheScript = ["script", "close", "rest of script", "nextTick", "microtask"];
+
+  describe.each([
+    ["HTTP/1.1", false],
+    ["HTTP/2", true],
+  ])("over %s", (_, http2) => {
+    const serve = (body: string, probe: Options["probe"]) => serveBodyJobs({ body, probe, http2 });
+
+    test.concurrent("do not run inside a call that pull() makes", async () => {
+      expect(await serve("stream", "statement")).toEqual(completed(afterTheScript));
+    });
+
+    // On Windows, libuv runs the timers of a turn before it polls: a timer that comes due
+    // in a callback is not the next callback of the loop there.
+    describe.skipIf(isWindows)("run before the next callback of the loop", () => {
+      test.concurrent("after pull()", async () => {
+        expect(await serve("stream", "timer")).toEqual(completed(["nextTick", "microtask", "timer"]));
+      });
+
+      // The writable callback settles the promise, and the code after the await is its job.
+      test.concurrent("for the code after an awaited write() that found the transport full", async () => {
+        expect(await serve("direct stream that awaits write()", "turn")).toEqual(
+          completed(["before the timer of its turn"]),
+        );
+      });
+    });
+  });
+
+  describe.skipIf(isWindows)("run before the next callback of the loop", () => {
+    test.concurrent("and a store that pull() enters is not the store of that callback", async () => {
+      expect(await serveBodyJobs({ body: "stream", probe: "store" })).toEqual(
+        completed(["timer sees undefined", "immediate sees undefined"]),
+      );
+    });
+
+    test.concurrent.each(["flush(true)", "end()"])(
+      "for the code after an awaited %s that found the socket full",
+      async awaited => {
+        expect(await serveBodyJobs({ body: `direct stream that awaits ${awaited}`, probe: "turn" })).toEqual(
+          completed(["before the timer of its turn"]),
+        );
+      },
+    );
+  });
+
+  test.concurrent("run when pull() throws, and the response is cut off", async () => {
+    expect(await serveBodyJobs({ body: "stream that throws", probe: "statement" })).toEqual({
+      order: afterTheScript,
+      response: "cut off",
+      stderr: expect.stringContaining("thrown by pull()"),
+      exitCode: 0,
+    });
+  });
+
+  // The client reads half of response A and then sends request B on a second connection.
+  // The server is blocked until then, so its loop finds both sockets ready in one poll:
+  // the writable callback of A, which runs pull(), and then the request B.
+  test.concurrent("a store that pull() enters is not the store of the next request", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const { Worker } = require("node:worker_threads");
+        const store = new AsyncLocalStorage();
+        const wroteB = new Int32Array(new SharedArrayBuffer(4));
+        const chunk = new Uint8Array(16 * 1024).fill(97);
+        let dispatched = false, entered = false, pulls = 0;
+        const server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch(request) {
+            const path = new URL(request.url).pathname;
+            // Answered after the loop has polled again, so that B is not ahead of A in the next poll.
+            if (path === "/warm") {
+              return new Promise(resolve => setImmediate(() => setImmediate(() => resolve(new Response("warm")))));
+            }
+            if (path === "/b") return new Response("B starts with " + store.getStore());
+            // After the dispatch of A: the socket is full and the pump waits for the writable callback.
+            setImmediate(() => {
+              dispatched = true;
+              client.postMessage((pulls >> 1) * chunk.length);
+              Atomics.wait(wroteB, 0, 0, 10_000);
+            });
+            // Made with no store active: a stream made under a store puts that store back after pull().
+            return new Response(
+              new ReadableStream({
+                pull(controller) {
+                  pulls++;
+                  if (entered) return controller.close();
+                  if (dispatched) {
+                    entered = true;
+                    store.enterWith("request A");
+                  }
+                  controller.enqueue(chunk);
+                },
+              }),
+            );
+          },
+        });
+        const client = new Worker(
+          \`
+          const { once } = require("node:events");
+          const { createConnection } = require("node:net");
+          const { parentPort, workerData } = require("node:worker_threads");
+          const wroteB = new Int32Array(workerData.wroteB);
+          (async () => {
+            const b = createConnection(workerData.port, "127.0.0.1");
+            await once(b, "connect");
+            b.write("GET /warm HTTP/1.1\\\\r\\\\nHost: x\\\\r\\\\n\\\\r\\\\n");
+            let text = "";
+            b.on("data", bytes => (text += bytes.toString("latin1")));
+            while (!text.endsWith("warm")) await once(b, "data");
+            const a = createConnection(workerData.port, "127.0.0.1");
+            await once(a, "connect");
+            a.pause();
+            a.write("GET /a HTTP/1.1\\\\r\\\\nHost: x\\\\r\\\\nConnection: close\\\\r\\\\n\\\\r\\\\n");
+            const half = (await once(parentPort, "message"))[0];
+            let received = 0, sent = false;
+            a.on("data", bytes => {
+              received += bytes.length;
+              if (sent || received < half) return;
+              sent = true;
+              b.write("GET /b HTTP/1.1\\\\r\\\\nHost: x\\\\r\\\\nConnection: close\\\\r\\\\n\\\\r\\\\n", () => {
+                Atomics.store(wroteB, 0, 1);
+                Atomics.notify(wroteB, 0);
+              });
+            });
+            const closed = Promise.all([once(a, "close"), once(b, "close")]);
+            a.resume();
+            await closed;
+            parentPort.postMessage(/B starts .*$/.exec(text)?.[0] ?? "no response to B: " + text);
+          })();
+          \`,
+          { eval: true, workerData: { port: server.port, wroteB: wroteB.buffer } },
+        );
+        client.on("message", seen => {
+          console.log(seen);
+          server.stop(true);
+        });
+        client.on("error", error => {
+          console.error(error);
+          process.exit(1);
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "B starts with undefined\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("cancel() fires when the client disconnects while waiting for end()", async () => {

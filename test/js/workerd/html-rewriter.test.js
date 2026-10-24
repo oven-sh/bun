@@ -16,6 +16,7 @@ import {
 import { createConnection, createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
+import { serveBodyJobs } from "../bun/http/serve-body-jobs";
 import { asyncIterableBodyShapes, settled as settledBody } from "../web/streams/async-iterable-body-shapes";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
@@ -2373,6 +2374,85 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
       chunks.push(value);
     }
     expect(Buffer.concat(chunks).toString()).toBe(out);
+  });
+});
+
+// When the client of Bun.serve has read, the socket's writable callback resumes the rewrite
+// of a streamed body. The content handlers run inside that callback, and so does the
+// script that feeds the rewriter. The jobs that this script queues belong to the callback:
+// they run when it returns, and not in the middle of the script. See
+// serve-body-jobs-fixture.ts for the probes.
+describe("jobs of the script that the socket's writable callback runs for a rewritten Bun.serve body", () => {
+  const completed = order => ({ order, response: "complete", stderr: "", exitCode: 0 });
+  const afterTheScript = ["script", "close", "rest of script", "nextTick", "microtask"];
+
+  // These read no file and use no timer, so they run on every platform.
+  it.concurrent("do not run inside a call that a handler makes", async () => {
+    expect(await serveBodyJobs({ body: "rewriter over a direct stream", probe: "statement" })).toEqual(
+      completed(afterTheScript),
+    );
+  });
+
+  it.concurrent("do not run inside a call that pull() of the input makes", async () => {
+    expect(await serveBodyJobs({ body: "rewriter over a stream", probe: "statement" })).toEqual(
+      completed(afterTheScript),
+    );
+  });
+
+  // On Windows, libuv runs the timers of a turn before it polls: a timer that comes due in
+  // a callback is not the next callback of the loop there.
+  describe.skipIf(isWindows)("run before the next callback of the loop", () => {
+    it.concurrent("after pull() of the input", async () => {
+      expect(await serveBodyJobs({ body: "rewriter over a stream", probe: "timer" })).toEqual(
+        completed(["nextTick", "microtask", "timer"]),
+      );
+    });
+
+    it.concurrent("for the code after an awaited flush(true) into the rewriter", async () => {
+      expect(
+        await serveBodyJobs({ body: "rewriter over a direct stream that awaits flush(true)", probe: "turn" }),
+      ).toEqual(completed(["before the timer of its turn"]));
+    });
+  });
+
+  // On Windows the event loop reads the file, so a chunk reaches the handlers from the
+  // file's read callback and not from the writable callback.
+  describe.skipIf(isWindows)("when the input is a file", () => {
+    // One <b> in each 256 KiB that the file is read in. 16 MiB is more than a socket takes
+    // from a server whose client reads nothing.
+    const block = "<p>" + Buffer.alloc(256 * 1024 - 15, "a").toString() + "</p><b></b>\n";
+    let dir;
+    beforeAll(() => {
+      dir = tempDir("html-rewriter-serve-jobs", { "page.html": Buffer.alloc(64 * block.length, block) });
+    });
+    afterAll(() => dir[Symbol.dispose]());
+
+    const serve = (probe, body = "rewriter") => serveBodyJobs({ body, probe, page: join(String(dir), "page.html") });
+
+    it.concurrent("run before the next callback of the loop", async () => {
+      expect(await serve("timer")).toEqual(completed(["nextTick", "microtask", "timer"]));
+    });
+
+    it.concurrent("do not run inside a call that a handler makes", async () => {
+      expect(await serve("statement")).toEqual(completed(afterTheScript));
+    });
+
+    it.concurrent("do not run inside a call that an async handler makes after an await", async () => {
+      expect(await serve("statement", "rewriter with an async handler")).toEqual(completed(afterTheScript));
+    });
+
+    it.concurrent("a store that a handler enters is not the store of the loop's next callbacks", async () => {
+      expect(await serve("store")).toEqual(completed(["timer sees undefined", "immediate sees undefined"]));
+    });
+
+    it.concurrent("run when the handler throws, and the response is cut off", async () => {
+      expect(await serve("statement", "rewriter that throws")).toEqual({
+        order: afterTheScript,
+        response: "cut off",
+        stderr: expect.stringContaining("thrown by the content handler"),
+        exitCode: 0,
+      });
+    });
   });
 });
 

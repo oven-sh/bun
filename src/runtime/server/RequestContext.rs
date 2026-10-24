@@ -1730,6 +1730,10 @@ where
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         if let Some(sink) = this.sink_mut() {
+            // The drain wakes parked script. Its jobs run when the scope ends, inside the pin.
+            let _entered = sink
+                .on_writable_reaches_script()
+                .then(|| this.server().vm().enter_event_loop_scope());
             return sink.on_writable(write_offset, _resp);
         }
         true
@@ -3393,15 +3397,20 @@ where
         _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableByteStream");
-        // SAFETY: `this` is live for the callback; only a shared view is
-        // formed, so the `resume()` re-entry into `write_chunk` is fine.
+        // SAFETY: `this` is live until `resume()`, which may release it (`end_chunk`): nothing after
+        // `resume()` reads it. Only a shared view is formed, so the re-entry into `write_chunk` is fine.
         let this = unsafe { &*this };
         debug_assert!(this.resp.get().is_some());
         if this.is_aborted_or_ended() {
             return false;
         }
         if let Some(bs) = this.byte_stream.get() {
-            bun_ptr::BackRef::from(bs).resume();
+            let bs = bun_ptr::BackRef::from(bs);
+            // A rewriter's handlers and its input's `pull()` run in `resume()`, their jobs when the scope ends.
+            let _entered = bs
+                .producer_runs_script()
+                .then(|| this.server().vm().enter_event_loop_scope());
+            bs.resume();
         }
         true
     }

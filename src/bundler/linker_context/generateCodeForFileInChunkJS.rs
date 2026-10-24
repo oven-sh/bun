@@ -255,23 +255,22 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let output_format = c.options.output_format;
 
     // The top-level directive must come first (the non-wrapped case is handled
-    // by the chunk generation code, although only for the entry point)
+    // by the chunk generation code, although only for the entry point of this
+    // chunk). An ES module without a wrapper symbol prints no closure to hold it.
     if flags.wrap != WrapKind::None
         && ast
             .flags
             .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-        && !chunk.is_entry_point()
+        && !chunk.is_entry_point_file(source_index as u32)
+        && !ast.wrapper_ref.is_empty()
         && !output_format.is_always_strict_mode()
     {
-        stmts
-            .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
-                S::Directive {
-                    value: bun_ast::StoreStr::new(b"use strict"),
-                },
-                bun_ast::Loc::EMPTY,
-            ))
-            .expect("unreachable");
+        stmts.inside_wrapper_prefix.append_directive(Stmt::alloc(
+            S::Directive {
+                value: bun_ast::StoreStr::new(b"use strict"),
+            },
+            bun_ast::Loc::EMPTY,
+        ));
     }
 
     // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
@@ -280,7 +279,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
         bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
 
-    // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)

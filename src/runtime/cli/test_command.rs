@@ -976,8 +976,9 @@ pub(crate) fn on_process_exit(
     runner: core::ptr::NonNull<jest::TestRunner<'static>>,
     vm: &mut VirtualMachine,
 ) {
-    // SAFETY: `RUNNER` is only accessed on the main thread, which the caller checked. `bail_out` holds
-    // `&mut CommandLineReporter` below this call and does not run again: the caller ends in `global_exit()`.
+    // SAFETY: `RUNNER` is only accessed on the main thread, which the caller checked. `run_all_tests`, `run`
+    // or `bail_out` hold `&mut CommandLineReporter` below this call. None of them runs again: the caller ends
+    // in `global_exit()`.
     let ended_early = unsafe { (*runner.as_ptr()).ended_early };
     // One of the 'exit' listeners that `--bail` runs calls `process.exit(0)`.
     if ended_early && vm.exit_handler.exit_code == 0 {

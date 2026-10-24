@@ -640,8 +640,7 @@ function evaluationView(mod: HMRModule, evaluation: number): HMRModule {
           return true;
         }
       }
-      target[key as keyof HMRModule] = value as never;
-      return true;
+      return Reflect.set(target, key, value);
     },
   });
 }

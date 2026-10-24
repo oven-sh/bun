@@ -824,8 +824,8 @@ impl Crew {
         }
     }
 
-    /// The thread function of the member `at`. The thread is never joined: once it's done with its VM it waits until
-    /// the process exits, unless [`Crew::free_all`] released it.
+    /// The thread function of the member `at`. The thread is never joined: it ends once its VM is freed, and if
+    /// [`Crew::end_all`] ended the VM instead, it keeps it and waits until the process exits.
     fn run_member(crew: &Arc<Crew>, at: usize) {
         name_this_thread(at);
         bun_sema_driver::run_regions_inline_on_this_thread();
@@ -859,12 +859,10 @@ impl Crew {
                 }
                 Next::End { frees } => {
                     end_vm(frees);
-                    let mut state = crew.state.lock();
-                    state.all[at].is_gone = true;
-                    let is_released = state.is_released;
-                    drop(state);
+                    crew.state.lock().all[at].is_gone = true;
                     crew.is_over.notify_all();
-                    if is_released {
+                    // A freed VM leaves nothing to keep the thread for.
+                    if frees {
                         return;
                     }
                     break;

@@ -4836,7 +4836,7 @@ describe("css tests", () => {
       ["1grad", "89.1deg"],
       ["1rad", "32.704deg"],
       [".3turn", "342deg"],
-      // Too large for an exact `450 - a` in an f32.
+      // Too large for an exact `90 - a` in an f32.
       ["1e30deg", "330deg", "1e+30deg"],
       // `359.9996deg` rounds to `360deg`, which is `0deg`.
       ["90.0004deg", "0deg"],
@@ -4976,7 +4976,7 @@ describe("css tests", () => {
           cmd: [bunExe(), "build", ...names.map(name => name + ".css"), "--outdir=" + outdir, ...flags],
           env: bunEnv,
           cwd: String(dir),
-          stdout: "pipe",
+          stdout: "ignore",
           stderr: "pipe",
         });
         const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

@@ -1011,10 +1011,10 @@ impl LineDirection {
         }
         match self {
             LineDirection::Angle(angle) => {
-                // Reduce the angle first: `450 - a` is not exact in an f32 when `a` is large.
-                let degrees = (450.0 - angle.to_degrees().rem_euclid(360.0)).rem_euclid(360.0);
-                // Without the rounding, float noise shows in a small result: the standard
-                // `89.9deg` would print as `.0999985deg`.
+                // Reduce the angle first: `90 - a` is not exact in an f32 when `a` is large.
+                let degrees = (90.0 - angle.to_degrees().rem_euclid(360.0)).rem_euclid(360.0);
+                // Keep three decimals. Without the rounding, float noise shows in a small
+                // result: the standard `89.9deg` would print as `.0999985deg`.
                 let degrees = (degrees * 1000.0).round() / 1000.0;
                 // The standard `90.0004deg` is `359.9996deg` here, which rounds to `360deg`.
                 LineDirection::Angle(Angle::Deg(if degrees == 360.0 { 0.0 } else { degrees }))

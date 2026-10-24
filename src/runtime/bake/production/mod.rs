@@ -664,10 +664,31 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         return Ok(());
     }
 
-    // The output of each entry point is loaded as a module on its side.
+    // The prerender step loads the framework entry points, each page and the layouts above it.
+    // Each is a module on its side.
+    let mut loaded = AutoBitSet::init_empty(entry_points.files.count())?;
+    for router_type in router.types.iter() {
+        loaded.set(router_type.server_file.get() as usize);
+        if let Some(client_file) = router_type.client_file {
+            loaded.set(client_file.get() as usize);
+        }
+    }
+    for route in router.routes.iter() {
+        let Some(page) = route.file_page else {
+            continue;
+        };
+        loaded.set(page.get() as usize);
+        let mut above = Some(route);
+        while let Some(current) = above {
+            if let Some(layout) = current.file_layout {
+                loaded.set(layout.get() as usize);
+            }
+            above = current.parent.map(|parent| router.route_ptr(parent));
+        }
+    }
     let mut not_modules: usize = 0;
     let mut client_components: usize = 0;
-    for (input, output) in entry_points.files.iter() {
+    for (id, (input, output)) in entry_points.files.iter().enumerate() {
         let output = output
             .unwrap()
             .map(|index| &bundled_outputs_list[index.get() as usize]);
@@ -677,6 +698,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             BStr::new(input.abs_path()),
             BStr::new(output.map_or(&b"none"[..], |file| &file.dest_path)),
         );
+        if !loaded.is_set(id) {
+            continue;
+        }
         let path = bun_core::fmt::quote(resolve_path::relative(cwd, input.abs_path()));
         match output {
             // Only a "use client" file has its entry point output on the other side.
@@ -700,7 +724,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     }
     if not_modules > 0 {
         bun_core::note!(
-            "The build loads each route file, layout and framework entry point as a module."
+            "The build loads each page, the layouts above it and the framework entry points as modules."
         );
     }
     if client_components > 0 {

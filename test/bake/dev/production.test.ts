@@ -793,6 +793,23 @@ export default function () {
       ).toEqual({ "/": "index", "/about": "about", "/zed": "zed", exitCode: 0 });
     });
 
+    // The build does not load a layout that no page is below, so it does not have to be a module.
+    test.concurrent("when a layout with no page below it is a stylesheet or a client component", async () => {
+      const realPages = ["a", "b", "d", "e", "h"];
+      using dir = tempDir("bake-production-unloaded-layout", {
+        ...appFiles(realPages, { framework: serverComponents, router: `extensions: "*",` }),
+        "routes/styled/_layout.css": `body { color: red; }`,
+        "routes/client/_layout.ts": `"use client";\n${page("layout-client")}`,
+      });
+      symlinkSync(path.join("..", "shared", "page.ts"), path.join(String(dir), "routes", "f.ts"));
+      symlinkSync(path.join("..", "shared", "page.ts"), path.join(String(dir), "routes", "g.ts"));
+      const { pages, exitCode, stderr } = await prerender(String(dir));
+      expect({ pages, exitCode }, stderr).toEqual({
+        pages: { ...ownPages(realPages), "/f": "shared-page", "/g": "shared-page" },
+        exitCode: 0,
+      });
+    });
+
     // The build loads the output of each entry point as a module. It names every file that has none.
     // A route file with "use client" works in the dev server, and is not supported yet in a production build.
     test.concurrent("an entry point that is not bundled to a module of its side is reported", async () => {
@@ -804,6 +821,9 @@ export default function () {
         "client.css": `body { color: blue; }`,
         "routes/styles.css": `body { color: red; }`,
         "routes/client.ts": `"use client";\n${page("page-client")}`,
+        // A layout above a page, two directories up.
+        "routes/below/_layout.css": `body { color: green; }`,
+        "routes/below/deep/page.ts": page("page-deep"),
       });
       const { pages, exitCode, stderr } = await prerender(String(dir));
       const reported = stderr
@@ -814,10 +834,11 @@ export default function () {
       expect({ reported, pages, dist: existsSync(path.join(String(dir), "dist")), exitCode }, stderr).toEqual({
         reported: [
           `error: "client.css" was not bundled to a JavaScript module, so the client cannot load it`,
+          `error: "routes/below/_layout.css" was not bundled to a JavaScript module, so the server cannot load it`,
           `error: "routes/client.ts" is a client component, so the server cannot load it`,
           `error: "routes/styles.css" was not bundled to a JavaScript module, so the server cannot load it`,
           `note: "use client" is not supported yet in a route file in a production build. Put the client component in a file of its own and import it from the route file.`,
-          `note: The build loads each route file, layout and framework entry point as a module.`,
+          `note: The build loads each page, the layouts above it and the framework entry points as modules.`,
         ],
         pages: {},
         dist: false,

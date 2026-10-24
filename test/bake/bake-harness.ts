@@ -61,6 +61,60 @@ export const minimalFramework: Bake.Framework = {
   },
 };
 
+// [package.json fields next to "main", the file bun resolves, the file a browser resolves]
+const platformPackageShapes = {
+  "browser-string": [{ browser: "./browser.js" }, "main.js", "browser.js"],
+  "browser-map": [{ browser: { "./main.js": "./browser.js" } }, "main.js", "browser.js"],
+  // main.js exports what node.js exports, or its own path when node.js is empty.
+  "browser-false": [{ browser: { "./node.js": false } }, "node.js", "main.js"],
+  // The bun target reads "main" before "jsnext:main".
+  "jsnext-main": [{ "jsnext:main": "./jsnext.js" }, "main.js", "jsnext.js"],
+} as const;
+
+/**
+ * Packages that send a server and a browser to different files. Each file
+ * exports its own path, and `resolved.ts` exports the paths that the graph
+ * which bundles it got.
+ */
+export const platformPackages: Record<string, string> = (() => {
+  const files: Record<string, string> = {};
+  const names = Object.keys(platformPackageShapes);
+  for (const [name, [fields, ...resolved]] of Object.entries(platformPackageShapes)) {
+    const ownPath = (file: string) => JSON.stringify(`${name}/${file}`);
+    files[`node_modules/${name}/package.json`] = JSON.stringify({
+      name,
+      version: "1.0.0",
+      main: "./main.js",
+      ...fields,
+    });
+    for (const file of resolved) {
+      files[`node_modules/${name}/${file}`] = `export const file = ${ownPath(file)};`;
+    }
+    if (name === "browser-false") {
+      files[`node_modules/${name}/main.js`] =
+        `import { file as nodeFile } from "./node.js";\nexport const file = nodeFile ?? ${ownPath("main.js")};`;
+    }
+  }
+  files["resolved.ts"] = [
+    ...names.map((name, i) => `import { file as file${i} } from "${name}";`),
+    `export default [${names.map((_, i) => `file${i}`).join(", ")}];`,
+  ].join("\n");
+  return files;
+})();
+
+/** What `resolved.ts` of `platformPackages` exports in a graph for bun, and in one for a browser. */
+export const platformFiles = {
+  bun: Object.entries(platformPackageShapes).map(([name, [, bun]]) => `${name}/${bun}`),
+  browser: Object.entries(platformPackageShapes).map(([name, [, , browser]]) => `${name}/${browser}`),
+};
+
+/** The files of `platformPackages` whose source is in the text of a bundle. */
+export function platformFilesIn(bundle: string): string[] {
+  return Object.keys(platformPackageShapes).flatMap(name =>
+    [...new Set(bundle.match(new RegExp(`(?<![\\w/-])${name}/\\w+\\.js`, "g")))].sort(),
+  );
+}
+
 export const imageFixtures = {
   bun: imageFixture("test/integration/sharp/bun.png"),
   bun2: imageFixture("test/bundler/fixtures/with-assets/img.png"),

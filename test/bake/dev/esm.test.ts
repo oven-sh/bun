@@ -1,7 +1,14 @@
 // ESM tests are about various esm features in development mode.
 import { expect } from "bun:test";
 import { isWindows } from "harness";
-import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import {
+  devTest,
+  emptyHtmlFile,
+  minimalFramework,
+  platformFiles,
+  platformFilesIn,
+  platformPackages,
+} from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
   framework: minimalFramework,
@@ -484,6 +491,176 @@ devTest("browser field is used when it is a string", {
   async test(dev) {
     await using c = await dev.client();
     await c.expectMessage("PASS");
+  },
+});
+
+// The server and SSR graphs run in Bun, so a package's "browser" field and
+// "browser" map are not for them. The client graph keeps both. Every graph
+// imports the same packages here.
+const withClientEntryPoint = {
+  ...minimalFramework,
+  fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client-entry.ts" }],
+};
+for (const [firstReader, bunfig] of [
+  ["the client graph", ""],
+  ["the runtime", `preload = ["./resolved.ts"]`],
+]) {
+  devTest(`each graph resolves packages for the platform that runs it, when ${firstReader} reads them first`, {
+    framework: {
+      ...withClientEntryPoint,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: true },
+    },
+    files: {
+      "bunfig.toml": bunfig,
+      ...platformPackages,
+      "client-entry.ts": `
+        import resolved from "./resolved";
+        console.log(resolved);
+      `,
+      "ssr.ts": `
+        export { default } from "./resolved";
+      `,
+      "routes/client-only.ts": `
+        export default function (req, meta) {
+          return Response.json(meta.modules);
+        }
+      `,
+      "routes/index.ts": `
+        import server from "../resolved";
+        import ssr from "../ssr" with { bunBakeGraph: "ssr" };
+        export default function (req, meta) {
+          return Response.json({ server, ssr, clientBundles: meta.modules });
+        }
+      `,
+    },
+    async test(dev) {
+      // The bundle has the source of each package file that the client graph resolved.
+      const clientFiles = async ([bundle]: string[]) => platformFilesIn(await dev.fetch(bundle).text());
+
+      // No server module of this route imports the packages.
+      expect(await clientFiles(await dev.fetch("/client-only").json())).toEqual(platformFiles.browser);
+
+      const { clientBundles, ...serverSide } = await dev.fetch("/").json();
+      expect(serverSide).toEqual({ server: platformFiles.bun, ssr: platformFiles.bun });
+      expect(await clientFiles(clientBundles)).toEqual(platformFiles.browser);
+    },
+  });
+}
+
+// A client component is in the client graph, and in the SSR graph when there
+// is one. Each of them resolves the imports of the component for itself.
+for (const separateSSRGraph of [true, false]) {
+  devTest(
+    `a client component's packages resolve for each graph that bundles it (separateSSRGraph: ${separateSSRGraph})`,
+    {
+      framework: {
+        ...withClientEntryPoint,
+        serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
+      },
+      files: {
+        ...platformPackages,
+        "client-entry.ts": `
+        console.log("client entry point");
+      `,
+        "island.ts": `
+        "use client";
+        import resolved from "./resolved";
+        export const island = resolved;
+      `,
+        "routes/index.ts": separateSSRGraph
+          ? `
+          import { ssrManifest } from "bun:bake/server";
+          import "../island";
+          export default async function (req, meta) {
+            // The SSR copy of the component, loaded as a framework loads it.
+            const { specifier, name } = ssrManifest["island.ts"].island;
+            const ssr = (await import(specifier))[name];
+            return Response.json({ ssr, clientBundles: meta.modules });
+          }
+        `
+          : `
+          import "../island";
+          export default function (req, meta) {
+            return Response.json({ clientBundles: meta.modules });
+          }
+        `,
+      },
+      async test(dev) {
+        const { clientBundles, ...serverSide } = await dev.fetch("/").json();
+        expect(serverSide).toEqual(separateSSRGraph ? { ssr: platformFiles.bun } : {});
+        expect(platformFilesIn(await dev.fetch(clientBundles[0]).text())).toEqual(platformFiles.browser);
+      },
+    },
+  );
+}
+
+// The server entry point and the server components runtime of a framework run
+// in Bun.
+devTest("a framework's server modules resolve for bun", {
+  framework: {
+    fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "framework-server" }],
+    serverComponents: {
+      separateSSRGraph: false,
+      serverRuntimeImportSource: "framework-server",
+      serverRegisterClientReferenceExport: "registerClientReference",
+    },
+  },
+  files: {
+    // A "browser" condition and a "browser" map: each of them sends a resolver for a browser to browser.js.
+    "node_modules/framework-server/package.json": JSON.stringify({
+      name: "framework-server",
+      version: "1.0.0",
+      main: "./main.js",
+      exports: { ".": { browser: "./browser.js", default: "./main.js" } },
+      browser: { "./main.js": "./browser.js" },
+    }),
+    ...Object.fromEntries(
+      ["main.js", "browser.js"].map(file => [
+        `node_modules/framework-server/${file}`,
+        `
+          export const render = (req, meta) => new Response("${file} renders a reference from " + meta.pageModule.default);
+          export const registerClientReference = () => "${file}";
+        `,
+      ]),
+    ),
+    "component.ts": `
+      "use client";
+      export const component = 1;
+    `,
+    "routes/index.ts": `
+      export { component as default } from "../component";
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("main.js renders a reference from main.js");
+  },
+});
+
+// A stylesheet is resolved by the graph that imports it, as every other file is.
+devTest("a stylesheet that a server route imports resolves as the server graph does", {
+  framework: minimalFramework,
+  files: {
+    "package.json": JSON.stringify({ name: "app", browser: { "./theme.css": "./theme.browser.css" } }),
+    "theme.css": `
+      body {
+        color: red;
+      }
+    `,
+    "theme.browser.css": `
+      body {
+        color: blue;
+      }
+    `,
+    "routes/index.ts": `
+      import "../theme.css";
+      export default function (req, meta) {
+        return Response.json(meta.styles);
+      }
+    `,
+  },
+  async test(dev) {
+    const [stylesheet] = await dev.fetch("/").json();
+    expect(await dev.fetch(stylesheet).text()).toBe("/* theme.css */\nbody {\n  color: red;\n}\n");
   },
 });
 

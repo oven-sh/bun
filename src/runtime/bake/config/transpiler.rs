@@ -21,29 +21,24 @@ impl Framework {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
+        let target = match renderer {
+            Graph::Client => bun_schema::api::Target::browser,
+            Graph::Server | Graph::Ssr => bun_schema::api::Target::bun,
+        };
+
         // The caller (`DevServer::init`) hands us an uninitialized slot, so
         // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
         // `&mut Transpiler` for the field assignments below.
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            // `TransformOptions::default()`: every `Option` is `None`, every
-            // slice empty, every scalar zero/false.
-            bun_schema::api::TransformOptions::default(),
+            bun_schema::api::TransformOptions {
+                target: Some(target),
+                ..Default::default()
+            },
             None,
         )?);
 
-        out.options.target = match renderer {
-            Graph::Client => bun_ast::Target::Browser,
-            Graph::Server | Graph::Ssr => bun_ast::Target::Bun,
-        };
-        // The transpiler was made with the main fields of the default target, a browser.
-        out.options.main_fields =
-            <bun_ast::Target as bun_bundler::options::TargetExt>::default_main_fields_map()
-                [out.options.target]
-                .iter()
-                .map(|name| Box::from(*name))
-                .collect();
         out.options.public_path = match renderer {
             Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
             Graph::Server | Graph::Ssr => Box::default(),
@@ -111,6 +106,9 @@ impl Framework {
         if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix.clone().unwrap_or_default();
+        } else {
+            // `init` turns inlining on for the bun target.
+            out.options.env.behavior = bun_schema::api::DotEnvBehavior::disable;
         }
         // The resolver crate carries a FORWARD_DECL subset of
         // `BundleOptions`, so re-project via the dedicated helper rather than

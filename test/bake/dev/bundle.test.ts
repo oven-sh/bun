@@ -110,6 +110,23 @@ for (const [reader, bunfig] of [
     },
   });
 }
+// A server graph is built for bun, and bun also looks for `.node` files.
+devTest("a server route resolves an import of a .node file without its extension", {
+  framework: minimalFramework,
+  files: {
+    // Resolved when the route is bundled, and never loaded: it is not an addon.
+    "addon.node": "not an addon",
+    "routes/index.ts": `
+      export default function (req, meta) {
+        const load = () => require("../addon");
+        return new Response(typeof load);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("function");
+  },
+});
 devTest("importing a file before it is created", {
   files: {
     "index.html": emptyHtmlFile({
@@ -131,6 +148,32 @@ devTest("importing a file before it is created", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+// The dev server tries a failed import again when its directory changes, with the resolver of
+// the graph that has the importer. Only a resolver for a browser reads a "browser" map.
+devTest('importing a file that a "browser" map names before it is created', {
+  files: {
+    "package.json": JSON.stringify({ name: "app", browser: { "./second.ts": "./second-browser.ts" } }),
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './second';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./second"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("second-browser.ts", `export const abc = "browser";`);
+    });
+
+    await c.expectMessage("value: browser");
   },
 });
 // After a failed resolution, the dev server evicts the specifier's path and its parent from the
@@ -1931,6 +1974,23 @@ devTest("inlined env var survives a runtime process.env write to a proxy variabl
     const after = await clientBundle(dev);
     expect(after).toContain('"v2"');
     expect(after).toContain(startupProxy);
+  },
+});
+
+// Without `env = "inline"`, no environment variable is a define of the server graph.
+devTest("a server route reads process.env when it runs", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function (req, meta) {
+        Reflect.set(process.env, "BAKE_ENV_PROBE", "set when the route ran");
+        return new Response(process.env.BAKE_ENV_PROBE);
+      }
+    `,
+  },
+  env: { BAKE_ENV_PROBE: "set when the server started" },
+  async test(dev) {
+    await dev.fetch("/").equals("set when the route ran");
   },
 });
 

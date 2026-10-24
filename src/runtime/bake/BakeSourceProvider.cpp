@@ -15,6 +15,7 @@
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
+#include "JavaScriptCore/ParserError.h"
 #include "ImportMetaObject.h"
 #include <wtf/text/MakeString.h>
 
@@ -81,26 +82,30 @@ extern "C" JSC::EncodedJSValue BakeLoadModuleByKey(JSC::JSGlobalObject* global, 
   return JSC::JSValue::encode(promise);
 }
 
-extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunString source) {
-  JSC::VM&vm = global->vm();
-  auto scope = DECLARE_THROW_SCOPE(vm);
+// Returns true when JSC's parser rejects `source`. `errorLine` and `errorColumn` are then 0-based.
+extern "C" bool BakeFindServerCodeSyntaxError(JSC::JSGlobalObject* global, BunString source, uint32_t* errorLine, uint32_t* errorColumn, BunString* errorMessage) {
+  auto& vm = JSC::getVM(global);
+  JSC::SourceCode sourceCode = JSC::makeSource(source.transferToWTFString(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted);
 
-  String string = "bake://server.patch.js"_s;
-  JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
-  JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
-    global,
-    source.transferToWTFString(),
-    origin,
-    WTF::move(string),
-    WTF::TextPosition(),
-    JSC::SourceProviderSourceType::Program
-  ));
+  JSC::ParserError error;
+  if (JSC::checkSyntax(vm, sourceCode, error)) return false;
 
-  JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
-  RETURN_IF_EXCEPTION(scope, {});
+  String message;
+  if (error.type() == JSC::ParserError::SyntaxError) {
+    message = error.message();
+  } else if (error.type() == JSC::ParserError::StackOverflow) {
+    // The parser gives this one no message.
+    message = "Maximum call stack size exceeded."_s;
+  } else {
+    return false;
+  }
 
-  RELEASE_ASSERT(result);
-  return JSC::JSValue::encode(result);
+  int offset = error.token().m_startPosition.offset;
+  JSC::LineColumn position = sourceCode.provider()->lineColumnInTextForOffset(offset < 0 ? 0 : offset);
+  *errorLine = position.line;
+  *errorColumn = position.column;
+  *errorMessage = Bun::toStringRef(message);
+  return true;
 }
 
 extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject* global, BunString source, const char* sourceMapJSONPtr, size_t sourceMapJSONLength) {
@@ -112,7 +117,6 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   
   // Use DevServerSourceProvider with the source map JSON
   auto provider = DevServerSourceProvider::create(
-    global,
     source.transferToWTFString(),
     sourceMapJSONPtr,
     sourceMapJSONLength,
@@ -128,6 +132,8 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   RETURN_IF_EXCEPTION(scope, {});
 
   RELEASE_ASSERT(result);
+  // A chunk that did not load must not take the source map of the code that runs.
+  provider->registerSourceMap(global);
   return JSC::JSValue::encode(result);
 }
 

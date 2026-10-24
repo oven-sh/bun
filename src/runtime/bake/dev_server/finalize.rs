@@ -64,6 +64,16 @@ impl<'a> HotUpdateContext<'a> {
 
         &mut self.resolved_index_cache[start..][..len][i.get() as usize]
     }
+
+    /// The bundler's source of a server file that this bundle produced.
+    fn server_source(&self, file: incremental_graph::ServerFileIndex) -> Option<&bun_ast::Source> {
+        let len = self.sources.len();
+        let file = CachedFileIndex::from(Some(file));
+        let index = self.resolved_index_cache[len..][..len]
+            .iter()
+            .position(|cached| *cached == file)?;
+        Some(&self.sources[index])
+    }
 }
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
@@ -147,6 +157,150 @@ pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) 
         let req = unsafe { (*node).data.assume_init_mut() };
         req.abort_and_deref();
     }
+}
+
+/// Runs the current server chunk. The inner `Err` is what JSC threw.
+fn evaluate_server_chunk(dev: &mut DevServer) -> JsResult<JsResult<JSValue>> {
+    let source_map_json = {
+        // Create a temporary source map entry to render
+        let mut source_map_entry = source_map_store::Entry {
+            ref_count: 1,
+            ..Default::default()
+        };
+
+        // Fill the source map entry
+        dev.server_graph.take_source_map(&mut source_map_entry)?;
+        // Note: erase to raw ptr so `render_json` can borrow the entry while the cleanup guard is armed.
+        let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
+        scopeguard::defer! {
+            // SAFETY: `source_map_entry` is a stack local that outlives this guard.
+            unsafe {
+                (*entry_ptr).ref_count = 0;
+                (*entry_ptr).deinit();
+            }
+        };
+
+        source_map_entry.render_json(dev, ChunkKind::HmrChunk, bake::Side::Server)?
+    };
+
+    let server_bundle =
+        dev.server_graph
+            .take_js_bundle_server(&incremental_graph::TakeJSBundleOptionsServer {
+                kind: ChunkKind::HmrChunk,
+            })?;
+
+    // This memory will be owned by the `DevServerSourceProvider` in C++
+    let source_map_json = ::core::mem::ManuallyDrop::new(source_map_json);
+
+    Ok(server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
+        dev.global(),
+        BunString::clone_utf8(&server_bundle),
+        source_map_json.as_ptr(),
+        source_map_json.len(),
+    ))
+}
+
+fn abort_on_server_chunk_error(dev: &mut DevServer, exception: JSValue) -> ! {
+    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
+    // `print_error_like_object_to_console` needs `&mut`.
+    dev.vm_mut().print_error_like_object_to_console(exception);
+    // Note: `panic!()` would unwind through the `extern "C"` boundary above (`nounwind` UB), so abort.
+    bun_core::Output::panic(format_args!(
+        "Error thrown while evaluating server code. This is always a bug in the bundler."
+    ));
+}
+
+/// Loads the current server chunk. A module that JSC rejects becomes the build error of its file, and the rest load.
+fn load_server_chunk(dev: &mut DevServer, ctx: &HotUpdateContext<'_>) -> JsResult<Option<JSValue>> {
+    let global = dev.global();
+    let exception = match evaluate_server_chunk(dev)? {
+        Ok(modules) => return Ok(Some(modules)),
+        Err(err) => global.take_exception(err),
+    };
+
+    // JSC's error for the chunk can name a place in another module, so each module is parsed alone.
+    let mut rejected_any = false;
+    let mut part = 0;
+    while part < dev.server_graph.current_chunk_code.len() {
+        let alone = dev.server_graph.current_chunk_part_alone(part);
+        let Some(syntax_error) = server_hmr_ffi::bake_find_server_code_syntax_error(
+            global,
+            BunString::clone_utf8(&alone),
+        ) else {
+            part += 1;
+            continue;
+        };
+        rejected_any = true;
+
+        let module = dev.server_graph.remove_current_chunk_part(part);
+        let file = module.file_index;
+        // The server and SSR graphs share one record per file, and so one failure.
+        if !dev.server_graph.bundled_files.values()[file.get() as usize].failed {
+            let source = ctx.server_source(file);
+            let loc = source
+                .and_then(|source| {
+                    original_loc(
+                        source,
+                        &module.source_map,
+                        syntax_error.line,
+                        syntax_error.column,
+                    )
+                })
+                .unwrap_or(bun_ast::Loc::EMPTY);
+            let mut log = Log::init();
+            log.add_range_error_fmt_with_notes(
+                source,
+                bun_ast::Range { loc, len: 0 },
+                Box::new([bun_ast::range_data(
+                    None,
+                    bun_ast::Range::NONE,
+                    "Bun's parser accepted this file, and JavaScriptCore rejected it when the dev server loaded it",
+                )]),
+                format_args!("{}", syntax_error.message),
+            );
+            dev.server_graph
+                .insert_failure(incremental_graph::InsertFailureKey::Index(file.get()), &log)?;
+        }
+    }
+    if !rejected_any {
+        abort_on_server_chunk_error(dev, exception);
+    }
+
+    if dev.server_graph.current_chunk_len == 0 {
+        // No module is left. The runtime must still hear of a client component that this round removed.
+        let removed = !dev.incremental_result.client_components_removed.is_empty();
+        return Ok(removed.then(|| JSValue::create_empty_object(global, 0)));
+    }
+    match evaluate_server_chunk(dev)? {
+        Ok(modules) => Ok(Some(modules)),
+        Err(err) => abort_on_server_chunk_error(dev, global.take_exception(err)),
+    }
+}
+
+/// Maps the 0-based (`line`, `column`) of a module's text in a chunk back to `source`, if its source map can.
+fn original_loc(
+    source: &bun_ast::Source,
+    source_map: &packed_map::Shared,
+    line: u32,
+    column: u32,
+) -> Option<bun_ast::Loc> {
+    // The mappings of one module name one source.
+    let parsed =
+        bun_sourcemap::mapping::parse(source_map.get()?.vlq(), None, 1, Default::default()).ok()?;
+    let mapping = parsed.mappings.find(
+        bun_core::Ordinal::from_zero_based(i32::try_from(line).ok()?),
+        bun_core::Ordinal::from_zero_based(i32::try_from(column).ok()?),
+    )?;
+    let offset = bun_ast::Source::line_col_to_byte_offset(
+        &source.contents,
+        1,
+        1,
+        u64::try_from(mapping.original_line()).ok()? + 1,
+        u64::try_from(mapping.original_column()).ok()? + 1,
+    )?;
+    Some(bun_ast::Loc {
+        start: i32::try_from(offset).ok()?,
+    })
 }
 
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
@@ -644,14 +798,6 @@ pub(super) fn finalize_bundle(
         )?;
     }
 
-    // Index all failed files now that the incremental graph has been updated.
-    if !dev.incremental_result.failures_removed.is_empty()
-        || !dev.incremental_result.failures_added.is_empty()
-    {
-        had_sent_hmr_event.set(true);
-    }
-    dev.index_failures()?;
-
     dev.client_graph.ensure_stale_bit_capacity(false)?;
     dev.server_graph.ensure_stale_bit_capacity(false)?;
 
@@ -667,88 +813,11 @@ pub(super) fn finalize_bundle(
     }
 
     // Load all new chunks into the server runtime.
-    if !dev.frontend_only && dev.server_graph.current_chunk_len > 0 {
-        // Generate a script_id for server bundles
-
-        // Get the source map if available and render to JSON
-        let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
-            'json: {
-                // Create a temporary source map entry to render
-                let mut source_map_entry = source_map_store::Entry {
-                    ref_count: 1,
-                    ..Default::default()
-                };
-
-                // Fill the source map entry
-                dev.server_graph.take_source_map(&mut source_map_entry)?;
-                // Note: erase to raw ptr so `render_json` can borrow the entry
-                // while the cleanup guard is armed.
-                let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
-                scopeguard::defer! {
-                    // SAFETY: `source_map_entry` is a stack local that outlives this guard.
-                    unsafe {
-                        (*entry_ptr).ref_count = 0;
-                        (*entry_ptr).deinit();
-                    }
-                };
-
-                let json_data =
-                    source_map_entry.render_json(dev, ChunkKind::HmrChunk, bake::Side::Server)?;
-                break 'json Some(json_data);
-            }
-        } else {
-            None
-        };
-
-        let server_bundle = dev.server_graph.take_js_bundle_server(
-            &incremental_graph::TakeJSBundleOptionsServer {
-                kind: ChunkKind::HmrChunk,
-            },
-        )?;
-
+    if !dev.frontend_only
+        && dev.server_graph.current_chunk_len > 0
+        && let Some(server_modules) = load_server_chunk(dev, &ctx)?
+    {
         let global = dev.global();
-        let server_modules = if let Some(json) = source_map_json {
-            // This memory will be owned by the `DevServerSourceProvider` in C++
-            let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
-
-            match server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
-                global,
-                BunString::clone_utf8(&server_bundle),
-                json.as_ptr(),
-                json.len(),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
-                        .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
-                }
-            }
-        } else {
-            match server_hmr_ffi::bake_load_server_hmr_patch(
-                global,
-                BunString::clone_latin1(&server_bundle),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
-                        .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
-                }
-            }
-        };
         // Note: `make_array_for_server_components_patch` needs `&mut self`
         // while reading `self.incremental_result.client_components_{added,removed}`.
         // It only touches `server_graph.bundled_files.keys()`, so reborrow the
@@ -783,6 +852,14 @@ pub(super) fn finalize_bundle(
         };
         let _ = errors; // TODO:
     }
+
+    // Index all failed files. The server chunk load above can add failures, so this comes after it.
+    if !dev.incremental_result.failures_removed.is_empty()
+        || !dev.incremental_result.failures_added.is_empty()
+    {
+        had_sent_hmr_event.set(true);
+    }
+    dev.index_failures()?;
 
     let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;
     let mut route_bits_client = DynamicBitSet::init_empty(dev.route_bundles.len())?;

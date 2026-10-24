@@ -3814,7 +3814,7 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
 
   // Each kind: the range in package.json, what yarn.lock has as `resolved`, the requests of an install that has to
   // download, and whether yarn.lock pins the bytes. A tarball that yarn.lock has no hash for is downloaded by every
-  // install that saves a lockfile, because its cache entry is named after the hash.
+  // install that saves a lockfile and has to place it, because its cache entry is named after the hash.
   const kinds = {
     "a tarball URL with its sha1": (origin: string, sha1: string) =>
       [`${origin}/dl/tool.tgz`, `${origin}/dl/tool.tgz#${sha1}`, ["/dl/tool.tgz"], true] as const,
@@ -4054,28 +4054,30 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
   });
 
   // The first install saves nothing, so the second one migrates again. A row records only what the cache has of
-  // the bytes that it pins. The second cache has nothing, so the install that saves installs the package again.
+  // the bytes that it pins, and the second cache has nothing. The install makes no request for a package that is in
+  // place: it links the bins of that copy, and the row stays as the migration wrote it.
   test.each(cases)(
-    "%s: --linker %s installs a package again that is in place and not in the cache, to record it",
+    "%s: --linker %s makes no request for a package that is in place and not in the cache",
     async (kind, linker) => {
       using server = await fixture(kind);
       using caches = tempDir("yarn-migration-described-cache", { first: {}, second: {} });
       using dir = server.project();
       await server.run(String(dir), join(String(caches), "first"), "install", "--frozen-lockfile", "--linker", linker);
+      fs.rmSync(join(String(dir), "node_modules", ".bin"), { recursive: true, force: true });
 
       expect(await server.run(String(dir), join(String(caches), "second"), "install", "--linker", linker)).toEqual({
         errors: [],
         bins,
-        row: described,
-        blocked: true,
+        row: {},
+        blocked: false,
         saved: true,
-        requests: server.download,
+        requests: [],
         exitCode: 0,
       });
     },
   );
 
-  // An install that saves nothing has no row to record, so it makes no request: it reads the copy in place.
+  // The same for an install that saves nothing.
   test.each(cases)(
     "%s: bun install --frozen-lockfile --linker %s links the bins of a package that is in place and not in the cache",
     async (kind, linker) => {
@@ -4099,7 +4101,8 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
   );
 
   // The cache has the package as it is published. A script or an edit can change the copy that is in place. No
-  // cache entry has the name of a row without a hash, so the install downloads the package of such a row again.
+  // cache entry has the name of a row without a hash: the links of such a package are of the copy in place, and
+  // its row records nothing.
   test.each(cases)(
     "%s: --linker %s records what the cache has of a package whose copy in place was changed",
     async (kind, linker) => {
@@ -4115,11 +4118,11 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
       // With `--no-cache`, nothing opens the cache directory before the linker needs it.
       expect(await server.run(String(dir), String(cache), "install", "--no-cache", "--linker", linker)).toEqual({
         errors: [],
-        bins,
-        row: described,
-        blocked: !server.pinned,
+        bins: server.pinned ? bins : ["changed", ...bins],
+        row: server.pinned ? described : {},
+        blocked: false,
         saved: true,
-        requests: server.pinned ? [] : server.download,
+        requests: [],
         exitCode: 0,
       });
     },
@@ -4212,6 +4215,33 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
     });
   });
 
+  // A row in bun.lock does not say that nothing read its package.json. Bun 1.4.4 and older saved these rows with
+  // no `bin`, and some orders still do. A command that reads the tarball again records the `bin` of such a row,
+  // also when the hash of the row is the hash of what it read.
+  test.each(["install --force", "update tool"])(
+    "bun %s records the bin of a row that bun.lock has without one",
+    async command => {
+      using server = await fixture("a tarball URL");
+      using cache = tempDir("yarn-migration-described-cache", {});
+      using dir = server.project();
+      // A fresh resolve records the sha512 of the tarball. The edit takes what its package.json says out of the row.
+      fs.rmSync(join(String(dir), "yarn.lock"));
+      await server.run(String(dir), String(cache), "install");
+      const lockfile = join(String(dir), "bun.lock");
+      const saved = Bun.JSONC.parse(fs.readFileSync(lockfile, "utf8")) as { packages: Record<string, unknown[]> };
+      saved.packages.tool[1] = {};
+      fs.writeFileSync(lockfile, JSON.stringify(saved, null, 2));
+      fs.rmSync(join(String(dir), "node_modules"), { recursive: true });
+
+      expect(await server.run(String(dir), String(cache), ...command.split(" "))).toMatchObject({
+        errors: [],
+        bins,
+        row: { bin },
+        exitCode: 0,
+      });
+    },
+  );
+
   // These commands place nothing and read no dependency again. A row records what the cache has of the bytes that
   // it pins, and nothing is downloaded for it.
   test.each(names)(
@@ -4282,6 +4312,30 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
     });
   });
 
+  // The isolated linker saves the lockfile of an install that failed, and it still does when the package that
+  // failed is another one. The hoisted linker saves nothing after a failed download.
+  test("--linker isolated saves the lockfile when the download of another package fails", async () => {
+    using server = await fixture("a tarball URL with its sha1");
+    using caches = tempDir("yarn-migration-described-cache", { first: {}, second: {} });
+    using dir = server.project();
+    const install = ["install", "--linker", "isolated"];
+    await server.run(String(dir), join(String(caches), "first"), ...install, "--frozen-lockfile");
+
+    fs.writeFileSync(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "app", dependencies: { tool: server.range, dep: "1.0.0" } }),
+    );
+    fs.writeFileSync(join(String(dir), "yarn.lock"), [server.header + server.entry, server.depEntry].join("\n"));
+    server.refuse("/dep/-/dep-1.0.0.tgz", 404);
+    // The package is in place and the second cache does not have it, so nothing reads it for the row.
+    expect(await server.run(String(dir), join(String(caches), "second"), ...install)).toMatchObject({
+      bins,
+      row: {},
+      saved: true,
+      exitCode: 1,
+    });
+  });
+
   // A checkout in the cache is complete when it has its `.bun-tag`. Older versions left folders without one.
   test.each(linkers)("--linker %s does not read a checkout in the cache that has no .bun-tag", async linker => {
     using server = await fixture("a git repository");
@@ -4304,7 +4358,7 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
     ).toMatchObject({ ...read, row: null });
     expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toMatchObject({
       ...read,
-      row: described,
+      row: {},
     });
   });
 
@@ -4474,24 +4528,18 @@ describe.concurrent("yarn.lock entries of packages that only their own package.j
       requests: [],
     });
 
-    // Only the copy with the patch is at hand. An install that saves nothing links no name of the patch, and an
-    // install that saves downloads the package to record it.
+    // Only the copy with the patch is at hand. The links are of that copy, and the row records nothing.
     using empty = tempDir("yarn-migration-described-cache", {});
-    fs.rmSync(join(String(dir), "bun.lock"));
-    fs.rmSync(join(String(dir), "node_modules", ".bin"), { recursive: true });
-    expect(await server.run(String(dir), String(empty), "install", "--frozen-lockfile", "--linker", linker)).toEqual({
-      ...linked,
-      bins: [],
-      row: null,
-      saved: false,
-      requests: [],
-    });
-    expect(await server.run(String(dir), String(empty), "install", "--linker", linker)).toEqual({
-      ...linked,
-      row: { bin: "cli.js" },
-      saved: true,
-      requests: server.download,
-    });
+    const placed = { ...linked, bins: ["patched-by-the-project"], requests: [] };
+    for (const [args, saved] of [[["--frozen-lockfile"], false] as const, [[], true] as const]) {
+      fs.rmSync(join(String(dir), "bun.lock"), { force: true });
+      fs.rmSync(join(String(dir), "node_modules", ".bin"), { recursive: true });
+      expect(await server.run(String(dir), String(empty), "install", ...args, "--linker", linker)).toEqual({
+        ...placed,
+        row: saved ? {} : null,
+        saved,
+      });
+    }
   });
 
   // `--no-verify` does not compare the download with the hash of the row, so what it placed says nothing for

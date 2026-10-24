@@ -6434,7 +6434,8 @@ declare module "bun" {
      */
     namespace: string;
     /**
-     * The default loader for this file extension
+     * The loader Bun uses for this module when the callback returns no `loader`:
+     * the loader that the `type` attribute of the import names, otherwise the default loader for the file extension
      */
     loader: Loader;
     /**

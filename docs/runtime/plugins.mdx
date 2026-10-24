@@ -208,7 +208,7 @@ Like `onResolve()`, the first argument to `onLoad()` filters which modules this 
 
 The second argument to `onLoad()` is a callback that runs for each matching module _before_ Bun loads its contents into memory.
 
-The callback receives the matching module's _path_, its _namespace_, the default _loader_ for that file, and a _defer_ function.
+The callback receives the matching module's _path_, its _namespace_, its _loader_, and a _defer_ function. The loader is the one that the `type` attribute of the import names. Without that attribute, it is the default loader for the file.
 
 The callback can return a new `contents` string for the module as well as a new `loader`.
 

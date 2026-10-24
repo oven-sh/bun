@@ -748,6 +748,7 @@ pub mod bv2_impl {
         #[allow(non_snake_case)]
         pub mod JSBundler {
             use super::super::BundleV2;
+            use crate::Graph::InputFileColumns as _;
             use crate::options::{Loader, Target};
             use crate::options_impl::TargetExt;
             use crate::parse_task::ParseTask;
@@ -1320,9 +1321,10 @@ pub mod bv2_impl {
             }
             impl Load {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
-                    let default_loader = parse
-                        .path
-                        .loader(&bv2.transpiler.options.loaders)
+                    // A module with a key loader was asked for with that loader.
+                    let default_loader = bv2.graph.input_files.items_key_loader()
+                        [parse.source_index.get() as usize]
+                        .or_else(|| parse.path.loader(&bv2.transpiler.options.loaders))
                         .unwrap_or(Loader::Js);
                     Self {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
@@ -2895,9 +2897,9 @@ pub mod bv2_impl {
                                 &mut tmp_source,
                                 loader,
                                 import_record.original_target,
+                                key_loader,
                             )
                             .expect("oom");
-                        self.graph.set_key_loader(idx, key_loader);
                         // SAFETY: see `value_ptr` note above.
                         unsafe { *value_ptr = idx };
                         let record: &mut ImportRecord =
@@ -3154,9 +3156,9 @@ pub mod bv2_impl {
                         &mut tmp_source,
                         loader,
                         import_record.original_target,
+                        key_loader,
                     )
                     .expect("oom");
-                self.graph.set_key_loader(idx, key_loader);
                 self.path_to_source_index_map(target)
                     .put(ModuleKey::new(path.text, key_loader), idx)
                     .expect("oom");
@@ -4283,12 +4285,14 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// `key_loader`: the key loader of the module of `source`.
         pub(crate) fn enqueue_parse_task(
             &mut self,
             resolve_result: &_resolver::Result,
             source: &mut bun_ast::Source,
             loader: Loader,
             known_target: options::Target,
+            key_loader: Option<Loader>,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
@@ -4299,6 +4303,7 @@ pub mod bv2_impl {
                 side_effects: loader.side_effects(),
                 ..Default::default()
             })?;
+            self.graph.set_key_loader(source_index.get(), key_loader);
             // `ParseTask::init` takes `bun_ast::Index`; both Index newtypes
             // are `repr(transparent)` u32 so reconstruct via `.get()`.
             // Arena-owned; freed on heap reset.

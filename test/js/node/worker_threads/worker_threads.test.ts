@@ -1968,8 +1968,8 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
-  // A partial descriptor moves the entry from the shared store onto the JS object.
-  it("keeps an array-index env var readable after a partial defineProperty on the shared map", async () => {
+  // Shared maps retain Node's rejection of incomplete environment descriptors.
+  it("rejects a partial defineProperty without changing the shared array-index env var", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1977,8 +1977,11 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
         `const { Worker, SHARE_ENV } = require("worker_threads");
          new Worker("1", { eval: true, env: SHARE_ENV }).on("exit", () => {
            process.env[0] = "zero";
-           Object.defineProperty(process.env, "0", { enumerable: true });
+           let errorCode;
+           try { Object.defineProperty(process.env, "0", { enumerable: true }); }
+           catch (error) { errorCode = error.code; }
            console.log(JSON.stringify({
+             errorCode,
              byIndex: process.env[0],
              byString: process.env["0"],
              listed: Object.keys(process.env).includes("0"),
@@ -1992,6 +1995,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
       parsed: {
+        errorCode: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
         byIndex: "zero",
         byString: "zero",
         listed: true,

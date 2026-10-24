@@ -9459,6 +9459,20 @@ describe.concurrent("store entries an install stops linking to", () => {
     },
   );
 
+  test("an install with --no-save leaves the store alone", async () => {
+    const deps = (noDeps: string) => JSON.stringify({ name: "foo", dependencies: { "no-deps": noDeps } });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(packageJson, deps("1.0.0"));
+    await runBunInstall(installEnv(packageDir), packageDir);
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+
+    // bun.lock still names no-deps@1.0.0, so its entry stays.
+    await write(packageJson, deps("1.0.1"));
+    await runBunInstall(installEnv(packageDir), packageDir, { packages: ["--no-save"], savesLockfile: false });
+    expect(await entries(packageDir)).toEqual(["no-deps@1.0.0", "no-deps@1.0.1"]);
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+  });
+
   test.skipIf(isWindows)("a symlinked node_modules keeps its store entries, with no warning", async () => {
     const deps = (noDeps: string) => JSON.stringify({ name: "foo", dependencies: { "no-deps": noDeps } });
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

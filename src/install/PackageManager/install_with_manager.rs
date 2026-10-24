@@ -1095,6 +1095,8 @@ pub fn install_with_manager(
             || !manager.summary.removed_extension_rows.is_empty())
         && workspace_filters.is_empty()
         && crate::prune::lays_out_every_dependency(manager)
+        // `--no-save` leaves bun.lock with entries this install did not lay out.
+        && (manager.options.do_.save_lockfile() || manager.options.enable.frozen_lockfile())
         && let Some(store) = install_summary.store.take()
     {
         crate::prune::remove_unreferenced_store_entries(manager, &store);

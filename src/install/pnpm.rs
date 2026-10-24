@@ -1040,6 +1040,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         pkg.resolution = res.copy();
 
         let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+        // pnpm-lock.yaml has neither the bins nor the install scripts of the package.
+        if res.tag.is_self_described() {
+            lockfile.mark_unread(pkg_id);
+        }
         if has_unbound_peers {
             packages_with_unbound_peers.put(pkg_id, ())?;
         }

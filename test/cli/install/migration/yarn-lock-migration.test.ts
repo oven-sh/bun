@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, githubTarball, isDebug, nodeModulesPackages, tempDir } from "harness";
+import { bunEnv, bunExe, githubTarball, hostedGitRepository, isDebug, nodeModulesPackages, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 import npmMetadata from "./yarn/npm-metadata.json";
@@ -3784,4 +3784,1101 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
       expect(exitCode).toBe(0);
     },
   );
+});
+
+// yarn.lock records neither the bins nor the install scripts of a package. For a registry package the migration
+// reads them from the registry's manifest. A tarball, a git repository and a GitHub repository have no manifest:
+// only the package.json inside says what they have. Nothing is downloaded to read one: the install that places the
+// package reads it.
+describe.concurrent("yarn.lock entries of packages that only their own package.json describes", () => {
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  // The second name and its path are too long for a lockfile string to hold them inline: they are in the buffers
+  // of the row.
+  const bin = { tool: "cli.js", "tool-with-a-long-name": "bin/tool-with-a-long-name.js" };
+  const bins = Object.keys(bin);
+  const script = "#!/usr/bin/env node\n";
+  const tool = { name: "tool", version: "1.0.0", bin, scripts: { postinstall: "exit 0" } };
+  const files = {
+    "package.json": JSON.stringify(tool),
+    "cli.js": script,
+    "bin/tool-with-a-long-name.js": script,
+  };
+  // What a fresh resolve of each of these dependencies records.
+  const described = { hasInstallScript: true, bin };
+
+  let repo: Awaited<ReturnType<typeof hostedGitRepository>>;
+  beforeAll(async () => {
+    repo = await hostedGitRepository(["https://git.example.com/me/tool.git"], files);
+  });
+  afterAll(() => repo[Symbol.dispose]());
+
+  // Each kind: the range in package.json, what yarn.lock has as `resolved`, the requests of an install that has to
+  // download, and whether yarn.lock pins the bytes. A tarball that yarn.lock has no hash for is downloaded by every
+  // install that saves a lockfile, because its cache entry is named after the hash.
+  const kinds = {
+    "a tarball URL with its sha1": (origin: string, sha1: string) =>
+      [`${origin}/dl/tool.tgz`, `${origin}/dl/tool.tgz#${sha1}`, ["/dl/tool.tgz"], true] as const,
+    "a tarball URL": (origin: string) =>
+      [`${origin}/dl/tool.tgz`, `${origin}/dl/tool.tgz`, ["/dl/tool.tgz"], false] as const,
+    "owner/repo": (origin: string) =>
+      ["me/tool", `${origin}/me/tool/tar.gz/${commit}`, [`/me/tool/tar.gz/${commit}`], false] as const,
+    "a file: tarball": (_: string, sha1: string) =>
+      ["file:./vendor/tool.tgz", `file:./vendor/tool.tgz#${sha1}`, [], true] as const,
+    "a GitHub repository": () =>
+      [
+        "git+https://github.com/me/tool.git",
+        `git+https://github.com/me/tool.git#${commit}`,
+        [`/repos/me/tool/tarball/${commit.slice(0, 7)}`],
+        true,
+      ] as const,
+    "a git repository": () =>
+      [
+        "git+https://git.example.com/me/tool.git",
+        `git+https://git.example.com/me/tool.git#${repo.sha}`,
+        [],
+        true,
+      ] as const,
+  };
+  type Kind = keyof typeof kinds;
+  const names = Object.keys(kinds) as Kind[];
+  const linkers = ["hoisted", "isolated"] as const;
+  const cases = names.flatMap(kind => linkers.map(linker => [kind, linker] as const));
+  // The kinds whose files a test can choose, and that yarn.lock pins.
+  const tarballs = cases.filter(
+    ([kind]) => kind === "a tarball URL with its sha1" || kind === "a file: tarball" || kind === "a GitHub repository",
+  );
+
+  const sha512 = (bytes: Uint8Array) => "sha512-" + new Bun.CryptoHasher("sha512").update(bytes).digest("base64");
+
+  // Serves the package at every URL above, and gives each project the yarn.lock of `kind`.
+  //   `packageFiles`: what yarn.lock pins, if not `files`. The git repository always has `files`.
+  //   `served`: what the server sends, if it is something else.
+  //   `manifest`: more fields for the package.json of the project.
+  //   `wrapBin`: the `bin` of the registry package `wrap`.
+  //   `wrapDependencies`: what `wrap` depends on beside the package.
+  async function fixture(
+    kind: Kind,
+    {
+      group = "dependencies",
+      dependency = "tool",
+      packageFiles = files as Record<string, string>,
+      served = packageFiles,
+      manifest = {},
+      wrapBin = undefined as Record<string, string> | undefined,
+      wrapDependencies = {} as Record<string, string>,
+    } = {},
+  ) {
+    const [tarball, archive, dep] = await Promise.all([
+      githubTarball("package", packageFiles),
+      githubTarball(`me-tool-${commit.slice(0, 7)}`, packageFiles),
+      githubTarball("package", { "package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) }),
+    ]);
+    // The bytes that yarn.lock has the hash of, unless the test asks for others.
+    const sent = served === packageFiles ? tarball : await githubTarball("package", served);
+    const requests: string[] = [];
+    // The status that the server answers with, for the paths that a test makes it refuse.
+    const refused = new Map<string, number>();
+    // `wrap` is a registry package whose only dependency is the package at its URL.
+    let wrapped: Promise<{ manifest: object; tarball: Uint8Array; integrity: string }> | undefined;
+    const wrap = () =>
+      (wrapped ??= (async () => {
+        const manifest = {
+          name: "wrap",
+          version: "1.0.0",
+          dependencies: { ...wrapDependencies, tool: `${origin}/dl/tool.tgz` },
+          ...(wrapBin && { bin: wrapBin }),
+        };
+        const tarball = await githubTarball("package", {
+          "package.json": JSON.stringify(manifest),
+          "index.js": "exports.scanner = { version: '1', scan: async () => [] };\n",
+        });
+        return { manifest, tarball, integrity: sha512(tarball) };
+      })());
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        if (refused.has(pathname)) return new Response("refused", { status: refused.get(pathname) });
+        if (pathname === "/dl/tool.tgz" || pathname === `/me/tool/tar.gz/${commit}`) return new Response(sent);
+        if (pathname.startsWith("/repos/me/tool/tarball/")) return new Response(archive);
+        if (pathname === "/wrap/-/wrap-1.0.0.tgz") return new Response((await wrap()).tarball);
+        if (pathname === "/wrap") {
+          const { manifest, integrity } = await wrap();
+          const dist = { tarball: `${origin}/wrap/-/wrap-1.0.0.tgz`, integrity };
+          return Response.json({ name: "wrap", versions: { "1.0.0": { ...manifest, dist } } });
+        }
+        // `dep` is a registry package that the package at the URL can depend on.
+        if (pathname === "/dep/-/dep-1.0.0.tgz") return new Response(dep);
+        if (pathname === "/dep") {
+          const dist = { tarball: `${origin}/dep/-/dep-1.0.0.tgz`, integrity: sha512(dep) };
+          return Response.json({
+            name: "dep",
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { name: "dep", version: "1.0.0", dist } },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const origin = server.url.origin;
+    const [range, resolved, download, pinned] = kinds[kind](
+      origin,
+      new Bun.CryptoHasher("sha1").update(tarball).digest("hex"),
+    );
+    const header = "# yarn lockfile v1\n\n\n";
+    const entry = `"${dependency}@${range}":\n  version "1.0.0"\n  resolved "${resolved}"\n`;
+    // The entry of `wrap`, for a yarn.lock that has the registry package too.
+    const wrapEntry = async () =>
+      `wrap@1.0.0:\n  version "1.0.0"\n  resolved "${origin}/wrap/-/wrap-1.0.0.tgz"\n` +
+      `  integrity ${(await wrap()).integrity}\n  dependencies:\n` +
+      Object.entries({ ...wrapDependencies, tool: `${origin}/dl/tool.tgz` })
+        .map(([name, range]) => `    ${name} "${range}"\n`)
+        .join("");
+    const project = (more: Record<string, string | Uint8Array> = {}) =>
+      tempDir("yarn-migration-described-by-package-json", {
+        "package.json": JSON.stringify({ name: "app", [group]: { [dependency]: range }, ...manifest }),
+        "yarn.lock": header + entry,
+        "vendor/tool.tgz": tarball,
+        ...more,
+      });
+    // Runs bun, and returns what it left in the project. `requests` are the ones of this run.
+    const run = async (cwd: string, cache: string, ...args: string[]) => {
+      const before = requests.length;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        env: {
+          ...repo.env,
+          BUN_CONFIG_REGISTRY: server.url.href,
+          GITHUB_API_URL: origin,
+          BUN_INSTALL_CACHE_DIR: cache,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return {
+        errors: stderr.split("\n").filter(line => line.startsWith("error")),
+        bins: binsIn(join(cwd, "node_modules")),
+        row: fs.existsSync(join(cwd, "bun.lock")) ? rowsOf(cwd)[dependency][1] : null,
+        blocked: stdout.includes("Blocked 1 postinstall"),
+        saved: stderr.includes("Saved lockfile"),
+        requests: requests.slice(before),
+        exitCode,
+      };
+    };
+    return {
+      project,
+      run,
+      header,
+      entry,
+      wrapEntry,
+      // The entry of `dep`.
+      depEntry: `dep@1.0.0:\n  version "1.0.0"\n  resolved "${origin}/dep/-/dep-1.0.0.tgz"\n  integrity ${sha512(dep)}\n`,
+      range,
+      download: [...download],
+      pinned,
+      // The server answers `pathname` with `status`, or serves it again.
+      refuse: (pathname: string, status: number) => void refused.set(pathname, status),
+      allow: (pathname: string) => void refused.delete(pathname),
+      [Symbol.dispose]: () => void server.stop(true),
+    };
+  }
+  // The `packages` of the bun.lock in `dir`.
+  const rowsOf = (dir: string) =>
+    (Bun.JSONC.parse(fs.readFileSync(join(dir, "bun.lock"), "utf8")) as { packages: Record<string, unknown[]> })
+      .packages;
+  // The names in `<folder>/.bin`.
+  const binsIn = (folder: string) => {
+    const bin = join(folder, ".bin");
+    if (!fs.existsSync(bin)) return [];
+    return [...new Set(fs.readdirSync(bin).map(name => name.replace(/\.(exe|bunx)$/, "")))].sort();
+  };
+
+  test.each(cases)("%s: bun install --linker %s links the bin and records it", async (kind, linker) => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project();
+    const linked = { errors: [], bins, row: described, blocked: true, saved: true, exitCode: 0 };
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
+      ...linked,
+      requests: server.download,
+    });
+    // Everything is recorded, so there is nothing to save. The isolated linker names the store entry of a tarball
+    // after its hash, so it links a tarball again that got its hash from the first install.
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
+      ...linked,
+      blocked: linker === "isolated" && !server.pinned,
+      saved: false,
+      requests: [],
+    });
+  });
+
+  test.each(cases)("%s: bun install --linker %s of a package that is in the cache", async (kind, linker) => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using other = server.project();
+    await server.run(String(other), String(cache), "install", "--linker", linker);
+
+    using dir = server.project();
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
+      errors: [],
+      bins,
+      row: described,
+      blocked: true,
+      saved: true,
+      requests: server.pinned ? [] : server.download,
+      exitCode: 0,
+    });
+  });
+
+  test.each(cases)("%s: bun install --frozen-lockfile --linker %s links the bin", async (kind, linker) => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project();
+    const frozen = { errors: [], bins, row: null, blocked: true, saved: false, exitCode: 0 };
+    expect(await server.run(String(dir), String(cache), "install", "--frozen-lockfile", "--linker", linker)).toEqual({
+      ...frozen,
+      requests: server.download,
+    });
+
+    // Nothing was saved, so the next install migrates again. The package is in the cache, under its URL if
+    // yarn.lock has no hash for it.
+    using again = server.project();
+    expect(await server.run(String(again), String(cache), "install", "--frozen-lockfile", "--linker", linker)).toEqual({
+      ...frozen,
+      requests: [],
+    });
+  });
+
+  // The first install saves nothing, so the second one migrates again. A row records only what the cache has of
+  // the bytes that it pins. The second cache has nothing, so the install that saves installs the package again.
+  test.each(cases)(
+    "%s: --linker %s installs a package again that is in place and not in the cache, to record it",
+    async (kind, linker) => {
+      using server = await fixture(kind);
+      using caches = tempDir("yarn-migration-described-cache", { first: {}, second: {} });
+      using dir = server.project();
+      await server.run(String(dir), join(String(caches), "first"), "install", "--frozen-lockfile", "--linker", linker);
+
+      expect(await server.run(String(dir), join(String(caches), "second"), "install", "--linker", linker)).toEqual({
+        errors: [],
+        bins,
+        row: described,
+        blocked: true,
+        saved: true,
+        requests: server.download,
+        exitCode: 0,
+      });
+    },
+  );
+
+  // An install that saves nothing has no row to record, so it makes no request: it reads the copy in place.
+  test.each(cases)(
+    "%s: bun install --frozen-lockfile --linker %s links the bins of a package that is in place and not in the cache",
+    async (kind, linker) => {
+      using server = await fixture(kind);
+      using caches = tempDir("yarn-migration-described-cache", { first: {}, second: {} });
+      using dir = server.project();
+      const frozen = ["install", "--frozen-lockfile", "--linker", linker];
+      await server.run(String(dir), join(String(caches), "first"), ...frozen);
+      fs.rmSync(join(String(dir), "node_modules", ".bin"), { recursive: true });
+
+      expect(await server.run(String(dir), join(String(caches), "second"), ...frozen)).toEqual({
+        errors: [],
+        bins,
+        row: null,
+        blocked: false,
+        saved: false,
+        requests: [],
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The cache has the package as it is published. A script or an edit can change the copy that is in place. No
+  // cache entry has the name of a row without a hash, so the install downloads the package of such a row again.
+  test.each(cases)(
+    "%s: --linker %s records what the cache has of a package whose copy in place was changed",
+    async (kind, linker) => {
+      using server = await fixture(kind);
+      using cache = tempDir("yarn-migration-described-cache", {});
+      using dir = server.project();
+      await server.run(String(dir), String(cache), "install", "--frozen-lockfile", "--linker", linker);
+      // A new file, because the file in place can be a hard link to the file in the cache.
+      const placed = join(String(dir), "node_modules", "tool", "package.json");
+      fs.rmSync(placed);
+      fs.writeFileSync(placed, JSON.stringify({ name: "tool", version: "1.0.0", bin: { changed: "cli.js" } }));
+
+      // With `--no-cache`, nothing opens the cache directory before the linker needs it.
+      expect(await server.run(String(dir), String(cache), "install", "--no-cache", "--linker", linker)).toEqual({
+        errors: [],
+        bins,
+        row: described,
+        blocked: !server.pinned,
+        saved: true,
+        requests: server.pinned ? [] : server.download,
+        exitCode: 0,
+      });
+    },
+  );
+
+  // yarn.lock names a row after the dependency. The package.json of the package still says what its bins are.
+  test.each(cases)(
+    "%s: --linker %s links the bins of a package that is installed under another name",
+    async (kind, linker) => {
+      using server = await fixture(kind, { dependency: "other-name" });
+      using cache = tempDir("yarn-migration-described-cache", {});
+      using dir = server.project();
+      expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
+        errors: [],
+        bins,
+        row: described,
+        blocked: true,
+        saved: true,
+        requests: server.download,
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.each(cases)("%s: bun add --linker %s of another package describes the row", async (kind, linker) => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project({
+      "vendor/other.tgz": await githubTarball("package", {
+        "package.json": JSON.stringify({ name: "other", version: "2.0.0", bin: { other: "cli.js" } }),
+        "cli.js": script,
+      }),
+    });
+
+    expect(await server.run(String(dir), String(cache), "add", "file:./vendor/other.tgz", "--linker", linker)).toEqual({
+      errors: [],
+      bins: ["other", ...bins],
+      row: described,
+      blocked: true,
+      saved: true,
+      requests: server.download,
+      exitCode: 0,
+    });
+    expect(JSON.parse(fs.readFileSync(join(String(dir), "package.json"), "utf8")).dependencies).toEqual({
+      other: "file:./vendor/other.tgz",
+      tool: server.range,
+    });
+  });
+
+  test.each(cases)("%s: --linker %s records the bin in bun.lockb", async (kind, linker) => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project({ "bunfig.toml": "[install]\nsaveTextLockfile = false\n" });
+    const linked = { errors: [], bins, row: null, blocked: true, saved: true, exitCode: 0 };
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
+      ...linked,
+      requests: server.download,
+    });
+    expect(fs.existsSync(join(String(dir), "bun.lockb"))).toBe(true);
+
+    // bun.lock shows what bun.lockb has.
+    fs.rmSync(join(String(dir), "yarn.lock"));
+    expect(await server.run(String(dir), String(cache), "install", "--lockfile-only", "--save-text-lockfile")).toEqual({
+      ...linked,
+      row: described,
+      blocked: false,
+      requests: [],
+    });
+  });
+
+  // These commands resolve again, so the row is complete before a linker has it: `--force` a dependency on a
+  // tarball, `bun update` a dependency on a repository too. `bun update` asks for the default branch.
+  test.each(
+    names.flatMap(kind => ["install --force", "update", "update tool"].map(command => [kind, command] as const)),
+  )("%s: bun %s --lockfile-only records what a package.json that it reads says", async (kind, command) => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project();
+    const onTarball = kind === "a tarball URL with its sha1" || kind === "a tarball URL" || kind === "a file: tarball";
+    const reads = onTarball || command !== "install --force";
+    const branch = kind === "a git repository" ? [] : ["/repos/me/tool/tarball/"];
+    expect(await server.run(String(dir), String(cache), ...command.split(" "), "--lockfile-only")).toEqual({
+      errors: [],
+      bins: [],
+      row: reads ? described : {},
+      blocked: false,
+      saved: true,
+      requests: onTarball ? server.download : reads ? branch : [],
+      exitCode: 0,
+    });
+  });
+
+  // These commands place nothing and read no dependency again. A row records what the cache has of the bytes that
+  // it pins, and nothing is downloaded for it.
+  test.each(names)(
+    "%s: bun install --lockfile-only and bun pm migrate record a package that is in the cache",
+    async kind => {
+      using server = await fixture(kind);
+      using caches = tempDir("yarn-migration-described-cache", { cold: {}, warm: {} });
+      const warm = join(String(caches), "warm");
+      using other = server.project();
+      await server.run(String(other), warm, "install", "--frozen-lockfile");
+      const recorded = { errors: [], bins: [], row: server.pinned ? described : {}, requests: [], exitCode: 0 };
+
+      using cold = server.project();
+      expect(await server.run(String(cold), join(String(caches), "cold"), "install", "--lockfile-only")).toMatchObject({
+        ...recorded,
+        row: {},
+      });
+      using lockfileOnly = server.project();
+      expect(await server.run(String(lockfileOnly), warm, "install", "--lockfile-only")).toMatchObject(recorded);
+      using migrated = server.project();
+      expect(await server.run(String(migrated), warm, "pm", "migrate")).toMatchObject(recorded);
+    },
+  );
+
+  // `bun pm trust` loads the lockfile as an install does, and saves it.
+  test.each(linkers)(
+    "bun pm trust records the package of an install that saved nothing (--linker %s)",
+    async linker => {
+      using server = await fixture("a tarball URL with its sha1");
+      using cache = tempDir("yarn-migration-described-cache", {});
+      using dir = server.project({ "bunfig.toml": `[install]\nlinker = "${linker}"\n` });
+      await server.run(String(dir), String(cache), "install", "--frozen-lockfile");
+
+      expect(await server.run(String(dir), String(cache), "pm", "trust", "tool")).toMatchObject({
+        errors: [],
+        row: described,
+        requests: [],
+        exitCode: 0,
+      });
+      expect(JSON.parse(fs.readFileSync(join(String(dir), "package.json"), "utf8")).trustedDependencies).toEqual([
+        "tool",
+      ]);
+    },
+  );
+
+  // A row that a failed install did not read is not saved as complete. The next install migrates again.
+  test.each(linkers)("--linker %s saves no lockfile when the download of the package fails", async linker => {
+    using server = await fixture("a tarball URL with its sha1");
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project();
+    server.refuse("/dl/tool.tgz", 500);
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toMatchObject({
+      bins: [],
+      row: null,
+      saved: false,
+      exitCode: 1,
+    });
+
+    server.allow("/dl/tool.tgz");
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
+      errors: [],
+      bins,
+      row: described,
+      blocked: true,
+      saved: true,
+      requests: server.download,
+      exitCode: 0,
+    });
+  });
+
+  // A checkout in the cache is complete when it has its `.bun-tag`. Older versions left folders without one.
+  test.each(linkers)("--linker %s does not read a checkout in the cache that has no .bun-tag", async linker => {
+    using server = await fixture("a git repository");
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project();
+    await server.run(String(dir), String(cache), "install", "--frozen-lockfile", "--linker", linker);
+    const checkout = join(String(cache), `@G@${repo.sha}`);
+    fs.rmSync(join(checkout, ".bun-tag"));
+    // A new file, because the file in place can be a hard link to this one.
+    fs.rmSync(join(checkout, "package.json"));
+    fs.writeFileSync(
+      join(checkout, "package.json"),
+      JSON.stringify({ name: "tool", bin: { "not-the-commit": "cli.js" } }),
+    );
+    fs.rmSync(join(String(dir), "node_modules", ".bin"), { recursive: true });
+
+    const read = { errors: [], bins, exitCode: 0 };
+    expect(
+      await server.run(String(dir), String(cache), "install", "--frozen-lockfile", "--linker", linker),
+    ).toMatchObject({ ...read, row: null });
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toMatchObject({
+      ...read,
+      row: described,
+    });
+  });
+
+  // Only a package.json that is not there says that a package has no bin.
+  test.each(linkers)("--linker %s fails when the package.json of a package in place cannot be read", async linker => {
+    using server = await fixture("a file: tarball");
+    using caches = tempDir("yarn-migration-described-cache", { first: {}, second: {} });
+    using dir = server.project();
+    const frozen = ["install", "--frozen-lockfile", "--linker", linker];
+    await server.run(String(dir), join(String(caches), "first"), ...frozen);
+    const placed = join(String(dir), "node_modules", "tool", "package.json");
+    fs.rmSync(placed);
+    fs.mkdirSync(placed);
+
+    const { errors, exitCode } = await server.run(String(dir), join(String(caches), "second"), ...frozen);
+    expect(errors.join("\n")).toContain(`"package.json" for "tool" failed to open`);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(linkers)("--linker %s links the bins of a package that a workspace depends on", async linker => {
+    using server = await fixture("a tarball URL with its sha1");
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project({
+      "package.json": JSON.stringify({ name: "app", private: true, workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { tool: server.range } }),
+    });
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toMatchObject({
+      errors: [],
+      row: described,
+      blocked: true,
+      exitCode: 0,
+    });
+    const owner = linker === "hoisted" ? [] : ["packages", "a"];
+    expect(binsIn(join(String(dir), ...owner, "node_modules"))).toEqual(bins);
+  });
+
+  // A `binding.gyp` with no install script means `node-gyp rebuild`. Only the files of the package say so.
+  test.each(cases.filter(([kind]) => kind === "a tarball URL with its sha1" || kind === "a GitHub repository"))(
+    "%s: --linker %s records the install script that a binding.gyp stands for",
+    async (kind, linker) => {
+      const withGyp = {
+        ...files,
+        "package.json": JSON.stringify({ name: "tool", version: "1.0.0", bin }),
+        "binding.gyp": "{}",
+      };
+      using server = await fixture(kind, { packageFiles: withGyp });
+      using cache = tempDir("yarn-migration-described-cache", {});
+      for (const requests of [server.download, []]) {
+        using dir = server.project();
+        expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toMatchObject({
+          errors: [],
+          bins,
+          row: described,
+          requests,
+          exitCode: 0,
+        });
+      }
+    },
+  );
+
+  // A trusted package can write the file of its bin in a script, so its bin is linked after the scripts.
+  test.each(tarballs)(
+    "%s: --linker %s links the bin that a script of a trusted package writes",
+    async (kind, linker) => {
+      const made = { "made-by-the-postinstall-script": "made-by-the-postinstall-script.js" };
+      const manifest = {
+        name: "tool",
+        version: "1.0.0",
+        bin: made,
+        scripts: { postinstall: "echo made > " + Object.values(made)[0] },
+      };
+      using server = await fixture(kind, {
+        packageFiles: { "package.json": JSON.stringify(manifest) },
+        manifest: { trustedDependencies: ["tool"] },
+      });
+      using cache = tempDir("yarn-migration-described-cache", {});
+      using dir = server.project();
+      expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
+        errors: [],
+        bins: Object.keys(made),
+        row: { hasInstallScript: true, bin: made },
+        blocked: false,
+        saved: true,
+        requests: server.download,
+        exitCode: 0,
+      });
+    },
+  );
+
+  // [what the package.json has beside the name and the version, the row, the names in `.bin`]
+  const shapes = {
+    "no bin and no script": [{}, {}, []],
+    "a bin that is one path": [
+      { bin: "bin/tool-with-a-long-name.js" },
+      { bin: "bin/tool-with-a-long-name.js" },
+      ["tool"],
+    ],
+    "directories.bin": [{ directories: { bin: "./bin" } }, { binDir: "./bin" }, ["tool-with-a-long-name.js"]],
+    "a name that a lockfile cannot have": [{ name: "to@ol", bin }, { bin }, bins],
+  } as const;
+  test.each(
+    (Object.keys(shapes) as (keyof typeof shapes)[]).flatMap(shape => linkers.map(linker => [shape, linker] as const)),
+  )("a package.json with %s: --linker %s records it", async (shape, linker) => {
+    const [fields, row, linked] = shapes[shape];
+    using server = await fixture("a tarball URL with its sha1", {
+      packageFiles: { ...files, "package.json": JSON.stringify({ name: "tool", version: "1.0.0", ...fields }) },
+    });
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project();
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
+      errors: [],
+      bins: [...linked],
+      row,
+      blocked: false,
+      saved: true,
+      requests: server.download,
+      exitCode: 0,
+    });
+  });
+
+  // A patch of the project can change the package.json of the package. The row records the package as it is
+  // published, as a fresh resolve does.
+  test.each(linkers)("--linker %s records the bin of a patched package without the patch", async linker => {
+    const lines = ["{", '  "name": "tool",', '  "version": "1.0.0",', '  "bin": "cli.js"', "}", ""];
+    using server = await fixture("a tarball URL with its sha1", {
+      packageFiles: { "package.json": lines.join("\n"), "cli.js": script },
+    });
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project({
+      "patches/tool.patch": [
+        "diff --git a/package.json b/package.json",
+        "--- a/package.json",
+        "+++ b/package.json",
+        "@@ -2,4 +2,4 @@",
+        '   "name": "tool",',
+        '   "version": "1.0.0",',
+        '-  "bin": "cli.js"',
+        '+  "bin": { "patched-by-the-project": "cli.js" }',
+        " }",
+        "",
+      ].join("\n"),
+    });
+    const manifest = join(String(dir), "package.json");
+    fs.writeFileSync(
+      manifest,
+      JSON.stringify({
+        ...JSON.parse(fs.readFileSync(manifest, "utf8")),
+        patchedDependencies: { [`tool@${server.range}`]: "patches/tool.patch" },
+      }),
+    );
+    const linked = { errors: [], bins: ["tool"], blocked: false, exitCode: 0 };
+
+    expect(await server.run(String(dir), String(cache), "install", "--frozen-lockfile", "--linker", linker)).toEqual({
+      ...linked,
+      row: null,
+      saved: false,
+      requests: server.download,
+    });
+    expect(fs.readFileSync(join(String(dir), "node_modules", "tool", "package.json"), "utf8")).toContain(
+      "patched-by-the-project",
+    );
+    // The package is in place with the patch. The cache has it without.
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toEqual({
+      ...linked,
+      row: { bin: "cli.js" },
+      saved: true,
+      requests: [],
+    });
+
+    // Only the copy with the patch is at hand. An install that saves nothing links no name of the patch, and an
+    // install that saves downloads the package to record it.
+    using empty = tempDir("yarn-migration-described-cache", {});
+    fs.rmSync(join(String(dir), "bun.lock"));
+    fs.rmSync(join(String(dir), "node_modules", ".bin"), { recursive: true });
+    expect(await server.run(String(dir), String(empty), "install", "--frozen-lockfile", "--linker", linker)).toEqual({
+      ...linked,
+      bins: [],
+      row: null,
+      saved: false,
+      requests: [],
+    });
+    expect(await server.run(String(dir), String(empty), "install", "--linker", linker)).toEqual({
+      ...linked,
+      row: { bin: "cli.js" },
+      saved: true,
+      requests: server.download,
+    });
+  });
+
+  // `--no-verify` does not compare the download with the hash of the row, so what it placed says nothing for
+  // the row.
+  test.each(linkers)("--linker %s with --no-verify links what it placed and records nothing", async linker => {
+    using server = await fixture("a tarball URL with its sha1", {
+      served: {
+        "package.json": JSON.stringify({
+          name: "tool",
+          version: "1.0.0",
+          bin: { "not-what-yarn-lock-pins": "cli.js" },
+        }),
+        "cli.js": script,
+      },
+    });
+    using cache = tempDir("yarn-migration-described-cache", {});
+    const unchecked = {
+      errors: [],
+      bins: ["not-what-yarn-lock-pins"],
+      row: {},
+      blocked: false,
+      saved: true,
+      exitCode: 0,
+    };
+    using dir = server.project();
+    expect(await server.run(String(dir), String(cache), "install", "--no-verify", "--linker", linker)).toEqual({
+      ...unchecked,
+      requests: server.download,
+    });
+    // The same, for what is in the cache without a check.
+    using again = server.project();
+    expect(await server.run(String(again), String(cache), "install", "--no-verify", "--linker", linker)).toEqual({
+      ...unchecked,
+      requests: [],
+    });
+  });
+
+  // yarn.lock has no hash to compare the download with, so the hash of the download is the one of the row.
+  test("both linkers record a tarball with no hash under --no-verify", async () => {
+    using server = await fixture("a tarball URL");
+    const rows = [];
+    for (const linker of linkers) {
+      using cache = tempDir("yarn-migration-described-cache", {});
+      using dir = server.project();
+      const installed = await server.run(String(dir), String(cache), "install", "--no-verify", "--linker", linker);
+      rows.push({ linker, errors: installed.errors, bins: installed.bins, row: installed.row });
+    }
+    expect(rows).toEqual(linkers.map(linker => ({ linker, errors: [], bins, row: described })));
+  });
+
+  // A commit says what the bytes are, with or without the check of a hash.
+  test.each(cases.filter(([kind]) => kind === "a GitHub repository" || kind === "a git repository"))(
+    "%s: bun install --no-verify --linker %s records the bin",
+    async (kind, linker) => {
+      using server = await fixture(kind);
+      using cache = tempDir("yarn-migration-described-cache", {});
+      using dir = server.project();
+      expect(await server.run(String(dir), String(cache), "install", "--no-verify", "--linker", linker)).toEqual({
+        errors: [],
+        bins,
+        row: described,
+        blocked: true,
+        saved: true,
+        requests: server.download,
+        exitCode: 0,
+      });
+    },
+  );
+
+  // This backend makes a link of each file of the package, into the first cache.
+  test.each(names)("%s: --backend=symlink reads the package.json of a package that is in place", async kind => {
+    using server = await fixture(kind);
+    using caches = tempDir("yarn-migration-described-cache", { first: {}, second: {} });
+    using dir = server.project();
+    const frozen = ["install", "--frozen-lockfile", "--linker", "hoisted", "--backend", "symlink"];
+    await server.run(String(dir), join(String(caches), "first"), ...frozen);
+    fs.rmSync(join(String(dir), "node_modules", ".bin"), { recursive: true });
+
+    expect(await server.run(String(dir), join(String(caches), "second"), ...frozen)).toEqual({
+      errors: [],
+      bins,
+      row: null,
+      blocked: false,
+      saved: false,
+      requests: [],
+      exitCode: 0,
+    });
+  });
+
+  test.each(linkers)("--linker %s records each of two packages", async linker => {
+    using server = await fixture("a tarball URL with its sha1");
+    using cache = tempDir("yarn-migration-described-cache", {});
+    const second = "file:./vendor/tool.tgz";
+    using dir = server.project({
+      "package.json": JSON.stringify({ name: "app", dependencies: { tool: server.range, second } }),
+      "yarn.lock": [
+        server.header + server.entry,
+        `"second@${second}":\n  version "1.0.0"\n  resolved "${second}"\n`,
+      ].join("\n"),
+    });
+    expect(await server.run(String(dir), String(cache), "install", "--linker", linker)).toMatchObject({
+      errors: [],
+      bins,
+      row: described,
+      exitCode: 0,
+    });
+    expect(rowsOf(String(dir)).second[1]).toEqual(described);
+  });
+
+  test.each(linkers)("--linker %s installs a repository that has no package.json", async linker => {
+    const url = "https://git.example.com/me/no-manifest.git";
+    using bare = await hostedGitRepository([url], { "index.js": "" });
+    using dir = tempDir("yarn-migration-described-by-package-json", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { bare: `git+${url}` } }),
+      "yarn.lock": `# yarn lockfile v1\n\n\n"bare@git+${url}":\n  version "0.0.0"\n  resolved "git+${url}#${bare.sha}"\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--linker", linker],
+      cwd: String(dir),
+      env: { ...bare.env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+    expect(fs.existsSync(join(String(dir), "node_modules", "bare", "index.js"))).toBe(true);
+    expect(rowsOf(String(dir)).bare[1]).toEqual({});
+    expect(exitCode).toBe(0);
+  });
+
+  // The scanner and its dependencies are installed before the rest, by a run of the linker of their own.
+  test.each(linkers)(
+    "--linker %s links the bins of a dependency of the security scanner",
+    async linker => {
+      using server = await fixture("a tarball URL with its sha1");
+      using cache = tempDir("yarn-migration-described-cache", {});
+      using dir = server.project({
+        "package.json": JSON.stringify({ name: "app", dependencies: { wrap: "1.0.0" } }),
+        "bunfig.toml": `[install]\nlinker = "${linker}"\n[install.security]\nscanner = "wrap"\n`,
+        "yarn.lock": [server.header + server.entry, await server.wrapEntry()].join("\n"),
+      });
+      expect(await server.run(String(dir), String(cache), "install")).toMatchObject({
+        errors: [],
+        row: described,
+        exitCode: 0,
+      });
+      const linkedInto = linker === "hoisted" ? [] : [".bun", "wrap@1.0.0", "node_modules"];
+      expect(binsIn(join(String(dir), "node_modules", ...linkedInto))).toEqual(bins);
+    },
+    // The install starts a second process for the scanner, and a debug build takes seconds to start.
+    isDebug ? 60_000 : undefined,
+  );
+
+  // What follows needs a store that has the tarball with no bin, as Bun 1.4.4 and older built it from a migrated
+  // lockfile. `wrap` depends on the tarball.
+  //   `toolDependency`: the group in which the tarball depends on the registry package `dep`.
+  //   `depMissing`: the tarball of `dep` cannot be downloaded.
+  async function storeWithoutBins(
+    bunfig = "",
+    {
+      wrapBin = undefined as Record<string, string> | undefined,
+      toolDependency = undefined as "dependencies" | "optionalDependencies" | undefined,
+      depMissing = false,
+    } = {},
+  ) {
+    const server = await fixture("a tarball URL with its sha1", {
+      wrapBin,
+      packageFiles: toolDependency
+        ? { ...files, "package.json": JSON.stringify({ ...tool, [toolDependency]: { dep: "1.0.0" } }) }
+        : files,
+    });
+    if (depMissing) server.refuse("/dep/-/dep-1.0.0.tgz", 404);
+    const cache = tempDir("yarn-migration-described-cache", {});
+    const dir = server.project({
+      "package.json": JSON.stringify({ name: "app", dependencies: { wrap: "1.0.0" } }),
+      "bunfig.toml": `[install]\nlinker = "isolated"\n${bunfig}`,
+    });
+    const lockfile = join(String(dir), "bun.lock");
+    const install = (...args: string[]) => server.run(String(dir), String(cache), "install", ...args);
+
+    // A fresh resolve records the tarball. The edit takes its bin and its scripts away.
+    fs.rmSync(join(String(dir), "yarn.lock"));
+    await install();
+    const resolved = fs.readFileSync(lockfile, "utf8");
+    const [row, key, id, info, hash] = /("[^"]*tool"): \[("tool@[^"]+"), (\{[^\]]*\}), "(sha512-[^"]+)"\]/.exec(
+      resolved,
+    )!;
+    const { bin: _bin, hasInstallScript: _scripts, ...rest } = Bun.JSONC.parse(info) as Record<string, unknown>;
+    fs.writeFileSync(lockfile, resolved.replace(row, `${key}: [${id}, ${JSON.stringify(rest)}, "${hash}"]`));
+    fs.rmSync(join(String(dir), "node_modules"), { recursive: true });
+    await install("--frozen-lockfile");
+
+    // yarn.lock pins the tarball with the hash that the store has it under.
+    const pinned =
+      `"tool@${server.range}":\n  version "1.0.0"\n  resolved "${server.range}"\n  integrity ${hash}\n` +
+      (toolDependency ? `  ${toolDependency}:\n    dep "1.0.0"\n` : "");
+    const yarnLock = [
+      server.header + pinned,
+      await server.wrapEntry(),
+      ...(toolDependency ? [server.depEntry] : []),
+    ].join("\n");
+    const store = join(String(dir), "node_modules", ".bun");
+    const [toolEntry] = fs.readdirSync(store).filter(name => name.startsWith("tool@"));
+    return {
+      dir: String(dir),
+      install,
+      resolved,
+      yarnLock,
+      // The `node_modules` of the store entries of `wrap` and of the tarball, and the names in their `.bin`.
+      wrapModules: join(store, "wrap@1.0.0", "node_modules"),
+      toolModules: join(store, toolEntry, "node_modules"),
+      wrapBins: () => binsIn(join(store, "wrap@1.0.0", "node_modules")),
+      toolBins: () => binsIn(join(store, toolEntry, "node_modules")),
+      [Symbol.dispose]() {
+        server[Symbol.dispose]();
+        cache[Symbol.dispose]();
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+
+  test("--linker isolated links the bins of a package that was in the store before its package.json was read", async () => {
+    using store = await storeWithoutBins();
+    expect({ wrap: store.wrapBins(), tool: store.toolBins() }).toEqual({ wrap: [], tool: [] });
+
+    fs.rmSync(join(store.dir, "bun.lock"));
+    fs.writeFileSync(join(store.dir, "yarn.lock"), store.yarnLock);
+    expect(await store.install()).toMatchObject({ errors: [], requests: [], exitCode: 0 });
+    expect({ wrap: store.wrapBins(), tool: store.toolBins() }).toEqual({ wrap: bins, tool: bins });
+    expect(fs.readFileSync(join(store.dir, "bun.lock"), "utf8")).toContain(
+      `{ "hasInstallScript": true, "bin": { "tool": "cli.js", "tool-with-a-long-name": "bin/tool-with-a-long-name.js" } }`,
+    );
+  });
+
+  // The task of an entry that is in the store writes the links that are not there, and no bin of its package.
+  test.each([
+    ["a link to a dependency is written again", "dependencies"],
+    ["the link to an optional dependency that is left out is written again", "optionalDependencies"],
+  ] as const)("--linker isolated links the bins of a package in the store when %s", async (_, toolDependency) => {
+    const optional = toolDependency === "optionalDependencies";
+    using store = await storeWithoutBins("", { toolDependency, depMissing: optional });
+    if (!optional) fs.rmSync(join(store.toolModules, "dep"));
+
+    fs.rmSync(join(store.dir, "bun.lock"));
+    fs.writeFileSync(join(store.dir, "yarn.lock"), store.yarnLock);
+    expect(await store.install()).toMatchObject({ errors: [], exitCode: 0 });
+    expect({ wrap: store.wrapBins(), tool: store.toolBins() }).toEqual({ wrap: bins, tool: bins });
+  });
+
+  // A task links the bins of the dependencies of a package, and then the bins of the package. The same holds for
+  // an entry that is in the store: a name that both have leads to the package.
+  test("--linker isolated keeps a bin of a package in the store that a dependency also has", async () => {
+    using store = await storeWithoutBins("", { wrapBin: { tool: "index.js" } });
+    const own = join(store.wrapModules, ".bin", "tool");
+    expect(own).toBeValidBin(join("..", "wrap", "index.js"));
+
+    fs.rmSync(join(store.dir, "bun.lock"));
+    fs.writeFileSync(join(store.dir, "yarn.lock"), store.yarnLock);
+    for (const run of [1, 2]) {
+      expect(await store.install("--frozen-lockfile")).toMatchObject({ errors: [], requests: [], exitCode: 0 });
+      expect([run, store.wrapBins()]).toEqual([run, bins]);
+      expect(own).toBeValidBin(join("..", "wrap", "index.js"));
+      expect(join(store.wrapModules, ".bin", "tool-with-a-long-name")).toBeValidBin(
+        join("..", "tool", "bin", "tool-with-a-long-name.js"),
+      );
+    }
+  });
+
+  // The names of the store entries of `wrap` and of the tarball.
+  const storeEntries = (dir: string) =>
+    fs.readdirSync(join(dir, "node_modules", ".bun")).filter(name => /^(wrap|tool)@/.test(name));
+
+  // The entry of `wrap` stays as it is, so no task links a bin into it. The tarball is installed from the cache.
+  test("--linker isolated links the bins of a package into an entry that was in the store before the package", async () => {
+    using store = await storeWithoutBins();
+    for (const name of storeEntries(store.dir).filter(name => name.startsWith("tool@"))) {
+      fs.rmSync(join(store.dir, "node_modules", ".bun", name), { recursive: true });
+    }
+
+    fs.rmSync(join(store.dir, "bun.lock"));
+    fs.writeFileSync(join(store.dir, "yarn.lock"), store.yarnLock);
+    expect(await store.install()).toMatchObject({ errors: [], requests: [], exitCode: 0 });
+    expect(store.wrapBins()).toEqual(bins);
+  });
+
+  // A `.bin` that is a link came with the project. Nothing is written through it.
+  test("--linker isolated does not link a bin through a `.bin` of the store that is a link", async () => {
+    using store = await storeWithoutBins();
+    const outside = join(store.dir, "outside");
+    fs.mkdirSync(outside);
+    const planted = storeEntries(store.dir).map(name =>
+      join(store.dir, "node_modules", ".bun", name, "node_modules", ".bin"),
+    );
+    expect(planted.length).toBe(2);
+    for (const link of planted) fs.symlinkSync(outside, link, "junction");
+
+    fs.rmSync(join(store.dir, "bun.lock"));
+    fs.writeFileSync(join(store.dir, "yarn.lock"), store.yarnLock);
+    expect(await store.install()).toMatchObject({ errors: [], requests: [], exitCode: 0 });
+    expect({
+      outside: fs.readdirSync(outside),
+      links: planted.filter(path => fs.lstatSync(path).isSymbolicLink()),
+      wrap: store.wrapBins(),
+    }).toEqual({ outside: [], links: [], wrap: bins });
+  });
+
+  // A script of a workspace can write the files of its bins, so a second pass after the tasks links the bins of
+  // the workspace into each entry that depends on it. Since the package.json of the package is read, that pass
+  // links the bins of the package too.
+  test("--linker isolated does not link a bin of a workspace through a `.bin` of the store that is a link", async () => {
+    using server = await fixture("a tarball URL with its sha1", { wrapDependencies: { core: "^1.0.0" } });
+    using cache = tempDir("yarn-migration-described-cache", {});
+    const core = { name: "core", version: "1.2.0", bin: { core: "cli.js" }, scripts: { postinstall: "exit 0" } };
+    using dir = server.project({
+      "package.json": JSON.stringify({
+        name: "app",
+        private: true,
+        workspaces: ["packages/*"],
+        dependencies: { wrap: "1.0.0" },
+      }),
+      "packages/core/package.json": JSON.stringify(core),
+      "packages/core/cli.js": script,
+      "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "yarn.lock": [server.header + server.entry, await server.wrapEntry()].join("\n"),
+    });
+    await server.run(String(dir), String(cache), "install", "--frozen-lockfile");
+    const wrapModules = join(String(dir), "node_modules", ".bun", "wrap@1.0.0", "node_modules");
+    const outside = join(String(dir), "outside");
+    fs.mkdirSync(outside);
+    fs.rmSync(join(wrapModules, ".bin"), { recursive: true });
+    fs.symlinkSync(outside, join(wrapModules, ".bin"), "junction");
+
+    expect(await server.run(String(dir), String(cache), "install")).toMatchObject({ errors: [], exitCode: 0 });
+    expect({
+      outside: fs.readdirSync(outside),
+      link: fs.lstatSync(join(wrapModules, ".bin")).isSymbolicLink(),
+      bins: binsIn(wrapModules),
+    }).toEqual({ outside: [], link: false, bins: ["core", ...bins] });
+  });
+
+  // The entry of `wrap` in the global store has a link for each bin of its dependency. An entry that was made
+  // while the row of the dependency had no bin is not the one to use.
+  test("a global virtual store entry has the bins of a tarball that the lockfile records", async () => {
+    using store = await storeWithoutBins("globalStore = true\n");
+    expect(store.wrapBins()).toEqual([]);
+
+    fs.writeFileSync(join(store.dir, "bun.lock"), store.resolved);
+    fs.rmSync(join(store.dir, "node_modules"), { recursive: true });
+    expect(await store.install("--frozen-lockfile")).toMatchObject({ errors: [], requests: [], exitCode: 0 });
+    expect(store.wrapBins()).toEqual(bins);
+  });
+
+  // A project that never saves a lockfile migrates on each install, so its package is never in the global store.
+  test("a global virtual store does not get the package of installs that save nothing", async () => {
+    using server = await fixture("a tarball URL with its sha1");
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project({ "bunfig.toml": '[install]\nlinker = "isolated"\nglobalStore = true\n' });
+    const store = join(String(dir), "node_modules", ".bun");
+    for (const requests of [server.download, []]) {
+      fs.rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+      expect(await server.run(String(dir), String(cache), "install", "--frozen-lockfile")).toMatchObject({
+        errors: [],
+        bins,
+        requests,
+        exitCode: 0,
+      });
+      const [entry] = fs.readdirSync(store).filter(name => name.startsWith("tool@"));
+      expect(fs.lstatSync(join(store, entry)).isSymbolicLink()).toBe(false);
+    }
+  });
+
+  test.each(names)("%s: a global virtual store gets the package once its bins are known", async kind => {
+    using server = await fixture(kind);
+    using cache = tempDir("yarn-migration-described-cache", {});
+    using dir = server.project({ "bunfig.toml": '[install]\nlinker = "isolated"\nglobalStore = true\n' });
+    const linked = { errors: [], bins, row: described, blocked: true, saved: true, exitCode: 0 };
+    const entry = () => {
+      const store = join(String(dir), "node_modules", ".bun");
+      const [name] = fs.readdirSync(store).filter(name => name.startsWith("tool@"));
+      return fs.lstatSync(join(store, name)).isSymbolicLink() ? "global" : "local";
+    };
+
+    expect(await server.run(String(dir), String(cache), "install")).toEqual({ ...linked, requests: server.download });
+    expect(entry()).toBe("local");
+
+    fs.rmSync(join(String(dir), "node_modules"), { recursive: true });
+    expect(await server.run(String(dir), String(cache), "install")).toEqual({ ...linked, saved: false, requests: [] });
+    expect(entry()).toBe("global");
+  });
 });

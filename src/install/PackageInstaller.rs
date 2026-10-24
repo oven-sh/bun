@@ -29,6 +29,7 @@ use crate::network_task::ForTarballError;
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
 use crate::package_manager_real::progress_strings::ProgressStrings;
+use crate::package_manager_real::unread_packages::{Described, DescribedPackages};
 use crate::package_manager_task as task;
 use crate::patch_install::{self, PatchTask};
 use crate::postinstall_optimizer::{self, PostinstallOptimizer};
@@ -108,6 +109,9 @@ pub struct PackageInstaller<'a> {
     pub(crate) trees: Box<[TreeContext]>,
 
     pub(crate) seen_bin_links: StringHashMap<()>,
+
+    /// `Some` if the lockfile has an unread package. `bins` has no `bin` for one.
+    pub(crate) described: Option<Box<DescribedPackages>>,
 }
 
 use bun_core::UnwrapOrOom;
@@ -761,7 +765,14 @@ impl<'a> PackageInstaller<'a> {
             debug_assert!((dep_id as usize) < lockfile.buffers.dependencies.as_slice().len());
             let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
             debug_assert!(package_id != invalid_package_id);
-            let bin = self.bins[package_id as usize];
+            let (bin, bin_strings, bin_extern_strings) = match &self.described {
+                Some(described) => described.bin_of(lockfile, package_id),
+                None => (
+                    self.bins[package_id as usize],
+                    string_buf,
+                    lockfile.buffers.extern_strings.as_slice(),
+                ),
+            };
             debug_assert!(bin.tag != bin::Tag::None);
 
             let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
@@ -879,8 +890,8 @@ impl<'a> PackageInstaller<'a> {
                     global_bin_path: manager.options.bin_path,
                     package_name: package_name_,
                     target_package_name,
-                    string_buf,
-                    extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
+                    string_buf: bin_strings,
+                    extern_string_buf: bin_extern_strings,
                     seen: Some(&mut self.seen_bin_links),
                     target_node_modules_path: target_node_modules_path_opt
                         .as_ref()
@@ -1273,6 +1284,7 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// The entry of the cache that a package which `can_enqueue_install_task` is linked from.
+    #[inline(always)]
     fn cache_entry_name(
         &self,
         package_id: PackageID,
@@ -1664,6 +1676,77 @@ impl<'a> PackageInstaller<'a> {
         Ok(path)
     }
 
+    /// The row of an unread package has no bin: `described` has what its package.json says.
+    #[inline]
+    fn has_bin(&self, package_id: PackageID) -> bool {
+        self.bins[package_id as usize].tag != bin::Tag::None
+            || (self.described.as_deref())
+                .and_then(|described| described.get(package_id))
+                .is_some_and(|package| package.bin.tag != bin::Tag::None)
+    }
+
+    fn has_install_script(&self, package_id: PackageID) -> bool {
+        self.metas[package_id as usize].has_install_script()
+            || (self.described.as_deref())
+                .and_then(|described| described.get(package_id))
+                .is_some_and(|package| package.has_install_script)
+    }
+
+    /// Reads the package.json of an unread package, once, before anything links its bins.
+    #[cold]
+    #[inline(never)]
+    fn describe_unread(
+        &mut self,
+        package_id: PackageID,
+        read: impl FnOnce(&mut PackageManager) -> Option<Described>,
+    ) {
+        if let Some(described) = self.described.take() {
+            if described.wants(self.lockfile(), package_id) {
+                described.set(package_id, read(self.manager_mut()));
+            }
+            self.described = Some(described);
+        }
+    }
+
+    /// `describe_unread` for a package of the current tree that `verify` accepted in place.
+    #[cold]
+    #[inline(never)]
+    fn describe_placed(&mut self, package_id: PackageID, alias: &[u8], patched: bool) {
+        let placed = self.package_path(alias);
+        self.describe_unread(package_id, |manager| {
+            manager.describe_placed(package_id, placed.ok()?.slice(), patched)
+        });
+    }
+
+    /// `describe_unread` for a package that was linked from the cache.
+    #[cold]
+    #[inline(never)]
+    fn describe_installed(
+        &mut self,
+        package_id: PackageID,
+        pkg_name: String,
+        resolution: &Resolution,
+    ) {
+        if !self.lockfile().is_unread(package_id) {
+            return;
+        }
+        // An owned copy, because the next name is printed into the same buffer.
+        let entry = self.cache_entry_name(package_id, pkg_name, resolution, None);
+        let entry = bun_core::ZBox::from_bytes(entry.as_bytes());
+        self.describe_unread(package_id, |manager| {
+            manager.describe_cached(package_id, &entry)
+        });
+    }
+
+    /// A run that saves the lockfile needs the bytes that an unread row pins, not a copy in place.
+    #[cold]
+    #[inline(never)]
+    fn reinstalls_unread(&self, package_id: PackageID) -> bool {
+        self.lockfile().is_unread(package_id)
+            && self.manager().pins_tarballs()
+            && !self.manager_mut().has_pinned_cache_entry(package_id)
+    }
+
     fn get_installed_package_scripts_count(
         &mut self,
         alias: &[u8],
@@ -2020,7 +2103,8 @@ impl<'a> PackageInstaller<'a> {
                 &self.metas[package_id as usize].integrity,
                 self.manager().skips_verify(resolution.tag),
                 &self.root_node_modules_folder,
-            );
+            )
+            || (self.described.is_some() && self.reinstalls_unread(package_id));
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
             self.node.complete_one();
@@ -2398,7 +2482,11 @@ impl<'a> PackageInstaller<'a> {
                 self.summary.offline_misses.in_place.push(package_id);
             }
 
-            if self.bins[package_id as usize].tag != bin::Tag::None {
+            if self.described.is_some() {
+                let patched = patch_contents_hash.is_some();
+                self.describe_placed(package_id, alias.slice(string_buf!()), patched);
+            }
+            if self.has_bin(package_id) {
                 self.trees[self.current_tree_id as usize]
                     .binaries
                     .add(dependency_id)
@@ -2474,7 +2562,10 @@ impl<'a> PackageInstaller<'a> {
                     self.node.complete_one();
                 }
 
-                if self.bins[package_id as usize].tag != bin::Tag::None {
+                if self.described.is_some() {
+                    self.describe_installed(package_id, pkg_name, resolution);
+                }
+                if self.has_bin(package_id) {
                     self.trees[self.current_tree_id as usize]
                         .binaries
                         .add(dependency_id)
@@ -2509,7 +2600,7 @@ impl<'a> PackageInstaller<'a> {
                         resolution.tag,
                         resolution::Tag::Root | resolution::Tag::Workspace
                     )
-                    && self.metas[package_id as usize].has_install_script()
+                    && self.has_install_script(package_id)
                 {
                     // `hasInstallScript` is a false positive when binding.gyp is not published.
                     let count = self.package_path(alias.slice(string_buf!())).map_or(
@@ -2787,7 +2878,7 @@ impl<'a> PackageInstaller<'a> {
         let optional = !self
             .manager()
             .is_package_required(dependency_id, package_id);
-        if self.bins[package_id as usize].tag != bin::Tag::None {
+        if self.has_bin(package_id) {
             self.trees[self.current_tree_id as usize]
                 .bins_after_scripts
                 .push(dependency_id);

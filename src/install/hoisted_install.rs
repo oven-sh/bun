@@ -24,6 +24,7 @@ use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstalle
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
+use crate::package_manager_real::unread_packages::DescribedPackages;
 use crate::package_manager_task as Task;
 use crate::prune::LinkedNodeModules;
 
@@ -472,6 +473,7 @@ pub(crate) fn install_hoisted_packages(
                     }
                     set
                 },
+                described: DescribedPackages::for_linker(&this.lockfile),
             };
         };
 

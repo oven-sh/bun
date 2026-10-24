@@ -811,6 +811,13 @@ impl PackageManagerCommand {
                 Output::flush();
                 Global::exit(0);
             }
+            pm.record_unread_from_cache();
+            if pm.log_mut().has_errors() {
+                let _ = pm
+                    .log_mut()
+                    .print(std::ptr::from_mut(Output::error_writer()));
+                Global::crash();
+            }
             package_json_write_back::write_migrated(pm);
             let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
             // SAFETY: `load_lockfile` is `Ok` (errors exited above), and `save_to_disk` reads only its

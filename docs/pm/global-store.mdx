@@ -108,6 +108,8 @@ The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure
 
 The hash also covers a version number of the entry layout. A Bun release that changes what an entry contains builds new entries and leaves the ones an older release made unused.
 
+For a git, GitHub or tarball package, the hash also covers whether the lockfile records a `bin` for it.
+
 ## What stays project-local
 
 An entry only lives in the global store when it can be safely shared. Entries fall back to a per-project `node_modules/.bun/<storepath>/` directory when:
@@ -116,6 +118,7 @@ An entry only lives in the global store when it can be safely shared. Entries fa
 - the package is listed in **`trustedDependencies`** (or trusted via `bun add --trust`) — its lifecycle script may mutate the install directory, and a script running through the project symlink would mutate the shared copy;
 - the package is a direct or transitive **dependency of a trusted package** — the script can write through the trusted package's dependency symlinks;
 - the package, or **any** dependency it links to, is a `workspace:`, `file:`, or `link:` dependency — those resolve to project-local paths that other projects can't see;
+- the package is a **git, GitHub or tarball dependency that this install migrates** from `yarn.lock` or `pnpm-lock.yaml`: those lockfiles do not record its `bin`, so Bun reads it from the package while it installs. After an install saves `bun.lock`, later installs share the entry. `bun ci`, `--frozen-lockfile` and `--no-save` save nothing, so each of them migrates again and keeps the package project-local;
 - the package has a **peer dependency typed by an `@types/*` package of the project** (a library that peers on `react` in a project with `@types/react`) — TypeScript resolves a declaration file's imports from its real path, and from `<cache>/links/` it cannot reach the project's `@types`. A package that depends on the `@types/*` package itself is still shared.
 
 Ineligibility propagates: if `your-app` depends on `internal-utils` which is a workspace package, `internal-utils` is project-local, and so is every entry that links to it. When an entry loses eligibility between installs (newly patched, newly trusted), Bun detaches it from the global store and rebuilds it project-locally on the next install. The shared entry stays untouched.

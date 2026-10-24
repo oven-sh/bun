@@ -808,6 +808,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
         this.packages.append(package)?;
         this.get_or_put_id(appended_id, name_hash)?;
+        // yarn.lock has no install scripts either, and no manifest describes such a package.
+        if resolution.tag.is_self_described() {
+            this.mark_unread(appended_id);
+        }
     }
 
     let mut spec_to_package_id: StringHashMap<PackageID> = StringHashMap::new();

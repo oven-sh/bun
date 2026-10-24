@@ -67,6 +67,22 @@ void invalidateLiveDateInstanceCaches(JSC::VM&);
 // together; every caller that changes the time zone override uses this instead.
 void resetDateCachesAfterTimeZoneChange(JSC::VM&);
 
+// Sets the time zone of the process to a zone name or a custom ID, as ICU reads them. False, and no change, for another value.
+[[nodiscard]] bool setProcessTimeZone(JSC::VM&, WTF::StringView zoneID);
+
+// Gives the time zone of the process back to the host.
+void clearProcessTimeZone(JSC::VM&);
+
+enum class TimeZoneWriter : uint8_t {
+    // The TZ the process starts with, from the environment or a .env file. `bun test --isolate` puts it back.
+    Start,
+    // process.env.TZ = value
+    Assignment,
+};
+
+// Sets the time zone of the process from a TZ value: a zone name, ":name", or a POSIX value of whole hours such as "MSK-3".
+void applyTimeZoneFromEnv(JSC::VM&, const WTF::String& value, TimeZoneWriter);
+
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go
 // through the SharedEnvStore of the tree its global belongs to.
 JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject);

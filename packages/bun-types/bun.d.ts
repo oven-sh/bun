@@ -776,6 +776,14 @@ declare module "bun" {
     NODE_ENV?: string;
     /**
      * Set to change the default timezone at runtime
+     *
+     * The value is a time zone name such as `"America/New_York"`, the same
+     * with a colon before it, or a POSIX value of whole hours such as
+     * `"MSK-3"` (three hours east of UTC). Bun reads a POSIX value from
+     * `"XYZ-14"` (14 hours east) to `"XYZ12"` (12 hours west). For an offset
+     * with minutes or a zone with daylight saving time, use the time zone
+     * name. A standalone executable and a macro do not read a POSIX value
+     * when they start.
      */
     TZ?: string;
   }

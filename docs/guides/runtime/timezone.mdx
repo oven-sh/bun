@@ -36,3 +36,18 @@ process.env.TZ = "America/New_York";
 
 new Date().getHours(); // => 21
 ```
+
+---
+
+`TZ` takes a time zone name, and two other forms that the C library reads.
+
+| Value of `TZ`       | Time zone                            |
+| ------------------- | ------------------------------------ |
+| `America/New_York`  | `America/New_York`                   |
+| `:America/New_York` | `America/New_York`                   |
+| `MSK-3`             | `Etc/GMT-3`, three hours east of UTC |
+| `GMT+3`             | `Etc/GMT+3`, three hours west of UTC |
+
+`MSK-3` and `GMT+3` are POSIX values: a name for the zone, then the hours to add to local time to get UTC. The offset counts west of Greenwich. Bun reads a POSIX value of whole hours from `XYZ-14` (14 hours east of UTC) to `XYZ12` (12 hours west). For an offset with minutes or a zone with daylight saving time, set the time zone name, such as `Asia/Kolkata` or `America/New_York`.
+
+A [standalone executable](/bundler/executables) and a [macro](/bundler/macros) do not read a POSIX value when they start. Set a time zone name for them.

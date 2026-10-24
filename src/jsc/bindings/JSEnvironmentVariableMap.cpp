@@ -31,6 +31,7 @@
 #include "SharedEnvStore.h"
 #include "wtf/NeverDestroyed.h"
 #include "WebCoreJSBuiltins.h"
+#include <wtf/text/MakeString.h>
 
 using namespace JSC;
 
@@ -47,6 +48,9 @@ using namespace WebCore;
 
 void invalidateLiveDateInstanceCaches(JSC::VM& vm)
 {
+    // The walk stops every allocator of the heap. No Date has a local time to drop before one has computed it.
+    if (!vm.dateCache.takeMayHaveCachedLocalGregorianDateTime())
+        return;
     JSC::HeapIterationScope iterationScope(vm.heap);
     vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
         static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell))->invalidateCachedLocalGregorianDateTime();
@@ -61,6 +65,137 @@ void resetDateCachesAfterTimeZoneChange(JSC::VM& vm)
     WTF::timeZoneDidChange();
     vm.dateCache.clearForTimeZoneChange();
     invalidateLiveDateInstanceCaches(vm);
+}
+
+bool setProcessTimeZone(JSC::VM& vm, StringView zoneID)
+{
+    // The longest zone name has 32 characters. ICU makes a copy of a value before it rejects it.
+    static constexpr unsigned maxZoneIDLength = 128;
+    if (zoneID.length() > maxZoneIDLength || !WTF::setTimeZoneOverride(zoneID))
+        return false;
+    resetDateCachesAfterTimeZoneChange(vm);
+    return true;
+}
+
+void clearProcessTimeZone(JSC::VM& vm)
+{
+    WTF::setTimeZoneOverride(String());
+    resetDateCachesAfterTimeZoneChange(vm);
+}
+
+struct PosixStandardTime {
+    int32_t secondsWest { 0 };
+    bool isWholeValue { false };
+};
+
+// A POSIX TZ value starts `std offset`: a name, then the [+-]hh[:mm[:ss]] to add to local time to get UTC.
+static std::optional<PosixStandardTime> parsePosixStandardTime(StringView text)
+{
+    unsigned position = 0;
+    auto peek = [&]() -> char16_t { return position < text.length() ? text[position] : 0; };
+    // The C library reads every digit of a field: "XYZ-003" is three hours, and "GMT+0000" is UTC.
+    auto consumeNumber = [&](int32_t max) -> std::optional<int32_t> {
+        unsigned start = position;
+        int32_t value = 0;
+        for (; isASCIIDigit(peek()); ++position)
+            value = std::min(value * 10 + (text[position] - '0'), max + 1);
+        if (position == start || value > max)
+            return std::nullopt;
+        return value;
+    };
+
+    if (peek() == '<') {
+        unsigned start = ++position;
+        while (isASCIIAlphanumeric(peek()) || peek() == '+' || peek() == '-')
+            ++position;
+        if (position - start < 3 || peek() != '>')
+            return std::nullopt;
+        ++position;
+    } else {
+        while (isASCIIAlpha(peek()))
+            ++position;
+        if (position < 3)
+            return std::nullopt;
+    }
+
+    bool isEast = peek() == '-';
+    if (isEast || peek() == '+')
+        ++position;
+    auto hours = consumeNumber(24);
+    if (!hours)
+        return std::nullopt;
+    int32_t seconds = hours.value() * 3600;
+    for (int32_t unit : { 60, 1 }) {
+        if (peek() != ':')
+            break;
+        ++position;
+        auto part = consumeNumber(59);
+        if (!part)
+            return std::nullopt;
+        seconds += part.value() * unit;
+    }
+    return PosixStandardTime { isEast ? -seconds : seconds, position == text.length() };
+}
+
+// "Etc/GMT-14" to "Etc/GMT+12" are the zones a whole number of hours from UTC. Their sign counts west, as in TZ.
+static String zoneIDForWholeHoursWest(int32_t secondsWest)
+{
+    int32_t hoursWest = secondsWest / 3600;
+    if (secondsWest % 3600 || hoursWest < -14 || hoursWest > 12)
+        return String();
+    return makeString("Etc/GMT"_s, hoursWest > 0 ? '+' : '-', static_cast<unsigned>(std::abs(hoursWest)));
+}
+
+// ICU reads "GMT+3" as three hours east. In TZ it is a POSIX value, three hours west.
+static bool isPosixOffsetFromGMT(StringView value)
+{
+    constexpr auto gmt = "gmt"_s;
+    if (value.length() <= gmt.length() || !startsWithLettersIgnoringASCIICase(value, gmt))
+        return false;
+    char16_t next = value[gmt.length()];
+    return next == '+' || next == '-';
+}
+
+static bool hasProcessTimeZone()
+{
+    Vector<char16_t, 32> zoneID;
+    WTF::getTimeZoneOverride(zoneID);
+    return !zoneID.isEmpty();
+}
+
+void applyTimeZoneFromEnv(JSC::VM& vm, const String& value, TimeZoneWriter writer)
+{
+    StringView name = value;
+    if (name.startsWith(':'))
+        name = name.substring(1);
+    // Only the C library can read the tzfile at a path, and what follows `std offset` in a POSIX value.
+    bool isForHost = value.isEmpty() || name.startsWith('/');
+    if (!isForHost) {
+        // "posix/" and "right/" are directories of tzfiles: a file name follows them, and not a POSIX value.
+        bool isFileName = false;
+        for (auto directory : { "posix/"_s, "right/"_s }) {
+            if (name.startsWith(directory)) {
+                name = name.substring(directory.length());
+                isFileName = true;
+                break;
+            }
+        }
+        if (!name.isEmpty() && !isPosixOffsetFromGMT(name) && setProcessTimeZone(vm, name))
+            return;
+        if (auto standard = isFileName ? std::nullopt : parsePosixStandardTime(name)) {
+            String zoneID = standard->isWholeValue ? zoneIDForWholeHoursWest(standard->secondsWest) : String();
+            if (!zoneID.isNull() && setProcessTimeZone(vm, zoneID))
+                return;
+            isForHost = true;
+        }
+    }
+    // Node gives UTC for an assigned name that no zone has: https://github.com/nodejs/node/blob/v26.3.0/src/node_env_var.cc#L78-L105
+    if (!isForHost && writer == TimeZoneWriter::Assignment && setProcessTimeZone(vm, "UTC"_s))
+        return;
+    // A start has no zone to give back, and the restore of `bun test --isolate` has one only when a file set it.
+    if (writer == TimeZoneWriter::Start && !hasProcessTimeZone())
+        return;
+    clearProcessTimeZone(vm);
 }
 
 const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEnvironmentVariableMap) };
@@ -345,10 +480,8 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
     // the CustomAccessor and existing Dates keep the old offset. put() handles re-set.
     auto* uid = propertyName.publicName();
     if (uid && WTF::equal(uid, "TZ"_s)) {
-        if (shouldApplyTZSideEffect(globalObject)) {
-            WTF::setTimeZoneOverride(String());
-            resetDateCachesAfterTimeZoneChange(vm);
-        }
+        if (shouldApplyTZSideEffect(globalObject))
+            clearProcessTimeZone(vm);
         auto* clientData = WebCore::clientData(vm);
         DeletePropertySlot dataSlot;
         Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
@@ -520,10 +653,8 @@ JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetForDelete, (JSGlobalObject * globalObj
     auto keyView = asString(key)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (WTF::equal(keyView, "TZ"_s)) {
-        if (shouldApplyTZSideEffect(globalObject)) {
-            WTF::setTimeZoneOverride(String());
-            resetDateCachesAfterTimeZoneChange(vm);
-        }
+        if (shouldApplyTZSideEffect(globalObject))
+            clearProcessTimeZone(vm);
     } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
         applyTLSRejectFromString(globalObject, String());
     }
@@ -702,8 +833,7 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
     if (!shouldApplyTZSideEffect(globalObject))
         return;
-    if (value.length() < 32 && WTF::setTimeZoneOverride(value))
-        resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+    applyTimeZoneFromEnv(JSC::getVM(globalObject), value, TimeZoneWriter::Assignment);
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {
@@ -806,8 +936,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     String key(uid);
     String normalizedKey = SharedEnvStore::normalizeKey(key);
     if (normalizedKey == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
-        WTF::setTimeZoneOverride(String());
-        resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+        clearProcessTimeZone(JSC::getVM(globalObject));
     } else if (normalizedKey == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
         applyTLSRejectFromString(globalObject, String());
     } else if (isProxyEnvVarName(JSC::getVM(globalObject), normalizedKey)) {

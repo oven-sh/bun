@@ -390,6 +390,8 @@ struct us_socket_t {
   unsigned char ssl_send_rejected : 1;
   /* The same on a socket without TLS: loop.c closes it after its next event. */
   unsigned char send_rejected : 1;
+  /* LIBUS_SOCKET_WATCH_ONLY, until us_socket_watch_only_start. */
+  unsigned char watch_only : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.

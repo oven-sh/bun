@@ -210,7 +210,10 @@ void us_internal_socket_group_link_socket(struct us_socket_group_t *group, struc
     }
     group->head_sockets = s;
     us_internal_group_touched(group);
-    us_internal_enable_sweep_timer(group->loop);
+    /* A watch-only socket has no timeout to sweep: us_socket_watch_only_start counts it. */
+    if (!s->watch_only) {
+        us_internal_enable_sweep_timer(group->loop);
+    }
 }
 
 void us_internal_socket_group_unlink_socket(struct us_socket_group_t *group, struct us_socket_t *s) {
@@ -233,7 +236,9 @@ void us_internal_socket_group_unlink_socket(struct us_socket_group_t *group, str
             next->prev = prev;
         }
     }
-    us_internal_disable_sweep_timer(group->loop);
+    if (!s->watch_only) {
+        us_internal_disable_sweep_timer(group->loop);
+    }
     us_internal_group_maybe_unlink(group);
 }
 
@@ -361,6 +366,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
     s->send_rejected = 0;
+    s->watch_only = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -542,6 +548,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
     s->send_rejected = 0;
+    s->watch_only = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }

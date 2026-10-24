@@ -2,6 +2,12 @@
 //!
 //! The VM records only a `PendingIpc { fd, advanced }` at env load; the
 //! channel itself (one per JS thread) lives here.
+//!
+//! Nothing reads the channel before the script uses it, so a message that
+//! arrives first waits in the socket for the first listener. When the entry
+//! point starts to evaluate, the channel is put under watch for the parent's
+//! close ([`watch_inherited_channel`]), which a script that never uses the
+//! channel still has to learn of.
 
 use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
@@ -354,9 +360,14 @@ pub(crate) fn send<'a>(
     bun_jsc::mark_binding!();
     let global = cx.global();
     let vm = global.bun_vm().as_mut();
-    // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
-    // `None`); the instance is heap-allocated, not embedded in `vm`.
-    let ipc = get_ipc_instance(vm).map(|i| unsafe { (*i).data() });
+    let ipc = if parent_left_watched_channel() {
+        // The channel is closed, and what the parent sent stays for a first listener.
+        None
+    } else {
+        // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
+        // `None`); the instance is heap-allocated, not embedded in `vm`.
+        get_ipc_instance(vm).map(|i| unsafe { (*i).data() })
+    };
     #[cfg(windows)]
     let peer_pid = {
         let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
@@ -394,6 +405,23 @@ unsafe extern "C" {
 /// Child-side IPC channel: the send queue for the inherited channel fd.
 pub(crate) struct IPCInstance {
     pub data: RefPtr<SendQueue>,
+    state: core::cell::Cell<ChannelState>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum ChannelState {
+    /// The script has not used the channel. The socket polls for nothing
+    /// (`LIBUS_SOCKET_WATCH_ONLY`): the fd is as the parent made it, and other
+    /// processes that share it lose nothing. Not on Windows, where a pipe
+    /// reports its close only to a read.
+    #[cfg_attr(windows, allow(dead_code))]
+    Watched,
+    /// The parent closed the channel while it was watched. The socket stays open
+    /// with what the parent sent, for a first listener. `restore_ref`:
+    /// `vm.channel_ref` was taken back for the close and is wanted again then.
+    ParentLeft { restore_ref: bool },
+    /// In use: the socket reads and writes.
+    Started,
 }
 
 /// One channel per JS thread (a VM is thread-bound; workers re-detect their
@@ -412,7 +440,31 @@ impl IPCInstance {
         &self.data
     }
 
-    /// Only reached from the `get_ipc_instance` error path.
+    /// The parent closed the channel before the script used it.
+    #[inline]
+    fn parent_left(&self) -> bool {
+        matches!(self.state.get(), ChannelState::ParentLeft { .. })
+    }
+
+    /// First use of a watched channel: read it from here on. After the parent's
+    /// close this reads what the parent sent, and then the end of the channel.
+    #[cfg(not(windows))]
+    fn start(&self, vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+        let restore_ref = match self.state.replace(ChannelState::Started) {
+            ChannelState::Started => return,
+            ChannelState::Watched => false,
+            ChannelState::ParentLeft { restore_ref } => restore_ref,
+        };
+        if restore_ref {
+            vm.channel_ref.ref_(bun_io::js_vm_ctx());
+        }
+        if let IPC::SocketUnion::Open(socket) = *self.data().socket.get() {
+            socket.watch_only_start();
+        }
+        self.data().write_version_packet(vm.global());
+    }
+
+    /// Only reached from the error paths of `open_channel` and `get_ipc_instance`.
     ///
     /// # Safety
     /// `this` must have been produced by `IPCInstance::new` (heap::alloc) and
@@ -476,76 +528,196 @@ impl IPCInstance {
     }
 }
 
-/// Returns the initialized IPC instance, lazily creating it from the VM's
-/// recorded `PendingIpc`.
-pub(crate) fn get_ipc_instance(
+/// Makes the instance for `pending` and its socket. `None` leaves no trace of
+/// the attempt.
+#[cfg(not(windows))]
+fn open_channel(
     vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+    pending: bun_jsc::virtual_machine::PendingIpc,
+    state: ChannelState,
 ) -> Option<*mut IPCInstance> {
-    if let Some(inst) = CHANNEL.get() {
-        return Some(inst.as_ptr());
-    }
-    let pending = vm.pending_ipc.take()?;
-    let fd = pending.fd;
     let mode = if pending.advanced {
         IPC::Mode::Advanced
     } else {
         IPC::Mode::Json
     };
-    bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
-
     vm.event_loop_mut().ensure_waker();
+    let loop_ = vm.uws_loop();
+    let group: *mut bun_uws::SocketGroup = vm.rare_data().spawn_ipc_group(loop_);
+
+    let instance = IPCInstance::new(IPCInstance {
+        data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
+        state: core::cell::Cell::new(state),
+    });
+    // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
+    let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
+    // SAFETY: as above.
+    unsafe {
+        (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
+            core::ptr::NonNull::new_unchecked(instance),
+        ))
+    };
+    // SAFETY: `instance` was just boxed above and is non-null.
+    CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
+
+    let options = if state == ChannelState::Watched {
+        bun_uws::LIBUS_SOCKET_WATCH_ONLY
+    } else {
+        0
+    };
+    // SAFETY: `group` is the live per-VM SocketGroup; `send_queue` is
+    // the freshly-allocated SendQueue (root raw pointer, stored in the
+    // socket ext slot for the socket's lifetime).
+    let socket = unsafe {
+        IPC::Socket::from_fd_with_options::<SendQueue>(
+            &mut *group,
+            bun_uws::SocketKind::SpawnIpc,
+            pending.fd,
+            send_queue,
+            true,
+            options,
+        )
+    };
+    let Some(socket) = socket else {
+        // SAFETY: `instance` was produced by `IPCInstance::new`
+        // (heap::alloc) above and is not yet aliased.
+        unsafe { IPCInstance::deinit(instance) };
+        CHANNEL.set(None);
+        return None;
+    };
+    socket.set_timeout(0);
+
+    // SAFETY: `send_queue` is live (owned by `instance`).
+    unsafe { (*send_queue).socket.set(IPC::SocketUnion::Open(socket)) };
+
+    Some(instance)
+}
+
+/// `RuntimeHooks::watch_inherited_ipc`: the entry point starts to evaluate, and
+/// its script may never use the channel. A failure here leaves the channel to
+/// its first use, which reports it.
+pub(crate) fn watch_inherited_channel(vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    #[cfg(not(windows))]
+    {
+        if CHANNEL.get().is_some() {
+            return;
+        }
+        let Some(pending) = vm.pending_ipc else {
+            return;
+        };
+        // `NODE_CHANNEL_FD` can be left over from a process further up, and name
+        // an fd that the script polls for itself.
+        if !bun_sys::fstat(pending.fd).is_ok_and(|stat| bun_sys::S::ISSOCK(stat.st_mode as _)) {
+            return;
+        }
+        bun_core::scoped_log!(IPC, "watchInheritedChannel {:?}", pending.fd);
+        if open_channel(vm, pending, ChannelState::Watched).is_some() {
+            vm.pending_ipc = None;
+        }
+    }
+    #[cfg(windows)]
+    let _ = vm;
+}
+
+/// `on_end` of a socket that may be the watched channel of this process: the
+/// parent closed it, or the socket failed. Nothing is read or closed. `false`
+/// for the end of a channel that is in use.
+pub(crate) fn parent_closed_watched_channel(send_queue: &SendQueue) -> bool {
+    let Some(IPC::SendQueueOwner::Instance(instance)) = send_queue.owner.get() else {
+        return false;
+    };
+    // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
+    let instance = unsafe { instance.as_ref() };
+    match instance.state.get() {
+        ChannelState::Started => false,
+        ChannelState::ParentLeft { .. } => true,
+        ChannelState::Watched => {
+            bun_core::scoped_log!(IPC, "the parent closed the watched channel");
+            let vm = bun_jsc::virtual_machine::VirtualMachine::get().as_mut();
+            let restore_ref = vm.channel_ref.is_active();
+            // Not `disable()`: a first listener refs the channel again, to read
+            // what the parent sent.
+            vm.channel_ref.unref(bun_io::js_vm_ctx());
+            instance.state.set(ChannelState::ParentLeft { restore_ref });
+            true
+        }
+    }
+}
+
+/// The parent closed the channel of this process before the script used it.
+fn parent_left_watched_channel() -> bool {
+    // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
+    CHANNEL
+        .get()
+        .is_some_and(|inst| unsafe { inst.as_ref() }.parent_left())
+}
+
+/// `process.channel.ref()` / `unref()` after the parent closed a channel that
+/// the script has not used: nothing is left to wait for, so the call only
+/// decides whether a first listener gets the ref. `false` in any other state.
+pub(crate) fn set_ref_after_parent_left(enabled: bool) -> bool {
+    let Some(inst) = CHANNEL.get() else {
+        return false;
+    };
+    // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
+    let inst = unsafe { inst.as_ref() };
+    if !inst.parent_left() {
+        return false;
+    }
+    inst.state.set(ChannelState::ParentLeft {
+        restore_ref: enabled,
+    });
+    true
+}
+
+/// node:cluster set this worker up: the channel is in use from here on.
+pub(crate) fn start_for_cluster_worker(vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    let parent_left = parent_left_watched_channel();
+    let _ = get_ipc_instance(vm);
+    if parent_left {
+        // A worker exits on 'disconnect'. Its listener for it does not ref the
+        // channel, and nothing is sent to a primary that left, so hold the loop
+        // until the end of the channel is read.
+        vm.channel_ref.ref_(bun_io::js_vm_ctx());
+    }
+}
+
+/// Returns the IPC instance for a use of the channel: it reads and writes from
+/// here on. Creates it from the VM's recorded `PendingIpc` when the channel is
+/// not under watch yet.
+pub(crate) fn get_ipc_instance(
+    vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+) -> Option<*mut IPCInstance> {
+    if let Some(inst) = CHANNEL.get() {
+        #[cfg(not(windows))]
+        // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
+        unsafe { inst.as_ref() }.start(vm);
+        return Some(inst.as_ptr());
+    }
+    let pending = vm.pending_ipc.take()?;
+    let fd = pending.fd;
+    bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
 
     #[cfg(not(windows))]
     let instance: *mut IPCInstance = {
-        let loop_ = vm.uws_loop();
-        let group: *mut bun_uws::SocketGroup = vm.rare_data().spawn_ipc_group(loop_);
-
-        let instance = IPCInstance::new(IPCInstance {
-            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
-        });
-        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
-        let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
-        // SAFETY: as above.
-        unsafe {
-            (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
-                core::ptr::NonNull::new_unchecked(instance),
-            ))
-        };
-        // SAFETY: `instance` was just boxed above and is non-null.
-        CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
-
-        // SAFETY: `group` is the live per-VM SocketGroup; `send_queue` is
-        // the freshly-allocated SendQueue (root raw pointer, stored in the
-        // socket ext slot for the socket's lifetime).
-        let socket = unsafe {
-            IPC::Socket::from_fd::<SendQueue>(
-                &mut *group,
-                bun_uws::SocketKind::SpawnIpc,
-                fd,
-                send_queue,
-                true,
-            )
-        };
-        let Some(socket) = socket else {
-            // SAFETY: `instance` was produced by `IPCInstance::new`
-            // (heap::alloc) above and is not yet aliased.
-            unsafe { IPCInstance::deinit(instance) };
-            CHANNEL.set(None);
+        let Some(instance) = open_channel(vm, pending, ChannelState::Started) else {
             bun_core::warn!("Unable to start IPC socket");
             return None;
         };
-        socket.set_timeout(0);
-
-        // SAFETY: `send_queue` is live (owned by `instance`).
-        unsafe { (*send_queue).socket.set(IPC::SocketUnion::Open(socket)) };
-
         instance
     };
 
     #[cfg(windows)]
     let instance: *mut IPCInstance = {
+        let mode = if pending.advanced {
+            IPC::Mode::Advanced
+        } else {
+            IPC::Mode::Json
+        };
+        vm.event_loop_mut().ensure_waker();
         let instance = IPCInstance::new(IPCInstance {
             data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
+            state: core::cell::Cell::new(ChannelState::Started),
         });
         // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
         let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
@@ -584,7 +756,8 @@ pub(crate) fn get_ipc_instance(
 pub(crate) fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
     if let Some(inst) = CHANNEL.get() {
         // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
-        return unsafe { inst.as_ref().data().is_connected() };
+        let inst = unsafe { inst.as_ref() };
+        return !inst.parent_left() && inst.data().is_connected();
     }
     global.bun_vm().as_mut().pending_ipc.is_some()
 }
@@ -595,9 +768,9 @@ pub(crate) fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
     CHANNEL.get().is_some() || global.bun_vm().as_mut().pending_ipc.is_some()
 }
 
-/// When IPC environment variables are passed, the socket is not immediately opened,
+/// When IPC environment variables are passed, the socket is not immediately read,
 /// but rather we wait for process.on('message') or process.send() to be called, THEN
-/// we open the socket. This is to avoid missing messages at the start of the program.
+/// we read the socket. This is to avoid missing messages at the start of the program.
 // HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
 pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
     let _ = get_ipc_instance(global.bun_vm().as_mut());

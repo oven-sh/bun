@@ -55,7 +55,9 @@ pub(crate) fn on_internal_message_child<'a>(
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(worker.to_js(), global);
     singleton.cb = StrongOptional::create(callback.to_js(), global);
-    singleton.flush(global)
+    singleton.flush(global)?;
+    crate::ipc_host::start_for_cluster_worker(global.bun_vm().as_mut());
+    Ok(())
 }
 
 pub(crate) fn handle_internal_message_child(
@@ -269,6 +271,9 @@ pub(crate) fn handle_internal_message_primary(
 pub(crate) fn set_ref(enabled: bool) {
     let vm = VirtualMachine::get().as_mut();
     vm.channel_ref_overridden = true;
+    if crate::ipc_host::set_ref_after_parent_left(enabled) {
+        return;
+    }
     if enabled {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
     } else {

@@ -525,6 +525,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Ends `LIBUS_SOCKET_WATCH_ONLY` on a socket from [`Self::from_fd_with_options`]:
+    /// sets the fd up and starts the reads.
+    pub fn watch_only_start(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).watch_only_start();
+        }
+    }
+
     pub fn set_no_delay(&self, enabled: bool) -> bool {
         match self.socket {
             InternalSocket::Connected(s) => {
@@ -766,6 +774,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         this: *mut This,
         is_ipc: bool,
     ) -> Option<Self> {
+        Self::from_fd_with_options(g, k, handle, this, is_ipc, 0)
+    }
+
+    /// [`Self::from_fd`] with `LIBUS_SOCKET_*` open options.
+    pub fn from_fd_with_options<This>(
+        g: &mut SocketGroup,
+        k: SocketKind,
+        handle: Fd,
+        this: *mut This,
+        is_ipc: bool,
+        options: c_int,
+    ) -> Option<Self> {
         // The dispatch trampolines read the ext slot as `Option<NonNull<_>>`
         // (8 bytes, null-niche optimized), so size and write must match that
         // layout — NOT `Option<*mut This>` (16 bytes).
@@ -775,7 +795,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             None,
             ext_size,
             handle.native() as LIBUS_SOCKET_DESCRIPTOR,
-            0,
+            options,
             is_ipc,
         );
         if raw.is_null() {

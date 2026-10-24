@@ -166,6 +166,12 @@ enum {
      * for connects, and ignored for TLS sockets: the handshake needs the reads, the owner pauses
      * those sockets itself. */
     LIBUS_SOCKET_OPEN_PAUSED = 256,
+    /* us_socket_from_fd takes an fd that other processes may share and that its owner may never use:
+     * the fd keeps its file status flags, its close-on-exec flag and its socket options, and nothing
+     * reads it. The socket starts paused and polls for nothing, so its one event is the peer's hangup
+     * (or a socket error). That is reported as on_end, and the socket stays open with what is unread.
+     * It has no timeout. us_socket_watch_only_start ends this state. Ignored for TLS sockets. */
+    LIBUS_SOCKET_WATCH_ONLY = 512,
 };
 
 /* Library types publicly available */
@@ -768,6 +774,9 @@ int us_socket_set_tos(us_socket_r s, int tos);
 int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
+/* For a socket from LIBUS_SOCKET_WATCH_ONLY: sets the fd up as us_socket_from_fd does for any other
+ * socket, and resumes it. */
+void us_socket_watch_only_start(us_socket_r s);
 
 #ifdef __cplusplus
 }

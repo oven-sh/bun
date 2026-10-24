@@ -596,6 +596,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
                         s->send_rejected = 0;
+                        s->watch_only = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -638,6 +639,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             s = us_internal_socket_follow_adopted(s);
             /* The group can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->group->loop;
+            /* A watch-only socket polls for nothing, so this is its peer's hangup or a socket error. It is
+             * reported as on_end, and nothing here reads or closes the fd: what is unread stays in the kernel
+             * for the owner that calls us_socket_watch_only_start. kqueue can report it again. */
+            if (UNLIKELY(!events) && s->watch_only) {
+#ifdef LIBUS_USE_EPOLL
+                /* EPOLLHUP and EPOLLERR are unmaskable: leave epoll, as a paused socket that hung up does below. */
+                us_poll_stop(&s->p, loop);
+                s->p.state.poll_type = us_internal_poll_type(&s->p);
+#endif
+                us_dispatch_end(s);
+                return;
+            }
             /* Captured before the read loop folds recv()==0 into `eof`; error events keep the error path. */
             const int hangup = (eof & LIBUS_POLL_HANGUP) && !error;
             /* Set once recv() returns 0 below: the only proof that the peer's stream ended with a FIN. The

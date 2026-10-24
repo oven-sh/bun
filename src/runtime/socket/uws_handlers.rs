@@ -746,6 +746,9 @@ impl VHandler for SpawnIPC {
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = ext.owner_ref() else { return };
+        if crate::ipc_host::parent_closed_watched_channel(this) {
+            return;
+        }
         IpcH::on_end(this, IpcS::from(s));
     }
 }

@@ -1512,6 +1512,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     generate_entry_point,
     load_preloads,
     ensure_debugger,
+    watch_inherited_ipc: crate::ipc_host::watch_inherited_channel,
     auto_tick,
     auto_tick_active,
     print_exception,

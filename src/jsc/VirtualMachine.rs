@@ -279,6 +279,10 @@ pub struct VirtualMachine {
     /// does not count). What is still pending on the entry promise after that
     /// is a top-level await.
     pub entry_evaluation_started: bool,
+    /// The `bun:main` load in progress has to report `entry_evaluation_started`
+    /// although nothing waits on it: `pending_ipc` gets its watch then (see
+    /// `RuntimeHooks::watch_inherited_ipc`).
+    pub watch_ipc_at_entry_evaluation: bool,
 
     pub(crate) had_errors: bool,
 
@@ -787,13 +791,19 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
         vm.entry_evaluation_started = true;
+        if core::mem::take(&mut vm.watch_ipc_at_entry_evaluation) {
+            if let Some(hooks) = runtime_hooks() {
+                (hooks.watch_inherited_ipc)(vm);
+            }
+        }
     }
 
-    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
-    /// any other VM answers `true` so the hook's registry probe never runs there.
+    /// A worker's start waits on this (`wait_for_worker_entry_evaluation`), and a
+    /// `bun:main` load with `watch_ipc_at_entry_evaluation` acts on it. Any other VM
+    /// answers `true` so the hook's registry probe never runs there.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
-        vm.entry_evaluation_started || vm.worker.is_none()
+        vm.entry_evaluation_started || (vm.worker.is_none() && !vm.watch_ipc_at_entry_evaluation)
     }
 
     /// The module-registry key of the current entry load's root: the
@@ -2877,6 +2887,9 @@ pub struct RuntimeHooks {
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
+    /// The entry point starts to evaluate with `pending_ipc` set: put the channel
+    /// under watch for the parent's close. Nothing reads it before its first use.
+    pub watch_inherited_ipc: fn(vm: &mut VirtualMachine),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
     /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
@@ -3658,6 +3671,7 @@ impl VirtualMachine {
         // Preloads (evaluated above, synchronously) are not the entry: only
         // module evaluations from here on mark the entry graph as executing.
         self.entry_evaluation_started = false;
+        self.watch_ipc_at_entry_evaluation = false;
         let builtin = match self.main_entry_point {
             MainEntryPoint::File => None,
             MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
@@ -3680,6 +3694,10 @@ impl VirtualMachine {
             }
             p
         } else if !self.transpiler.options.disable_transpilation {
+            // A Windows pipe reports its close only to a read, so there is nothing to watch.
+            // `is_main_thread` the field: a `bun lint` plugin VM also has no worker.
+            self.watch_ipc_at_entry_evaluation =
+                cfg!(not(windows)) && self.is_main_thread && self.pending_ipc.is_some();
             let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
                 .map(NonNull::as_ptr)

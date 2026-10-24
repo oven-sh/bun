@@ -453,11 +453,29 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
     return written < 0 ? 0 : written;
 }
 
+static void us_internal_socket_configure_fd(LIBUS_SOCKET_DESCRIPTOR fd) {
+    /* We always use nodelay */
+    bsd_socket_nodelay(fd, 1);
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
+}
+
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
-    int open_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
-    int rc = us_poll_start_rc(p1, group->loop, (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE);
+    int watch_only = (options & LIBUS_SOCKET_WATCH_ONLY) && !ssl_ctx;
+    int open_paused = watch_only || ((options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx);
+    int events = (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE;
+    if (watch_only) {
+        /* No event is asked for: the kernel reports a hangup and an error without that. */
+        events = 0;
+#ifdef LIBUS_USE_EPOLL
+        /* A script can close this fd by number while another process holds the socket. The entry is then
+         * out of reach of EPOLL_CTL_DEL, and a level-triggered hangup would be reported for ever. */
+        events |= EPOLLONESHOT;
+#endif
+    }
+    int rc = us_poll_start_rc(p1, group->loop, events);
     if (rc != 0) {
         us_poll_free(p1, group->loop);
         return 0;
@@ -480,12 +498,12 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
     s->send_rejected = 0;
+    s->watch_only = watch_only;
     s->connect_state = NULL;
 
-    /* We always use nodelay */
-    bsd_socket_nodelay(fd, 1);
-    apple_no_sigpipe(fd);
-    bsd_set_nonblocking(fd);
+    if (!watch_only) {
+        us_internal_socket_configure_fd(fd);
+    }
     us_internal_socket_group_link_socket(group, s);
 
     /* Bun.connect({fd, tls}) hands us an already-connected fd that should
@@ -919,4 +937,12 @@ void us_socket_resume(struct us_socket_t *s) {
         int err = LIBUS_ERR;
         us_internal_loop_close_unresumable_socket(s->group->loop, s, err > 2 ? err : LIBUS_ECONNRESET);
     }
+}
+
+void us_socket_watch_only_start(struct us_socket_t *s) {
+    if (!s->watch_only || us_socket_is_closed(s)) return;
+    s->watch_only = 0;
+    us_internal_enable_sweep_timer(s->group->loop);
+    us_internal_socket_configure_fd(us_poll_fd(&s->p));
+    us_socket_resume(s);
 }

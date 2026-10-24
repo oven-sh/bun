@@ -1305,3 +1305,121 @@ test(
   },
   timeout,
 );
+
+// A worker terminated while JSC is still tier-up compiling (OMG) a large Wasm function: the compile ran
+// to the end on a compiler thread (about 50 s for QuickJS), the worker thread waited for it in ~VM, and
+// the parent process could not exit until then. The compile now stops at its next phase or fixpoint
+// check once the plan is cancelled. The fixture builds one function whose OMG compile takes over 15 s
+// in a release build (4000 locals, a loop with a 1300-way br_table), calls it until the tier-up is
+// requested and the compile is running, and the parent then terminates the worker and exits.
+test(
+  "worker terminate during a long Wasm tier-up compile does not keep the process alive",
+  async () => {
+    using dir = tempDir("worker-terminate-wasm-tier-up", {
+      "worker.mjs": `
+        function makeModule(locals, cases, touches) {
+          const out = [];
+          const uleb = (v, o = out) => {
+            do {
+              let b = v & 0x7f;
+              v >>>= 7;
+              if (v) b |= 0x80;
+              o.push(b);
+            } while (v);
+          };
+          const section = (id, content) => {
+            out.push(id);
+            uleb(content.length);
+            out.push(...content);
+          };
+          out.push(0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00);
+          section(1, [0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f]); // type 0: (i32) -> i32
+          section(3, [0x01, 0x00]);
+          section(7, [0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00]); // export "run" = func 0
+
+          // local 0: n (param), local 1: i, locals 2..: state
+          const body = [];
+          uleb(1, body);
+          uleb(locals + 1, body);
+          body.push(0x7f);
+          const L = k => 2 + (k % locals);
+          body.push(0x02, 0x40); // block $exit
+          body.push(0x03, 0x40); // loop $top
+          body.push(0x20, 0x01, 0x20, 0x00, 0x4e, 0x0d, 0x01); // if (i >= n) br $exit
+          for (let c = 0; c < cases; c++) body.push(0x02, 0x40); // one block per case
+          body.push(0x20, 0x01, 0x41); // br_table (i & (cases - 1))
+          uleb(cases - 1, body);
+          body.push(0x71, 0x0e);
+          uleb(cases, body);
+          for (let c = 0; c < cases; c++) uleb(c, body);
+          uleb(cases - 1, body);
+          for (let c = 0; c < cases; c++) {
+            body.push(0x0b); // end of case block c: its body follows
+            for (let t = 0; t < touches; t++) {
+              const a = L(c * touches + t);
+              const b = L(c * 7 + t * 13 + 1);
+              body.push(0x20);
+              uleb(a, body);
+              body.push(0x20);
+              uleb(b, body);
+              body.push(0x20, 0x01, 0x6c, 0x6a, 0x21); // local[a] = local[a] + local[b] * i
+              uleb(a, body);
+            }
+            if (c < cases - 1) {
+              body.push(0x0c); // br past the other cases
+              uleb(cases - 2 - c, body);
+            }
+          }
+          body.push(0x20, 0x01, 0x41, 0x01, 0x6a, 0x21, 0x01, 0x0c, 0x00); // i++; br $top
+          body.push(0x0b, 0x0b); // end loop, end $exit
+          body.push(0x20, 0x02, 0x0b); // return local 2
+
+          const code = [];
+          uleb(1, code);
+          uleb(body.length, code);
+          code.push(...body);
+          section(10, code);
+          return new Uint8Array(out);
+        }
+
+        const { run } = new WebAssembly.Instance(new WebAssembly.Module(makeModule(4000, 1300, 5))).exports;
+        // Call until the loop back edges request the OMG tier-up, then keep the worker busy for a
+        // while longer so the compiler thread has picked the plan up before terminate() arrives.
+        const start = performance.now();
+        while (performance.now() - start < Number(process.env.WARMUP_MS)) run(100000);
+        postMessage("compiling");
+      `,
+      "main.mjs": `
+        const w = new Worker(new URL("./worker.mjs", import.meta.url));
+        w.onerror = e => { console.error(e.message); process.exit(1); };
+        await new Promise(resolve => (w.onmessage = resolve));
+        w.terminate();
+        console.log("terminated");
+      `,
+    });
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, WARMUP_MS: String(slow ? 8000 : 2000) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = proc.stdout.text();
+    const stderr = proc.stderr.text();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"did not exit">(resolve => {
+      timer = setTimeout(() => resolve("did not exit"), slow ? 60_000 : 10_000);
+    });
+    // The process must exit soon after "terminated": the worker's ~VM waits only until the cancelled
+    // compile reaches its next check. Without the fix it waits for the whole compile.
+    const exited = await Promise.race([proc.exited, deadline]);
+    clearTimeout(timer);
+    if (exited === "did not exit") proc.kill();
+    expect({ stdout: await stdout, stderr: await stderr, exited }).toEqual({
+      stdout: "terminated\n",
+      stderr: "",
+      exited: 0,
+    });
+  },
+  slow ? 120_000 : 40_000,
+);

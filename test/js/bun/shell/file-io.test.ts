@@ -1,3 +1,4 @@
+import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import * as fs from "node:fs";
@@ -259,5 +260,123 @@ test.concurrent("write completion survives dropping the redirect writer's last r
     stdout: "hello\n",
     stderr: expect.any(String),
     exitCode: 0,
+  });
+});
+
+// An external command redirected to a Response that wraps Bun.file(path) opens
+// the file like `> path` does, so the operator decides: read, replace or append.
+describe("external command redirected to a Response that wraps a file", () => {
+  const OLD = "OLD-OLD-OLD-OLD\n";
+  const writeStdout = `process.stdout.write("new\\n")`;
+  const writeStderr = `process.stderr.write("new\\n")`;
+  const writeBoth = `process.stdout.write("out\\n"); process.stderr.write("err\\n")`;
+  const echoStdin = "process.stdin.pipe(process.stdout)";
+
+  test.concurrent("> replaces the file", async () => {
+    using dir = tempDir("shell-response-redirect", { "out.txt": OLD });
+    const out = join(String(dir), "out.txt");
+    const { exitCode } = await $`${bunExe()} -e ${writeStdout} > ${new Response(Bun.file(out))}`
+      .env(bunEnv)
+      .nothrow()
+      .quiet();
+    expect(fs.readFileSync(out, "utf8")).toBe("new\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("2> replaces the file", async () => {
+    using dir = tempDir("shell-response-redirect", { "err.txt": OLD });
+    const err = join(String(dir), "err.txt");
+    const { exitCode } = await $`${bunExe()} -e ${writeStderr} 2> ${new Response(Bun.file(err))}`
+      .env(bunEnv)
+      .nothrow()
+      .quiet();
+    expect(fs.readFileSync(err, "utf8")).toBe("new\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(">> appends to the file", async () => {
+    using dir = tempDir("shell-response-redirect", { "out.txt": OLD });
+    const out = join(String(dir), "out.txt");
+    const { exitCode } = await $`${bunExe()} -e ${writeStdout} >> ${new Response(Bun.file(out))}`
+      .env(bunEnv)
+      .nothrow()
+      .quiet();
+    expect(fs.readFileSync(out, "utf8")).toBe(OLD + "new\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("&> sends stdout and stderr to the file", async () => {
+    using dir = tempDir("shell-response-redirect", { "both.txt": OLD });
+    const both = join(String(dir), "both.txt");
+    const { exitCode } = await $`${bunExe()} -e ${writeBoth} &> ${new Response(Bun.file(both))}`
+      .env(bunEnv)
+      .nothrow()
+      .quiet();
+    expect(fs.readFileSync(both, "utf8").split("\n").sort()).toEqual(["", "err", "out"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("< reads the file", async () => {
+    using dir = tempDir("shell-response-redirect", { "in.txt": OLD });
+    const input = join(String(dir), "in.txt");
+    const { stdout, exitCode } = await $`${bunExe()} -e ${echoStdin} < ${new Response(Bun.file(input))}`
+      .env(bunEnv)
+      .nothrow()
+      .quiet();
+    expect({ stdout: stdout.toString(), file: fs.readFileSync(input, "utf8") }).toEqual({ stdout: OLD, file: OLD });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("< fails on a file that does not exist and does not create it", async () => {
+    using dir = tempDir("shell-response-redirect", {});
+    const missing = join(String(dir), "missing.txt");
+    const { stdout, stderr, exitCode } = await $`${bunExe()} -e ${echoStdin} < ${new Response(Bun.file(missing))}`
+      .env(bunEnv)
+      .nothrow()
+      .quiet();
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), created: fs.existsSync(missing) }).toEqual({
+      stdout: "",
+      stderr: `bun: No such file or directory: ${missing}`,
+      created: false,
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  // Like `> out.txt` and `> ${Bun.file("out.txt")}`: the cwd of the shell, not the cwd of the process.
+  test.concurrent("a relative path resolves against the cwd of the shell", async () => {
+    using dir = tempDir("shell-response-redirect", {
+      "process-cwd/in.txt": "from the cwd of the process\n",
+      "shell-cwd/in.txt": "from the cwd of the shell\n",
+      "process-cwd/redirect-fixture.ts": /* ts */ `
+        import { $ } from "bun";
+        $.cwd(process.argv[2]);
+        await $\`\${process.execPath} -e \${'process.stdout.write("new\\\\n")'} > \${new Response(Bun.file("out.txt"))}\`.quiet();
+        const { stdout } = await $\`\${process.execPath} -e \${"process.stdin.pipe(process.stdout)"} < \${new Response(Bun.file("in.txt"))}\`.quiet();
+        process.stdout.write(stdout);
+      `,
+    });
+    const processCwd = join(String(dir), "process-cwd");
+    const shellCwd = join(String(dir), "shell-cwd");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "redirect-fixture.ts", shellCwd],
+      cwd: processCwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      stderr,
+      inShellCwd: fs.existsSync(join(shellCwd, "out.txt")) && fs.readFileSync(join(shellCwd, "out.txt"), "utf8"),
+      inProcessCwd: fs.existsSync(join(processCwd, "out.txt")),
+      exitCode,
+    }).toEqual({
+      stdout: "from the cwd of the shell\n",
+      stderr: "",
+      inShellCwd: "new\n",
+      inProcessCwd: false,
+      exitCode: 0,
+    });
   });
 });

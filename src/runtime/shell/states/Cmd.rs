@@ -780,17 +780,28 @@ impl Cmd {
                     // `get_body_value` is `&self`.
                     let req = unsafe { &*req };
                     req.get_body_value().to_blob_if_possible();
+                    let body = req.get_body_value().use_as_any_blob();
+                    // A file with a path opens like `> path`, so the operator decides the
+                    // flags. `Stdio::Path` would open it with the flags of `Bun.spawn`.
+                    if let Some(path) = file_path(&body) {
+                        let mut path_buf = path.to_vec();
+                        path_buf.push(0);
+                        let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
+                        return Ok(Self::open_redirect_path(interp, this, stdio, flags, path));
+                    }
+                    let mut body = Some(body);
+                    let mut next_blob = || {
+                        body.take()
+                            .unwrap_or_else(|| req.get_body_value().use_as_any_blob())
+                    };
                     if flags.stdin() {
-                        let b = req.get_body_value().use_as_any_blob();
-                        stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
+                        stdio[STDIN_NO].extract_blob(global, next_blob(), STDIN_NO as i32)?;
                     }
                     if flags.stdout() {
-                        let b = req.get_body_value().use_as_any_blob();
-                        stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
+                        stdio[STDOUT_NO].extract_blob(global, next_blob(), STDOUT_NO as i32)?;
                     }
                     if flags.stderr() {
-                        let b = req.get_body_value().use_as_any_blob();
-                        stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
+                        stdio[STDERR_NO].extract_blob(global, next_blob(), STDERR_NO as i32)?;
                     }
                 } else {
                     return Err(global.throw(format_args!(
@@ -826,32 +837,41 @@ impl Cmd {
                 };
                 let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
-                let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
-                let redirfd = match crate::shell::interpreter::shell_openat(
-                    cwd_fd,
-                    path,
-                    flags.to_flags(),
-                    0o666,
-                ) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        let sys_err = e.to_shell_system_error();
-                        return Ok(Some(Builtin::cmd_write_failing_error(
-                            interp,
-                            this,
-                            format_args!(
-                                "bun: {}: {}",
-                                sys_err.message,
-                                bstr::BStr::new(path.as_bytes())
-                            ),
-                        )));
-                    }
-                };
-                interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
-                set_stdio_from_redirect(stdio, flags, redirfd);
+                return Ok(Self::open_redirect_path(interp, this, stdio, flags, path));
             }
         }
         Ok(None)
+    }
+
+    /// Opens `path` with the flags of the redirect operator and gives the fd to
+    /// the redirected slots. Returns the queued error write when the open fails.
+    fn open_redirect_path(
+        interp: &Interpreter,
+        this: NodeId,
+        stdio: &mut [Stdio; 3],
+        flags: ast::RedirectFlags,
+        path: &bun_core::ZStr,
+    ) -> Option<Yield> {
+        let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
+        let redirfd =
+            match crate::shell::interpreter::shell_openat(cwd_fd, path, flags.to_flags(), 0o666) {
+                Ok(f) => f,
+                Err(e) => {
+                    let sys_err = e.to_shell_system_error();
+                    return Some(Builtin::cmd_write_failing_error(
+                        interp,
+                        this,
+                        format_args!(
+                            "bun: {}: {}",
+                            sys_err.message,
+                            bstr::BStr::new(path.as_bytes())
+                        ),
+                    ));
+                }
+            };
+        interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
+        set_stdio_from_redirect(stdio, flags, redirfd);
+        None
     }
 
     /// Called by `Builtin::done` / subprocess exit handler.
@@ -1121,6 +1141,20 @@ fn is_assignment_word(atom: &ast::Atom) -> bool {
         && name[1..]
             .iter()
             .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// The path of a blob that `Stdio::extract_blob` lowers to `Stdio::Path`.
+fn file_path(blob: &crate::webcore::blob::Any) -> Option<&[u8]> {
+    if !blob.needs_to_read_file() {
+        return None;
+    }
+    let crate::webcore::blob::store::Data::File(file) = &blob.store()?.data else {
+        return None;
+    };
+    match &file.pathlike {
+        crate::node::PathOrFileDescriptor::Path(path) => Some(path.slice()),
+        crate::node::PathOrFileDescriptor::Fd(_) => None,
+    }
 }
 
 fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd: bun_sys::Fd) {

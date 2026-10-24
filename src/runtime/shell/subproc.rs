@@ -632,6 +632,9 @@ impl ShellSubprocess {
             true
         };
 
+        // The shell opens a redirect to a path itself, with the operator's flags.
+        debug_assert!(!stdio_guard.iter().any(|s| matches!(s, Stdio::Path(_))));
+
         // Hoist asSpawnOption results so a later one failing doesn't strand an earlier
         // Windows *uv.Pipe in an unbound temporary inside the struct initializer.
         // `mut` only for the Windows-only `.deinit()` rollback below.

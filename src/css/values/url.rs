@@ -14,6 +14,7 @@ pub struct Url {
 
 impl Url {
     pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
+        input.skip_whitespace();
         let start_pos = input.position();
         let loc = input.current_source_location();
         let url = input.expect_url_cloned()?;

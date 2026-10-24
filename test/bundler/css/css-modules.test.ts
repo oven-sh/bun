@@ -555,6 +555,117 @@ describe("css", () => {
     },
   });
 
+  // A name in `list-style` or `list-style-type` refers to an `@counter-style`
+  // rule. It must get the SAME hashed name as the rule, otherwise the list
+  // uses a counter style that no rule defines.
+  itBundled("css-module/CounterStyleNameScopedToListStyle", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.early);
+      `,
+      "/styles.module.css": `
+        .early { list-style: thumbs; }
+        @counter-style thumbs { system: cyclic; symbols: "+"; suffix: " "; }
+        .shorthand { list-style: thumbs inside; }
+        .longhand { list-style-type: thumbs; }
+        .none { list-style: none thumbs; }
+        .image { list-style: thumbs linear-gradient(red, blue) inside; }
+        .important { list-style-type: thumbs !important; }
+        .upper { LIST-STYLE-TYPE: thumbs; }
+        @media (min-width: 1px) {
+          @counter-style stars { system: cyclic; symbols: "*"; }
+          .nested { list-style: stars; }
+        }
+        @page { list-style-type: thumbs; }
+        @keyframes swap { to { list-style-type: thumbs; } }
+        @container style(list-style-type: thumbs) { .query { color: red; } }
+        .elsewhere { list-style-type: checks; }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const early = css.match(/\.early_([A-Za-z0-9_-]+)\s*\{/);
+      expect(early, ".early should be scoped").not.toBeNull();
+      const hash = early![1];
+
+      expect(css).toContain(`@counter-style thumbs_${hash} {`);
+      expect(css).toContain(`@counter-style stars_${hash} {`);
+
+      const declarations = css
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line.startsWith("list-style"));
+      expect(declarations).toEqual([
+        // Before the rule.
+        `list-style: thumbs_${hash};`,
+        `list-style: inside thumbs_${hash};`,
+        `list-style-type: thumbs_${hash};`,
+        `list-style: thumbs_${hash};`,
+        `list-style: inside linear-gradient(red, #00f) thumbs_${hash};`,
+        `list-style-type: thumbs_${hash} !important;`,
+        `list-style-type: thumbs_${hash};`,
+        // In @media, with a rule that is in @media too.
+        `list-style: stars_${hash};`,
+        // In @page and in a keyframe.
+        `list-style-type: thumbs_${hash};`,
+        `list-style-type: thumbs_${hash};`,
+        // A name with no rule in the file gets the hash too, as a keyframes name does.
+        `list-style-type: checks_${hash};`,
+      ]);
+      expect(css).toContain(`@container style(list-style-type: thumbs_${hash}) {`);
+    },
+  });
+
+  // A value that names no `@counter-style` rule, and a value the grammar
+  // rejects, stay as written.
+  itBundled("css-module/ListStyleValuesNotScoped", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.predefined);
+      `,
+      "/styles.module.css": `
+        @counter-style thumbs { system: cyclic; symbols: "+"; }
+        .predefined { list-style-type: lower-roman; }
+        .legacy { list-style-type: cjk-ideographic; }
+        .keywords { list-style: inside square; }
+        .none { list-style: none; }
+        .string { list-style-type: "thumbs"; }
+        .symbols { list-style-type: symbols(cyclic "thumbs"); }
+        .wide { list-style-type: inherit; }
+        .reserved { list-style: default; }
+        .variable { list-style: var(--position) thumbs; }
+        .custom { --marker: thumbs; list-style-type: var(--marker); }
+        .twice { list-style: thumbs thumbs; }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const declarations = api
+        .readFile("/out/entry.css")
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line.startsWith("list-style"));
+      expect(declarations).toEqual([
+        "list-style-type: lower-roman;",
+        "list-style-type: cjk-ideographic;",
+        "list-style: inside square;",
+        "list-style: none;",
+        'list-style-type: "thumbs";',
+        'list-style-type: symbols(cyclic "thumbs");',
+        "list-style-type: inherit;",
+        "list-style: default;",
+        "list-style: var(--position) thumbs;",
+        "list-style-type: var(--marker);",
+        "list-style: thumbs thumbs;",
+      ]);
+    },
+  });
+
   itBundled("css-module/ExportsMapMultipleClassesAndComposes", {
     files: {
       "/entry.js": `
@@ -656,6 +767,36 @@ test("css-module/NoBundleHashesByRelativePath", async () => {
   expect(hashA).not.toBe(hashB);
 });
 
+// `bun build --no-bundle` and `Bun.build` with a CSS entry point print the
+// `@counter-style` rule and its references with one name too.
+test("css-module/CounterStyleNameScopedNoBundleAndBunBuild", async () => {
+  using dir = tempDir("css-module-counter-style", {
+    "styles.module.css": `
+      @counter-style thumbs { system: cyclic; symbols: "+" }
+      .list { list-style: thumbs inside }
+      .type { list-style-type: thumbs }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "--minify", "styles.module.css"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const built = await Bun.build({ entrypoints: [join(String(dir), "styles.module.css")], minify: true });
+
+  const printed = [stdout, await built.outputs[0].text()].map(css => css.trim());
+  const expected = printed.map(css => {
+    const hash = css.match(/\.list_([A-Za-z0-9_-]+)\{/)?.[1];
+    return `@counter-style thumbs_${hash}{system:cyclic;symbols:"+"}.list_${hash}{list-style:inside thumbs_${hash}}.type_${hash}{list-style-type:thumbs_${hash}}`;
+  });
+  expect(printed).toEqual(expected);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("a resolve error in CSS covers the whole url() and composes path", async () => {
   using dir = tempDir("css-resolve-error-range", {
     "a.module.css": [
@@ -671,4 +812,45 @@ test("a resolve error in CSS covers the whole url() and composes path", async ()
     position!.lineText.slice(position!.column - 1, position!.column - 1 + position!.length),
   );
   expect(ranges).toEqual([`url('/fonts/missing.woff2')`, `url("./missing.png")`, `'./missing.css'`]);
+});
+
+test("a resolve error in CSS starts at the url(), after the white space before it", async () => {
+  using dir = tempDir("css-resolve-error-white-space", {
+    "a.css": [
+      ".a { list-style: inside   url(./a.png); }",
+      ".b { list-style:",
+      "  url(./b.png); }",
+      ".c { border-image-source:",
+      "  url(./c.png); }",
+      ".d { mask: no-repeat   url(./d.png); }",
+    ].join("\n"),
+  });
+  const result = await Bun.build({ entrypoints: [join(String(dir), "a.css")], throw: false });
+
+  // `column` is 1-based.
+  const ranges = result.logs.map(({ position }) => ({
+    line: position!.line,
+    text: position!.lineText.slice(position!.column - 1, position!.column - 1 + position!.length),
+  }));
+  expect(ranges).toEqual([
+    { line: 1, text: "url(./a.png)" },
+    { line: 3, text: "url(./b.png)" },
+    { line: 5, text: "url(./c.png)" },
+    { line: 6, text: "url(./d.png)" },
+  ]);
+});
+
+// `list-style` and `list-style-type` are in the property table, so the
+// conflict check of `composes` reads them like every other typed property.
+test("composes reports a list-style that the class and the composed class both set", async () => {
+  using dir = tempDir("css-composes-list-style", {
+    "entry.js": `import styles from "./a.module.css"; console.log(styles.a);`,
+    "a.module.css": `.a { composes: b from "./b.module.css"; list-style: square; }`,
+    "b.module.css": `.b { list-style: circle; } .b { color: red; }`,
+  });
+  const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], throw: false });
+  // The message holds ANSI escapes when colors are on.
+  expect(result.logs.map(({ message }) => Bun.stripANSI(message))).toEqual([
+    "The value of list-style in the class a is undefined.",
+  ]);
 });

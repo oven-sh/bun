@@ -700,6 +700,14 @@ mod inherent_bridge {
     bridge_clone_partialeq!(FontFamily);
     // `Font` DeepClone/CssEql now via `#[derive]` on the struct (properties/font.rs).
 
+    // ── properties/list ──
+    use crate::properties::list::{
+        ListStylePosition, ListStyleType, PredefinedCounterStyle, Symbol, SymbolsType,
+    };
+    bridge_eql!(ListStyleType, Symbol);
+    bridge_deep_clone!(ListStyleType, Symbol);
+    bridge_clone_partialeq!(ListStylePosition, PredefinedCounterStyle, SymbolsType);
+
     // ── properties/size ──
     use crate::properties::size::{AspectRatio, BoxSizing, MaxSize, Size};
     bridge_eql!(Size, MaxSize, AspectRatio);

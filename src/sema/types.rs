@@ -5102,7 +5102,7 @@ impl Visitor for MentionsOwn {
 struct ContentHash(u64);
 
 #[inline]
-fn fold(a: u64, b: u64) -> u64 {
+pub(crate) fn fold(a: u64, b: u64) -> u64 {
     let product = u128::from(a) * u128::from(b);
     product as u64 ^ (product >> 64) as u64
 }

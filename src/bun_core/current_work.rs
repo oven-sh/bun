@@ -197,10 +197,10 @@ impl Text<'_> {
     /// "Stopped while checking a.ts", "Still compiling a.ts in Lower", "Still compiling in BindModules".
     fn push_work(&mut self, start: &str, record: Option<&Record>, step: Step) {
         self.push_all(start);
-        let verb = match step {
-            Step::Load if record.is_some() => " loading",
-            Step::Check if record.is_some() => " checking",
-            _ => " compiling",
+        let (verb, names_step) = match step {
+            Step::Load if record.is_some() => (" loading", false),
+            Step::Check if record.is_some() => (" checking", false),
+            _ => (" compiling", true),
         };
         self.push_all(verb);
         if let Some(record) = record {
@@ -215,7 +215,7 @@ impl Text<'_> {
                 self.push(if is_shown { byte } else { b'?' });
             }
         }
-        if verb == " compiling" {
+        if names_step {
             self.push_all(" in ");
             self.push_all(step.name());
         }

@@ -322,16 +322,16 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     let _alone = WAITS_ACROSS_POOLS.lock();
                     io.each_while(
                         (),
-                        |(), (), _| self.work(true, false, start),
+                        |(), (), _| self.work(LoadSteps::Read, start),
                         &mut vec![(); io.max_threads()],
                         || {
-                            let work = |_| self.work(false, true, start);
+                            let work = |_| self.work(LoadSteps::Process, start);
                             host.parallel_while(threads, &work, &mut meanwhile);
                         },
                     );
                 }
                 None => {
-                    let work = |_| self.work(true, true, start);
+                    let work = |_| self.work(LoadSteps::ReadAndProcess, start);
                     host.parallel_while(threads, &work, &mut meanwhile);
                 }
             }
@@ -389,7 +389,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             if needs_another {
                 start_another();
             }
-            if !loader.load(true, true, true) {
+            if !loader.load(LoadSteps::ReadAndProcess, true) {
                 return;
             }
             state = self.state.lock();
@@ -421,7 +421,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         }
     }
 
-    fn work(&self, reads: bool, processes: bool, start: ThreadStarters<'_>) {
+    fn work(&self, steps: LoadSteps, start: ThreadStarters<'_>) {
+        let (reads, processes) = (steps.reads(), steps.processes());
         let context = self.context;
         let mut arena = None;
         let mut state = self.state.lock();

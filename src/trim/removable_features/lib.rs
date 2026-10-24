@@ -52,22 +52,22 @@ pub enum GuardOrigin {
     BuiltinNamedByEngine = 3,
 }
 
+/// `generated::FEATURE_RECORDS` has one for each of `generated::ALL_FEATURES`, in the same order.
 pub(crate) struct FeatureRecord {
-    pub(crate) feature: Feature,
     pub(crate) name: &'static str,
     pub(crate) text: &'static str,
     pub(crate) entered_from: EnteredFrom,
     pub(crate) narrowest_trim_feature: Option<TrimFeature>,
 }
 
+/// `generated::TRIM_FEATURE_RECORDS` has one for each of `generated::ALL_TRIM_FEATURES`, in the same order.
 pub(crate) struct TrimFeatureRecord {
-    pub(crate) trim_feature: TrimFeature,
     pub(crate) name: &'static str,
     pub(crate) features: &'static [Feature],
 }
 
 const _: () = {
-    assert!(generated::RUST_SOURCE_VERSION == 2);
+    assert!(generated::RUST_SOURCE_VERSION == 3);
     assert!(!generated::ALL_FEATURES.is_empty());
     assert!(!generated::ALL_TRIM_FEATURES.is_empty());
     assert!(generated::FEATURE_RECORDS.len() == generated::ALL_FEATURES.len());
@@ -76,7 +76,6 @@ const _: () = {
     let mut position = 0;
     while position < generated::ALL_FEATURES.len() {
         let index = generated::ALL_FEATURES[position] as u16;
-        assert!(generated::FEATURE_RECORDS[position].feature as u16 == index);
         assert!((index as usize) < Feature::INDEX_LIMIT);
         assert!(position == 0 || (generated::ALL_FEATURES[position - 1] as u16) < index);
         position += 1;
@@ -84,9 +83,7 @@ const _: () = {
 
     let mut position = 0;
     while position < generated::ALL_TRIM_FEATURES.len() {
-        let trim_feature = generated::ALL_TRIM_FEATURES[position];
-        assert!(trim_feature as usize == position);
-        assert!(generated::TRIM_FEATURE_RECORDS[position].trim_feature as u8 == trim_feature as u8);
+        assert!(generated::ALL_TRIM_FEATURES[position] as usize == position);
         position += 1;
     }
 };
@@ -111,8 +108,8 @@ impl Feature {
     pub fn from_name(name: &[u8]) -> Option<Feature> {
         generated::FEATURE_RECORDS
             .iter()
-            .find(|record| record.name.as_bytes() == name)
-            .map(|record| record.feature)
+            .position(|record| record.name.as_bytes() == name)
+            .map(|position| generated::ALL_FEATURES[position])
     }
 
     pub fn name(self) -> &'static str {
@@ -151,7 +148,7 @@ impl Feature {
     }
 
     fn record(self) -> &'static FeatureRecord {
-        match generated::FEATURE_RECORDS.binary_search_by_key(&self, |record| record.feature) {
+        match generated::ALL_FEATURES.binary_search(&self) {
             Ok(position) => &generated::FEATURE_RECORDS[position],
             Err(_) => unreachable!(),
         }
@@ -164,8 +161,8 @@ impl TrimFeature {
     pub fn from_name(name: &[u8]) -> Option<TrimFeature> {
         generated::TRIM_FEATURE_RECORDS
             .iter()
-            .find(|record| record.name.as_bytes() == name)
-            .map(|record| record.trim_feature)
+            .position(|record| record.name.as_bytes() == name)
+            .map(|position| generated::ALL_TRIM_FEATURES[position])
     }
 
     pub fn name(self) -> &'static str {

@@ -14,6 +14,7 @@ use bun_exe_format::identity::{
 };
 use bun_options_types::Format;
 use bun_paths::resolve_path::{self, platform};
+use bun_sema::util::FxHashSet;
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileResult, ExecutableRequest, Flags, GraphRequest, target_base_public_path, to_graph_bytes,
     write_executable,
@@ -645,7 +646,7 @@ pub(super) fn pair_embedded_copies<'b>(
     output_files: &mut [OutputFile],
 ) -> Result<(), CompileFailure> {
     // Of the files with one path the executable holds the first, and a pair needs a file.
-    let mut paths: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+    let mut paths: FxHashSet<Vec<u8>> = FxHashSet::default();
     for copy in output_files.iter_mut() {
         let path = bun_core::strings::remove_leading_dot_slash(&copy.dest_path);
         let is_first = paths.insert(path.to_vec());

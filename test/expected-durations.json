@@ -19,6 +19,12 @@
   "aot/a-build-that-reports-an-error-beside-a-pattern-without-code-ends-by-itself.test.ts": {
     "default": 300
   },
+  "aot/a-build-that-stops-says-where.test.ts": {
+    "default": 4000
+  },
+  "aot/a-build-that-verifies-the-program-makes-the-same-executable.test.ts": {
+    "default": 10000
+  },
   "aot/a-callback-type-does-not-hold-eval.test.ts": {
     "default": 8271,
     "asan": 15801,
@@ -36,6 +42,9 @@
     "default": 380,
     "asan": 10832,
     "windows": 1059
+  },
+  "aot/a-file-that-is-no-program-fails-where-it-is-loaded.test.ts": {
+    "default": 31250
   },
   "aot/a-hardened-build-runs-no-compiled-code-out-of-another-file.test.ts": {
     "default": 300
@@ -91,6 +100,9 @@
   "aot/a-request-handler-is-as-well-known-when-the-global-object-is-handed-to-a-built-in.test.ts": {
     "default": 300
   },
+  "aot/a-require-passed-as-an-argument-finds-the-files-it-names.test.ts": {
+    "default": 7000
+  },
   "aot/a-result-read-by-its-parts-is-not-made-where-a-rare-way-returns-it-whole.test.ts": {
     "default": 4359
   },
@@ -102,6 +114,9 @@
     "asan": 109140,
     "windows": 35988
   },
+  "aot/a-start-writes-to-no-page-of-the-embedded-program.test.ts": {
+    "default": 2000
+  },
   "aot/a-switch-of-the-compiler-names-every-enumerator.test.ts": {
     "default": 300
   },
@@ -112,6 +127,9 @@
   },
   "aot/a-weak-map-given-new-keys-for-ever-stays-small.test.ts": {
     "default": 1282
+  },
+  "aot/a-worker-in-a-loop-is-terminated-under-any-inherited-signal-mask.test.ts": {
+    "default": 1000
   },
   "aot/abort-is-reported.test.ts": {
     "default": 32,
@@ -352,6 +370,9 @@
     "windows": 70,
     "windows-aarch64": 84
   },
+  "aot/build-carries-files-that-are-no-code.test.ts": {
+    "default": 3000
+  },
   "aot/build-cli-plugins-and-flags.test.ts": {
     "default": 13907,
     "asan": 34829
@@ -380,6 +401,9 @@
     "default": 15153,
     "asan": 45089,
     "windows": 18498
+  },
+  "aot/build-plugins-answer-javascript-for-typescript.test.ts": {
+    "default": 4750
   },
   "aot/build-plugins-are-told-the-same.test.ts": {
     "default": 19585,
@@ -436,6 +460,9 @@
     "default": 8772,
     "asan": 22632,
     "windows": 7897
+  },
+  "aot/build-resolves-packages-as-a-bundle-does.test.ts": {
+    "default": 3250
   },
   "aot/build-scaling/build-scaling.test.ts": {
     "default": 36670,
@@ -1387,6 +1414,30 @@
   "aot/code-addresses-have-names.test.ts": {
     "default": 300
   },
+  "aot/code-from-disk-1.test.ts": {
+    "default": 69000
+  },
+  "aot/code-from-disk-2.test.ts": {
+    "default": 78000
+  },
+  "aot/code-from-disk-3.test.ts": {
+    "default": 72250
+  },
+  "aot/code-from-disk-4.test.ts": {
+    "default": 69500
+  },
+  "aot/code-from-disk-5.test.ts": {
+    "default": 71000
+  },
+  "aot/code-from-disk-6.test.ts": {
+    "default": 70000
+  },
+  "aot/code-from-disk-7.test.ts": {
+    "default": 66750
+  },
+  "aot/code-from-disk-8.test.ts": {
+    "default": 48500
+  },
   "aot/code-size-map.test.ts": {
     "default": 1505,
     "asan": 5455,
@@ -1397,6 +1448,15 @@
     "asan": 9355,
     "windows": 63,
     "windows-aarch64": 77
+  },
+  "aot/code-the-compiler-never-saw-1.test.ts": {
+    "default": 99250
+  },
+  "aot/code-the-compiler-never-saw-2.test.ts": {
+    "default": 88250
+  },
+  "aot/code-the-compiler-never-saw-3.test.ts": {
+    "default": 90000
   },
   "aot/code-the-compiler-never-saw.test.ts": {
     "default": 155821,
@@ -1578,6 +1638,9 @@
     "default": 2124,
     "asan": 9769,
     "windows": 3538
+  },
+  "aot/command-line-tools.test.ts": {
+    "default": 38750
   },
   "aot/commonjs-cycle-in-place.test.ts": {
     "default": 3642,
@@ -2022,6 +2085,12 @@
     "asan": 27393,
     "windows": 6364
   },
+  "aot/entry-points-begin-programs-of-their-own.test.ts": {
+    "default": 32000
+  },
+  "aot/entry-points-behind-links.test.ts": {
+    "default": 4000
+  },
   "aot/enums.test.ts": {
     "default": 1644,
     "asan": 5174,
@@ -2064,6 +2133,9 @@
   },
   "aot/every-field-of-flows-results-is-written-and-read.test.ts": {
     "default": 300
+  },
+  "aot/every-image-of-an-executable-has-its-map.test.ts": {
+    "default": 5000
   },
   "aot/every-launch-places-its-heap-anew.test.ts": {
     "default": 8000
@@ -2274,6 +2346,9 @@
     "default": 842,
     "windows": 1509
   },
+  "aot/every-threshold-of-the-compiler-is-declared-as-one.test.ts": {
+    "default": 1000
+  },
   "aot/every-way-to-a-loader-finds-the-built-in-module-that-the-program-names.test.ts": {
     "default": 60000
   },
@@ -2297,6 +2372,9 @@
     "asan": 2729,
     "musl": 1136,
     "windows": 1385
+  },
+  "aot/explain-names-the-line-that-many-operations-hang-on.test.ts": {
+    "default": 4000
   },
   "aot/explain-of-a-method-of-a-host-class-whose-receiver-native-code-keeps.test.ts": {
     "default": 300
@@ -2358,6 +2436,9 @@
   },
   "aot/fastify-validators-written-to-files.test.ts": {
     "default": 11026
+  },
+  "aot/fault-inside-a-removed-range.test.ts": {
+    "default": 3000
   },
   "aot/fields-under-symbols-have-slots.test.ts": {
     "default": 396,
@@ -2521,6 +2602,9 @@
   "aot/full-types-compiler-options.test.ts": {
     "default": 2051
   },
+  "aot/full-types-prove-every-int32.test.ts": {
+    "default": 7000
+  },
   "aot/function-declarations-in-switch-cases.test.ts": {
     "default": 17491,
     "asan": 30454,
@@ -2566,6 +2650,9 @@
     "default": 300
   },
   "aot/generated-a-constructor-that-only-hands-on-in-a-very-large-function.test.ts": {
+    "default": 300
+  },
+  "aot/generated-a-full-heap-is-let-go-and-built-ins-make-things.test.ts": {
     "default": 300
   },
   "aot/generated-a-parse-by-a-type-that-reaches-very-many-objects.test.ts": {
@@ -2620,6 +2707,9 @@
     "default": 10021,
     "windows": 15389,
     "windows-aarch64": 12385
+  },
+  "aot/generated-births-and-uses-of-counters-near-the-ends-of-the-whole-numbers.test.ts": {
+    "default": 1000
   },
   "aot/generated-births-and-uses-of-equal-stretches-that-seldom-run.test.ts": {
     "default": 300
@@ -2805,6 +2895,9 @@
   "aot/generated-births-and-uses-of-texts-put-together-piece-by-piece.test.ts": {
     "default": 300
   },
+  "aot/generated-births-and-uses-of-texts-read-as-records.test.ts": {
+    "default": 1000
+  },
   "aot/generated-births-and-uses-of-the-keys-of-an-object-are-walked.test.ts": {
     "default": 300
   },
@@ -2862,6 +2955,9 @@
   "aot/generated-births-and-uses-of-typed-arrays.test.ts": {
     "default": 12966,
     "windows": 23162
+  },
+  "aot/generated-births-and-uses-of-typed-counters-near-the-ends-of-the-whole-numbers.test.ts": {
+    "default": 2000
   },
   "aot/generated-births-and-uses-of-typed-equal-stretches-that-seldom-run.test.ts": {
     "default": 300
@@ -2944,6 +3040,9 @@
   },
   "aot/generated-births-and-uses-of-typed-texts-put-together-piece-by-piece.test.ts": {
     "default": 300
+  },
+  "aot/generated-births-and-uses-of-typed-texts-read-as-records.test.ts": {
+    "default": 1000
   },
   "aot/generated-births-and-uses-of-typed-the-keys-of-an-object-are-walked.test.ts": {
     "default": 300
@@ -3035,6 +3134,12 @@
   "aot/generated-births-and-uses-of-work-done-ahead-of-a-test-that-fails.test.ts": {
     "default": 300
   },
+  "aot/generated-bodies-in-every-encoding-read-as-json.test.ts": {
+    "default": 300
+  },
+  "aot/generated-builds-with-plugins-loaders-and-import-attributes.test.ts": {
+    "default": 24500
+  },
   "aot/generated-built-ins-called-as-members-of-a-table.test.ts": {
     "default": 300
   },
@@ -3106,6 +3211,9 @@
   "aot/generated-closures-read-through-array-methods.test.ts": {
     "default": 300
   },
+  "aot/generated-code-the-build-never-saw-changes-what-it-is-handed.test.ts": {
+    "default": 300
+  },
   "aot/generated-code.test.ts": {
     "default": 137000,
     "windows": 56
@@ -3116,6 +3224,12 @@
     "windows": 7793
   },
   "aot/generated-constant-lists-changed-by-every-road.test.ts": {
+    "default": 300
+  },
+  "aot/generated-copies-that-follow-other-copies.test.ts": {
+    "default": 300
+  },
+  "aot/generated-counters-handed-to-the-one-call-in-a-loop.test.ts": {
     "default": 300
   },
   "aot/generated-element-key-kinds.test.ts": {
@@ -3167,6 +3281,9 @@
     "asan": 8872,
     "windows": 61
   },
+  "aot/generated-instances-below-built-in-classes-frozen-closed-and-redefined.test.ts": {
+    "default": 300
+  },
   "aot/generated-instances-of-classes-below-built-in-classes-in-typed-code.test.ts": {
     "default": 90000
   },
@@ -3188,8 +3305,17 @@
   "aot/generated-left-half-way.test.ts": {
     "default": 300
   },
+  "aot/generated-lists-of-numbers-through-one-map-or-filter.test.ts": {
+    "default": 300
+  },
   "aot/generated-lists-read-where-they-are-made.test.ts": {
     "default": 300
+  },
+  "aot/generated-loops-whose-tests-are-settled-on-the-first-turn.test.ts": {
+    "default": 1000
+  },
+  "aot/generated-makers-of-makers-each-with-a-prototype-of-its-own.test.ts": {
+    "default": 1000
   },
   "aot/generated-many-of-one-thing.test.ts": {
     "default": 300
@@ -3204,6 +3330,9 @@
     "default": 2408,
     "asan": 3958,
     "windows": 4027
+  },
+  "aot/generated-names-asked-of-full-tables-and-texts-converted-again.test.ts": {
+    "default": 300
   },
   "aot/generated-new-objects-kept-through-built-ins.test.ts": {
     "default": 300
@@ -3231,6 +3360,9 @@
   "aot/generated-objects-born-in-every-place.test.ts": {
     "default": 3898,
     "windows": 5749
+  },
+  "aot/generated-objects-of-one-layout-changed-in-turns.test.ts": {
+    "default": 300
   },
   "aot/generated-objects-read-where-they-are-made.test.ts": {
     "default": 300
@@ -3278,6 +3410,9 @@
     "default": 300
   },
   "aot/generated-patterns-with-subjects-made-from-them.test.ts": {
+    "default": 300
+  },
+  "aot/generated-read-by-the-last-holder-while-others-are-made.test.ts": {
     "default": 300
   },
   "aot/generated-reads-through-proxies.test.ts": {
@@ -3328,6 +3463,9 @@
   "aot/generated-stacks-made-by-a-function-of-the-program.test.ts": {
     "default": 300
   },
+  "aot/generated-strangers-where-a-type-names-a-class.test.ts": {
+    "default": 1000
+  },
   "aot/generated-strings-still-in-pieces.test.ts": {
     "default": 300
   },
@@ -3367,11 +3505,17 @@
     "windows": 25905,
     "windows-aarch64": 19166
   },
+  "aot/generated-tests-that-ask-which-runtime-this-is.test.ts": {
+    "default": 300
+  },
   "aot/generated-text-beside-compiled-code.test.ts": {
     "default": 300
   },
   "aot/generated-text-that-comes-at-run-time-changes-what-the-program-holds.test.ts": {
     "default": 300
+  },
+  "aot/generated-texts-parsed-as-a-drawn-type.test.ts": {
+    "default": 1000
   },
   "aot/generated-two-names-where-ways-meet.test.ts": {
     "default": 12308
@@ -3402,6 +3546,15 @@
     "default": 31,
     "asan": 9250,
     "windows": 59
+  },
+  "aot/generated-what-a-callback-declares-however-it-reaches-a-built-in.test.ts": {
+    "default": 300
+  },
+  "aot/generated-what-a-function-declares-however-often-call-and-apply-enter-it.test.ts": {
+    "default": 1000
+  },
+  "aot/generated-what-is-awaited-in-every-place.test.ts": {
+    "default": 1000
   },
   "aot/generated-when-the-heap-is-full.test.ts": {
     "default": 300
@@ -3773,6 +3926,9 @@
     "asan": 15319,
     "windows": 9283
   },
+  "aot/int32-lanes-of-react-reconciler-cost-less-than-numbers.test.ts": {
+    "default": 49000
+  },
   "aot/int32-without-strict-null-checks.test.ts": {
     "default": 699,
     "asan": 4340,
@@ -3994,6 +4150,9 @@
     "asan": 2133,
     "windows": 57
   },
+  "aot/libraries-known-not-to-work.test.ts": {
+    "default": 26250
+  },
   "aot/library-from-npm.test.ts": {
     "default": 18975
   },
@@ -4013,6 +4172,9 @@
   },
   "aot/library-typed-file.test.ts": {
     "default": 2820
+  },
+  "aot/lists-of-operations-in-the-compiler-only-shrink.test.ts": {
+    "default": 1000
   },
   "aot/literal-strings-of-the-image-are-not-looked-up.test.ts": {
     "default": 469,
@@ -4875,6 +5037,12 @@
     "default": 624,
     "windows": 56
   },
+  "aot/perf/equivalent-syntax.test.ts": {
+    "default": 5000
+  },
+  "aot/perf/evaluated-text-reads-names-above-functions.test.ts": {
+    "default": 2000
+  },
   "aot/perf/front-end.test.ts": {
     "default": 24,
     "asan": 228,
@@ -4896,6 +5064,15 @@
     "asan": 373,
     "windows": 67
   },
+  "aot/perf/more-knowledge-costs-no-site.test.ts": {
+    "default": 300
+  },
+  "aot/perf/names-given-by-key.test.ts": {
+    "default": 18000
+  },
+  "aot/perf/one-loop-against-another.test.ts": {
+    "default": 15000
+  },
   "aot/perf/operations.test.ts": {
     "default": 131488,
     "windows": 1030
@@ -4914,6 +5091,9 @@
   },
   "aot/perf/pinned-everyday-idioms-4.test.ts": {
     "default": 62750
+  },
+  "aot/perf/plain-bun-costs.test.ts": {
+    "default": 156000
   },
   "aot/perf/serial-time.test.ts": {
     "default": 11200,
@@ -5628,6 +5808,9 @@
     "asan": 16806,
     "windows": 4348
   },
+  "aot/servers/api-servers-on-node-http.test.ts": {
+    "default": 39250
+  },
   "aot/servers/api-servers.test.ts": {
     "default": 26000
   },
@@ -5653,6 +5836,9 @@
   },
   "aot/servers/elysia.test.ts": {
     "default": 38500
+  },
+  "aot/servers/every-pass-changes-a-real-program.test.ts": {
+    "default": 300
   },
   "aot/servers/every-pass-changes-one-of-the-servers.test.ts": {
     "default": 95000
@@ -5759,6 +5945,9 @@
     "asan": 4797,
     "windows": 60,
     "windows-aarch64": 82
+  },
+  "aot/small-builds-end-every-time.test.ts": {
+    "default": 76000
   },
   "aot/small-program-memory.test.ts": {
     "default": 262,
@@ -6052,6 +6241,9 @@
     "default": 2002,
     "windows": 67
   },
+  "aot/system-ca-certificates-by-use.test.ts": {
+    "default": 8750
+  },
   "aot/tail-calls-of-library-built-ins-are-tested.test.ts": {
     "default": 1408,
     "windows": 2626
@@ -6075,9 +6267,15 @@
     "default": 5230,
     "windows": 7430
   },
+  "aot/texts-that-tell-builds-apart.test.ts": {
+    "default": 300
+  },
   "aot/the-atoms-a-worker-makes-of-the-programs-texts-end-with-the-worker.test.ts": {
     "default": 3394,
     "windows": 58
+  },
+  "aot/the-build-answers-which-runtime-this-is.test.ts": {
+    "default": 11000
   },
   "aot/the-compiler-reads-no-environment-variable.test.ts": {
     "default": 300
@@ -6096,6 +6294,12 @@
   },
   "aot/the-first-read-of-a-standard-stream-finds-no-room-on-the-stack.test.ts": {
     "default": 2051
+  },
+  "aot/the-fuzzer-judges-as-it-says.test.ts": {
+    "default": 4000
+  },
+  "aot/the-fuzzer-keeps-a-wrong-answer-beside-a-clock.test.ts": {
+    "default": 300
   },
   "aot/the-marking-version-wraps.test.ts": {
     "default": 474,
@@ -6863,6 +7067,9 @@
   "aot/verified-collections-notice-a-cell-left-unmarked.test.ts": {
     "default": 1282
   },
+  "aot/very-long-chains-are-answered-at-once.test.ts": {
+    "default": 4250
+  },
   "aot/warm-code-limit.test.ts": {
     "default": 30,
     "windows": 62
@@ -6932,8 +7139,14 @@
   "aot/what-minified-syntax-leaves-out-of-executables.test.ts": {
     "default": 769
   },
+  "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off.test.ts": {
+    "default": 300
+  },
   "aot/what-the-back-end-is-told-is-checked-at-run-time.test.ts": {
     "default": 3077
+  },
+  "aot/what-the-variables-of-a-module-hold-is-visited-in-the-first-round-of-a-full-collection.test.ts": {
+    "default": 1000
   },
   "aot/where-names-lie-in-executables.test.ts": {
     "default": 512
@@ -6965,6 +7178,9 @@
   "aot/worker-entry-throw-origin.test.ts": {
     "default": 6896,
     "windows": 8290
+  },
+  "aot/workers-from-embedded-files.test.ts": {
+    "default": 12250
   },
   "aot/workers-named-by-relative-texts.test.ts": {
     "default": 1117,

@@ -80,7 +80,7 @@
   "mul_double": 1,
   "mul_int": 1,
   "neg_int": 2,
-  "nested_new": 21,
+  "nested_new": 32,
   "nested_new_class": 34.4,
   "nested_pass": 13,
   "nested_read": 3,

@@ -71,7 +71,6 @@ export function rustSource(model: FeatureModel): string {
   const featureRecord = (feature: Feature) => {
     const narrowest = narrowestTrimFeature(model, feature.name);
     const members = [
-      `feature: ${featurePath(feature)}`,
       `name: ${JSON.stringify(feature.name)}`,
       `text: ${JSON.stringify(feature.text)}`,
       `entered_from: ${rustEnteredFrom[feature.enteredFrom]}`,
@@ -81,11 +80,7 @@ export function rustSource(model: FeatureModel): string {
   };
 
   const trimFeatureRecord = (trimFeature: TrimFeature) => {
-    const members = [
-      `trim_feature: ${trimFeaturePath(trimFeature)}`,
-      `name: ${JSON.stringify(trimFeature.name)}`,
-      `features: ${featureList(trimFeature.features)}`,
-    ];
+    const members = [`name: ${JSON.stringify(trimFeature.name)}`, `features: ${featureList(trimFeature.features)}`];
     return `TrimFeatureRecord { ${members.join(", ")} }`;
   };
 
@@ -101,7 +96,7 @@ export function rustSource(model: FeatureModel): string {
     ...rustSlice("FEATURE_RECORDS", "FeatureRecord", features.map(featureRecord)),
     ...rustSlice("TRIM_FEATURE_RECORDS", "TrimFeatureRecord", trimFeatures.map(trimFeatureRecord)),
     ...rustFeatureNameFunction(features),
-    "pub(crate) const RUST_SOURCE_VERSION: u32 = 2;",
+    "pub(crate) const RUST_SOURCE_VERSION: u32 = 3;",
     "",
   ].join("\n");
 }

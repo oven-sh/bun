@@ -24,6 +24,8 @@ generated(
     programs.map(({ name, text }) => ({
       name: `${name}, ${title}.`,
       isAlwaysRun: alwaysRun.has(name) && (title === "constructed once" || title === "read by one function"),
+      // One of its constructors answers with a promise of `this`. There the prototype of `this` is such a promise, so `then` is found on what is no promise, and nobody handles the rejection.
+      ...(name.endsWith(".apply-with-instance-as-prototype") && { leavesAnError: true as const }),
       make: () => ({ file: "main.js", text }),
     })),
   ),

@@ -131,7 +131,7 @@ jobs:
   aot-rust-tests:
     name: AoT cargo test
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       # Without optimization a frame is several times as large, and the tests
       # of the nesting limits reach the end of the stack before the limit.

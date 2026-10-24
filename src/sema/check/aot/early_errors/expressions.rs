@@ -324,11 +324,11 @@ impl Checker<'_, '_> {
         for &(_, decorator) in hir.decorators.iter() {
             if is_reached(bound, decorator)
                 && !is_parenthesized(hir, decorator)
-                && let Some((from, to)) = self.invalid_syntax_in_decorator(file, decorator)
+                && let Some(invalid) = self.invalid_syntax_in_decorator(file, decorator)
             {
                 let written = self.decorator_position(file, decorator);
                 self.early_error_at((file, written.start, written.end), 1497, &[])
-                    .add_related_info(Reported::bare((file, from, to), 1498));
+                    .add_related_info(Reported::bare((file, invalid.from, invalid.to), 1498));
             }
         }
     }

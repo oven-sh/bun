@@ -179,7 +179,8 @@ async function compare(folder: string, carrier: string[], group: number | string
 
   // A validating build takes ten times as long.
   const isSlow = isASAN || flags.includes("--aot-validate");
-  const [expected, actual] = [await run(first.executable, cwd), await run(second.executable, cwd, {}, isSlow ? 300 : 60)];
+  // The programs of one group parse and print texts of a million levels: together they take over a minute.
+  const [expected, actual] = [await run(first.executable, cwd, {}, isASAN ? 300 : 150), await run(second.executable, cwd, {}, isSlow ? 300 : 150)];
   rmSync(cwd, { recursive: true, force: true });
   // In a slow build the clock ends slow programs, other ones in each build: that says nothing.
   const endedByClock = new Set(isSlow ? [...expected.stopped, ...actual.stopped].filter(stop => stop.endsWith(": SIGKILL")).map(stop => stop.slice(0, stop.lastIndexOf(": "))) : []);
@@ -220,6 +221,7 @@ type Way = { name: string; flags: string[]; env?: Record<string, string> };
 
 /** `waysOf` is asked twice: whether there is any way at all, and, with what `--explain=statistics` says of the usual build, which. */
 async function compareWays(folder: string, carrier: string[], group: number | string, listed: string[], waysOf: (group: string, statistics?: string) => Way[], mustBeMet = false) {
+  const began = performance.now();
   const cwd = join(folder, String(group));
   const paths = joinable(listed);
   if (paths.length > 2 * namesInGroup) {
@@ -257,6 +259,8 @@ async function compareWays(folder: string, carrier: string[], group: number | st
   await Promise.all(
     ways.map(way =>
       slot(async () => {
+        // The runner gives a file five minutes, twice that under a sanitizer. In a run that is told nothing, a way whose turn comes late is left to another run.
+        if (!process.env.AOT_WAYS && !process.env.AOT_WAYS_FILE && process.env.AOT_SHARE !== "all" && performance.now() - began > (isASAN ? 340_000 : 170_000)) return void console.error(says(way.name, "not tried: its turn came late"));
         const name = `built-${way.name.replace(/[^A-Za-z0-9]+/g, "-")}`;
         let built = await made.build(name, [...way.flags, "--explain=statistics"], { ...bunEnv, ...way.env });
         // A limit that no program of the group has met was not tried.

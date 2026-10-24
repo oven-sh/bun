@@ -13,10 +13,22 @@ if (kind === undefined) {
     const seen = [];
     worker.on("online", () => seen.push("online"));
     worker.on("listening", address => seen.push(`listening ${typeof address.port} ${address.addressType}`));
-    worker.on("message", message => seen.push(`message ${JSON.stringify(message)}`));
-    worker.on("exit", code => {
-      lines.push(`${k}: ${seen.sort().join(" | ")} | exit ${code}`);
+    // Every worker sends one message and then exits. The two events come from different handles, in either order.
+    let exitCode;
+    let hasMessage = false;
+    const finish = () => {
+      if (exitCode === undefined || !hasMessage) return;
+      lines.push(`${k}: ${seen.sort().join(" | ")} | exit ${exitCode}`);
       if (--left === 0) console.log(lines.sort().join("\n"));
+    };
+    worker.on("message", message => {
+      seen.push(`message ${JSON.stringify(message)}`);
+      hasMessage = true;
+      finish();
+    });
+    worker.on("exit", code => {
+      exitCode = code;
+      finish();
     });
   }
 } else {

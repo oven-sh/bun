@@ -2927,7 +2927,7 @@ pub fn for_each_in_parallel<T: Send>(
     std::thread::scope(|scope| {
         for _ in 0..more_threads {
             let thread = std::thread::Builder::new();
-            if thread.spawn_scoped(scope, &work_through_items).is_err() {
+            if thread.spawn_scoped(scope, work_through_items).is_err() {
                 break;
             }
         }

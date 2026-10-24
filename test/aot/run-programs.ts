@@ -304,8 +304,8 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
   if (moreBuildFlags.length && behindTheFlag) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
-  // A build that verifies the IR after every pass takes sixteen times as long as one that does not. One that may load code from disk holds every built-in module, and --aot-validate checks each.
-  const isLong = cmd.includes("--aot-check=verify-each-pass") || (cmd.includes("--aot-validate") && cmd.includes("--aot-allow-code-from-disk"));
+  // A build that verifies the IR after every pass takes sixteen times as long as one that does not. --aot-validate checks each built-in module that a program holds: one that starts a Worker holds most of them, one that may load code from disk all.
+  const isLong = cmd.includes("--aot-check=verify-each-pass") || cmd.includes("--aot-validate");
   const timeout = isLong || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000;
   const start = performance.now();
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });

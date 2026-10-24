@@ -726,6 +726,14 @@ impl<'s> ModuleSymbolLinks<'s> {
             None => self.resolved_exports.get(name).copied(),
         }
     }
+
+    /// `resolved_exports` is what `visit` would return for the module: it has been to none of `visited` yet.
+    fn is_what_would_be_returned(&self, visit: &ExportsVisit<'s>) -> bool {
+        let is_new = |symbol: &Sym| !visit.visited_symbols.contains(symbol);
+        !self.visited.is_empty()
+            && self.unmerged_exports.is_empty()
+            && self.visited.iter().all(is_new)
+    }
 }
 
 /// The state of `getExportsOfModuleWorker` while `visit` traverses the modules.
@@ -1285,6 +1293,24 @@ impl<'s, 'r> Prefetch<'s, 'r> {
     }
 }
 
+/// What a thread does with the files that are to be loaded.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum LoadSteps {
+    Read,
+    Process,
+    ReadAndProcess,
+}
+
+impl LoadSteps {
+    fn reads(self) -> bool {
+        self != Self::Process
+    }
+
+    fn processes(self) -> bool {
+        self != Self::Read
+    }
+}
+
 #[derive(Copy, Clone)]
 struct FileLoader<'a, 's, 'r, 'u> {
     session: &'s Session,
@@ -1316,7 +1342,7 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
     }
 
     /// With `once`, returns true after reading or processing one batch, or after one wait.
-    fn load(&self, reads: bool, processes: bool, once: bool) -> bool {
+    fn load(&self, steps: LoadSteps, once: bool) -> bool {
         const RUN: usize = Prefetch::FILES_READ_IN_A_RUN;
         /// Contents that have been read occupy memory until they are processed.
         const AHEAD: usize = 256;
@@ -1333,6 +1359,7 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
         } = *self;
         // Not shared if each copy is in the program, or if the log shows what each copy refers to.
         let shares_parses = !options.retains_duplicate_packages && !options.trace_resolution;
+        let (reads, processes) = (steps.reads(), steps.processes());
         let Prefetch {
             state: shared,
             has_work,
@@ -2161,11 +2188,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             return None;
         }
         let links = self.published_module_links(module)?;
-        let is_new = |symbol: &Sym| !visit.visited_symbols.contains(symbol);
-        let is_same = !links.visited.is_empty()
-            && links.unmerged_exports.is_empty()
-            && links.visited.iter().all(is_new);
-        is_same.then_some(links)
+        links.is_what_would_be_returned(visit).then_some(links)
     }
 
     /// `visit` of `getExportsOfModuleWorker`. `export_star`: the `export *` that led here.
@@ -6743,20 +6766,20 @@ impl<'s> Files<'s> {
             prefetch,
             is_code_file: None,
         };
-        let load = |reads: bool, processes: bool, once: bool| loader.load(reads, processes, once);
+        let load = |steps: LoadSteps, once: bool| loader.load(steps, once);
         if prefetch.is_done() {
             return meanwhile(&mut || ());
         }
         let (threads, io) = (host.threads(), host.io_pool());
         let mut pools_lock = io.map(|_| WAITS_ACROSS_POOLS.lock());
         let mut meanwhile = || meanwhile(&mut || drop(pools_lock.take()));
-        let mut on_all_threads = |reads: bool| {
+        let mut on_all_threads = |steps: LoadSteps| {
             let work = || {
-                load(reads, true, false);
+                load(steps, false);
             };
             match host.helpers_now() {
                 Some(_) => {
-                    let mut step = || load(reads, true, true);
+                    let mut step = || load(steps, true);
                     run_with_current_helpers(host, 0, &mut step, &work);
                     meanwhile();
                 }
@@ -6767,13 +6790,13 @@ impl<'s> Files<'s> {
             Some(io) => io.each_while(
                 (),
                 |(), (), _| {
-                    load(true, false, false);
+                    load(LoadSteps::Read, false);
                 },
                 &mut vec![(); io.max_threads()],
-                || on_all_threads(false),
+                || on_all_threads(LoadSteps::Process),
             ),
             // Any one of these finishes the load by itself.
-            None => on_all_threads(true),
+            None => on_all_threads(LoadSteps::ReadAndProcess),
         }
     }
 

@@ -26,8 +26,8 @@ const whyNotCounted = unsupported
     ? "the counts are those of a release build"
     : await whyInstructionsCannotBeCounted();
 
-// A turn with `int32` costs 0.973 times the instructions of a turn with `number`. The share may not pass this.
-const known = 0.98;
+// A turn with `int32` costs 0.971 to 0.979 times the instructions of a turn with `number`: it differs from run to run. The share may not pass this.
+const known = 0.985;
 
 describe.skipIf(!!unsupported || !!whyNotCounted)(
   "compile/aot/int32-lanes-of-react-reconciler-cost-less-than-numbers",

@@ -1,14 +1,9 @@
+use crate::types::fold;
 use std::hash::Hasher;
 
 // Two lanes of multiply and fold, with different constants.
 #[derive(Copy, Clone)]
 pub struct Lanes(pub [u64; 2]);
-
-#[inline]
-fn fold(a: u64, b: u64) -> u64 {
-    let product = u128::from(a) * u128::from(b);
-    product as u64 ^ (product >> 64) as u64
-}
 
 impl Lanes {
     pub const START: Lanes = Lanes([0x243f_6a88_85a3_08d3, 0x1319_8a2e_0370_7344]);

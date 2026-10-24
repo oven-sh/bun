@@ -688,7 +688,7 @@ fn compile_written_entry_points(
 fn remove_program_files_of_further_entry_points(options: &Options<'_>) {
     if let Some(path) = options.aot.ir_output_path.as_deref() {
         for index in 1..options.entry_points.len() {
-            let _ = bun_sys::unlink(&ZBox::from_bytes(&numbered_program_file(path, index)));
+            let _ = bun_sys::unlink(&ZBox::from_bytes(numbered_program_file(path, index)));
         }
     }
 }

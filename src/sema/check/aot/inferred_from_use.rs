@@ -1565,21 +1565,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_arm(&mut self, usage: &mut Usage, ty: TypeId) {
-        let Ok(ty) = self.without_nullish(ty) else {
-            return;
-        };
-        // `[]` is an Array of `never` for the checker: that says what it is, not what it will hold.
-        let holds_nothing = self.c.array_element(ty).is_some_and(TypeId::is_never);
-        let ty = match holds_nothing {
-            true => self.c.array_of(TypeId::ANY),
-            false => ty,
-        };
-        let says_nothing = self.c.is_any(ty)
-            || ty == TypeId::UNKNOWN
-            || ty.is_never()
-            || ty != TypeId::OBJECT && self.c.is_empty_object_type(ty);
-        if !says_nothing {
-            usage.add_arm(ty);
+        if let Ok(ty) = self.without_nullish(ty) {
+            // `[]` is an Array of `never` for the checker: that says what it is, not what it will hold.
+            let holds_nothing = self.c.array_element(ty).is_some_and(TypeId::is_never);
+            let ty = match holds_nothing {
+                true => self.c.array_of(TypeId::ANY),
+                false => ty,
+            };
+            let says_nothing = self.c.is_any(ty)
+                || ty == TypeId::UNKNOWN
+                || ty.is_never()
+                || ty != TypeId::OBJECT && self.c.is_empty_object_type(ty);
+            if !says_nothing {
+                usage.add_arm(ty);
+            }
         }
     }
 

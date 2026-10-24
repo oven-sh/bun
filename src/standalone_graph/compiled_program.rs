@@ -212,8 +212,8 @@ pub(crate) fn append_record(
     let header = CompiledProgramRecord {
         image,
         entry_point_count,
-        flags: u32::from(input.preserves_source_paths) * PRESERVES_SOURCE_PATHS
-            | u32::from(has_images) * HAS_IMAGE_FOR_EACH_ENTRY_POINT,
+        flags: (u32::from(input.preserves_source_paths) * PRESERVES_SOURCE_PATHS)
+            | (u32::from(has_images) * HAS_IMAGE_FOR_EACH_ENTRY_POINT),
     };
     let mut image_ranges: Vec<u32> = Vec::new();
     if has_images {

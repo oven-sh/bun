@@ -312,9 +312,9 @@ impl<'a, 's> Resolver<'a, 's> {
             ranges.flat_map(|range| entries_within(&facts.aliases_by_position, range.clone()));
         for &(_, index) in by_initializer.iter().chain(by_position) {
             let alias = &facts.declared_aliases[index as usize];
-            if !self.aliases.contains_key(&alias.symbol) {
-                self.aliases.insert(alias.symbol, alias.source.clone());
-            }
+            self.aliases
+                .entry(alias.symbol)
+                .or_insert_with(|| alias.source.clone());
         }
     }
 

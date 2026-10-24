@@ -58,7 +58,7 @@ impl<'s> AcceptedTree<'s, '_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 pub(super) fn load_code_file<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     arena: &'s Arena,

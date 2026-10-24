@@ -387,10 +387,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .all(|&(_, decl)| can_merge_with_class(decl));
         let (hir, bound) = (self.c.hir(class.file), self.c.bound(class.file));
         let mut modifiers = hir[class.class].modifiers.iter();
-        let is_decorated = modifiers.any(|modifier| match hir[modifier].kind {
-            ModifierKind::Decorator(_) => true,
-            ModifierKind::Keyword(_) => false,
-        });
+        let is_decorated =
+            modifiers.any(|modifier| matches!(hir[modifier].kind, ModifierKind::Decorator(_)));
         let is_stable = bound.is_stable_binding(bound.declared_symbol(Decl::Class(class.class)));
         (has_only_class_merges && !is_decorated && is_stable).then_some(class)
     }

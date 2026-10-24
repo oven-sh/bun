@@ -98,14 +98,14 @@ pub(crate) const ALL_TRIM_FEATURES: &[TrimFeature] = &[
     TrimFeature::Jit,
 ];
 pub(crate) const FEATURE_RECORDS: &[FeatureRecord] = &[
-    FeatureRecord { feature: Feature::Jit, name: "JIT", text: "the just-in-time compilers", entered_from: EnteredFrom::Startup, narrowest_trim_feature: Some(TrimFeature::Jit) },
-    FeatureRecord { feature: Feature::UriCoding, name: "URICoding", text: "encodeURI and decodeURI", entered_from: EnteredFrom::Program, narrowest_trim_feature: None },
-    FeatureRecord { feature: Feature::Sqlite, name: "Sqlite", text: "bun:sqlite", entered_from: EnteredFrom::Program, narrowest_trim_feature: Some(TrimFeature::HtmlRewriter) },
-    FeatureRecord { feature: Feature::Quoted, name: "Quoted", text: "a \"quote\" and a \\", entered_from: EnteredFrom::CommandLine, narrowest_trim_feature: None },
+    FeatureRecord { name: "JIT", text: "the just-in-time compilers", entered_from: EnteredFrom::Startup, narrowest_trim_feature: Some(TrimFeature::Jit) },
+    FeatureRecord { name: "URICoding", text: "encodeURI and decodeURI", entered_from: EnteredFrom::Program, narrowest_trim_feature: None },
+    FeatureRecord { name: "Sqlite", text: "bun:sqlite", entered_from: EnteredFrom::Program, narrowest_trim_feature: Some(TrimFeature::HtmlRewriter) },
+    FeatureRecord { name: "Quoted", text: "a \"quote\" and a \\", entered_from: EnteredFrom::CommandLine, narrowest_trim_feature: None },
 ];
 pub(crate) const TRIM_FEATURE_RECORDS: &[TrimFeatureRecord] = &[
-    TrimFeatureRecord { trim_feature: TrimFeature::HtmlRewriter, name: "html-rewriter", features: &[Feature::Jit, Feature::Sqlite] },
-    TrimFeatureRecord { trim_feature: TrimFeature::Jit, name: "jit", features: &[Feature::Jit] },
+    TrimFeatureRecord { name: "html-rewriter", features: &[Feature::Jit, Feature::Sqlite] },
+    TrimFeatureRecord { name: "jit", features: &[Feature::Jit] },
 ];
 #[unsafe(no_mangle)]
 extern "C" fn Bun__removableFeatureName(index: u16) -> *const core::ffi::c_char {
@@ -117,7 +117,7 @@ extern "C" fn Bun__removableFeatureName(index: u16) -> *const core::ffi::c_char 
         _ => core::ptr::null(),
     }
 }
-pub(crate) const RUST_SOURCE_VERSION: u32 = 2;
+pub(crate) const RUST_SOURCE_VERSION: u32 = 3;
 `);
   });
 

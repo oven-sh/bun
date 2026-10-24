@@ -1109,14 +1109,6 @@ pub(crate) enum SendQueueOwner {
 
 impl SendQueueOwner {
     #[inline]
-    pub(crate) fn kind(self) -> SendQueueOwnerKind {
-        match self {
-            SendQueueOwner::Subprocess(_) => SendQueueOwnerKind::Subprocess,
-            SendQueueOwner::Instance(_) => SendQueueOwnerKind::VirtualMachine,
-        }
-    }
-
-    #[inline]
     fn global_this(self) -> *const JSGlobalObject {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
@@ -1163,7 +1155,8 @@ impl SendQueueOwner {
         }
     }
 
-    fn this_jsvalue(self) -> JSValue {
+    /// What the JS side gets for the owner: the wrapper of the Subprocess (empty once it is collected), or null for the channel of this process.
+    fn js_target(self) -> JSValue {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }
@@ -1171,15 +1164,9 @@ impl SendQueueOwner {
                 .get()
                 .try_get()
                 .unwrap_or_default(),
-            SendQueueOwner::Instance(_) => JSValue::ZERO,
+            SendQueueOwner::Instance(_) => JSValue::NULL,
         }
     }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum SendQueueOwnerKind {
-    Subprocess,
-    VirtualMachine,
 }
 
 #[cfg(windows)]
@@ -1349,10 +1336,7 @@ impl SendQueue {
         let Some(owner) = self.owner.get() else {
             return;
         };
-        let target = match owner.kind() {
-            SendQueueOwnerKind::Subprocess => owner.this_jsvalue(),
-            SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
-        };
+        let target = owner.js_target();
         if target.is_empty() {
             return;
         }
@@ -1444,10 +1428,7 @@ impl SendQueue {
         let Some(fd) = acked.or_else(|| self.held_fds.with_mut(|fds| fds.pop_front())) else {
             return Ok(Delivery::Taken);
         };
-        let target: JSValue = match owner.kind() {
-            SendQueueOwnerKind::Subprocess => owner.this_jsvalue(),
-            SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
-        };
+        let target = owner.js_target();
 
         let _scope = global_this.bun_vm().enter_event_loop_scope();
         let fd_js = received_fd_to_js(fd);

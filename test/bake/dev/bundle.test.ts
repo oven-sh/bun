@@ -1680,26 +1680,35 @@ devTest("barrel optimization: a barrel that was not there to read keeps the requ
       };
     `,
     "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
-    "second.html": emptyHtmlFile({ scripts: ["second.ts"] }),
+    "named.html": emptyHtmlFile({ scripts: ["named.ts"] }),
+    "whole.html": emptyHtmlFile({ scripts: ["whole.ts"] }),
     "first.ts": `
       import { a as a1 } from 'named';
       import { a as a2 } from 'whole';
       console.log('first: ' + a1 + a2);
     `,
-    "second.ts": `
+    "named.ts": `
       import { b } from 'named';
+      console.log('named: ' + b);
+    `,
+    "whole.ts": `
       import * as whole from 'whole';
       const read = (ns: any) => ns.b;
-      console.log('second: ' + typeof b + ' ' + typeof read(whole));
+      console.log('whole: ' + read(whole));
     `,
     ...abPackage("named", abBarrel),
+    "node_modules/named/b.js": `export const b = "NAMED_B";`,
     ...abPackage("whole", abBarrel),
+    "node_modules/whole/b.js": `export const b = "WHOLE_B";`,
   },
   async test(dev) {
+    const bOfEachBarrel = ["NAMED_B", "WHOLE_B"];
     await build(dev, "/first");
+    // One barrel is missing in each build. The dev server loads first.ts again for it.
     fs.unlinkSync(dev.join("node_modules/named/index.js"));
+    expect(await clientBundleMarks(dev, "/named", bOfEachBarrel)).toEqual(["NAMED_B"]);
     fs.unlinkSync(dev.join("node_modules/whole/index.js"));
-    await expectPage(dev, "/second", "second: function function");
+    expect(await clientBundleMarks(dev, "/whole", bOfEachBarrel)).toEqual(["WHOLE_B"]);
   },
 });
 

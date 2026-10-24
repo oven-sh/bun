@@ -2329,7 +2329,8 @@ describe("css tests", () => {
           stderr: "pipe",
         });
         const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { css: await Bun.file(join(String(dir), outdir, "a.css")).text(), stderr, exitCode };
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+        return await Bun.file(join(String(dir), outdir, "a.css")).text();
       };
       const [minified, plain, api] = await Promise.all([
         build("min", "--minify"),
@@ -2338,24 +2339,21 @@ describe("css tests", () => {
       ]);
 
       const expected = "a{z-index:2147483647;flex-grow:1000001}b{z-index:2147483646;--build-id:20261023}\n";
-      expect(minified).toEqual({ css: expected, stderr: "", exitCode: 0 });
-      expect(plain).toEqual({
-        css:
-          indoc`
-            /* a.css */
-            a {
-              z-index: 2147483647;
-              flex-grow: 1000001;
-            }
+      expect(minified).toBe(expected);
+      expect(plain).toBe(
+        indoc`
+          /* a.css */
+          a {
+            z-index: 2147483647;
+            flex-grow: 1000001;
+          }
 
-            b {
-              z-index: 2147483646;
-              --build-id: 20261023;
-            }
-          ` + "\n",
-        stderr: "",
-        exitCode: 0,
-      });
+          b {
+            z-index: 2147483646;
+            --build-id: 20261023;
+          }
+        ` + "\n",
+      );
       expect(await api.outputs[0].text()).toBe(expected);
     });
   });

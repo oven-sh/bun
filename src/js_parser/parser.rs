@@ -211,6 +211,9 @@ pub mod Runtime {
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
+        /// A file that assigns the free `require` gets its own variable (`P::declare_own_require`).
+        pub per_file_require: bool,
+
         pub replace_exports: ReplaceableExportMap,
 
         /// Scan for '// @bun' at the top of this file, halting a parse if it is
@@ -298,6 +301,7 @@ pub mod Runtime {
                 set_breakpoint_on_first_line: false,
                 trim_unused_imports: false,
                 auto_polyfill_require: false,
+                per_file_require: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,
                 code_coverage: false,

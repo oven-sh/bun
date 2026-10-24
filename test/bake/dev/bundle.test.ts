@@ -1565,6 +1565,90 @@ devTest("require() of a built-in module in server code returns what require() re
     });
   },
 });
+// `require` prints as `hmr.require`, the method that also loads the bundled `./dep.cjs`. A module that
+// assigns `require` assigns a variable of its own, so the method stays. `require.resolve` and
+// `require.main` keep their dev server form.
+// `loader.cjs` starts like the loader that NAPI-RS generates.
+devTest("a file that assigns require still loads its bundled requires", {
+  framework: minimalFramework,
+  files: {
+    "dep.cjs": `module.exports = "dep ok";`,
+    "loader.cjs": `
+      const before = [typeof require.resolve("./dep.cjs"), require.main];
+      const { createRequire } = require("node:module");
+      require = createRequire(__filename);
+      module.exports = {
+        dep: require("./dep.cjs"),
+        fs: typeof require("node:fs").readFileSync,
+        before,
+        after: [typeof require.resolve("./dep.cjs"), require.main],
+      };
+    `,
+    "routes/index.ts": `
+      import loader from "../loader.cjs";
+      export default function () {
+        return new Response(JSON.stringify(loader));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ dep: "dep ok", fs: "function", before: ["string", false], after: ["string", false] });
+  },
+});
+// A hot update evaluates the file again with the same `hmr` object.
+devTest("a client module that assigns require keeps the assignment to one evaluation", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "dep.cjs": `module.exports = "dep ok";`,
+    "index.ts": `
+      const id = (x: string) => x;
+      require = (name: string) => "stub " + name;
+      console.log(JSON.stringify({ own: require(id("dep.cjs")), bundled: require("./dep.cjs"), resolve: typeof require.resolve }));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage('{"own":"stub dep.cjs","bundled":"dep ok","resolve":"function"}');
+    await dev.write(
+      "index.ts",
+      `
+        const id = (x: string) => x;
+        console.log(JSON.stringify({ own: require(id("dep.cjs")), bundled: require("./dep.cjs") }));
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage('{"own":"dep ok","bundled":"dep ok"}');
+  },
+});
+devTest("a server es module that assigns require keeps the assignment to one evaluation", {
+  framework: minimalFramework,
+  files: {
+    "dep.cjs": `module.exports = "dep ok";`,
+    "routes/index.ts": `
+      const id = (x: string) => x;
+      require = (name: string) => "stub " + name;
+      const seen = { own: require(id("dep.cjs")), bundled: require("../dep.cjs"), resolve: typeof require.resolve };
+      export default function () {
+        return new Response(JSON.stringify(seen));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ own: "stub dep.cjs", bundled: "dep ok", resolve: "function" });
+    await dev.write(
+      "routes/index.ts",
+      `
+        const id = (x: string) => x;
+        const seen = { own: require(id("dep.cjs")), bundled: require("../dep.cjs") };
+        export default function () {
+          return new Response(JSON.stringify(seen));
+        }
+      `,
+    );
+    await dev.fetch("/").equals({ own: "dep ok", bundled: "dep ok" });
+  },
+});
 devTest("a route whose import throws on load throws that error again on the next request", {
   framework: minimalFramework,
   files: {

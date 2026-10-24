@@ -330,6 +330,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.record_usage_of_runtime_require();
                 }
 
+                if in_.assign_target != js_ast::AssignTarget::None && !p.is_control_flow_dead {
+                    p.assigns_free_require = true;
+                }
+
                 *e = p.value_for_require(expr.loc);
                 return;
             }

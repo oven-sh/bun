@@ -542,6 +542,42 @@ describe("bundler", async () => {
     },
   });
 
+  // The path in that `require("./addon-[hash].node")` is relative to the bundle.
+  // `/src/loader.cjs` starts like the loader that NAPI-RS generates: it points
+  // its own `require` at the source folder. The call for the copied addon must
+  // keep the `require` of the bundle. The addon is not a real one, so finding
+  // it ends in ERR_DLOPEN_FAILED and not in MODULE_NOT_FOUND.
+  for (const target of ["bun", "node"] as const) {
+    for (const format of ["esm", "cjs"] as const) {
+      itBundled(`bun/loader-napi-after-require-assignment-${target}-${format}`, {
+        target,
+        format,
+        outdir: "/out",
+        files: {
+          "/src/entry.js": /* js */ `
+            import code from "./loader.cjs";
+            console.log(code);
+          `,
+          "/src/loader.cjs": /* js */ `
+            const { createRequire } = require("node:module");
+            require = createRequire(__filename);
+            try {
+              require("./addon.node");
+            } catch (error) {
+              module.exports = error.code;
+            }
+          `,
+          "/src/addon.node": "not a real addon",
+        },
+        run: {
+          file: "/out/entry.js",
+          runtime: target,
+          stdout: "ERR_DLOPEN_FAILED",
+        },
+      });
+    }
+  }
+
   itBundled("loader/AssetEntryPointInlinedByStylesheet", {
     backend: "cli",
     outdir: "/out",

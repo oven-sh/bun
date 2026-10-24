@@ -72,6 +72,8 @@ pub struct Ast<'a> {
     /// wrappers in a variable.
     pub wrapper_ref: Ref,
     pub require_ref: Ref,
+    /// The file assigns the free `require`, so `require_ref` is a variable that the file declares.
+    pub owns_require_ref: bool,
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
@@ -135,6 +137,7 @@ impl<'a> Ast<'a> {
             module_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
             require_ref: Ref::NONE,
+            owns_require_ref: false,
             named_imports: Default::default(),
             named_exports: Default::default(),
             export_star_import_records: AstAlloc::vec(),

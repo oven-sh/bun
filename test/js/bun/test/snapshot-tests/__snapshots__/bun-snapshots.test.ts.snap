@@ -1,11 +1,5 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`toMatchSnapshot errors should throw if arguments are in the wrong order: right spot 1`] = `
-{
-  "a": "oops",
-}
-`;
-
 exports[`it will create a snapshot file if it doesn't exist 1`] = `
 {
   "a": {
@@ -73,5 +67,163 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "a": "any",
   "b": Any<String>,
   "j": Any<RegExp>,
+}
+`;
+
+exports[`property matchers do not mutate the received object 1`] = `
+{
+  "id": Any<Number>,
+  "list": [
+    1,
+    Any<String>,
+    3,
+  ],
+  "nested": {
+    "name": Any<String>,
+  },
+  "when": Any<Date>,
+}
+`;
+
+exports[`property matchers preserve class name and handle shared references 1`] = `
+User {
+  "id": Any<Number>,
+  "name": "alice",
+}
+`;
+
+exports[`property matchers preserve class name and handle shared references 2`] = `
+{
+  "a": {
+    "x": Any<Number>,
+  },
+  "b": {
+    "x": Any<Number>,
+  },
+}
+`;
+
+exports[`property matchers preserve class name and handle shared references 3`] = `
+{
+  "id": Any<Number>,
+  "self": [Circular],
+}
+`;
+
+exports[`property matchers preserve class name and handle shared references 4`] = `[Error: boom]`;
+
+exports[`toMatchSnapshot errors should throw if arguments are in the wrong order: right spot 1`] = `
+{
+  "a": "oops",
+}
+`;
+
+exports[`property matchers preserve class name and handle shared references 5`] = `
+{
+  "id": Any<Number>,
+  "ts": [native code],
+}
+`;
+
+exports[`property matchers preserve class name and handle shared references 6`] = `
+{
+  "inner": {
+    "id": Any<Number>,
+    "parent": [Circular],
+  },
+}
+`;
+
+exports[`snapshot records the matchers that were checked 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 2`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 3`] = `
+{
+  "a": {
+    "x": Any<Number>,
+    "y": Any<String>,
+  },
+  "b": {
+    "x": Any<Number>,
+    "y": Any<String>,
+  },
+}
+`;
+
+exports[`snapshot records the matchers that were checked 4`] = `
+{
+  "id": Any<Number>,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 5`] = `[TypeError: [object ExpectAny]]`;
+
+exports[`snapshot records the matchers that were checked 6`] = `Headers 
+Headers {
+  "append": Any<Function>,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 7`] = `Event 
+Event {
+  "isTrusted": false,
+  "timeStamp": Any<Number>,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 8`] = `MessageEvent 
+MessageEvent {
+  "data": Any<String>,
+  "isTrusted": false,
+}
+`;
+
+exports[`snapshot records the matchers that were checked 9`] = `Any<String>`;
+
+exports[`snapshot records the matchers that were checked 10`] = `
+{
+  "current": {
+    "id": Any<Number>,
+  },
+  "log": [
+    {
+      "user": {
+        "id": 7,
+      },
+    },
+  ],
+}
+`;
+
+exports[`snapshot records the matchers that were checked 11`] = `
+{
+  "id": Any<Number>,
+  "self": [Circular],
+}
+`;
+
+exports[`a matcher object checked through a getter is recorded on the object behind it 1`] = `
+Wrapper {
+  "_user": {
+    "name": Any<String>,
+  },
+}
+`;
+
+exports[`a matcher object checked through a getter is recorded on the object behind it 2`] = `
+{
+  "_user": {
+    "name": Any<String>,
+  },
+  "user": [native code],
 }
 `;

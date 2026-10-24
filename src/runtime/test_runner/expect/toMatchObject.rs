@@ -32,7 +32,7 @@ impl Expect {
             );
         }
 
-        let mut pass = received_object.jest_deep_match(expected, global, true)?;
+        let mut pass = received_object.jest_deep_match(expected, global)?;
 
         if not {
             pass = !pass;

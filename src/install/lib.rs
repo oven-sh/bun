@@ -390,8 +390,7 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `<tmpdir>/bun-node-<uid>-<sha>` (or debug variant): the temp dir is
-    /// everybody's, this is one user's. `<tmpdir>` is `RealFS::tmpdir_path()`.
+    /// `<RealFS::tmpdir_path()>/bun-node-<uid>-<sha>` (or debug variant): the temp dir is everybody's, this is one user's.
     ///
     /// NOTE: the SHA alone does not uniquely identify a binary — two local
     /// builds at the same commit share this dir. `create_fake_temporary_node_executable`

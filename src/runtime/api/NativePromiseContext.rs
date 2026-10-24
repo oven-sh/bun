@@ -13,8 +13,8 @@
 //! let cell = native_promise_context::create(global, ctx);
 //! promise.then_with_value(global, cell, on_resolve, on_reject)?;
 //!
-//! // In on_resolve/on_reject:
-//! let Some(ctx) = native_promise_context::take::<RequestContext>(arguments[1]) else { return; };
+//! // In on_resolve/on_reject, with `context: b.nativePromiseContext("crate::..::RequestContext")` in the schema:
+//! let Some(ctx) = context else { return; };
 //! // ... process ...
 //! ctx.deref_();
 //! ```
@@ -143,6 +143,7 @@ unsafe extern "C" {
         held: JSValue,
     ) -> JSValue;
     safe fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
+    safe fn Bun__NativePromiseContext__takeHeld(value: JSValue) -> JSValue;
 }
 
 /// The cell owns the caller's claim on `ctx` until `take()` transfers it back
@@ -163,6 +164,11 @@ pub(crate) fn create<T: NativePromiseContextType>(
 /// and the ref was released via the destructor on a prior GC cycle).
 pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
     NonNull::new(Bun__NativePromiseContext__take(cell).cast::<T>())
+}
+
+/// Clears the cell's `held` slot and returns its old value (`JSValue::ZERO` if it was empty).
+pub(crate) fn take_held(cell: JSValue) -> JSValue {
+    Bun__NativePromiseContext__takeHeld(cell)
 }
 
 /// Called from the C++ destructor when a cell is collected with a non-null

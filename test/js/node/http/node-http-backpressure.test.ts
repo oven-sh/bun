@@ -310,7 +310,7 @@ describe("backpressure", () => {
         if (endMode === "sync") res.end();
         else if (endMode === "drain") res.once("drain", () => res.end());
       });
-      if (halfOpen) server.httpAllowHalfOpen = true;
+      if (halfOpen) (server as any).httpAllowHalfOpen = true;
       await once(server.listen(0, "127.0.0.1"), "listening");
       const { body, ended } = await halfCloseRequestBodyBytes(server);
       expect({ body, ended }).toEqual({ body: BODY, ended: true });
@@ -394,7 +394,7 @@ describe("backpressure", () => {
             else res.once("drain", () => res.end());
           }
         });
-        if (endMode === "drain") server.httpAllowHalfOpen = true;
+        if (endMode === "drain") (server as any).httpAllowHalfOpen = true;
         await once(server.listen(0, "127.0.0.1"), "listening");
         const port = (server.address() as AddressInfo).port;
         for (let i = 0; i < 5; i++) {
@@ -532,7 +532,7 @@ describe("backpressure", () => {
         else socket.write(request);
         if (!reading) socket.pause();
       });
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         received += chunk.length;
         if (collect) chunks.push(chunk);
         if (headLength < 0) {
@@ -1031,7 +1031,7 @@ describe("backpressure", () => {
         const server = tls
           ? http2.createSecureServer({ ...tlsOptions, allowHTTP1: true, allowHalfOpen: halfOpen }, listener as never)
           : http.createServer(listener);
-        (server as http.Server).httpAllowHalfOpen = halfOpen;
+        (server as any).httpAllowHalfOpen = halfOpen;
         // The http.Server never listens: a net.Server accepts its connections.
         const acceptor = tls
           ? (server as net.Server)
@@ -1047,7 +1047,7 @@ describe("backpressure", () => {
         return {
           port: (acceptor.address() as AddressInfo).port,
           close,
-          [Symbol.asyncDispose]: () => (close(), closed),
+          [Symbol.asyncDispose]: (): Promise<any> => (close(), closed),
         };
       }
 
@@ -2347,7 +2347,7 @@ describe("backpressure", () => {
           client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
           await written.promise;
           const received: Buffer[] = [];
-          client.on("data", chunk => received.push(chunk));
+          client.on("data", (chunk: Buffer) => received.push(chunk));
           client.resume();
           await once(client, "end");
 

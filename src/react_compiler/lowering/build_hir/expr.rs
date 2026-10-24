@@ -22,6 +22,9 @@ pub(crate) fn lower_expression(
     builder: &mut HirBuilder,
     expr: &Expr,
 ) -> Result<InstructionValue, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let loc = convert_loc(expr.loc);
     match &expr.data {
         Data::EObjectJSON(_) | Data::EArrayJSON(_) => Ok(unsupported_node("JSONValue", loc)),
@@ -422,7 +425,9 @@ fn lower_logical(
     let test_block = builder.reserve(BlockKind::Value);
     let test_block_id = test_block.id;
     let place = build_temporary_place(builder, loc);
-    let left_loc = convert_loc(bin.left.loc);
+    let around_left = (builder.parentheses_around(bin.left.loc))
+        .or_else(|| builder.type_cast_around(bin.left.loc));
+    let left_loc = convert_loc(around_left.unwrap_or(bin.left.loc));
     let left_place = build_temporary_place(builder, left_loc);
 
     let consequent_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {
@@ -614,6 +619,10 @@ fn lower_sequence(
 
     let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
         fn flatten_comma(builder: &mut HirBuilder, e: &Expr) -> Result<Place, CompilerError> {
+            if !builder.environment().has_stack() {
+                return Err(crate::lowering::nested_too_deeply().into());
+            }
+
             if let Data::EBinary(b) = &e.data {
                 if b.op == OpCode::BinComma {
                     flatten_comma(builder, &b.left)?;
@@ -1338,6 +1347,9 @@ fn is_reorderable_expression(
     expr: &Expr,
     allow_local_identifiers: bool,
 ) -> bool {
+    if !builder.environment().has_stack() {
+        return false;
+    }
     match &expr.data {
         Data::EIdentifier(ident) => {
             if is_module_level_or_global(builder, ident.ref_) {
@@ -1408,6 +1420,11 @@ fn is_reorderable_expression(
             }
             stmts.is_empty()
         }
+        Data::ECall(call)
+            if call.was_jsx_element && !builder.environment().config.jsx_can_be_reordered =>
+        {
+            false
+        }
         Data::ECall(call) if call.optional_chain.is_none() => {
             is_reorderable_expression(builder, &call.target, allow_local_identifiers)
                 && call
@@ -1469,17 +1486,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
     ) {
         return true;
     }
-    if let Some(member) = builder
-        .host()
-        .module_scope()
-        .members
-        .get(sym.original_name.slice())
-    {
-        if member.ref_ == ref_ {
-            return true;
-        }
-    }
-    false
+    builder.host().is_module_level(ref_)
 }
 
 // =============================================================================

@@ -1,5 +1,5 @@
 // A string literal type names a text. Where a build-time constant removes every expression that produced the text or compared with it,
-// `bun build --compile` leaves the text out of the executable, and `bun build --compile --aot --minify` must leave it out too, although
+// `bun build --compile` leaves the text out of the executable, and `bun build --compile --aot` must leave it out too, although
 // the type still lists it. A value that holds the text can still arrive from parsed data, and is handled as the type says.
 import { afterAll, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync } from "fs";
@@ -68,7 +68,6 @@ describe.skipIf(!!unsupported)("compile/aot/literal-types-in-executables", () =>
           bunExe(),
           "build",
           "--compile",
-          "--minify",
           "--no-compile-function-source",
           "--define",
           'process.env.BUILD_KIND="external"',
@@ -91,13 +90,15 @@ describe.skipIf(!!unsupported)("compile/aot/literal-types-in-executables", () =>
     };
   }
 
-  // TODO: three of the four texts are in the executable built with --aot.
-  test.todo(
-    "a text that only a type lists is in neither executable",
-    async () => {
+  test.each([
+    ["", []],
+    [" built with --minify", ["--minify"]],
+  ])(
+    "a text that only a type lists is in neither executable%s",
+    async (_, flags) => {
       await slot(async () => {
-        const plain = await build("plain", []);
-        const compiled = await build("compiled", ["--aot"]);
+        const plain = await build("plain", flags);
+        const compiled = await build("compiled", ["--aot", ...flags]);
         expect(compiled.printed).toBe(plain.printed);
         expect(hidden.filter(plain.holds)).toEqual([]);
         expect(hidden.filter(compiled.holds)).toEqual([]);

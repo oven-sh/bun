@@ -16,7 +16,7 @@ export const Thing = b.class({ rustPath: "crate::thing::Thing", proto: { ${proto
   });
   const problems = new Problems();
   const source = `bun_runtime=${join(String(dir), "thing.bind.ts")}`;
-  const { declarations } = await collectBindgen(String(dir), [source], new Map(), problems);
+  const { declarations } = await collectBindgen(String(dir), [source], new Map(), new Set(), new Map(), problems);
   expect(problems.lines).toEqual([]);
   return Object.fromEntries(
     declarations.flatMap(({ declaration }) =>

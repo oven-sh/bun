@@ -188,6 +188,7 @@ const stopped: Record<string, string[]> = {
     "regexp-exec-test-last-index",
     "replace-matching-and-non-matching",
     "replace-matching-and-non-matching-untyped",
+    "short-texts-from-many-makers-are-walked-character-by-character",
   ],
   "structural-types": [
     "a-literal-of-three-numbers-gets-a-string-by-reflect-set-before-each-use",

@@ -1,7 +1,7 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::Binding;
 use bun_sema::check::aot::{
-    GaveUp, MemberLookup, ObjectMemberKind, PositionTypes, ShapeKind, WrittenType,
+    GaveUp, MemberLookup, ObjectMemberKind, PositionTypes, ShapeKind, TupleElementKind, WrittenType,
 };
 use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 use smallvec::{SmallVec, smallvec};
@@ -11,7 +11,7 @@ use crate::ir::generated::TypeSiteKind;
 use crate::ir::{LayoutId, ValueId};
 use crate::lower::positions::{self, SiteOrigin};
 use crate::lower::types::map_type_at;
-use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, layouts};
+use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, expression, layouts};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum FoundKind {
@@ -101,9 +101,11 @@ fn look_up_element(
         return None;
     }
     let written = find_written_type(file, object);
-    let written = written.and_then(|ty| find_array_element_type(file, ty));
+    // Under a constant index the read of a tuple is a reference, which is converted to the type of that one element.
+    let is_any_element = expression::find_constant(file, index).is_none();
+    let written = written.and_then(|ty| find_contents_type(file, ty, is_any_element));
     let checked = file.queries.expression_type(object).ok();
-    let checked = checked.and_then(|ty| find_array_element_type(file, ty));
+    let checked = checked.and_then(|ty| find_contents_type(file, ty, is_any_element));
     if written.is_none() && checked.is_none() {
         return None;
     }
@@ -127,6 +129,39 @@ pub(in crate::lower) fn find_array_element_type(
         ShapeKind::Constrained { base, .. } => find_array_element_type(file, base),
         _ => None,
     }
+}
+
+fn find_contents_type(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    container: CheckerTypeId,
+    is_any_element: bool,
+) -> Option<CheckerTypeId> {
+    let element = find_array_element_type(file, container);
+    match is_any_element {
+        true => element.or_else(|| find_tuple_contents_type(file, container)),
+        false => element,
+    }
+}
+
+fn find_tuple_contents_type(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    container: CheckerTypeId,
+) -> Option<CheckerTypeId> {
+    let container = file.queries.without_nullish(container).ok()?;
+    let elements = match file.queries.type_shape(container).ok()?.kind {
+        ShapeKind::Tuple { elements, .. } => elements,
+        ShapeKind::Constrained { base, .. } => return find_tuple_contents_type(file, base),
+        _ => return None,
+    };
+    if elements.is_empty()
+        || elements
+            .iter()
+            .any(|element| element.kind == TupleElementKind::Variadic)
+    {
+        return None;
+    }
+    let held: SmallVec<[CheckerTypeId; 4]> = elements.iter().map(|element| element.ty).collect();
+    file.queries.union_of(&held).ok()
 }
 
 fn has_number_type(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) -> bool {

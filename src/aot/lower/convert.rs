@@ -190,7 +190,9 @@ fn find_cause(
     }
     let source_position = source.map_or(0, |source| file.hir[source].pos);
     let source = source.and_then(|source| file.queries.expression_type(source).ok());
-    if let (Some(source), Construct::Flow) = (source, construct) {
+    if let (Some(source), Construct::Flow) = (source, construct)
+        && !target.is_some_and(|target| supertypes::flows_into_container(file, source, target))
+    {
         let source = map_type_at(file, source, source_position).ty;
         file.fragment
             .family_facts

@@ -713,6 +713,34 @@ fn classify_union_member(
     }
 }
 
+fn is_container(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> bool {
+    let shape = file.queries.type_shape(ty);
+    shape.is_ok_and(|shape| matches!(classify_shape(&shape.kind), ComparedShape::Container))
+}
+
+// `new (class extends Set { })()` into `Stream | Set<Stream>`: the object is a Set, and belongs to the family of no other member.
+pub(super) fn flows_into_container(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    source: CheckerTypeId,
+    target: CheckerTypeId,
+) -> bool {
+    let shapes = (
+        file.queries.type_shape(source),
+        file.queries.type_shape(target),
+    );
+    let (Ok(source_shape), Ok(target_shape)) = shapes else {
+        return false;
+    };
+    let ComparedShape::Transparent(members) = classify_shape(&target_shape.kind) else {
+        return false;
+    };
+    find_value_kind(&classify_shape(&source_shape.kind)) == ValueKind::Object
+        && members.iter().any(|&member| {
+            is_container(file, member)
+                && matches!(file.queries.is_assignable(source, member), Ok(true))
+        })
+}
+
 // The type of a position is the union of the families of its members, so one member that takes the value is enough.
 fn follow_into_fitting_member(
     file: &mut FileLowering<'_, '_, '_, '_>,

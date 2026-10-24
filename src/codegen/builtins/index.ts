@@ -47,7 +47,7 @@ import { hostDeclarationFiles, loadDeclarationFiles, registerLibraryModule } fro
 import type { TableModel } from "./model.ts";
 import { collectOwnProperties } from "./own-properties.ts";
 import { compareBytes } from "./paths.ts";
-import { targetPlatforms, type BuiltinPath, type TargetPlatform } from "./vocabulary.ts";
+import { targetPlatforms, type BuiltinPath, type FeatureUseSpec, type TargetPlatform } from "./vocabulary.ts";
 
 const { loadSchema }: typeof import("../../../vendor/WebKit/Source/JavaScriptCore/aot/ir/generator/load.ts") =
   await import(engineFile("ir/generator/load.ts"));
@@ -112,6 +112,15 @@ function findPlacements(staticTableMembers: readonly SourcedDeclaration[]): Map<
   return placements;
 }
 
+function findFeatureUses(written: readonly SourcedDeclaration[]): Map<BuiltinPath, FeatureUseSpec[]> {
+  const uses = new Map<BuiltinPath, FeatureUseSpec[]>();
+  for (const { declaration } of written) {
+    if (declaration.declares !== "Extension" || declaration.columns.usesFeature === undefined) continue;
+    uses.set(declaration.path, [...(uses.get(declaration.path) ?? []), ...[declaration.columns.usesFeature].flat()]);
+  }
+  return uses;
+}
+
 const schemaFileNameOf = (bindgenSource: string): string =>
   basename(bindgenSource.slice(bindgenSource.indexOf("=") + 1));
 
@@ -130,7 +139,14 @@ export async function collectHost(options: GenerateOptions, problems: Problems):
   const writtenMembers = new Set(
     written.flatMap(({ declaration }) => (declaration.declares === "Member" ? [declaration.path] : [])),
   );
-  const schemas = await collectBindgen(bunRoot, sources, findPlacements(staticTableMembers), writtenMembers, problems);
+  const schemas = await collectBindgen(
+    bunRoot,
+    sources,
+    findPlacements(staticTableMembers),
+    writtenMembers,
+    findFeatureUses(written),
+    problems,
+  );
   return [
     ...written,
     ...staticTableMembers,

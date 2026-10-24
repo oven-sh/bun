@@ -11,6 +11,7 @@ import {
   getterSymbolName,
   methodHostFunctionName,
   methodSymbolName,
+  pathOfBoundNamespace,
   setterSymbolName,
   thunkSymbol,
   type SchemaFile,
@@ -59,6 +60,7 @@ import {
   type DirectForm,
   type DirectParameterSpec,
   type EntryColumns,
+  type FeatureUseSpec,
   type Heap,
   type KeyedProtocol,
   type ParameterType,
@@ -84,6 +86,8 @@ interface Joins {
   placements: ReadonlyMap<string, BuiltinPath>;
   /** What the files of the table declare themselves. */
   writtenMembers: ReadonlySet<BuiltinPath>;
+  /** The features that the files of the table give an entry. The functions of a namespace leave with the `$bindgen` that hands them out. */
+  writtenFeatureUses: ReadonlyMap<BuiltinPath, readonly FeatureUseSpec[]>;
   nativeBindings: ReadonlySet<BuiltinPath>;
 }
 
@@ -892,18 +896,16 @@ function collectNamespace(namespace: NamespaceDefinition, path: BuiltinPath): De
   ];
 }
 
-/** The object that `$bindgen` of a namespace makes for the module that asks. It has the functions of the namespace and no other members. */
-const pathOfBoundNamespace = (namespace: NamespaceDefinition, { namespace: cppNamespace }: SchemaFile["origin"]) =>
-  `%${cppNamespace}${namespace.name[0].toUpperCase()}${namespace.name.slice(1)}%`;
-
 function collectBoundNamespace(
   namespace: NamespaceDefinition,
   path: BuiltinPath,
   binding: BuiltinPath,
   header: string,
+  usesFeature: readonly FeatureUseSpec[],
 ): Declaration[] {
   return [
     ...b.namespace(path, {}, { scope: "Module", listsAllMembers: true, ...namespace.columns }),
+    ...(usesFeature.length > 0 ? b.extend(path, { usesFeature }) : []),
     ...(namespace.call === undefined ? b.inherits(path, "Object.prototype") : declareFunction(namespace.call, path)),
     ...namespace.functions.flatMap(fn => [
       ...declareFunction(fn, joinPath([path, fn.name])),
@@ -961,9 +963,10 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
     declaredFunctions.push(...namespace.functions);
     if (path !== undefined) declarations.push(...tryCollect(() => collectNamespace(namespace, path)));
     if (!isBound) continue;
-    const boundPath = pathOfBoundNamespace(namespace, schema.origin);
+    const boundPath = pathOfBoundNamespace(namespace);
     const header = `Generated${cppNamespace}.h`;
-    declarations.push(...tryCollect(() => collectBoundNamespace(namespace, boundPath, binding, header)));
+    const usesFeature = joins.writtenFeatureUses.get(binding) ?? [];
+    declarations.push(...tryCollect(() => collectBoundNamespace(namespace, boundPath, binding, header, usesFeature)));
   }
   for (const fn of schema.functions) {
     if (placedFunctions.has(fn)) continue;
@@ -1008,9 +1011,10 @@ export async function collectBindgen(
   sources: readonly string[],
   placements: ReadonlyMap<string, BuiltinPath>,
   writtenMembers: ReadonlySet<BuiltinPath>,
+  writtenFeatureUses: ReadonlyMap<BuiltinPath, readonly FeatureUseSpec[]>,
   problems: Problems,
 ): Promise<CollectedSchemas> {
-  const joins: Joins = { placements, writtenMembers, nativeBindings: findNativeBindings() };
+  const joins: Joins = { placements, writtenMembers, writtenFeatureUses, nativeBindings: findNativeBindings() };
   // A type is named by the file that exports it, and another file may use it.
   const loaded: { file: string; schema: SchemaFile }[] = [];
   for (const source of [...sources].sort(compareBytes)) {

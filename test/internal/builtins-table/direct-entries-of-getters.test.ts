@@ -15,7 +15,7 @@ export const Thing = b.class({ rustPath: "crate::thing::Thing", ${definition} })
   });
   const problems = new Problems();
   const source = `bun_runtime=${join(String(dir), "thing.bind.ts")}`;
-  const { declarations } = await collectBindgen(String(dir), [source], new Map(), problems);
+  const { declarations } = await collectBindgen(String(dir), [source], new Map(), new Set(), new Map(), problems);
   return {
     problems: problems.lines,
     accessors: declarations.flatMap(({ declaration }) =>

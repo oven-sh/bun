@@ -16,6 +16,10 @@ const programs = [
   "arrays/frozen-array-error-messages",
   // Arrays are frozen and the run counts, and nothing throws.
   "arrays/elements-of-frozen-arrays-that-fit-are-not-coerced",
+  // Linux on x64, a shell built with assertions: signal 6 as they stand and at each of the three heats. A module of the image loads another
+  // under a name that the program computes, and the shell took the path of the first for a URL.
+  "modules/two-loads-of-a-module-that-cannot-be-linked-give-one-error",
+  "structural-types/a-module-imported-by-a-computed-name-is-untyped",
 ];
 
 /** What shell/quick.py passes over for now is printed, so that every run on that platform says where the shell died. The other lines. */

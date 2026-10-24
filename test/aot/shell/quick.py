@@ -28,7 +28,7 @@ Prints one line per program and exits with 1 if any line is a failure:
 
 A program with a .build-errors.txt is skipped: front end and engine stop at the errors that `bun compile` reports.
 """
-import difflib, json, os, platform, re, sys, tempfile
+import difflib, json, os, re, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -164,9 +164,6 @@ def run_program(program):
         if code is None:
             return verdict
         verdict += where_it_died(ir, image, words, build_env, entries[0], env, bool(options.get("env")), cwd)
-        # TODO: on Linux on ARM64 the shell dies of signal 11 where it counts the calls of operations and compiled code catches an error.
-        if code == -11 and sys.platform == "linux" and platform.machine() in ("aarch64", "arm64") and "JSC_aotCountsPath" in options.get("env", {}):
-            return "skipped: TODO: on Linux on ARM64 the shell dies where it counts the calls of operations: " + verdict
         return verdict
 
     if os.path.isfile(base + ".expected.txt"):

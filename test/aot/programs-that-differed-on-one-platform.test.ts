@@ -1,6 +1,5 @@
 // Programs whose executable once answered otherwise than plain Bun on one platform alone. A run takes a part of each folder, and which part goes by the commit,
 // so such a program may stay unseen on that platform for many runs. Each is listed here, and every run takes all of them.
-import { isArm64, isLinux } from "harness";
 import { programsBuiltWith } from "./run-programs";
 
 // Windows: an observer had heard nothing yet of the marks made five milliseconds before. The program now waits until it has.
@@ -10,13 +9,7 @@ programsBuiltWith("every-member-of-a-host-object", "in-every-run", [], {}, 1, 1,
   "every-member-of-bun-is-read",
   "every-member-of-process-is-read",
 ]);
-// Linux on ARM64: in the engine's shell, where its counts are written, the program died of a signal under each of the three heats.
-// TODO: there the executable dies too where the calls of operations are counted, in all four forms, and passes in all four where they are not.
-const diesWhereCallsAreCounted = isLinux && isArm64;
-if (diesWhereCallsAreCounted)
-  console.error(
-    "SKIPPED: arrays/index-fill-grows-like-push with counts: on Linux on ARM64 it dies of a segmentation fault",
-  );
+// Linux on ARM64: where the calls of operations are counted, the program did not end, in the engine's shell and as an executable.
 for (const [label, flags] of [
   ["in-every-run", []],
   ["in-every-run-every-function-hot", ["--aot-heat=everything-is-hot"]],
@@ -24,7 +17,6 @@ for (const [label, flags] of [
   ["in-every-run-every-function-neither-hot-nor-cold", ["--aot-heat=nothing-is-hottest"]],
 ] as const) {
   programsBuiltWith("arrays", label, [...flags], {}, 1, 1, ["index-fill-grows-like-push"]);
-  if (diesWhereCallsAreCounted) continue;
   programsBuiltWith("arrays", `${label}-with-counts`, [...flags], { BUN_JSC_aotCountsPath: "/dev/null" }, 1, 1, [
     "index-fill-grows-like-push",
   ]);

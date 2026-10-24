@@ -23,8 +23,8 @@ feature Cron "Bun.cron"
 feature Secrets "Bun.secrets"
 
 feature Shell "the Bun.$ shell"
-  minimum 50000 elf
-  minimum 50000 macho
+  minimum 200000 elf
+  minimum 200000 macho
 
 feature Color "Bun.color"
 

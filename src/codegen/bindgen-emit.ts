@@ -68,7 +68,8 @@ function guardOfFunction(
   namespace: NamespaceDefinition | undefined,
   guards: Guards,
 ): Guard | null {
-  const holder = namespace && textOfNativeSymbol(cppNamespaceSymbol(namespace), guards);
+  const holder =
+    namespace && (textOfNativeSymbol(cppNamespaceSymbol(namespace), guards) ?? pathOfBoundNamespace(namespace));
   const text = holder ? textOfStaticTableEntry(holder, fn.name) : textOfNativeSymbol(cppFunctionSymbol(fn), guards);
   return guards.ofPath(text ?? textOfNativeBinding("Bindgen", `${fn.origin!.stem}.bind.ts`, fn.name));
 }
@@ -472,6 +473,9 @@ export const cppFunctionSymbol = (fn: FunctionDefinition) =>
 export const cppNamespaceSymbol = (namespace: NamespaceDefinition) =>
   cppQualified(namespace.functions[0].origin!, namespaceCreatorName(namespace));
 export const cppConstructorSymbol = (type: NamedType) => cppQualified(type.origin!, constructorGetterName(type));
+/** In the table of built-ins, the object that `$bindgen` of a namespace makes for the module that asks. It has the functions of the namespace and no other members. */
+export const pathOfBoundNamespace = (namespace: NamespaceDefinition) =>
+  `%${namespace.functions[0].origin!.namespace}${cap(namespace.name)}%`;
 
 function cppSourceForNamespace(namespace: NamespaceDefinition, origin: Origin): string {
   return `

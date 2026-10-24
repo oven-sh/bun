@@ -79,6 +79,15 @@ Three columns, three starts, one route, both pinnings: six minutes a server on e
 holds every everyday idiom of `../../perf/idioms` (typed and untyped) and every single operation of `../../perf/operations` against the JIT, by instructions and by CPU time, and lists the
 rows that lose, worst first. Two minutes on sixteen cores.
 
+## What a request does in compiled code, counted by the executable itself
+
+    bun test/aot/servers/measure/tests-by-request.ts --bun <bun with --aot> --server koa
+    bun test/aot/servers/measure/arrivals-by-request.ts --bun <bun with --aot> --server koa --routes text,hand
+
+The first builds the server with `--aot-count-branches` and prints how many tests a request runs, and which of them have only ever gone one way: by the kind of test, by where the tested
+value comes from, by function and by place. The second builds it with `--aot-count-arrivals` and prints how often a request arrives at an operation that looks something up at run time, and with what.
+Both compare every answer, read no counter of the processor and print the same on a busy machine. `counted-server.ts` lists the options.
+
 ## More
 
 `measure.py --help` and the text at its top: any number of columns, other servers (`../effect`, the API servers, the Go and Rust twins under `../go` and `../rust`), hardware events, code layouts,

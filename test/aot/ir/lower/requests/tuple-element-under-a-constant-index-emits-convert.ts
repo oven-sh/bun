@@ -13,13 +13,13 @@
 
 // RUN(VARIABLE): lower
 // VARIABLE-LABEL: function {{*}}name="underVariableIndex"
-// VARIABLE-NOT: illTypedCause=
 // VARIABLE: [[element]] = ElemGet
-// VARIABLE-NEXT: = StrictEq [[element]],
+// VARIABLE-NEXT: [[claimed]] = Convert [[element]] {{*}}illTypedCause=ContainerWriterUnseen
+// VARIABLE-NEXT: = StrictEq [[claimed]],
 // VARIABLE-NOT: illTypedCause=
 // VARIABLE: Return
 
-// A tuple is sent as an array of the union of its elements, which says less than the checker knows about `pair[1]`. Under a constant index the read is a reference, so it is converted to the checker's type of that element, and the member is read from the converted value. Under any other index the checker has the union too, the read is no reference, and nothing is emitted.
+// A tuple is sent as an array of the union of its elements, which says less than the checker knows about `pair[1]`. Under a constant index the read is a reference, so it is converted to the checker's type of that element, and the member is read from the converted value. Under any other index the checker has the union too, the read is no reference, and it is claimed as the read of an array is.
 interface Item {
   name: string;
 }

@@ -685,6 +685,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(self.c.filter(ty, |c, member| !c.is_nullish(member)))
     }
 
+    pub fn union_of(&mut self, members: &[TypeId]) -> CheckedType {
+        for &member in members {
+            self.resolved(member)?;
+        }
+        Ok(self.c.union(members))
+    }
+
     pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> Result<bool, GaveUp> {
         self.ask(|queries| {
             let source = queries.resolved(source)?;

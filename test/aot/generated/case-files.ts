@@ -13,15 +13,18 @@ export interface CaseFile {
   name: string;
   head: string;
   cases: { name: string; line: string }[];
+  /** Lines behind the cases. */
+  tail?: string;
 }
 
-export const textOf = ({ head, cases }: CaseFile, isKept: (name: string) => boolean = () => true) =>
+export const textOf = ({ head, cases, tail = "" }: CaseFile, isKept: (name: string) => boolean = () => true) =>
   head +
   cases
     .filter(({ name }) => isKept(name))
     .map(({ line }) => line)
     .join("\n") +
-  "\n";
+  "\n" +
+  tail;
 
 /** So many of the names that every value of every axis, and then every pair of values, occurs as often as any other. The same names give the same choice. */
 export function spread(names: string[], count: number): string[] {

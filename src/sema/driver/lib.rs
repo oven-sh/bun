@@ -857,6 +857,15 @@ pub trait ListedProjects: Sync {
     fn of(&self, path: &[u8], is_case_sensitive: bool) -> &[Vec<u8>];
 }
 
+/// `Request::pages`
+#[derive(Clone, Copy)]
+pub struct PageRules<'a> {
+    /// The loader of each extension, as `--loader` sets it (`bun_ast::Loader::of_extension`).
+    pub loaders: &'a bun_ast::LoaderHashTable,
+    /// The files that have the name of a page and that a bundle loads in another way. In the checker's format.
+    pub not_pages: &'a [Vec<u8>],
+}
+
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     /// The working directory, as a native path.
@@ -884,8 +893,8 @@ pub struct Request<'a> {
     pub script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     /// `--conditions` of what is run or bundled, besides `customConditions`.
     pub conditions: &'a [Box<[u8]>],
-    /// The loaders by extension (`--loader`), which say what import is an HTML page to follow. `None`: follow none.
-    pub loaders: Option<&'a bun_ast::LoaderHashTable>,
+    /// How Bun loads files, which says what import is an HTML page to follow. `None`: follow none.
+    pub pages: Option<PageRules<'a>>,
     /// Compiler options given on the command line. They override the configuration file, including those of referenced
     /// projects.
     pub compiler_options: &'a [CompilerOption],
@@ -3929,8 +3938,8 @@ fn check_named_files(
     let mut scripts_elsewhere = Vec::new();
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
-        let of_program = |loaders| pages::Pages::new(host, program.files, loaders);
-        let pages = request.loaders.map(of_program);
+        let of_program = |rules| pages::Pages::new(host, program.files, rules);
+        let pages = request.pages.map(of_program);
         let mut is_reached = vec![false; modules.len()];
         let mut to_follow: Vec<usize> = (0..modules.len())
             .filter(|&i| is_among(named, modules[i].path.text))

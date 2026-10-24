@@ -244,7 +244,7 @@ struct Entries<'a> {
     conditions: &'a [Box<[u8]>],
     /// `None`: the loader that has the name of each extension, because `bun check` takes no `--loader`.
     loaders: Option<&'a bun_ast::LoaderHashTable>,
-    /// `TypeChecked::not_pages`, as `Host::scripts_of_page` is given a path.
+    /// `PageRules::not_pages`
     not_pages: &'a [Vec<u8>],
 }
 
@@ -314,25 +314,17 @@ fn run_quietly<R>(
         threads,
         progress,
     );
-    let not_pages = match *paths {
-        Paths::Arguments(_) => Vec::new(),
-        Paths::EntryPoints(entries) => entries.not_pages.to_vec(),
-    };
-    let provided = with_pages(cwd, not_pages, provided);
-    bun_sema_driver::check_provided_then(&request, provided, then)
+    bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), then)
 }
 
-/// Returns `provided` with `Provided::scripts_of_page` set. `not_pages`: see `Entries`.
-fn with_pages(cwd: &[u8], not_pages: Vec<Vec<u8>>, provided: Provided) -> Provided {
+/// Returns `provided` with `Provided::scripts_of_page` set.
+fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
     use bun_sema_driver::host::{from_native, to_native};
     // One thread at a time, because the first call initializes the `FileSystem` that the scanner
     // reads.
     let (cwd, turn) = (cwd.to_vec(), bun_threading::Guarded::new(()));
     Provided {
         scripts_of_page: Some(Box::new(move |page| {
-            if not_pages.iter().any(|it| it == page) {
-                return Vec::new();
-            }
             let _turn = turn.lock();
             let scripts = imports_of_page(&cwd, to_native(page)).into_iter();
             let scripts = scripts.filter(|path| has_types(path));
@@ -373,7 +365,10 @@ fn request<'a>(
         script_kinds: entries.script_kinds,
         script_kinds_by_extension: entries.script_kinds_by_extension,
         conditions: entries.conditions,
-        loaders: Some(entries.loaders.unwrap_or(no_loaders)),
+        pages: Some(bun_sema_driver::PageRules {
+            loaders: entries.loaders.unwrap_or(no_loaders),
+            not_pages: entries.not_pages,
+        }),
         compiler_options,
         threads,
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),

@@ -24016,13 +24016,16 @@ describe.concurrent("--check", () => {
         errors: [],
         ran: "ran string string",
       },
-      // Bun loads nothing for a type.
-      "an import of a type, and a type of the module": {
+      // Bun loads nothing for a type: its parser drops each of these declarations.
+      "imports and exports of a type, and a type of the module": {
         files: {
           "template.html": template,
           "server.ts":
             `import type it from "./template.html";\n` +
-            `export type Page = typeof it | typeof import("./template.html");\nconsole.log("ran");\n`,
+            `import { type default as Named } from "./template.html";\n` +
+            `export type { default as Exported } from "./template.html";\n` +
+            `export { type default as Inline } from "./template.html";\n` +
+            `export type Page = typeof it | typeof Named | typeof import("./template.html");\nconsole.log("ran");\n`,
         },
         errors: [],
         ran: "ran",
@@ -24303,6 +24306,26 @@ describe.concurrent("--check", () => {
       expect([errorsOf(stdout), exitCode]).toEqual([[], 0]);
     });
 
+    // The runtime evaluates the options, so the second `type` decides. Its value is not written in the call.
+    test("`import()` with two `type`s, of which the last is a variable", async () => {
+      using dir = project({
+        "tmpl.d.ts": pattern("*.tmpl"),
+        "template.tmpl": template,
+        "server.ts": server(
+          `const name: string = "text";\n// @ts-ignore\n` +
+            `const it = (await import("./template.tmpl", { with: { type: "html", type: name } })).default;`,
+        ),
+      });
+      const [ran, alone, before] = await Promise.all([
+        run(String(dir), ["server.ts"]),
+        check(dir, ["server.ts"]),
+        run(String(dir), ["--check", "server.ts"]),
+      ]);
+      expect(ran.stdout).toBe("ran string");
+      expect([errorsOf(alone.stdout), alone.exitCode]).toEqual([[], 0]);
+      expect([errorsOf(before.stderr), before.stdout, before.exitCode]).toEqual([[], "ran string", 0]);
+    });
+
     // Each script declares the same global variable with another type: TS2403 names the script that is checked last.
     test("checks the pages of a file in the order of its imports", async () => {
       const declares = (type: string) => `export {};\ndeclare global {\n  var shared: ${type};\n}\n`;
@@ -24542,18 +24565,21 @@ describe.concurrent("--check", () => {
               build.onLoad({ filter: /\\.html$/ }, async args => ({ contents: await Bun.file(args.path).text(), loader: "text" }));
             },
           };
-          const result = await Bun.build({ entrypoints: ["plain.ts"], outdir: "out-plugin", target: "bun", check: true, throw: false, plugins: [asText] });
+          const [entry] = process.argv.slice(2);
+          const result = await Bun.build({ entrypoints: [entry], outdir: "out-" + entry, target: "bun", check: true, throw: false, plugins: [asText] });
           console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message) }));
         `,
         "template.html": template,
         "text.ts": server(`import it from "./template.html" with { type: "text" };`),
         "plain.ts": server(`import it from "./template.html";`),
+        // Where the file system ignores case, the bundle has the file under the name that the disk has.
+        "other-case.ts": server(`import it from "./TEMPLATE.html";`),
         "index.html": page("./main.ts"),
         // `run` turns a backslash into a slash, so the line that a log quotes has no double quote.
         "main.ts": `export const c: number = '1';\n`,
         "page.ts": server(`import it from "./index.html";`),
       });
-      const [text, byLoader, aPage, external, byPlugin] = await Promise.all([
+      const [text, byLoader, aPage, external, byPlugin, inOtherCase] = await Promise.all([
         build(dir, { entrypoints: ["text.ts"], outdir: "out-text", target: "bun", throw: false }),
         build(dir, {
           entrypoints: ["plain.ts"],
@@ -24570,7 +24596,8 @@ describe.concurrent("--check", () => {
           external: ["./index.html"],
           throw: false,
         }),
-        run(String(dir), ["with-plugin.mjs"]),
+        run(String(dir), ["with-plugin.mjs", "plain.ts"]),
+        isCaseInsensitive ? run(String(dir), ["with-plugin.mjs", "other-case.ts"]) : undefined,
       ]);
       expect(text.result).toEqual({ success: true, outputs: 1, logs: [] });
       expect(byLoader.result).toEqual({ success: true, outputs: 1, logs: [] });
@@ -24581,6 +24608,7 @@ describe.concurrent("--check", () => {
       });
       expect(external.result).toEqual(aPage.result);
       expect(JSON.parse(byPlugin.stdout)).toEqual({ success: true, logs: [] });
+      if (inOtherCase) expect(JSON.parse(inOtherCase.stdout)).toEqual({ success: true, logs: [] });
     });
 
     // A path is a named file, unless it is a directory that has every file of its project.

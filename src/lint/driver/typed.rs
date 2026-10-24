@@ -489,7 +489,7 @@ fn check_and_lint_in(
         script_kinds: &[],
         script_kinds_by_extension: &[],
         conditions: &[],
-        loaders: None,
+        pages: None,
         compiler_options: &command_line.compiler_options,
         threads: context.options.threads,
         libs: environment.libs,

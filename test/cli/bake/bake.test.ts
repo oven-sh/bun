@@ -28,10 +28,10 @@ async function get(url: string, path: string) {
   return `${res.status} ${await res.text()}`;
 }
 
-function spawnBake(dir: string, args: string[]) {
+function spawnBake(dir: string, args: string[], extraEnv?: Record<string, string>) {
   return Bun.spawn({
     cmd: [bunExe(), ...args],
-    env,
+    env: { ...env, ...extraEnv },
     cwd: dir,
     // Some fixtures catch SIGTERM, so the cleanup of `await using` would wait for an exit that never comes.
     killSignal: "SIGKILL",
@@ -701,15 +701,7 @@ test.concurrent.each([
   });
 
   // No `--port` and no `--host`: with a flag, `bun bake` does not use the `unix` of the export.
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "bake"],
-    env: { ...env, PORT: "0" },
-    cwd: String(dir),
-    killSignal: "SIGKILL",
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using proc = spawnBake(String(dir), ["bake"], { PORT: "0" });
   const url = await getServerUrl(proc);
 
   // The banner is no proof: it says localhost when the server listens on every interface.
@@ -741,25 +733,15 @@ test.concurrent.skipIf(isWindows)("bun bake reads the unix socket of the export 
   expect(await res.text()).toBe("1");
 });
 
-// Bun.serve's `unix` option takes a socket path, which this test only makes on POSIX.
-test.concurrent.skipIf(isWindows).each(["--port=0", "--host=localhost"])(
+// The flag comes before the socket of the export, so no socket is made, on any platform.
+test.concurrent.each(["--port=0", "--host=localhost"])(
   "bun bake %s serves TCP when app/server.ts exports a unix socket",
   async flag => {
-    using dir = tempDir("bake-command-unix-flag", {});
-    await Bun.write(
-      join(String(dir), "app/server.ts"),
-      `export default { unix: ${JSON.stringify(join(String(dir), "s.sock"))}, fetch: () => new Response("ok") };`,
-    );
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "bake", flag],
-      env: { ...env, PORT: "0" },
-      cwd: String(dir),
-      killSignal: "SIGKILL",
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
+    using dir = tempDir("bake-command-unix-flag", {
+      "app/server.ts": `export default { unix: "s.sock", fetch: () => new Response("ok") };`,
     });
+
+    await using proc = spawnBake(String(dir), ["bake", flag], { PORT: "0" });
     const output = collectOutput(proc);
     const [, url] = await output.waitFor(/url: (\S+)/);
 

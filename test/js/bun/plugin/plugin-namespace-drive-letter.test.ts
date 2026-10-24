@@ -4,7 +4,7 @@
 // drive, never a plugin namespace; resolving "C:\\..." with a one-letter
 // namespace registered must still reach the filesystem resolver.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("single-letter plugin namespace does not capture Windows drive paths", async () => {
   using dir = tempDir("plugin-ns-drive-letter", {
@@ -50,4 +50,43 @@ test("single-letter plugin namespace does not capture Windows drive paths", asyn
   expect(stdout).not.toContain("imported");
   expect(exitCode).toBe(0);
   void stderr;
+});
+
+test.skipIf(!isWindows)("Windows namespace prefixes survive plugin importer query stripping", async () => {
+  using dir = tempDir("plugin-device-prefix", {
+    "parent.cjs": 'module.exports = require("./namespace-child.js");',
+    "entry.cjs": `
+      const assert = require("node:assert/strict");
+      const { join, toNamespacedPath } = require("node:path");
+      const importers = [];
+      Bun.plugin({
+        name: "namespace-importers",
+        setup(build) {
+          build.onResolve({ filter: /namespace-child\\.js$/ }, ({ importer }) => {
+            importers.push(importer);
+            return { path: "child", namespace: "namespace-importers" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "namespace-importers" }, () => ({
+            exports: { value: 42 }, loader: "object",
+          }));
+        },
+      });
+      const plain = join(process.cwd(), "parent.cjs");
+      const namespaced = toNamespacedPath(plain);
+      for (const key of [plain, plain + "?query", namespaced, namespaced + "?query"]) {
+        assert.equal(require(key).value, 42);
+      }
+      assert.deepEqual(importers, [plain, plain, namespaced, namespaced]);
+      console.log("ok");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
 });

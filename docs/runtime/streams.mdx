@@ -146,7 +146,7 @@ await response.text(); // "hello"
 
 When the consumer leaves before the body ends, Bun calls the iterator's `return()` method at once. The consumer leaves when an HTTP client disconnects, when a write to a file or a pipe fails, or when you call `cancel()` on the body. Bun never calls `throw()`, so a `catch` block does not see why the consumer left.
 
-Bun does not wait for what `return()` gives back. When a write fails, the consumer gets the error at once, even if a `finally` block still awaits its cleanup. Only the promise of `cancel()` settles after that cleanup has finished.
+Bun does not wait for the `finally` block. A consumer that fails, such as `Bun.write()` on a full disk or `text()` on a chunk it cannot take, can reject before that block has finished.
 
 A generator acts on `return()` at a `yield`: its `finally` block runs there. A generator that waits in an `await` stays there until that `await` settles. To end such a wait when an HTTP client disconnects, pass `req.signal` to the call that waits.
 

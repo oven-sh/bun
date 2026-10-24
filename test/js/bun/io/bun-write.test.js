@@ -1568,16 +1568,21 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         },
       ],
       [
+        // The body has an end: a body with no end whose write error is lost would pull for ever.
         "an iterator whose return() never settles",
-        () => ({
-          body: {
-            [Symbol.asyncIterator]: () => ({
-              next: async () => ({ done: false, value: Buffer.alloc(64 * 1024, "x") }),
-              return: () => new Promise(() => {}),
-            }),
-          },
-          release: () => {},
-        }),
+        () => {
+          let given = 0;
+          return {
+            body: {
+              [Symbol.asyncIterator]: () => ({
+                next: async () =>
+                  given++ < 8 ? { done: false, value: Buffer.alloc(64 * 1024, "x") } : { done: true, value: undefined },
+                return: () => new Promise(() => {}),
+              }),
+            },
+            release: () => {},
+          };
+        },
       ],
     ])("a write that fails with ENOSPC rejects while the cleanup of %s is pending", async (_, make) => {
       const { body, release } = make();
@@ -1587,6 +1592,43 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       );
       release();
       expect(error?.code).toBe("ENOSPC");
+    });
+
+    // A chunk that the file sink cannot take fails the write on every platform.
+    it.each([
+      [
+        "the iterator of a tee() branch whose other branch is unread",
+        () => {
+          const source = new ReadableStream({
+            start(controller) {
+              controller.enqueue({ not: "a chunk" });
+            },
+          });
+          const [unread, written] = source.tee();
+          return { body: written.values(), release: () => void unread.cancel().catch(() => {}) };
+        },
+      ],
+      [
+        "an iterator whose return() never settles",
+        () => ({
+          body: {
+            [Symbol.asyncIterator]: () => ({
+              next: async () => ({ done: false, value: Symbol("not a chunk") }),
+              return: () => new Promise(() => {}),
+            }),
+          },
+          release: () => {},
+        }),
+      ],
+    ])("a chunk the file cannot take rejects while the cleanup of %s is pending", async (_, make) => {
+      using dir = tempDir("bun-write-refused-chunk", {});
+      const { body, release } = make();
+      const error = await Bun.write(join(String(dir), "out.bin"), new Response(body)).then(
+        () => undefined,
+        error => error,
+      );
+      release();
+      expect(error?.code).toBe("ERR_INVALID_ARG_TYPE");
     });
 
     // https://github.com/oven-sh/bun/issues/31681: these wrote "[object ReadableStream]".

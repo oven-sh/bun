@@ -142,15 +142,6 @@ static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncItera
     }
 }
 
-// cancel() and close() set m_cancelled and close the iterator in the same call, so a pump that
-// finds the flag has only the pull promise left to settle.
-static void settleCancelledPump(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
-{
-    ASSERT(op->m_cancelled);
-    ASSERT(!op->iterator());
-    settlePullPromiseResolved(globalObject, op);
-}
-
 // The boundaries' last resort: delivering an error ran a hook (iterator.return()) that
 // threw as well; drop the iterator and reject the pull with that. Runs no user JS.
 static void asyncIterAbandon(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
@@ -180,15 +171,15 @@ static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIterator
 }
 
 // Ends the pump: iterator.return() unless the iterator itself failed, then the pull promise settles in the same turn.
-// It rejects with `error` when the consumer failed and did not cancel, and resolves otherwise.
+// It rejects with `error` when the consumer failed, and resolves when the body ended. A cancel() or close() made
+// from inside return() has settled it already, so neither branch does anything then.
 // Out of line: it runs once per body, and inlined it grows every per-chunk function of the pump.
 static NEVER_INLINE void asyncIterFinish(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     op->closeIterator(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    // Read after return() ran: a cancel() made from inside it ends the stream cleanly.
-    if (!error || op->m_cancelled) {
+    if (!error) {
         settlePullPromiseResolved(globalObject, op);
         return;
     }
@@ -222,11 +213,9 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
         return NextStep::Finished;
     }
 
-    // The done/value getters run user JS that can cancel the stream.
-    if (op->m_cancelled) {
-        settleCancelledPump(globalObject, op);
+    // The done/value getters run user JS that can cancel or close the stream. Both settle the pull promise and close the iterator.
+    if (op->m_done)
         return NextStep::Finished;
-    }
 
     if (doneValue.toBoolean(globalObject)) {
         asyncIterFinishSuccess(globalObject, op);
@@ -288,10 +277,6 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
             op->m_running = false;
             return;
         }
-        if (op->m_cancelled) {
-            settleCancelledPump(globalObject, op);
-            return;
-        }
         JSObject* iterator = op->iterator();
         if (!iterator) {
             settlePullPromiseResolved(globalObject, op);
@@ -304,20 +289,16 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
             op->abandonIterator();
             return;
         }
-        if (op->m_cancelled) {
-            // A `next` getter cancelled the stream; do not resume the iterator.
-            settleCancelledPump(globalObject, op);
+        // A `next` getter cancelled the stream; do not resume the iterator.
+        if (op->m_done)
             return;
-        }
         JSValue nextResult = JSC::call(globalObject, nextFunction, iterator, nextArgs, "iterator.next is not a function"_s);
         if (scope.exception()) [[unlikely]] {
             op->abandonIterator();
             return;
         }
-        if (op->m_cancelled) {
-            settleCancelledPump(globalObject, op);
+        if (op->m_done)
             return;
-        }
         JSPromise* nextPromise = asPromise(nextResult);
         if (!nextPromise) {
             // `await` semantics: adopt thenables; plain results become fulfilled promises.
@@ -359,10 +340,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceNextFulfilled,
             op->m_running = false;
             return;
         }
-        if (op->m_cancelled) {
-            settleCancelledPump(globalObject, op);
-            return;
-        }
         auto step = asyncIterHandleNextResult(globalObject, op, result);
         RETURN_IF_EXCEPTION(scope, );
         if (step == NextStep::ContinueLoop)
@@ -387,8 +364,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceFlushFulfilled
     return enterStreams(globalObject, [&] {
         if (op->m_done)
             return;
-        if (op->m_cancelled)
-            return settleCancelledPump(globalObject, op);
         driveAsyncIterator(globalObject, op); }, [&](JSValue error) { asyncIterFinish(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 
@@ -418,7 +393,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourcePull, (JSGlobalO
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->thisValue());
-    if (op->m_done || op->m_cancelled)
+    if (op->m_done)
         return JSValue::encode(jsUndefined());
     if (JSObject* controller = callFrame->argument(0).getObject())
         op->setController(vm, controller);
@@ -440,7 +415,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourceCancel, (JSGloba
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->thisValue());
-    op->m_cancelled = true;
     // The pump is abandoned: whatever awaited pull() resolves, like the old converter.
     settlePullPromiseResolved(globalObject, op);
     auto* returnPromise = op->closeIteratorForCancel(globalObject);
@@ -449,13 +423,14 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourceCancel, (JSGloba
 }
 
 // close(): the consumer is gone; the iterator's finally still runs via return(), and a throw from
-// it propagates to whoever closed the source.
+// it propagates to whoever closed the source. The pull promise resolves first, as in cancel(), so
+// that throw does not leave it pending.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourceClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->thisValue());
-    op->m_cancelled = true;
-    asyncIterFinish(globalObject, op);
+    settlePullPromiseResolved(globalObject, op);
+    op->closeIterator(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

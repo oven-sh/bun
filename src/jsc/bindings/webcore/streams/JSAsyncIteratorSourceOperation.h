@@ -55,6 +55,7 @@ public:
 
     // The consumer is done: iterator.return?.() and never throw(), which a body can catch and outlive.
     // Nothing waits for what return() gives back, and a rejection of it is not reported.
+    // What return() throws is not caught here: it propagates to the caller.
     void closeIterator(JSC::JSGlobalObject*);
     // cancel() only: the stream's cancel promise chains onto what return() gives back.
     JSC::JSPromise* closeIteratorForCancel(JSC::JSGlobalObject*);
@@ -62,7 +63,6 @@ public:
     void abandonIterator() { internalField(Field::Iterator).clear(); }
     void clearPullPromise() { internalField(Field::PullPromise).clear(); }
 
-    bool m_cancelled : 1 { false };
     bool m_done : 1 { false };
     bool m_running : 1 { false };
 

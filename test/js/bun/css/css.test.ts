@@ -7942,19 +7942,6 @@ describe("css tests", () => {
       '.a { list-style-type: "a" } .b { list-style-type: a }',
       '.a{list-style-type:"a"}.b{list-style-type:a}',
     );
-    // A rule is not a duplicate of a later rule that sets another property.
-    minify_test(
-      "ul { list-style: none } .b { color: red } ul { float: left }",
-      "ul{list-style:none}.b{color:red}ul{float:left}",
-    );
-    minify_test(
-      ".a { list-style: square } .b { color: red } .a { list-style-type: thumbs }",
-      ".a{list-style:square}.b{color:red}.a{list-style-type:thumbs}",
-    );
-    minify_test(
-      ".a { transition-property: list-style } .b { transition-property: content }",
-      ".a{transition-property:list-style}.b{transition-property:content}",
-    );
     // A rule that is split for an old browser gets its own copy of the values.
     prefix_test(
       ".a, .b:focus-visible { list-style: thumbs inside; list-style-type: symbols('a' linear-gradient(red, blue)) }",

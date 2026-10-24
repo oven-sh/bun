@@ -876,7 +876,16 @@ A CSS module is a CSS file (with the `.module.css` extension) where all class na
 
 Bun's bundler transforms locally scoped class names into unique identifiers.
 
-The names of `@counter-style` rules are scoped to the file too. In `list-style` and `list-style-type`, a name that is not a predefined counter style (such as `decimal` or `lower-roman`) refers to an `@counter-style` rule and gets the same unique identifier.
+The names of `@counter-style` rules are scoped to the file too. In `list-style` and `list-style-type`, Bun gives the same unique identifier to every name that is not a predefined counter style (such as `decimal` or `lower-roman`). Bun does not check that the file has a rule of that name: a counter style from another stylesheet, or a keyword that only some browsers have (such as `hangul`), is renamed too. To keep a name as written, put it in a custom property:
+
+```css title="styles.module.css" icon="file-code"
+.list {
+  --marker: hangul;
+  list-style-type: var(--marker);
+}
+```
+
+A counter style name in `counter()`, `counters()`, `system: extends` or `fallback` is not renamed.
 
 ### Getting started
 

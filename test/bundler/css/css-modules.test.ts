@@ -591,10 +591,8 @@ describe("css", () => {
       expect(early, ".early should be scoped").not.toBeNull();
       const hash = early![1];
 
-      // Each rule keeps its hashed name. The white space around the name is
-      // not the subject of this test.
-      expect(css).toMatch(new RegExp(`@counter-style\\s*thumbs_${hash}\\s*\\{`));
-      expect(css).toMatch(new RegExp(`@counter-style\\s*stars_${hash}\\s*\\{`));
+      expect(css).toContain(`@counter-style thumbs_${hash} {`);
+      expect(css).toContain(`@counter-style stars_${hash} {`);
 
       const declarations = css
         .split("\n")
@@ -640,6 +638,7 @@ describe("css", () => {
         .wide { list-style-type: inherit; }
         .reserved { list-style: default; }
         .variable { list-style: var(--position) thumbs; }
+        .custom { --marker: thumbs; list-style-type: var(--marker); }
         .twice { list-style: thumbs thumbs; }
       `,
     },
@@ -661,6 +660,7 @@ describe("css", () => {
         "list-style-type: inherit;",
         "list-style: default;",
         "list-style: var(--position) thumbs;",
+        "list-style-type: var(--marker);",
         "list-style: thumbs thumbs;",
       ]);
     },
@@ -787,10 +787,7 @@ test("css-module/CounterStyleNameScopedNoBundleAndBunBuild", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const built = await Bun.build({ entrypoints: [join(String(dir), "styles.module.css")], minify: true });
 
-  // The white space after `@counter-style` is not the subject of this test.
-  const printed = [stdout, await built.outputs[0].text()].map(css =>
-    css.trim().replace(/@counter-style\s*/, "@counter-style "),
-  );
+  const printed = [stdout, await built.outputs[0].text()].map(css => css.trim());
   const expected = printed.map(css => {
     const hash = css.match(/\.list_([A-Za-z0-9_-]+)\{/)?.[1];
     return `@counter-style thumbs_${hash}{system:cyclic;symbols:"+"}.list_${hash}{list-style:inside thumbs_${hash}}.type_${hash}{list-style-type:thumbs_${hash}}`;
@@ -815,4 +812,42 @@ test("a resolve error in CSS covers the whole url() and composes path", async ()
     position!.lineText.slice(position!.column - 1, position!.column - 1 + position!.length),
   );
   expect(ranges).toEqual([`url('/fonts/missing.woff2')`, `url("./missing.png")`, `'./missing.css'`]);
+});
+
+test("a resolve error in CSS starts at the url(), after the white space before it", async () => {
+  using dir = tempDir("css-resolve-error-white-space", {
+    "a.css": [
+      ".a { list-style: inside   url(./a.png); }",
+      ".b { list-style:",
+      "  url(./b.png); }",
+      ".c { border-image-source:",
+      "  url(./c.png); }",
+      ".d { mask: no-repeat   url(./d.png); }",
+    ].join("\n"),
+  });
+  const result = await Bun.build({ entrypoints: [join(String(dir), "a.css")], throw: false });
+
+  // `column` is 1-based.
+  const ranges = result.logs.map(({ position }) => ({
+    line: position!.line,
+    text: position!.lineText.slice(position!.column - 1, position!.column - 1 + position!.length),
+  }));
+  expect(ranges).toEqual([
+    { line: 1, text: "url(./a.png)" },
+    { line: 3, text: "url(./b.png)" },
+    { line: 5, text: "url(./c.png)" },
+    { line: 6, text: "url(./d.png)" },
+  ]);
+});
+
+// `list-style` and `list-style-type` are in the property table, so the
+// conflict check of `composes` reads them like every other typed property.
+test("composes reports a list-style that the class and the composed class both set", async () => {
+  using dir = tempDir("css-composes-list-style", {
+    "entry.js": `import styles from "./a.module.css"; console.log(styles.a);`,
+    "a.module.css": `.a { composes: b from "./b.module.css"; list-style: square; }`,
+    "b.module.css": `.b { list-style: circle; } .b { color: red; }`,
+  });
+  const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], throw: false });
+  expect(result.logs.map(({ message }) => message)).toEqual(["The value of list-style in the class a is undefined."]);
 });

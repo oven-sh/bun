@@ -223,10 +223,7 @@ pub enum PredefinedCounterStyle {
     EthiopicNumeric,
 }
 
-/// A [`<symbols-type>`](https://www.w3.org/TR/css-counter-styles-3/#typedef-symbols-type) value,
-/// as used in the `symbols()` function.
-///
-/// See [CounterStyle](CounterStyle).
+/// The [`<symbols-type>`](https://www.w3.org/TR/css-counter-styles-3/#typedef-symbols-type) of a `symbols()` function.
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum SymbolsType {
     Cyclic,
@@ -236,10 +233,7 @@ pub enum SymbolsType {
     Fixed,
 }
 
-/// A single [symbol](https://www.w3.org/TR/css-counter-styles-3/#funcdef-symbols) as used in the
-/// `symbols()` function.
-///
-/// See [CounterStyle](CounterStyle).
+/// A [symbol](https://www.w3.org/TR/css-counter-styles-3/#funcdef-symbols) of a `symbols()` function.
 pub enum Symbol {
     /// A string.
     String(CSSString),
@@ -332,8 +326,7 @@ impl ListStyle {
                 }
             }
 
-            // Last, because most values are idents. No image starts with a token that a
-            // position or a type starts with, so the order does not change the result.
+            // Last: most values are idents, and the one ident of an image is the `none` above.
             if image.is_none() {
                 if let Ok(value) = input.try_parse(Image::parse) {
                     image = Some(value);
@@ -349,8 +342,7 @@ impl ListStyle {
             return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
-        // Assign the `none` to the opposite property from the one we have a value for,
-        // or both in case neither list-style-image or list-style-type have a value.
+        // A `none` is the value of the image or the type that has no other value, or of both.
         let position = position.unwrap_or(ListStylePosition::Outside);
         match (nones, image, list_style_type) {
             (2, None, None) | (1, None, None) => Ok(ListStyle {

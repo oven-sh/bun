@@ -1424,8 +1424,7 @@ export function never(v) {
       if (!decisions.has(decision)) decisions.set(decision, [Number(line), []]);
       decisions.get(decision)![1][Number(branch)] = Number(hits);
     }
-    // The decision of a `do`-`while` is after those in its body, and has the lower number.
-    return [...decisions.values()].sort(([a], [b]) => a - b);
+    return [...decisions.values()];
   }
 
   test.concurrent.each(["transpiled", "// @bun", "coverageIgnoreSourcemaps"] as const)(

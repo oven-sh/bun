@@ -95,6 +95,7 @@ impl Store {
     /// Makes the store read the files in `already_read` from memory instead of from disk. Call it before any rule
     /// queries the store.
     pub fn provide(&self, already_read: AlreadyRead) {
+        debug_assert!(self.disk.get().is_none());
         let _ = self.already_read.set(already_read);
     }
 
@@ -351,6 +352,11 @@ impl<'h> Graph<'h> {
     /// Sets the function that implements [`Modules::list_files`]. Without it no files are found.
     pub fn list_files_by(&self, lister: ListFiles<'h>) {
         let _ = self.lister.set(lister);
+    }
+
+    /// [`Store::provide`]
+    pub fn provide(&self, already_read: AlreadyRead) {
+        self.store.provide(already_read);
     }
 
     fn caches(&self) -> &Caches<'h> {

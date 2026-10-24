@@ -1659,6 +1659,8 @@ impl Run<'_> {
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
         if let Some(only) = &only {
+            // This search follows no symlink, and resolves no argument.
+            only.searched_unresolved(&options.patterns);
             expanded.retain(|it| match it {
                 Expanded::File(target) => only.has(&target.path),
                 Expanded::Error(_) => true,

@@ -39,6 +39,7 @@ use bun_lint::rule::{Frameworks, Plugin, minor_of};
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::borrow::Cow;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};
 
 /// The parsed `package.json` of the package that `specifier` names, found in `node_modules` from `directory` up. `None`
@@ -502,6 +503,10 @@ pub(crate) struct Loader<'l> {
     /// directories it listed, so `Inferred` doesn't have to hit the file system for them.
     pub(crate) searched_from: Guarded<Vec<Vec<u8>>>,
     pub(crate) tsconfigs: Guarded<Vec<Vec<u8>>>,
+    /// The symlinks to directories that the file search went through, each with its real path. See `collects_links`.
+    pub(crate) links: Guarded<Vec<(Vec<u8>, Vec<u8>)>>,
+    /// True if an argument of the file search named a file. The search doesn't resolve that path.
+    pub(crate) named_a_file: AtomicBool,
     /// Cache for [`Loader::detect_frameworks`], keyed by directory.
     frameworks: Guarded<FxHashMap<Vec<u8>, Frameworks>>,
 }
@@ -837,6 +842,8 @@ impl<'l> Loader<'l> {
             is_vite_plus: OnceLock::new(),
             searched_from: Default::default(),
             tsconfigs: Default::default(),
+            links: Default::default(),
+            named_a_file: AtomicBool::new(false),
             frameworks: Default::default(),
         }
     }
@@ -844,6 +851,11 @@ impl<'l> Loader<'l> {
     /// True if anything reads `searched_from` and `tsconfigs`, which only `InferGlobals::ByOptions` does.
     pub(crate) fn collects_tsconfigs(&self) -> bool {
         self.options.infer_globals.is_none() && self.options.infers_globals_by_options
+    }
+
+    /// True if anything reads `links`, which only [`crate::git::Files`] does, for `--staged` and `--changed`.
+    pub(crate) fn collects_links(&self) -> bool {
+        self.options.only.is_some()
     }
 
     /// A loader that reads ESLint 8's configuration files, whatever else exists.

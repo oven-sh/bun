@@ -288,6 +288,11 @@ fn search(
             if loader.collects_tsconfigs() {
                 (loader.searched_from.lock()).push(search.base_path.clone());
             }
+            if loader.collects_links()
+                && let Some(real) = real.as_ref().filter(|it| **it != search.base_path)
+            {
+                (loader.links.lock()).push((search.base_path.clone(), real.clone()));
+            }
             level.push(Directory {
                 path: search.base_path.clone(),
                 trail: Arc::new(Trail {
@@ -392,6 +397,9 @@ fn search(
                             is_loop = directory.trail.has(&end);
                             if is_loop && own.flavor != Flavor::EslintRc {
                                 continue;
+                            }
+                            if loader.collects_links() {
+                                (loader.links.lock()).push((path.clone(), end.clone()));
                             }
                             (real, entry.is_directory) = (Some(end), true);
                         }
@@ -640,6 +648,7 @@ pub(crate) fn find_files(
                 excluded_argument.get_or_insert(pattern);
             }
             Some((fs::Kind::File, size)) => {
+                loader.named_a_file.store(true, Ordering::Relaxed);
                 let loaded = loader.for_directory(paths::dirname(&path))?;
                 if loader.lacks_eslint_config_file(&loaded) {
                     return Err(config_file_missing(&path));

@@ -2,6 +2,112 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
 
+describe("v8.queryObjects", () => {
+  test.concurrent("validates arguments and counts inherited prototypes without invoking traps", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--input-type=module",
+        "-e",
+        `
+          import assert from "node:assert/strict";
+          import vm from "node:vm";
+          import { queryObjects } from "node:v8";
+          assert.equal(queryObjects.length, 1);
+          assert.throws(() => queryObjects(null, null), {
+            name: "TypeError", code: "ERR_INVALID_ARG_TYPE",
+            message: 'The "constructor" argument must be of type function. Received null',
+          });
+          for (const options of [null, [], 1, "count", () => {}]) {
+            assert.throws(() => queryObjects(() => {}, options), { code: "ERR_INVALID_ARG_TYPE" });
+          }
+          assert.throws(() => queryObjects(() => {}, { format: "bad" }), {
+            name: "TypeError", code: "ERR_INVALID_ARG_VALUE",
+            message: "The property 'options.format' is invalid. Received 'bad'",
+          });
+          class Base {}
+          class Derived extends Base {}
+          globalThis.retained = [new Base(), new Derived(), Object.create(Base.prototype)];
+          assert.equal(queryObjects(Base), 4);
+          assert.equal(queryObjects(Derived), 1);
+          assert.equal(queryObjects(Derived, { format: false }), 1);
+          assert.deepEqual(queryObjects(Derived, { format: "summary" }), ["Derived {}"]);
+          assert.equal(queryObjects(() => {}), 0);
+          function NoPrototype() {}
+          NoPrototype.prototype = null;
+          assert.deepEqual(queryObjects(NoPrototype, { format: "summary" }), []);
+          const context = vm.createContext({ Base });
+          vm.runInContext("globalThis.retained = Object.setPrototypeOf({}, Base.prototype)", context);
+          assert.equal(queryObjects(Base), 4);
+          const Foreign = vm.runInContext("class Foreign {}; globalThis.foreign = new Foreign(); Foreign", context);
+          globalThis.foreign = new Foreign();
+          assert.equal(queryObjects(Foreign), 0);
+          let traps = 0;
+          globalThis.proxy = new Proxy(new Base(), { getPrototypeOf() { traps++; throw Error("trap"); } });
+          assert.equal(queryObjects(Base), 5);
+          assert.equal(traps, 0);
+          const sentinel = new Error("prototype getter");
+          const constructor = new Proxy(function() {}, {
+            get(target, key, receiver) {
+              if (key === "prototype") throw sentinel;
+              return Reflect.get(target, key, receiver);
+            },
+          });
+          assert.throws(() => queryObjects(constructor), error => error === sentinel);
+          console.log("queryObjects arguments, prototypes, summaries and contexts passed");
+        `,
+      ],
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "queryObjects arguments, prototypes, summaries and contexts passed\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("collects unreachable objects and does not retain previous query results", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--input-type=module",
+        "-e",
+        `
+          import assert from "node:assert/strict";
+          import { queryObjects } from "node:v8";
+          import { setImmediate } from "node:timers/promises";
+          class Retained { value = { nested: 1 }; }
+          for (let round = 0; round < 3; round++) {
+            globalThis.retained = Array.from({ length: 128 }, () => new Retained());
+            globalThis.weak = new WeakRef(globalThis.retained[0]);
+            assert.equal(queryObjects(Retained), 128);
+            const summaries = queryObjects(Retained, { format: "summary" });
+            assert.equal(summaries.length, 128);
+            assert.ok(summaries.every(value => value === "Retained { value: [Object] }"));
+            globalThis.retained = undefined;
+            await setImmediate();
+            assert.equal(queryObjects(Retained), 0);
+            assert.equal(globalThis.weak.deref(), undefined);
+          }
+          console.log("queryObjects collection and result lifetimes passed");
+        `,
+      ],
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "queryObjects collection and result lifetimes passed\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("v8.isStringOneByteRepresentation", () => {
   test("rejects non-string arguments", () => {
     for (const value of [undefined, null, false, 5n, 5, Symbol(), () => {}, {}]) {

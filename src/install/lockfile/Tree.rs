@@ -148,11 +148,6 @@ impl Tree {
 enum HoistDependencyResult {
     DependencyLoop,
     Hoisted,
-    /// The package's own `node_modules` has the row of a name that differs from this one only in
-    /// case. The two would be one folder on a case-insensitive volume.
-    SameFolder {
-        dep_id: DependencyID,
-    },
     /// `Filter` only: the same package lists this name in another dependency group, which resolves
     /// to a different package and already has the name's row in tree `id`.
     Contested {
@@ -536,6 +531,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) served: Vec<(DependencyID, PackageID)>,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
+    /// The `folded_name_hash` of each entry of `sort_buf`.
+    pub(crate) folded_buf: Vec<PackageNameHash>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
     pub(crate) install_root_dependencies: bool,
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
@@ -856,6 +853,53 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
     fn buf(&self) -> &[u8] {
         self.lockfile().buffers.string_bytes.as_slice()
+    }
+
+    /// Logs an error if two dependencies of `pkg_id`, the package whose list `sort_buf` holds,
+    /// have names that differ only in case. They are one folder on a case-insensitive volume,
+    /// wherever the hoister places them.
+    fn refuse_same_folder_names(&mut self, pkg_id: PackageID) {
+        let deps = self.dependencies;
+        // Copied out, so that it does not keep `self` borrowed.
+        let lockfile_ref = self.lockfile;
+        let lockfile: &Lockfile = lockfile_ref.get();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let pkg_name = lockfile.packages.items_name()[pkg_id as usize].slice(buf);
+        // A lowercase name is its own key, so only a name with an uppercase letter can collide.
+        let Some(first) = (self.folded_buf.iter().zip(&self.sort_buf))
+            .position(|(&folded, &dep_id)| folded != deps[dep_id as usize].name_hash)
+        else {
+            return;
+        };
+        for i in first..self.sort_buf.len() {
+            let folded = self.folded_buf[i];
+            let dep = &deps[self.sort_buf[i] as usize];
+            if folded == dep.name_hash {
+                continue;
+            }
+            for (j, &other_id) in self.sort_buf.iter().enumerate() {
+                let other = &deps[other_id as usize];
+                // Each pair is reported once. The one of the two that has no uppercase letter
+                // is not visited by the outer loop.
+                let reported_before = j < i && self.folded_buf[j] != other.name_hash;
+                if self.folded_buf[j] != folded
+                    || other.name_hash == dep.name_hash
+                    || reported_before
+                {
+                    continue;
+                }
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "dependency names \"{}\" and \"{}\" of {} differ only in case and cannot share a node_modules folder",
+                        bun_core::fmt::for_terminal(bstr::BStr::new(dep.name.slice(buf))),
+                        bun_core::fmt::for_terminal(bstr::BStr::new(other.name.slice(buf))),
+                        bun_core::fmt::for_terminal(bstr::BStr::new(pkg_name)),
+                    ),
+                );
+            }
+        }
     }
 
     /// The package that loading `bun.lock` first resolves a peer to, going by its version range.
@@ -1517,16 +1561,23 @@ impl Tree {
                 }
             });
         }
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        builder.folded_buf.clear();
+        builder.folded_buf.extend(
+            (builder.sort_buf.iter())
+                .map(|&dep_id| folded_name_hash(&dependencies[dep_id as usize], buf)),
+        );
+        if first_walk {
+            builder.refuse_same_folder_names(parent_pkg_id);
+        }
 
         'dep: for sort_idx in 0..builder.sort_buf.len() {
             let dep_id = builder.sort_buf[sort_idx];
+            let folded = builder.folded_buf[sort_idx];
             let bound_by_version = builder.bind_peer(dep_id);
             let pkg_id = builder.resolutions[dep_id as usize];
             let dependency = &dependencies[dep_id as usize];
-            let dependency_name = dependency
-                .name
-                .slice(lockfile.buffers.string_bytes.as_slice());
-            let folded = crate::dependency::folded_name_hash(dependency_name, dependency.name_hash);
+            let dependency_name = dependency.name.slice(buf);
 
             // Unresolved packages already had their chance to resolve. Bundled ones are still kept.
             if METHOD == BuilderMethod::Filter
@@ -1625,27 +1676,6 @@ impl Tree {
 
             match hoisted {
                 HoistDependencyResult::DependencyLoop | HoistDependencyResult::Hoisted => continue,
-
-                HoistDependencyResult::SameFolder { dep_id: other } => {
-                    if first_walk {
-                        let buf = lockfile.buffers.string_bytes.as_slice();
-                        builder.log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "dependency names \"{}\" and \"{}\" of {} differ only in case and cannot share a node_modules folder",
-                                bun_core::fmt::for_terminal(bstr::BStr::new(dependency_name)),
-                                bun_core::fmt::for_terminal(bstr::BStr::new(
-                                    dependencies[other as usize].name.slice(buf)
-                                )),
-                                bun_core::fmt::for_terminal(bstr::BStr::new(
-                                    pkgs.items_name()[parent_pkg_id as usize].slice(buf)
-                                )),
-                            ),
-                        );
-                    }
-                    continue;
-                }
 
                 HoistDependencyResult::Served(res_id) => {
                     // A dependency has one resolution, however many times its package is placed.
@@ -1861,11 +1891,7 @@ impl Tree {
             // The row has a name that differs from this one only in case. That is one folder on a
             // case-insensitive volume, so it is taken, whatever package it holds.
             if dep.name_hash != dependency.name_hash {
-                return if AS_DEFINED {
-                    HoistDependencyResult::SameFolder { dep_id }
-                } else {
-                    HoistDependencyResult::DependencyLoop // 3
-                };
+                return HoistDependencyResult::DependencyLoop; // 3
             }
 
             // A dependency that Bun installs never resolves to a row that a tarball ships. The

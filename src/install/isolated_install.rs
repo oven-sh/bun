@@ -31,7 +31,7 @@ use bun_alloc::AllocError;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
-    StringArrayHashMap, index_sort,
+    index_sort,
 };
 use bun_core::{Global, Output, fast_random, fmt as bun_fmt};
 use bun_paths::path_options::AssumeOk as _;
@@ -215,10 +215,15 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
+/// The names taken in one `node_modules` folder. Keyed without ASCII case: two names that differ
+/// only in case are one entry on a case-insensitive volume, so the first one wins on every
+/// platform.
+type HoistedNames = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<()>;
+
 /// Grants `node_modules/.bun/node_modules/<dep_name>` to the first dependency that asks for it.
 fn claim_hidden_hoist(
     manager: &PackageManager,
-    hidden_hoisted: &mut StringArrayHashMap<()>,
+    hidden_hoisted: &mut HoistedNames,
     dep_name: &[u8],
 ) -> Result<bool, AllocError> {
     Ok(manager.options.hoist
@@ -1268,9 +1273,9 @@ fn build_store(
         entry_parent_id: store::entry::Id::INVALID,
     })?;
 
-    let mut public_hoisted: StringArrayHashMap<()> = StringArrayHashMap::default();
+    let mut public_hoisted = HoistedNames::default();
 
-    let mut hidden_hoisted: StringArrayHashMap<()> = StringArrayHashMap::default();
+    let mut hidden_hoisted = HoistedNames::default();
     let mut hidden_hoist_keys: Vec<store::entry::DependenciesItem> = Vec::new();
 
     // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.

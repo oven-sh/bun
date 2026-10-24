@@ -3042,38 +3042,117 @@ describe.concurrent("two names that differ only in case never share a node_modul
     expect(layout(String(dir))).toEqual(["helper@1.0.0", "helper/React@1.0.0", "react@1.0.0"]);
   });
 
-  test("the name that hoists first takes the root, the other one stays below its dependent", async () => {
+  // A package that lists both names cannot be installed on a case-insensitive volume, wherever
+  // the hoister places them: Node looks for `React` in the package's own node_modules first.
+  test.each([
+    ["the project", "hoisted"],
+    ["the project", "isolated"],
+    ["a dependency", "hoisted"],
+    ["a dependency", "isolated"],
+  ] as const)("%s that lists both names is refused (%s linker)", async (who, linker) => {
+    const both = { dependencies: { React: "npm:preact@1.0.0" }, devDependencies: { react: "1.0.0" } };
     using server = await serveGraph({
       react: { "1.0.0": {} },
       preact: { "1.0.0": {} },
       p: { "1.0.0": { dependencies: { React: "npm:preact@1.0.0", react: "1.0.0" } } },
     });
-    using dir = tempDir("hoist-case-both-below", {
-      "bunfig.toml": bunfig(server),
-      "package.json": JSON.stringify({ name: "app", dependencies: { p: "1.0.0" } }),
-    });
-    await run(String(dir), "install");
-    expect(layout(String(dir))).toEqual(["React@1.0.0", "p@1.0.0", "p/react@1.0.0"]);
-    expect(await run(String(dir), "install", "--frozen-lockfile")).toContain("no changes");
-    expect(layout(String(dir))).toEqual(["React@1.0.0", "p@1.0.0", "p/react@1.0.0"]);
-  });
-
-  test("a package that lists both names is refused", async () => {
-    using server = await serveGraph({ react: { "1.0.0": {} }, preact: { "1.0.0": {} } });
     using dir = tempDir("hoist-case-own-folder", {
-      "bunfig.toml": bunfig(server),
+      "bunfig.toml": bunfig(server).replace("hoisted", linker),
       "package.json": JSON.stringify({
         name: "app",
-        dependencies: { React: "npm:preact@1.0.0" },
-        devDependencies: { react: "1.0.0" },
+        ...(who === "the project" ? both : { dependencies: { p: "1.0.0" } }),
       }),
     });
     const { stderr, exitCode } = await spawnBun(String(dir), "install");
+    const pkg = who === "the project" ? "app" : "p";
     expect(stderr).toContain(
-      'error: dependency names "React" and "react" of app differ only in case and cannot share a node_modules folder',
+      `error: dependency names "React" and "react" of ${pkg} differ only in case and cannot share a node_modules folder`,
     );
     expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
     expect(exitCode).toBe(1);
+  });
+
+  // Bun 1.4.4 and older wrote bun.lock with `React` at the root. The tree is hoisted again when it
+  // is loaded, so the same install from that lockfile gives the same layout.
+  test("a bun.lock with the alias at the root still installs, and the alias nests", async () => {
+    using server = await serveGraph({
+      react: { "1.0.0": {} },
+      preact: { "1.0.0": {} },
+      helper: { "1.0.0": { dependencies: { React: "npm:preact@1.0.0" } } },
+    });
+    const url = (name: string) => `${server.url.origin}/${name}-1.0.0.tgz`;
+    const files = {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({ name: "app", dependencies: { react: "1.0.0", helper: "1.0.0" } }),
+      "bun.lock": `{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "app",
+      "dependencies": {
+        "helper": "1.0.0",
+        "react": "1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "React": ["preact@1.0.0", "${url("preact")}", {}, ""],
+
+    "helper": ["helper@1.0.0", "${url("helper")}", { "dependencies": { "React": "npm:preact@1.0.0" } }, ""],
+
+    "react": ["react@1.0.0", "${url("react")}", {}, ""],
+  }
+}
+`,
+    };
+    const expected = ["helper@1.0.0", "helper/React@1.0.0", "react@1.0.0"];
+
+    using frozen = tempDir("hoist-case-old-lockfile-frozen", files);
+    await run(String(frozen), "install", "--frozen-lockfile");
+    expect(layout(String(frozen))).toEqual(expected);
+    expect(await file(join(String(frozen), "bun.lock")).text()).toBe(files["bun.lock"]);
+
+    // On a case-insensitive volume, the old layout left preact's package.json in node_modules/react.
+    using repaired = tempDir("hoist-case-old-lockfile-repair", {
+      ...files,
+      "node_modules/react/package.json": JSON.stringify({ name: "preact", version: "1.0.0" }),
+      "node_modules/helper/package.json": JSON.stringify({
+        name: "helper",
+        version: "1.0.0",
+        dependencies: { React: "npm:preact@1.0.0" },
+      }),
+    });
+    await run(String(repaired), "install");
+    expect(layout(String(repaired))).toEqual(expected);
+  });
+
+  // The isolated linker links every package into `node_modules/.bun/node_modules` under its name,
+  // and the ones that `publicHoistPattern` names into the project's node_modules.
+  test("the isolated linker does not hoist the alias next to the name it differs from in case", async () => {
+    using server = await serveGraph({
+      react: { "1.0.0": {} },
+      preact: { "1.0.0": {} },
+      helper: { "1.0.0": { dependencies: { React: "npm:preact@1.0.0" } } },
+    });
+    using dir = tempDir("hoist-case-isolated", {
+      "bunfig.toml": `${bunfig(server).replace("hoisted", "isolated")}publicHoistPattern = ["*"]\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { react: "1.0.0", helper: "1.0.0" } }),
+    });
+    await run(String(dir), "install");
+    const version = (...segments: string[]) =>
+      JSON.parse(readFileSync(join(String(dir), "node_modules", ...segments, "package.json"), "utf8")).version;
+    expect({
+      root: readdirSync(join(String(dir), "node_modules")).sort(),
+      hidden: readdirSync(join(String(dir), "node_modules", ".bun", "node_modules")).sort(),
+      react: version("react"),
+      React: version(".bun", "helper@1.0.0", "node_modules", "React"),
+    }).toEqual({
+      root: [".bun", "helper", "react"],
+      hidden: ["helper", "react"],
+      react: "1.0.0",
+      React: "1.0.0",
+    });
   });
 
   // `--production` walks the tree again to find the rows it keeps, by the same key.

@@ -1684,6 +1684,7 @@ impl Lockfile {
             served: Default::default(),
             list: Default::default(),
             sort_buf: Default::default(),
+            folded_buf: Default::default(),
             peer_probes: Default::default(),
             // Most lookups find nothing, and a miss is cheap in a table that is at most half full.
             placed: tree::Placed::with_capacity(slice.len() * 2),

@@ -1,11 +1,12 @@
-import { file, spawn, version, type Socket } from "bun";
-import { describe, expect, test } from "bun:test";
+import { file, randomUUIDv7, S3Client, spawn, version, type Socket } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
 import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
 import { finished } from "node:stream/promises";
+import { serve, type S3Server } from "s3-server";
 
 const exampleServer = exampleSite("http");
 
@@ -1530,6 +1531,267 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ status: 205, body: null, text: "" });
     expect(exitCode).toBe(0);
+  });
+});
+
+// A body made from an S3 file reads the whole object, or the whole slice, whatever asked for its size first.
+describe("a body made from an S3 file", () => {
+  const payload = Buffer.alloc(100, "0123456789").toString();
+  let server: S3Server;
+  let client: S3Client;
+  beforeAll(() => {
+    server = serve({ buckets: ["bucket"] });
+    client = new S3Client(server.clientOptions("bucket"));
+  });
+  afterAll(() => server.stop());
+
+  /** Stores the bytes under a new key. */
+  async function store(bytes: string | Uint8Array, type?: string) {
+    const key = randomUUIDv7();
+    await client.write(key, bytes);
+    return {
+      file: () => client.file(key, { type }),
+      /** The Range header of each download of the object so far. `null` is a download with no Range header. */
+      ranges: () =>
+        server.requests
+          .filter(request => request.key === key && request.operation === "GetObject")
+          .map(request => request.headers.get("range")),
+    };
+  }
+
+  const toRequest = (blob: Blob) => new Request("http://example.com/", { method: "POST", body: blob });
+  // new Response(s3file) is a redirect. fetch() of a blob: URL gives a Response that holds the S3 blob.
+  async function toResponse(blob: Blob) {
+    const url = URL.createObjectURL(blob);
+    try {
+      return await fetch(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  for (const [name, make] of [
+    ["Request", toRequest],
+    ["Response", toResponse],
+  ] as const) {
+    describe.concurrent(name, () => {
+      test(".body and textStream() download the whole object", async () => {
+        const object = await store(payload);
+        const body = await Bun.readableStreamToText((await make(object.file())).body!);
+        const textStream = (await Array.fromAsync((await make(object.file())).textStream())).join("");
+        expect({ body, textStream, ranges: object.ranges() }).toEqual({
+          body: payload,
+          textStream: payload,
+          ranges: [null, null],
+        });
+      });
+
+      test(".body and textStream() of a slice download the slice", async () => {
+        const object = await store(payload);
+        const body = await Bun.readableStreamToText((await make(object.file().slice(10, 30))).body!);
+        const textStream = (await Array.fromAsync((await make(object.file().slice(10, 30))).textStream())).join("");
+        expect({ body, textStream, ranges: object.ranges() }).toEqual({
+          body: payload.slice(10, 30),
+          textStream: payload.slice(10, 30),
+          ranges: ["bytes=10-29", "bytes=10-29"],
+        });
+      });
+
+      // S3 rejects `Range: bytes=0-0` for an empty object.
+      test("an object of 0 bytes reads as empty", async () => {
+        const object = await store("");
+        const body = await Bun.readableStreamToText((await make(object.file())).body!);
+        const textStream = (await Array.fromAsync((await make(object.file())).textStream())).join("");
+        const printed = await make(object.file());
+        Bun.inspect(printed);
+        expect({ body, textStream, afterInspect: await printed.text(), ranges: object.ranges() }).toEqual({
+          body: "",
+          textStream: "",
+          afterInspect: "",
+          ranges: [null, null, null],
+        });
+      });
+
+      test("a clone and its original both download the whole object", async () => {
+        const object = await store(payload);
+        const original = await make(object.file());
+        const clone = original.clone();
+        expect({
+          clone: await Bun.readableStreamToText(clone.body!),
+          original: await Bun.readableStreamToText(original.body!),
+          ranges: object.ranges(),
+        }).toEqual({ clone: payload, original: payload, ranges: [null, null] });
+      });
+
+      const prints: Record<string, (subject: Request | Response) => unknown> = {
+        "Bun.inspect()": subject => Bun.inspect(subject),
+        // The message prints the subject. Its first line has no size.
+        "the message of a failed expect()": subject => expect(() => expect(subject).toBeNull()).toThrow(`${name} {\n`),
+      };
+      for (const [how, print] of Object.entries(prints)) {
+        test(`${how} does not change what the body reads`, async () => {
+          const object = await store(payload);
+          const printed = async () => {
+            const subject = await make(object.file());
+            print(subject);
+            return subject;
+          };
+          const blob = await (await printed()).blob();
+          expect({
+            body: await Bun.readableStreamToText((await printed()).body!),
+            text: await (await printed()).text(),
+            bytes: Buffer.from(await (await printed()).bytes()).toString(),
+            clone: await (await printed()).clone().text(),
+            blob: [blob.size, await blob.text()],
+            ranges: object.ranges(),
+          }).toEqual({
+            body: payload,
+            text: payload,
+            bytes: payload,
+            clone: payload,
+            blob: [NaN, payload],
+            ranges: [null, null, null, null, null],
+          });
+        });
+      }
+    });
+  }
+
+  test.concurrent(
+    "Bun.inspect() prints no size for the object, the size of a slice, and sends no request",
+    async () => {
+      const object = await store(payload);
+      const firstLine = (subject: Request | Response) => Bun.inspect(subject).split("\n")[0];
+      const lines = {
+        object: [firstLine(toRequest(object.file())), firstLine(await toResponse(object.file()))],
+        slice: [
+          firstLine(toRequest(object.file().slice(10, 30))),
+          firstLine(await toResponse(object.file().slice(10, 30))),
+        ],
+      };
+      // The server lists a request after it answered it, so one more download lets a request from a print show first.
+      await object.file().text();
+      expect({ ...lines, ranges: object.ranges() }).toEqual({
+        object: ["Request {", "Response {"],
+        slice: ["Request (20 bytes) {", "Response (20 bytes) {"],
+        ranges: [null],
+      });
+    },
+  );
+
+  test.concurrent("Bun.serve: HEAD for a slice of an S3 file reports the length that GET sends", async () => {
+    const object = await store(payload);
+    await using app = Bun.serve({
+      port: 0,
+      fetch: () => toResponse(object.file().slice(10, 30)),
+    });
+    const head = await fetch(app.url, { method: "HEAD" });
+    const get = await fetch(app.url);
+    const sent = String((await get.arrayBuffer()).byteLength);
+    expect({
+      head: head.headers.get("content-length"),
+      get: get.headers.get("content-length"),
+    }).toEqual({ head: sent, get: sent });
+  });
+
+  test.concurrent("new Request(request) downloads the whole object", async () => {
+    const object = await store(payload);
+    const request = toRequest(object.file());
+    Bun.inspect(request);
+    expect({
+      body: await Bun.readableStreamToText(new Request(toRequest(object.file())).body!),
+      afterInspect: await new Request(request).text(),
+      ranges: object.ranges(),
+    }).toEqual({ body: payload, afterInspect: payload, ranges: [null, null] });
+  });
+
+  test.concurrent("fetch(request) uploads the whole object after Bun.inspect(request)", async () => {
+    const object = await store(payload);
+    const uploads: string[] = [];
+    await using sink = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        uploads.push(await req.text());
+        return new Response("ok");
+      },
+    });
+    const request = new Request(sink.url.href, { method: "POST", body: object.file() });
+    Bun.inspect(request);
+    expect(await (await fetch(request)).text()).toBe("ok");
+    expect({ uploads, ranges: object.ranges() }).toEqual({ uploads: [payload], ranges: [null] });
+  });
+
+  test.concurrent("HTMLRewriter.transform() reads the whole object", async () => {
+    const object = await store("<p>" + payload + "</p>");
+    const seen: string[] = [];
+    const output = await new HTMLRewriter()
+      .on("p", { text: chunk => void seen.push(chunk.text) })
+      .transform(await toResponse(object.file()))
+      .text();
+    expect({ output, seen: seen.join(""), ranges: object.ranges() }).toEqual({
+      output: "<p>" + payload + "</p>",
+      seen: payload,
+      ranges: [null],
+    });
+  });
+
+  test.concurrent("WebAssembly.compileStreaming() and instantiateStreaming() read the whole object", async () => {
+    // The smallest module: the magic number and the version.
+    const object = await store(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]), "application/wasm");
+    const module = await WebAssembly.compileStreaming(toResponse(object.file()));
+    const { instance } = await WebAssembly.instantiateStreaming(toResponse(object.file()));
+    expect({
+      compiled: WebAssembly.Module.exports(module),
+      instantiated: Object.keys(instance.exports),
+      ranges: object.ranges(),
+    }).toEqual({ compiled: [], instantiated: [], ranges: [null, null] });
+  });
+
+  // The fill is 251 bytes long, a prime, so chunks in a wrong order do not line up with it.
+  test.concurrent("an object of 1 MiB arrives whole through each stream", async () => {
+    const html = "<p>" + Buffer.alloc(1024 * 1024, Buffer.alloc(251, "a line of the object\n")).toString() + "</p>";
+    const object = await store(html);
+    const digest = (text: string) => ({ length: text.length, hash: Bun.hash(text) });
+
+    let seen = 0;
+    const rewritten = new HTMLRewriter()
+      .on("p", { text: chunk => void (seen += chunk.text.length) })
+      .transform(await toResponse(object.file()));
+    expect({
+      "Request.body": digest(await Bun.readableStreamToText(toRequest(object.file()).body!)),
+      "Response.body": digest(await Bun.readableStreamToText((await toResponse(object.file())).body!)),
+      "textStream()": digest((await Array.fromAsync(toRequest(object.file()).textStream())).join("")),
+      "HTMLRewriter": digest(await rewritten.text()),
+      seen,
+      ranges: object.ranges(),
+    }).toEqual({
+      "Request.body": digest(html),
+      "Response.body": digest(html),
+      "textStream()": digest(html),
+      "HTMLRewriter": digest(html),
+      seen: html.length - "<p></p>".length,
+      ranges: [null, null, null, null],
+    });
+  });
+
+  test.concurrent("a module of 1 MiB arrives whole through WebAssembly.compileStreaming()", async () => {
+    // The header, then one custom section with the name "pad".
+    const pad = Buffer.alloc(1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, index) => index + 1)));
+    const name = [3, 0x70, 0x61, 0x64];
+    const sectionSize = name.length + pad.length;
+    // The size of the section as LEB128: 1048580 takes 3 bytes.
+    const leb128 = [(sectionSize & 0x7f) | 0x80, ((sectionSize >> 7) & 0x7f) | 0x80, sectionSize >> 14];
+    const object = await store(
+      Buffer.concat([Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0, ...leb128, ...name]), pad]),
+      "application/wasm",
+    );
+    const module = await WebAssembly.compileStreaming(toResponse(object.file()));
+    const [section] = WebAssembly.Module.customSections(module, "pad");
+    expect({ length: section.byteLength, hash: Bun.hash(section), ranges: object.ranges() }).toEqual({
+      length: pad.length,
+      hash: Bun.hash(pad),
+      ranges: [null],
+    });
   });
 });
 

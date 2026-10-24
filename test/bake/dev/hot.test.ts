@@ -691,3 +691,137 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+
+const library = {
+  "node_modules/unchanged-barrel/package.json": JSON.stringify({
+    name: "unchanged-barrel",
+    type: "module",
+    exports: "./index.js",
+    sideEffects: false,
+  }),
+  "node_modules/unchanged-barrel/index.js": `
+    export { suffix } from './suffix.js';
+    export { unused } from './unused.js';
+  `,
+  "node_modules/unchanged-barrel/suffix.js": `export const suffix = ':library';`,
+  "node_modules/unchanged-barrel/unused.js": `export const unused = 'unused';`,
+};
+
+devTest("editing an accepted leaf does not hot-replace its unchanged barrel dependency", {
+  files: {
+    ...library,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1></h1><button>Count 0</button>" }),
+    "index.ts": `
+      import { suffix } from 'unchanged-barrel';
+      import './leaf.ts';
+      document.documentElement.dataset.suffix = suffix;
+      globalThis.documentToken = Math.random();
+      let count = 0;
+      document.querySelector('button').onclick = event => {
+        event.currentTarget.textContent = 'Count ' + ++count;
+      };
+    `,
+    "leaf.ts": `
+      import { suffix } from 'unchanged-barrel';
+      document.querySelector('h1').textContent = 'BEFORE' + suffix;
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectElemText("h1", "BEFORE:library");
+    await c.click("button");
+    await c.expectElemText("button", "Count 1");
+    const token = await c.js`globalThis.documentToken`;
+
+    await dev.patch("leaf.ts", { find: "BEFORE", replace: "AFTER" });
+    await c.expectElemText("h1", "AFTER:library");
+    expect(await c.js`globalThis.documentToken`).toBe(token);
+    await c.expectElemText("button", "Count 1");
+  },
+});
+
+for (const shadowing of [false, true]) {
+  devTest(
+    `a cached sibling's import names do not change an unchanged barrel during HMR${shadowing ? " with nested shadowing" : ""}`,
+    {
+      files: {
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1></h1><button>Count 0</button>" }),
+        "index.ts": `
+      import { prefix } from './sibling.ts';
+      import { suffix } from 'unchanged-barrel';
+      import './leaf.ts';
+      document.documentElement.dataset.value = prefix + suffix;
+      globalThis.documentToken = Math.random();
+      let count = 0;
+      document.querySelector('button').onclick = event => {
+        event.currentTarget.textContent = 'Count ' + ++count;
+      };
+    `,
+        "sibling.ts": `
+      import { value } from './value.ts';
+      export const prefix = value;
+    `,
+        "value.ts": `export const value = 'sibling';`,
+        "leaf.ts": shadowing
+          ? `
+      import { suffix } from 'unchanged-barrel';
+      function format(import_unchanged_barrel) {
+        return import_unchanged_barrel + suffix;
+      }
+      document.querySelector('h1').textContent = format('BEFORE');
+      import.meta.hot.accept();
+    `
+          : `
+      import { suffix } from 'unchanged-barrel';
+      document.querySelector('h1').textContent = 'BEFORE' + suffix;
+      import.meta.hot.accept();
+    `,
+        "node_modules/unchanged-barrel/package.json": JSON.stringify({
+          name: "unchanged-barrel",
+          type: "module",
+          exports: "./index.js",
+          sideEffects: false,
+        }),
+        "node_modules/unchanged-barrel/index.js": `
+      export { value as suffix } from './value.js';
+      export { unused } from './unused.js';
+    `,
+        "node_modules/unchanged-barrel/value.js": `export const value = ':library';`,
+        "node_modules/unchanged-barrel/unused.js": `export const unused = 'unused';`,
+      },
+      async test(dev) {
+        await using c = await dev.client("/", { allowUnlimitedReloads: true });
+        await c.expectElemText("h1", "BEFORE:library");
+        await c.click("button");
+        await c.expectElemText("button", "Count 1");
+        const token = await c.js`globalThis.documentToken`;
+
+        await dev.patch("leaf.ts", { find: "BEFORE", replace: "AFTER" });
+        await c.expectElemText("h1", "AFTER:library");
+        expect(await c.js`globalThis.documentToken`).toBe(token);
+        await c.expectElemText("button", "Count 1");
+      },
+    },
+  );
+}
+
+devTest("namespace imports do not collide with a module's local exports binding during HMR", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1></h1>" }),
+    "index.ts": `
+      import * as ns from './dep.ts';
+      const exports = 'local';
+      document.querySelector('h1').textContent = [ns.value, exports].join(':');
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `export const value = 'BEFORE';`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("h1", "BEFORE:local");
+
+    await dev.patch("dep.ts", { find: "BEFORE", replace: "AFTER" });
+    await c.expectElemText("h1", "AFTER:local");
+  },
+});

@@ -1026,6 +1026,9 @@ pub(super) fn finalize_bundle(
                         source_map_hash.update(&keys[part.get() as usize]);
                         if let Some(map) = values[part.get() as usize].source_map.get() {
                             source_map_hash.update(map.vlq());
+                            let source = map.quoted_contents();
+                            source_map_hash.update(&(source.len() as u64).to_le_bytes());
+                            source_map_hash.update(source);
                         }
                     }
                     // Set the bottom bit.

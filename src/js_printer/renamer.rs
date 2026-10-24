@@ -1141,6 +1141,28 @@ impl<'r> NestedRenamer<'r> {
         }
     }
 
+    /// Reserve names visible outside the scopes being named, without adding
+    /// reservations to other files that share this renamer's root.
+    pub fn reserve_names(&mut self, names: &StringHashMap<u32>) {
+        for (name, &count) in names.iter() {
+            let id = match self.id_of(name) {
+                Some(id) => id,
+                None => {
+                    let name = self.keep_name(name);
+                    self.intern(name)
+                }
+            };
+            self.set_slot(
+                id,
+                NameSlot {
+                    scope: self.scope,
+                    count,
+                    owner: Ref::NONE,
+                },
+            );
+        }
+    }
+
     fn assign_name(&mut self, input_ref: Ref) {
         let symbols = &self.root.symbols;
         let ref_ = symbols.follow(input_ref);

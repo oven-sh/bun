@@ -10,13 +10,14 @@ pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 /// `PackedMap.end_state` — only the two fields the bundler needs to thread
 /// between chunks (generated_column is always 0 because minification is off,
 /// generated_line is recomputed per concatenation).
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub(crate) struct EndState {
     pub(crate) original_line: i32,
     pub(crate) original_column: i32,
 }
 
 /// Packed source mapping data for a single file.
+#[derive(PartialEq, Eq)]
 pub(crate) struct PackedMap {
     /// Allocated by `dev.arena()`. Access with `.vlq()`.
     /// Stored to allow lazy construction of source map files.
@@ -67,7 +68,7 @@ impl PackedMap {
 ///
 /// An SoA split buys nothing for a 2-word payload (and `MultiArrayElement`
 /// cannot be derived for an enum), so callers store `Vec<Shared>`.
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 pub(crate) enum Shared {
     Some(Rc<PackedMap>),
     #[default]

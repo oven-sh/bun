@@ -273,6 +273,19 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = ({ f: class C {} }).f", "x = class C {\n}");
       ts.expectPrintedMin_("x = ({ f: [() => {}] }).f", "x = [() => {}]");
     });
+    it("drops an unused read of an anonymous function or class that stays in its object", () => {
+      // Reading the one data property runs no code.
+      ts.expectPrintedMin_("({ f: () => {} }).f; x", "x");
+      ts.expectPrintedMin_("(({ f: class {} }).f, x)", "x");
+      ts.expectPrintedMin_('({ "a-b": function() {} })["a-b"]; x', "x");
+
+      // The read stays when the value has side effects.
+      ts.expectPrintedMin_(
+        "({ f: class { static { y() } } }).f; x",
+        "({ f: class {\n  static {\n    y();\n  }\n} }).f;\nx",
+      );
+      ts.expectPrintedMin_("({ f: class extends y {} }).f; x", "({ f: class extends y {\n} }).f;\nx");
+    });
     it("keeps the name an object literal key gives an anonymous function or class", async () => {
       const src = `
         const a = ({ aa: async () => {} }).aa;

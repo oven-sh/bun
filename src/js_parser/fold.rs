@@ -569,7 +569,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // To avoid thinking too much about edgecases, only do this for:
                             //   1) Objects with a single property
                             //   2) Not a method, not a computed property
-                            //   3) Not an anonymous function or class: `{ f: () => {} }.f.name` is "f"
+                            //
+                            // An anonymous function or class stays in the object:
+                            // `{ f: () => {} }.f.name` is "f". Reading that one data
+                            // property runs no code, so the read is still free of
+                            // side effects when the value is.
                             if obj.properties.len_u32() == 1
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -587,9 +591,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         )
                                         && name != b"__proto__"
                                         && value.can_be_inlined_from_property_access()
-                                        && !value.is_anonymous_named()
                                     {
-                                        return Some(value);
+                                        if !value.is_anonymous_named() {
+                                            return Some(value);
+                                        }
+                                        if p.expr_can_be_removed_if_unused(&value) {
+                                            return Some(p.new_expr(
+                                                E::Dot {
+                                                    target,
+                                                    name: name_static,
+                                                    name_loc,
+                                                    can_be_removed_if_unused: true,
+                                                    ..Default::default()
+                                                },
+                                                loc,
+                                            ));
+                                        }
                                     }
                                 }
                             }

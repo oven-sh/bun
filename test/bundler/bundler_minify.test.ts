@@ -1184,6 +1184,28 @@ describe("bundler", () => {
     ],
   });
 
+  // `({ f: () => {} }).f` stays an object literal, because the key is the
+  // name of the function. The read itself runs no code.
+  itBundled("minify/UnusedReadOfAnonymousFunctionInObjectLiteral", {
+    files: {
+      "/entry.js": /* js */ `
+        const a = ({ f: () => "REMOVE" }).f;
+        const b = ({ f: function () { return "REMOVE"; } }).f;
+        const c = ({ f: class { m() { return "REMOVE"; } } }).f;
+        const d = ({ "a-b": () => "REMOVE" })["a-b"];
+        ({ f: () => "REMOVE" }).f;
+        const e = ({ f: class { static { globalThis.ran = "KEEP"; } } }).f;
+        const v = ({ used: () => "KEEP" }).used;
+        console.log(v.name, v(), globalThis.ran);
+      `,
+    },
+    minifySyntax: true,
+    dce: true,
+    run: {
+      stdout: "used KEEP KEEP",
+    },
+  });
+
   itBundled("minify/TrimCodeInDeadControlFlow", {
     files: {
       "/entry.js": /* js */ `

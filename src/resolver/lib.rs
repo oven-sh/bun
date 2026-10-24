@@ -229,8 +229,7 @@ pub mod fs {
             Ok(ZStr::from_buf_mut(buf, written))
         }
 
-        /// True if `name` is what [`Self::tmpname`] writes for `extname`. Older versions pad both
-        /// numbers with zeros, as `bun_paths::fs::FileSystem::tmpname` does.
+        /// True if `name` is what [`Self::tmpname`] writes for `extname`, zero-padded or not.
         pub fn is_tmpname(name: &[u8], extname: &[u8]) -> bool {
             let Some((hex, id)) = name
                 .strip_prefix(b".")

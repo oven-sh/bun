@@ -3104,11 +3104,19 @@ it.concurrent(
       ".57c41e258af0c3a3-1.node-gyp",
       ".18e12f1c7864b7ff-00000001.node-gyp",
       ".0-0.node-gyp",
-      ".ffffffffffffffff-FFFFFFFF.node-gyp",
+      ".0123456789abcdef-01234567.node-gyp",
+      ".fedcba9876543210-89ABCDEF.node-gyp",
     ];
     const others = [
       ".DEADBEEF-1.node-gyp",
       ".deadbeef-1f.node-gyp",
+      ".deadbeefg-1.node-gyp",
+      ".deadbeef-1G.node-gyp",
+      ".deadbeef-1@.node-gyp",
+      ".dead-BEEF-1.node-gyp",
+      ".dead beef-1.node-gyp",
+      ".-1.node-gyp",
+      ".deadbeef-.node-gyp",
       ".00000000000000000-1.node-gyp",
       ".deadbeef-000000001.node-gyp",
       "deadbeef-1.node-gyp",
@@ -3127,6 +3135,7 @@ it.concurrent(
     const cases: Record<string, Promise<string>> = {
       ...Object.fromEntries(made.map(name => [name, run([plant(name), real])])),
       "with a separator at the end": run([first + sep, real]),
+      "with two separators at the end": run([first + sep + sep, real]),
       "relative to the working directory": run([relative(box.cwd, first), real]),
       "two of them": run([first, second, real]),
       "one that BUN_WHICH_IGNORE_CWD names too": run([first, real], first),
@@ -3141,6 +3150,7 @@ it.concurrent(
     ).toEqual({
       ...Object.fromEntries(made.map(name => [name, "real"])),
       "with a separator at the end": "real",
+      "with two separators at the end": "real",
       "relative to the working directory": "real",
       "two of them": "real",
       "one that BUN_WHICH_IGNORE_CWD names too": "real",

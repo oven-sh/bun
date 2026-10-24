@@ -1395,10 +1395,25 @@ extern "C" fn remove_node_gyp_tempdir() {
 
 const NODE_GYP_EXTNAME: &[u8] = b"node-gyp";
 
-/// True if `dir` is a directory that a `bun install` made for its `node-gyp` script. Any install
-/// up the process tree can have put one on PATH.
+/// True if `dir` has the name that a `bun install` gives the directory of its `node-gyp` script.
 pub fn is_node_gyp_script_dir(dir: &[u8]) -> bool {
     fs::FileSystem::is_tmpname(bun_paths::basename(dir), NODE_GYP_EXTNAME)
+}
+
+/// This executable as the `node-gyp` script names it, or `bun` if the script cannot hold the path.
+fn node_gyp_script_bun() -> Vec<u8> {
+    let Ok(exe) = bun_core::self_exe_path().map(|exe| exe.as_bytes()) else {
+        return b"bun".to_vec();
+    };
+    if cfg!(windows) {
+        // cmd reads the file in the code page of the console, and `%` starts a variable.
+        if !strings::is_all_ascii(exe) || strings::contains_char(exe, b'%') {
+            return b"bun".to_vec();
+        }
+        return [b"\"".as_slice(), exe, b"\""].concat();
+    }
+    let quoted = strings::replace_owned(exe, b"'", b"'\\''");
+    [b"'".as_slice(), &quoted, b"'"].concat()
 }
 
 fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
@@ -1467,39 +1482,29 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         }
     };
 
+    // Not the first `bun` on PATH: the `bun x` of an older one finds this script again.
+    let bun = node_gyp_script_bun();
     #[cfg(windows)]
-    const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
-    // `bun x` must not find this script, or the one of another install, when it looks for
-    // node-gyp on PATH. The script takes those directories off PATH itself, because the `bun` that
-    // PATH finds can be older than the `bun x` that skips them.
+    let content = [
+        b"if not defined npm_config_node_gyp (\n  ".as_slice(),
+        &bun,
+        b" x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n",
+    ]
+    .concat();
     #[cfg(not(windows))]
-    const CONTENT: &str = const_format::concatcp!(
+    let content = [
         if cfg!(target_os = "android") {
-            "#!/system/bin/sh\n"
+            b"#!/system/bin/sh\n".as_slice()
         } else {
-            "#!/bin/sh\n"
+            b"#!/bin/sh\n"
         },
-        "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
-        "  kept=\n",
-        "  ifs=$IFS\n",
-        "  IFS=:\n",
-        "  set -f\n",
-        "  for dir in $PATH; do\n",
-        "    name=${dir%/}\n",
-        "    case ${name##*/} in\n",
-        "      .[0123456789abcdef]*-[0123456789ABCDEF]*.node-gyp) ;;\n",
-        "      *) kept=$kept:$dir ;;\n",
-        "    esac\n",
-        "  done\n",
-        "  IFS=$ifs\n",
-        "  set +f\n",
-        "  PATH=${kept#:} bun x --silent node-gyp $@\n",
-        "else\n",
-        "  \"$npm_config_node_gyp\" $@\n",
-        "fi\n"
-    );
+        b"if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n  ",
+        &bun,
+        b" x --silent node-gyp $@\nelse\n  \"$npm_config_node_gyp\" $@\nfi\n",
+    ]
+    .concat();
 
-    if let Err(e) = node_gyp_file.write_all(CONTENT.as_bytes()) {
+    if let Err(e) = node_gyp_file.write_all(&content) {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: <b><red>{}<r> writing to {} file",
             bstr::BStr::new(e.name()),
@@ -1508,21 +1513,18 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Global::crash();
     }
 
-    // An older `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be
-    // identical.
+    // `bun x` removes the PATH entry that equals BUN_WHICH_IGNORE_CWD, so the two must be identical.
     let parts: [&[u8]; 3] = [
         strings::without_trailing_slash(tempdir.name),
         &[SEP],
         &manager.node_gyp_tempdir_name,
     ];
     let mut node_gyp_abs_dir = parts.concat();
-    // A script runs in its own package, where a name that is relative to this working directory
-    // leads elsewhere.
+    // A script runs in the directory of its package, where a relative entry leads elsewhere.
     if !bun_paths::is_fully_qualified(&node_gyp_abs_dir) {
         let cwd = FileSystem::instance().top_level_dir();
         let absolute = if cfg!(windows) {
-            // Windows does not open every name as a join resolves it: an empty one is the
-            // working directory. So the handle gives the path.
+            // A join can differ from what Windows opened: an empty name is the working directory.
             let mut opened = bun_paths::path_buffer_pool::get();
             match bun_sys::get_fd_path(node_gyp_tempdir.fd, &mut opened) {
                 Ok(path) => path.to_vec(),
@@ -1532,12 +1534,10 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
                 }
             }
         } else {
-            // Only a prefix: the kernel resolved the name as it is spelled, and a normalized
-            // `link/..` names another directory.
+            // Only a prefix: the kernel resolved `link/..` as it is spelled, and a join does not.
             bun_paths::join_sep_maybe_z::<false>(&[cwd, &node_gyp_abs_dir]).into_vec()
         };
-        // PATH cannot hold a name with the delimiter in it. The relative name still leads the
-        // root's scripts to the directory.
+        // PATH cannot hold an entry with the delimiter in it. Then the relative entry stays.
         if !strings::contains_char(&absolute, DELIMITER) {
             node_gyp_abs_dir = absolute;
         }
@@ -1547,8 +1547,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
     let mut path_var: Vec<u8> =
         Vec::with_capacity(existing_path.len() + 1 + node_gyp_abs_dir.len());
-    // A script of another `bun install` can start this one. An older `bun x` leaves out only the
-    // directory in BUN_WHICH_IGNORE_CWD, so that install's directory must not stay on PATH.
+    // An install that started this one can be older: its script runs the first `bun` on PATH.
     if !existing_path.is_empty() {
         // A delimiter at the end already separates the new entry.
         let inherited = existing_path

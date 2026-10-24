@@ -994,9 +994,7 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
 
-        // The `node-gyp` script that `bun install` puts on PATH runs `bun x node-gyp`. It must not
-        // find itself or the script of another install. BUN_WHICH_IGNORE_CWD names only one of
-        // those directories, and is gone below another `bun x`.
+        // The `node-gyp` script of a `bun install` runs `bun x node-gyp`, which must not find one.
         let is_node_gyp = initial_bin_name == b"node-gyp";
         let path_for_bin_dirs: Vec<u8> = if ignore_cwd.is_empty() && !is_node_gyp {
             path.clone()

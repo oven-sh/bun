@@ -166,6 +166,14 @@ describe("date setters range-check year + floor(month / 12), not each argument",
     expect(new Date(0).setFullYear(Infinity, -Infinity)).toBeNaN();
   });
 
+  test("a year or a month count that is not an int32 is truncated and split the same way", () => {
+    expect(new Date(0).setUTCFullYear(2000.9, 13.7, 1.5)).toBe(utcTime(2001, 1, 1));
+    expect(new Date(0).setUTCFullYear(-0.5, -0, 1)).toBe(startOfYear0);
+    expect(new Date(0).setUTCMonth(-7.9)).toBe(utcTime(1969, 5, 1));
+    expect(new Date(0).setUTCMonth("17" as unknown as number)).toBe(utcTime(1971, 5, 1));
+    expect(new Date(2001, 1, 3, 4, 5, 6, 7).setFullYear(1950.5, 14.5, 40.5)).toBe(localTime(1950, 14, 40, 4, 5, 6, 7));
+  });
+
   test("each setter with each number of arguments keeps the other fields", () => {
     const start = Date.UTC(2001, 1, 3, 4, 5, 6, 7);
     expect(new Date(start).setUTCFullYear(1950)).toBe(utcTime(1950, 1, 3, 4, 5, 6, 7));

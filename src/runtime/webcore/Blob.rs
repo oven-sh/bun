@@ -282,8 +282,8 @@ pub(crate) trait BlobExt {
     where
         Self: Sized;
     fn shared_view_raw(&self) -> *mut [u8];
-    /// The Blob's bytes, or `None` for a file- or S3-backed Blob, which has to be read first.
-    fn in_memory_view(&self) -> Option<&[u8]>;
+    /// The Blob's bytes, read on the calling thread. Fails for S3 and for a path that is not a regular file.
+    fn read_bytes_sync(&self) -> bun_sys::Result<Vec<u8>>;
     fn set_is_ascii_flag(&self, is_all_ascii: bool);
     /// # Safety
     /// `raw_bytes` must be valid for reads for the duration of the call; when
@@ -2287,11 +2287,104 @@ impl BlobExt for Blob {
         }
     }
 
-    fn in_memory_view(&self) -> Option<&[u8]> {
-        if self.needs_to_read_file() || self.is_s3() {
-            return None;
+    fn read_bytes_sync(&self) -> bun_sys::Result<Vec<u8>> {
+        let file = match self.store().map(|store| &store.data) {
+            Some(store::Data::File(file)) => file,
+            Some(store::Data::S3(_)) => {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENOTSUP,
+                    bun_sys::Tag::read,
+                ));
+            }
+            Some(store::Data::Bytes(_)) | None => return Ok(self.shared_view().to_vec()),
+        };
+        let with_target = |err: bun_sys::Error| match &file.pathlike {
+            PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
+            PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd),
+        };
+
+        let opened: bun_sys::File;
+        let fd = match &file.pathlike {
+            PathOrFileDescriptor::Fd(fd) => *fd,
+            PathOrFileDescriptor::Path(path) => {
+                // A FIFO with no writer blocks a plain open. It is rejected below.
+                #[cfg(unix)]
+                let flags = bun_sys::O::RDONLY
+                    | bun_sys::O::CLOEXEC
+                    | bun_sys::O::NONBLOCK
+                    | bun_sys::O::NOCTTY;
+                #[cfg(not(unix))]
+                let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+                let mut buf = bun_paths::path_buffer_pool::get();
+                opened =
+                    bun_sys::File::open(path.slice_z(&mut buf), flags, 0).map_err(with_target)?;
+                opened.handle()
+            }
+        };
+
+        let stat = bun_sys::fstat(fd).map_err(with_target)?;
+        if !bun_sys::S::ISREG(stat.st_mode as _) {
+            // A pipe or a device has no end that a blocking read is sure to reach.
+            let code = if bun_sys::S::ISDIR(stat.st_mode as _) {
+                bun_sys::E::EISDIR
+            } else {
+                bun_sys::E::ENODEV
+            };
+            return Err(with_target(bun_sys::Error::from_code(
+                code,
+                bun_sys::Tag::read,
+            )));
         }
-        Some(self.shared_view())
+
+        let (offset, size) = (self.offset.get(), self.size.get());
+        // procfs reports a size of 0 for a file that has content, so only a known size can end the window.
+        let file_size = (stat.st_size as i64).max(0) as u64;
+        if size == 0 || (file_size > 0 && offset >= file_size) {
+            return Ok(Vec::new());
+        }
+        // A file system rejects an offset that no file of its kind can reach: that window is empty too.
+        if offset > 0 && bun_sys::set_file_offset(fd, offset).is_err() {
+            return Ok(Vec::new());
+        }
+
+        let mut node_fs = node::fs::NodeFS::default();
+        // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
+        let mut args = node::fs::args::ReadFile::default();
+        args.path = PathOrFileDescriptor::Fd(fd);
+        args.max_size = (size != MAX_SIZE).then_some(size);
+        args.limit_size_for_javascript = true;
+        let mut read = |args: &node::fs::args::ReadFile<'_>| -> bun_sys::Result<Vec<u8>> {
+            match node_fs
+                .read_file_with_options(
+                    args,
+                    node::fs::Flavor::Sync,
+                    node::fs::ReadFileStringType::NullTerminated,
+                )
+                .map_err(with_target)?
+            {
+                node::fs::ret::ReadFileWithOptions::NullTerminated(bytes) => {
+                    let mut bytes = bytes.into_vec_with_nul();
+                    bytes.pop();
+                    Ok(bytes)
+                }
+                _ => unreachable!(
+                    "ReadFileStringType::NullTerminated always yields the NullTerminated variant"
+                ),
+            }
+        };
+        let mut bytes = read(&args)?;
+        // With a `max_size` the reader stops at the size that `fstat` reports, and procfs reports 0: ask again until the window is full or the file ends.
+        if file_size == 0 && size != MAX_SIZE && !bytes.is_empty() {
+            while (bytes.len() as u64) < size {
+                args.max_size = Some(size - bytes.len() as u64);
+                let more = read(&args)?;
+                if more.is_empty() {
+                    break;
+                }
+                bytes.extend_from_slice(&more);
+            }
+        }
+        Ok(bytes)
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {

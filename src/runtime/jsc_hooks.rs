@@ -1371,6 +1371,10 @@ fn body_mixin_get_blob(
     Ok(None)
 }
 
+fn blob_read_bytes_sync(blob: &crate::webcore::Blob) -> bun_sys::Result<Vec<u8>> {
+    blob.read_bytes_sync()
+}
+
 /// `process.exit(code)`. Main-thread is `noreturn`; in a
 /// worker it returns and the caller `panic!`s.
 ///
@@ -1523,6 +1527,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     create_node_fs,
     has_blob_url,
     body_mixin_get_blob,
+    blob_read_bytes_sync,
     process_exit,
     console_on_before_print,
     console_print_runtime_object,

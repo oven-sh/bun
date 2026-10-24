@@ -1583,8 +1583,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc);
 
                         let mut temp = ListManaged::new_in(p.arena);
-                        // A top-level enum comes as a list of one. It keeps the siblings that the top-level loop set.
-                        let res = if i > 0 {
+                        // A top-level enum can come as a list of one. It keeps the siblings that the top-level loop set.
+                        let res = if i > 0 || p.current_scope != p.module_scope {
                             p.with_ts_enum_siblings(&mut siblings, earlier, |p| {
                                 p.visit_and_append_stmt(&mut temp, stmt)
                             })

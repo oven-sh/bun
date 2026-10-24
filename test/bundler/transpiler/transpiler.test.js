@@ -1397,6 +1397,15 @@ function foo() {}
             "const a = 1, b = 10;\nenum Outer {\n  A = a,\n  B = (() => {\n    const q = 5;\n    enum Inner { X = q, Y }\n    return Inner.Y;\n  })(),\n  C = b,\n  D,\n}\nreport([Outer.A, Outer.B, Outer.C, Outer.D]);",
             [1, 6, 10, 11],
           ],
+          // That enum does not read the consts of the outer list, first in its own list or not. tsc gives 2.
+          [
+            "const a = 1;\nenum Outer {\n  A = a,\n  B = (() => {\n    enum Inner { X = a, Y }\n    return Inner.Y;\n  })(),\n}\nreport([Outer.A, Outer.B]);",
+            [1, undefined],
+          ],
+          [
+            "const a = 1;\nenum Outer {\n  A = a,\n  B = (() => {\n    let pad;\n    enum Inner { X = a, Y }\n    return Inner.Y;\n  })(),\n}\nreport([Outer.A, Outer.B]);",
+            [1, undefined],
+          ],
         ];
         for (const options of [{}, { treeShaking: true }]) {
           for (const [code, expected] of cases) expect(evaluate(code, options)).toEqual(expected);

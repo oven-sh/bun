@@ -289,18 +289,8 @@ impl JSValue {
     pub fn is_big_int(self) -> bool {
         JSC__JSValue__isBigInt(self)
     }
-    /// `JSValue.isBigInt32()` — true iff this value uses
-    /// JSC's packed BigInt32 immediate representation (vs heap `JSBigInt`).
-    #[inline]
-    pub fn is_big_int32(self) -> bool {
-        unsafe extern "C" {
-            safe fn JSC__JSValue__isBigInt32(this: JSValue) -> bool;
-        }
-        JSC__JSValue__isBigInt32(self)
-    }
     /// `JSValue.isHeapBigInt()` — true iff this is a
-    /// heap-allocated `JSBigInt` cell. Distinct from [`is_big_int`], which
-    /// also returns `true` for the packed `BigInt32` immediate.
+    /// heap-allocated `JSBigInt` cell, as every BigInt is.
     #[inline]
     pub fn is_heap_big_int(self) -> bool {
         unsafe extern "C" {

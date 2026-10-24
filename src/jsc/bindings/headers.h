@@ -211,7 +211,6 @@ CPP_DECL bool JSC__JSValue__isAggregateError(JSC::EncodedJSValue JSValue0, JSC::
 CPP_DECL bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isBigInt(JSC::EncodedJSValue JSValue0);
-CPP_DECL bool JSC__JSValue__isBigInt32(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isCallable(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0);

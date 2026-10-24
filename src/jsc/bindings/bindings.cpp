@@ -4166,10 +4166,6 @@ bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
 {
     return JSC::JSValue::decode(JSValue0).isBigInt();
 }
-[[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isBigInt32(JSC::EncodedJSValue JSValue0)
-{
-    return JSC::JSValue::decode(JSValue0).isBigInt32();
-}
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isLiveCell(JSC::EncodedJSValue JSValue0)
 {
@@ -4343,40 +4339,13 @@ uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGloba
 {
     JSValue v1 = JSValue::decode(JSValue0);
     JSValue v2 = JSValue::decode(JSValue1);
-    ASSERT(v1.isHeapBigInt() || v1.isBigInt32());
-
-#if USE(BIGINT32)
-    if (v1.isBigInt32()) {
-        int32_t v1Int = v1.bigInt32AsInt32();
-        if (v2.isHeapBigInt()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.asHeapBigInt()));
-        } else if (v2.isBigInt32()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.bigInt32AsInt32()));
-        }
-
-        double v2Double = v2.asNumber();
-        if (v1Int == v2Double) {
-            return static_cast<uint8_t>(JSBigInt::ComparisonResult::Equal);
-        }
-        if (v1Int < v2Double) {
-            return static_cast<uint8_t>(JSBigInt::ComparisonResult::LessThan);
-        }
-
-        return static_cast<uint8_t>(JSBigInt::ComparisonResult::GreaterThan);
-    }
-#endif
+    ASSERT(v1.isHeapBigInt());
 
     if (v1.isHeapBigInt()) {
         JSBigInt* v1BigInt = v1.asHeapBigInt();
         if (v2.isHeapBigInt()) {
             return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.asHeapBigInt()));
         }
-
-#if USE(BIGINT32)
-        if (v2.isBigInt32()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.toInt32(globalObject)));
-        }
-#endif
 
         return static_cast<uint8_t>(JSBigInt::compareToDouble(v1BigInt, v2.asNumber()));
     }

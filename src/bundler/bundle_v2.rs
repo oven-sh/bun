@@ -132,8 +132,7 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
-    /// The bundle returns before `link()`, and its caller reads only import records. The parser
-    /// then keeps the import records of a file that a linked bundle refuses (`Features::graph_scan`).
+    /// Set for a bundle that returns before `link()` and whose caller reads only import records.
     pub(crate) scan_only: bool,
 
     /// Barrel optimization: tracks which exports have been requested from each

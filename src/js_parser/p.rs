@@ -4870,8 +4870,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.raises_bundle_only_errors() && self.options.output_format.is_esm()
     }
 
-    /// A bundle refuses code that is legal at run time when linking or printing it would change
-    /// what it does. A graph scan does neither, so it must not lose the file's import records.
+    /// Bundle-only errors protect linked or printed code, and a graph scan does neither.
     #[inline]
     pub(crate) fn raises_bundle_only_errors(&self) -> bool {
         self.options.bundle && !self.options.features.graph_scan

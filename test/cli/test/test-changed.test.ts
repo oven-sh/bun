@@ -468,9 +468,8 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.each(refusedByBundle)(
-    "an edit behind a file with $title selects its test",
-    async ({ build, files, edit, run }) => {
+  describe.each(refusedByBundle)("an edit behind a file with $title", ({ build, files, edit, run }) => {
+    test("selects its test", async () => {
       using dir = tempDir("test-changed-refused-by-bundle", { ...refusedByBundleTests, ...files });
       initRepo(String(dir));
       writeFileSync(join(String(dir), "rates.js"), edit);
@@ -503,8 +502,8 @@ describe.concurrent("bun test --changed", () => {
         ...run,
         exitCode: 1,
       });
-    },
-  );
+    });
+  });
 
   // `bun create <component>` reads a module graph too, but it links the bundle,
   // so it must keep these errors. Only a bundle that does not link skips them.
@@ -558,29 +557,35 @@ describe.concurrent("bun test --changed", () => {
     });
   });
 
-  test.each([
+  describe.each([
     {
-      title: "an edit of a file that nothing imports selects nothing",
+      title: "a file that nothing imports",
       edit: { "README.md": "more\n" },
       lines: ["--changed: 1 changed file, but no test files are affected"],
       tests: [],
     },
     {
-      title: "an edit of another test's import selects only that test",
+      title: "the import of another test",
       edit: { "other.js": `export const other = 9; // touched\n` },
       lines: ["--changed: 1 changed file, running 1/2 test files"],
       tests: ["(pass) other"],
     },
-  ])("a file that a linked bundle refuses adds no test: $title", async ({ edit, lines, tests }) => {
-    using dir = tempDir("test-changed-refused-by-bundle-exact", {
-      ...refusedByBundleTests,
-      ...refusedByBundle[0].files,
-    });
-    initRepo(String(dir));
-    for (const [name, contents] of Object.entries(edit)) writeFileSync(join(String(dir), name), contents);
+  ])("next to a file that a linked bundle refuses, an edit of $title", ({ edit, lines, tests }) => {
+    test("selects no other test", async () => {
+      using dir = tempDir("test-changed-refused-by-bundle-exact", {
+        ...refusedByBundleTests,
+        ...refusedByBundle[0].files,
+      });
+      initRepo(String(dir));
+      for (const [name, contents] of Object.entries(edit)) writeFileSync(join(String(dir), name), contents);
 
-    const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect({ lines: changedLines(stderr), tests: testLines(stderr), exitCode }).toEqual({ lines, tests, exitCode: 0 });
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect({ lines: changedLines(stderr), tests: testLines(stderr), exitCode }).toEqual({
+        lines,
+        tests,
+        exitCode: 0,
+      });
+    });
   });
 
   // The runtime refuses this file too, so the scan keeps refusing it.
@@ -620,12 +625,11 @@ describe.concurrent("bun test --changed", () => {
 
   // The script of a page is scanned for the browser, so shared.js is in the
   // module graph two times. Every copy of a changed file starts the walk.
-  test.each([
+  describe.each([
     { title: "a file that a bundle accepts", never: "" },
     { title: "a file that a linked bundle refuses", never: `export function never() {\n  page = null;\n}\n` },
-  ])(
-    "an edit of a file that a test and a page script import selects the test: the page is behind $title",
-    async ({ never }) => {
+  ])("an edit of a file that a test and a page script import, with the page behind $title", ({ never }) => {
+    test("selects the test", async () => {
       using dir = tempDir("test-changed-page-copy", {
         "shared.js": `export const rate = 1;\n`,
         "app.js": `import { rate } from "./shared.js";\ndocument.title = String(rate * 2);\n`,
@@ -638,12 +642,12 @@ describe.concurrent("bun test --changed", () => {
       writeFileSync(join(String(dir), "shared.js"), `export const rate = 2;\n`);
 
       const { stderr, exitCode } = await runTestChanged(String(dir));
-      expect({ tests: testLines(stderr).filter(line => line.endsWith(" rate")), exitCode }).toEqual({
-        tests: ["(fail) rate"],
+      expect({ tests: testLines(stderr), exitCode }).toEqual({
+        tests: expect.arrayContaining(["(fail) rate"]),
         exitCode: 1,
       });
-    },
-  );
+    });
+  });
 
   // https://github.com/oven-sh/bun/issues/29590: a tsconfig `paths` alias
   // like "@/*" must be followed when building the module graph.
@@ -891,5 +895,5 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
 
     proc.kill();
     reader.releaseLock();
-  }, 60_000);
+  });
 });

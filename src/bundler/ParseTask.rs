@@ -2519,8 +2519,7 @@ pub mod parse_worker {
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
-        // The unwrap is for printed code. It also makes a bundle refuse a top-level `return` behind
-        // `exports.x =` (https://github.com/oven-sh/bun/issues/8908), so a graph scan does not unwrap.
+        // A graph scan prints nothing, and the unwrap refuses a top-level `return`: https://github.com/oven-sh/bun/issues/8908
         opts.features.unwrap_commonjs_to_esm = output_format == options::Format::Esm
             && FeatureFlags::UNWRAP_COMMONJS_TO_ESM
             && !worker_ctx.scan_only;

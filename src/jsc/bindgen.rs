@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 use bun_core::EncodedSlice;
 
 use crate::{
-    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSGlobalObject, JSObject, JSString,
-    JSValue, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSArray, JSGlobalObject, JSObject,
+    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -27,15 +27,10 @@ type OpaqueFfi = (UnsafeCell<[u8; 0]>, PhantomPinned);
 #[repr(C)]
 pub struct JsHeap<'a>(OpaqueFfi, InvariantLifetime<'a>, NotSend);
 
-/// What reaches the Rust payloads of wrapper objects.
-#[repr(C)]
-pub struct JsPayloads<'a>(OpaqueFfi, InvariantLifetime<'a>, NotSend);
-
-/// `&mut JsScope` is what runs JavaScript. It is the `JSGlobalObject*`: both fields are zero-sized at offset 0.
+/// `&mut JsScope` is what runs JavaScript. It is the `JSGlobalObject*`: `heap` is zero-sized at offset 0.
 #[repr(C)]
 pub struct JsScope<'a> {
     pub heap: JsHeap<'a>,
-    pub payloads: JsPayloads<'a>,
 }
 
 impl<'a> JsHeap<'a> {
@@ -59,6 +54,49 @@ impl<'a> JsHeap<'a> {
     #[inline(always)]
     fn global_ptr(&self) -> *mut JSGlobalObject {
         self.global_object().as_mut_ptr()
+    }
+
+    /// Debug check: an empty result means an exception is pending. Any other means none is, except a termination.
+    fn exception_presence_matches(&self, should_have_exception: bool) -> bool {
+        // SAFETY: the global object is live.
+        unsafe {
+            extern_types::Bun__Bindgen__exceptionPresenceMatches(
+                self.global_ptr(),
+                should_have_exception,
+            )
+        }
+    }
+
+    /// An array of what `convert`, a function of [`to_js`], makes of each item.
+    #[inline]
+    pub fn create_array<I: IntoIterator>(
+        &self,
+        items: I,
+        mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
+    ) -> Result<'a, JsLocal<'a, JSArray>> {
+        let global = self.global_object();
+        // A short array is made with one call. A longer one takes a call per element.
+        let mut short = [JSValue::ZERO; 8];
+        let mut items = items.into_iter();
+        for count in 0..short.len() {
+            let Some(item) = items.next() else {
+                // SAFETY: `count` initialized values.
+                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
+                    extern_types::Bun__Bindgen__constructArrayFromValues(
+                        self.global_ptr(),
+                        short.as_ptr(),
+                        count,
+                    )
+                }));
+            };
+            short[count] = convert(self, item)?.0;
+        }
+        let array = JSValue::create_empty_array(global, short.len() + items.size_hint().0)?;
+        let rest = items.map(|item| convert(self, item).map(|value| value.0));
+        for (index, value) in short.into_iter().map(Ok).chain(rest).enumerate() {
+            array.put_index(global, index as u32, value?)?;
+        }
+        Ok(JsLocal::from_raw(array))
     }
 
     #[inline]
@@ -168,12 +206,6 @@ impl<'a> JsHeap<'a> {
     #[cold]
     pub fn invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
         self.error_with_code(ErrorCode::INVALID_ARG_TYPE, args)
-    }
-
-    /// What [`JSGlobalObject::throw_illegal_constructor`] throws.
-    #[cold]
-    pub fn illegal_constructor(&self) -> Error<'a> {
-        Error::unthrown(self.global_object().create_illegal_constructor_error())
     }
 
     /// What [`JSGlobalObject::throw_string_too_long`] throws.
@@ -343,6 +375,14 @@ impl<'a, T> JsLocal<'a, T> {
         JsLocal(value, PhantomData, PhantomData)
     }
 
+    /// # Safety
+    /// As [`core::slice::from_raw_parts`], and something holds each value for `'a`.
+    #[inline(always)]
+    unsafe fn slice_from_raw_parts(data: *const JSValue, length: usize) -> &'a [Self] {
+        // SAFETY: `JsLocal` is a transparent `JSValue`.
+        unsafe { core::slice::from_raw_parts(data.cast(), length) }
+    }
+
     #[inline(always)]
     fn from_js_result(result: crate::JsResult<JSValue>) -> Result<'a, Self> {
         result.map(Self::from_raw).map_err(Error::pending)
@@ -365,12 +405,6 @@ impl<'a, T> JsLocal<'a, T> {
     pub fn as_value(self) -> JsLocal<'a> {
         JsLocal::from_raw(self.0)
     }
-
-    /// Keeps the value past the call.
-    #[inline]
-    pub fn to_strong(self, heap: &JsHeap<'a>) -> Strong {
-        Strong::create(self.0, heap.global_object())
-    }
 }
 
 impl<'a> JsLocal<'a> {
@@ -382,6 +416,13 @@ impl<'a> JsLocal<'a> {
     pub fn new(_: &JsHeap<'a>, value: JSValue) -> Self {
         debug_assert!(!value.is_empty());
         Self::from_raw(value)
+    }
+
+    /// A `b.any.variadic` argument as plain `JSValue`s, for the older API.
+    #[inline(always)]
+    pub fn to_js_slice(values: &[Self]) -> &[JSValue] {
+        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
+        unsafe { &*(core::ptr::from_ref(values) as *const [JSValue]) }
     }
 
     #[inline(always)]
@@ -406,8 +447,7 @@ impl<'a> JsLocal<'a, Callable> {
         this: JsLocal<'a, T>,
         args: &[JsLocal<'a>],
     ) -> Result<'a, JsLocal<'a>> {
-        // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
-        let args = unsafe { &*(core::ptr::from_ref(args) as *const [JSValue]) };
+        let args = JsLocal::to_js_slice(args);
         JsLocal::from_js_result(self.0.call(cx.heap.global_object(), this.0, args))
     }
 }
@@ -490,6 +530,11 @@ impl<'a> JsBytes<'a> {
         }
     }
 
+    #[inline]
+    pub fn to_js(self) -> JSValue {
+        self.value.to_js()
+    }
+
     /// `shared: "copied"` for `string: "asIs"`. Like [`get`](Self::get), but copies the bytes of a shared buffer into `copy` and returns those.
     #[inline]
     pub fn get_or_copy_if_shared<'heap>(
@@ -545,6 +590,21 @@ impl<'a> StringOrJsBytes<'a> {
             // SAFETY: forwarded.
             value: unsafe { JsLocal::from_extern(argument.value, heap) },
         })
+    }
+
+    /// # Safety
+    /// As [`from_extern`](Self::from_extern), of a `.nullable` argument: C++ converts neither `undefined` nor `null`.
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn from_extern_optional(
+        argument: extern_types::ExternWithValue<extern_types::ExternString>,
+        heap: &JsHeap<'a>,
+    ) -> Option<Self> {
+        if argument.value.is_undefined_or_null() {
+            return None;
+        }
+        // SAFETY: forwarded.
+        Some(unsafe { Self::from_extern(argument, heap) })
     }
 
     /// `held: "copied"`.
@@ -622,12 +682,16 @@ impl core::ops::Deref for PinnedBytes {
 pub unsafe trait JsPayload: Sized + 'static {
     #[doc(hidden)]
     const PAYLOAD_OFFSET: usize;
-    #[doc(hidden)]
-    const INTERNAL_FIELDS_OFFSET: usize;
     /// # Safety
     /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
     #[doc(hidden)]
     unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
+    /// With `estimatedSize`, the extra memory to report to the GC for a new object.
+    #[doc(hidden)]
+    #[inline(always)]
+    fn extra_memory_size(&self) -> Option<usize> {
+        None
+    }
 
     /// A new JS object that owns `self`.
     #[inline]
@@ -638,29 +702,108 @@ pub unsafe trait JsPayload: Sized + 'static {
 
     /// As [`into_js`](Self::into_js), for code that has the global object and no capability.
     #[inline]
-    fn into_js_value(self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: a `JsHeap` is the global object, and the wrapper leaves as a `JSValue`.
-        let heap = unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() };
-        self.into_js(heap).as_value().to_js()
+    fn into_js_wrapper(self, global: &JSGlobalObject) -> JsWrapper<'_, Self> {
+        // SAFETY: a `JsHeap` is the global object.
+        self.into_js(unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() })
     }
 }
 
-/// The JS object that wraps a `T`. The payload is reached only through [`JsPayloads`].
+/// A class whose constructor creates the object itself: `passStructure`.
+///
+/// # Safety
+/// Implemented by generated code only.
+pub unsafe trait JsCreateWithStructure: Sized {
+    /// The struct, or a ref on the struct of a `refCounted` class.
+    type Wrapped;
+    /// # Safety
+    /// `structure` is a Structure of this class.
+    #[doc(hidden)]
+    unsafe fn create_with_structure<'a>(
+        heap: &JsHeap<'a>,
+        structure: *mut c_void,
+        wrapped: Self::Wrapped,
+    ) -> JsWrapper<'a, Self>;
+}
+
+/// What `new` creates its object with: the structure of the class, or of a subclass.
+pub struct JsStructure<'a, T>(*mut c_void, InvariantLifetime<'a>, PhantomData<*const T>);
+impl<'a, T: JsCreateWithStructure> JsStructure<'a, T> {
+    /// # Safety
+    /// As [`JsCreateWithStructure::create_with_structure`], and the call `heap` belongs to holds it.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub unsafe fn from_extern(structure: *mut c_void, _: &JsHeap<'a>) -> Self {
+        Self(structure, PhantomData, PhantomData)
+    }
+
+    /// The new object, which owns `wrapped`.
+    #[inline]
+    pub fn create(self, heap: &JsHeap<'a>, wrapped: T::Wrapped) -> JsWrapper<'a, T> {
+        // SAFETY: `from_extern`'s contract.
+        unsafe { T::create_with_structure(heap, self.0, wrapped) }
+    }
+}
+
+/// # Safety
+/// `class_index` is the index of a generated class.
+#[doc(hidden)]
+#[inline]
+pub unsafe fn constructor_for_class(global: &JSGlobalObject, class_index: u32) -> JSValue {
+    // SAFETY: forwarded.
+    unsafe { extern_types::Bun__Bindgen__constructorForClass(global, class_index) }
+}
+
+/// # Safety
+/// `this_value` is the JS object of a generated class that has an internal field at `offset`.
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn internal_field_at(this_value: JSValue, offset: usize) -> Option<JSValue> {
+    // SAFETY: a cell value is its pointer, and the offset is inside the cell.
+    let value = unsafe {
+        (this_value.encoded() as *const JSValue)
+            .byte_add(offset)
+            .read()
+    };
+    if value.is_empty() { None } else { Some(value) }
+}
+
+/// # Safety
+/// As [`internal_field_at`].
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn set_internal_field_at(
+    this_value: JSValue,
+    global: &JSGlobalObject,
+    offset: usize,
+    value: JSValue,
+) {
+    // SAFETY: as above; C++ stores through the `WriteBarrier`.
+    unsafe {
+        extern_types::Bun__Bindgen__setInternalField(
+            global.as_mut_ptr(),
+            this_value.encoded() as *mut c_void,
+            offset as u32,
+            value,
+        )
+    }
+}
+
+/// The JS object that wraps a `T`.
 #[repr(transparent)]
-pub struct JsWrapper<'a, T: JsPayload>(
+pub struct JsWrapper<'a, T>(
     NonNull<c_void>,
     InvariantLifetime<'a>,
     PhantomData<*const T>,
 );
-impl<T: JsPayload> Clone for JsWrapper<'_, T> {
+impl<T> Clone for JsWrapper<'_, T> {
     #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T: JsPayload> Copy for JsWrapper<'_, T> {}
+impl<T> Copy for JsWrapper<'_, T> {}
 
-impl<'a, T: JsPayload> JsWrapper<'a, T> {
+impl<'a, T> JsWrapper<'a, T> {
     /// # Safety
     /// `cell` is a wrapper of `T` that something holds for the call `heap` belongs to.
     #[doc(hidden)]
@@ -669,6 +812,18 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         JsWrapper(cell, PhantomData, PhantomData)
     }
 
+    #[inline(always)]
+    pub fn as_value(self) -> JsLocal<'a, JSObject> {
+        JsLocal::from_raw(self.to_js())
+    }
+
+    #[inline(always)]
+    pub fn to_js(self) -> JSValue {
+        JSValue::from_cell(self.0.as_ptr())
+    }
+}
+
+impl<'a, T: JsPayload> JsWrapper<'a, T> {
     /// # Safety
     /// `structure` is null or a Structure of `T`'s cell class.
     #[doc(hidden)]
@@ -682,24 +837,32 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         unsafe {
             let this = Self::from_extern(T::create_cell(heap.global_ptr(), structure), heap);
             this.payload().write(payload);
+            // Marking threads read such a payload, so a fence follows the write.
+            if let Some(size) = (*this.payload()).extra_memory_size() {
+                extern_types::Bun__Bindgen__notifyInitialized(
+                    heap.global_ptr(),
+                    this.0.as_ptr(),
+                    size,
+                );
+            }
             this
         }
     }
 
     /// # Safety
-    /// Nothing can reach the payload mutably for `'b`, and the caller's frame holds the cell.
+    /// Nothing can reach the payload mutably for `'a`, and the caller's frame holds the cell.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn payload_ref<'b>(self) -> &'b T {
+    pub unsafe fn payload_ref(self) -> &'a T {
         // SAFETY: forwarded.
         unsafe { &*self.payload() }
     }
 
     /// # Safety
-    /// Nothing else can reach the payload for `'b`, and the caller's frame holds the cell.
+    /// Nothing else can reach the payload for `'a`, and the caller's frame holds the cell.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn payload_mut<'b>(self) -> &'b mut T {
+    pub unsafe fn payload_mut(self) -> &'a mut T {
         // SAFETY: forwarded.
         unsafe { &mut *self.payload() }
     }
@@ -710,85 +873,11 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         unsafe { self.0.as_ptr().byte_add(T::PAYLOAD_OFFSET).cast() }
     }
 
+    /// The payload's address, which does not change. It is valid while the wrapper is alive.
     #[inline(always)]
-    pub fn as_value(self) -> JsLocal<'a, JSObject> {
-        JsLocal::from_raw(JSValue::from_cell(self.0.as_ptr()))
-    }
-
-    /// Lends the payload. `f` cannot run JavaScript: that takes the `&mut JsScope` the `JsPayloads` is borrowed from.
-    #[inline(always)]
-    pub fn with<R>(self, _: &JsPayloads<'a>, f: impl FnOnce(&T) -> R) -> R {
-        // SAFETY: a `&mut T` is lent by `with_mut`, which holds `JsPayloads` exclusively, or to a body that has no `JsPayloads`.
-        let result = f(unsafe { &*self.payload() });
-        self.as_value().0.ensure_still_alive();
-        result
-    }
-
-    /// As [`with`](Self::with), exclusively.
-    #[inline(always)]
-    pub fn with_mut<R>(self, _: &mut JsPayloads<'a>, f: impl FnOnce(&mut T) -> R) -> R {
-        // SAFETY: the exclusive borrow of `JsPayloads` excludes every other payload reference.
-        let result = f(unsafe { &mut *self.payload() });
-        self.as_value().0.ensure_still_alive();
-        result
-    }
-
-    /// Keeps the wrapper, and so the payload, alive past the call.
-    #[inline]
-    pub fn to_strong(self, heap: &JsHeap<'a>) -> JsWrapperStrong<T> {
-        JsWrapperStrong(self.as_value().to_strong(heap), PhantomData)
-    }
-
-    /// # Safety
-    /// `index` is one of the class's internal fields.
-    #[doc(hidden)]
-    #[inline(always)]
-    pub unsafe fn internal_field(self, _: &JsHeap<'a>, index: usize) -> JsLocal<'a> {
-        // SAFETY: generated offset inside the cell; they are initialized to `undefined`.
-        JsLocal::from_raw(unsafe {
-            self.0
-                .as_ptr()
-                .byte_add(T::INTERNAL_FIELDS_OFFSET)
-                .cast::<JSValue>()
-                .add(index)
-                .read()
-        })
-    }
-
-    /// # Safety
-    /// As [`internal_field`](Self::internal_field).
-    #[doc(hidden)]
-    #[inline(always)]
-    pub unsafe fn set_internal_field<V>(
-        self,
-        heap: &JsHeap<'a>,
-        index: usize,
-        value: JsLocal<'a, V>,
-    ) {
-        // SAFETY: as above; C++ stores through the `WriteBarrier`.
-        unsafe {
-            extern_types::Bun__Bindgen__setInternalField(
-                heap.global_ptr(),
-                self.0.as_ptr(),
-                (T::INTERNAL_FIELDS_OFFSET + index * size_of::<JSValue>()) as u32,
-                value.0,
-            )
-        }
-    }
-}
-
-/// A [`Strong`] on a wrapper; gives it back to code that has a capability again.
-pub struct JsWrapperStrong<T: JsPayload>(Strong, PhantomData<*const T>);
-impl<T: JsPayload> JsWrapperStrong<T> {
-    #[inline]
-    pub fn get<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, T> {
-        // SAFETY: made from a `JsWrapper<T>`; a cell value is its pointer.
-        unsafe {
-            JsWrapper::from_extern(
-                NonNull::new_unchecked(self.0.get().encoded() as *mut c_void),
-                heap,
-            )
-        }
+    pub fn payload_ptr(self) -> NonNull<T> {
+        // SAFETY: inside the cell, which is not null.
+        unsafe { NonNull::new_unchecked(self.payload()) }
     }
 }
 
@@ -846,10 +935,18 @@ pub mod to_js {
             self.as_value()
         }
     }
+    impl<'a, T> Any<'a> for JsWrapper<'a, T> {
+        #[inline(always)]
+        fn into_value(self, _: &JsHeap<'a>) -> JsLocal<'a> {
+            self.as_value().as_value()
+        }
+    }
     impl<'a> Any<'a> for JSValue {
         #[inline(always)]
         fn into_value(self, heap: &JsHeap<'a>) -> JsLocal<'a> {
-            JsLocal::new(heap, self)
+            // A function of the older API returns the empty value after it threw.
+            debug_assert!(!self.is_empty() || heap.exception_presence_matches(true));
+            JsLocal::from_raw(self)
         }
     }
 
@@ -870,34 +967,23 @@ pub mod to_js {
     }
 
     #[inline]
+    pub fn string_array<'a>(
+        heap: &JsHeap<'a>,
+        strings: impl AsRef<[bun_core::String]>,
+    ) -> Result<'a, JsLocal<'a>> {
+        JsLocal::from_js_result(crate::bun_string_jsc::to_js_array(
+            heap.global_object(),
+            strings.as_ref(),
+        ))
+    }
+
+    #[inline]
     pub fn array<'a, I: IntoIterator>(
         heap: &JsHeap<'a>,
         items: I,
-        mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
+        convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
     ) -> Result<'a, JsLocal<'a>> {
-        let global = heap.global_object();
-        // A short array is made with one call. A longer one takes a call per element.
-        let mut short = [JSValue::ZERO; 8];
-        let mut items = items.into_iter();
-        for count in 0..short.len() {
-            let Some(item) = items.next() else {
-                // SAFETY: `count` initialized values.
-                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
-                    extern_types::Bun__Bindgen__constructArrayFromValues(
-                        heap.global_ptr(),
-                        short.as_ptr(),
-                        count,
-                    )
-                }));
-            };
-            short[count] = convert(heap, item)?.0;
-        }
-        let array = JSValue::create_empty_array(global, short.len() + items.size_hint().0)?;
-        let rest = items.map(|item| convert(heap, item).map(|value| value.0));
-        for (index, value) in short.into_iter().map(Ok).chain(rest).enumerate() {
-            array.put_index(global, index as u32, value?)?;
-        }
-        Ok(JsLocal::from_raw(array))
+        heap.create_array(items, convert).map(JsLocal::as_value)
     }
 
     /// A key that comes again keeps its place and takes the new value. The inline room is the upper `size_hint`.
@@ -998,10 +1084,30 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
         };
         error.into_host_fn_return(cx)
     };
-    debug_assert_eq!(
-        value.is_empty(),
-        cx.heap.global_object().has_exception(),
+    debug_assert!(
+        cx.heap.exception_presence_matches(value.is_empty()),
         "a body fails exactly when an exception is pending",
     );
     value
+}
+
+/// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.
+#[doc(hidden)]
+#[inline(always)]
+pub fn host_fn_construct_return<'a, T, E: IntoError<'a>>(
+    cx: &mut JsScope<'a>,
+    result: core::result::Result<*mut T, E>,
+) -> *mut c_void {
+    let wrapped: *mut c_void = match result {
+        Ok(wrapped) => wrapped.cast(),
+        Err(error) => {
+            error.into_error(&cx.heap).into_host_fn_return(cx);
+            core::ptr::null_mut()
+        }
+    };
+    debug_assert!(
+        cx.heap.exception_presence_matches(wrapped.is_null()),
+        "a constructor fails exactly when an exception is pending",
+    );
+    wrapped
 }

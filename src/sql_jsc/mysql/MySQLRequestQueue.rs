@@ -86,9 +86,7 @@ impl MySQLRequestQueue {
         self.requests.get().front().map(RefPtr::this_ptr)
     }
 
-    /// They were handed over for a transaction or savepoint that never began: the ones that are
-    /// not written yet, up to the next statement that a scope sends itself. `written` leaves out
-    /// a written request that cannot be followed.
+    /// The pending requests up to the next internal one: they waited for a start that was refused.
     pub(crate) fn reject_unwritten_behind_refused_start(&self, error: JSValue) {
         let unwritten: Vec<RefPtr<JSMySQLQuery>> = self
             .requests

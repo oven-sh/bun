@@ -1771,8 +1771,7 @@ impl PostgresSQLConnection {
             .any(|request| !request.flags.get().internal)
     }
 
-    /// They were handed over for a transaction or savepoint that never began: the ones that are
-    /// not written yet, up to the next statement that a scope sends itself.
+    /// The unwritten requests up to the next internal one: they waited for a start that was refused.
     fn reject_unwritten_behind_refused_start(&self, error: JSValue) {
         let unwritten: Vec<RefPtr<PostgresSQLQuery>> = {
             let requests = self.requests.get();

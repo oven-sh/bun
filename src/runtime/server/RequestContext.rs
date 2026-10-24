@@ -2453,7 +2453,18 @@ where
         ctx_log!("toAsync");
         self.to_async_without_abort_handler(req, request_object);
         if DEBUG_MODE {
-            self.pathname.set(request_object.url.get().clone());
+            // Only the path and query, as the log prints them while the request is still synchronous
+            // (the request's `url` is the full URL).
+            let url = request_object.url.get().to_utf8();
+            let bytes = url.slice();
+            let path = match bytes.windows(3).position(|w| w == b"://") {
+                Some(i) => match bytes[i + 3..].iter().position(|&c| c == b'/') {
+                    Some(j) => &bytes[i + 3 + j..],
+                    None => &b"/"[..],
+                },
+                None => bytes,
+            };
+            self.pathname.set(BunString::clone_utf8(path));
         }
         self.set_abort_handler();
     }

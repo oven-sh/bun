@@ -76,6 +76,8 @@ pub struct Task<'s> {
     is_trusted: bool,
     /// See `discard_until_recheck`.
     can_recheck_early: Cell<bool>,
+    /// See `commit_after_file_only`.
+    commits_after_file_only: Cell<bool>,
     /// See `close_cycle`.
     is_first_in_order: Cell<bool>,
     is_first_in_component: Cell<bool>,
@@ -118,6 +120,7 @@ impl<'s> Task<'s> {
             was_discarded: Cell::new(false),
             is_trusted: false,
             can_recheck_early: Cell::new(false),
+            commits_after_file_only: Cell::new(false),
             is_first_in_order: Cell::new(false),
             is_first_in_component: Cell::new(false),
             cycle_members: RefCell::default(),
@@ -297,6 +300,43 @@ impl<'s> Task<'s> {
         }
     }
 
+    /// What the task stores from now on is only published by the commit that follows the file it visits. If the task is
+    /// discarded by then, the task that rechecks the file evaluates all of it again.
+    pub(super) fn commit_after_file_only(&self) {
+        self.commits_after_file_only.set(true);
+        self.stop_writing_immediately();
+    }
+
+    pub(super) fn commits_after_file_only(&self) -> bool {
+        self.commits_after_file_only.get()
+    }
+
+    /// The task's next commit resolves `member`, for the tasks that `close_cycle` has discarded because of it.
+    pub(super) fn resolve_with_next_commit(&self, member: u64) {
+        if self.was_discarded() {
+            return;
+        }
+        self.cycle_members.borrow_mut().push(member);
+        if self.cycle_since_idle.get().is_none() {
+            let logged = self.buffer().log_lengths();
+            self.cycle_since_idle.set(Some(logged));
+        }
+        self.stop_writing_immediately();
+    }
+
+    /// What the task reports for the file it visits depends on what the checks of the earlier files have evaluated about
+    /// that file. Unless they're all final, the task is discarded, and the file is rechecked once they are.
+    ///
+    /// `is_reachable_only_by_importers`: only files that import the current file can refer to it. Then unrelated earlier
+    /// files don't matter.
+    pub(super) fn wait_for_earlier_files(&self, is_reachable_only_by_importers: bool) {
+        if !self.is_first_in_order.get()
+            && !(self.is_first_in_component.get() && is_reachable_only_by_importers)
+        {
+            self.discard_until_recheck();
+        }
+    }
+
     /// Returns the `members` of the cycles this task has resolved since its last commit, sorted. For a task that was
     /// discarded because of a cycle, that cycle is included.
     pub(super) fn take_cycle_members(&self) -> Vec<u64> {
@@ -383,6 +423,7 @@ impl<'s> Task<'s> {
     pub fn begin_file(&mut self, file: FileId, is_imported: bool) {
         self.file = Some(file);
         self.uncommitted_files.push(file);
+        self.commits_after_file_only.set(false);
         self.note_idle();
         self.own.add_visited_file(file);
         if !is_imported {
@@ -410,6 +451,7 @@ impl<'s> Task<'s> {
             was_discarded,
             is_trusted,
             can_recheck_early,
+            commits_after_file_only,
             is_first_in_order,
             is_first_in_component,
             cycle_members,
@@ -431,6 +473,7 @@ impl<'s> Task<'s> {
         held_back.set(0);
         was_discarded.set(false);
         can_recheck_early.set(false);
+        commits_after_file_only.set(false);
         is_first_in_order.set(false);
         is_first_in_component.set(false);
         cycle_members.get_mut().clear();

@@ -74,6 +74,15 @@ struct Mentioned {
     enclosing_infer_params: SmallVec<[TypeId; 4]>,
 }
 
+/// One of the `type_params_in_scope` of a type node.
+#[derive(Copy, Clone)]
+struct OuterTypeParam {
+    /// `None` for a `this` type.
+    symbol: Option<Sym>,
+    /// Its index among them.
+    index: usize,
+}
+
 /// `toInt32` of jsnum.go
 fn to_int32(n: f64) -> i32 {
     if !n.is_finite() {
@@ -986,11 +995,7 @@ impl<'p, 's> Checker<'p, 's> {
                 pairs.push((p, p));
             }
         }
-        if pairs.is_empty() {
-            MapperId::IDENTITY
-        } else {
-            self.types().mapper(pairs)
-        }
+        self.mapper_of_pairs(pairs)
     }
 
     /// `len(tp.symbol.Declarations) == 1`. `infer U` occurring twice is one symbol of its scope.
@@ -1142,8 +1147,196 @@ impl<'p, 's> Checker<'p, 's> {
         scope: ScopeId,
         node: TypeNodeId,
     ) -> MapperId {
+        let referenced = self.possibly_referenced_type_params(file, scope, node);
+        if !self.resolves_names_at_first_instantiation(file, node) {
+            return referenced;
+        }
+        // Every type parameter in scope, so that `instantiate` gets to the type.
+        let all = self.identity_mapper(file, scope);
+        let mut pairs = self.types().mapping(all).to_vec();
+        let referenced = self.types().mapping(referenced).iter();
+        pairs.extend(referenced.filter(|pair| self.types().map(all, pair.0).is_none()));
+        self.mapper_of_pairs(pairs)
+    }
+
+    fn mapper_of_pairs(&self, pairs: Vec<(TypeId, TypeId)>) -> MapperId {
+        match pairs.is_empty() {
+            true => MapperId::IDENTITY,
+            false => self.types().mapper(pairs),
+        }
+    }
+
+    /// `links.outerTypeParameters` of `getObjectTypeInstantiation` for the type of `node`, each mapped to itself.
+    pub(super) fn possibly_referenced_type_params(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+    ) -> MapperId {
         let declared = self.identity_mapper_of_declared_for_node(file, scope, node);
         self.with_adopted_type_params(declared, file, scope, self.hir(file)[node].pos)
+    }
+
+    /// True if `node` is a type literal, a function type or a mapped type in the type arguments of an import type. No
+    /// check visits it, so the first `getObjectTypeInstantiation` of its type is what resolves the names that
+    /// `isTypeParameterPossiblyReferenced` looks at. See `resolve_names_at_first_instantiation`.
+    #[inline]
+    pub(super) fn resolves_names_at_first_instantiation(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> bool {
+        // FOR SPEED: most files have no such node.
+        if self.bound(file).resolved_on_demand.is_empty() {
+            return false;
+        }
+        let node = &self.hir(file)[node];
+        self.bound(file).is_resolved_on_demand(node.pos)
+            && matches!(
+                node.kind,
+                TypeNodeKind::Object(_) | TypeNodeKind::Fn(_) | TypeNodeKind::Mapped(_)
+            )
+    }
+
+    /// Call before something in `file` for which `Bound::is_resolved_on_demand` is resolved. What tsc reports there, and
+    /// which names count as used, depends on what it has resolved by the end of the check of `file`. So that check, and
+    /// those of the earlier files, have to get there themselves. They must not find what follows from a resolution that
+    /// comes later in tsc, or from one by a task that was discarded.
+    /// - `Emit` runs after every check. Nothing that follows from what it resolves is stored.
+    /// - The check of a later file waits for the end of the check of `file`, as for a cycle.
+    #[cold]
+    fn note_resolved_on_demand(&mut self, file: FileId) {
+        let Some(visited) = self.task.file else {
+            return;
+        };
+        if self.is_type_checked {
+            if visited != file {
+                self.mark_tainted_from(0);
+            }
+        } else if self.is_checked_no_later_than(visited, file) {
+            self.task.commit_after_file_only();
+        } else if self.reports_semantic_errors(file) {
+            let end = super::commit::end_of_check(file);
+            if !(self.p).is_cycle_resolved(&[end], 0, self.p.last_commit()) {
+                self.task.close_cycle(|| false, std::iter::once(end));
+            }
+        }
+    }
+
+    /// `getObjectTypeInstantiation` with `mapper` of a type made from `node`, for which
+    /// `resolves_names_at_first_instantiation`. `own` is the type's mapper. Returns the mapper of the result.
+    #[cold]
+    pub(super) fn instantiate_below_import_type_arguments(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        own: MapperId,
+        mapper: MapperId,
+    ) -> MapperId {
+        self.note_resolved_on_demand(file);
+        if !self.is_resolved_too_late(file, self.hir(file)[node].pos) {
+            (self.p.instantiated_below_import_type_arguments.lock()).insert((file, node));
+        }
+        let scope = self.bound(file).type_scope[node.idx()];
+        let referenced = self.possibly_referenced_type_params(file, scope, node);
+        let own = self.types().mapping(own).iter();
+        let own = own.filter(|pair| self.types().map(referenced, pair.0).is_some());
+        let own = self.mapper_of_pairs(own.copied().collect());
+        match self.map_mapper(own, mapper) {
+            // `data.instantiations[getTypeInstantiationKey(typeParameters, target.alias, false)] = target`
+            new if new == referenced => self.identity_mapper_for_node(file, scope, node),
+            new => new,
+        }
+    }
+
+    /// `getObjectTypeInstantiation` has got to the type of `node`. For each type parameter in scope,
+    /// `isTypeParameterPossiblyReferenced` resolves the type references without type arguments and the first identifier
+    /// of each type query in `node`, up to the first reference to that type parameter. Resolves the same names, and adds
+    /// the ranges of those that report something or count as a use to `names_resolved_on_demand`.
+    pub(super) fn resolve_names_at_first_instantiation(&mut self, file: FileId, node: TypeNodeId) {
+        let hir = self.hir(file);
+        let scope = self.bound(file).type_scope[node.idx()];
+        let params = self.type_params_in_scope(file, scope);
+        for (index, &tp) in params.iter().enumerate() {
+            let (declaration, symbol) = match *self.data(tp) {
+                TypeData::TypeParam(of, declared, _)
+                    if of == file && self.type_param_has_one_declaration(of, declared) =>
+                {
+                    let symbol = self.bound(file).type_param_symbol[declared.idx()];
+                    (hir.node(declared), Some(self.files().sym(file, symbol)))
+                }
+                TypeData::ThisParam(owner) => match self.files().decls_of(owner)[..] {
+                    [(of, declaration)] if of == file => (hir.node(declaration), None),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let tp = OuterTypeParam { symbol, index };
+            let (container, mut at) = (hir.parent(declaration), hir.node(node));
+            loop {
+                if at == container {
+                    self.contains_reference(file, tp, hir.node(node));
+                    break;
+                }
+                let extends = match hir.data(at) {
+                    NodeData::Type(t) => match hir[t].kind {
+                        TypeNodeKind::Cond { extends, .. } => extends,
+                        _ => TypeNodeId::NONE,
+                    },
+                    _ => TypeNodeId::NONE,
+                };
+                if at.is_none()
+                    || hir.kind(at) == Kind::Block
+                    || extends.is_some() && self.contains_reference(file, tp, hir.node(extends))
+                {
+                    break;
+                }
+                at = hir.parent(at);
+            }
+        }
+    }
+
+    /// `containsReference` of `isTypeParameterPossiblyReferenced`. See `resolve_names_at_first_instantiation`.
+    fn contains_reference(&mut self, file: FileId, tp: OuterTypeParam, node: Node) -> bool {
+        let hir = self.hir(file);
+        let is_this_type = tp.symbol.is_none();
+        if let NodeData::Type(t) = hir.data(node) {
+            match hir[t].kind {
+                TypeNodeKind::Keyword(Keyword::This) => return is_this_type,
+                TypeNodeKind::Ref { name, args } if !is_this_type && args.is_empty() => {
+                    let scope = self.bound(file).type_scope[t.idx()];
+                    let found = self.resolve_type_reference_name(file, scope, name, false);
+                    if found.is_some() && found == tp.symbol {
+                        return true;
+                    }
+                    if found.is_none() {
+                        (self.names_resolved_on_demand).push((hir[t].pos, hir[t].end));
+                    }
+                }
+                TypeNodeKind::Typeof { expr, args, .. } => {
+                    let first = first_identifier(hir, expr);
+                    let ExprKind::Ident(name) = hir[first].kind else {
+                        return true;
+                    };
+                    let range = (hir[first].pos, self.end_of_expr(file, first));
+                    self.names_resolved_on_demand.push(range);
+                    // `checkIdentifier` of a name that doesn't resolve reports that, and no more.
+                    if self.symbol_of_identifier(file, first, name).is_none() {
+                        self.type_of_expr(file, first);
+                    }
+                    let mut mentioned = Mentioned::default();
+                    self.collect_mentions(file, t, &mut mentioned);
+                    return mentioned.everything
+                        || mentioned.values_in.iter().any(|&(of, declared_in)| {
+                            tp.index < self.type_params_in_scope(of, declared_in).len()
+                        })
+                        || (hir.ids(args))
+                            .any(|it| self.contains_reference(file, tp, hir.node(it)));
+                }
+                _ => {}
+            }
+        }
+        hir.for_each_child(node, &mut |child| self.contains_reference(file, tp, child))
     }
 
     /// Returns `declared` plus `adopted_type_params_in_scope`, each mapped to itself.
@@ -2907,6 +3100,9 @@ impl<'p, 's> Checker<'p, 's> {
             // instantiation limit.
             return self.excessively_deep();
         }
+        if (self.bound(file)).is_resolved_on_demand(self.hir(file)[node].pos) {
+            self.note_resolved_on_demand(file);
+        }
         let ty = self.type_from_node_uncached(file, node);
         let ty = self.conditional_flow_type_of_type(file, ty, node);
         let ty = self.with_alias_for_type_node(file, node, ty);
@@ -3327,8 +3523,9 @@ impl<'p, 's> Checker<'p, 's> {
                 if !has_type_arguments {
                     return ty;
                 }
-                let args = self.types_from_nodes(file, args);
-                self.with_type_arguments(ty, &args, InstantiationExpression::TypeNode(file, node))
+                // `checkExpressionWithTypeArguments`: `checkSourceElements(node.TypeArguments())`
+                self.types_from_nodes(file, args);
+                self.with_type_arguments(ty, InstantiationExpression::TypeNode(file, node))
             }
             TypeNodeKind::Import { .. } => self.get_type_from_import_type_node(file, scope, node),
             TypeNodeKind::Ref { .. } => {
@@ -3435,9 +3632,8 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return ty;
             }
-            let args = self.types_from_nodes(file, args);
             let node = InstantiationExpression::TypeNode(file, node);
-            return self.with_type_arguments(ty, &args, node);
+            return self.with_type_arguments(ty, node);
         }
         let AliasTarget::Symbol(sym) = self.resolve_symbol(symbol) else {
             return TypeId::ERROR;

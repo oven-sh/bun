@@ -72,6 +72,11 @@
 //!   gets there. So a task ignores what a task of a later file has stored under a file, if the later task found an error
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
 //!   never finds such entries of its own. This covers the entries under nodes, not those under records.
+//! - **What no check visits is resolved in program order.** tsc resolves what's in a type literal in the type arguments of
+//!   an import type when something needs it, and reports what's wrong there if that's by the end of the file's check. So
+//!   the task of a later file that gets there waits for that check, as for a cycle. The file's own task waits for the
+//!   earlier files if something is left unresolved (`Task::wait_for_earlier_files`). See
+//!   `Checker::note_resolved_on_demand`.
 //! - **What a task stores about an expression of the file it visits never leaves the task**
 //!   (`crate::table::Location::KEEPS_VISITED_FILE_LOCAL`). That's most of what a check stores, and other tasks rarely
 //!   look it up. It's neither logged nor counted as a `Task::hold_back`.
@@ -123,6 +128,12 @@ pub(super) struct Commits<'s> {
     /// `tables_written_immediately`
     immediate_tables: u128,
     ways_to_limits: Guarded<Vec<WaysToLimit>>,
+}
+
+/// The check of `file`, as a member of a cycle. The commit that follows that check resolves it. See
+/// `Checker::note_resolved_on_demand`.
+pub(super) fn end_of_check(file: FileId) -> u64 {
+    crate::util::fx_hash(&(u64::MAX, file))
 }
 
 /// What a task that was discarded at a limit on depth or size publishes, until a commit resolves one of the queries
@@ -702,7 +713,11 @@ impl<'s> Checker<'_, 's> {
         self.learn_ways_to_limits();
         self.discard_if_missed_cycle_member();
         // A commit here would store the members of a cycle that are in other files, and withhold those in this one.
-        if self.is_commit_due() && !self.task.was_discarded() && !self.task.has_resolved_a_cycle() {
+        if self.is_commit_due()
+            && !self.task.was_discarded()
+            && !self.task.has_resolved_a_cycle()
+            && !self.task.commits_after_file_only()
+        {
             cold_path();
             let is_between_files = false;
             self.commit(is_between_files);
@@ -794,6 +809,11 @@ impl<'s> Checker<'_, 's> {
     /// round's task.
     pub fn commit_after_file(&mut self, is_last: bool) -> bool {
         self.discard_if_missed_cycle_member();
+        if let Some(file) = self.task.file
+            && !self.bound(file).resolved_on_demand.is_empty()
+        {
+            self.task.resolve_with_next_commit(end_of_check(file));
+        }
         // The last round's task commits once, when it ends. See `is_commit_due`. It's never discarded.
         if self.task.is_trusted() && !is_last && !self.task.was_discarded() {
             return true;

@@ -1590,6 +1590,9 @@ pub struct BoundIn<S: Storage> {
     pub unchecked_exprs: S::Few<ExprId>,
     /// The type nodes under one of those, and the type arguments of a `super` call. Sorted.
     pub unchecked_types: S::Few<TypeNodeId>,
+    /// The ranges of the outermost type literals, function types and mapped types in the type arguments of import
+    /// types. Sorted. See `is_resolved_on_demand`.
+    pub resolved_on_demand: S::Few<(u32, u32)>,
     /// The position of each `infer T` whose position implies a constraint on `T`. Ordered by type
     /// parameter.
     pub infer_positions: S::Few<(TypeParamId, InferPosition)>,
@@ -2372,6 +2375,17 @@ impl Bound<'_> {
                 .is_ok()
     }
 
+    /// True if `pos` is in a type literal, a function type or a mapped type in the type arguments of an import type.
+    /// `checkImportType` doesn't visit the type arguments. `getTypeFromTypeNode` resolves them with the import type, but
+    /// what's in one of these types is resolved when something needs it.
+    #[inline]
+    pub fn is_resolved_on_demand(&self, pos: u32) -> bool {
+        let ranges = &self.resolved_on_demand[..];
+        !ranges.is_empty()
+            && (ranges[..ranges.partition_point(|range| range.0 <= pos)].last())
+                .is_some_and(|range| pos < range.1)
+    }
+
     /// `IsInstantiatedModule`
     pub fn is_instantiated_module(&self, m: ModuleId, preserve_const_enums: bool) -> bool {
         match self.module_instance_state[m.idx()] {
@@ -2697,6 +2711,7 @@ impl BoundBuilder {
             type_query_operands,
             unchecked_exprs,
             unchecked_types,
+            resolved_on_demand,
             infer_positions,
             expando_declarations,
             computed_symbols,
@@ -2793,6 +2808,7 @@ impl BoundBuilder {
         type_query_operands.clear();
         unchecked_exprs.clear();
         unchecked_types.clear();
+        resolved_on_demand.clear();
         infer_positions.clear();
         expando_declarations.clear();
         computed_symbols.clear();
@@ -2913,6 +2929,7 @@ impl BoundBuilder {
             type_query_operands: few_to_arena(std::mem::take(&mut self.type_query_operands), arena),
             unchecked_exprs: few_to_arena(std::mem::take(&mut self.unchecked_exprs), arena),
             unchecked_types: few_to_arena(std::mem::take(&mut self.unchecked_types), arena),
+            resolved_on_demand: few_to_arena(std::mem::take(&mut self.resolved_on_demand), arena),
             infer_positions: few_to_arena(std::mem::take(&mut self.infer_positions), arena),
             expando_declarations: few_to_arena(
                 std::mem::take(&mut self.expando_declarations),
@@ -3059,6 +3076,10 @@ impl Bound<'_> {
             ),
             unchecked_exprs: ArenaFew::from_iter_in(self.unchecked_exprs.iter().cloned(), arena),
             unchecked_types: ArenaFew::from_iter_in(self.unchecked_types.iter().cloned(), arena),
+            resolved_on_demand: ArenaFew::from_iter_in(
+                self.resolved_on_demand.iter().cloned(),
+                arena,
+            ),
             infer_positions: ArenaFew::from_iter_in(self.infer_positions.iter().cloned(), arena),
             expando_declarations: ArenaFew::from_iter_in(
                 self.expando_declarations.iter().cloned(),

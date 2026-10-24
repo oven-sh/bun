@@ -347,15 +347,28 @@ impl Checker<'_, '_> {
 
     /// `node` is an import type, or it's below the type arguments of one, which `checkImportType` doesn't visit.
     /// `getTypeFromTypeNode` resolves them if the import type refers to a generic type, and reports what's wrong with
-    /// them, down to the type literals and function types. What's in those is resolved when a query needs it.
+    /// them, down to the type literals, function types and mapped types. What's in those is resolved when a query needs
+    /// it.
     pub(super) fn never_check_deferred_types(&mut self, file: FileId, node: Node) {
         let hir = self.hir(file);
         if let NodeData::Type(t) = hir.data(node) {
             match hir[t].kind {
-                TypeNodeKind::Object(_) | TypeNodeKind::Fn(_) => {
+                TypeNodeKind::Object(_) | TypeNodeKind::Fn(_) | TypeNodeKind::Mapped(_) => {
                     // 2344 is reported at the type argument.
                     let range = (hir[t].pos + 1, self.end_of_type_node(file, t));
+                    let instantiated = &self.p.instantiated_below_import_type_arguments;
+                    if instantiated.lock().contains(&(file, t)) {
+                        self.resolve_names_at_first_instantiation(file, t);
+                    }
                     return self.never_check_unless_visited_by_query(file, node, range);
+                }
+                // `getTypeFromTypeQueryNode`: `checkExpressionWithTypeArguments` checks the type arguments.
+                TypeNodeKind::Typeof { expr, args, .. }
+                    if (self.p.type_node_types.get(&self.task, &(file, t))).is_some() =>
+                {
+                    // Only the file's own check reports a name that doesn't resolve (`note_unresolved_identifier`).
+                    self.type_of_expr(file, first_identifier(hir, expr));
+                    return self.check_type_nodes(file, args);
                 }
                 TypeNodeKind::Import { spec, args, .. } if spec.is_some() => {
                     for argument in hir.ids(args) {
@@ -379,6 +392,21 @@ impl Checker<'_, '_> {
         });
     }
 
+    /// Removes `names_resolved_on_demand` from the ranges given to `never_check` from index `from` on.
+    pub(super) fn check_names_resolved_on_demand(&mut self, from: usize) {
+        let mut resolved = std::mem::take(&mut self.names_resolved_on_demand);
+        if resolved.is_empty() {
+            return;
+        }
+        resolved.shared_sort_unstable();
+        let never_checked = self.never_checked.get_mut();
+        for range in never_checked.split_off(from) {
+            let inside = &resolved[resolved.partition_point(|name| name.0 < range.0)..];
+            let inside = &inside[..inside.partition_point(|name| name.0 < range.1)];
+            never_checked.extend(parts_outside(range, inside.to_vec()));
+        }
+    }
+
     /// The ranges of the outermost expressions, type nodes and declared names below `node` whose type is stored.
     fn ranges_visited_by_queries(
         &mut self,
@@ -398,6 +426,10 @@ impl Checker<'_, '_> {
                     // What's in a type literal or a function type below `t` is resolved on demand too.
                     self.never_check_deferred_types(file, child);
                     Some((hir[t].pos, self.end_of_type_node(file, t)))
+                }
+                // Only `getTypeFromTypeQueryNode` checks the operand of a type query.
+                NodeData::Type(t) if matches!(hir[t].kind, TypeNodeKind::Typeof { .. }) => {
+                    return false;
                 }
                 NodeData::Pat(name)
                     if matches!(hir[name].kind, PatKind::Ident(_))

@@ -216,6 +216,8 @@ pub(super) struct Binder<'f, 's> {
     by_alias: bool,
     /// Type literal nesting depth of the type being bound.
     type_literal_depth: u32,
+    /// The nodes being bound are in the type arguments of an import type.
+    is_in_import_type_arguments: bool,
     /// The function whose parameters are being visited, with no node in between that
     /// `requiresScopeChangeWorker` doesn't descend into.
     scope_change_of: FnId,
@@ -373,6 +375,7 @@ impl<'f, 's> Binder<'f, 's> {
             flow_after_name: FlowId::NONE,
             by_alias: false,
             type_literal_depth: 0,
+            is_in_import_type_arguments: false,
             scope_change_of: FnId::NONE,
             associated_declaration: PatId::NONE,
             instance_states: Vec::new(),
@@ -2101,6 +2104,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.type_query_operands.as_mut_slice().sort_unstable();
         self.b.unchecked_exprs.as_mut_slice().sort_unstable();
         self.b.unchecked_types.as_mut_slice().sort_unstable();
+        self.b.resolved_on_demand.as_mut_slice().sort_unstable();
         self.b.free_idents.sort_unstable_by_key(|f| f.0);
         self.b.yields.sort_unstable_by_key(|it| it.0);
         self.b.exits.sort_unstable_by_key(|it| it.0);
@@ -4260,6 +4264,17 @@ impl<'f, 's> Binder<'f, 's> {
         if self.is_unchecked {
             self.b.unchecked_types.push(id);
         }
+        let node = &self.f[id];
+        if self.is_in_import_type_arguments
+            && matches!(
+                node.kind,
+                TypeNodeKind::Object(_) | TypeNodeKind::Fn(_) | TypeNodeKind::Mapped(_)
+            )
+            && !(self.b.resolved_on_demand.last())
+                .is_some_and(|it| (it.0..it.1).contains(&node.pos))
+        {
+            self.b.resolved_on_demand.push((node.pos, node.end));
+        }
         // `requiresScopeChangeWorker` doesn't descend into types.
         let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
         let by_alias = self.by_alias;
@@ -4328,7 +4343,7 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 self.tys(args)
             }
-            TypeNodeKind::Import { args, .. } => {
+            TypeNodeKind::Import { spec, args, .. } => {
                 // In JavaScript, two copies of a JSDoc type share one.
                 if let Some(attributes) = self.f.attributes_of_import_type(id)
                     && matches!(self.b.parent_of_expr(attributes), Parent::None)
@@ -4338,7 +4353,10 @@ impl<'f, 's> Binder<'f, 's> {
                     self.expr(attributes, Parent::File);
                     (self.true_target, self.false_target) = saved;
                 }
-                self.tys(args)
+                let is_outermost = spec.is_some() && !self.is_in_import_type_arguments;
+                self.is_in_import_type_arguments |= is_outermost;
+                self.tys(args);
+                self.is_in_import_type_arguments &= !is_outermost;
             }
             TypeNodeKind::Template { types, .. } => {
                 for t in self.f.ids(types) {

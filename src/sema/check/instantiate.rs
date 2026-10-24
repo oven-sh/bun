@@ -1071,7 +1071,14 @@ impl<'p, 's> Checker<'p, 's> {
                 origin,
                 mapper: own,
             } => {
-                let new = self.map_mapper(*own, mapper);
+                let new = match *origin {
+                    Origin::TypeLiteral(file, node) | Origin::Mapped(file, node)
+                        if self.resolves_names_at_first_instantiation(file, node) =>
+                    {
+                        self.instantiate_below_import_type_arguments(file, node, *own, mapper)
+                    }
+                    _ => self.map_mapper(*own, mapper),
+                };
                 // A declared type has no mapper in tsgo. Here it has one of identity pairs.
                 let is_under_its_own_key = (self.types().provenance(ty))
                     .is_none_or(|provenance| provenance.stored_under.is_none());
@@ -1096,7 +1103,22 @@ impl<'p, 's> Checker<'p, 's> {
                 })
             }
             TypeData::Fns { decls, mapper: own } => {
-                let new = self.map_mapper(*own, mapper);
+                let new = match decls[..] {
+                    // FOR SPEED: most files have no such node.
+                    [(file, func)] if !self.bound(file).resolved_on_demand.is_empty() => {
+                        match self.bound(file).fns[func.idx()].owner {
+                            crate::bind::FnOwner::Type(node)
+                                if self.resolves_names_at_first_instantiation(file, node) =>
+                            {
+                                self.instantiate_below_import_type_arguments(
+                                    file, node, *own, mapper,
+                                )
+                            }
+                            _ => self.map_mapper(*own, mapper),
+                        }
+                    }
+                    _ => self.map_mapper(*own, mapper),
+                };
                 self.intern_key(TypeKey::Fns { decls, mapper: new })
             }
             TypeData::Synth(shape) => {

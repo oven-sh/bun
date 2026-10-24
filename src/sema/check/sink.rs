@@ -629,7 +629,7 @@ impl Checker<'_, '_> {
             }
             return self.discarded.insert(diagnostic);
         }
-        if self.is_reported_too_late(None, diagnostic.file) {
+        if self.is_reported_too_late(None, (diagnostic.file, diagnostic.start)) {
             self.mark_tainted_from(0);
             return self.discarded.insert(diagnostic);
         }
@@ -889,7 +889,7 @@ impl Checker<'_, '_> {
         // those two are the first to evaluate isn't stored, so the check of a later file that needs it evaluates it
         // again and reports.
         if self.is_type_checked && diagnostic.file == NOWHERE.0
-            || self.is_reported_too_late(owner, diagnostic.file)
+            || self.is_reported_too_late(owner, (diagnostic.file, diagnostic.start))
         {
             return self.mark_tainted_from(0);
         }
@@ -980,15 +980,20 @@ impl Checker<'_, '_> {
 
     /// `GetDiagnosticsOfAnyProgram`: `Emit`, like a baseline writer, runs after every file's
     /// diagnostics are collected. Here it runs after those of the task's file. Returns true if only
-    /// `Emit` or a baseline writer causes a diagnostic in `file`, another checked file, because no
+    /// `Emit` or a baseline writer causes a diagnostic at `start` in `file`, another checked file, because no
     /// check requests `owner` or a query in progress in time. The caller then stores no result, so
     /// the check of a later file that does request it evaluates it and reports.
-    pub(super) fn is_reported_too_late(&self, owner: Option<Query>, file: FileId) -> bool {
+    pub(super) fn is_reported_too_late(
+        &self,
+        owner: Option<Query>,
+        (file, start): (FileId, u32),
+    ) -> bool {
         self.is_type_checked
             && file != NOWHERE.0
             && self.task.file != Some(file)
             && self.reports_semantic_errors(file)
-            && !self.is_requested_by_check_in_time(owner, &self.stack, file)
+            && (self.bound(file).is_resolved_on_demand(start)
+                || !self.is_requested_by_check_in_time(owner, &self.stack, file))
     }
 
     /// Takes the diagnostics that a commit publishes. A query's diagnostics go with the query's entry, which the commit

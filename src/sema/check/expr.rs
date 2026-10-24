@@ -2035,8 +2035,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let type_args = hir.list_at(type_args);
                 self.precheck_type_nodes(file, type_args);
                 let ty = self.type_of_expr(file, expr);
-                let args = self.types_from_nodes(file, type_args);
-                self.with_type_arguments(ty, &args, InstantiationExpression::Expr(file, e))
+                self.with_type_arguments(ty, InstantiationExpression::Expr(file, e))
             }
             ExprKind::Jsx(j) => {
                 let is_fragment = hir[j].tag.is_none();
@@ -4723,6 +4722,10 @@ impl<'p, 's> Checker<'p, 's> {
                     self.type_from_node(file, inner);
                     self.looked_at_type_node = outer;
                 }
+                continue;
+            }
+            // `checkImportType` doesn't visit the type arguments.
+            if hir.kind(at) == Kind::ImportType {
                 continue;
             }
             let from = pending.len();

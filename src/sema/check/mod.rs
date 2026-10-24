@@ -247,6 +247,9 @@ pub struct Program<'s> {
     /// (`mark_property_as_referenced`). The task that checks the declaration's file may be past it when another task
     /// marks one, so `finish_file` retracts what that task reported. Tasks write to this set directly.
     properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
+    /// The type nodes for which `resolves_names_at_first_instantiation`, once the check of their file or an earlier one
+    /// has instantiated their type. Tasks write to this set directly.
+    instantiated_below_import_type_arguments: Guarded<crate::util::FxHashSet<(FileId, TypeNodeId)>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     /// See `Services::file_info`. Built on first use.
@@ -618,6 +621,7 @@ impl<'s> Program<'s> {
             commits: commit::Commits::new_in(session.arena())
                 .for_files(files.ranks(), session.arena()),
             properties_referenced_before: Default::default(),
+            instantiated_below_import_type_arguments: Default::default(),
             auto_array_type,
             package_names_of_linked_files: Default::default(),
             types,
@@ -717,6 +721,7 @@ impl<'s> Program<'s> {
         self.types.release();
         self.commits.release();
         *self.serial_variances.get_mut() = FxHashMap::default();
+        *self.instantiated_below_import_type_arguments.get_mut() = Default::default();
         *self.global_errors.get_mut() = Default::default();
         self.call_diagnostics = ByNodeIndirect::new_in(&no_nodes, session);
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
@@ -1037,6 +1042,7 @@ impl<'s> Program<'s> {
             renamed_binding_elements_in_types: Vec::new(),
             unvisited_exprs: Vec::new(),
             import_types_with_arguments: Vec::new(),
+            names_resolved_on_demand: Vec::new(),
             checked_with_contextual_type: Vec::new(),
             contextual_signatures_at_check: Vec::new(),
             call_resolution_errors: None,
@@ -1979,6 +1985,8 @@ pub struct Checker<'p, 's> {
     /// The import types with type arguments in `task.file` that `checkSourceFile` has visited. A query can get here with
     /// a node of another file (`precheck_type_node`), whose own walk visits it again. See `never_check_deferred_types`.
     import_types_with_arguments: Vec<TypeNodeId>,
+    /// See `resolve_names_at_first_instantiation`.
+    names_resolved_on_demand: Vec<(u32, u32)>,
     /// The initializers in the parameters of functions without a body that `getTypeFromBindingElement`
     /// has checked. `checkExpressionWithContextualType` doesn't store a type, and with a type parameter in scope nothing
     /// else does either.

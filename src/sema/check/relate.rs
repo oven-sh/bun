@@ -2117,7 +2117,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let scope = self.bound(file).type_scope[node.idx()];
-        let referenced = self.identity_mapper_for_node(file, scope, node);
+        let referenced = self.possibly_referenced_type_params(file, scope, node);
         self.types().map(referenced, tp).is_some()
     }
 

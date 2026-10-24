@@ -60,6 +60,7 @@ impl<'s> Checker<'_, 's> {
         self.renamed_binding_elements_in_types.clear();
         self.unvisited_exprs.clear();
         self.import_types_with_arguments.clear();
+        self.names_resolved_on_demand.clear();
         let hir = self.hir(file);
         // `parseDeclaration`, `parseClassElement`: outside a declaration file only a `declare`
         // sets `NodeFlagsAmbient`.
@@ -138,8 +139,16 @@ impl<'s> Checker<'_, 's> {
         }
         self.never_check_with_bodies(file);
         self.never_check_specifier_expressions(file);
-        for node in std::mem::take(&mut self.import_types_with_arguments) {
+        let never_checked = self.never_checked.borrow().len();
+        // The check of the type arguments of a type query adds to the list.
+        while let Some(node) = self.import_types_with_arguments.pop() {
             self.never_check_deferred_types(file, self.hir(file).node(node));
+        }
+        self.check_deferred_nodes(file);
+        self.check_names_resolved_on_demand(never_checked);
+        if self.never_checked.borrow().len() != never_checked {
+            // The check of an earlier file that refers to this one may still resolve what's left.
+            (self.task).wait_for_earlier_files(self.files().module(file).is_closed);
         }
     }
 
@@ -1191,7 +1200,7 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `checkSourceElements` for type nodes.
-    fn check_type_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) {
+    pub(super) fn check_type_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) {
         for node in self.hir(file).ids(nodes) {
             self.check_type_node(file, node);
         }

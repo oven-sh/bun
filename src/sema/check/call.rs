@@ -1943,23 +1943,20 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getInstantiationExpressionType`, `f<Args>` without a call: `ty` restricted to the
     /// signatures that accept that many type arguments, instantiated with them. `node` is its node,
     /// which the created object types store.
-    pub fn with_type_arguments(
-        &mut self,
-        ty: TypeId,
-        args: &[TypeId],
-        node: InstantiationExpression,
-    ) -> TypeId {
+    pub fn with_type_arguments(&mut self, ty: TypeId, node: InstantiationExpression) -> TypeId {
         if ty == TypeId::SILENT_NEVER || self.is_error_type(ty) {
             return ty;
         }
         // `hasSomeApplicableSignature`, `nonApplicableType`
         let mut found = (false, None);
-        let result = self.instantiated_type(ty, args, node, &mut found);
+        let result = self.instantiated_type(ty, node, &mut found);
         let error_type = if found.0 { found.1 } else { Some(ty) };
         if let Some(error_type) = error_type
             && let Some(loc) = self.range_of_type_argument_list(node)
         {
-            self.error_at(loc, 2635, &[super::sink::Arg::Type(error_type)]);
+            let error = self.error_at(loc, 2635, &[super::sink::Arg::Type(error_type)]);
+            // At the first type argument, which nothing has resolved if the node is an import type.
+            error.by_another_node = true;
         }
         result
     }
@@ -2032,13 +2029,12 @@ impl<'p, 's> Checker<'p, 's> {
     fn instantiated_type(
         &mut self,
         ty: TypeId,
-        args: &[TypeId],
         node: InstantiationExpression,
         found: &mut (bool, Option<TypeId>),
     ) -> TypeId {
         // `hasSignatures`, `hasApplicableSignature`
         let mut own = (false, false);
-        let result = self.instantiated_type_part(ty, args, node, &mut own, found);
+        let result = self.instantiated_type_part(ty, node, &mut own, found);
         found.0 |= own.1;
         if own.0 && !own.1 && found.1.is_none() {
             found.1 = Some(ty);
@@ -2050,7 +2046,6 @@ impl<'p, 's> Checker<'p, 's> {
     fn instantiated_type_part(
         &mut self,
         ty: TypeId,
-        args: &[TypeId],
         node: InstantiationExpression,
         own: &mut (bool, bool),
         found: &mut (bool, Option<TypeId>),
@@ -2060,12 +2055,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.data(ty) {
             TypeData::Union(_) => {
-                return self.map_type(ty, |c, m| c.instantiated_type(m, args, node, found));
+                return self.map_type(ty, |c, m| c.instantiated_type(m, node, found));
             }
             TypeData::Intersection(parts) => {
                 let parts: Vec<TypeId> = parts
                     .iter()
-                    .map(|&p| self.instantiated_type_part(p, args, node, own, found))
+                    .map(|&p| self.instantiated_type_part(p, node, own, found))
                     .collect();
                 return self.intersection(&parts);
             }
@@ -2073,7 +2068,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if self.is_deferred(ty) {
             let constraint = self.base_constraint(ty);
-            let actual = self.instantiated_type_part(constraint, args, node, own, found);
+            let actual = self.instantiated_type_part(constraint, node, own, found);
             return if actual == constraint { ty } else { actual };
         }
         let Some(members) = self.members(ty) else {
@@ -2090,12 +2085,15 @@ impl<'p, 's> Checker<'p, 's> {
                 let sig = c.instantiate_sig(sig, members.mapper);
                 let params = c.sig_type_params(sig);
                 // `getInstantiatedSignatures`: the empty list of `f<>` fits every generic signature.
-                if params.is_empty() || !c.has_correct_type_argument_arity(&params, args.len()) {
+                let (file, nodes) = c.type_argument_nodes(node);
+                if params.is_empty() || !c.has_correct_type_argument_arity(&params, nodes.len()) {
                     is_same = false;
                     continue;
                 }
-                let error_nodes = Some(c.type_argument_nodes(node));
-                let Some(filled) = c.check_type_arguments(sig, &params, args, error_nodes) else {
+                // `checkTypeArguments` is the first to resolve the type arguments of a `typeof import("m").f<..>`.
+                let args = c.types_from_nodes(file, nodes);
+                let error_nodes = Some((file, nodes));
+                let Some(filled) = c.check_type_arguments(sig, &params, &args, error_nodes) else {
                     out.push(sig);
                     continue;
                 };

@@ -255,11 +255,16 @@ impl Checker<'_, '_> {
         }
         // An index signature's type is bound twice, so a declaration in it is listed twice.
         let decls = bound.symbol(symbol).decls;
-        if decls.first() != Some(&Decl::TypeParam(param)) || decls.iter().all(|d| *d == decls[0]) {
+        // `checkImportType` doesn't visit the type arguments.
+        let is_checked =
+            |d: &&Decl| (hir.find_ancestor_kind(hir.node(**d), Kind::ImportType)).is_none();
+        if decls.iter().find(is_checked) != Some(&Decl::TypeParam(param))
+            || decls.iter().all(|d| *d == decls[0])
+        {
             return;
         }
         // `areTypeParametersIdentical`
-        let target = self.type_param(file, param);
+        let target = self.declared_type_of_type_parameter(file, param);
         let Some(expected) = self.constraint_of_type_param(target) else {
             return;
         };

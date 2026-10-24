@@ -114,12 +114,26 @@ impl Checker<'_, '_> {
         let Some(&part) = parts.iter().find(|part| part.file == file) else {
             return;
         };
-        if self.p.reference_kinds.flags(part) & kinds == kinds {
+        if self.p.reference_kinds.flags(part) & kinds == kinds
+            || self.bound(file).is_resolved_on_demand(pos) && self.is_resolved_too_late(file, pos)
+        {
             return;
         }
         if !is_inside_declaration_of(self.hir(file), self.bound(file), pos, part.id) {
             self.p.reference_kinds.add(part, kinds);
         }
+    }
+
+    /// `Bound::is_resolved_on_demand` for `pos` in `file`. Returns true if tsc resolves what's there after
+    /// `checkUnusedIdentifiers` of `file`, if at all: for the check of a later file, for a declaration file, or not by
+    /// the end of `checkSourceFile`, while a later pass over every node of a kind does.
+    pub(super) fn is_resolved_too_late(&self, file: FileId, pos: u32) -> bool {
+        self.is_type_checked
+            || match self.task.file {
+                Some(visited) if visited == file => self.is_never_checked(pos),
+                Some(visited) => !self.is_checked_no_later_than(visited, file),
+                None => false,
+            }
     }
 
     pub(super) fn check_unused(&mut self, file: FileId) {

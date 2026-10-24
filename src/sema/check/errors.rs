@@ -1377,7 +1377,10 @@ impl Checker<'_, '_> {
         if hir.has_diagnostic(hir[e].pos, 1308) {
             return;
         }
-        if bound.is_unchecked(e.idx()) || self.is_name_with_object_assignment_initializer(file, e) {
+        if bound.is_unchecked(e.idx())
+            || self.is_never_checked(hir[e].pos)
+            || self.is_name_with_object_assignment_initializer(file, e)
+        {
             return;
         }
         let location = hir.node(e);

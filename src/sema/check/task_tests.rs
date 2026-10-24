@@ -733,6 +733,7 @@ fn is_like_new(task: &mut Task) -> bool {
         was_discarded,
         is_trusted,
         can_recheck_early,
+        commits_after_file_only,
         is_first_in_order,
         is_first_in_component,
         cycle_members,
@@ -757,6 +758,7 @@ fn is_like_new(task: &mut Task) -> bool {
         && !was_discarded.get()
         && !*is_trusted
         && !can_recheck_early.get()
+        && !commits_after_file_only.get()
         && !is_first_in_order.get()
         && !is_first_in_component.get()
         && cycle_members.get_mut().is_empty()

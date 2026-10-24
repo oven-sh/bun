@@ -53,7 +53,8 @@ describe("s3", () => {
           env,
         );
       },
-      30_000,
+      // Only a debug build needs more than the default limit: a case takes up to 11 s there.
+      isDebug ? 30_000 : undefined,
     );
   });
 });

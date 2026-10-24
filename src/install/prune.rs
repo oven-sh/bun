@@ -2006,7 +2006,10 @@ fn unlink_links_into(manager: &PackageManager, removed: &[Box<[u8]>]) {
 }
 
 /// Runs `f` with every CPU, OS and libc enabled.
-fn with_all_platforms<T>(manager: &mut PackageManager, f: impl FnOnce(&mut PackageManager) -> T) -> T {
+fn with_all_platforms<T>(
+    manager: &mut PackageManager,
+    f: impl FnOnce(&mut PackageManager) -> T,
+) -> T {
     use bun_install_types::{Architecture, Libc, NegatableEnum, OperatingSystem};
     let options = &mut manager.options;
     let saved = (options.cpu, options.os, options.libc);
@@ -2014,7 +2017,11 @@ fn with_all_platforms<T>(manager: &mut PackageManager, f: impl FnOnce(&mut Packa
     options.os = <OperatingSystem as NegatableEnum>::ALL;
     options.libc = <Libc as NegatableEnum>::ALL;
     let result = f(manager);
-    (manager.options.cpu, manager.options.os, manager.options.libc) = saved;
+    (
+        manager.options.cpu,
+        manager.options.os,
+        manager.options.libc,
+    ) = saved;
     result
 }
 

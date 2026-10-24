@@ -13,7 +13,14 @@ afterAll(() => {
 });
 
 async function bun(cwd: string, ...args: string[]) {
-  await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  await using proc = spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { out, err, exitCode };
 }
@@ -25,7 +32,13 @@ test("extension removal + re-key fires both hooks", async () => {
   const install = async (m: any) => {
     await write(packageJson, JSON.stringify({ name: "app", version: "1.0.0", ...m }));
     const r = await bun(dir, "install");
-    console.log(r.out.split("\n").filter(l => /installed|removed|no changes/.test(l)).join(" | "), r.err.trim());
+    console.log(
+      r.out
+        .split("\n")
+        .filter(l => /installed|removed|no changes/.test(l))
+        .join(" | "),
+      r.err.trim(),
+    );
     console.log(await readdirSorted(store));
     return r;
   };

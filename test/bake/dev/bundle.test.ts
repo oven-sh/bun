@@ -1222,6 +1222,126 @@ devTest("barrel optimization: adding a new import triggers reload", {
   },
 });
 
+// The hot update of the save has the importer first, then the barrel with the submodule that it
+// deferred until now. The importer accepts the update, so the page is not loaded again.
+const alphaBetaBarrel = {
+  "node_modules/barrel-lib/package.json": JSON.stringify({
+    name: "barrel-lib",
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  "node_modules/barrel-lib/index.js": `
+    export { Alpha } from './alpha.js';
+    export { Beta } from './beta.js';
+  `,
+  "node_modules/barrel-lib/alpha.js": `export const Alpha = "ALPHA";`,
+  "node_modules/barrel-lib/beta.js": `export const Beta = "BETA";`,
+};
+for (const [how, saved] of [
+  [
+    "a named import",
+    `
+      import { Alpha, Beta } from 'barrel-lib';
+      console.log('got: ' + Alpha + ' ' + Beta);
+      import.meta.hot.accept();
+    `,
+  ],
+  [
+    "a namespace import",
+    `
+      import * as all from 'barrel-lib';
+      console.log('got: ' + all.Alpha + ' ' + all.Beta);
+      import.meta.hot.accept();
+    `,
+  ],
+  [
+    "a new module",
+    `
+      import { Alpha } from 'barrel-lib';
+      import { Beta } from './added';
+      console.log('got: ' + Alpha + ' ' + Beta);
+      import.meta.hot.accept();
+    `,
+  ],
+] as const) {
+  devTest(`barrel optimization: a self-accepting importer reads the export that its save adds through ${how}`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": `
+        import { Alpha } from 'barrel-lib';
+        console.log('got: ' + Alpha);
+        import.meta.hot.accept();
+      `,
+      "added.ts": `export { Beta } from 'barrel-lib';`,
+      ...alphaBetaBarrel,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("got: ALPHA");
+      await dev.write("index.ts", saved);
+      await c.expectMessage("got: ALPHA BETA");
+    },
+  });
+}
+
+// A route is a root that nothing accepts, so the server keeps what its body read until the next save.
+devTest("barrel optimization: server: a route reads the export that its save adds", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { Alpha } from 'barrel-lib';
+      const text = 'got: ' + Alpha;
+      export default function () {
+        return new Response(text);
+      }
+    `,
+    ...alphaBetaBarrel,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("got: ALPHA");
+    await dev.write(
+      "routes/index.ts",
+      `
+        import { Alpha, Beta } from 'barrel-lib';
+        const text = 'got: ' + Alpha + ' ' + Beta;
+        export default function () {
+          return new Response(text);
+        }
+      `,
+    );
+    await dev.fetch("/").equals("got: ALPHA BETA");
+  },
+});
+
+// The update gets to index.ts twice: as the saved file, and as the importer of the barrel.
+devTest("barrel optimization: a self-accepting importer is disposed of once when its save adds an export", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Alpha } from 'barrel-lib';
+      console.log('got: ' + Alpha);
+      import.meta.hot.accept();
+      import.meta.hot.dispose(() => console.log('disposed: 1'));
+    `,
+    ...alphaBetaBarrel,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: ALPHA");
+    await dev.write(
+      "index.ts",
+      `
+        import { Alpha, Beta } from 'barrel-lib';
+        console.log('got: ' + Alpha + ' ' + Beta);
+        import.meta.hot.accept();
+        import.meta.hot.dispose(() => console.log('disposed: 2'));
+      `,
+    );
+    await c.expectMessage("disposed: 1", "got: ALPHA BETA");
+  },
+});
+
 devTest("barrel optimization: multi-file imports preserved across rebuilds", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

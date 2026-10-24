@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { Client, Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -691,3 +691,535 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+
+/**
+ * Saves the files of `version(n)` in one batch, in their order, and returns `n` once one hot update
+ * had all of them. On a slow machine the dev server can get to a later file only after it built the
+ * earlier ones. The page then gets two hot updates, which is not the case under test, so the files
+ * are saved again as version `n + 1`. With `inOrder`, the update also has to list them as they
+ * were written: the watcher sorts the files of one read.
+ */
+async function saveInOneUpdate(
+  dev: Dev,
+  c: Client,
+  first: number,
+  version: (n: number) => Record<string, string>,
+  inOrder = false,
+) {
+  for (let n = first; n < first + 5; n++) {
+    const files = Object.entries(version(n));
+    {
+      await using batch = await dev.batchChanges();
+      // `batchChanges` waited for the updates of the attempt before this one.
+      if (n !== first) c.messages.length = 0;
+      for (const [file, text] of files) await dev.write(file, text);
+    }
+    // Each module of a hot update starts a line with its id.
+    const at = (update: string) => files.map(([file]) => update.indexOf(`\n  ${JSON.stringify(file)}`));
+    let found = at(await c.getMostRecentHmrChunk());
+    if (!found.includes(-1) && (!inOrder || found.every((index, i) => i === 0 || index > found[i - 1]))) return n;
+    // The dev server builds the files in the order of the writes. The last one ends the attempt.
+    while (found.at(-1) === -1) found = at(await c.getMostRecentHmrChunk());
+  }
+  throw new Error("The files did not get to the page in one hot update");
+}
+
+// A hot update holds its modules in the order in which the watcher saw the files, so `importer.ts`
+// is first. It must not run against the previous evaluation of `imported.ts`.
+devTest("a hot update evaluates a saved module before the saved module that imports it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./importer";
+    `,
+    "importer.ts": `
+      import { value } from "./imported";
+      console.log("importer: " + value);
+      import.meta.hot.accept();
+    `,
+    "imported.ts": `export const value = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("importer: 1");
+    const n = await saveInOneUpdate(dev, c, 2, n => ({
+      "importer.ts": `
+        import { value, added } from "./imported";
+        console.log("importer: " + value + " " + added);
+        import.meta.hot.accept();
+      `,
+      "imported.ts": `export const value = ${n}; export const added = "added";`,
+    }));
+    await c.expectMessage(`importer: ${n} added`);
+  },
+});
+
+// `index.ts` is not saved. It comes right after the first saved module in the update, in either order.
+devTest("a module that accepts a hot update is evaluated after every saved module that it imports", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { first } from "./first";
+      import { second } from "./second";
+      console.log("index: " + first + " " + second);
+      import.meta.hot.accept();
+    `,
+    "first.ts": `export const first = "first 1";`,
+    "second.ts": `export const second = "second 1";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("index: first 1 second 1");
+    const n = await saveInOneUpdate(dev, c, 2, n => ({
+      "first.ts": `export const first = "first ${n}";`,
+      "second.ts": `export const second = "second ${n}";`,
+    }));
+    await c.expectMessage(`index: first ${n} second ${n}`);
+  },
+});
+
+// The importer loads `imported.ts` before the update gets to it. The callback of the body that is
+// replaced gets the new module, and the callback that the new body registers then is kept for the
+// next save.
+devTest("a module that its importer loads first in a hot update keeps the accept callback of its new body", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./importer";
+    `,
+    "importer.ts": `
+      import { value } from "./imported";
+      console.log("importer: " + value);
+      import.meta.hot.accept();
+    `,
+    "imported.ts": `
+      export const value = 1;
+      import.meta.hot.accept(next => console.log("body 1 accepts: " + next.value));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("importer: 1");
+    let n = 1;
+    for (let save = 0; save < 2; save++) {
+      n = await saveInOneUpdate(dev, c, n + 1, n => ({
+        "importer.ts": `
+          import { value } from "./imported";
+          console.log("importer: " + value);
+          import.meta.hot.accept();
+          // ${n}
+        `,
+        "imported.ts": `
+          export const value = ${n};
+          import.meta.hot.accept(next => console.log("body ${n} accepts: " + next.value));
+        `,
+      }));
+      await c.expectMessage(`importer: ${n}`, `body ${n - 1} accepts: ${n}`);
+    }
+  },
+});
+
+// Only `util.ts` is saved. Each module that accepts the update gets its callback right after its
+// own new body, before the next module runs: a callback can hand the page over to the new body.
+devTest("the accept callback of a module runs before the next module of the hot update", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./one";
+      import "./two";
+    `,
+    "one.ts": `
+      import { value } from "./util";
+      console.log("one: " + value);
+      import.meta.hot.accept(() => console.log("one accepts"));
+    `,
+    "two.ts": `
+      import { value } from "./util";
+      console.log("two: " + value);
+      import.meta.hot.accept(() => console.log("two accepts"));
+    `,
+    "util.ts": `export const value = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one: 1", "two: 1");
+    await dev.write("util.ts", `export const value = 2;`);
+    await c.expectMessage("one: 2", "one accepts", "two: 2", "two accepts");
+  },
+});
+
+// The importer starts the load of `tla.ts`, which still waits when the update gets to `tla.ts`
+// itself. The update waits for that load, and then calls the accept callback of `tla.ts` once.
+devTest("the accept callback of a saved module with top-level await waits for the load that its importer started", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./importer";
+    `,
+    "importer.ts": `
+      import { value } from "./tla";
+      console.log("importer: " + value);
+      import.meta.hot.accept();
+    `,
+    "tla.ts": `
+      console.log("tla starts");
+      export const value = await Promise.resolve(1);
+      import.meta.hot.accept(next => console.log("accepted: " + next.value));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("tla starts", "importer: 1");
+    const n = await saveInOneUpdate(
+      dev,
+      c,
+      2,
+      n => ({
+        "importer.ts": `
+          import { value } from "./tla";
+          console.log("importer: " + value);
+          import.meta.hot.accept();
+          // ${n}
+        `,
+        "tla.ts": `
+          console.log("tla starts");
+          export const value = await Promise.resolve(${n});
+          import.meta.hot.accept(next => console.log("accepted: " + next.value));
+        `,
+      }),
+      true,
+    );
+    await c.expectMessage("tla starts", `accepted: ${n}`, `importer: ${n}`);
+  },
+});
+
+// `user.ts` is saved with `shared.ts` and loads it with require() before the update gets to
+// `shared.ts`. `reader.ts` is not saved, and has the new module as soon as require() returns.
+for (const [form, shared] of [
+  ["an ES module", `export const value = 1; import.meta.hot.accept(() => {});`],
+  ["a CommonJS module", `module.exports = { value: 1 };`],
+] as const) {
+  devTest(
+    `a saved module that another saved module loads with require() reaches its other importers (${form} before the save)`,
+    {
+      files: {
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+        "index.ts": `
+        import "./reader";
+        import "./user";
+        import.meta.hot.accept();
+      `,
+        "reader.ts": `
+        import { value } from "./shared";
+        globalThis.readShared = () => value;
+      `,
+        "shared.ts": shared,
+        "user.ts": `
+        console.log("user: " + require("./shared").value + " reader: " + readShared());
+        import.meta.hot.accept();
+      `,
+      },
+      async test(dev) {
+        await using c = await dev.client("/", { storeHotChunks: true });
+        await c.expectMessage("user: 1 reader: 1");
+        const n = await saveInOneUpdate(
+          dev,
+          c,
+          2,
+          n => ({
+            "user.ts": `
+            console.log("user: " + require("./shared").value + " reader: " + readShared());
+            import.meta.hot.accept();
+            // ${n}
+          `,
+            "shared.ts": `
+            export const value = ${n};
+            import.meta.hot.accept(() => {});
+          `,
+          }),
+          true,
+        );
+        await c.expectMessage(`user: ${n} reader: ${n}`);
+        expect(await c.js<number>`readShared()`).toBe(n);
+      },
+    },
+  );
+}
+
+// require() refuses a module with top-level await that is not evaluated yet. The refusal must not
+// keep the update from evaluating `tla.ts` when it gets to it.
+devTest("a saved module with top-level await still loads after require() of it was refused", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./user";
+    `,
+    "user.ts": `
+      import("./tla");
+      console.log("user: loaded");
+      import.meta.hot.accept();
+    `,
+    "tla.ts": `
+      console.log("tla: " + (await Promise.resolve(1)));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("user: loaded", "tla: 1");
+    const n = await saveInOneUpdate(
+      dev,
+      c,
+      2,
+      n => ({
+        "user.ts": `
+          try {
+            require("./tla");
+            console.log("user: loaded");
+          } catch (e) {
+            console.log("user: refused");
+          }
+          import.meta.hot.accept();
+          // ${n}
+        `,
+        "tla.ts": `
+          console.log("tla: " + (await Promise.resolve(${n})));
+          import.meta.hot.accept();
+        `,
+      }),
+      true,
+    );
+    await c.expectMessage("user: refused", `tla: ${n}`);
+  },
+});
+
+// `user.ts` starts the load of `tla.ts` with import(), before the update gets to `tla.ts`. The
+// update waits for that load too, and then calls the accept callback of `tla.ts`.
+devTest("a hot update waits for the load of a saved module that import() started", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./user";
+    `,
+    "user.ts": `
+      import("./tla");
+      import.meta.hot.accept();
+    `,
+    "tla.ts": `
+      console.log("tla starts");
+      export const value = await Promise.resolve(1);
+      import.meta.hot.accept(next => console.log("accepted: " + next.value));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("tla starts");
+    const n = await saveInOneUpdate(
+      dev,
+      c,
+      2,
+      n => ({
+        "user.ts": `
+          import("./tla").then(tla => console.log("user: imported " + tla.value));
+          import.meta.hot.accept();
+          // ${n}
+        `,
+        "tla.ts": `
+          console.log("tla starts");
+          export const value = await Promise.resolve(${n});
+          import.meta.hot.accept(next => console.log("accepted: " + next.value));
+        `,
+      }),
+      true,
+    );
+    await c.expectMessageInAnyOrder("tla starts", `accepted: ${n}`, `user: imported ${n}`);
+  },
+});
+
+// `about.ts` is in the update, and is loaded for the first time while the dispose handler of
+// `other.ts` waits. That load ran the new code already, so the update leaves the module alone.
+devTest("a module that is first loaded while a dispose handler waits keeps its accept handler", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./other";
+      globalThis.loadAbout = () => import("./about");
+    `,
+    "other.ts": `
+      console.log("other: 1");
+      import.meta.hot.accept();
+      import.meta.hot.dispose(() => loadAbout());
+    `,
+    "about.ts": `
+      console.log("about: 1");
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("other: 1");
+    const n = await saveInOneUpdate(dev, c, 2, n => ({
+      "other.ts": `
+        console.log("other: ${n}");
+        import.meta.hot.accept();
+        import.meta.hot.dispose(() => loadAbout());
+      `,
+      "about.ts": `
+        console.log("about: ${n}");
+        import.meta.hot.accept();
+      `,
+    }));
+    await c.expectMessageInAnyOrder(`about: ${n}`, `other: ${n}`);
+    await dev.write(
+      "about.ts",
+      `
+        console.log("about: ${n + 1}");
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage(`about: ${n + 1}`);
+  },
+});
+
+// A save of `x.ts` alone. `b.ts` accepts the update and is in an import cycle with `x.ts`: it is
+// evaluated after `x.ts`, not under it.
+devTest("a self-accepting module in an import cycle with the saved module is evaluated after it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b } from "./b";
+      console.log("index " + b);
+    `,
+    "b.ts": `
+      import { x } from "./x";
+      export const b = "b(" + x + ")";
+      console.log("b " + b);
+      import.meta.hot.accept();
+    `,
+    // `x.ts` reads `b` only from a function: in a first load `b.ts` is not evaluated yet.
+    "x.ts": `
+      import { b } from "./b";
+      export const x = "x1";
+      export const readB = () => b;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("b b(x1)", "index b(x1)");
+    await dev.patch("x.ts", { find: '"x1"', replace: '"x2"' });
+    await c.expectMessage("b b(x2)");
+    await dev.patch("x.ts", { find: '"x2"', replace: '"x3"' });
+    await c.expectMessage("b b(x3)");
+  },
+});
+
+// A save of a JSON file. The dev server sends its importer again, before the file.
+for (const dispose of [false, true]) {
+  devTest(`a save of an imported JSON file reaches its importer${dispose ? ", which is disposed of once" : ""}`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": `
+        import data, { value } from "./data.json";
+        console.log("json: " + data.value + " " + value);
+        globalThis.readJson = () => data.value + " " + value;
+        import.meta.hot.accept();
+        ${dispose ? `import.meta.hot.dispose(() => console.log("disposed"));` : ""}
+      `,
+      "data.json": `{ "value": 1 }`,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("json: 1 1");
+      for (const n of [2, 3]) {
+        await dev.write("data.json", `{ "value": ${n} }`);
+        await c.expectMessage(...(dispose ? ["disposed"] : []), `json: ${n} ${n}`);
+        expect(await c.js<string>`readJson()`).toBe(`${n} ${n}`);
+      }
+    },
+  });
+}
+
+devTest("a save of a CommonJS module reaches the ES modules that import it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import dep from "./dep.cjs";
+      console.log("cjs: " + dep.value);
+      globalThis.readCjs = () => dep.value;
+      import.meta.hot.accept();
+    `,
+    "dep.cjs": `module.exports = { value: 1 };`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("cjs: 1");
+    for (const n of [2, 3]) {
+      await dev.write("dep.cjs", `module.exports = { value: ${n} };`);
+      await c.expectMessage(`cjs: ${n}`);
+      expect(await c.js<number>`readCjs()`).toBe(n);
+    }
+  },
+});
+
+// What tsc 6.0.2 prints with `module: commonjs`. The barrel is not saved and does not run again: it
+// holds the `exports` object of the file behind it, which has to stay the same object.
+const tscOutput = {
+  /** `export const helper = "<value>";` */
+  helper: (value: string) => `
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.helper = void 0;
+    exports.helper = "${value}";
+  `,
+  /** `export { helper } from "./helper";` */
+  namedReexport: `
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.helper = void 0;
+    var helper_1 = require("./helper");
+    Object.defineProperty(exports, "helper", { enumerable: true, get: function () { return helper_1.helper; } });
+  `,
+  /** `export * from "./helper";` */
+  exportStar: `
+    "use strict";
+    var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+        if (k2 === undefined) k2 = k;
+        var desc = Object.getOwnPropertyDescriptor(m, k);
+        if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+          desc = { enumerable: true, get: function() { return m[k]; } };
+        }
+        Object.defineProperty(o, k2, desc);
+    }) : (function(o, m, k, k2) {
+        if (k2 === undefined) k2 = k;
+        o[k2] = m[k];
+    }));
+    var __exportStar = (this && this.__exportStar) || function(m, exports) {
+        for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+    };
+    Object.defineProperty(exports, "__esModule", { value: true });
+    __exportStar(require("./helper"), exports);
+  `,
+};
+for (const [name, barrel] of [
+  ["a named re-export", tscOutput.namedReexport],
+  ["`export *`", tscOutput.exportStar],
+] as const) {
+  devTest(`a save of the file behind ${name} in tsc CommonJS output updates in place`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": `
+        import * as dep from "./lib/dep.js";
+        console.log("helper=" + dep.helper);
+        import.meta.hot.accept();
+      `,
+      "lib/dep.js": barrel,
+      "lib/helper.js": tscOutput.helper("h1"),
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("helper=h1");
+      await dev.write("lib/helper.js", tscOutput.helper("h2"));
+      await c.expectMessage("helper=h2");
+    },
+  });
+}

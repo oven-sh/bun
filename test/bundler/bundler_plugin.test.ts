@@ -576,6 +576,63 @@ describe("bundler", () => {
       },
     };
   });
+  // An import keeps its `with { type }` when an onResolve plugin resolves it: the path that the
+  // plugin returns and that type name the module.
+  itBundled("plugin/ResolveKeepsImportType", ({ root }) => ({
+    files: {
+      "index.ts": /* ts */ `
+        import data from "alias:data";
+        import text from "alias:data" with { type: "text" };
+        import sameData from "./data.json";
+        console.log(JSON.stringify([data, text, data === sameData]));
+      `,
+      "data.json": `{"version":1}`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^alias:data$/ }, () => ({ path: root + "/data.json" }));
+    },
+    run: {
+      stdout: JSON.stringify([{ version: 1 }, `{"version":1}`, true]),
+    },
+  }));
+  // onLoad runs once for each type that a module of a plugin's namespace is imported with.
+  itBundled("plugin/ResolveNamespaceLoadsOncePerImportType", () => {
+    const loaders: string[] = [];
+    const imports = /* ts */ `
+      import module from "virtual:thing";
+      import text from "virtual:thing" with { type: "text" };
+    `;
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          ${imports}
+          import other from "./other.ts";
+          console.log(JSON.stringify([module, text, other]));
+        `,
+        "other.ts": /* ts */ `
+          ${imports}
+          export default [module, text];
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virtual:thing$/ }, () => ({ path: "thing", namespace: "virtual" }));
+        builder.onLoad({ filter: /.*/, namespace: "virtual" }, args => {
+          loaders.push(args.loader);
+          return { contents: `export default "loader ${args.loader}";` };
+        });
+      },
+      run: {
+        stdout: JSON.stringify([
+          "loader js",
+          `export default "loader text";`,
+          ["loader js", `export default "loader text";`],
+        ]),
+      },
+      onAfterBundle() {
+        expect(loaders.sort()).toEqual(["js", "text"]);
+      },
+    };
+  });
   // Like esbuild, an external import is printed with the path that onResolve returned.
   itBundled("plugin/ResolveExternalRewritesPath", {
     files: {

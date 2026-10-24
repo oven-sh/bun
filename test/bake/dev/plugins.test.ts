@@ -151,6 +151,46 @@ devTest("onLoad sees the loader of each module of a file", {
     await c.style(".box").notFound();
   },
 });
+// An import keeps its `with { type }` when an onResolve plugin resolves it.
+devTest("onResolve keeps the type of the import", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./alias-plugin.ts"]
+    `,
+    "alias-plugin.ts": `
+      import { join } from "node:path";
+      export default {
+        name: "alias-plugin",
+        setup(build) {
+          build.onResolve({ filter: /^alias:data$/ }, () => ({ path: join(import.meta.dirname, "data.json") }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "data.json": `{"version":1}`,
+    "app.ts": `
+      import data from "alias:data";
+      import text from "alias:data" with { type: "text" };
+      let value;
+      try {
+        value = typeof data + " " + data.version + ", " + typeof text + " " + text;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log(value);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(`object 1, string {"version":1}`);
+
+    await c.expectReload(async () => {
+      await dev.write("data.json", `{"version":2}`);
+    });
+    await c.expectMessage(`object 2, string {"version":2}`);
+  },
+});
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

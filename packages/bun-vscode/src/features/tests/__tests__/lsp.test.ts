@@ -1,0 +1,411 @@
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { MockRelativePattern, MockUri, MockWorkspaceFolder } from "./vscode-types.mock";
+import "./vscode.mock";
+import {
+  fireConfigurationChange,
+  getOutputLines,
+  makeWorkspaceFolder,
+  openTextDocument,
+  resetVscodeMock,
+  setConfiguration,
+  vscodeMockState,
+  type MockTextDocumentLike,
+} from "./vscode.mock";
+
+class FakeLanguageClient {
+  static instances: FakeLanguageClient[] = [];
+  started = 0;
+  stopped = 0;
+
+  constructor(
+    public readonly id: string,
+    public readonly name: string,
+    public readonly serverOptions: any,
+    public readonly clientOptions: any,
+  ) {
+    FakeLanguageClient.instances.push(this);
+  }
+
+  async start(): Promise<void> {
+    this.started++;
+  }
+
+  async stop(): Promise<void> {
+    this.stopped++;
+  }
+}
+
+mock.module("vscode-languageclient/node", () => ({
+  LanguageClient: FakeLanguageClient,
+  TransportKind: { stdio: 0, ipc: 1, pipe: 2, socket: 3 },
+  CloseAction: { DoNotRestart: 1, Restart: 2 },
+  ErrorAction: { Continue: 1, Shutdown: 2 },
+  RevealOutputChannelOn: { Debug: 0, Info: 1, Warn: 2, Error: 3, Never: 4 },
+}));
+
+type LspModule = typeof import("../../lsp");
+type ServerSpec = import("../../lsp").ServerSpec;
+
+// Each test loads its own copy of the module so `wanted` / `failed` / the running client
+// never leak between tests.
+let moduleInstance = 0;
+async function loadLsp(): Promise<LspModule> {
+  moduleInstance++;
+  return (await import(`../../lsp?instance=${moduleInstance}`)) as LspModule;
+}
+
+class FakeClient {
+  started = 0;
+  stopped = 0;
+
+  constructor(
+    public readonly spec: ServerSpec,
+    private readonly startError?: () => Error | undefined,
+  ) {}
+
+  async start(): Promise<void> {
+    this.started++;
+    const error = this.startError?.();
+    if (error) throw error;
+  }
+
+  async stop(): Promise<void> {
+    this.stopped++;
+  }
+}
+
+function makeHarness(startError?: () => Error | undefined) {
+  const clients: FakeClient[] = [];
+  const context = { subscriptions: [] as { dispose(): void }[] };
+  const createClient = mock((spec: ServerSpec) => {
+    const client = new FakeClient(spec, startError);
+    clients.push(client);
+    return client;
+  });
+  const checkRuntime = mock(async (_runtime: string): Promise<string | undefined> => undefined);
+  return { clients, context, createClient, checkRuntime };
+}
+
+const WITH_MARKER = "/ws/with-marker";
+const OTHER_WITH_MARKER = "/ws/other-with-marker";
+const NO_MARKER = "/ws/no-marker";
+const foldersWithMarker = new Set([WITH_MARKER, OTHER_WITH_MARKER]);
+
+function patternBase(include: string | MockRelativePattern): string {
+  if (typeof include === "string") return include;
+  const base: any = include.base;
+  if (typeof base === "string") return base;
+  if (base instanceof MockWorkspaceFolder) return base.uri.fsPath;
+  return base?.fsPath ?? "";
+}
+
+function doc(path: string, languageId = "typescript", scheme = "file"): MockTextDocumentLike {
+  const uri = scheme === "file" ? MockUri.file(path) : new MockUri(scheme, "", path, "", "", path);
+  return { uri, languageId };
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+}
+
+async function open(document: MockTextDocumentLike): Promise<void> {
+  await openTextDocument(document);
+  await settle();
+}
+
+describe("registerLanguageServer", () => {
+  beforeEach(() => {
+    resetVscodeMock();
+    FakeLanguageClient.instances.length = 0;
+    vscodeMockState.workspaceFolders = [
+      makeWorkspaceFolder(WITH_MARKER),
+      makeWorkspaceFolder(NO_MARKER),
+      makeWorkspaceFolder(OTHER_WITH_MARKER),
+    ];
+    vscodeMockState.findFiles = async include => {
+      const base = patternBase(include);
+      return foldersWithMarker.has(base) ? [MockUri.file(`${base}/bunfig.toml`)] : [];
+    };
+  });
+
+  afterAll(() => {
+    resetVscodeMock();
+  });
+
+  test("exports the marker glob and the supported languages", async () => {
+    const lsp = await loadLsp();
+    expect(lsp.MARKER_GLOB).toContain("bunfig.toml");
+    expect(lsp.MARKER_GLOB).toContain("bun.lock");
+    expect(lsp.MARKER_GLOB).toContain("bun.lockb");
+    expect(lsp.LSP_LANGUAGE_IDS).toContain("typescript");
+    expect(lsp.LSP_LANGUAGE_IDS).toContain("javascript");
+    expect(lsp.LSP_LANGUAGE_IDS).toContain("json");
+  });
+
+  test("does not start for a document that is not a file", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`, "typescript", "untitled"));
+    await open(doc(`${WITH_MARKER}/index.ts`, "typescript", "vscode-userdata"));
+
+    expect(clients).toHaveLength(0);
+    expect(checkRuntime).not.toHaveBeenCalled();
+  });
+
+  test("does not start for an unsupported language", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/main.rs`, "rust"));
+    await open(doc(`${WITH_MARKER}/notes.txt`, "plaintext"));
+
+    expect(clients).toHaveLength(0);
+    expect(checkRuntime).not.toHaveBeenCalled();
+  });
+
+  test("does not start for a folder without bunfig.toml, bun.lock or bun.lockb", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${NO_MARKER}/index.ts`));
+    await open(doc("/outside/any/folder/index.ts"));
+
+    expect(clients).toHaveLength(0);
+    expect(checkRuntime).not.toHaveBeenCalled();
+  });
+
+  test("does not start when bun.lsp.enable is false", async () => {
+    setConfiguration("bun.lsp.enable", false);
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+
+    expect(clients).toHaveLength(0);
+    expect(checkRuntime).not.toHaveBeenCalled();
+  });
+
+  test("starts exactly one client for the first qualifying document", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+
+    expect(checkRuntime).toHaveBeenCalledTimes(1);
+    expect(checkRuntime).toHaveBeenCalledWith("bun");
+    expect(clients).toHaveLength(1);
+    expect(clients[0].spec.command).toBe("bun");
+    expect(clients[0].spec.args).toEqual(["fmt", "--no-script", "--lsp"]);
+    expect(clients[0].spec.cwd).toBe(WITH_MARKER);
+    expect(clients[0].started).toBe(1);
+    expect(vscodeMockState.messages).toHaveLength(0);
+
+    await open(doc(`${WITH_MARKER}/other.tsx`, "typescriptreact"));
+    await open(doc(`${OTHER_WITH_MARKER}/package.json`, "json"));
+
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(clients).toHaveLength(1);
+    expect(clients[0].started).toBe(1);
+  });
+
+  test("uses the trimmed bun.runtime setting as the command", async () => {
+    setConfiguration("bun.runtime", "  /opt/bun/bin/bun  ");
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.js`, "javascript"));
+
+    expect(checkRuntime).toHaveBeenCalledWith("/opt/bun/bin/bun");
+    expect(clients).toHaveLength(1);
+    expect(clients[0].spec.command).toBe("/opt/bun/bin/bun");
+    expect(clients[0].spec.args).toEqual(["fmt", "--no-script", "--lsp"]);
+  });
+
+  test("starts for a qualifying document that is already open at registration", async () => {
+    vscodeMockState.textDocuments.push(doc(`${NO_MARKER}/index.ts`), doc(`${WITH_MARKER}/index.ts`));
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+    await settle();
+
+    expect(clients).toHaveLength(1);
+    expect(clients[0].started).toBe(1);
+  });
+
+  test("logs one line and does not retry when the client fails to start", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness(() => new Error("spawn bun ENOENT"));
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+
+    expect(clients).toHaveLength(1);
+    expect(clients[0].started).toBe(1);
+    const lines = getOutputLines("Bun");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("spawn bun ENOENT");
+    expect(vscodeMockState.messages).toHaveLength(0);
+
+    await open(doc(`${WITH_MARKER}/second.ts`));
+    await open(doc(`${OTHER_WITH_MARKER}/third.ts`));
+
+    expect(createClient).toHaveBeenCalledTimes(1);
+    expect(clients[0].started).toBe(1);
+    expect(getOutputLines("Bun")).toHaveLength(1);
+  });
+
+  test("logs one line and does not create a client when the runtime check fails", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    checkRuntime.mockImplementation(async () => "bun --version failed: ENOENT");
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+    await open(doc(`${WITH_MARKER}/second.ts`));
+
+    expect(checkRuntime).toHaveBeenCalledTimes(1);
+    expect(clients).toHaveLength(0);
+    const lines = getOutputLines("Bun");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("bun --version failed: ENOENT");
+    expect(vscodeMockState.messages).toHaveLength(0);
+  });
+
+  test("restarts with the new command when bun.runtime changes and a document wanted it", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+    expect(clients).toHaveLength(1);
+
+    setConfiguration("bun.runtime", "/opt/bun");
+    await fireConfigurationChange(["bun.runtime"]);
+    await settle();
+
+    expect(clients[0].stopped).toBe(1);
+    expect(clients).toHaveLength(2);
+    expect(clients[1].spec.command).toBe("/opt/bun");
+    expect(clients[1].spec.args).toEqual(["fmt", "--no-script", "--lsp"]);
+    expect(clients[1].started).toBe(1);
+    expect(checkRuntime).toHaveBeenLastCalledWith("/opt/bun");
+  });
+
+  test("retries after a failed start once bun.runtime changes", async () => {
+    let fail = true;
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness(() =>
+      fail ? new Error("spawn bun ENOENT") : undefined,
+    );
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+    expect(clients).toHaveLength(1);
+    expect(getOutputLines("Bun")).toHaveLength(1);
+
+    fail = false;
+    setConfiguration("bun.runtime", "/opt/bun");
+    await fireConfigurationChange(["bun.runtime"]);
+    await settle();
+
+    expect(clients).toHaveLength(2);
+    expect(clients[1].spec.command).toBe("/opt/bun");
+    expect(clients[1].started).toBe(1);
+    expect(getOutputLines("Bun")).toHaveLength(1);
+  });
+
+  test("does not start on a bun.runtime change when no document wanted the server", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${NO_MARKER}/index.ts`));
+    setConfiguration("bun.runtime", "/opt/bun");
+    await fireConfigurationChange(["bun.runtime"]);
+    await settle();
+
+    expect(clients).toHaveLength(0);
+    expect(checkRuntime).not.toHaveBeenCalled();
+  });
+
+  test("ignores configuration changes that do not affect bun.runtime", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+    await fireConfigurationChange(["bun.test.filePattern"]);
+    await settle();
+
+    expect(clients).toHaveLength(1);
+    expect(clients[0].stopped).toBe(0);
+    expect(createClient).toHaveBeenCalledTimes(1);
+  });
+
+  test("constructs the real LanguageClient over stdio by default", async () => {
+    const lsp = await loadLsp();
+    const { context, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+
+    expect(FakeLanguageClient.instances).toHaveLength(1);
+    const [client] = FakeLanguageClient.instances;
+    expect(client.started).toBe(1);
+    expect(client.serverOptions.command).toBe("bun");
+    expect(client.serverOptions.args).toEqual(["fmt", "--no-script", "--lsp"]);
+    expect(client.serverOptions.transport).toBe(0);
+    expect(client.clientOptions.documentSelector).toContainEqual({ scheme: "file", language: "typescript" });
+    expect(client.clientOptions.initializationFailedHandler(new Error("boom"))).toBe(false);
+    expect(client.clientOptions.errorHandler.error(new Error("boom"), undefined, 1)).toMatchObject({ handled: true });
+    expect(client.clientOptions.errorHandler.closed()).toMatchObject({ action: 1, handled: true });
+    expect(client.clientOptions.revealOutputChannelOn).toBe(4);
+    expect(vscodeMockState.messages).toHaveLength(0);
+  });
+});
+
+describe("stopLanguageServer", () => {
+  beforeEach(() => {
+    resetVscodeMock();
+    FakeLanguageClient.instances.length = 0;
+    vscodeMockState.workspaceFolders = [makeWorkspaceFolder(WITH_MARKER)];
+    vscodeMockState.findFiles = async include => [MockUri.file(`${patternBase(include)}/bun.lock`)];
+  });
+
+  afterAll(() => {
+    resetVscodeMock();
+  });
+
+  test("is a no-op when no client is running", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await expect(lsp.stopLanguageServer()).resolves.toBeUndefined();
+    expect(clients).toHaveLength(0);
+  });
+
+  test("stops the running client once", async () => {
+    const lsp = await loadLsp();
+    const { clients, context, createClient, checkRuntime } = makeHarness();
+    lsp.registerLanguageServer(context as any, { createClient, checkRuntime });
+
+    await open(doc(`${WITH_MARKER}/index.ts`));
+    expect(clients).toHaveLength(1);
+
+    await lsp.stopLanguageServer();
+    expect(clients[0].stopped).toBe(1);
+
+    await lsp.stopLanguageServer();
+    expect(clients[0].stopped).toBe(1);
+  });
+});

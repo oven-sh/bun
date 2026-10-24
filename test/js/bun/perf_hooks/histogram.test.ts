@@ -1564,34 +1564,67 @@ describe("Histogram", () => {
       }
     });
 
-    test("to a worker that records while this thread does", async () => {
-      const h = createHistogram();
-      const started = new Int32Array(new SharedArrayBuffer(4));
-      const worker = new Worker(
-        `const { parentPort, workerData: started } = require("node:worker_threads");
-         parentPort.once("message", h => {
-           Atomics.store(started, 0, 1);
-           Atomics.notify(started, 0);
-           for (let i = 0; i < 20000; i++) h.record(2);
-           parentPort.postMessage(h.constructor.name);
-         });`,
-        { eval: true, workerData: started },
+    // Runs `inWorker` in each of some workers and `here` in this thread, 20,000 times each, all at the same time.
+    // Returns the nanoseconds that took.
+    async function inThreads(workers, h, inWorker, here) {
+      // How many workers are ready, and whether they can start.
+      const flags = new Int32Array(new SharedArrayBuffer(8));
+      const threads = Array.from(
+        { length: workers },
+        () =>
+          new Worker(
+            `const { parentPort, workerData: flags } = require("node:worker_threads");
+             parentPort.once("message", h => {
+               Atomics.add(flags, 0, 1);
+               Atomics.notify(flags, 0);
+               Atomics.wait(flags, 1, 0);
+               for (let i = 0; i < 20000; i++) ${inWorker};
+               parentPort.postMessage(h.constructor.name);
+             });`,
+            { eval: true, workerData: flags },
+          ),
       );
       try {
-        const done = new Promise((resolve, reject) => {
-          worker.once("message", resolve);
-          worker.once("messageerror", reject);
-          worker.once("error", reject);
-          worker.once("exit", code => reject(new Error(`the worker exited with code ${code}`)));
-        });
-        worker.postMessage(h);
-        await Promise.race([Atomics.waitAsync(started, 0, 0).value, done]);
-        for (let i = 0; i < 20000; i++) h.record(1);
-        assert.strictEqual(await done, "RecordableHistogram");
+        const done = Promise.all(
+          threads.map(
+            worker =>
+              new Promise((resolve, reject) => {
+                worker.once("message", resolve);
+                worker.once("messageerror", reject);
+                worker.once("error", reject);
+                worker.once("exit", code => reject(new Error(`the worker exited with code ${code}`)));
+              }),
+          ),
+        );
+        done.catch(() => {});
+        for (const worker of threads) worker.postMessage(h);
+        for (let ready; (ready = Atomics.load(flags, 0)) < workers;) {
+          await Promise.race([Atomics.waitAsync(flags, 0, ready).value, done]);
+        }
+        const start = process.hrtime.bigint();
+        Atomics.store(flags, 1, 1);
+        Atomics.notify(flags, 1);
+        for (let i = 0; i < 20000; i++) here();
+        assert.deepStrictEqual(await done, Array(workers).fill("RecordableHistogram"));
+        return Number(process.hrtime.bigint() - start);
       } finally {
-        await worker.terminate();
+        await Promise.all(threads.map(worker => worker.terminate()));
       }
+    }
+
+    test("to a worker that records while this thread does", async () => {
+      const h = createHistogram();
+      await inThreads(1, h, "h.record(2)", () => h.record(1));
       assert.deepStrictEqual([h.count, h.min, h.max, h.mean], [40000, 1, 2, 1.5]);
+    });
+
+    test("to workers that call recordDelta while this thread does", async () => {
+      const h = createHistogram();
+      const elapsed = await inThreads(3, h, "h.recordDelta()", () => h.recordDelta());
+      assert.deepStrictEqual([h.count, h.exceeds], [79999, 0]);
+      // Together, the deltas are the time from the first call to the last. They are far more if a thread records the
+      // time that it read after a thread that read a later one. A bucket is 0.1% wide.
+      assert.ok(h.mean * h.count <= elapsed * 1.002, `${h.mean * h.count} ns in ${elapsed} ns`);
     });
   });
 });

@@ -6,7 +6,7 @@ import { once } from "node:events";
 import { BlockList } from "node:net";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import { deserialize as v8Deserialize, serialize as v8Serialize } from "node:v8";
-import { MessageChannel, receiveMessageOnPort, Worker as NodeWorker } from "node:worker_threads";
+import { MessageChannel, Worker as NodeWorker, receiveMessageOnPort } from "node:worker_threads";
 import { deflate } from "node:zlib";
 import { join } from "path";
 

@@ -74,7 +74,7 @@ test("wat", async () => {
 }, 500); // test must run in <500ms
 ```
 
-In `bun:test`, a timeout throws an uncatchable exception to force the test to stop running and fail. Bun also kills any child processes spawned in the test, so they don't linger as zombie processes.
+In `bun:test`, a test that exceeds its timeout fails, and Bun starts the next test. Bun does not interrupt JavaScript that is running: a test that blocks the thread runs until its callback returns (see [Test Timeouts](/test/runtime-behavior#test-timeouts)). Bun also kills any child processes spawned in the test, so they don't linger as zombie processes.
 
 The default timeout for each test is 5000ms (5 seconds) unless you override it with this timeout option or `jest.setTimeout()`.
 

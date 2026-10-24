@@ -328,8 +328,7 @@ pub(super) fn finalize_bundle(
             }
             continue;
         }
-        // A later build can parse none of the importers of this copy. Only an entry in
-        // `tracked_barrels` makes that build parse the barrel and keep their requests.
+        // Only an entry makes a later build parse this barrel and keep its importers' requests.
         debug_assert!(
             !import_records[index.get() as usize]
                 .iter()

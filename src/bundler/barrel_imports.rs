@@ -34,28 +34,10 @@ impl Default for RequestedExports {
     }
 }
 
-/// Dev server: the barrels that have deferred a record, by side of the module
-/// graph and by source path.
-///
-/// A build of the dev server parses only the new and the changed files, so
-/// `requested_exports` lacks what the modules of earlier builds read. A barrel
-/// with an entry here is therefore parsed in every build that reaches it
-/// (`must_reparse`), and `persist_requests_of_tracked_barrels` adds the requests
-/// of each build to its entry:
-/// - `Partial`: the names that the builds so far requested. The other records can
-///   stay deferred.
-/// - `All`: a build requested every export. No record is deferred again.
-///
-/// A barrel that has no entry and that the dev server already bundled never
-/// deferred a record. Builds took it from the cache and recorded no request for
-/// it, so `apply_barrel_optimization` defers none of its records either.
-///
-/// The key has the side because a copy that one side loaded in full has no entry,
-/// while the entry of the other side still makes every build parse it. The server
-/// and SSR copies of a file share one record and one list of imports in the dev
-/// server, so they share one entry.
+/// Dev server: what every build requested from each barrel that has deferred a record.
 #[derive(Default)]
 pub struct TrackedBarrels {
+    /// By `bake_types::Side`: the server and SSR copies of a file share one graph record.
     by_side: [StringArrayHashMap<RequestedExports>; 2],
 }
 
@@ -75,9 +57,7 @@ impl TrackedBarrels {
         self.get(side, path).is_some()
     }
 
-    /// True if a build that reaches this file has to parse it again. An importer on
-    /// one side can read the copy of the other side (a client component boundary),
-    /// so an entry on either side counts.
+    /// A client component boundary reads the copy of the other side: either side's entry counts.
     pub fn must_reparse(&self, path: &[u8]) -> bool {
         self.by_side
             .iter()
@@ -269,16 +249,16 @@ fn apply_barrel_optimization_impl(
         }
     }
 
-    // Dev server: the modules of earlier builds that this build does not parse
-    // also read this barrel. See `TrackedBarrels`.
+    // Dev server: also include exports persisted from previous builds. This
+    // handles the case where file A imports Alpha from the barrel (previous
+    // build) and file B adds Beta (current build). Without this, Alpha would
+    // be re-deferred because only B's requests are in requested_exports.
     // `DevServerHandle` is `Copy`; copied out so the `&self` borrow
     // doesn't conflict with later `&mut this.requested_exports`.
     let dev_handle = this.dev_server_handle().copied();
     let side = ast.target.bake_graph().side();
     if let Some(dev) = dev_handle {
-        // An importer records its request under the source index that its path map
-        // had for this file at that moment. A file that was not there to read, and
-        // that the build loads again, has a second index by now.
+        // A file that was not there to read has a second index: count the requests under the first.
         let sources = this.graph.input_files.items_source();
         for (other, requested) in this.requested_exports.iter().enumerate() {
             let Some(requested) = requested else {
@@ -304,10 +284,8 @@ fn apply_barrel_optimization_impl(
             }
         }
 
-        // SAFETY: `tracked_barrels` is a field of the DevServer, which outlives the
-        // bundle. This pass and `persist_requests_of_tracked_barrels` run on the JS
-        // thread and are its only writers. No reference made from the pointer is
-        // held across a call into the DevServer.
+        // SAFETY: the DevServer owns `tracked_barrels` and outlives the bundle. Only the JS thread
+        // writes it, and no reference from this pointer is held across a call into the DevServer.
         let is_tracked = match unsafe { &*dev.tracked_barrels() }.get(side, result.source.path.text)
         {
             Some(RequestedExports::All) => return Ok(()),
@@ -323,9 +301,7 @@ fn apply_barrel_optimization_impl(
             }
             None => false,
         };
-        // The dev server bundled this file and does not track it: no copy of it
-        // deferred a record, and the builds that took it from the cache recorded
-        // no request for it.
+        // Bundled and not tracked: no copy deferred a record, and no build recorded a request.
         if !is_tracked && dev.has_file(result.source.path.key_for_incremental_graph(), side) {
             return Ok(());
         }
@@ -421,15 +397,13 @@ fn apply_barrel_optimization_impl(
     Ok(())
 }
 
-/// Dev server: the side of the copy of a file that has this source index. A file
-/// that did not parse has no target of its own: the path map that has it tells
-/// the target that imported it. `None`: no path map has it, because the file was
-/// not there to read.
+/// Dev server: the side of the copy with this source index. `None`: the file was not there to read.
 fn copy_side(this: &BundleV2, source_index: u32) -> Option<bake_types::Side> {
     let index = source_index as usize;
     if this.graph.ast.items_parts()[index].len() != 0 {
         return Some(this.graph.ast.items_target()[index].bake_graph().side());
     }
+    // A copy that did not parse has no target: the path map that still has it tells the side.
     let path = this.graph.input_files.items_source()[index].path.text;
     this.graph
         .build_graphs
@@ -440,9 +414,7 @@ fn copy_side(this: &BundleV2, source_index: u32) -> Option<bake_types::Side> {
         })
 }
 
-/// Dev server, once per build when every file is parsed: add what the files of this
-/// build requested from each tracked barrel to `TrackedBarrels`, for the builds that
-/// do not parse those files.
+/// Dev server, once per build: adds the requests of this build to the entries of `TrackedBarrels`.
 pub(crate) fn persist_requests_of_tracked_barrels(
     this: &BundleV2,
     dev: &crate::dispatch::DevServerHandle,
@@ -455,9 +427,7 @@ pub(crate) fn persist_requests_of_tracked_barrels(
     let sources = this.graph.input_files.items_source();
     let mut lookups: usize = 0;
     let mut names_added: usize = 0;
-    // A request is for the copy that it was recorded under. The path maps do not
-    // lead back to that copy: the bundler can give a path another source index
-    // within a build.
+    // By source index: the path maps can point a path at another copy within a build.
     for (index, requested) in this.requested_exports.iter().enumerate() {
         let Some(requested) = requested else {
             continue;
@@ -473,9 +443,7 @@ pub(crate) fn persist_requests_of_tracked_barrels(
             }
         }
     }
-    // The bundler points the path of a client component boundary at the copy that it
-    // generates for the other side. What a later importer of the build records under
-    // that copy is for the file itself.
+    // A request under the generated copy of a client component boundary is for the original file.
     let boundaries = this.graph.server_component_boundaries.slice();
     for (&original, &generated) in boundaries
         .list

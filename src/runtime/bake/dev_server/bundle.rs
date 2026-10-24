@@ -85,7 +85,7 @@ pub(crate) struct CacheEntry {
 
 impl DevServer {
     pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
-        // A build has to record what its files request from a barrel that has deferred a record.
+        // Barrel files with deferred records must always be re-parsed.
         if self.tracked_barrels.must_reparse(path) {
             return None;
         }
@@ -124,7 +124,7 @@ impl DevServer {
         }
     }
 
-    /// True if an earlier build can have bundled a copy of this file for `side`. The copy can be stale or failed by now.
+    /// True if an earlier build can have bundled a copy of this file for `side`, stale or not.
     pub(crate) fn has_file(&self, path: &[u8], side: bake::Side) -> bool {
         let _g = self.graph_safety_lock.guard();
         match side {

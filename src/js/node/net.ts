@@ -3547,7 +3547,7 @@ Server.prototype[kRealListen] = function (
     exclusive = false;
   }
   const serverOptions = this[bunSocketServerOptions];
-  const listenOptions = {
+  const listenOptions: any = {
     tls,
     allowHalfOpen: true,
     reusePort: reusePort || serverOptions?.reusePort || false,
@@ -3556,11 +3556,10 @@ Server.prototype[kRealListen] = function (
     socket: serverHandlersFor(this),
     data: this,
     pauseOnConnect: this.pauseOnConnect,
-    defaultTimeout: false,
+    ...(path ? { unix: path } : fd != null ? { fd, hostname } : { port, hostname }),
   };
-  if (path) this._handle = Bun.listen({ unix: path, ...listenOptions });
-  else if (fd != null) this._handle = Bun.listen({ fd, hostname, ...listenOptions });
-  else this._handle = Bun.listen({ port, hostname, ...listenOptions });
+  $putByIdDirectPrivate(listenOptions, "defaultTimeout", false);
+  this._handle = Bun.listen(listenOptions);
   if (path) {
     // Mirror libuv uv_pipe_chmod: readableAll/writableAll relax the unix socket
     // file's group/other permission bits. Skipped on Windows and abstract

@@ -193,9 +193,13 @@ const N_HTTP_METHODS: usize = 36;
 bun_jsc::impl_abort_handle_owner!(
     [const SSL: bool, const DEBUG: bool] NewServer<SSL, DEBUG>,
     abort_handle,
-    |this, _cause| {
+    |this, cause| {
+        let thread_ends = matches!(
+            cause,
+            bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
+        );
         // SAFETY: trait contract — `this` is live (armed ⇒ not deinit'd).
-        unsafe { &*this }.stop(true)
+        unsafe { &*this }.stop(true, thread_ends)
     }
 );
 
@@ -1755,7 +1759,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.poll_ref.with_mut(|r| r.unref(self.vm.loop_ctx()));
     }
 
-    pub(crate) fn stop_listening(&self, abrupt: bool) {
+    /// Abrupt stop: close the listen sockets and every connection of `app`.
+    fn close_app(app: *mut uws_sys::NewApp<SSL>, thread_ends: bool) {
+        // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        let app = bun_opaque::opaque_deref_mut(app);
+        if thread_ends {
+            app.close_as_thread_ends();
+        } else {
+            app.close();
+        }
+    }
+
+    pub(crate) fn stop_listening(&self, abrupt: bool, thread_ends: bool) {
         // httplog!("stopListening", .{});
 
         // A graceful stop leaves connections open, and this handle is how their context's stop
@@ -1804,8 +1819,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 self.flags.set(self.flags.get() | ServerFlags::TERMINATED);
                 if let Some(app) = self.app.get() {
                     self.deinit_running.set(true);
-                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).close();
+                    Self::close_app(app, thread_ends);
                     self.deinit_running.set(false);
                 }
                 self.config.with_mut(|config| {
@@ -1881,8 +1895,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // guard across the drain so that nested call early-returns —
             // `stop()` runs `deinit_if_we_can` itself right after this returns.
             self.deinit_running.set(true);
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(self.app.get().unwrap()).close();
+            Self::close_app(self.app.get().unwrap(), thread_ends);
             self.deinit_running.set(false);
             // Only clear after the drain — `on_close` defers reach
             // `on_websocket_closed` through `handler.server`, so wiping it
@@ -1896,7 +1909,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    pub(crate) fn stop(&self, abrupt: bool) {
+    /// `thread_ends`: the abrupt stop of a server whose thread ends (see `thread_ends` in libusockets.h).
+    pub(crate) fn stop(&self, abrupt: bool, thread_ends: bool) {
         if self.config.get().allow_hot && !self.config.get().id.is_empty() {
             // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
             unsafe {
@@ -1906,7 +1920,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        self.stop_listening(abrupt);
+        self.stop_listening(abrupt, thread_ends);
         self.deinit_if_we_can();
     }
 
@@ -3521,12 +3535,12 @@ mod ffi {
     }
 }
 
-/// Servers with the same options share a context. `None` leaves BoringSSL's error queued for `throw_ssl_error_if_necessary`.
+/// Servers with the same options share a context, unless it reads files. `None` leaves BoringSSL's error queued for `throw_ssl_error_if_necessary`.
 fn create_ssl_ctx(
     options: &uws_sys::BunSocketContextOptions,
 ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
     let mut err = uws::create_bun_socket_error_t::none;
-    crate::api::SSLContextCache::SSLContextCache::get_or_create_opts(options, &mut err)
+    crate::api::SSLContextCache::SSLContextCache::get_or_create_for_server(options, &mut err)
 }
 
 /// Drain the BoringSSL error queue; if non-empty, throw the top error on

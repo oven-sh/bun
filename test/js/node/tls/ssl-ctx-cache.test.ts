@@ -693,6 +693,96 @@ describe.concurrent("how long the cache keeps a context that nothing else holds"
     });
   });
 
+  describe("a server reads its files again while one with the same options is up", () => {
+    // The size and the time are all that the cache's key has of a file's content.
+    const files = `
+      const fs = require("node:fs"), { connect } = require("node:tls"), { once } = require("node:events");
+      const other = ${JSON.stringify({ cert: expiredTls.cert, key: expiredTls.key })};
+      function put(file, text, otherText) {
+        fs.writeFileSync(file, text.padEnd(Math.max(text.length, otherText.length), "\\n"));
+        fs.utimesSync(file, new Date(1e12), new Date(1e12));
+      }`;
+
+    test.each([
+      ["Bun.listen()", `Bun.listen({ ...options, socket: { data() {} } })`],
+      ["Bun.serve()", `Bun.serve({ ...options, fetch: () => new Response("") })`],
+    ])("%s presents the certificate that is in certFile now", async (_, serve) => {
+      using dir = tempDir("ssl-ctx-server-cert", {});
+      const fingerprint = (cert: string) => new X509Certificate(cert).fingerprint256;
+      expect(
+        await inAFreshProcess(`${files}
+          const certFile = ${JSON.stringify(join(String(dir), "cert.pem"))}, keyFile = ${JSON.stringify(join(String(dir), "key.pem"))};
+          const options = { hostname: "127.0.0.1", port: 0, tls: { certFile, keyFile } };
+          async function presentedBy(server) {
+            const socket = connect({ host: "127.0.0.1", port: server.port, rejectUnauthorized: false });
+            await once(socket, "secureConnect");
+            const { fingerprint256 } = socket.getPeerCertificate();
+            socket.destroy();
+            return fingerprint256;
+          }
+          put(certFile, tls.cert, other.cert);
+          put(keyFile, tls.key, other.key);
+          const first = ${serve};
+          result.first = await presentedBy(first);
+          put(certFile, other.cert, tls.cert);
+          put(keyFile, other.key, tls.key);
+          const second = ${serve};
+          result.second = await presentedBy(second);
+          result.firstAfterThat = await presentedBy(first);
+          first.stop(true);
+          second.stop(true);
+        `),
+      ).toEqual({
+        result: {
+          first: fingerprint(tlsCerts.cert),
+          second: fingerprint(expiredTls.cert),
+          firstAfterThat: fingerprint(tlsCerts.cert),
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("Bun.listen() verifies client certificates against what is in caFile now", async () => {
+      using dir = tempDir("ssl-ctx-server-ca", {});
+      expect(
+        await inAFreshProcess(`${files}
+          const caFile = ${JSON.stringify(join(String(dir), "ca.pem"))};
+          function listen() {
+            const verdict = Promise.withResolvers();
+            const listener = Bun.listen({
+              hostname: "127.0.0.1",
+              port: 0,
+              tls: { ...tls, caFile, requestCert: true, rejectUnauthorized: true },
+              socket: { data() {}, handshake: (socket, ok, error) => verdict.resolve(socket.authorized ? "let in" : error.code) },
+            });
+            return { listener, verdict: verdict.promise };
+          }
+          // The client's certificate is self-signed, so it is its own CA.
+          async function verdictOf({ listener, verdict }) {
+            const socket = connect({ host: "127.0.0.1", port: listener.port, ...tls, rejectUnauthorized: false });
+            socket.on("error", () => {});
+            const said = await verdict;
+            socket.destroy();
+            return said;
+          }
+          put(caFile, tls.cert, other.cert);
+          const first = listen();
+          result.withItsCAInTheFile = await verdictOf(first);
+          put(caFile, other.cert, tls.cert);
+          const second = listen();
+          result.withAnotherCAInTheFile = await verdictOf(second);
+          first.listener.stop(true);
+          second.listener.stop(true);
+        `),
+      ).toEqual({
+        result: { withItsCAInTheFile: "let in", withAnotherCAInTheFile: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   // It used to be dropped only when the GC finalized the Listener, so a listener the program still
   // references, or any at process exit, kept its CTX alive. A tls.Server's listener serves the
   // Server's own context, which outlives close(). One from Bun.listen() shows its reference in the count.

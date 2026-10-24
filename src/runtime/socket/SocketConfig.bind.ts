@@ -47,8 +47,6 @@ export const SocketOptions = b.dictionary(
     reusePort: b.bool.default(false),
     ipv6Only: b.bool.default(false),
     pauseOnConnect: b.bool.loose.default(false),
-    /** node:net passes false, because `net.Socket` keeps its own timer: an accepted socket then starts without the 120 second timeout. */
-    defaultTimeout: b.bool.default(true),
     unix: {
       type: b.string.falsyAsNull,
       rustName: "unix_", // The C++ struct has the same field, and `unix` is a predefined C macro.

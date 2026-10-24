@@ -2295,7 +2295,7 @@ where
             .then(|| input.as_class_ref::<Request>())
             .flatten()
         {
-            request_.clone(&global.js_thread_of_caller_no_frame())?
+            request_.clone(&global.js_thread_of_caller())?
         } else {
             let fetch_error = Fetch::fetch_type_error_string(input);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(global, format_args!("{}", fetch_error));
@@ -2376,7 +2376,7 @@ where
                 && !self.flags.get().contains(ServerFlags::TERMINATED)
                 && !self.deinit_running.get())
         {
-            self.stop(abrupt);
+            self.stop(abrupt, false);
         }
 
         rc
@@ -2386,7 +2386,7 @@ where
         if self.has_listener()
             || (!self.flags.get().contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
         {
-            self.stop(true);
+            self.stop(true, false);
         }
     }
 

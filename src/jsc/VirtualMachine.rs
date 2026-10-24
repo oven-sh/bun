@@ -1117,21 +1117,14 @@ impl VirtualMachine {
         self.handle.script_allowed()
     }
 
-    /// The context of the script that called a host function. `frame` is that call: script is
-    /// running, so its async context says whose it is. Helpers below the host function take the
-    /// context as a parameter; native code the event loop calls has no frame and uses the
+    /// The context of the script that is calling: script is running, so its async context says
+    /// whose it is. For a host function, a function exported to C++ that a C++ host function calls,
+    /// a custom getter or setter, a Node-API function (an addon calls those from a callback script
+    /// called, or from one of its own completions, which entered the context it was scheduled in).
+    /// Helpers below take the context as a parameter; native code the event loop calls uses the
     /// [`ContextScope`] it entered ([`ContextScope::context`]).
     #[inline]
-    pub fn context_of_caller(&self, _frame: &crate::CallFrame) -> &crate::ScriptExecutionContext {
-        self.current_context()
-    }
-
-    /// [`context_of_caller`](Self::context_of_caller) where script is calling but no `CallFrame`
-    /// reaches Rust: a function exported to C++ that a C++ host function calls, a custom getter or
-    /// setter, a Node-API function (an addon calls those from a callback script called, or from one
-    /// of its own completions, which entered the context it was scheduled in).
-    #[inline]
-    pub fn context_of_caller_no_frame(&self) -> &crate::ScriptExecutionContext {
+    pub fn context_of_caller(&self) -> &crate::ScriptExecutionContext {
         self.current_context()
     }
 

@@ -251,11 +251,11 @@ public:
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, int, std::string_view)> close = nullptr;
     };
 
-    /* Closes all sockets including listen sockets. */
-    TemplatedApp &&close() {
+    /* Closes all sockets including listen sockets. `thread_ends`: see us_socket_group_close_all_ex. */
+    TemplatedApp &&close(int thread_ends) {
         /* close_all() walks head_listen_sockets first, so listeners are closed
          * here without us holding raw pointers to them across loop ticks. */
-        us_socket_group_close_all(httpContext->getSocketGroup());
+        us_socket_group_close_all_ex(httpContext->getSocketGroup(), 1, thread_ends);
         for (us_socket_group_t *g : webSocketGroups) {
             /* Snapshot the list first: end() runs the close handler, which can close other sockets in the group */
             std::vector<us_socket_t *> sockets;
@@ -267,10 +267,10 @@ public:
                     ((WebSocket<SSL, true, int> *) s)->end(1001, "Server closed");
                 }
             }
-            us_socket_group_close_all(g);
+            us_socket_group_close_all_ex(g, 1, thread_ends);
         }
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
-            h2->closeAll();
+            h2->closeAll(thread_ends);
         }
 
         return std::move(*this);

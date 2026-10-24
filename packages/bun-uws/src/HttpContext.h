@@ -1153,6 +1153,11 @@ private:
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
         asyncSocket->uncork();
+        /* No close_notify, which says that the stream is whole, over a response that isn't finished or isn't sent. */
+        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !asyncSocket->hasFullyDrained()) {
+            us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+            return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+        }
         return us_socket_close_now(s);
     }
 

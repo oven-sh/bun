@@ -333,7 +333,7 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
-            context: global_object.bun_vm().context_of_caller_no_frame().id(),
+            context: global_object.bun_vm().context_of_caller().id(),
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),
@@ -477,6 +477,7 @@ pub(crate) struct SocketConfig {
     pub(crate) ipv6_only: bool,
     /// node:net's `pauseOnConnect`: the socket, or every accepted one, opens paused.
     pub(crate) pause_on_connect: bool,
+    /// node:net sets the private `$defaultTimeout` to false, because `net.Socket` keeps its own timer: an accepted socket then starts without the 120 second timeout.
     pub(crate) default_timeout: bool,
 }
 
@@ -553,7 +554,7 @@ impl SocketConfig {
                 reuse_port: generated.reuse_port,
                 ipv6_only: generated.ipv6_only,
                 pause_on_connect: generated.pause_on_connect,
-                default_timeout: generated.default_timeout,
+                default_timeout: true,
             };
         };
         // On any `?` below, `result` drops and releases what it owns — no
@@ -608,8 +609,12 @@ impl SocketConfig {
         global_object: &JSGlobalObject,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
-        SocketOptions::from_js(global_object, opts, |generated| {
+        let mut config = SocketOptions::from_js(global_object, opts, |generated| {
             Self::from_generated(vm, global_object, generated, mode)
-        })
+        })?;
+        config.default_timeout = opts
+            .fast_get(global_object, bun_jsc::BuiltinName::defaultTimeout)?
+            .is_none_or(|value| value.to_boolean());
+        Ok(config)
     }
 }

@@ -1075,7 +1075,7 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
 pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
     let global_object = cx.global();
     // The server is the calling script's.
-    let context = global_object.bun_vm().context_of_caller_no_frame();
+    let context = global_object.bun_vm().context_of_caller();
     let mut config = crate::server::ServerConfig::from_js(
         global_object,
         options.to_js(),

@@ -364,7 +364,8 @@ __attribute__((always_inline)) struct us_socket_t *us_socket_close(struct us_soc
 
 struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
     /* The graceful close sends what it can and may then wait, for the spill or for the peer. A close defers at most once. */
-    us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+    /* It ends with a close_notify, which says that the stream is whole. After a write that fell short the owner may hold the rest. */
+    us_socket_close(s, s->ssl && s->flags.last_write_failed ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
     return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
 }
 

@@ -50,7 +50,7 @@ struct H2App {
 
     void clearRoutes() { http2Context->clearRoutes(); }
     /* GOAWAY + close every connection. */
-    void close() { http2Context->closeAll(); }
+    void close() { http2Context->closeAll(0); }
 };
 
 }

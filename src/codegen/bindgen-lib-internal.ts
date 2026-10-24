@@ -118,7 +118,7 @@ export const kindTests: Record<
   null: { ofValue: value => `${value}.isNull()` },
   boolean: { ofValue: value => `${value}.isBoolean()` },
   number: { ofValue: value => `${value}.isNumber()` },
-  bigint: { ofValue: value => `${value}.isBigInt32()`, ofCell: "cell->isHeapBigInt()" },
+  bigint: { ofCell: "cell->isHeapBigInt()" },
   string: { ofCell: "cell->isString()" },
   stringObject: { ofCell: "cell->inherits<JSC::StringObject>()" },
   array: { ofCell: "cell->inherits<JSC::JSArray>()" },
@@ -379,7 +379,7 @@ export abstract class Type {
 
 // ───────────────────────────── primitives ─────────────────────────────
 
-class PrimitiveType extends Type {
+export class PrimitiveType extends Type {
   readonly idlType: string;
   readonly tsType: string;
   readonly rustName: string;
@@ -398,6 +398,9 @@ class PrimitiveType extends Type {
   }
   protected get cppName(): string {
     return "double";
+  }
+  get cppType(): string {
+    return this.rustName === "bool" ? "bool" : this.cppName;
   }
   toCpp(value: unknown): string {
     if (this.rustName === "bool") {
@@ -730,6 +733,11 @@ export class StringType extends Type {
   get owned(): OwnedStringType {
     return new OwnedStringType(this.idlType, this.valueKinds);
   }
+  /** `bun_core::StringView<'a>` for the duration of the call, for a body that only reads the characters. It takes no reference, and a slice of another string is not copied out of it. */
+  get view(): StringViewType {
+    assert(this.valueKinds !== "any", ".view follows b.string or b.string.allowStringObject");
+    return new StringViewType(this.valueKinds);
+  }
   /** As a result: the JS string, which the body made. */
   get local(): LocalStringResultType {
     assert(this.idlType === "Bun::Bindgen::IDLStrictString", ".local follows b.string");
@@ -768,6 +776,63 @@ export class StringType extends Type {
   }
 }
 
+export class StringViewType extends Type {
+  readonly tsType = "string";
+  readonly #valueKinds: ValueKinds;
+  constructor(valueKinds: ValueKinds) {
+    super();
+    this.#valueKinds = valueKinds;
+  }
+  get idlType(): string {
+    return `Bun::Bindgen::IDLStringView<${this.valueKinds.includes("stringObject")}>`;
+  }
+  get valueKinds(): ValueKinds {
+    return this.#valueKinds;
+  }
+  get borrowsFrame(): boolean {
+    return true;
+  }
+  get borrowedByBody(): boolean {
+    return true;
+  }
+  get rustIsCopy(): boolean {
+    return false;
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternStringView";
+  }
+  rustType(): string {
+    return "bun_core::StringView<'a>";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get(heap)`;
+  }
+}
+
+/** Bytes that C++ has: `std::span<const uint8_t>` there, `&'a [u8]` in Rust. */
+export class ByteSpanType extends Type {
+  readonly idlType = "Bun::Bindgen::IDLByteSpan";
+  readonly tsType = "never";
+  get borrowsFrame(): boolean {
+    return true;
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternBytes";
+  }
+  rustType(): string {
+    return "&'a [u8]";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get_optional(heap).unwrap_or_default()`;
+  }
+}
+
 export class LocalStringResultType extends ResultType {
   readonly tsType = "string";
   readonly refusal = ".local is a result";
@@ -791,6 +856,9 @@ export class OwnedStringType extends StringType {
   }
   get local(): never {
     throw new TypeError(".local follows b.string");
+  }
+  get view(): never {
+    throw new TypeError(".view borrows the string and .owned keeps it");
   }
   get loose(): never {
     throw new TypeError("write b.string.loose.owned");
@@ -816,6 +884,9 @@ export class OwnedUtf8Type extends StringType {
   }
   get owned(): never {
     throw new TypeError("already .owned");
+  }
+  get view(): never {
+    throw new TypeError(".view borrows the string and .owned keeps it");
   }
   get loose(): never {
     throw new TypeError("write b.string.loose.utf8.owned");
@@ -1365,7 +1436,10 @@ export class OptionalType extends Type {
     // `.ifPassed` does not claim `undefined`, so it goes on a type that takes it.
     if (modifier !== "ifPassed") {
       if (inner instanceof AnyType)
-        assert(modifier === "emptyStringAsNull", "b.any already accepts undefined and null");
+        assert(
+          modifier === "emptyStringAsNull" || modifier === "falsyAsNull",
+          "b.any already accepts undefined and null",
+        );
       else assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
     }
     assert(
@@ -2184,8 +2258,8 @@ export class Signature {
   readonly requiredArguments: number;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
-  /** `hasThisValue`: the body is also handed its own JS object. */
-  constructor(options: SignatureOptions, hasThisValue = false) {
+  /** `hasThisValue`: the body is also handed its own JS object. `isProperty`: JS can call it, so each argument is converted from a JS value. */
+  constructor(options: SignatureOptions, hasThisValue = false, isProperty = true) {
     this.length = options.length;
     this.rejects = options.rejects ?? false;
     this.requiredArguments = options.requiredArguments ?? 0;
@@ -2220,6 +2294,7 @@ export class Signature {
         `${name}: a class with a mutates member is not an argument type: it could be the receiver`,
       );
       refuseResultType(name, type);
+      assert(!isProperty || !holdsByteSpan(type), `${name}: b.byteSpan is not a JS value`);
       assert(
         !type.borrowsHeap || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
@@ -2263,6 +2338,10 @@ export class Signature {
 
 function holdsClassWithMutates(type: Type): boolean {
   return (type instanceof ClassType && !type.sharedThis) || type.dependencies.some(holdsClassWithMutates);
+}
+
+function holdsByteSpan(type: Type): boolean {
+  return type instanceof ByteSpanType || type.dependencies.some(holdsByteSpan);
 }
 
 /** The first `ResultType` that `type` is or is made of. */
@@ -2401,6 +2480,43 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   rustName?: string;
   /** Overrides the function's `name`. Only for an `@@` key, where it defaults to `[Symbol.x]`. */
   name?: string;
+  /** Also a member function of the generated C++ class. It takes `globalObject` and a `JSValue` for each argument, and converts them as a call from JS does. */
+  calledFromCpp?: boolean;
+}
+
+/** A member function of the generated C++ class that is defined in Rust. */
+export interface CalledFromCppField {
+  /** Each is `b.any`, `b.bool`, a number or `b.byteSpan`. */
+  args?: Record<string, Type>;
+  /** `b.any`, `b.bool`, a number, or nothing. */
+  returns?: Type;
+  /** With this or `throws`, `globalObject` is the first parameter. */
+  capability?: Capability;
+  /** It returns `b.any`, which is empty if it threw, or nothing. */
+  throws?: boolean;
+}
+
+/** A member function of the generated C++ class that is defined in hand-written C++. */
+export interface CalledFromRustField {
+  /** Each is `b.any`, `b.bool` or a number. */
+  args?: Record<string, Type>;
+  /** `b.any`, or nothing. */
+  returns?: Type;
+  /** `"heap"`: it allocates JS values. `"js"`: it runs JavaScript. With either or `throws`, `globalObject` is the first parameter, and `global` follows `this_value` in Rust. */
+  capability?: Capability;
+  /** The Rust function returns a `JsResult`. */
+  throws?: boolean;
+}
+
+/** A `JSCell` subclass and the header that declares it. */
+export class CellClass {
+  readonly cpp: string;
+  readonly header: string;
+  constructor(cpp: string, header: string) {
+    this.cpp = cpp;
+    this.header = header;
+    assert(/^([A-Za-z_]\w*::)+[A-Z]\w*$/.test(cpp), `b.cell: ${cpp} needs its namespace`);
+  }
 }
 
 export interface GetterField {
@@ -2419,6 +2535,8 @@ export interface GetterField {
   rustName?: string;
   /** Defaults to the class's. */
   configurable?: boolean;
+  /** Defaults to the class's. */
+  enumerable?: boolean;
 }
 
 /** An accessor that reads an internal field in C++, without calling Rust. With `setter: true` it also stores any value assigned to it. */
@@ -2433,10 +2551,20 @@ export interface BuiltinField {
   length: number;
 }
 
+/** An integer that every instance shares, like a WebIDL `const`: a read-only data property. */
+export interface ConstantField {
+  constant: number;
+  /** Defaults to the class's. */
+  configurable?: boolean;
+  /** Defaults to the class's. */
+  enumerable?: boolean;
+}
+
 /** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. */
-export type Field = FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField;
+export type Field =
+  FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | ConstantField;
 export type StaticField =
-  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name">
+  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name" | "calledFromCpp">
   | Omit<GetterField, "cache" | "writable" | "passThis">;
 
 export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "returns"> {
@@ -2465,6 +2593,8 @@ export interface ClassOptions {
   configurable?: boolean;
   /** `false`: native properties are non-enumerable. */
   enumerable?: boolean;
+  /** `false`: native functions are read-only. */
+  writable?: boolean;
   /** `fn memory_cost(&self) -> usize`: the extra memory the struct owns, for a heap snapshot. */
   memoryCost?: boolean;
   /** `fn estimated_size(&self) -> usize`: the same for the GC, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
@@ -2473,12 +2603,19 @@ export interface ClassOptions {
   construct?: ConstructOptions | "illegal";
   /** `Name(..)` without `new`, which otherwise throws. The Rust function is `call`. */
   call?: Omit<SignatureOptions, "rustPath">;
-  /** JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each. */
-  internalFields?: readonly string[];
+  /**
+   * JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each.
+   * In a record each field names its type: `b.any` is what a list declares, and `b.cell("JSC::JSPromise", ..)` makes `m_x` a `WriteBarrier<JSC::JSPromise>` that only hand-written C++ uses.
+   */
+  internalFields?: readonly string[] | Readonly<Record<string, AnyType | CellClass>>;
   /** Properties of the prototype. */
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
   static?: Record<string, StaticField>;
+  /** What C++ calls in Rust and is not a property: `thisObject->x(..)` calls `Name::x(&self, ..)`. */
+  calledFromCpp?: Record<string, CalledFromCppField>;
+  /** What Rust calls in C++: `js_Name::x(this_value, ..)` calls `JSName::x(..)`, which the generated class declares and hand-written C++ defines. */
+  calledFromRust?: Record<string, CalledFromRustField>;
 }
 
 /** The property's name without a leading `_` or `@@`, for use in generated identifiers. */
@@ -2500,6 +2637,18 @@ function memberRustName(name: string): string {
   return rustIdent(name);
 }
 
+/** The declaration in the generated header has these names. */
+function refuseCppMemberFunctionNames(name: string, args: readonly { name: string }[]) {
+  assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: a C++ member function is named in camelCase`);
+  assert(!cppKeywords.has(name), `${name} is a C++ keyword`);
+  for (const arg of args) {
+    assert(/^[a-z][A-Za-z0-9]*$/.test(arg.name), `${name}: ${arg.name}: a C++ parameter is named in camelCase`);
+    assert(!cppKeywords.has(arg.name), `${name}: ${arg.name} is a C++ keyword`);
+  }
+}
+/** Passed between C++ and Rust without conversion. */
+const isPassedAsIs = (type: Type) => type instanceof AnyType || type instanceof PrimitiveType;
+
 export class Method extends Signature {
   readonly name: string;
   readonly rustName: string;
@@ -2509,9 +2658,37 @@ export class Method extends Signature {
   readonly invalidThis: "throw" | "undefined";
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
-  constructor(name: string, options: FunctionField, isStatic = false, sharedThis = false) {
-    super(options, !isStatic && !!options.passThis);
+  readonly calledFromCpp: boolean;
+  /** A property of the prototype or the constructor, so JS can call it. */
+  readonly isProperty: boolean;
+  constructor(name: string, options: FunctionField, isStatic = false, sharedThis = false, isProperty = true) {
+    super(options, !isStatic && !!options.passThis, isProperty);
     this.name = name;
+    this.isProperty = isProperty;
+    this.calledFromCpp = !!options.calledFromCpp;
+    if (this.calledFromCpp) {
+      refuseCppMemberFunctionNames(name, this.args);
+      assert(
+        !this.args.some(arg => arg.type instanceof VariadicType),
+        `${name}: a calledFromCpp function has no .variadic`,
+      );
+      assert(!this.rejects, `${name}: a calledFromCpp function throws, so it has no rejects`);
+    }
+    if (!isProperty) {
+      for (const arg of this.args)
+        assert(
+          isPassedAsIs(arg.type) || arg.type instanceof ByteSpanType,
+          `${name}: ${arg.name} is b.any, b.bool, a number or b.byteSpan`,
+        );
+      assert(
+        this.returns instanceof UnitType || isPassedAsIs(this.returns),
+        `${name}: returns b.any, b.bool, a number or nothing`,
+      );
+      assert(
+        !this.throws || !(this.returns instanceof PrimitiveType),
+        `${name}: a function that throws returns b.any or nothing`,
+      );
+    }
     this.rustName = memberRustName(options.rustName ?? snakeCase(memberIdentifier(name)));
     this.hasDefaultRustName = options.rustName === undefined;
     refuseReentrancy(name, isStatic, sharedThis, this.capability);
@@ -2522,6 +2699,25 @@ export class Method extends Signature {
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);
     this.functionName = options.name;
     assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: name is only for an @@ key`);
+  }
+}
+
+/** One of a class's `calledFromRust`. */
+export class CalledFromRustFunction {
+  readonly name: string;
+  readonly args: readonly { name: string; type: Type }[];
+  readonly returnsValue: boolean;
+  readonly throws: boolean;
+  readonly takesGlobalObject: boolean;
+  constructor(name: string, options: CalledFromRustField) {
+    this.name = name;
+    this.args = Object.entries(options.args ?? {}).map(([name, type]) => ({ name, type }));
+    refuseCppMemberFunctionNames(name, this.args);
+    for (const arg of this.args) assert(isPassedAsIs(arg.type), `${name}: ${arg.name} is b.any, b.bool or a number`);
+    assert(options.returns === undefined || options.returns instanceof AnyType, `${name}: returns b.any or nothing`);
+    this.returnsValue = options.returns !== undefined;
+    this.throws = options.throws ?? false;
+    this.takesGlobalObject = this.throws || (options.capability ?? "none") !== "none";
   }
 }
 
@@ -2544,6 +2740,7 @@ export class Getter {
   readonly passThis: boolean;
   readonly setterCapability: Capability;
   readonly configurable: boolean | undefined;
+  readonly enumerable: boolean | undefined;
   constructor(name: string, options: GetterField, isStatic = false, sharedThis = false) {
     this.name = name;
     this.isStatic = isStatic;
@@ -2581,6 +2778,7 @@ export class Getter {
     this.internalField = options.cache === true ? name : options.cache;
     this.declaresInternalField = options.cache === true;
     this.configurable = options.configurable;
+    this.enumerable = options.enumerable;
   }
 }
 
@@ -2604,7 +2802,21 @@ export class Builtin {
   }
 }
 
-export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | Builtin;
+export class Constant {
+  readonly name: string;
+  readonly value: number;
+  readonly configurable: boolean | undefined;
+  readonly enumerable: boolean | undefined;
+  constructor(name: string, options: ConstantField) {
+    assert(Number.isSafeInteger(options.constant), `${name}: a constant is an integer`);
+    this.name = name;
+    this.value = options.constant;
+    this.configurable = options.configurable;
+    this.enumerable = options.enumerable;
+  }
+}
+
+export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | Builtin | Constant;
 
 /** Stands for the class being declared, in its own signatures. */
 class SelfType extends Type {
@@ -2651,13 +2863,19 @@ export class ClassType extends NamedType {
   readonly staticFunctions: readonly FunctionDefinition[];
   readonly staticGetters: readonly Getter[];
   readonly builtins: readonly Builtin[];
+  readonly constants: readonly Constant[];
+  readonly calledFromCpp: readonly Method[];
+  readonly calledFromRust: readonly CalledFromRustFunction[];
   /** The properties of the prototype and of the constructor, as written. */
   readonly protoMembers: readonly ClassMember[];
   readonly staticMembers: readonly ClassMember[];
   /** The schema's, then those of `cache: true` getters. */
   readonly internalFields: readonly string[];
+  /** The `b.cell` internal fields. */
+  readonly internalFieldClasses: ReadonlyMap<string, CellClass>;
   readonly configurable: boolean;
   readonly enumerable: boolean;
+  readonly writable: boolean;
   readonly prototypeBase: "Error" | undefined;
   /** Index in `AdditionsToGlobalObject::m_classes`. Set by the generator. */
   classIndex = -1;
@@ -2711,7 +2929,8 @@ export class ClassType extends NamedType {
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
         assert(
-          !wellKnownSymbol(name) || !("builtin" in field || "internalField" in field || "getter" in field),
+          !wellKnownSymbol(name) ||
+            !("builtin" in field || "internalField" in field || "getter" in field || "constant" in field),
           `${name}: only a function has an @@ key`,
         );
         if ("builtin" in field) {
@@ -2721,6 +2940,10 @@ export class ClassType extends NamedType {
         if ("internalField" in field) {
           assert(!isStatic, `${name}: an internalField accessor is a property of the prototype`);
           return new InternalFieldAccessor(name, field);
+        }
+        if ("constant" in field) {
+          assert(!isStatic, `${name}: a constant is a property of the prototype`);
+          return new Constant(name, field);
         }
         if ("getter" in field) {
           assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
@@ -2732,6 +2955,10 @@ export class ClassType extends NamedType {
             overloads.every(overload => overload[key] === overloads[0]?.[key]),
             `${name}: every overload gives ${key} the same value`,
           );
+        assert(
+          overloads.length === 1 || !overloads.some(overload => overload.calledFromCpp),
+          `${name}: a calledFromCpp function has no overloads`,
+        );
         assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
         const fn = new FunctionDefinition(
           overloads.map(overload => new Method(name, resolve(overload), isStatic, this.sharedThis)),
@@ -2743,23 +2970,43 @@ export class ClassType extends NamedType {
     this.staticMembers = members(options.static ?? {}, true);
     assert(this.construct || !options.call, "call needs a constructor object: add construct");
     this.call = options.call ? (members({ call: options.call }, true)[0] as FunctionDefinition) : null;
+    this.calledFromCpp = Object.entries(options.calledFromCpp ?? {}).map(
+      ([name, field]) => new Method(name, { ...field, calledFromCpp: true }, false, this.sharedThis, false),
+    );
+    this.calledFromRust = Object.entries(options.calledFromRust ?? {}).map(
+      ([name, field]) => new CalledFromRustFunction(name, field),
+    );
     this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
     this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
     this.builtins = this.protoMembers.filter(member => member instanceof Builtin);
+    this.constants = this.protoMembers.filter(member => member instanceof Constant);
     this.staticFunctions = this.staticMembers.filter(member => member instanceof FunctionDefinition);
     this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
     const { getters } = this;
     assert(this.construct || this.staticMembers.length === 0, "static members need a constructor object");
+    const declaredFields = options.internalFields ?? [];
     this.internalFields = [
-      ...(options.internalFields ?? []),
+      ...(Array.isArray(declaredFields) ? declaredFields : Object.keys(declaredFields)),
       ...getters.filter(getter => getter.declaresInternalField).map(getter => getter.name),
     ];
-    for (const { name, internalField } of [...getters, ...this.internalFieldAccessors])
+    const internalFieldClasses = new Map<string, CellClass>();
+    if (!Array.isArray(declaredFields))
+      for (const [field, type] of Object.entries(declaredFields)) {
+        assert(type instanceof AnyType || type instanceof CellClass, `${field}: an internal field is b.any or b.cell`);
+        if (type instanceof CellClass) internalFieldClasses.set(field, type);
+      }
+    this.internalFieldClasses = internalFieldClasses;
+    for (const { name, internalField } of [...getters, ...this.internalFieldAccessors]) {
       assert(
         internalField === undefined || this.internalFields.includes(internalField),
         `${name}: there is no internal field ${internalField}`,
       );
+      assert(
+        internalField === undefined || !this.internalFieldClasses.has(internalField),
+        `${name}: ${internalField} is a b.cell field, which only C++ reads and writes`,
+      );
+    }
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
     // A `rustName` may be another member's function.
@@ -2774,6 +3021,10 @@ export class ClassType extends NamedType {
       "members' Rust functions",
     );
     assertDistinct(this.internalFields.map(snakeCase), "internal fields");
+    assertDistinct(
+      [...this.methods.filter(method => method.calledFromCpp), ...this.calledFromRust].map(member => member.name),
+      "C++ member functions",
+    );
     assert(
       !this.forBind ||
         (this.internalFieldAccessors.length === 0 && getters.every(getter => !getter.hasSetter && !getter.writable)),
@@ -2781,14 +3032,16 @@ export class ClassType extends NamedType {
     );
     this.configurable = options.configurable ?? false;
     this.enumerable = options.enumerable ?? true;
+    this.writable = options.writable ?? true;
     this.prototypeBase = options.prototypeBase;
   }
   /** The prototype's and the constructor's functions, and `call`. */
   get nativeFunctions(): readonly FunctionDefinition[] {
     return [...this.functions, ...this.staticFunctions, ...(this.call ? [this.call] : [])];
   }
+  /** Every signature that a Rust function implements. */
   get methods(): readonly Method[] {
-    return this.nativeFunctions.flatMap(fn => fn.signatures as readonly Method[]);
+    return [...this.nativeFunctions.flatMap(fn => fn.signatures as readonly Method[]), ...this.calledFromCpp];
   }
   get cpp(): string {
     return `Bun::Bindgen::Generated::JS${this.name}`;

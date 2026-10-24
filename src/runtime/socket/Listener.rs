@@ -322,7 +322,10 @@ impl Listener {
         let secure_ctx = match (prebuilt_ctx, socket_config.ssl.as_ref()) {
             (None, Some(ssl_cfg)) => {
                 let mut create_err = uws::create_bun_socket_error_t::none;
-                let ctx = SSLContextCache::get_or_create(ssl_cfg, &mut create_err);
+                let ctx = SSLContextCache::get_or_create_for_server(
+                    &ssl_cfg.as_usockets(),
+                    &mut create_err,
+                );
                 if ctx.is_none() {
                     return Err(cx.global().throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(

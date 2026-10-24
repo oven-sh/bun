@@ -34,7 +34,7 @@ use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyVal
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
-use crate::webcore::sink::JSSink;
+use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
 use bun_jsc::AbortSignalRef;
@@ -501,7 +501,7 @@ impl FetchTasklet {
             // FetchTasklet ref — `write_end_request` is the canonical release.
             sink.task = None;
             // `detach` may fire the controller's onClose; every terminal path
-            // here has already cleared it, so this just nulls m_sinkPtr.
+            // here has already cleared it, so this just detaches the controller.
             sink.source.detach(&self.global_this);
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
@@ -708,7 +708,7 @@ impl FetchTasklet {
             crate::webcore::readable_stream::NativeWireResult::NotNative => {}
         }
 
-        let assignment_result = JSSink::<FetchRequestBodySink>::assign_to_stream(
+        let assignment_result = ReadableSinkController::assign_to_stream(
             &global_this,
             stream.value,
             core::ptr::NonNull::from(&mut *sink),

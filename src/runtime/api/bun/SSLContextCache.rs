@@ -93,6 +93,17 @@ impl SSLContextCache {
         Self::get_or_create_digest(opts, opts.digest(), err)
     }
 
+    /// For a server. One whose options name files reads them again, whoever else holds a context with the same digest.
+    pub(crate) fn get_or_create_for_server(
+        opts: &uws::SocketContext::BunSocketContextOptions,
+        err: &mut create_bun_socket_error_t,
+    ) -> Option<OwnedSslCtx> {
+        if opts.reads_files() {
+            return opts.create_ssl_context_with_digest(&opts.digest(), err);
+        }
+        Self::get_or_create_opts(opts, err)
+    }
+
     /// Core entry — `d` already computed by caller. `SecureContext.intern()`
     /// threads its WeakGCMap key through here so the SHA-256 runs once total
     /// instead of three times on a miss.

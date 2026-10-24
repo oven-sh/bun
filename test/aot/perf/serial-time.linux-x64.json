@@ -1,7 +1,7 @@
 {
   "all phases": 17986,
   "ReadAndVerify | Read": 393,
-  "ReadAndVerify | AllocateTaggedLayouts": 84,
+  "ReadAndVerify | AllocateTaggedLayouts": 600,
   "ReadAndVerify | CheckTypesAtEntry": 45,
   "ReadAndVerify | Type": 144,
   "ReadAndVerify | NarrowFieldTypes": 241,

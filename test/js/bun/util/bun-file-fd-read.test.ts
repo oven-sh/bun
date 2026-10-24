@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync } from "fs";
-import { isWindows, tempDir } from "harness";
+import { appendFileSync, closeSync, openSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Reading a Bun.file() backed by a file descriptor goes through
@@ -49,4 +49,42 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
     expect(await withFd(path, fd => Bun.file(fd).text())).toBe("");
     expect((await withFd(path, fd => Bun.file(fd).arrayBuffer())).byteLength).toBe(0);
   });
+});
+
+// `.size` and exists() ask for the size of the file behind the descriptor. The answer is not the byte budget of a later read.
+test.each([
+  [".size", (file: Bun.BunFile) => void file.size],
+  ["exists()", (file: Bun.BunFile) => file.exists()],
+])("Bun.file(fd): %s, then the file grows: text() returns all of it", async (_name, ask) => {
+  using dir = tempDir("bun-file-fd-read", { "fd-grow.txt": "0123456789" });
+  const path = join(String(dir), "fd-grow.txt");
+  const fd = openSync(path, "r");
+  try {
+    const file = Bun.file(fd);
+    await ask(file);
+    appendFileSync(path, "abcdefghij");
+    expect(await file.text()).toBe("0123456789abcdefghij");
+  } finally {
+    closeSync(fd);
+  }
+});
+
+test("Bun.stdin.text() returns a file on stdin as it is now, after Bun.stdin.size", async () => {
+  using dir = tempDir("bun-stdin-size", { "in.txt": "0123456789" });
+  const input = join(String(dir), "in.txt");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `void Bun.stdin.size;
+       require("node:fs").appendFileSync(process.env.INPUT, "abcdefghij");
+       process.stdout.write(await Bun.stdin.text());`,
+    ],
+    env: { ...bunEnv, INPUT: input },
+    stdin: Bun.file(input),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0123456789abcdefghij", stderr: "", exitCode: 0 });
 });

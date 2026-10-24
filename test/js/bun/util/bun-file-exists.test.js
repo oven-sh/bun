@@ -30,4 +30,5 @@ test.each([
   expect(await file.exists()).toBeFalse();
   writeFileSync(file.name, "boop");
   expect(await file.exists()).toBeTrue();
+  expect({ size: file.size, text: await file.text() }).toEqual({ size: 4, text: "boop" });
 });

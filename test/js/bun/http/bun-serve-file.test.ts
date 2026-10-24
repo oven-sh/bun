@@ -1,8 +1,9 @@
-import type { Server } from "bun";
+import type { BunFile, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import {
+  appendFileSync,
   closeSync,
   constants,
   openSync,
@@ -1904,6 +1905,69 @@ test.skipIf(!isLinux)("Response(Bun.file(fifo)) ends the body when the EOF arriv
   closeSync(writer);
   const last = await reader.read();
   expect({ first: Buffer.from(first.value!).toString(), done: last.done }).toEqual({ first: "hello", done: true });
+});
+
+// `.size` and exists() ask the file system for the size. The answer is not the length of a later response.
+describe.concurrent("a Bun.file() that was asked for its size before its file changed", () => {
+  const get = async (server: Server<undefined>, init?: RequestInit) => {
+    const response = await fetch(server.url, init);
+    return {
+      status: response.status,
+      contentLength: response.headers.get("content-length"),
+      contentRange: response.headers.get("content-range"),
+      body: await response.text(),
+    };
+  };
+
+  describe.each([
+    [".size", (handle: BunFile) => handle.size],
+    ["await exists()", (handle: BunFile) => handle.exists()],
+  ] as const)("%s", (_ask, ask) => {
+    it.each([
+      ["grows", "1234", (path: string) => appendFileSync(path, "5678"), "12345678"],
+      ["shrinks", "12345678", (path: string) => writeFileSync(path, "12"), "12"],
+    ] as const)("the file %s", async (_change, before, change, after) => {
+      using dir = tempDir("serve-asked-handle", { "file.txt": before });
+      const path = join(String(dir), "file.txt");
+      const handle = Bun.file(path);
+      await ask(handle);
+      change(path);
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(handle) });
+
+      expect({
+        whole: await get(server),
+        head: await get(server, { method: "HEAD" }),
+        range: await get(server, { headers: { Range: "bytes=0-1" } }),
+      }).toEqual({
+        whole: { status: 200, contentLength: String(after.length), contentRange: null, body: after },
+        head: { status: 200, contentLength: String(after.length), contentRange: null, body: "" },
+        range: { status: 206, contentLength: "2", contentRange: `bytes 0-1/${after.length}`, body: after.slice(0, 2) },
+      });
+    });
+
+    it("the file behind a Bun.file(fd) grows", async () => {
+      const before = Buffer.alloc(100_000, "a").toString();
+      const appended = Buffer.alloc(100_000, "b").toString();
+      using dir = tempDir("serve-asked-fd", { "log.txt": before });
+      const path = join(String(dir), "log.txt");
+      const fd = openSync(path, "r");
+      try {
+        const handle = Bun.file(fd);
+        await ask(handle);
+        appendFileSync(path, appended);
+        await using server = Bun.serve({ port: 0, fetch: () => new Response(handle) });
+
+        const { status, contentLength, body } = await get(server);
+        expect({ status, contentLength, same: body === before + appended }).toEqual({
+          status: 200,
+          contentLength: "200000",
+          same: true,
+        });
+      } finally {
+        closeSync(fd);
+      }
+    });
+  });
 });
 
 describe.concurrent("Bun.file() body that ends short of its Content-Length", () => {

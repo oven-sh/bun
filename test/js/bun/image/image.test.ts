@@ -193,6 +193,29 @@ describe("Bun.Image", () => {
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
   });
 
+  // exists(), `.size` and structuredClone() ask the file system for the size. The answer is not the byte budget of the read behind an image.
+  test.each([
+    ["exists()", (file: Bun.BunFile) => file.exists()],
+    [".size", (file: Bun.BunFile) => file.size],
+    ["structuredClone()", (file: Bun.BunFile) => structuredClone(file)],
+  ])("a Bun.file() input that %s asked first is read as the file is now", async (_ask, ask) => {
+    using dir = tempDir("image-asked-bunfile", {});
+    const missing = Bun.file(join(String(dir), "later.png"));
+    await ask(missing);
+    await Bun.write(join(String(dir), "later.png"), cornersPng);
+
+    await Bun.write(join(String(dir), "replaced.png"), cornersPng);
+    const replaced = Bun.file(join(String(dir), "replaced.png"));
+    await ask(replaced);
+    expect(gradientPng.length).toBeGreaterThan(cornersPng.length);
+    await Bun.write(join(String(dir), "replaced.png"), gradientPng);
+
+    expect({ later: await missing.image().metadata(), replaced: await replaced.image().metadata() }).toEqual({
+      later: { width: 4, height: 3, format: "png" },
+      replaced: { width: 16, height: 16, format: "png" },
+    });
+  });
+
   // Store-backed Blob sources are read at terminal time through the Blob's
   // own store dispatch. The Bun.file() test above covers the file store; this
   // covers the S3 download callback (bytes and error arm) and the synchronous

@@ -1033,7 +1033,10 @@ pub(crate) fn bun_resolve_sync_with_strings(
 }
 
 // HOST_EXPORT(Bun__importMetaResolveRealPath, c)
-pub fn bun_import_meta_resolve_real_path(global: &JSGlobalObject, path: &BunString) -> BunString {
+pub(crate) fn bun_import_meta_resolve_real_path(
+    global: &JSGlobalObject,
+    path: &BunString,
+) -> BunString {
     let path = path.to_utf8();
     // A malformed package.json or tsconfig.json next to `path` reports here, not to the VM's log.
     let mut log = bun_ast::Log::default();

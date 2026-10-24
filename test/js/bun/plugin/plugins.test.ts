@@ -425,9 +425,18 @@ describe("module", () => {
     const mod = require("onload-cjs:m2");
     expect(mod).toEqual({ fromOnLoad: true });
   });
+
+  it("module() returning CommonJS source is a module of the Bun.ModuleGraph that imports it", async () => {
+    using graph = new Bun.ModuleGraph();
+    for (const name of ["my-virtual-module-cjs-graph-sync", "my-virtual-module-cjs-graph-async"]) {
+      expect((await graph.import(name)).default).toEqual({ inGraph: true, isCached: true });
+      expect(name in require.cache).toBe(false);
+    }
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/19279
+// https://github.com/oven-sh/bun/issues/21369
 // The reference for each of these is the same text in a file on disk.
 describe.concurrent("CommonJS `contents` from a plugin", () => {
   async function run(files: Record<string, string>, args: string[]) {
@@ -458,92 +467,128 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
     });
   `;
 
-  const object = { a: 1, b: { c: 2 } };
-  // [text, the namespace an import gives, what require() gives]
-  const sources: Record<string, [string, unknown, unknown]> = {
-    "module-exports.js": [`module.exports = { a: 1, b: { c: 2 } };`, { ...object, default: object }, object],
-    "exports-property.js": [`exports.a = 1; exports.b = { c: 2 };`, { ...object, default: object }, object],
-    "calls-require.js": [
-      `exports.sep = require("node:path").posix.sep;`,
-      { default: { sep: "/" }, sep: "/" },
-      { sep: "/" },
-    ],
-    "top-level-this.js": [
-      `this.kind = typeof module;`,
-      { default: { kind: "object" }, kind: "object" },
-      { kind: "object" },
-    ],
-    "es-module-flag.js": [
-      `Object.defineProperty(exports, "__esModule", { value: true }); exports.default = 1; exports.named = 2;`,
-      { default: 1, named: 2 },
-      { default: 1, named: 2 },
-    ],
-    "typescript.cts": [`const a: number = 1; module.exports = { a };`, { a: 1, default: { a: 1 } }, { a: 1 }],
-  };
-  const names = Object.keys(sources);
-  // `served-<name>` is empty on disk. The plugin serves the text of `<name>` for it.
-  const files = Object.fromEntries(
-    names.flatMap(name => [
-      [name, sources[name][0]],
-      [`served-${name}`, ""],
-    ]),
-  );
-  const serves = (callback: "sync" | "pending") => `
-    import { readFileSync } from "node:fs";
-    const serve = ({ path }) => ({
-      contents: readFileSync(path.replace(/served-(?=[\\w.-]+$)/, ""), "utf8"),
-      loader: path.endsWith("ts") ? "ts" : "js",
-    });
-    Bun.plugin({
-      name: "serves",
-      setup(build) {
-        build.onLoad({ filter: /served-[\\w.-]+$/ }, ${callback === "sync" ? "serve" : "async args => (await 0, serve(args))"});
-      },
-    });
-  `;
-  const expected = (column: 1 | 2) => {
-    const each = Object.fromEntries(names.map(name => [name, sources[name][column]]));
-    return { printed: { file: each, plugin: each }, stderr: "", exitCode: 0 };
-  };
-
-  it.each([
-    ["import()", "sync", "{ ...(await import(specifier)) }", 1],
-    ["import() with a promise that is pending", "pending", "{ ...(await import(specifier)) }", 1],
-    ["require()", "sync", "require(specifier)", 2],
-    ["import.meta.require()", "sync", "import.meta.require(specifier)", 2],
-  ] as const)("loads like the same text in a file, by %s", async (_, callback, load, column) => {
-    const entry = `
-      const loaded = { file: {}, plugin: {} };
-      for (const name of ${JSON.stringify(names)}) {
-        for (const [from, specifier] of [["file", "./" + name], ["plugin", "./served-" + name]]) loaded[from][name] = ${load};
-      }
-      console.log(JSON.stringify(loaded));
+  // Each text is the file `<name>`. `served-<name>` is empty on disk, and a plugin serves the text of `<name>` for it.
+  describe.each([undefined, "module"] as const)("loads like the same text in a file, in a package of type %p", type => {
+    const object = { a: 1, b: { c: 2 } };
+    const flagged = { default: 1, named: 2 };
+    // [text, the namespace an import gives, what require() gives]
+    const sources: Record<string, [string, unknown, unknown]> = {
+      "module-exports.js": [`module.exports = { a: 1, b: { c: 2 } };`, { ...object, default: object }, object],
+      "exports-property.js": [`exports.a = 1; exports.b = { c: 2 };`, { ...object, default: object }, object],
+      "calls-require.js": [
+        `exports.sep = require("node:path").posix.sep;`,
+        { default: { sep: "/" }, sep: "/" },
+        { sep: "/" },
+      ],
+      "top-level-this.js": [
+        `this.kind = typeof module;`,
+        { default: { kind: "object" }, kind: "object" },
+        { kind: "object" },
+      ],
+      "es-module-flag.js": [
+        `Object.defineProperty(exports, "__esModule", { value: true }); exports.default = 1; exports.named = 2;`,
+        // In a "type": "module" package an import does not read the flag: the default export is module.exports.
+        type === "module" ? { __esModule: true, default: flagged, named: 2 } : flagged,
+        flagged,
+      ],
+      "already-bundled.js": [
+        "// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {module.exports = { a: 1, b: { c: 2 } };\n})\n",
+        { ...object, default: object },
+        object,
+      ],
+      "as-bytes.js": [`module.exports = { a: 1, b: { c: 2 } };`, { ...object, default: object }, object],
+      "empty.cjs": ["", { default: {} }, {}],
+      "typescript.cts": [`const a: number = 1; module.exports = { a };`, { a: 1, default: { a: 1 } }, { a: 1 }],
+      "jsx.jsx": [`module.exports = { a: 1 };`, { a: 1, default: { a: 1 } }, { a: 1 }],
+      "tsx.tsx": [`const a: number = 1; module.exports = { a };`, { a: 1, default: { a: 1 } }, { a: 1 }],
+    };
+    const names = Object.keys(sources);
+    const files = {
+      ...Object.fromEntries(
+        names.flatMap(name => [
+          [name, sources[name][0]],
+          [`served-${name}`, ""],
+        ]),
+      ),
+      ...(type ? { "package.json": JSON.stringify({ type }) } : {}),
+    };
+    // Without `loader`, the loader is the one of the file extension.
+    const serves = (callback: "sync" | "pending", loader = true) => `
+      import { readFileSync } from "node:fs";
+      import { extname } from "node:path";
+      const loaders = { ".cts": "ts", ".jsx": "jsx", ".tsx": "tsx" };
+      const serve = ({ path }) => {
+        const text = readFileSync(path.replace(/served-(?=[\\w.-]+$)/, ""), "utf8");
+        return {
+          contents: path.endsWith("as-bytes.js") ? new TextEncoder().encode(text) : text,
+          ${loader ? `loader: loaders[extname(path)] ?? "js",` : ""}
+        };
+      };
+      Bun.plugin({
+        name: "serves",
+        setup(build) {
+          build.onLoad({ filter: /served-[\\w.-]+$/ }, ${callback === "sync" ? "serve" : "async args => (await 0, serve(args))"});
+        },
+      });
     `;
-    const result = await run({ ...files, "plugin.mjs": serves(callback), "entry.mjs": entry }, [
-      "--preload",
-      "./plugin.mjs",
-      "entry.mjs",
-    ]);
-    expect(json(result)).toEqual(expected(column));
-  });
+    const expected = (column: 1 | 2) => {
+      const each = Object.fromEntries(names.map(name => [name, sources[name][column]]));
+      return { printed: { file: each, plugin: each }, stderr: "", exitCode: 0 };
+    };
+    // An ES module that has the namespace of every file, or of every served twin, as its default export.
+    const importer = (prefix: string) =>
+      names.map((name, i) => `import * as m${i} from "./${prefix}${name}";\n`).join("") +
+      `export default { ${names.map((name, i) => `${JSON.stringify(name)}: { ...m${i} }`).join(", ")} };\n`;
+    const importers = { "imports-files.mjs": importer(""), "imports-plugin.mjs": importer("served-") };
 
-  it.each(["sync", "pending"] as const)(
-    "loads like the same text in a file, by an import statement (%s callback)",
-    async callback => {
-      const namespaces = (from: string) =>
-        `{ ${names.map((name, i) => `${JSON.stringify(name)}: { ...${from}${i} }`).join(", ")} }`;
-      const entry =
-        names
-          .map((name, i) => `import * as file${i} from "./${name}";\nimport * as plugin${i} from "./served-${name}";\n`)
-          .join("") + `console.log(JSON.stringify({ file: ${namespaces("file")}, plugin: ${namespaces("plugin")} }));`;
-      const result = await run({ ...files, "plugin.mjs": serves(callback), "entry.mjs": entry }, [
+    it.each([
+      ["import()", "sync", true, "{ ...(await import(specifier)) }", 1],
+      ["import() with a promise that is pending", "pending", true, "{ ...(await import(specifier)) }", 1],
+      ["import() with no loader", "sync", false, "{ ...(await import(specifier)) }", 1],
+      ["require()", "sync", true, "require(specifier)", 2],
+      ["require() with no loader", "sync", false, "require(specifier)", 2],
+      ["import.meta.require()", "sync", true, "import.meta.require(specifier)", 2],
+    ] as const)("by %s", async (_, callback, loader, load, column) => {
+      const entry = `
+        const loaded = { file: {}, plugin: {} };
+        for (const name of ${JSON.stringify(names)}) {
+          for (const [from, specifier] of [["file", "./" + name], ["plugin", "./served-" + name]]) loaded[from][name] = ${load};
+        }
+        console.log(JSON.stringify(loaded));
+      `;
+      const result = await run({ ...files, "plugin.mjs": serves(callback, loader), "entry.mjs": entry }, [
+        "--preload",
+        "./plugin.mjs",
+        "entry.mjs",
+      ]);
+      expect(json(result)).toEqual(expected(column));
+    });
+
+    it.each(["sync", "pending"] as const)("by an import statement (%s callback)", async callback => {
+      const entry = `
+        import file from "./imports-files.mjs";
+        import plugin from "./imports-plugin.mjs";
+        console.log(JSON.stringify({ file, plugin }));
+      `;
+      const result = await run({ ...files, ...importers, "plugin.mjs": serves(callback), "entry.mjs": entry }, [
         "--preload",
         "./plugin.mjs",
         "entry.mjs",
       ]);
       expect(json(result)).toEqual(expected(1));
-    },
-  );
+    });
+
+    // The loader fetches what a required ES module imports without a promise.
+    it("by require() of an ES module that imports it", async () => {
+      const entry = `console.log(JSON.stringify({ file: require("./imports-files.mjs").default, plugin: require("./imports-plugin.mjs").default }));`;
+      const result = await run({ ...files, ...importers, "plugin.mjs": serves("sync"), "entry.cjs": entry }, [
+        "--preload",
+        "./plugin.mjs",
+        "entry.cjs",
+      ]);
+      expect(json(result)).toEqual(expected(1));
+    });
+  });
 
   it("runs once, whichever of import() and require() comes first", async () => {
     // Each order for a build.module() name and for a file that onLoad serves.
@@ -719,9 +764,11 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
           imported: (await import("virtual:imported")).default,
           pending: (await import("virtual:pending")).default,
           required: require("virtual:required"),
+          importedByRequired: require("./imports-virtual.mjs").default,
           cached: cached(),
         }))();
       `,
+      "imports-virtual.mjs": `export { default } from "virtual:imported-by-required";`,
       "entry.mjs": `
         const text = ${JSON.stringify(text)};
         Bun.plugin({
@@ -730,6 +777,7 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
             build.module("virtual:imported", () => ({ contents: text, loader: "js" }));
             build.module("virtual:pending", async () => (await 0, { contents: text, loader: "js" }));
             build.module("virtual:required", () => ({ contents: text, loader: "js" }));
+            build.module("virtual:imported-by-required", () => ({ contents: text, loader: "js" }));
           },
         });
         using graph = new Bun.ModuleGraph();
@@ -748,7 +796,8 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
           imported: inGraph,
           pending: inGraph,
           required: inGraph,
-          cached: ["virtual:imported", "virtual:pending", "virtual:required"],
+          importedByRequired: inGraph,
+          cached: ["virtual:imported", "virtual:imported-by-required", "virtual:pending", "virtual:required"],
         },
         host: { imported: { inGraph: false, isCached: true }, cached: ["virtual:imported"] },
       },
@@ -777,6 +826,41 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // An import under an override does not run the text, for a file and for a plugin alike (#45322 changes both).
+  it("loads like a file under an overridden Module.wrapper, by import()", async () => {
+    const text = `globalThis.ran.push(module.filename); module.exports = { wrapped: module.wrapped === true };`;
+    const files = {
+      "file.cjs": text,
+      "entry.cjs": `
+        globalThis.ran = [];
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module("virtual:sync", () => ({ contents: ${JSON.stringify(text)}, loader: "js" }));
+            build.module("virtual:pending", async () => (await 0, { contents: ${JSON.stringify(text)}, loader: "js" }));
+          },
+        });
+        require("node:module").wrapper = ["(function(exports,require,module,__filename,__dirname){module.wrapped = true;", "})"];
+        (async () => {
+          const loaded = {};
+          for (const specifier of ["./file.cjs", "virtual:sync", "virtual:pending"]) {
+            const before = globalThis.ran.length;
+            loaded[specifier] = { namespace: { ...(await import(specifier)) }, ran: globalThis.ran.length - before };
+          }
+          console.log(JSON.stringify(loaded));
+        })();
+      `,
+    };
+    const { printed, stderr, exitCode } = json(await run(files, ["entry.cjs"]));
+    expect({ sync: printed?.["virtual:sync"], pending: printed?.["virtual:pending"], stderr, exitCode }).toEqual({
+      sync: printed?.["./file.cjs"],
+      pending: printed?.["./file.cjs"],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(printed["./file.cjs"]).toBeDefined();
   });
 
   // The plugin's text is a string that becomes script, whichever kind of module it is.
@@ -832,7 +916,6 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
 
   // https://github.com/oven-sh/bun/issues/5044
   // https://github.com/oven-sh/bun/issues/10083
-  // https://github.com/oven-sh/bun/issues/21369
   it("keeps the named exports of a CommonJS package in node_modules that onLoad passes through", async () => {
     const files = {
       "plugin.mjs": passThrough("/\\.[mc]?js$/"),

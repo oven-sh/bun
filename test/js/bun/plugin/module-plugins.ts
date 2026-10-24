@@ -64,6 +64,14 @@ plugin({
       loader: "js",
     }));
 
+    // Says where it ran: in a Bun.ModuleGraph, and as the module that its own require.cache has under its name.
+    const whereItRan = `module.exports = { inGraph: Bun.ModuleGraph.current !== undefined, isCached: require.cache[module.filename] === module };`;
+    builder.module("my-virtual-module-cjs-graph-sync", () => ({ contents: whereItRan, loader: "js" }));
+    builder.module("my-virtual-module-cjs-graph-async", async () => {
+      await Promise.resolve();
+      return { contents: whereItRan, loader: "js" };
+    });
+
     builder.onResolve({ filter: /.*/, namespace: "onload-cjs" }, a => ({ path: a.path, namespace: "onload-cjs-load" }));
     builder.onLoad({ filter: /.*/, namespace: "onload-cjs-load" }, () => ({
       contents: `module.exports = { fromOnLoad: true };`,

@@ -1411,7 +1411,10 @@ impl<'p> Checker<'p, '_> {
         let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
         // The properties of the members themselves. An intersection inside a union contributes a single property.
         let mut constituents: SmallVec<[&Prop; 4]> = SmallVec::new();
-        for &member in self.parts(containing) {
+        // `getPropertyOfType`, where the caller has the property from, looks in the reduced type. For a pattern,
+        // `containing` is the destructured type as it is.
+        let reduced = self.reduced(containing);
+        for &member in self.parts(reduced) {
             let member = self.apparent_type(member);
             let Some((prop, _)) = self.prop_ref(member, name) else {
                 return true;
@@ -1436,7 +1439,7 @@ impl<'p> Checker<'p, '_> {
         let flags = if is_declared_once && constituents.iter().all(is_declared) {
             self.get_declaration_modifier_flags_from_symbol_ex(first, writing)
         } else {
-            self.modifier_flags_of_synthetic_property(containing, &constituents, writing)
+            self.modifier_flags_of_synthetic_property(reduced, &constituents, writing)
         };
         let is_static = flags.contains(Flags::STATIC);
         if is_super {

@@ -629,11 +629,7 @@ Server.prototype[setSecureContextSymbol] = function (options) {
     throw $ERR_INVALID_ARG_VALUE("options", options, "server is not configured for TLS");
   }
 
-  const {
-    processPfxOptions,
-    secureProtocolToVersionRange,
-    tlsStringToProtocolVersion,
-  } = require("internal/tls");
+  const { processPfxOptions, secureProtocolToVersionRange, tlsStringToProtocolVersion } = require("internal/tls");
   // Match Node's synchronous option validation before publishing a replacement.
   require("node:tls").createSecureContext(options);
   const tlsOptions = processPfxOptions(options);

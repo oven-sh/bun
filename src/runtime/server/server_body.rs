@@ -1562,7 +1562,8 @@ where
                 global.throw_invalid_arguments(format_args!("Failed to set the TLS context",))
             );
         }
-        self.config.with_mut(|server_config| server_config.ssl_config = Some(config));
+        self.config
+            .with_mut(|server_config| server_config.ssl_config = Some(config));
         Ok(JSValue::UNDEFINED)
     }
 

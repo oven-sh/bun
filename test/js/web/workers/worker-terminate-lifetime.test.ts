@@ -1305,3 +1305,161 @@ test(
   },
   timeout,
 );
+
+// A worker terminated while JSC is still tier-up compiling (OMG) a large Wasm function: the compile ran
+// to the end on a compiler thread (about 50 s for QuickJS), the worker thread waited for it in ~VM, and
+// the parent process could not exit until then. The compile now stops at its next phase or fixpoint
+// check once the plan is cancelled. The fixture builds one function whose OMG compile takes over 15 s
+// in a release build (4000 locals, a loop with a 1300-way br_table) and calls it in a loop. JSC logs
+// "triggerOMGReplacement" when it queues that compile (BUN_JSC_verboseOSR=1); the test then tells the
+// parent to terminate the worker, and the parent exits.
+test(
+  "worker terminate during a long Wasm tier-up compile does not keep the process alive",
+  async () => {
+    using dir = tempDir("worker-terminate-wasm-tier-up", {
+      "worker.mjs": `
+        function makeModule(locals, cases, touches) {
+          const out = [];
+          const uleb = (v, o = out) => {
+            do {
+              let b = v & 0x7f;
+              v >>>= 7;
+              if (v) b |= 0x80;
+              o.push(b);
+            } while (v);
+          };
+          const section = (id, content) => {
+            out.push(id);
+            uleb(content.length);
+            out.push(...content);
+          };
+          out.push(0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00);
+          section(1, [0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f]); // type 0: (i32) -> i32
+          section(3, [0x01, 0x00]);
+          section(7, [0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00]); // export "run" = func 0
+
+          // local 0: n (param), local 1: i, locals 2..: state
+          const body = [];
+          uleb(1, body);
+          uleb(locals + 1, body);
+          body.push(0x7f);
+          const L = k => 2 + (k % locals);
+          body.push(0x02, 0x40); // block $exit
+          body.push(0x03, 0x40); // loop $top
+          body.push(0x20, 0x01, 0x20, 0x00, 0x4e, 0x0d, 0x01); // if (i >= n) br $exit
+          for (let c = 0; c < cases; c++) body.push(0x02, 0x40); // one block per case
+          body.push(0x20, 0x01, 0x41); // br_table (i & (cases - 1))
+          uleb(cases - 1, body);
+          body.push(0x71, 0x0e);
+          uleb(cases, body);
+          for (let c = 0; c < cases; c++) uleb(c, body);
+          uleb(cases - 1, body);
+          for (let c = 0; c < cases; c++) {
+            body.push(0x0b); // end of case block c: its body follows
+            for (let t = 0; t < touches; t++) {
+              const a = L(c * touches + t);
+              const b = L(c * 7 + t * 13 + 1);
+              body.push(0x20);
+              uleb(a, body);
+              body.push(0x20);
+              uleb(b, body);
+              body.push(0x20, 0x01, 0x6c, 0x6a, 0x21); // local[a] = local[a] + local[b] * i
+              uleb(a, body);
+            }
+            if (c < cases - 1) {
+              body.push(0x0c); // br past the other cases
+              uleb(cases - 2 - c, body);
+            }
+          }
+          body.push(0x20, 0x01, 0x41, 0x01, 0x6a, 0x21, 0x01, 0x0c, 0x00); // i++; br $top
+          body.push(0x0b, 0x0b); // end loop, end $exit
+          body.push(0x20, 0x02, 0x0b); // return local 2
+
+          const code = [];
+          uleb(1, code);
+          uleb(body.length, code);
+          code.push(...body);
+          section(10, code);
+          return { bytes: new Uint8Array(out), bodySize: body.length };
+        }
+
+        const { bytes, bodySize } = makeModule(4000, 1300, 5);
+        // JSC never tiers a function above Options::maximumOMGCandidateCost (100000 bytes) up to OMG.
+        if (bodySize >= 100000) throw new Error("function body too large for OMG tier-up: " + bodySize);
+        const { run } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+        for (;;) run(100000);
+      `,
+      "main.mjs": `
+        const w = new Worker(new URL("./worker.mjs", import.meta.url));
+        w.onerror = e => { console.error(e.message); process.exit(1); };
+        // The test writes a byte once JSC has logged that the OMG compile was queued.
+        for await (const chunk of process.stdin) if (chunk.length) break;
+        w.terminate();
+        console.log("terminated");
+      `,
+    });
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      cwd: String(dir),
+      // verboseOSR logs every JIT decision and logPhaseTimes every finished B3 and Air phase. The DFG
+      // is off so its log (and a debug-only crash in the DFG's logging when the worker is torn down)
+      // stays out of the way, and so that every B3 line comes from the Wasm compile.
+      env: { ...bunEnv, BUN_JSC_verboseOSR: "1", BUN_JSC_logPhaseTimes: "1", BUN_JSC_useDFGJIT: "0" },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = proc.stdout.text();
+
+    // Terminate the worker as soon as the OMG compile of function 0 is queued. The compiler thread picks
+    // it up at once, and the compile takes far longer than the round trip through this test. The
+    // "Total OMG compilation" line at the end proves it: a plan cancelled while still queued never
+    // starts and never logs it, and a compile that ran to the end would have kept the process alive
+    // past the deadline.
+    const trigger = "triggerOMGReplacement for 0";
+    const triggered = Promise.withResolvers<boolean>();
+    // The JIT log runs to megabytes. Keep the last part for the assertions and a failure report.
+    let stderrTail = "";
+    let compiled = false;
+    const stderrDone = (async () => {
+      try {
+        const decoder = new TextDecoder();
+        let sent = false;
+        for await (const chunk of proc.stderr) {
+          stderrTail = (stderrTail + decoder.decode(chunk, { stream: true })).slice(-65536);
+          compiled ||= stderrTail.includes("[B3] Total OMG compilation took");
+          if (sent || !stderrTail.includes(trigger)) continue;
+          sent = true;
+          proc.stdin.write("go");
+          await proc.stdin.end();
+          triggered.resolve(true);
+        }
+        triggered.resolve(false);
+      } catch (error) {
+        triggered.reject(error);
+      }
+    })();
+
+    try {
+      expect(await Promise.race([triggered.promise, proc.exited])).toBe(true);
+
+      // The process must exit soon after the terminate: the worker's ~VM waits only until the cancelled
+      // compile reaches its next check. Without the fix it waits for the whole compile: 17 s in release
+      // and a few times that under ASAN, so a debug build is the only one that needs the long window.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<"did not exit">(resolve => {
+        timer = setTimeout(() => resolve("did not exit"), isDebug ? 60_000 : 10_000);
+      });
+      const exited = await Promise.race([proc.exited, deadline]);
+      clearTimeout(timer);
+      if (exited === "did not exit") proc.kill();
+      await stderrDone;
+      if (exited !== 0) console.error(stderrTail);
+      expect({ stdout: await stdout, exited, compiled }).toEqual({ stdout: "terminated\n", exited: 0, compiled: true });
+    } finally {
+      proc.kill();
+      await stderrDone.catch(() => {});
+    }
+  },
+  slow ? 120_000 : 40_000,
+);

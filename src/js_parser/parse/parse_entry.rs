@@ -1097,7 +1097,11 @@ impl<'a> Parser<'a> {
         // because we only do tree-shaking on top-level statements and lowering
         // a top-level "using" declaration moves all top-level statements into a
         // nested scope.
-        if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
+        if !p.options.tree_shaking
+            || p.will_wrap_module_in_try_catch_for_using
+            // The REPL transform moves all top-level statements into a function.
+            || p.options.repl_mode
+        {
             // When tree shaking is disabled, everything comes in a single part
             p.append_part(&mut parts, stmts)?;
         } else {

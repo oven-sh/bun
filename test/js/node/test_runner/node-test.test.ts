@@ -388,7 +388,7 @@ describe("node:test", () => {
         for await (const { type, data } of run({ files: [process.env.FIXTURE], only: true })) {
           if (type === "test:stdout") console.log("child " + data.message.trimEnd());
           if (type !== "test:pass" && type !== "test:fail") continue;
-          const directive = data.skip !== undefined ? " # SKIP" : data.todo !== undefined ? " # TODO" : "";
+          const directive = data.skip !== undefined ? " # skip" : data.todo !== undefined ? " # todo" : "";
           if (data.details.type === "test" || directive !== "") console.log(type, data.details.type, data.name + directive);
         }
       })();
@@ -414,16 +414,16 @@ describe("node:test", () => {
             "test:pass test only option",
             "test:pass test it.only alias",
             "test:pass test modifier beats only false",
-            "test:pass test only todo # TODO",
-            "test:pass test only skip # SKIP",
+            "test:pass test only todo # todo",
+            "test:pass test only skip # skip",
             "test:pass test inherits",
             "test:pass test inherits",
             "test:pass test narrows",
             "test:pass test focused child",
-            "test:pass test marked skip # SKIP",
-            "test:pass test marked todo # TODO",
+            "test:pass test marked skip # skip",
+            "test:pass test marked todo # todo",
           ],
-          suites: ["test:pass suite marked skipped suite # SKIP"],
+          suites: ["test:pass suite marked skipped suite # skip"],
           stderr: "",
           exitCode: 0,
         });
@@ -498,11 +498,11 @@ describe("node:test", () => {
       expect((await run([bunExe(), fixture("35-only-diagnostic.mjs")])).exitCode).toBe(0);
     });
     test.todo("run({ only: true }) reports no directive for a suite that is not selected", async () => {
-      // Bun also reports `todo suite # TODO` and `nested skipped suite in a narrowed suite # SKIP`.
+      // Bun also reports `todo suite # todo` and `nested skipped suite in a narrowed suite # skip`.
       expect((await runEvents("39-only-directives.js")).suites).toEqual([
-        "test:pass suite marked skipped suite # SKIP",
-        "test:pass suite nested skipped suite # SKIP",
-        "test:pass suite nested todo suite # TODO",
+        "test:pass suite marked skipped suite # skip",
+        "test:pass suite nested skipped suite # skip",
+        "test:pass suite nested todo suite # todo",
       ]);
     });
   });

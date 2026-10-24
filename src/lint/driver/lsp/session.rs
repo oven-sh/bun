@@ -44,6 +44,8 @@ pub(crate) fn with_session<R>(
     environment: &Environment,
     then: impl FnOnce(&Session) -> R,
 ) -> R {
+    // The thread of a root is a plain one: the stack bounds of the recursion guard are set here.
+    bun_core::Output::Source::configure_thread();
     let registry = Registry::new(&[
         bun_lint_eslint::RULES,
         bun_lint_typescript::RULES,
@@ -110,7 +112,7 @@ impl Session<'_> {
             return false;
         };
         self.loader.wants_types(&loaded, &linted.config)
-            && linted.config.has_enabled(|it| it.requires_types)
+            && linted.config.has_enabled(|it| it.triggers_type_check())
     }
 
     /// `None`: the file at `path` is not one to lint.

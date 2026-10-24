@@ -304,6 +304,19 @@ pub(crate) fn shell_cmd_from_js(
 
 const MAX_TEMPLATE_ARRAY_DEPTH: u32 = 100;
 
+/// A C open stops at a NUL byte, so a path that holds one names another file.
+pub(crate) fn throw_path_with_nul(global: &JSGlobalObject, path: &[u8]) -> jsc::JsError {
+    global
+        .err(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!(
+                "The shell argument must be a string without null bytes. Received {}",
+                bun_core::fmt::quote(path)
+            ),
+        )
+        .throw()
+}
+
 pub(crate) fn handle_template_value(
     global: &JSGlobalObject,
     template_value: JSValue,
@@ -340,12 +353,7 @@ pub(crate) fn handle_template_value(
 
                         // Check for null bytes in path (security: prevent null byte injection)
                         if strings::index_of_char(path, 0).is_some() {
-                            return Err(global
-                                .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
-                                    "The shell argument must be a string without null bytes. Received {}",
-                                    bun_core::fmt::quote(path)
-                                ))
-                                .throw());
+                            return Err(throw_path_with_nul(global, path));
                         }
 
                         if !builder.append_utf8::<true>(path)? {

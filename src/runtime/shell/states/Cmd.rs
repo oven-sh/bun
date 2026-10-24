@@ -783,9 +783,12 @@ impl Cmd {
                     let body = req.get_body_value().use_as_any_blob();
                     // As `Stdio::Path` it would get the flags of `Bun.spawn`, not of the operator.
                     if let Some(path) = file_path(&body) {
-                        let mut path_buf = path.to_vec();
-                        path_buf.push(0);
-                        let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
+                        let Ok(path_z) = bun_sys::to_posix_path(path) else {
+                            return Err(crate::shell::shell_body::throw_path_with_nul(
+                                global, path,
+                            ));
+                        };
+                        let path = bun_core::ZStr::from_cstr(&path_z);
                         return Ok(Self::open_redirect_path(interp, this, stdio, flags, path));
                     }
                     let mut body = Some(body);

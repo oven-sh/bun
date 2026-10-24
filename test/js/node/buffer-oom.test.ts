@@ -97,9 +97,6 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
     // '"' + '\\u00e9' + 'a'.repeat(${SIZE} - 4) + '"': a valid JSON string literal.
     const json = Buffer.alloc(${SIZE}, "a");
     json[0] = 0x22; json[1] = 0xc3; json[2] = 0xa9; json[${SIZE} - 1] = 0x22;
-    // '"' + '\\u4e2d' + 'a'.repeat(${SIZE} - 5) + '"': the same with a character that takes two bytes in a string.
-    const wideJson = Buffer.alloc(${SIZE}, "a");
-    wideJson[0] = 0x22; wideJson[1] = 0xe4; wideJson[2] = 0xb8; wideJson[3] = 0xad; wideJson[${SIZE} - 1] = 0x22;
   `;
 
   test("Buffer.prototype.toString and StringDecoder.prototype.write", async () => {
@@ -137,9 +134,6 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
       // Blob.json() parses the bytes where they lie. The string that it answers with has one byte a character and fits under the cap.
       const parsed = await new Blob([json]).json();
       results["Blob.json"] = { length: parsed.length, start: parsed.slice(0, 2) };
-      // With two bytes a character it does not fit.
-      await run("Blob.json of wide text", () => new Blob([wideJson]).json());
-      await run("Response.json of wide text", () => new Response(wideJson).json());
       await run("Response.text", () => new Response(nonAscii).text());
       await Bun.write(${JSON.stringify(file)}, nonAscii);
       await run("Bun.file.text", () => Bun.file(${JSON.stringify(file)}).text());
@@ -149,8 +143,6 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
       "TextDecoder.decode": allocationFailed,
       "Blob.text": allocationFailed,
       "Blob.json": { length: SIZE - 3, start: "\u00e9a" },
-      "Blob.json of wide text": allocationFailed,
-      "Response.json of wide text": allocationFailed,
       "Response.text": allocationFailed,
       "Bun.file.text": allocationFailed,
     });

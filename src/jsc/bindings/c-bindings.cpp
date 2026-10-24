@@ -290,7 +290,12 @@ extern "C" void windows_enable_stdio_inheritance()
 // close_range is glibc > 2.33, which is very new
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
+#if defined(__ANDROID__)
+    // Android kernels < 5.9 lack close_range
+    return -1;
+#else
     return syscall(__NR_close_range, start, end, flags);
+#endif
 }
 
 #if CPU(X86_64) || CPU(ARM64)

@@ -1,5 +1,6 @@
 use core::mem::size_of;
 
+use super::*;
 use crate::api::server::html_bundle::HTMLBundleRoute;
 use crate::bake::dev_server::{
     DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
@@ -172,7 +173,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             client_components_removed: _,
             failures_removed: _,
             client_components_affected: _,
-            framework_client_entries_affected: _,
             failures_added: _,
         } = &dev.incremental_result;
         // .had_adjusted_edges (bool — no heap)
@@ -186,9 +186,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         other_bytes += memory_cost_array_list(&dev.incremental_result.failures_removed);
         // .client_components_affected
         other_bytes += memory_cost_array_list(&dev.incremental_result.client_components_affected);
-        // .framework_client_entries_affected
-        other_bytes +=
-            memory_cost_array_list(&dev.incremental_result.framework_client_entries_affected);
         // .failures_added
         other_bytes += memory_cost_array_list(&dev.incremental_result.failures_added);
         // .html_routes_soft_affected
@@ -222,11 +219,13 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for failure in dev.bundling_failures.values() {
         other_bytes += failure.data.len();
     }
-    // All entries are owned by the bundler arena, not DevServer, except for `requests`
+    // All entries are owned by the bundler arena, not DevServer, except for the request lists
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
         // `SinglyLinkedList::len()` is an O(N) walk; only the node count matters.
         other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
+        other_bytes += memory_cost_array_list(&bundle.script_requests);
+        other_bytes += bundle.script_requests.len() * size_of::<DeferredScriptRequest>();
     }
     // .next_bundle
     {
@@ -238,7 +237,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .testing_batch_events
     match &dev.testing_batch_events {
         TestingBatchEvents::Disabled => {}
-        TestingBatchEvents::Enabled(batch) => {
+        TestingBatchEvents::Enabled(batch) | TestingBatchEvents::ReleaseAfterBundle(batch) => {
             other_bytes += memory_cost_array_hash_map(&batch.entry_points.set);
         }
         TestingBatchEvents::EnableAfterBundle => {}
@@ -280,3 +279,105 @@ pub(crate) fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -
     // hashes), so the footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
     map.capacity() * (size_of::<K>() + size_of::<V>() + size_of::<u32>())
 }
+
+impl DevServer {
+    pub(super) fn print_memory_line(&self) {
+        if !bun_output::scope_is_visible!(DevServer) {
+            return;
+        }
+        bun_core::pretty_errorln!(
+            "<d>DevServer tracked {}, process: {}<r>",
+            bun_core::fmt::size(self.memory_cost(), Default::default()),
+            bun_core::fmt::size(
+                sys::self_process_memory_usage().unwrap_or(0),
+                Default::default()
+            ),
+        );
+    }
+}
+
+impl DevServer {
+    pub(crate) fn emit_visualizer_message_if_needed(&mut self) {}
+
+    #[inline]
+    pub(super) fn timer_heap(&self) -> &mut crate::timer::All {
+        crate::jsc_hooks::timer_all_mut()
+    }
+
+    pub(crate) fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
+        // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
+        let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
+        debug_assert!(dev.magic == Magic::Valid);
+        dev.emit_memory_visualizer_message();
+        dev.memory_visualizer_timer.state = EventLoopTimerState::FIRED;
+        let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
+        dev.timer_heap().update(timer, &next);
+    }
+
+    pub(crate) fn emit_memory_visualizer_message_if_needed(&mut self) {}
+
+    pub(crate) fn emit_memory_visualizer_message(&mut self) {
+        debug_assert!(self.emit_memory_visualizer_events > 0);
+
+        let mut payload: Vec<u8> = Vec::with_capacity(65536);
+        payload.push(MessageId::MemoryVisualizer.char());
+        if self.write_memory_visualizer_message(&mut payload).is_err() {
+            return; // drop packet
+        }
+        self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::BINARY);
+    }
+
+    pub(crate) fn write_memory_visualizer_message(
+        &self,
+        payload: &mut Vec<u8>,
+    ) -> crate::Result<()> {
+        let cost = self.memory_cost_detailed();
+        let system_total = crate::node::os::totalmem();
+        // Wire format: 10 contiguous native-endian u32s. `[u32; 10]` has no
+        // padding and is `bytemuck::Pod`, so the byte view is safe.
+        let fields: [u32; 10] = [
+            /* incremental_graph_client */ cost.incremental_graph_client as u32,
+            /* incremental_graph_server */ cost.incremental_graph_server as u32,
+            /* js_code */ cost.js_code as u32,
+            /* source_maps */ cost.source_maps as u32,
+            /* assets */ cost.assets as u32,
+            /* other */ cost.other as u32,
+            // No runtime allocation-scope tracker exists; report 0.
+            /* devserver_tracked */
+            0,
+            /* process_used */ sys::self_process_memory_usage().unwrap_or(0) as u32,
+            /* system_used */ system_total.saturating_sub(crate::node::os::freemem()) as u32,
+            /* system_total */ system_total as u32,
+        ];
+        payload.extend_from_slice(bytemuck::bytes_of(&fields));
+
+        // SourceMapStore is easy to leak refs in.
+        {
+            let keys = self.source_maps.entries.keys();
+            let values = self.source_maps.entries.values();
+            payload.extend_from_slice(&u32::try_from(keys.len()).expect("int cast").to_le_bytes());
+            for (key, value) in keys.iter().zip(values) {
+                debug_assert!(value.ref_count > 0);
+                payload.extend_from_slice(&key.get().to_ne_bytes());
+                payload.extend_from_slice(&value.ref_count.to_le_bytes());
+                match self.source_maps.locate_weak_ref(*key) {
+                    Some(e) => {
+                        payload.extend_from_slice(&e.r#ref.count.to_le_bytes());
+                        // floats are easier to decode in JS
+                        payload.extend_from_slice(&(e.r#ref.expire as f64).to_ne_bytes());
+                    }
+                    None => {
+                        payload.extend_from_slice(&0u32.to_le_bytes());
+                    }
+                }
+                payload.extend_from_slice(&(value.files.len() as u32).to_le_bytes());
+                payload.extend_from_slice(&value.overlapping_memory_cost.to_le_bytes());
+            }
+        }
+        Ok(())
+    }
+}
+
+// Note: MessageId/IncomingMessageId/ConsoleLogKind/HmrTopic are defined
+// once in `crate::bake::dev_server` and re-exported here.
+pub(super) use crate::bake::dev_server::{HmrTopic, MessageId};

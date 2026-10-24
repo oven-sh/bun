@@ -9,7 +9,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
-pub struct Script {
+pub(crate) struct Script {
     pub(crate) base: Base,
     /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
     /// The arena outlives every state node (it's dropped only when the
@@ -20,7 +20,7 @@ pub struct Script {
     pub(crate) state: ScriptState,
 }
 
-pub enum ScriptState {
+pub(crate) enum ScriptState {
     Normal { idx: usize },
 }
 

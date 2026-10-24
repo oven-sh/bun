@@ -262,6 +262,14 @@ void Performance::unregisterPerformanceObserver(PerformanceObserver& observer)
     m_observers.remove(&observer);
 }
 
+void Performance::disconnectObserversOf(const ScriptExecutionContext& context)
+{
+    for (auto& observer : copyToVector(m_observers)) {
+        if (observer->scriptExecutionContext() == &context)
+            observer->disconnect();
+    }
+}
+
 void Performance::queueEntry(PerformanceEntry& entry)
 {
     bool shouldScheduleTask = false;

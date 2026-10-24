@@ -14,6 +14,7 @@ use super::client_context::ClientContext;
 use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
+use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
 use crate::{HTTPClient, HeaderResult, Protocol};
@@ -33,6 +34,8 @@ pub struct ClientSession {
     pub(crate) hostname: Vec<u8>,
     pub(crate) port: u16,
     pub(crate) reject_unauthorized: bool,
+    /// The fetch session whose requests may share this connection.
+    pub(crate) pool_id: u64,
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
     pub(crate) registry_index: u32,
@@ -50,6 +53,7 @@ impl ClientSession {
         hostname: Vec<u8>,
         port: u16,
         reject_unauthorized: bool,
+        pool_id: u64,
     ) -> *mut ClientSession {
         bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
@@ -57,6 +61,7 @@ impl ClientSession {
             hostname,
             port,
             reject_unauthorized,
+            pool_id,
             handshake_done: false,
             closed: false,
             registry_index: u32::MAX,
@@ -64,9 +69,16 @@ impl ClientSession {
         }))
     }
 
-    pub(crate) fn matches(&self, hostname: &[u8], port: u16, reject_unauthorized: bool) -> bool {
+    pub(crate) fn matches(
+        &self,
+        hostname: &[u8],
+        port: u16,
+        reject_unauthorized: bool,
+        pool_id: u64,
+    ) -> bool {
         !self.closed
             && self.port == port
+            && self.pool_id == pool_id
             && self.reject_unauthorized == reject_unauthorized
             && strings::eql_long(&self.hostname, hostname, true)
     }
@@ -82,6 +94,19 @@ impl ClientSession {
     fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
         // Route through the shared [`quic_socket_mut`] accessor; see INVARIANT.
         self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
+    }
+
+    /// `on_conn_close` runs from a later engine tick, so the registry is not
+    /// touched from here.
+    pub(crate) fn close_if_idle(&mut self, pool_id: u64) {
+        if self.pool_id != pool_id || self.closed || !self.pending.is_empty() {
+            return;
+        }
+        if let Some(qs) = self.qsocket_mut() {
+            // No later request may pick a connection that is going away.
+            self.closed = true;
+            qs.close();
+        }
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
@@ -122,7 +147,11 @@ impl ClientSession {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) -> bool {
+    pub(crate) fn stream_body_by_http_id(
+        &mut self,
+        async_http_id: u32,
+        message: WriteMessageType,
+    ) -> bool {
         for &stream_ptr in self.pending.iter() {
             let stream = stream_mut(stream_ptr);
             let Some(client) = stream.client else {
@@ -133,7 +162,11 @@ impl ClientSession {
                 continue;
             }
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
-                s.ended = ended;
+                if message == WriteMessageType::LengthMismatch {
+                    self.fail(stream_ptr, crate::Error::RequestBodyLengthMismatch);
+                    return true;
+                }
+                s.ended = message == WriteMessageType::End;
                 if let Some(qs) = stream.qstream_mut() {
                     encode::drain_send_body(stream, qs);
                 }
@@ -220,10 +253,10 @@ impl ClientSession {
 
     /// A stream closed before any response headers arrived. If the request
     /// hasn't been retried yet and the body wasn't a JS stream (which may
-    /// already be consumed), re-enqueue it on a fresh session — this is the
-    /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
-    /// port-reuse race where a pooled session goes stale between the
-    /// `matches()` check and the first stream open.
+    /// already be consumed), re-enqueue it — this is the standard h2/h3 client
+    /// behavior for the GOAWAY / stateless-reset / port-reuse race where a
+    /// pooled session goes stale between the `matches()` check and the first
+    /// stream open.
     pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
         // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
@@ -236,7 +269,10 @@ impl ClientSession {
         // `Stream.client` is a live backref while attached; `ParentRef::from`
         // (NonNull → shared deref) reads the Copy `flags` field without
         // forming `&mut HTTPClient` across the `detach()` below.
-        if bun_ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
+        let client_ref = bun_ptr::ParentRef::from(client_ptr);
+        // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
+        let replay_safe = !st.headers_sent || st.peer_rejected || client_ref.method.is_idempotent();
+        if client_ref.flags.h3_retried || st.is_streaming_body || !replay_safe {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {
@@ -244,9 +280,12 @@ impl ClientSession {
         };
         // Same backref as above; short-lived write before detach().
         client_mut(client_ptr).flags.h3_retried = true;
-        // The old session is dead from our perspective; make sure connect()
-        // can't pick it again.
-        self.closed = true;
+        // The end of one stream leaves the connection usable, and connect() may
+        // pick it again. It must not if the connection is going, or if the
+        // origin rejected the request, which it does when it shuts down.
+        if st.peer_rejected || !self.qsocket_mut().is_some_and(|qs| qs.is_connected()) {
+            self.closed = true;
+        }
         let port = self.port;
         let host: Vec<u8> = self.hostname.clone();
         bun_core::scoped_log!(

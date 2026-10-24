@@ -337,12 +337,27 @@ show(new A().all);`,
     `class A { @d "a b" = 1; @d 1 = 2; @d "c" = 3; @d 1.5 = 4; @d 0x10 = 5; "x y" = 6; 2 = 7; }
 show(Object.entries(new A()).join(";"));`,
   ),
-  ...defineAndAssign(
-    "fields in quotes named like built-in properties",
-    `try { class A { @d static "name" = "n"; } show(A.name); } catch (e: any) { log(e.name); }
+  ...expecting(
+    defineAndAssign(
+      "fields in quotes named like built-in properties",
+      `try { class A { @d static "name" = "n"; } show(A.name); } catch (e: any) { log(e.name); }
 try { class A { @d static "length" = 5; } show(A.length); } catch (e: any) { log(e.name); }
 class B { @d "__proto__" = 1; }
 show(Object.keys(new B()), Object.getPrototypeOf(new B()) === B.prototype);`,
+    ),
+    {
+      assign: [
+        `n["name"] design:type = Object`,
+        `n["name"] @d`,
+        `"n"`,
+        `A["length"] design:type = Object`,
+        `A["length"] @d`,
+        "5",
+        `B.prototype["__proto__"] design:type = Object`,
+        `B.prototype["__proto__"] @d`,
+        "[] true",
+      ],
+    },
   ),
   ...defineAndAssign(
     "declare fields",
@@ -408,10 +423,17 @@ class A { @seen static a = 1; @seen static b?: number; @seen c = 2; @seen m() {}
     "static field that throws",
     `try { class A { @d static a = 1; @d static b = (() => { throw new Error("no"); })(); @d static c = (log("c"), 3); } } catch (e: any) { log(e.message); }`,
   ),
-  ...defineAndAssign(
-    "static fields named like those of a function",
-    `try { class A { @d static name = "n"; } show(A.name, Object.getOwnPropertyDescriptor(A, "name")?.writable); } catch (e: any) { log(e.name); }
-try { class A { static length = 2; } show(A.length); } catch (e: any) { log(e.name); }`,
+  ...expecting(
+    defineAndAssign(
+      "static fields named like those of a function",
+      `try { class A { @d static name = "n"; } show(A.name, Object.getOwnPropertyDescriptor(A, "name")?.writable); } catch (e: any) { log(e.name); }
+try { class A { static length = 2; } show(A.length); } catch (e: any) { log(e.name); }
+class Base { static set other(v: string) { log("set other " + v); } }
+class B extends Base { static name = "b"; static other = B.name; }
+class C { static name: string; static length?: number; }
+show(C.name, C.length);`,
+    ),
+    { assign: [`n["name"] design:type = Object`, `n["name"] @d`, `"n" true`, "2", "set other b", `"C" 0`] },
   ),
   ...defineAndAssign(
     "class without a name",

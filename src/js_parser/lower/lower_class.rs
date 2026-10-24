@@ -49,6 +49,16 @@ fn is_private(prop: &G::Property) -> bool {
     )
 }
 
+/// A class has its own `name` and `length`, and `this.name = value` throws because they are read-only.
+fn initializes_name_or_length_of_class(prop: &G::Property) -> bool {
+    is_static(prop)
+        && prop.initializer.is_some()
+        && matches!(
+            prop.key.map(|key| key.data),
+            Some(js_ast::ExprData::EString(s)) if s.eql_comptime(b"name") || s.eql_comptime(b"length")
+        )
+}
+
 /// True if the class evaluates the key of `prop`. `lower_class` removes a field that is there for its decorators.
 fn has_evaluated_key(prop: &G::Property) -> bool {
     prop.flags.contains(Flags::Property::IsComputed)
@@ -250,6 +260,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
         let can_lower_field = |prop: &G::Property| {
             is_field(prop)
+                && !initializes_name_or_length_of_class(prop)
                 && (!is_private(prop) || (!is_static(prop) && has_initialized_public_field))
         };
         let key_to_hoist = |prop: &G::Property| {

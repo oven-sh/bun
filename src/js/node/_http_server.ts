@@ -1488,7 +1488,8 @@ function shouldQueueResponseWrite(response) {
   return !!(
     socket &&
     (hasResponseSocketWork(socket) || (response[kCorked] && willBeChunked(response))) &&
-    NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket &&
+    NodeHTTPServerSocket &&
+    socket instanceof NodeHTTPServerSocket &&
     response[kHandle]
   );
 }
@@ -4409,7 +4410,6 @@ ServerResponse.prototype.flushHeaders = function () {
   }
 };
 const ServerResponsePrototypeFlushHeaders = ServerResponse.prototype.flushHeaders;
-
 
 function updateHasBody(response, statusCode) {
   // RFC 2616, 10.2.5:

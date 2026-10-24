@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeMajorVersion, runtimesWithNode } from "harness";
+import { bunEnv, bunExe, runtimesWithNode } from "harness";
 
 async function responseCorkOracle(mode: string) {
   const assert = require("node:assert/strict");
@@ -498,8 +498,7 @@ async function responseCorkOracle(mode: string) {
   console.log("ok");
 }
 
-// Node 26 changed cross-cork chunked header flushing; these regressions target Node 24's contract.
-const corkRuntimes = runtimesWithNode(24).filter(([runtime]) => runtime === "bun" || nodeMajorVersion() === 24);
+const corkRuntimes = runtimesWithNode(24);
 describe.each(corkRuntimes)("response cork Node oracle (%s)", (_runtime, executable) => {
   for (const mode of [
     "pipeline",

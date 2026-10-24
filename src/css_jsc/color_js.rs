@@ -229,8 +229,7 @@ pub(crate) fn color<'a>(
             // MimallocArena::new() calls mi_heap_new(), so defer creation to the
             // paths that actually allocate.
             let arena = Arena::new();
-            // Unlike CssColor::parse alone, this rejects "red;background:url(x)".
-            css::parse_utility::parse_string(&arena, text, CssColor::parse)
+            CssColor::parse_string(&arena, text)
         }
     };
     let heap = &cx.heap;

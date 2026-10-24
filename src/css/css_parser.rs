@@ -2995,7 +2995,7 @@ pub enum ParseUntilErrorBehavior {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub struct ParserOpts: u8 {
+    pub(crate) struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
         /// Makes `TokenList::parse` keep `url()` as a raw token instead of creating an import record.
         const RAW_URL_TOKENS = 0b10;
@@ -3133,7 +3133,7 @@ impl<'a> Parser<'a> {
     /// Pass in `import_records` to track imports (`@import` rules, `url()`
     /// tokens). If this is `None`, calling `Parser::add_import_record` will
     /// error.
-    pub fn new(
+    pub(crate) fn new(
         input: &'a mut ParserInput<'a>,
         import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
         flags: ParserOpts,
@@ -3853,7 +3853,7 @@ impl<'a> ParserInput<'a> {
     /// PORTING.md §Forbidden: do not fabricate `&'a Bump` from a boxed field
     /// via raw-pointer cast; the previous self-referential `owned_arena` hack
     /// was removed. Callers now pass `&'a Bump` explicitly.
-    pub fn new(code: &'a [u8], arena: &'a Bump) -> ParserInput<'a> {
+    pub(crate) fn new(code: &'a [u8], arena: &'a Bump) -> ParserInput<'a> {
         ParserInput {
             tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,
@@ -5959,11 +5959,11 @@ pub mod serializer {
 pub mod parse_utility {
     use super::*;
 
-    /// Parse a whole string as one value; anything left after it is a parse error.
+    /// Parse a value from a string.
     ///
     /// NOTE: `input` should live as long as the returned value. Otherwise,
     /// strings in the returned parsed value will point to undefined memory.
-    pub fn parse_string<T>(
+    pub(crate) fn parse_string<T>(
         arena: &Bump,
         input: &[u8],
         parse_one: fn(&mut Parser) -> CssResult<T>,

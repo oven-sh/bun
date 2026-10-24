@@ -398,8 +398,15 @@ impl Default for CssColor {
 }
 
 impl CssColor {
+    /// Parse a whole string as one `<color>`; anything left after it is a parse error.
+    pub fn parse_string(arena: &Arena, string: &[u8]) -> CssResult<CssColor> {
+        let mut input = css::ParserInput::new(string, arena);
+        let mut parser = css::Parser::new(&mut input, None, css::ParserOpts::default(), None);
+        parser.parse_entirely((), |(), parser| CssColor::parse(parser))
+    }
+
     /// Parse a CSS `<color>` from the parser cursor.
-    pub fn parse(input: &mut css::Parser) -> CssResult<CssColor> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<CssColor> {
         let location = input.current_source_location();
         let token = *input.next()?;
 

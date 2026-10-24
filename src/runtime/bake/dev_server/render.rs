@@ -708,6 +708,7 @@ impl DevServer {
                     script_id,
                     console_log: self.should_receive_console_log_from_browser(),
                     route_page_files: route_page_files.as_ref(),
+                    cached_modules_start: None,
                 })?;
         Ok(client_bundle)
     }

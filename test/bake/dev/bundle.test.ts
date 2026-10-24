@@ -373,6 +373,69 @@ devTest("directory cache bust case #17576", {
     await c.expectMessage(456);
   },
 });
+for (const closure of ["eager", "edited", "transitive", "cycle"]) {
+  const cachedFiles =
+    closure === "eager" || closure === "edited"
+      ? {
+          "before.ts": `import { shared } from './shared.ts'; export const value = { label: 'before', shared };`,
+        }
+      : closure === "transitive"
+        ? {
+            "before.ts": `export { value } from './cached-middle.ts';`,
+            "cached-middle.ts": `export { value } from './cached-leaf.ts';`,
+            "cached-leaf.ts": `import { shared } from './shared.ts'; export const value = { label: 'before', shared };`,
+          }
+        : {
+            "before.ts": `import { makeValue } from './cached-cycle-a.ts'; import { shared } from './shared.ts'; export const value = makeValue(shared);`,
+            "cached-cycle-a.ts": `
+              import { getLabel } from './cached-cycle-b.ts';
+              export function label() { return 'before'; }
+              export function makeValue(shared) { return { label: getLabel(), shared }; }
+            `,
+            "cached-cycle-b.ts": `import { label } from './cached-cycle-a.ts'; export function getLabel() { return label(); }`,
+          };
+  devTest(`restores a cached ${closure} client dependency closure after a fresh page load`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": `
+        import { value } from './graph.ts';
+        import { shared } from './shared.ts';
+        console.log({ label: value.label, identity: value.shared === shared, initialization: shared.initialization });
+        import.meta.hot.accept();
+      `,
+      "graph.ts": `export { value } from './before.ts';`,
+      "after.ts": `import { shared } from './shared.ts'; export const value = { label: 'after', shared };`,
+      "shared.ts": `
+        globalThis.cachedClosureInitializations = (globalThis.cachedClosureInitializations ?? 0) + 1;
+        export const shared = { initialization: globalThis.cachedClosureInitializations };
+      `,
+      ...cachedFiles,
+    },
+    async test(dev) {
+      await using client = await dev.client("/");
+      const before = { label: "before", identity: true, initialization: 1 };
+      const after = { label: "after", identity: true, initialization: 1 };
+      await client.expectMessage(before);
+      await dev.write("graph.ts", `export { value } from './after.ts';`);
+      await client.expectMessage(after);
+      await dev.write("graph.ts", `export { value } from './before.ts';`);
+      await client.expectMessage(before);
+      await dev.write("graph.ts", `export { value } from './after.ts';`);
+      await client.expectMessage(after);
+      await client.hardReload();
+      await client.expectMessage(after);
+      if (closure === "edited") {
+        await dev.write(
+          "before.ts",
+          `import { shared } from './shared.ts'; export const value = { label: 'edited', shared };`,
+        );
+      }
+      await dev.write("graph.ts", `export { value } from './before.ts';`);
+      await client.expectMessage(closure === "edited" ? { ...before, label: "edited" } : before);
+    },
+  });
+}
+
 devTest("deleting imported file shows error then recovers", {
   skip: [
     "win32", // unlinkSync is having weird behavior

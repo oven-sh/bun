@@ -7119,7 +7119,7 @@ pub(crate) mod __gated_printer {
                 return;
             }
             // ESM is represented by an array tuple [ dependencies, exports, starImports, load, async ];
-            if ast.exports_kind == js_ast::ExportsKind::Esm {
+            if ast.exports_kind.has_dev_server_dependency_list() {
                 self.print(b": [ [");
                 // Print the dependencies.
                 if stmts.len() > 1 {
@@ -7227,6 +7227,8 @@ pub(crate) mod __gated_printer {
                 self.print(b"],\n");
             } else {
                 debug_assert!(ast.exports_kind == js_ast::ExportsKind::Cjs);
+                // This form has no dependency list, so an import statement here would be dropped.
+                debug_assert!(stmts.len() == 1);
                 self.print_func(func);
                 self.print(b",\n");
             }

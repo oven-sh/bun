@@ -859,6 +859,11 @@ impl ExportsKind {
             Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs
         )
     }
+
+    /// Whether the dev server prints this kind as an ESM entry, which has a dependency list.
+    pub fn has_dev_server_dependency_list(self) -> bool {
+        matches!(self, Self::Esm | Self::EsmWithDynamicFallback)
+    }
 }
 
 #[derive(Copy, Clone)]

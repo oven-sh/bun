@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -103,6 +103,62 @@ devTest("import.meta.hot.accept patches imports", {
     await c.expectMessage("C"); // C self accepted even if the new one doesnt
     expect(await c.js<string>`callFunction()`).toBe("B!2!5");
     expect(await c.js<string>`callFunction()`).toBe("B!3!6");
+  },
+});
+devTest("a hot update patches the imports of a file with module.exports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import read from "./mixed.js";
+      console.log("index " + read());
+      globalThis.read = read;
+      import.meta.hot.accept();
+    `,
+    "mixed.js": `
+      import { value } from "./dep.js";
+      module.exports = () => value;
+    `,
+    "dep.js": `
+      console.log("dep");
+      export const value = 1;
+      // import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("dep", "index 1");
+    await dev.patch("dep.js", { find: "1", replace: "2" });
+    await c.expectMessage("dep", "index 2"); // the update reaches index.ts through mixed.js
+    await dev.patch("dep.js", { find: "// ", replace: "" });
+    await c.expectMessage("dep", "index 2"); // dep.js does not self-accept YET
+    await dev.patch("dep.js", { find: "2", replace: "3" });
+    await c.expectMessage("dep"); // only dep.js runs again
+    expect(await c.js<number>`read()`).toBe(3);
+  },
+});
+devTest("a hot update patches the imports of a file with module.exports in server code", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import render from "../render.js";
+      export default function () {
+        return new Response(render());
+      }
+    `,
+    "render.js": `
+      import { version } from "./helper.js";
+      module.exports = () => "helper " + version;
+    `,
+    "helper.js": `
+      export const version = 1;
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("helper 1");
+    await dev.patch("helper.js", { find: "1", replace: "2" });
+    await dev.fetch("/").equals("helper 2");
   },
 });
 devTest("import.meta.hot.accept specifier", {

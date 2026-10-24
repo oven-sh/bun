@@ -3663,3 +3663,32 @@ it("the EventEmitter methods that node:process exports act on process", async ()
   expect(ns.off("namespace-event", listener)).toBe(process);
   expect(process.listenerCount("namespace-event")).toBe(0);
 });
+
+it("process.report retains full startup argv independently of mutable process arrays", async () => {
+  using dir = tempDir("report-startup-argv", {
+    "main.js": `
+      process.argv.splice(0, process.argv.length, "changed");
+      process.execArgv = ["changed"];
+      process.title = "changed";
+      const first = process.report.getReport().header.commandLine;
+      const original = first.slice();
+      first.fill("changed");
+      console.log(JSON.stringify([original, process.report.getReport().header.commandLine]));
+    `,
+  });
+  const args = ["--no-warnings", join(String(dir), "main.js"), "hello world", "🌊测试", "", "--flag"];
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    argv0: "report-launcher",
+    env: { ...bunEnv, BUN_OPTIONS: "--smol" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual([
+    ["report-launcher", ...args],
+    ["report-launcher", ...args],
+  ]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

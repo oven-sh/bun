@@ -1400,20 +1400,27 @@ pub fn is_node_gyp_script_dir(dir: &[u8]) -> bool {
     fs::FileSystem::is_tmpname(bun_paths::basename(dir), NODE_GYP_EXTNAME)
 }
 
-/// This executable as the `node-gyp` script names it, or `bun` if the script cannot hold the path.
-fn node_gyp_script_bun() -> Vec<u8> {
-    let Ok(exe) = bun_core::self_exe_path().map(|exe| exe.as_bytes()) else {
-        return b"bun".to_vec();
+/// `bun x` as the `node-gyp` script starts it: this executable by its path, or `bun` from PATH.
+fn node_gyp_script_bun_x() -> Vec<u8> {
+    let exe = match bun_core::self_exe_path() {
+        Ok(exe) if !crate::is_node(exe.as_bytes()) => exe.as_bytes(),
+        _ => return b"bun x".to_vec(),
     };
-    if cfg!(windows) {
+    let quoted = if cfg!(windows) {
         // cmd reads the file in the code page of the console, and `%` starts a variable.
         if !strings::is_all_ascii(exe) || strings::contains_char(exe, b'%') {
-            return b"bun".to_vec();
+            return b"bun x".to_vec();
         }
-        return [b"\"".as_slice(), exe, b"\""].concat();
+        [b"\"".as_slice(), exe, b"\""].concat()
+    } else {
+        let escaped = strings::replace_owned(exe, b"'", b"'\\''");
+        [b"'".as_slice(), &escaped, b"'"].concat()
+    };
+    // An executable with the name `bunx` takes `x` for a package.
+    if crate::is_bun_x(exe) {
+        return quoted;
     }
-    let quoted = strings::replace_owned(exe, b"'", b"'\\''");
-    [b"'".as_slice(), &quoted, b"'"].concat()
+    [quoted.as_slice(), b" x"].concat()
 }
 
 fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
@@ -1483,12 +1490,12 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     };
 
     // Not the first `bun` on PATH: the `bun x` of an older one finds this script again.
-    let bun = node_gyp_script_bun();
+    let bun_x = node_gyp_script_bun_x();
     #[cfg(windows)]
     let content = [
         b"if not defined npm_config_node_gyp (\n  ".as_slice(),
-        &bun,
-        b" x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n",
+        &bun_x,
+        b" --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n",
     ]
     .concat();
     #[cfg(not(windows))]
@@ -1499,8 +1506,8 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             b"#!/bin/sh\n"
         },
         b"if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n  ",
-        &bun,
-        b" x --silent node-gyp $@\nelse\n  \"$npm_config_node_gyp\" $@\nfi\n",
+        &bun_x,
+        b" --silent node-gyp $@\nelse\n  \"$npm_config_node_gyp\" $@\nfi\n",
     ]
     .concat();
 

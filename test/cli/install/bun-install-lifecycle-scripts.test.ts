@@ -3633,7 +3633,7 @@ describe.concurrent("the node-gyp directory on PATH", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("error:");
     expect(ctx.ran()).toEqual({ nodeGyp: ["from-the-script"], bunOnPath: [] });
     expect(exitCode).toBe(0);

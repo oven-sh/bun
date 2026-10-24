@@ -22,6 +22,7 @@ import {
   lutimesSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -861,6 +862,61 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
   expect(err).not.toContain("Cannot find module 'exec'");
   expect(out.trim()).toBe("esbuild 0.28.2 after postinstall --version");
   expect(registry.requests).toEqual(["/esbuild", "/esbuild/-/esbuild-0.28.2.tgz"]);
+  expect(exited).toBe(0);
+});
+
+// The node-gyp script of that install starts the executable that wrote it, by its path. One with
+// the name `bunx` takes `x --silent node-gyp` for the package `x`. The `bun` that is first on PATH
+// stands in for an older one, which the script must not run.
+it.concurrent("the node-gyp script of an install that a copied bunx starts runs node-gyp", async () => {
+  const { x_dir, env } = setup();
+  const bunx = join(x_dir, isWindows ? "bunx.exe" : "bunx");
+  const first = join(x_dir, "first-on-path");
+  const ran = join(x_dir, "node-gyp-ran.txt");
+  copyFileSync(bunExe(), bunx);
+  mkdirSync(first);
+  if (isWindows) writeFileSync(join(first, "bun.cmd"), "@exit /b 99\r\n");
+  else writeFileSync(join(first, "bun"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+
+  // esbuild is in bun's default trusted dependencies, so its postinstall runs.
+  using registry = await localRegistry(
+    {
+      name: "esbuild",
+      version: "0.28.2",
+      bin: { esbuild: "cli.js" },
+      scripts: { postinstall: "node-gyp from-the-postinstall" },
+      files: { "cli.js": echoBin("esbuild 0.28.2") },
+    },
+    {
+      name: "node-gyp",
+      version: "1.0.0",
+      bin: { "node-gyp": "cli.js" },
+      files: {
+        "cli.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync(process.env.NODE_GYP_RAN, process.argv[2]);\n`,
+      },
+    },
+  );
+
+  await using subprocess = spawn({
+    cmd: [bunx, "esbuild@latest"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: {
+      ...env,
+      npm_config_registry: registry.url,
+      NODE_GYP_RAN: ran,
+      PATH: `${first}${delimiter}${pathWithout("node-gyp", env.PATH)}`,
+    },
+  });
+  const [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
+
+  expect(err).not.toContain("error:");
+  expect({ out: out.trim(), nodeGyp: existsSync(ran) ? readFileSync(ran, "utf8") : "" }).toEqual({
+    out: "esbuild 0.28.2",
+    nodeGyp: "from-the-postinstall",
+  });
   expect(exited).toBe(0);
 });
 

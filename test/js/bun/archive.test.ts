@@ -1,7 +1,7 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
-import { heapStats } from "bun:jsc";
 import {
   closeSync,
   existsSync,

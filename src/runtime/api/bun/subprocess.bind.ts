@@ -1,5 +1,7 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 
+export default b.module({ rustPath: "crate::api::bun::subprocess::testing_apis" });
+
 /** A stream, a file descriptor, `null` or `undefined`, made the first time it is read. */
 const stdio = { getter: b.any, capability: "js" } as const;
 
@@ -39,3 +41,11 @@ export const Subprocess = b.class({
     "@@asyncDispose": { returns: b.any, capability: "js", throws: true, passThis: true },
   },
 });
+
+export const injectStdioReadError = b.fn({
+  args: { subprocess: Subprocess, kind: b.string.loose },
+  returns: b.bool,
+  capability: "js",
+  throws: true,
+});
+export const closeStdinWriter = b.fn({ args: { subprocess: Subprocess }, returns: b.bool, capability: "js" });

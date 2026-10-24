@@ -4,7 +4,7 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Set BUN_CODEGEN_DIR for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_js2native.rs"))`.
+//! Set BUN_CODEGEN_DIR for `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_jssink.rs"))`.
 //!
 //! The codegen output lives at `<repo>/build/<profile>/codegen/` and is
 //! produced by the scripts in `src/codegen/` (run as part of `bun bd`).
@@ -28,14 +28,6 @@ fn main() {
         .map(PathBuf::from)
         .unwrap_or_else(|_| repo.join("build/debug/codegen"));
 
-    let gen_js2native_rs = codegen_dir.join("generated_js2native.rs");
-    if !gen_js2native_rs.exists() {
-        panic!(
-            "generated_js2native.rs not found at {} — run `bun bd` (bundle-modules codegen) first",
-            gen_js2native_rs.display()
-        );
-    }
-
     let gen_jssink_rs = codegen_dir.join("generated_jssink.rs");
     if !gen_jssink_rs.exists() {
         panic!(
@@ -54,7 +46,6 @@ fn main() {
     }
 
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
-    println!("cargo:rerun-if-changed={}", gen_js2native_rs.display());
     println!("cargo:rerun-if-changed={}", gen_jssink_rs.display());
     println!("cargo:rerun-if-changed={}", gen_host_exports_rs.display());
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");

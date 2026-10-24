@@ -1887,12 +1887,9 @@ impl WindowsBufferedReader {
             sys::Result::Ok(n) => n,
             sys::Result::Err(_) => unreachable!(),
         };
-        // A reader that shares a `maxBuffer` budget another reader used up keeps nothing more.
-        let amount_result = if MaxBuf::is_exhausted(self.maxbuf) {
-            0
-        } else {
-            amount_result
-        };
+        // A reader that shares a `maxBuffer` budget another reader used up keeps nothing more and ends.
+        let exhausted = MaxBuf::is_exhausted(self.maxbuf);
+        let amount_result = if exhausted { 0 } else { amount_result };
 
         // Address arithmetic: `slice` covers spare (uninit) capacity, so no `&[u8]` over the Vec may be formed for the check.
         debug_assert!(
@@ -1909,7 +1906,7 @@ impl WindowsBufferedReader {
 
         // Using the limit up is this reader's EOF (`ReadLimit`); so is exhausting `maxBuffer`.
         let limit_reached = self.limit.charge(amount_result);
-        let over_budget = self.charge_max_buffer(amount_result);
+        let over_budget = exhausted || self.charge_max_buffer(amount_result);
         let has_more = if limit_reached || over_budget {
             ReadState::Eof
         } else {

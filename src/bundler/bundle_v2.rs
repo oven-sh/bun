@@ -985,7 +985,6 @@ pub mod bv2_impl {
                 ) -> Result<(), KeyConflict> {
                     use bun_paths::resolve_path::{
                         dangerously_convert_path_to_posix_in_place, join_abs_string_spill,
-                        relative_platform,
                     };
                     dangerously_convert_path_to_posix_in_place::<u8>(&mut key);
                     let is_absolute = bun_paths::is_absolute_loose(&key);
@@ -1001,11 +1000,7 @@ pub mod bv2_impl {
                         )
                         .to_vec();
                         dangerously_convert_path_to_posix_in_place::<u8>(&mut path);
-                        let mut from_cwd =
-                            relative_platform::<bun_paths::platform::Loose, false>(self.cwd, &path)
-                                .to_vec();
-                        dangerously_convert_path_to_posix_in_place::<u8>(&mut from_cwd);
-                        pretty = Some(from_cwd.into_boxed_slice());
+                        pretty = Some(Self::from_cwd(self.cwd, &path).into_boxed_slice());
                         joined = Some(path);
                     }
                     let path: &[u8] = joined.as_deref().unwrap_or(&key);
@@ -1032,6 +1027,17 @@ pub mod bv2_impl {
                         self.spelled.put_assume_capacity(&key, of);
                     }
                     Ok(())
+                }
+
+                /// The display path of an absolute path: its path from the cwd, with `/` separators.
+                fn from_cwd(cwd: &[u8], path: &[u8]) -> Vec<u8> {
+                    use bun_paths::resolve_path::{
+                        dangerously_convert_path_to_posix_in_place, relative_platform,
+                    };
+                    let mut from_cwd =
+                        relative_platform::<bun_paths::platform::Loose, false>(cwd, path).to_vec();
+                    dangerously_convert_path_to_posix_in_place::<u8>(&mut from_cwd);
+                    from_cwd
                 }
 
                 /// A path: `./a`, `../a`, or a file extension and no scheme. Any other key is a name.
@@ -1153,20 +1159,18 @@ pub mod bv2_impl {
                 /// The in-memory file that an entry point names by text, or by path from the cwd.
                 pub(crate) fn resolve_entry_point(
                     &self,
-                    arena: &bun_alloc::Arena,
                     entry_point: &[u8],
-                ) -> Option<bun_resolver::Result> {
+                ) -> Option<InMemoryFile<'_>> {
                     let (path, file) = self.entry_point(entry_point)?;
-                    Some(Self::result(arena, path, file))
+                    Some(self.found(path, file))
                 }
 
                 /// `./a` and `../a` name the file beside `source_file` first, others the key text.
                 pub(crate) fn resolve(
                     &self,
-                    arena: &bun_alloc::Arena,
                     source_file: &[u8],
                     specifier: &[u8],
-                ) -> Option<bun_resolver::Result> {
+                ) -> Option<InMemoryFile<'_>> {
                     if specifier.is_empty() {
                         return None;
                     }
@@ -1188,7 +1192,15 @@ pub mod bv2_impl {
                             None => self.file_spelled(specifier)?,
                         }
                     };
-                    Some(Self::result(arena, path, file))
+                    Some(self.found(path, file))
+                }
+
+                fn found<'a>(&'a self, path: &'a [u8], file: &'a File) -> InMemoryFile<'a> {
+                    InMemoryFile {
+                        path,
+                        file,
+                        cwd: self.cwd,
+                    }
                 }
 
                 /// The file at `specifier` joined onto the directory of `source_file`.
@@ -1239,26 +1251,50 @@ pub mod bv2_impl {
                     };
                     self.file_in_dir(effective_source_dir, specifier)
                 }
+            }
 
-                /// Copies into the arena of the build. `pretty` is set for a relative path only.
-                fn result(
-                    arena: &bun_alloc::Arena,
-                    path: &[u8],
-                    file: &File,
-                ) -> bun_resolver::Result {
+            /// A file that a lookup found. `import` and `entry_point` build the path of its module.
+            #[derive(Clone, Copy)]
+            pub(crate) struct InMemoryFile<'a> {
+                /// The key of the file in the map: an absolute path, or a name.
+                pub(crate) path: &'a [u8],
+                file: &'a File,
+                cwd: &'a [u8],
+            }
+
+            impl InMemoryFile<'_> {
+                /// An import shows as its path from the cwd for a relative path, and as its key if not.
+                pub(crate) fn import(self, arena: &bun_alloc::Arena) -> bun_resolver::Result {
+                    self.result(arena, self.file.pretty.as_deref().unwrap_or(self.path))
+                }
+
+                /// As `import`, but an absolute key shows as its path from the cwd, like an entry point on disk.
+                pub(crate) fn entry_point(self, arena: &bun_alloc::Arena) -> bun_resolver::Result {
+                    match &self.file.pretty {
+                        None if self.file.absolute => {
+                            self.result(arena, &FileMap::from_cwd(self.cwd, self.path))
+                        }
+                        pretty => self.result(arena, pretty.as_deref().unwrap_or(self.path)),
+                    }
+                }
+
+                /// Copies into the arena of the build. A `pretty` that is the `text` slice reads as "not computed".
+                fn result(self, arena: &bun_alloc::Arena, pretty: &[u8]) -> bun_resolver::Result {
                     // SAFETY: ARENA — `arena` is the build-pass bump arena
                     // (never freed before the `Result` is consumed); detaching the
                     // borrow lifetime matches the established `Path<'static>`
                     // convention used throughout `bun_resolver` (PORTING.md
                     // §Lifetimes: ARENA → `&'bump T`).
                     let dupe = |bytes: &[u8]| -> &'static [u8] {
+                        // NUL-terminated, like a path that `dupe_alloc` copies into the arena.
+                        let copy = arena.alloc_slice_fill_copy(bytes.len() + 1, 0u8);
+                        copy[..bytes.len()].copy_from_slice(bytes);
                         // SAFETY: see ARENA note above — bytes live in the build-pass arena.
-                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(bytes)) }
+                        unsafe { bun_ptr::detach_lifetime(&copy[..bytes.len()]) }
                     };
-                    let mut primary = crate::bun_fs::Path::init_with_namespace(dupe(path), b"file");
-                    if let Some(pretty) = &file.pretty {
-                        primary.pretty = dupe(pretty);
-                    }
+                    let mut primary =
+                        crate::bun_fs::Path::init_with_namespace(dupe(self.path), b"file");
+                    primary.pretty = dupe(pretty);
                     bun_resolver::Result {
                         path_pair: bun_resolver::PathPair {
                             primary,
@@ -2928,13 +2964,9 @@ pub mod bv2_impl {
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
-                if let Some(_file_map_result) = file_map.resolve(
-                    self.arena(),
-                    &import_record.source_file,
-                    &import_record.specifier,
-                ) {
-                    let file_map_result = _file_map_result;
-                    let mut path_primary = file_map_result.path_pair.primary;
+                if let Some(found) =
+                    file_map.resolve(&import_record.source_file, &import_record.specifier)
+                {
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2942,7 +2974,7 @@ pub mod bv2_impl {
                     let (found_existing, value_ptr): (bool, *mut u32) = {
                         let entry = self
                             .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
+                            .get_or_put(found.path)
                             .expect("oom");
                         (
                             entry.found_existing,
@@ -2950,6 +2982,8 @@ pub mod bv2_impl {
                         )
                     };
                     if !found_existing {
+                        let file_map_result = found.import(self.arena());
+                        let path_primary = file_map_result.path_pair.primary;
                         let loader: Loader = 'brk: {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
@@ -2964,11 +2998,6 @@ pub mod bv2_impl {
                                 .loader(unsafe { &(*transpiler).options.loaders })
                                 .unwrap_or(Loader::File);
                         };
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        // A relative path already has its display path.
-                        if path_primary.pretty.as_ptr() == path_primary.text.as_ptr() {
-                            path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
-                        }
                         let mut tmp_source = bun_ast::Source {
                             path: path_as_static(&path_primary),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -3393,9 +3422,9 @@ pub mod bv2_impl {
             let result = &mut *resolve;
             // borrowck: clone the active path out so we don't hold a `&mut`
             // into `result` across the `&mut self` calls below.
-            let mut path: Fs::Path<'static> = *result.path().expect(
-                "resolve_entry_point rejects disabled results and FileMap results have a path",
-            );
+            let mut path: Fs::Path<'static> = *result
+                .path()
+                .expect("resolve_entry_point rejects disabled results");
 
             path.assert_file_path_is_absolute();
             // borrowck: get-then-put instead of a single get-or-put.
@@ -3438,6 +3467,44 @@ pub mod bv2_impl {
             if let Some(p) = result.path() {
                 *p = path;
             }
+            self.register_entry_item(result, path, source_index, loader, is_entry_point, target)
+                .map(Some)
+        }
+
+        /// An entry point that `files` has. Its text can be a name, so nothing here reads it as a path on disk.
+        fn enqueue_in_memory_entry_item(
+            &mut self,
+            found: jsc_api::JSBundler::InMemoryFile<'_>,
+            target: options::Target,
+        ) -> Result<Option<IndexInt>, Error> {
+            if self
+                .path_to_source_index_map(target)
+                .get(found.path)
+                .is_some()
+            {
+                return Ok(None);
+            }
+            let result = found.entry_point(self.arena());
+            let path = result.path_pair.primary;
+            debug_assert!(path.pretty.as_ptr() != path.text.as_ptr());
+            path.assert_pretty_is_valid();
+            self.increment_scan_counter();
+            let source_index = Index::source(self.graph.input_files.len() as u32);
+            let loader = self.requested_file_loader(&path, None);
+            self.register_entry_item(&result, path, source_index, loader, true, target)
+                .map(Some)
+        }
+
+        /// Adds the module of an entry point to the graph and schedules its parse task. `path` has its display path.
+        fn register_entry_item(
+            &mut self,
+            result: &_resolver::Result,
+            path: Fs::Path<'static>,
+            source_index: Index,
+            loader: Loader,
+            is_entry_point: bool,
+            target: options::Target,
+        ) -> Result<IndexInt, Error> {
             self.path_to_source_index_map(target)
                 .put(path.text, source_index.get())
                 .expect("oom");
@@ -3488,7 +3555,7 @@ pub mod bv2_impl {
                 .entry_points
                 .push(bun_ast::Index::init(source_index.get()));
 
-            Ok(Some(source_index.get()))
+            Ok(source_index.get())
         }
 
         /// `heap` is not freed when `deinit`ing the BundleV2
@@ -3826,15 +3893,9 @@ pub mod bv2_impl {
 
                 // Check FileMap first for in-memory entry points
                 if let Some(file_map) = self.file_map {
-                    if let Some(file_map_result) =
-                        file_map.resolve_entry_point(self.arena(), entry_point)
-                    {
-                        let source_index = self.enqueue_entry_item(
-                            &mut { file_map_result },
-                            true,
-                            self.transpiler.options.target,
-                            None,
-                        )?;
+                    if let Some(found) = file_map.resolve_entry_point(entry_point) {
+                        let source_index = self
+                            .enqueue_in_memory_entry_item(found, self.transpiler.options.target)?;
                         // A relative entry point keeps the name and the directory it was written with.
                         if let Some(source_index) = source_index {
                             if !bun_paths::is_absolute_loose(entry_point) {
@@ -7151,27 +7212,21 @@ pub mod bv2_impl {
 
                 // Check the FileMap first for in-memory files
                 if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
+                    if let Some(found) = file_map.resolve(source.path.text, import_record.path.text)
                     {
-                        let mut file_map_result = _file_map_result;
-                        let mut path_primary = file_map_result.path_pair.primary;
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                            Fs::Path::init(path_primary.text)
+                            Fs::Path::init(found.path)
                                 .loader(&transpiler.options.loaders)
                                 .unwrap_or(Loader::File)
                         });
                         import_record.loader = Some(import_record_loader);
 
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
+                        if let Some(id) = self.path_to_source_index_map(target).get(found.path) {
                             import_record.source_index = Index::init(id);
                             continue;
                         }
 
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
+                        let resolve_entry = resolve_queue.get_or_put(found.path).expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
@@ -7179,27 +7234,14 @@ pub mod bv2_impl {
                             continue;
                         }
 
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        // A relative path already has its display path.
-                        if path_primary.pretty.as_ptr() == path_primary.text.as_ptr() {
-                            // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
-                            // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
-                            // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
-                            // cascading borrow conflicts into every `&mut self` call below).
-                            path_primary.pretty = unsafe {
-                                bun_ptr::detach_lifetime(
-                                    self.arena().alloc_slice_copy(path_primary.text),
-                                )
-                            };
-                        }
+                        let file_map_result = found.import(self.arena());
+                        let path_primary = file_map_result.path_pair.primary;
                         import_record.path = path_as_static(&path_primary);
-                        let _ = path_primary.text; // key already interned by get_or_put
                         bun_core::scoped_log!(
                             Bundle,
                             "created ParseTask from FileMap: {}",
                             bstr::BStr::new(&path_primary.text)
                         );
-                        file_map_result.path_pair.primary = path_primary;
                         // Arena-owned.
                         let resolve_task_val =
                             ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);

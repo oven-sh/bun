@@ -1470,5 +1470,244 @@ describe("bundler files option", () => {
       },
       !isWindows,
     );
+
+    // An entrypoint that is a path shows as its path from the cwd, like an
+    // entrypoint on disk.
+    buildsIn(
+      "the display path of an entrypoint that is a path is its path from the cwd",
+      {},
+      ["entry in memory"],
+      `(() => {
+        const build = (...entrypoints) => ({
+          entrypoints,
+          files: { [entrypoints[0]]: 'console.log("entry in memory");' },
+          metafile: true,
+        });
+        return {
+          "a relative key": build("./virtual/entry.ts"),
+          "an absolute key": build(abs("virtual/entry.ts")),
+          "an absolute key above the cwd": build(abs("../above/entry.ts")),
+          "two entrypoints for one key": build("./entry.ts", abs("entry.ts")),
+        };
+      })()`,
+      report => {
+        const inMemory = { logs: [], found: ["entry in memory"] };
+        expect(report).toEqual({
+          "a relative key": { ...inMemory, outputs: ["virtual/entry.js"], inputs: ["virtual/entry.ts"] },
+          "an absolute key": { ...inMemory, outputs: ["virtual/entry.js"], inputs: ["virtual/entry.ts"] },
+          "an absolute key above the cwd": {
+            ...inMemory,
+            outputs: [expect.stringContaining("entry.js")],
+            inputs: ["../above/entry.ts"],
+          },
+          "two entrypoints for one key": { ...inMemory, outputs: ["./entry.js"], inputs: ["entry.ts"] },
+        });
+      },
+    );
+
+    // The builds from here on stopped a build of bun that has assertions. They
+    // are last, so that every case above keeps its report if the child process
+    // stops here.
+
+    // A name is not a path: nothing resolves it against the cwd. It shows as
+    // the key, as an entrypoint and as an import.
+    {
+      const names = [
+        "virtual:entry.ts",
+        "my-plugin:entry.ts",
+        "https://host/entry.js",
+        "my-pkg",
+        "@scope/pkg",
+        ".env",
+        "LICENSE",
+        "bin/cli",
+      ];
+      buildsIn(
+        "a name is an entrypoint",
+        {},
+        ["entry in memory"],
+        `Object.fromEntries(${JSON.stringify(names)}.map(name => [name, {
+          entrypoints: [name],
+          files: { [name]: 'console.log("entry in memory");' },
+          metafile: true,
+        }]))`,
+        report => {
+          expect(report).toEqual(
+            Object.fromEntries(
+              names.map(name => [
+                name,
+                { logs: [], outputs: expect.any(Array), found: ["entry in memory"], inputs: [name] },
+              ]),
+            ),
+          );
+          expect(report["virtual:entry.ts"]).toMatchObject({ outputs: ["./virtual:entry.js"] });
+        },
+      );
+    }
+
+    buildsIn(
+      "an entrypoint that is a name is the module that an import of the name gets",
+      { "helper.ts": `export const helper = "helper on disk";` },
+      [
+        "entry in memory",
+        "shared in memory",
+        "index in memory",
+        "name in memory",
+        "path in memory",
+        "helper on disk",
+        "lazy in memory",
+        "virtual:entry.ts in file",
+      ],
+      `(() => {
+        const shared = {
+          files: {
+            "virtual:shared.ts": 'console.log("shared in memory");',
+            "./index.ts": 'import "virtual:shared.ts"; console.log("index in memory");',
+          },
+          splitting: true,
+          metafile: true,
+        };
+        return {
+          // A plugin in the default namespace gets the key as the path.
+          "an onLoad plugin": {
+            entrypoints: ["virtual:entry.ts"],
+            files: { "virtual:entry.ts": "" },
+            plugins: [{
+              name: "names",
+              setup(build) {
+                build.onLoad({ filter: /^virtual:/ }, ({ path, namespace }) => ({
+                  contents: "console.log(" + JSON.stringify(path + " in " + namespace) + ");",
+                  loader: "js",
+                }));
+              },
+            }],
+          },
+          // One module: with splitting its code is in one output.
+          "an entrypoint, then an import of it": { entrypoints: ["virtual:shared.ts", "./index.ts"], ...shared },
+          "an import of it, then an entrypoint": { entrypoints: ["./index.ts", "virtual:shared.ts"], ...shared },
+          // A relative import in a name is a path from the cwd.
+          "imports of a name, a path and a file on disk": {
+            entrypoints: ["virtual:entry.ts"],
+            files: {
+              "virtual:entry.ts": 'import "virtual:name.ts"; import "./path.ts"; import { helper } from "./helper.ts"; console.log("entry in memory", helper);',
+              "virtual:name.ts": 'console.log("name in memory");',
+              "./path.ts": 'console.log("path in memory");',
+            },
+            metafile: true,
+          },
+          "a dynamic import": {
+            entrypoints: ["virtual:entry.ts"],
+            files: {
+              "virtual:entry.ts": 'import("virtual:lazy.ts"); console.log("entry in memory");',
+              "virtual:lazy.ts": 'console.log("lazy in memory");',
+            },
+            splitting: true,
+            metafile: true,
+          },
+          "a syntax error": { entrypoints: ["virtual:entry.ts"], files: { "virtual:entry.ts": "console.log(" } },
+        };
+      })()`,
+      report => {
+        const chunk = expect.stringMatching(/^\.\/chunk-\w+\.js$/);
+        const shared = {
+          logs: [],
+          outputs: [chunk, "./index.js", "./virtual:shared.js"],
+          found: ["shared in memory", "index in memory"],
+          inputs: ["index.ts", "virtual:shared.ts"],
+        };
+        expect(report).toEqual({
+          "an onLoad plugin": { logs: [], outputs: ["./virtual:entry.js"], found: ["virtual:entry.ts in file"] },
+          "an entrypoint, then an import of it": shared,
+          "an import of it, then an entrypoint": shared,
+          "imports of a name, a path and a file on disk": {
+            logs: [],
+            outputs: ["./virtual:entry.js"],
+            found: ["entry in memory", "name in memory", "path in memory", "helper on disk"],
+            inputs: ["helper.ts", "path.ts", "virtual:entry.ts", "virtual:name.ts"],
+          },
+          "a dynamic import": {
+            logs: [],
+            outputs: [chunk, "./virtual:entry.js"],
+            found: ["entry in memory", "lazy in memory"],
+            inputs: ["virtual:entry.ts", "virtual:lazy.ts"],
+          },
+          "a syntax error": { logs: ["BuildMessage: Unexpected end of file"], outputs: [], found: [] },
+        });
+      },
+    );
+
+    // A key with a drive letter is an absolute path on every platform. On
+    // POSIX it does not start with "/", and from "/" it is its own display path.
+    buildsIn(
+      "a key with a drive letter is an entrypoint on POSIX",
+      {},
+      ["entry in memory"],
+      `(() => {
+        const build = chdir => ({
+          chdir,
+          entrypoints: ["C:/app/index.ts"],
+          files: { "C:/app/index.ts": 'console.log("entry in memory");' },
+        });
+        return { "from the directory of the case": build(), "from the root directory": build("/") };
+      })()`,
+      report => {
+        const inMemory = { logs: [], outputs: ["C:/app/index.js"], found: ["entry in memory"] };
+        expect(report).toEqual({ "from the directory of the case": inMemory, "from the root directory": inMemory });
+      },
+      isWindows,
+    );
+
+    // An import that an onResolve plugin declines gets its module in another
+    // branch of the bundler. The module has the same display path there, so
+    // the metafile and the [hash] of each output are the same.
+    {
+      const entry = (marker: string) =>
+        `'import "virtual:lib.ts"; import "https://host/lib.js"; import ' + JSON.stringify(abs("virtual/lib.ts")) + '; console.log("${marker}");'`;
+      const build = (plugins: string) => `{
+        entrypoints: ["./a.ts", "./b.ts"],
+        files: {
+          "./a.ts": ${entry("a in memory")},
+          "./b.ts": ${entry("b in memory")},
+          "virtual:lib.ts": 'console.log("name in memory");',
+          "https://host/lib.js": 'console.log("url in memory");',
+          [abs("virtual/lib.ts")]: 'console.log("absolute in memory");',
+        },
+        naming: "[name]-[hash].[ext]",
+        metafile: true,
+        plugins: ${plugins},
+      }`;
+      buildsIn(
+        "an onResolve plugin that declines an import of a name or an absolute key does not change the build",
+        {},
+        ["a in memory", "b in memory", "name in memory", "url in memory", "absolute in memory"],
+        `{
+          "no plugin": ${build("[]")},
+          "declined": ${build(`[{
+            name: "declines",
+            setup(build) {
+              build.onResolve({ filter: /lib/ }, () => undefined);
+            },
+          }]`)},
+        }`,
+        report => {
+          expect(report["no plugin"]).toEqual({
+            logs: [],
+            outputs: [expect.stringMatching(/^\.\/a-\w+\.js$/), expect.stringMatching(/^\.\/b-\w+\.js$/)],
+            found: [
+              "a in memory",
+              "b in memory",
+              "name in memory",
+              "name in memory",
+              "url in memory",
+              "url in memory",
+              "absolute in memory",
+              "absolute in memory",
+            ],
+            inputs: expect.arrayContaining(["a.ts", "b.ts", "https://host/lib.js", "virtual:lib.ts"]),
+          });
+          expect(report["declined"]).toEqual(report["no plugin"]);
+        },
+      );
+    }
   });
 });

@@ -1303,6 +1303,12 @@ function parseHeaderPairs(pairs) {
   return block;
 }
 
+// One native flag gates all three kinds of header block, as in Node's updateHeaderInterest().
+function updateHeaderInterest(inner: QuicStreamInner) {
+  inner.state.wantsHeaders =
+    inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
+}
+
 /**
  * Applies session and stream callbacks from an options object to a session.
  * @param {QuicSession} session
@@ -1935,13 +1941,12 @@ class QuicStream {
     const inner = this.#inner;
     if (fn === undefined) {
       inner.onheaders = undefined;
-      inner.state.wantsHeaders = false;
     } else {
       validateFunction(fn, "onheaders");
       assertHeadersSupported(inner.session);
       inner.onheaders = FunctionPrototypeBind(fn, this);
-      inner.state.wantsHeaders = true;
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1960,6 +1965,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.oninfo = FunctionPrototypeBind(fn, this);
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1978,6 +1984,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.ontrailers = FunctionPrototypeBind(fn, this);
     }
+    updateHeaderInterest(inner);
   }
 
   /** @type {Function|undefined} */
@@ -2675,7 +2682,6 @@ class QuicStream {
 
     switch (kindName) {
       case "initial":
-        assert(inner.onheaders, "Unexpected stream headers event");
         inner.headers ??= block;
         if (onStreamHeadersChannel.hasSubscribers) {
           onStreamHeadersChannel.publish({
@@ -2685,7 +2691,10 @@ class QuicStream {
             headers: block,
           });
         }
-        safeCallbackInvoke(inner.onheaders, this, block);
+        {
+          const { onheaders } = inner;
+          if (onheaders) safeCallbackInvoke(onheaders, this, block);
+        }
         break;
       case "trailing":
         if (onStreamTrailersChannel.hasSubscribers) {

@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, expectRssDeltaBelow, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -303,6 +304,145 @@ describe("HTTP/3 header encoding", () => {
   });
 });
 
+// Native code only passes a received header block to JS while the stream's `wantsHeaders` flag is set.
+describe("HTTP/3 header callbacks without onheaders", () => {
+  const encoder = new TextEncoder();
+  const TRAILERS = { "x-checksum": "abc123" };
+  const tls = { sni: { "*": { keys: [key], certs: [cert] } }, transportParams: { maxIdleTimeout: 2 } };
+  const request = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  const connectTo = async (server: QuicEndpoint): Promise<any> => {
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 2 },
+    } as SessionOptions);
+    await client.opened;
+    return client;
+  };
+  async function bodyOf(stream: any) {
+    let body = "";
+    for await (const batch of stream) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    }
+    await stream.closed;
+    return body;
+  }
+
+  type Seen = { onheaders: number; info?: string; trailers?: object; status?: string };
+  type Register = (seen: Seen) => { options?: object; afterCreate?: (stream: any) => void };
+  const callbacks = (seen: Seen) => ({
+    onheaders: () => void seen.onheaders++,
+    oninfo: (block: Record<string, string>) => void (seen.info = block[":status"]),
+    ontrailers(this: any, block: object) {
+      seen.trailers = { ...block };
+      // A closed stream no longer has its headers, so they are read here.
+      seen.status = this.headers?.[":status"];
+    },
+  });
+  const everyBlock = ["info", "headers", "trailers"];
+  const withTrailers = { onheaders: 0, trailers: TRAILERS, status: "200", published: everyBlock };
+  const withInfo = { onheaders: 0, info: "103", published: everyBlock };
+  const rows: [name: string, register: Register, expected: Seen & { published: string[] }][] = [
+    ["ontrailers as an option", seen => ({ options: { ontrailers: callbacks(seen).ontrailers } }), withTrailers],
+    [
+      "ontrailers assigned after creation",
+      seen => ({ afterCreate: stream => void (stream.ontrailers = callbacks(seen).ontrailers) }),
+      withTrailers,
+    ],
+    ["oninfo as an option", seen => ({ options: { oninfo: callbacks(seen).oninfo } }), withInfo],
+    [
+      "oninfo assigned after creation",
+      seen => ({ afterCreate: stream => void (stream.oninfo = callbacks(seen).oninfo) }),
+      withInfo,
+    ],
+    [
+      "onheaders cleared, ontrailers and oninfo kept",
+      seen => ({ options: callbacks(seen), afterCreate: stream => void (stream.onheaders = undefined) }),
+      { ...withTrailers, info: "103" },
+    ],
+    [
+      "ontrailers and oninfo cleared",
+      seen => ({
+        options: { ontrailers: callbacks(seen).ontrailers, oninfo: callbacks(seen).oninfo },
+        afterCreate: stream => void (stream.ontrailers = stream.oninfo = undefined),
+      }),
+      { onheaders: 0, published: [] },
+    ],
+    ["no header callback", () => ({}), { onheaders: 0, published: [] }],
+  ];
+
+  test.each(rows)("a client with %s", async (_name, register, expected) => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        ...tls,
+        onheaders(this: any) {
+          this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(encoder.encode("body"));
+          this.writer.endSync();
+        },
+        onwanttrailers(this: any) {
+          this.sendTrailers(TRAILERS);
+        },
+      },
+    );
+    const client = await connectTo(server);
+    // The header blocks that reach JS for the client's stream, by diagnostics channel.
+    const published: string[] = [];
+    let stream: any;
+    const listeners = everyBlock.map(name => {
+      const onMessage = (message: any) => void (message.stream === stream && published.push(name));
+      subscribe(`quic.stream.${name}`, onMessage);
+      return () => unsubscribe(`quic.stream.${name}`, onMessage);
+    });
+    try {
+      const seen: Seen = { onheaders: 0 };
+      const { options, afterCreate } = register(seen);
+      stream = await client.createBidirectionalStream({ headers: request, ...options });
+      afterCreate?.(stream);
+      const body = await bodyOf(stream);
+      expect({ ...seen, body, published }).toEqual({ ...expected, body: "body" });
+    } finally {
+      for (const off of listeners) off();
+      client.close();
+    }
+  });
+
+  test.each(["given to listen()", "assigned in onstream"])("a server with ontrailers %s", async how => {
+    let trailers: object | undefined;
+    const ontrailers = (block: object) => void (trailers = { ...block });
+    const closed = Promise.withResolvers<void>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          if (how === "assigned in onstream") stream.ontrailers = ontrailers;
+          stream.sendHeaders({ ":status": "200" }, { terminal: true });
+          stream.closed.then(closed.resolve, closed.reject);
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      how === "given to listen()" ? { ...tls, ontrailers } : tls,
+    );
+    const client = await connectTo(server);
+    try {
+      const stream = await client.createBidirectionalStream();
+      stream.sendHeaders(request);
+      stream.sendTrailers(TRAILERS);
+      await bodyOf(stream);
+      await closed.promise;
+      expect(trailers).toEqual(TRAILERS);
+    } finally {
+      client.close();
+    }
+  });
+});
+
 // lsquic decodes a header block that follows another one while the stream is
 // read, not when its bytes arrive. The peer in these tests writes its header
 // blocks in one call, so they share one STREAM frame and that is where the
@@ -315,11 +455,11 @@ describe("HTTP/3 header blocks that follow another header block", () => {
     ":scheme": "https",
     ":authority": "localhost",
   });
-  const connectTo = async (server: QuicEndpoint) => {
+  const connectTo = async (server: QuicEndpoint, maxIdleTimeout = 1) => {
     const client = await connect(server.address!, {
       servername: "localhost",
       verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 1 },
+      transportParams: { maxIdleTimeout },
     } as SessionOptions);
     await client.opened;
     return client;
@@ -404,6 +544,66 @@ describe("HTTP/3 header blocks that follow another header block", () => {
       response: ["headers 200", "end"],
       requestTrailers: { "x-checksum": "abc123" },
     });
+  });
+
+  // This many bodies fill the congestion window, so lsquic is still buffering the end of some of them when their trailers are sent.
+  test.each<[string, number]>([
+    ["request", 6],
+    ["response", 6],
+    ["request", 3000],
+    ["response", 3000],
+  ])("the peer gets the trailers that follow a %s body (%d-byte value)", async (sender, valueLength) => {
+    const streams = 200;
+    const size = 1500;
+    const checksum = Buffer.alloc(valueLength, "a").toString();
+    // Opening the streams can block the event loop for longer than the 1-second idle timeout of the other tests.
+    const maxIdleTimeout = 30;
+    const received: { bytes: number; checksum?: string }[] = [];
+    const receivedAll = Promise.withResolvers<void>();
+
+    function send(stream: any) {
+      stream.onwanttrailers = () => stream.sendTrailers({ "x-checksum": checksum });
+      stream.writer.writeSync(new Uint8Array(size));
+      stream.writer.endSync();
+    }
+    async function receive(stream: any) {
+      const message: (typeof received)[number] = { bytes: 0 };
+      stream.ontrailers = (trailers: Record<string, string>) => (message.checksum = trailers["x-checksum"]);
+      for await (const batch of stream) for (const chunk of batch) message.bytes += chunk.byteLength;
+      await stream.closed;
+      if (received.push(message) === streams) receivedAll.resolve();
+    }
+
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          if (sender === "request") receive(stream).catch(receivedAll.reject);
+          else stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout, initialMaxStreamsBidi: streams },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" }, { terminal: sender === "request" });
+          if (sender === "response") send(this);
+        },
+      },
+    );
+    const client = await connectTo(server, maxIdleTimeout);
+    for (let i = 0; i < streams; i++) {
+      const stream: any = await client.createBidirectionalStream({ onheaders() {} } as any);
+      stream.sendHeaders(request("/"), { terminal: sender === "response" });
+      if (sender === "response") receive(stream).catch(receivedAll.reject);
+      else {
+        stream.closed.catch(() => {});
+        send(stream);
+      }
+    }
+    await receivedAll.promise;
+    client.close();
+    expect(received.filter(message => message.bytes !== size || message.checksum !== checksum)).toEqual([]);
   });
 });
 

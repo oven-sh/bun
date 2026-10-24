@@ -1,0 +1,48 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -2741,12 +2741,23 @@ active_hq_frame_sizes (const struct lsqu
+ static uint64_t
+ stream_hq_frame_end (const struct stream_hq_frame *shf)
+ {
++    const struct stream_hq_frame *next;
++    uint64_t end;
++
+     if (shf->shf_flags & SHF_FIXED_SIZE)
+         return shf->shf_off + shf->shf_frame_size;
+     else if (shf->shf_flags & SHF_TWO_BYTES)
+-        return shf->shf_off + ((1 << 14) - 1);
++        end = shf->shf_off + ((1 << 14) - 1);
+     else
+-        return shf->shf_off + ((1 << 6) - 1);
++        end = shf->shf_off + ((1 << 6) - 1);
++
++    /* bun: a HEADERS frame queued behind buffered body bytes ends their DATA
++     * frame.
++     */
++    next = STAILQ_NEXT(shf, shf_next);
++    if (next && next->shf_off < end)
++        end = next->shf_off;
++    return end;
+ }
+ 
+ 
+@@ -3426,7 +3437,10 @@ maybe_close_varsize_hq_frame (struct lsq
+     }
+ 
+     bits = (shf->shf_flags & SHF_TWO_BYTES) > 0;
+-    size = stream->sm_payload + stream->sm_n_buffered - shf->shf_off;
++    size = stream->sm_payload + stream->sm_n_buffered;
++    if (size > stream_hq_frame_end(shf))
++        size = stream_hq_frame_end(shf);
++    size -= shf->shf_off;
+     if (size <= VINT_MAX_B(bits) && shf->shf_frame_ptr)
+     {
+         if (0 == stream->sm_n_buffered)
+@@ -3613,6 +3627,7 @@ stream_hq_frame_extendable (const struct
+                                                                     unsigned len)
+ {
+     return (shf->shf_flags & (SHF_TWO_BYTES|SHF_FIXED_SIZE)) == 0
++        && !STAILQ_NEXT(shf, shf_next)
+         && cur_off - shf->shf_off < (1 << 6)
+         && cur_off - shf->shf_off + len >= (1 << 6)
+         ;

@@ -246,6 +246,11 @@ export const lsquic: Dependency = {
     // blocked. It takes a reset between lsquic_stream_hold_window(s, 0) and the
     // next tick. Applies on top of node-quic-accessors.
     "patches/lsquic/reset-keeps-window-update.patch",
+    // A header block sent while the end of the body was still in the stream's
+    // buffer went out inside the body's last DATA frame, with no HEADERS frame of
+    // its own. The peer read trailers as body bytes, or closed the connection
+    // when the block didn't fit in that frame's packet.
+    "patches/lsquic/headers-after-buffered-body.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

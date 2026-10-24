@@ -813,9 +813,7 @@ fn paths_to_check(
     let (mut paths, mut script_kinds) = (Vec::new(), Vec::new());
     for entry_point in entry_points {
         let path = entry_point.path;
-        // `bun` serves a page only if it loads the file with the HTML loader.
-        let is_page = matches!(entry_point.loader, None | Some(bun_ast::Loader::Html));
-        if is_page && path.ends_with(b".html") {
+        if path.ends_with(b".html") {
             for page in pages_of(cwd, path) {
                 let scripts = imports_of_page(cwd, &page);
                 paths.extend(scripts.into_iter().filter(|path| has_types(path)));

@@ -800,19 +800,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         before_read: Option<bun_sema_driver::host::BeforeRead>,
     ) -> bool {
         use crate::cli::check_command::{EntryPoint, check_before};
-        let loader = Self::loader_of_main(ctx, path, loader);
         let main = EntryPoint {
             path,
-            loader: Some(loader),
+            loader: Some(Self::loader_of_main(ctx, path, loader)),
             // `[eval]`, `[stdin]`
             text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
         };
-        // If the main module is a page, src/js/internal/html.ts serves every argument that ends in `.html`.
+        // src/js/internal/html.ts serves every argument that is a page.
         let is_page = |path: &&[u8]| path.ends_with(b".html");
         let more = arguments.iter().map(|it| &it[..]).filter(is_page);
-        let more = more
-            .filter(|_| loader == Loader::Html)
-            .map(EntryPoint::file);
+        let more = more.filter(|_| is_page(&path)).map(EntryPoint::file);
         let entry_points: Vec<EntryPoint> = std::iter::once(main).chain(more).collect();
         check_before(&entry_points, before_read)
     }

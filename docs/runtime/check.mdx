@@ -246,7 +246,7 @@ Bun checks each file with the same `tsconfig.json` your editor uses for it:
 
 A directory means the files of the project inside that directory. If the project has no files there, Bun checks every file in the directory that `exclude` does not rule out. An example is `bun check scripts` when `include` is `["src"]`.
 
-If a file that you name imports an HTML page, Bun also checks the local scripts of the page, as [`--check`](#check-before-you-run-build-or-test) does. A directory works the same way, with one exception: if the directory has every file of its project, Bun checks the whole project and follows no page, as `bun check` without a path does. Without a `tsconfig.json` there is no such project, so Bun follows the pages of every file it checks. `bun check` has no `--loader` and does not read `bunfig.toml`, so a page is a `.html` file, or any file imported `with { type: "html" }`.
+If a file that you name imports an HTML page, Bun also checks the local scripts of the page, as [`--check`](#check-before-you-run-build-or-test) does. A directory works the same way, with one exception: if the directory has every file of the project that its nearest `tsconfig.json` describes, Bun checks that whole project and follows no page, as `bun check` without a path does. Without a `tsconfig.json` there is no such project, so Bun follows the pages of every file it checks. `bun check` has no `--loader` and does not read `bunfig.toml`, so a page is a `.html` file, or any file imported `with { type: "html" }`.
 
 ### Without a `tsconfig.json`
 
@@ -384,8 +384,9 @@ A few more details:
 - An import is a page when Bun loads it with the HTML loader:
   - `with { type: "html" }` makes a page of any file.
   - `with { type: "text" }`, `with { type: "file" }`, or the name of any other loader does not. Bun then leaves the scripts in the file alone.
-  - Without a `type`, the extension of the file decides. A `.html` file is a page, unless `--loader` or `[loader]` in [`bunfig.toml`](/runtime/bunfig) gives `.html` another loader. Both can also give the `html` loader to another extension.
-- Bun follows a page that the import names by a path, such as `./index.html`. If the import goes through `paths` in `tsconfig.json`, `imports` in `package.json`, or the name of a package, only `bun build --check` follows it, because the bundle knows which file that is.
+  - Without a `type`, the extension of the file decides. A `.html` file is a page, unless `--loader` or `[loader]` in [`bunfig.toml`](/runtime/bunfig) gives `.html` another loader. Both can also give the `html` loader to another extension. A check of the whole project reads neither, like `bun check`.
+  - A plugin from `preload` that loads the file in another way is not known to the check.
+- Bun follows a page that the import names by the path of the file, such as `./index.html`. If the import goes through `paths` in `tsconfig.json`, `imports` in `package.json`, or the name of a workspace package, only `bun build --check` follows it, because the bundle knows which file that is.
 - A page can have a `tsconfig.json` of its own, for example in `web/`. Bun checks the scripts of the page with that one.
 - With `--tsconfig-override`, or `tsconfig` in `Bun.build()`, the check uses that `tsconfig.json`.
 - With `--conditions`, the check resolves packages with those conditions too.
@@ -420,7 +421,7 @@ note: TS6500: The expected type comes from property 'age' which is declared here
    at /app/src/greet.ts:1:46
 ```
 
-The check follows the HTML pages that the bundle loads. It does not follow a page that the bundle leaves out: an `--external` import, an import that only a type uses, or a file that a plugin loads in another way.
+The check follows the HTML pages that the bundle loads. It does not follow a page that the bundle leaves out: an `--external` import, an import that only a type uses, or a file that a plugin loads in another way. It does not check a script of a page that is in `node_modules`.
 
 ### `Bun.build`
 

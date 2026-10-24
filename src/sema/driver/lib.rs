@@ -3941,8 +3941,8 @@ fn check_named_files(
         while let Some(i) = to_follow.pop() {
             // A page represents its scripts.
             let importer = FileId(i as u32);
-            let scripts = pages.iter();
-            let scripts = scripts.flat_map(|pages| pages.scripts_imported_by(importer));
+            let imported = pages.iter().flat_map(|pages| pages.imported_by(importer));
+            let scripts = imported.flat_map(|page| host.scripts_of_page(&page));
             let scripts = scripts.filter_map(|script| {
                 let here = program.files.by_path.get(&script);
                 if here.is_none() {

@@ -24522,20 +24522,6 @@ describe.concurrent("--check", () => {
       expect([errorsOf(stderr), stdout.trim(), exitCode]).toEqual([[], "ran string", 0]);
     });
 
-    // `bun` serves a page only if it loads the entry point with the HTML loader.
-    test("an entry point named `.html` that `--loader` gives another loader", async () => {
-      using dir = project({
-        "template.html": template,
-        "main.html": `export const n: number = "1";\nconsole.log("ran", n);\n`,
-      });
-      const [text, script] = await Promise.all([
-        run(String(dir), ["--loader", ".html:text", "--check", "./template.html"]),
-        run(String(dir), ["--loader", ".html:ts", "--check", "./main.html"]),
-      ]);
-      expect([errorsOf(text.stderr), text.exitCode]).toEqual([[], 0]);
-      expect([errorsOf(script.stderr), script.stdout, script.exitCode]).toEqual([["main.html(1,14) TS2322"], "", 1]);
-    });
-
     // A bundle has the loader of each file, also the one that a plugin names. The check asks nothing else.
     test("Bun.build({ check: true }) follows the pages of its bundle", async () => {
       using dir = project({

@@ -16,10 +16,8 @@ pub(crate) struct Pages<'a, 's> {
     files: &'a Files<'s>,
     /// `Request::loaders`
     loaders: &'a LoaderHashTable,
-    /// `--loader :html`: a file without an extension is a page.
-    is_page_without_extension: bool,
-    /// The extensions that `loaders` gives the HTML loader, except `.html`.
-    other_page_extensions: Vec<&'a [u8]>,
+    /// `loaders` gives the HTML loader to an extension that is not `.html`.
+    has_other_page_extensions: bool,
 }
 
 /// A specifier of one file that can name a page, and what its uses in the file say.
@@ -48,19 +46,17 @@ impl<'a, 's> Pages<'a, 's> {
         files: &'a Files<'s>,
         loaders: &'a LoaderHashTable,
     ) -> Self {
-        let of_pages = loaders.iter().filter(|it| *it.1 == Loader::Html);
-        let of_pages = of_pages.map(|it| &it.0[..]);
+        let mut of_pages = loaders.iter().filter(|it| *it.1 == Loader::Html);
         Pages {
             host,
             files,
             loaders,
-            is_page_without_extension: Loader::of_extension(b"", loaders) == Some(Loader::Html),
-            other_page_extensions: of_pages.filter(|it| *it != b".html").collect(),
+            has_other_page_extensions: of_pages.any(|it| !it.0.eq_ignore_ascii_case(b".html")),
         }
     }
 
-    /// The scripts of the pages that `file` imports, in the order of the imports.
-    pub(crate) fn scripts_imported_by(&self, file: FileId) -> Vec<Vec<u8>> {
+    /// The paths of the pages that `file` imports, in the order of the imports.
+    pub(crate) fn imported_by(&self, file: FileId) -> Vec<Vec<u8>> {
         let module = self.files.module(file);
         let hir = &module.hir;
         let mut attributes = Attributes::default();
@@ -89,40 +85,20 @@ impl<'a, 's> Pages<'a, 's> {
         }
         self.read_attributes(hir, &mut attributes, &mut imports);
         let directory = dirname::<Posix>(module.file_name());
-        let mut scripts = Vec::new();
-        for import in &imports {
-            if !import.names_html && !(import.names_nothing && import.has_page_extension) {
-                continue;
-            }
-            let page = join(directory, self.files.atoms.bytes(import.specifier));
-            // Anything else is not read: a named pipe would block.
-            if self.host.is_file(&page) {
-                scripts.extend(self.host.scripts_of_page(&page));
-            }
-        }
-        scripts
+        let is_page = |it: &&Import| it.names_html || (it.names_nothing && it.has_page_extension);
+        let pages = imports.iter().filter(is_page);
+        let pages = pages.map(|it| join(directory, self.files.atoms.bytes(it.specifier)));
+        // Anything else is not read: a named pipe would block.
+        pages.filter(|page| self.host.is_file(page)).collect()
     }
 
     /// True if `path` has the extension of a page. Read as `Path::loader` reads it: a file named `.html` has one.
     fn has_page_extension(&self, path: &[u8]) -> bool {
-        if !self.can_end_like_a_page(path) {
-            return false;
-        }
-        match PathName::init(path).ext {
-            b"" => self.is_page_without_extension,
-            extension => Loader::of_extension(extension, self.loaders) == Some(Loader::Html),
-        }
-    }
-
-    /// False for nearly every specifier, after a byte or two compared: `path` ends with no extension of a page.
-    fn can_end_like_a_page(&self, path: &[u8]) -> bool {
-        let ends_with = |end: &[u8]| {
-            let start = path.len().checked_sub(end.len());
-            start.is_some_and(|start| path[start..].eq_ignore_ascii_case(end))
-        };
-        ends_with(b".html")
-            || self.is_page_without_extension
-            || self.other_page_extensions.iter().any(|it| ends_with(it))
+        // Nearly every specifier ends otherwise, which a byte or two show.
+        let end = path.len().checked_sub(5).map(|start| &path[start..]);
+        let ends_in_html = end.is_some_and(|end| end.eq_ignore_ascii_case(b".html"));
+        (ends_in_html || self.has_other_page_extensions)
+            && Loader::of_extension(PathName::init(path).ext, self.loaders) == Some(Loader::Html)
     }
 
     /// Reads the `type` attribute of every use of `imports` in the file, in one pass over its specifiers.

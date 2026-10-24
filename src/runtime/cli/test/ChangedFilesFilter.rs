@@ -155,14 +155,18 @@ pub(crate) fn filter<'a>(
     scan_transpiler.options.ignore_module_resolution_errors = true;
     scan_transpiler.options.output_dir = Box::default();
     scan_transpiler.options.tree_shaking = false;
-    // The run reads `process.env` when the code runs, so the scan does not inline it and drop a branch.
-    scan_transpiler.options.env.behavior = vm.transpiler.options.env.behavior;
+    // The target turned this on. It drops the import of a branch that a constant turns off.
+    scan_transpiler.options.minify_syntax = false;
+    // The target set `LoadAll`, which reads env files into the loader of the run and inlines the variables.
+    scan_transpiler.options.env.behavior = api::DotEnvBehavior::Disable;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the
     // fields we changed above.
     scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
+    // The run takes "main" over "module" for an import too.
+    scan_transpiler.resolver.prefer_module_field = vm.transpiler.resolver.prefer_module_field;
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at

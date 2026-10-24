@@ -276,6 +276,17 @@ impl ReadFile {
 // ReadFile
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Whether a Blob slice that starts at `offset` is read with `pread`, so the descriptor stays put.
+#[cfg(not(windows))]
+pub(crate) fn slice_reads_with_pread(
+    is_regular: bool,
+    st_size: SizeType,
+    offset: SizeType,
+) -> bool {
+    // Past the end `lseek` can fail, and that read then starts at the descriptor's position.
+    is_regular && offset > 0 && offset <= st_size
+}
+
 pub(crate) struct ReadFile {
     pub(crate) file_store: FileStore,
     pub(crate) store: Option<RefPtr<Store>>,
@@ -304,6 +315,9 @@ pub(crate) struct ReadFile {
     pub(crate) io_parking: super::IoParking,
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
+    /// Set from `slice_reads_with_pread` once `fstat` returns.
+    #[cfg(not(windows))]
+    pub(crate) uses_pread: bool,
     pub(crate) close_after_io: bool,
     pub(crate) state: AtomicU8, // ClosingState
 }
@@ -398,6 +412,7 @@ impl ReadFile {
             },
             io_parking: super::IoParking::new(),
             could_block: false,
+            uses_pread: false,
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
         };
@@ -556,12 +571,22 @@ impl ReadFile {
     pub(crate) fn do_read(
         &mut self,
         buf: &mut [u8],
+        already_read: SizeType,
         read_len: &mut usize,
         retry: &mut bool,
     ) -> bool {
         let result: bun_sys::Result<usize> = 'brk: {
             if bun_sys::S::ISSOCK(self.file_store.mode) {
                 break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
+            }
+            if self.uses_pread {
+                let position = (self.offset + already_read) as i64;
+                break 'brk bun_sys::pread(self.opened_fd, buf, position).map_err(|err| {
+                    bun_sys::Error {
+                        syscall: bun_sys::Tag::read,
+                        ..err
+                    }
+                });
             }
             break 'brk bun_sys::read(self.opened_fd, buf);
         };
@@ -746,6 +771,10 @@ impl ReadFile {
         }
 
         if self.offset > 0 {
+            self.uses_pread =
+                slice_reads_with_pread(!self.could_block, self.total_size, self.offset);
+        }
+        if self.offset > 0 && !self.uses_pread {
             // We DO support offset in Bun.file()
             // we ignore errors because it should continue to work even if its a pipe
             let _ = bun_sys::set_file_offset(fd, self.offset);
@@ -836,13 +865,15 @@ impl ReadFile {
         // held as a safe `&mut [u8]` across the `&mut self` call.
         let mut buffer = core::mem::take(&mut self.buffer);
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
+            let already_read = buffer.len() as SizeType;
             let (use_stack, buf) =
                 Self::remaining_buffer(&mut buffer, stack_buffer, self.max_length, self.read_off);
 
             if !buf.is_empty() && self.errno.is_none() && !self.read_eof {
                 let mut read_amount: usize = 0;
                 let mut retry = false;
-                let continue_reading = self.do_read(buf, &mut read_amount, &mut retry);
+                let continue_reading =
+                    self.do_read(buf, already_read, &mut read_amount, &mut retry);
 
                 // We might read into the stack buffer, so we need to copy it into the heap.
                 if use_stack {

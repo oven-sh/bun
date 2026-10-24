@@ -7074,6 +7074,62 @@ impl NodeFS {
         }
     }
 
+    /// Reads a Blob slice (a FormData part, a `fetch` body) with `pread`. `None`: the caller seeks.
+    #[cfg(not(windows))]
+    #[cold]
+    fn pread_slice(fd: FD, args: &args::ReadFile) -> Option<Maybe<ret::ReadFileWithOptions>> {
+        debug_assert!(args.encoding == Encoding::Buffer);
+        let stat = Syscall::fstat(fd).ok()?;
+        let size = stat.st_size.max(0) as u64;
+        let is_regular = sys::S::ISREG(stat.st_mode as u32);
+        if !webcore::blob::read_file::slice_reads_with_pread(is_regular, size, args.offset) {
+            return None;
+        }
+        let max_size = args.max_size.unwrap_or(BLOB_SIZE_MAX);
+        let in_file = size.saturating_sub(args.offset);
+        let mut bytes: Vec<u8> = Vec::new();
+        // `st_size` sizes the buffer. The read ends at the end of the file or of the slice.
+        let mut reserve = in_file.saturating_add(16).min(max_size) as usize;
+        loop {
+            if bytes.try_reserve(reserve).is_err() {
+                return Some(Err(with_path_like(
+                    sys::Error::from_code(E::ENOMEM, sys::Tag::read),
+                    &args.path,
+                )));
+            }
+            let read = bytes.len() as u64;
+            let left = (max_size - read).min(usize::MAX as u64) as usize;
+            // SAFETY: write-only until `commit_spare` exposes the bytes `pread` wrote.
+            let spare = unsafe { bun_core::vec::spare_bytes_mut(&mut bytes) };
+            let want = spare.len().min(left);
+            match Syscall::pread(fd, &mut spare[..want], (args.offset + read) as i64) {
+                Err(err) => {
+                    return Some(Err(sys::Error {
+                        syscall: sys::Tag::read,
+                        ..err
+                    }));
+                }
+                Ok(0) => break,
+                // SAFETY: `pread` filled the first `n` bytes of the spare capacity.
+                Ok(n) => unsafe { bun_core::vec::commit_spare(&mut bytes, n) },
+            }
+            if bytes.len() as u64 >= max_size {
+                break;
+            }
+            let full = bytes.len() == bytes.capacity();
+            reserve = if full { 8192 } else { 0 };
+        }
+        if bytes.is_empty() {
+            return Some(Ok(ret::ReadFileWithOptions::Buffer(Buffer::EMPTY)));
+        }
+        let raw = bun_core::heap::into_raw(bytes.into_boxed_slice());
+        // SAFETY: ownership moves to the `Buffer`, as at the returns of `read_file_with_options`.
+        Some(Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
+            unsafe { &mut *raw },
+            bun_jsc::JSType::Uint8Array,
+        ))))
+    }
+
     pub(crate) fn read_file_with_options(
         &mut self,
         args: &args::ReadFile,
@@ -7154,8 +7210,14 @@ impl NodeFS {
             return Err(abort_err());
         }
 
-        // Only used in DOMFormData
         if args.offset > 0 {
+            // Not on Windows: a read at an offset moves the file pointer there too.
+            #[cfg(not(windows))]
+            if string_type == ReadFileStringType::Default
+                && let Some(slice) = Self::pread_slice(fd, args)
+            {
+                return slice;
+            }
             let _ = sys::set_file_offset(fd, args.offset as u64);
         }
 

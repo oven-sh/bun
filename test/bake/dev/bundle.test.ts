@@ -2135,6 +2135,32 @@ devTest("recovers from an unresolved css url() and html script src longer than t
       expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button"]);
     },
   });
+  // With a separate SSR graph the chunk has two parts of the file: its proxy
+  // for the server graph, and its own code for the SSR graph.
+  devTest("a client component that JSC rejects in the SSR graph keeps its proxy registered", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      "Comp.ts": `
+        "use client";
+        export function Button() { return /+/; }
+      `,
+      "routes/index.ts": usesButton,
+      "routes/manifest.ts": manifestRoute,
+    },
+    async test(dev) {
+      {
+        await using c = await dev.client("/", {
+          errors: ["Comp.ts:2:35: error: Invalid regular expression: nothing to repeat"],
+        });
+      }
+      // The proxy loaded, so the runtime has the component.
+      expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button"]);
+
+      await dev.write("Comp.ts", `"use client"; export function Button() { return /a/; }`);
+      await dev.fetch("/").equals("object");
+      expect(await dev.fetch("/manifest").json()).toEqual(["Comp.ts#Button"]);
+    },
+  });
   devTest("a file that stops being a client component in the save that JSC rejects leaves the manifest", {
     framework: minimalFramework,
     files: {

@@ -2168,7 +2168,7 @@ describe.each(["spawn", "spawnSync"] as const)("Bun.file(path) at stdout and std
     expect(result).toEqual({ exitCode: 0, stdout: undefined });
   });
 
-  row.skipIf(isWindows)("the same path at stdio[3] keeps a file offset of its own", async () => {
+  row("the same path at stdio[3] keeps a file offset of its own", async () => {
     using dir = tempDir("spawn-one-log-extra", { "log.txt": "" });
     const path = join(String(dir), "log.txt");
     const log = Bun.file(path);

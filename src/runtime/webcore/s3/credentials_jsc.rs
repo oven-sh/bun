@@ -67,7 +67,7 @@ pub(crate) struct S3Defaults<'a> {
 
 pub(crate) fn get_credentials_with_options(
     this: &S3Credentials,
-    defaults: S3Defaults<'_>,
+    defaults: &S3Defaults<'_>,
     options: Option<JSValue>,
     global_object: &JSGlobalObject,
 ) -> JsResult<S3CredentialsWithOptions> {

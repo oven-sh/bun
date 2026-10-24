@@ -1,5 +1,7 @@
 import { randomUUIDv7, S3Client } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "node:path";
 import { serve, type S3Server, type Tag } from "s3-server";
 
 // The S3 server of test/packages/s3-server verifies the SigV4 signature of
@@ -301,6 +303,46 @@ describe("s3 write headers carried by the shared path", () => {
       const [request] = server.requests.filter(r => r.key === key);
       expect(request.status).toBe(200);
       expect(request.headers.get("content-disposition")).toBe(disposition.trim());
+    }
+  });
+
+  test("Bun.write() from a file uses the call's partSize over the client's", async () => {
+    const partSize = 5 * 1024 * 1024;
+    using dir = tempDir("s3-tagging", {});
+    const path = join(String(dir), "big.bin");
+    await Bun.write(path, Buffer.alloc(partSize + 1024, "a"));
+    const client = new S3Client({ ...options, partSize: 8 * 1024 * 1024 });
+
+    const single = randomUUIDv7();
+    await Bun.write(client.file(single), Bun.file(path));
+    expect(requestsFor(single).map(([op]) => op)).toEqual(["PutObject"]);
+
+    const multi = randomUUIDv7();
+    await Bun.write(client.file(multi), Bun.file(path), { partSize });
+    expect(requestsFor(multi).map(([op]) => op)).toEqual([
+      "CreateMultipartUpload",
+      "UploadPart",
+      "UploadPart",
+      "CompleteMultipartUpload",
+    ]);
+  });
+
+  test("a bare writer() retries as often as the client's retry says", async () => {
+    let puts = 0;
+    using failing = Bun.serve({
+      port: 0,
+      fetch: () => {
+        puts++;
+        return new Response("<Error><Code>InternalError</Code></Error>", { status: 500 });
+      },
+    });
+    for (const retry of [0, 2]) {
+      puts = 0;
+      const client = new S3Client({ ...options, endpoint: failing.url.href, retry });
+      const writer = client.file(randomUUIDv7()).writer();
+      writer.write("hello");
+      await expect(writer.end()).rejects.toMatchObject({ code: "InternalError" });
+      expect(puts).toBe(retry + 1);
     }
   });
 

@@ -131,7 +131,7 @@ pub(crate) fn s3_credentials_from_env(
     )
 }
 
-/// The headers of a `fetch("s3://")` write: the `s3` options, and the `Content-*` request headers.
+/// The headers of a `fetch("s3://")` write. `Content-*` come from the request headers only.
 fn s3_put_headers<'a>(
     credentials_with_options: &'a s3::S3CredentialsWithOptions,
     headers: Option<&'a Headers>,
@@ -1709,7 +1709,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     use crate::webcore::s3_client::S3CredentialsExt as _;
                     credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
                         &credentials_with_options.credentials,
-                        Default::default(),
+                        &Default::default(),
                         Some(s3_options),
                         global_this,
                     )?;
@@ -1777,7 +1777,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 readable_stream.get().unwrap(),
                 &global_this.js_thread(context),
                 credentials_with_options.options,
-                s3_put_headers(&credentials_with_options, headers.as_ref()),
+                &s3_put_headers(&credentials_with_options, headers.as_ref()),
                 proxy_url,
                 Some(s3_stream_wrapper_resolve),
                 bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),

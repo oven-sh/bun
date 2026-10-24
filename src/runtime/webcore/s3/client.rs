@@ -374,7 +374,7 @@ pub(crate) fn upload(
     context: &bun_jsc::ScriptExecutionContext,
     path: &[u8],
     content: &[u8],
-    headers: PutHeaders<'_>,
+    headers: &PutHeaders<'_>,
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
@@ -385,7 +385,7 @@ pub(crate) fn upload(
             path,
             method: bun_http::Method::PUT,
             body: content,
-            headers,
+            headers: *headers,
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),
@@ -401,7 +401,7 @@ pub(crate) fn writable_stream(
     path: &[u8],
     cx: &bun_jsc::JsThread<'_>,
     options: MultiPartUploadOptions,
-    headers: PutHeaders<'_>,
+    headers: &PutHeaders<'_>,
 ) -> JsResult<JSValue> {
     // Local callback wrapper. `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
@@ -753,7 +753,7 @@ pub(crate) fn upload_stream(
     readable_stream: ReadableStream,
     cx: &bun_jsc::JsThread<'_>,
     options: MultiPartUploadOptions,
-    headers: PutHeaders<'_>,
+    headers: &PutHeaders<'_>,
     proxy: Option<&[u8]>,
     callback: Option<fn(S3UploadResult, *mut c_void)>,
     callback_context: *mut c_void,

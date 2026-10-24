@@ -1332,7 +1332,7 @@ impl BlobExt for Blob {
                 readable_stream,
                 cx,
                 aws_options.options,
-                aws_options.put_headers(self.content_type_or_mime_type()),
+                &aws_options.put_headers(self.content_type_or_mime_type()),
                 None,
                 None,
                 core::ptr::null_mut(),
@@ -1525,7 +1525,7 @@ impl BlobExt for Blob {
                     path,
                     &cx,
                     credentials_with_options.options,
-                    credentials_with_options.put_headers(self.content_type_or_mime_type()),
+                    &credentials_with_options.put_headers(self.content_type_or_mime_type()),
                 );
             }
 
@@ -1534,7 +1534,7 @@ impl BlobExt for Blob {
                 path,
                 &cx,
                 s3.options,
-                s3.put_headers(self.content_type_or_mime_type()),
+                &s3.put_headers(self.content_type_or_mime_type()),
             );
         }
 
@@ -4193,7 +4193,7 @@ fn write_file_with_empty_source_to_destination(
                 cx.context(),
                 s3.path(),
                 b"",
-                aws_options.put_headers(destination_blob.content_type_or_mime_type()),
+                &aws_options.put_headers(destination_blob.content_type_or_mime_type()),
                 Wrapper::resolve,
                 bun_core::heap::into_raw(Box::new(Wrapper {
                     promise,
@@ -4385,7 +4385,7 @@ pub(crate) fn write_file_with_source_destination(
                             stream,
                             cx,
                             aws_options.options,
-                            aws_options.put_headers(destination_blob.content_type_or_mime_type()),
+                            &aws_options.put_headers(destination_blob.content_type_or_mime_type()),
                             None,
                             None,
                             core::ptr::null_mut(),
@@ -4442,7 +4442,7 @@ pub(crate) fn write_file_with_source_destination(
                         cx.context(),
                         s3.path(),
                         bytes.slice(),
-                        aws_options.put_headers(destination_blob.content_type_or_mime_type()),
+                        &aws_options.put_headers(destination_blob.content_type_or_mime_type()),
                         Wrapper::resolve,
                         bun_core::heap::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),
@@ -4474,7 +4474,7 @@ pub(crate) fn write_file_with_source_destination(
                         stream,
                         cx,
                         aws_options.options,
-                        aws_options.put_headers(destination_blob.content_type_or_mime_type()),
+                        &aws_options.put_headers(destination_blob.content_type_or_mime_type()),
                         None,
                         None,
                         core::ptr::null_mut(),
@@ -4752,7 +4752,7 @@ pub(crate) fn write_file_internal(
                                 readable,
                                 cx,
                                 aws_options.options,
-                                aws_options
+                                &aws_options
                                     .put_headers(destination_blob.content_type_or_mime_type()),
                                 None,
                                 None,

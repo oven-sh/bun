@@ -1166,7 +1166,7 @@ pub struct PutHeadersOwned {
 }
 
 impl PutHeadersOwned {
-    pub fn new(headers: PutHeaders<'_>) -> Self {
+    pub fn new(headers: &PutHeaders<'_>) -> Self {
         Self {
             content_type: headers.content_type.map(Box::<[u8]>::from),
             content_disposition: headers.content_disposition.map(Box::<[u8]>::from),

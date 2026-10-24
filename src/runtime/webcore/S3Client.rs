@@ -43,7 +43,7 @@ pub(crate) trait S3CredentialsExt {
         // (e.g. `&RefPtr<S3Credentials>` deref) cannot produce an owned copy. The
         // real impl in `s3/credentials_jsc.rs` deep-copies internally.
         this: &S3Credentials,
-        defaults: S3Defaults<'_>,
+        defaults: &S3Defaults<'_>,
         options: Option<JSValue>,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions>;
@@ -60,7 +60,7 @@ impl S3CredentialsExt for S3Credentials {
     #[inline]
     fn get_credentials_with_options(
         this: &S3Credentials,
-        defaults: S3Defaults<'_>,
+        defaults: &S3Defaults<'_>,
         options: Option<JSValue>,
         global: &JSGlobalObject,
     ) -> JsResult<bun_s3_signing::S3CredentialsWithOptions> {
@@ -293,7 +293,7 @@ impl S3Client {
         );
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
-            S3Defaults::default(),
+            &S3Defaults::default(),
             Some(options.to_js()),
             global,
         )?;
@@ -357,7 +357,7 @@ impl S3Client {
             path,
             options,
             &self.credentials,
-            self.defaults(),
+            &self.defaults(),
         )
     }
 
@@ -542,7 +542,7 @@ impl S3Client {
             PathLike::default(),
             options,
             &self.credentials,
-            S3Defaults {
+            &S3Defaults {
                 options: self.options,
                 request_payer: self.request_payer,
                 ..Default::default()

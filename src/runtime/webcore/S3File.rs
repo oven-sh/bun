@@ -185,7 +185,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     path: PathLike<'static>,
     options: Option<JSValue>,
     default_credentials: &s3::S3Credentials,
-    defaults: S3Defaults<'_>,
+    defaults: &S3Defaults<'_>,
 ) -> JsResult<Blob> {
     let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials,
@@ -211,7 +211,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
 ) -> JsResult<Blob> {
     let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
         existing_credentials,
-        S3Defaults::default(),
+        &S3Defaults::default(),
         options,
         global,
     )?;
@@ -490,7 +490,7 @@ pub(crate) fn get_presign_url_from(
         // A tagging default would oblige whoever uses the URL to send the header.
         credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
             s3.get_credentials(),
-            S3Defaults {
+            &S3Defaults {
                 tagging: None,
                 ..s3.defaults()
             },

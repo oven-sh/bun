@@ -336,19 +336,21 @@ impl Execution {
         }
     }
 
+    /// `arrived_at` is when `data` was queued (`BunTest::add_result`).
     pub(crate) fn step(
         buntest_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         data: &RefDataValue,
+        arrived_at: Timespec,
     ) -> JsResult<StepResult> {
         let _g = group_begin!();
         let buntest = buntest_strong.get();
         let buntest_ptr = NonNull::from(&mut *buntest);
         let this = &mut buntest.execution;
-        let mut now = Timespec::now_force_real_time();
 
         match data {
             RefDataValue::Start => {
+                let mut now = Timespec::now_force_real_time();
                 return step_group(buntest_strong, global_this, &mut now);
             }
             _ => {
@@ -371,10 +373,22 @@ impl Execution {
                     _ => unreachable!(),
                 };
 
-                // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
-                debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
+                debug_assert!(!arrived_at.eql(&Timespec::EPOCH));
+                // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive. This
+                // `&mut` is dead before `this` is touched again.
+                let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+                debug_assert!(sequence.active_entry.is_some());
+                // Judged by arrival: the timer cannot fire while a callback blocks. A verdict already set stands.
+                if sequence.result == Result::Pending
+                    && let Some(entry) = sequence.active_entry
+                {
+                    // SAFETY: arena-owned entry, alive for lifetime of BunTest
+                    let _ = unsafe { entry.as_ref() }.evaluate_timeout(sequence, &arrived_at, true);
+                }
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
+                // A stale `now` is safe: nothing below compares it before `run_test_callback` refreshes it.
+                let mut now = arrived_at;
                 let sequence_result =
                     step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
                 match sequence_result {
@@ -762,29 +776,6 @@ impl Execution {
         if let Some(runner) = super::jest::Jest::runner() {
             runner.snapshots.reset_counts();
         }
-    }
-
-    /// Judged here rather than in `step`: other callbacks may block before the queued completion is processed.
-    pub(crate) fn handle_callback_completed(&mut self, user_data: &RefDataValue) {
-        let _g = group_begin!();
-
-        let Some((sequence_ptr, _group_ptr)) =
-            self.get_current_and_valid_execution_sequence(user_data)
-        else {
-            return;
-        };
-        // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
-        // remainder of this function, so this is the unique live `&mut` to that element.
-        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-        let Some(entry) = sequence.active_entry else {
-            return;
-        };
-        // SAFETY: arena-owned entry, alive for lifetime of BunTest
-        let _ = unsafe { entry.as_ref() }.evaluate_timeout(
-            sequence,
-            &Timespec::now_force_real_time(),
-            true,
-        );
     }
 
     pub(crate) fn handle_uncaught_exception(

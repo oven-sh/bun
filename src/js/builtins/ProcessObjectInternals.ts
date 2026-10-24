@@ -90,6 +90,21 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  if (
+    process.platform !== "win32" &&
+    (isTTY || fdType === BunProcessStdinFdType.pipe || fdType === BunProcessStdinFdType.socket)
+  ) {
+    const setStdioBlocking = $bindgen("node_process.bind.ts", "setStdioBlocking");
+    stream._handle = {
+      get fd() {
+        return fd;
+      },
+      setBlocking(blocking) {
+        return setStdioBlocking(fd, !!blocking);
+      },
+    };
+  }
+
   // This is undefined if a FileSink couldn't be opened for the fd. The stream then writes through node:fs.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
   return [stream, underlyingSink];

@@ -133,6 +133,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
+On POSIX, piped and terminal `process.stdout` and `process.stderr` expose `_handle.fd` and `_handle.setBlocking()` for native writers. Regular-file output has no `_handle`.
+
 🟡 See [`process`](#process) Global.
 
 ### [`node:sys`](https://nodejs.org/api/util.html)

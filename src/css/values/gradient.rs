@@ -28,9 +28,8 @@ use bun_alloc::Arena;
 pub trait GradientPosition: Sized + Clone + PartialEq {
     fn parse(input: &mut Parser) -> Result<Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
-    /// `true` iff this is `DimensionPercentage::Percentage(p)` with `p.v == v`.
-    /// Used by `serialize_items` to skip the useless `50%` interpolation hint.
-    fn is_percentage_with_value(&self, v: f32) -> bool;
+    /// The fraction of the gradient line this position is at, when it is a percentage.
+    fn fraction(&self) -> Option<f32>;
 }
 
 // Only two `D` instantiations exist (`LengthValue` / `Angle`); both already
@@ -40,14 +39,20 @@ macro_rules! impl_gradient_position {
     ($ty:ty) => {
         impl GradientPosition for $ty {
             #[inline]
-            fn parse(input: &mut Parser) -> Result<Self> { <$ty>::parse(input) }
+            fn parse(input: &mut Parser) -> Result<Self> {
+                <$ty>::parse(input)
+            }
             #[inline]
             fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
                 <$ty>::to_css(self, dest)
             }
             #[inline]
-            fn is_percentage_with_value(&self, v: f32) -> bool {
-                matches!(self, DimensionPercentage::Percentage(p) if p.v == v)
+            fn fraction(&self) -> Option<f32> {
+                match self {
+                    // `calc()` can give a NaN or infinite percentage.
+                    DimensionPercentage::Percentage(p) if p.v.is_finite() => Some(p.v),
+                    _ => None,
+                }
             }
         }
     };
@@ -344,64 +349,12 @@ impl LinearGradient {
             // todo_stuff.depth
             serialize_items::<LengthPercentage>(&self.items, dest)?;
         }
-        // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
+        // If we have `to top` or `0deg`, and the list paints the same mirrored,
         // we can flip the gradient the other direction and omit the direction.
         else if angle == 0.0
             && dest.minify
-            && 'brk: {
-                for item in self.items.iter() {
-                    match item {
-                        GradientItem::Hint(h) if !matches!(h, LengthPercentage::Percentage(_)) => {
-                            break 'brk false;
-                        }
-                        GradientItem::ColorStop(cs)
-                            if cs
-                                .position
-                                .as_ref()
-                                .is_some_and(|p| !matches!(p, LengthPercentage::Percentage(_))) =>
-                        {
-                            break 'brk false;
-                        }
-                        _ => {}
-                    }
-                }
-                true
-            }
+            && let Some(flipped_items) = mirrored_items(&self.items)
         {
-            let mut flipped_items: Vec<GradientItem<LengthPercentage>> =
-                Vec::with_capacity(self.items.len());
-
-            let mut i: usize = self.items.len();
-            while i > 0 {
-                i -= 1;
-                let item = &self.items[i];
-                match item {
-                    GradientItem::Hint(h) => match h {
-                        LengthPercentage::Percentage(p) => flipped_items.push(GradientItem::Hint(
-                            LengthPercentage::Percentage(Percentage { v: 1.0 - p.v }),
-                        )),
-                        _ => unreachable!(),
-                    },
-                    GradientItem::ColorStop(cs) => {
-                        flipped_items.push(GradientItem::ColorStop(ColorStop {
-                            color: cs.color.clone(),
-                            position: if let Some(p) = &cs.position {
-                                match p {
-                                    LengthPercentage::Percentage(perc) => {
-                                        Some(LengthPercentage::Percentage(Percentage {
-                                            v: 1.0 - perc.v,
-                                        }))
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            } else {
-                                None
-                            },
-                        }))
-                    }
-                }
-            }
-
             if serialize_items::<LengthPercentage>(&flipped_items, dest).is_err() {
                 return Err(dest.add_fmt_error());
             }
@@ -1437,6 +1390,7 @@ pub(crate) fn parse_items<D: GradientPosition>(
 ) -> Result<Vec<GradientItem<D>>> {
     let mut items: Vec<GradientItem<D>> = Vec::new();
     let mut seen_stop = false;
+    let mut seen_50_percent_hint = false;
 
     loop {
         input.parse_until_before(
@@ -1445,6 +1399,7 @@ pub(crate) fn parse_items<D: GradientPosition>(
                 if seen_stop {
                     if let Ok(hint) = i.try_parse(D::parse) {
                         seen_stop = false;
+                        seen_50_percent_hint |= hint.fraction() == Some(0.5);
                         items.push(GradientItem::Hint(hint));
                         return Ok(());
                     }
@@ -1475,7 +1430,120 @@ pub(crate) fn parse_items<D: GradientPosition>(
         }
     }
 
+    if seen_50_percent_hint {
+        remove_midpoint_hints(&mut items);
+    }
     Ok(items)
+}
+
+/// Where a color stop or hint is written, before
+/// [color stop fix-up](https://drafts.csswg.org/css-images-4/#color-stop-fixup) moves it.
+enum WrittenPosition {
+    /// At this fraction of the gradient line.
+    Fraction(f32),
+    /// At a length, an angle or a `calc()`. Its fraction is not known here.
+    Unknown,
+    /// Nowhere. Step 3 of fix-up spaces the stop between its neighbors.
+    Auto,
+}
+
+fn written_position<D: GradientPosition>(items: &[GradientItem<D>], i: usize) -> WrittenPosition {
+    let position = match &items[i] {
+        GradientItem::Hint(hint) => Some(hint),
+        GradientItem::ColorStop(stop) => stop.position.as_ref(),
+    };
+    match position {
+        Some(position) => position
+            .fraction()
+            .map_or(WrittenPosition::Unknown, WrittenPosition::Fraction),
+        // Step 1 of fix-up.
+        None if i == 0 => WrittenPosition::Fraction(0.0),
+        None if i + 1 == items.len() => WrittenPosition::Fraction(1.0),
+        None => WrittenPosition::Auto,
+    }
+}
+
+/// Step 2 of fix-up raises each position to the largest one written before it. `largest` is
+/// that position, or `None` when one of them is unknown. Returns where `items[i]` ends up.
+fn used_position<D: GradientPosition>(
+    largest: &mut Option<f32>,
+    items: &[GradientItem<D>],
+    i: usize,
+) -> Option<f32> {
+    match written_position(items, i) {
+        WrittenPosition::Fraction(written) => *largest = largest.map(|l| l.max(written)),
+        WrittenPosition::Unknown => *largest = None,
+        // Raises nothing after it.
+        WrittenPosition::Auto => return None,
+    }
+    *largest
+}
+
+/// Removes each `50%` hint that fix-up leaves exactly halfway between the stops beside it.
+/// A transition is centered there without a hint. lightningcss skips every `50%` hint in its
+/// printer instead, which changes the gradient when the hint is not halfway.
+#[cold]
+fn remove_midpoint_hints<D: GradientPosition>(items: &mut Vec<GradientItem<D>>) {
+    let mut largest = Some(f32::NEG_INFINITY);
+    // Where fix-up leaves the item before `items[i]`.
+    let mut before = None;
+    let mut kept = 0;
+    for i in 0..items.len() {
+        if let GradientItem::Hint(hint) = &items[i]
+            && hint.fraction() == Some(0.5)
+            && i + 1 < items.len()
+        {
+            // `items[i..]` is still as parsed.
+            let mut ahead = largest;
+            if let (Some(before), Some(at), Some(after)) = (
+                before,
+                used_position(&mut ahead, items, i),
+                used_position(&mut ahead, items, i + 1),
+            ) && before + after == at + at
+            {
+                continue;
+            }
+        }
+        before = used_position(&mut largest, items, i);
+        items.swap(kept, i);
+        kept += 1;
+    }
+    items.truncate(kept);
+}
+
+/// `items` in the opposite order with each position `p` as `1 - p`, when that paints the same
+/// gradient in the opposite direction.
+fn mirrored_items(
+    items: &[GradientItem<LengthPercentage>],
+) -> Option<Vec<GradientItem<LengthPercentage>>> {
+    let mut largest = f32::NEG_INFINITY;
+    for i in 0..items.len() {
+        match written_position(items, i) {
+            // Fix-up raises a position to the largest one before it. Mirrored, that one
+            // comes after it.
+            WrittenPosition::Fraction(written) if written >= largest => largest = written,
+            WrittenPosition::Auto => {}
+            _ => return None,
+        }
+    }
+    let mut mirrored = Vec::with_capacity(items.len());
+    for item in items.iter().rev() {
+        // The curve a hint gives is not symmetric. At `1 - p` it paints another transition.
+        let GradientItem::ColorStop(stop) = item else {
+            return None;
+        };
+        let position = match &stop.position {
+            Some(position) => Some(LengthPercentage::Percentage(Percentage {
+                v: 1.0 - position.fraction()?,
+            })),
+            None => None,
+        };
+        mirrored.push(GradientItem::ColorStop(ColorStop {
+            color: stop.color.clone(),
+            position,
+        }));
+    }
+    Some(mirrored)
 }
 
 fn serialize_items<D: GradientPosition>(
@@ -1485,13 +1553,6 @@ fn serialize_items<D: GradientPosition>(
     let mut first = true;
     let mut last: Option<&GradientItem<D>> = None;
     for item in items.iter() {
-        // Skip useless hints
-        if let GradientItem::Hint(h) = item {
-            if h.is_percentage_with_value(0.5) {
-                continue;
-            }
-        }
-
         // Use double position stop if the last stop is the same color and all targets support it.
         if let Some(prev) = last {
             if !dest.targets.should_compile(

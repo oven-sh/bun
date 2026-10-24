@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -4683,6 +4683,216 @@ describe("css tests", () => {
       ".foo { background: linear-gradient(yellow, 50%, blue); }",
       ".foo{background:linear-gradient(#ff0,#00f)}",
     );
+
+    // A `50%` hint is removed only when color stop fix-up leaves it halfway between its stops.
+    minify_test(
+      ".foo { background: linear-gradient(red 25%, 50%, blue 75%); }",
+      ".foo{background:linear-gradient(red 25%,#00f 75%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red 10% 30%, 50%, blue 70% 90%); }",
+      ".foo{background:linear-gradient(red 10% 30%,#00f 70% 90%)}",
+    );
+    minify_test(
+      ".foo { background: conic-gradient(yellow, 50%, blue); }",
+      ".foo{background:conic-gradient(#ff0,#00f)}",
+    );
+    // Fix-up raises the hint and `blue` to 60%.
+    minify_test(
+      ".foo { background: linear-gradient(red 60%, 50%, blue 40%); }",
+      ".foo{background:linear-gradient(red 60%,#00f 40%)}",
+    );
+    // `lime` has no position. It does not move `blue`.
+    minify_test(
+      ".foo { background: linear-gradient(red, lime, blue 0%, 50%, yellow 100%); }",
+      ".foo{background:linear-gradient(red,#0f0,#00f 0%,#ff0 100%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red 20%, 50%, blue 60%); }",
+      ".foo{background:linear-gradient(red 20%,50%,#00f 60%)}",
+    );
+    cssTest(
+      `
+      .foo {
+        background: linear-gradient(red 20%, 50%, blue 60%);
+      }
+    `,
+      indoc`
+      .foo {
+        background: linear-gradient(red 20%, 50%, #00f 60%);
+      }
+`,
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to right, red 20%, 50%, blue 60%); }",
+      ".foo{background:linear-gradient(90deg,red 20%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: repeating-linear-gradient(red 20%, 50%, blue 60%); }",
+      ".foo{background:repeating-linear-gradient(red 20%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: radial-gradient(red 20%, 50%, blue 60%); }",
+      ".foo{background:radial-gradient(red 20%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: conic-gradient(red 20%, 50%, blue 60%); }",
+      ".foo{background:conic-gradient(red 20%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red, 50%, blue 60%); }",
+      ".foo{background:linear-gradient(red,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red 20%, 50%, blue); }",
+      ".foo{background:linear-gradient(red 20%,50%,#00f)}",
+    );
+    // The middle of two lengths is not known as a percentage.
+    minify_test(
+      ".foo { background: linear-gradient(red 10px, 50%, blue 200px); }",
+      ".foo{background:linear-gradient(red 10px,50%,#00f 200px)}",
+    );
+    // A stop without a position is spaced from the hint beside it.
+    minify_test(
+      ".foo { background: linear-gradient(red, lime, 50%, blue); }",
+      ".foo{background:linear-gradient(red,#0f0,50%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red, 50%, lime, blue); }",
+      ".foo{background:linear-gradient(red,50%,#0f0,#00f)}",
+    );
+    // Fix-up raises `lime` to 30%.
+    minify_test(
+      ".foo { background: linear-gradient(red 30%, lime 20%, 50%, blue 80%); }",
+      ".foo{background:linear-gradient(red 30%,#0f0 20%,50%,#00f 80%)}",
+    );
+    // Fix-up raises `lime` to 0%, the position of the first stop.
+    minify_test(
+      ".foo { background: linear-gradient(red, lime -20%, 50%, blue 120%); }",
+      ".foo{background:linear-gradient(red,#0f0 -20%,50%,#00f 120%)}",
+    );
+    // Fix-up raises `lime` to 100px when the gradient line is shorter than 2000px.
+    minify_test(
+      ".foo { background: linear-gradient(red 100px, lime 5%, 50%, blue 95%); }",
+      ".foo{background:linear-gradient(red 100px,#0f0 5%,50%,#00f 95%)}",
+    );
+    // `calc(NaN * 1%)` is 0%.
+    minify_test(
+      ".foo { background: linear-gradient(red -50%, lime calc(NaN * 1%), 50%, blue 150%); }",
+      ".foo{background:linear-gradient(red -50%,#0f0 0%,50%,#00f 150%)}",
+    );
+    // Only the first hint is halfway. Fix-up raises the second one to 80%.
+    minify_test(
+      ".foo { background: linear-gradient(red 20%, 50%, lime 80%, 50%, blue 100%); }",
+      ".foo{background:linear-gradient(red 20%,#0f0 80%,50%,#00f 100%)}",
+    );
+    // A hint that is not `50%` stays, as before.
+    minify_test(
+      ".foo { background: linear-gradient(red 0%, 25%, lime 50%, 50%, blue 100%); }",
+      ".foo{background:linear-gradient(red 0%,25%,#0f0 50%,50%,#00f 100%)}",
+    );
+    // The hint raises `red 40%` to 50%, so the two red stops are not one double-position stop.
+    minify_test(
+      ".foo { background: linear-gradient(red 20%, 50%, red 40%, blue); }",
+      ".foo{background:linear-gradient(red 20%,50%,red 40%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red, blue, 50%); }",
+      ".foo{background:linear-gradient(red,#00f,50%)}",
+    );
+
+    // `to top` becomes `to bottom` only when the mirrored list paints the same.
+    minify_test(
+      ".foo { background: linear-gradient(to top, yellow, 50%, blue); }",
+      ".foo{background:linear-gradient(#00f,#ff0)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, lime 30%, yellow, blue); }",
+      ".foo{background:linear-gradient(#00f,#ff0,#0f0 70%,red)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red 50%, blue 50%); }",
+      ".foo{background:linear-gradient(#00f 50%,red 50%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red 20%, 50%, blue 60%); }",
+      ".foo{background:linear-gradient(0deg,red 20%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, 25%, blue); }",
+      ".foo{background:linear-gradient(0deg,red,25%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red 60%, blue 40%); }",
+      ".foo{background:linear-gradient(0deg,red 60%,#00f 40%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, lime -20%, blue); }",
+      ".foo{background:linear-gradient(0deg,red,#0f0 -20%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, lime 120%, blue); }",
+      ".foo{background:linear-gradient(0deg,red,#0f0 120%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red 50%, 50%, blue -20%); }",
+      ".foo{background:linear-gradient(0deg,red 50%,#00f -20%)}",
+    );
+    // The output of the row above is stable.
+    minify_test(
+      ".foo{background:linear-gradient(0deg,red 50%,#00f -20%)}",
+      ".foo{background:linear-gradient(0deg,red 50%,#00f -20%)}",
+    );
+
+    // A removed hint is not in the value that the rule merge and the fallbacks read.
+    minify_test(
+      ".a { background: linear-gradient(yellow, blue) } .b { background: linear-gradient(yellow, 50%, blue) }",
+      ".a,.b{background:linear-gradient(#ff0,#00f)}",
+    );
+    prefix_test(
+      ".foo { background: linear-gradient(yellow, 50%, blue) }",
+      indoc`
+      .foo {
+        background: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0), to(#00f));
+        background: -webkit-linear-gradient(#ff0, #00f);
+        background: linear-gradient(#ff0, #00f);
+      }
+`,
+      { chrome: 8 << 16 },
+    );
+    prefix_test(
+      ".foo { background-image: linear-gradient(red, blue); background-image: linear-gradient(yellow, 50%, blue) }",
+      indoc`
+      .foo {
+        background-image: linear-gradient(#ff0, #00f);
+      }
+`,
+      { chrome: 30 << 16 },
+    );
+    prefix_test(
+      ".foo { background-image: linear-gradient(red, blue); background-image: linear-gradient(red 20%, 50%, blue 60%) }",
+      indoc`
+      .foo {
+        background-image: linear-gradient(red, #00f);
+        background-image: linear-gradient(red 20%, 50%, #00f 60%);
+      }
+`,
+      { chrome: 30 << 16 },
+    );
+
+    test.each([
+      [false, "a {\n  background: linear-gradient(red 20%, 50%, #00f 60%);\n}\n"],
+      [true, "a{background:linear-gradient(red 20%,50%,#00f 60%)}\n"],
+    ])("Bun.build keeps a hint that is not halfway between its stops (minify: %p)", async (minify, expected) => {
+      using dir = tempDir("css-gradient-hint", {
+        "a.css": "a{background:linear-gradient(red 20%,50%,blue 60%)}",
+      });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "a.css")], minify, throw: true });
+      const output = await result.outputs[0].text();
+      // Without `minify` the output starts with a `/* path */` line.
+      expect(output.replace(/^\/\*.*\*\/\n/, "")).toBe(expected);
+    });
+
     minify_test(
       ".foo { background: linear-gradient(yellow, 20px, blue); }",
       ".foo{background:linear-gradient(#ff0,20px,#00f)}",

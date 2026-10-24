@@ -65,15 +65,15 @@ pub(crate) fn checksum_ok(h: &Block) -> bool {
     if !field.iter().all(|c| matches!(c, b' ' | 0 | b'0'..=b'7')) {
         return false;
     }
-    // Eight octal digits fit in 24 bits.
     let expected = parse_field(field);
-    let mut unsigned: i64 = 8 * 32;
-    let mut signed: i64 = 8 * 32;
-    for &b in h[..148].iter().chain(&h[156..]) {
-        unsigned += i64::from(b);
-        signed += i64::from(b.cast_signed());
+    let sum = |bytes: &[u8]| bytes.iter().map(|&b| u32::from(b)).sum::<u32>();
+    // The field itself counts as eight spaces.
+    let unsigned = i64::from(sum(h) - sum(field) + 8 * 32);
+    if expected == unsigned {
+        return true;
     }
-    expected == unsigned || expected == signed
+    let negative = h.iter().filter(|&&b| b >= 128).count() as i64;
+    expected == unsigned - 256 * negative
 }
 
 fn number_field_looks_valid(field: &[u8]) -> bool {

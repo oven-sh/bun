@@ -116,6 +116,29 @@ describe("entry names", () => {
   });
 });
 
+describe("header checksum", () => {
+  // The linkname field holds the bytes over 127, which a regular file makes no use of.
+  const withChecksum = (sum: (bytes: Buffer) => number) => {
+    const header = tarHeader("a", 0);
+    header.fill(0xe9, 157, 200);
+    header.fill(" ", 148, 156);
+    header.write(sum(header).toString(8).padStart(6, "0") + "\0 ", 148);
+    return header;
+  };
+  const unsigned = (bytes: Buffer) => bytes.reduce((a, b) => a + b, 0);
+  const signed = (bytes: Buffer) => new Int8Array(bytes).reduce((a, b) => a + b, 0);
+
+  test.each([
+    ["of unsigned bytes", unsigned, 0, ["first", "a", "last"]],
+    ["of signed bytes, as some old tars wrote it", signed, 0, ["first", "a", "last"]],
+    ["that is off by one", unsigned, 1, ["first", "last"]],
+    ["of signed bytes that is off by one", signed, -1, ["first", "last"]],
+  ] as const)("%s", async (_, sum, off, expected) => {
+    const header = withChecksum(bytes => sum(bytes) + off);
+    expect(await names(file("first"), header, file("last"), end)).toEqual([...expected]);
+  });
+});
+
 describe("Bun.Archive writes archives the way it was recorded to", () => {
   const write = async (files: Record<string, string | Uint8Array>, options?: Bun.ArchiveOptions) => {
     const started = Math.floor(Date.now() / 1000);

@@ -3,6 +3,7 @@ use crate::header::{self, Block, gnu};
 use crate::num::{parse_decimal, parse_field, parse_pax_time};
 use crate::writer::Output as _;
 use bun_core::{FileKind, S, kind_from_mode, slice_to_nul, strings};
+use std::borrow::Cow;
 
 /// Whose answer to give where tar readers disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,7 +297,7 @@ pub struct Reader {
 
     block: Block,
     block_len: usize,
-    /// The entry's own header, kept while `block` takes the sparse extension blocks behind it.
+    /// The entry's own header, kept while the sparse extension blocks behind it are read.
     main_header: Block,
     collected: Vec<u8>,
 
@@ -486,6 +487,19 @@ impl Reader {
         (self.block_len == self.block.len()).then_some(())
     }
 
+    /// Like `fill_block`, but a block that `input` holds all of is not copied.
+    fn take_block<'a>(&mut self, input: &'a [u8], used: &mut usize) -> Option<Cow<'a, Block>> {
+        if self.block_len == 0
+            && let Some(block) = input.first_chunk()
+        {
+            *used = block.len();
+            return Some(Cow::Borrowed(block));
+        }
+        self.fill_block(input, used)?;
+        self.block_len = 0;
+        Some(Cow::Owned(self.block))
+    }
+
     fn step(&mut self, input: &[u8], eof: bool, used: &mut usize) -> Result<Step> {
         match self.state {
             State::Failed(error) => Err(error),
@@ -500,7 +514,7 @@ impl Reader {
             }
 
             State::Header => {
-                if self.fill_block(input, used).is_none() {
+                let Some(block) = self.take_block(input, used) else {
                     if !eof {
                         return Ok(Step::NeedInput);
                     }
@@ -512,9 +526,8 @@ impl Reader {
                     }
                     self.state = State::Done;
                     return Ok(Step::EndOfArchive);
-                }
-                self.block_len = 0;
-                self.on_header()?;
+                };
+                self.on_header(&block)?;
                 Ok(Step::Continue)
             }
 
@@ -657,17 +670,16 @@ impl Reader {
             }
 
             State::OldSparseExtension => {
-                if self.fill_block(input, used).is_none() {
+                let Some(block) = self.take_block(input, used) else {
                     if !eof {
                         return Ok(Step::NeedInput);
                     }
                     return Err(Error::TruncatedSparse);
-                }
-                self.block_len = 0;
-                let block = self.block;
+                };
                 self.add_old_sparse_entries(gnu::extension_sparse(&block))?;
                 if !gnu::extension_is_extended(&block) {
-                    self.header_common()?;
+                    let h = self.main_header;
+                    self.header_common(&h)?;
                 }
                 Ok(Step::Continue)
             }
@@ -805,9 +817,8 @@ impl Reader {
         before
     }
 
-    fn on_header(&mut self) -> Result<()> {
-        let block = self.block;
-        if header::is_null(&block) {
+    fn on_header(&mut self, block: &Block) -> Result<()> {
+        if header::is_null(block) {
             if self.is_npm() {
                 self.null_blocks = self.null_blocks.saturating_add(1);
                 if self.null_blocks == 2 {
@@ -818,7 +829,7 @@ impl Reader {
         }
         self.null_blocks = 0;
 
-        if !header::checksum_ok(&block) {
+        if !header::checksum_ok(block) {
             if self.eof_is_fatal {
                 return Err(Error::BadChecksum);
             }
@@ -827,8 +838,8 @@ impl Reader {
             return Ok(());
         }
 
-        let size = header::size(&block);
-        match header::typeflag(&block) {
+        let size = header::size(block);
+        match header::typeflag(block) {
             b'A' => {
                 if self.mark_seen(seen::SOLARIS_ACL) {
                     return Err(Error::RedundantHeader("A"));
@@ -887,7 +898,7 @@ impl Reader {
                 self.format = Format::Pax;
                 self.begin_pax(size)
             }
-            _ => self.on_main_header(),
+            _ => self.on_main_header(block),
         }
     }
 
@@ -1342,26 +1353,25 @@ impl Reader {
         Ok(())
     }
 
-    fn on_main_header(&mut self) -> Result<()> {
-        self.main_header = self.block;
-        let h = self.main_header;
-        let magic = header::magic(&h);
+    fn on_main_header(&mut self, h: &Block) -> Result<()> {
+        let magic = header::magic(h);
         let npm = self.is_npm();
 
         if magic == gnu::MAGIC {
             self.format = Format::Gnu;
             if self.entry.path.is_empty() {
                 self.entry.path_is_utf8 = false;
-                assign(&mut self.entry.path, slice_to_nul(header::name(&h)))?;
+                assign(&mut self.entry.path, slice_to_nul(header::name(h)))?;
             }
             if !npm {
-                if gnu::real_size(&h).first() != Some(&0) {
-                    self.gnu_sparse_real_size = parse_field(gnu::real_size(&h));
+                if gnu::real_size(h).first() != Some(&0) {
+                    self.gnu_sparse_real_size = parse_field(gnu::real_size(h));
                     self.size_fields |= size_field::GNU_SPARSE_REALSIZE;
                 }
-                if gnu::sparse(&h).first() != Some(&0) {
-                    self.add_old_sparse_entries(gnu::sparse(&h))?;
-                    if gnu::is_extended(&h) {
+                if gnu::sparse(h).first() != Some(&0) {
+                    self.add_old_sparse_entries(gnu::sparse(h))?;
+                    if gnu::is_extended(h) {
+                        self.main_header = *h;
                         self.state = State::OldSparseExtension;
                         return Ok(());
                     }
@@ -1373,32 +1383,31 @@ impl Reader {
             }
             if self.entry.path.is_empty() {
                 self.entry.path_is_utf8 = false;
-                let prefix = slice_to_nul(header::prefix(&h));
+                let prefix = slice_to_nul(header::prefix(h));
                 assign(&mut self.entry.path, prefix)?;
                 if !prefix.is_empty() && prefix.last() != Some(&b'/') {
                     self.entry.path.write(b"/")?;
                 }
-                self.entry.path.write(slice_to_nul(header::name(&h)))?;
+                self.entry.path.write(slice_to_nul(header::name(h)))?;
             }
         } else {
             self.format = Format::Old;
             if self.entry.path.is_empty() {
                 self.entry.path_is_utf8 = false;
-                assign(&mut self.entry.path, slice_to_nul(header::name(&h)))?;
+                assign(&mut self.entry.path, slice_to_nul(header::name(h)))?;
             }
         }
-        self.header_common()
+        self.header_common(h)
     }
 
-    fn header_common(&mut self) -> Result<()> {
-        let h = self.main_header;
+    fn header_common(&mut self, h: &Block) -> Result<()> {
         // Truncated the way a 32-bit `mode_t` is.
-        self.entry.mode = header::mode(&h) as u32;
+        self.entry.mode = header::mode(h) as u32;
         if self.entry.mtime.is_none() {
-            self.entry.mtime = Some(header::mtime(&h));
+            self.entry.mtime = Some(header::mtime(h));
         }
 
-        let header_size = header::size(&h);
+        let header_size = header::size(h);
         let has = |field: u8| self.size_fields & field != 0;
 
         self.disk_size = if has(size_field::GNU_SPARSE_REALSIZE) {
@@ -1436,7 +1445,7 @@ impl Reader {
             return Err(Error::SizeOverflow);
         }
 
-        self.typeflag = header::typeflag(&h);
+        self.typeflag = header::typeflag(h);
         let mut no_body = |entry: &mut Entry, filetype: u32| {
             entry.set_filetype(filetype);
             entry.size = 0;
@@ -1450,7 +1459,7 @@ impl Reader {
                     let ignore_size = match self.format {
                         Format::Pax => false,
                         Format::Old | Format::Gnu => true,
-                        Format::Ustar => header::bid(&h) > 50,
+                        Format::Ustar => header::bid(h) > 50,
                     };
                     if ignore_size {
                         self.entry.size = 0;
@@ -1461,7 +1470,7 @@ impl Reader {
             b'2' => {
                 self.entry.is_symlink = true;
                 if self.entry.link.is_empty() {
-                    assign(&mut self.entry.link, slice_to_nul(header::linkname(&h)))?;
+                    assign(&mut self.entry.link, slice_to_nul(header::linkname(h)))?;
                 }
                 no_body(&mut self.entry, S::IFLNK);
             }

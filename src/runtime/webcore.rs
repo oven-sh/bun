@@ -351,6 +351,26 @@ impl SinkHandle {
         !self.is_none()
     }
 
+    /// Whether the sink enters JS with no event-loop scope of its own, so that a source calling it from an event-loop callback owes the microtask checkpoint.
+    pub fn leaves_checkpoint_to_source(&self) -> bool {
+        match self {
+            SinkHandle::None => false,
+            // Opens `FileSink::completion_scope` where it enters JS.
+            SinkHandle::FileSink(_) => false,
+            // Hands the bytes to the HTTP thread; the fetch settles from a task.
+            SinkHandle::FetchRequestBody(_) => false,
+            // Runs content handlers and settles the output body.
+            SinkHandle::HTMLRewriter(_) => true,
+            // A source that fails rejects the upload from `end()`.
+            SinkHandle::S3Upload(_) => true,
+            // No `FileReader` is wired to these.
+            SinkHandle::ServerResponse(_)
+            | SinkHandle::HttpResponse(_)
+            | SinkHandle::HttpsResponse(_)
+            | SinkHandle::ArrayBuffer(_) => true,
+        }
+    }
+
     /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
     /// as this handle is installed.
     pub fn write(&self, data: &streams::Result) -> streams::Writable {

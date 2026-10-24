@@ -60,6 +60,8 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
+    /// `pull_into_sink` is reading for whoever acked the drain: the checkpoint for what that read delivers is the caller's.
+    pub(crate) pulling_into_sink: Cell<bool>,
 }
 
 impl Default for FileReader {
@@ -83,6 +85,7 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            pulling_into_sink: Cell::new(false),
         }
     }
 }
@@ -517,6 +520,15 @@ impl FileReader {
         self.detach_sink(None);
     }
 
+    /// Microtask checkpoint owed for the JS `sink` enters when the event loop, not `pull_into_sink`, dispatched the read that delivers to it.
+    fn sink_delivery_scope(
+        &self,
+        sink: SinkHandle,
+    ) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
+        (sink.leaves_checkpoint_to_source() && !self.pulling_into_sink.get())
+            .then(|| self.event_loop.get().entered())
+    }
+
     /// Sink's drain ack: unpause, push any buffered bytes, then resume reading.
     pub(crate) fn pull_into_sink(&self) {
         if !self.sink_paused.replace(false) {
@@ -564,10 +576,17 @@ impl FileReader {
             return;
         }
         if !self.reader().has_pending_read() {
+            // SAFETY: see `parent()`. The read can drop the last ref; the pin keeps `self` for the reset below.
+            let marked = (sink.leaves_checkpoint_to_source()
+                && !self.pulling_into_sink.replace(true))
+            .then(|| unsafe { RefPtr::init_ref(self.parent()) });
             self.reader().unpause();
             // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
             // the raw re-entrancy-safe entry (its dispatch runs user JS).
             unsafe { IOReader::read(self.reader.get()) };
+            if marked.is_some() {
+                self.pulling_into_sink.set(false);
+            }
         }
     }
 
@@ -650,6 +669,8 @@ impl FileReader {
 
     fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool) -> bool {
         if !chunk.is_empty() {
+            // Ends after the sink's answer is applied: a job may resume a sink that asked for a pause.
+            let _entered = self.sink_delivery_scope(sink);
             let chunk = bun_ptr::RawSlice::new(chunk);
             let wrote = sink.write(&if has_more {
                 streams::Result::Temporary(chunk)
@@ -676,7 +697,9 @@ impl FileReader {
                 _ => {}
             }
         }
+        // The chunk's jobs have run by now, ahead of the end handlers; one of them may have detached the sink.
         if !has_more && self.sink.get().is_some() {
+            let _entered = self.sink_delivery_scope(sink);
             self.detach_sink(None);
             sink.end(None);
         }
@@ -776,6 +799,7 @@ impl FileReader {
         if sink.is_some() {
             self.consume_reader_buffer();
             if !self.sink_paused.get() {
+                let _entered = self.sink_delivery_scope(sink);
                 self.detach_sink(None);
                 let buffered = self.buffered.replace(Vec::new());
                 if !buffered.is_empty() {
@@ -828,6 +852,7 @@ impl FileReader {
         let sink = *self.sink.get();
         if sink.is_some() {
             let err = streams::StreamError::Error(err);
+            let _entered = self.sink_delivery_scope(sink);
             self.detach_sink(Some(&err));
             sink.end(Some(err));
         } else if self.pending.get().state == streams::PendingState::Pending {

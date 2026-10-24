@@ -28,10 +28,10 @@ async function get(url: string, path: string) {
   return `${res.status} ${await res.text()}`;
 }
 
-function spawnBake(dir: string, args: string[]) {
+function spawnBake(dir: string, args: string[], extraEnv?: Record<string, string>) {
   return Bun.spawn({
     cmd: [bunExe(), ...args],
-    env,
+    env: { ...env, ...extraEnv },
     cwd: dir,
     // Some fixtures catch SIGTERM, so the cleanup of `await using` would wait for an exit that never comes.
     killSignal: "SIGKILL",
@@ -688,6 +688,67 @@ test.concurrent("bun bake listens on localhost when the export of app/server.ts 
 
   expect(new URL(url).hostname).toBe("localhost");
 });
+
+// `Bun.serve()` reads none of these as a socket. Then `bun bake` must listen where it does without `unix`.
+test.concurrent.each([
+  ["unix: null", ["127.0.0.1", "::1"]],
+  [`unix: ""`, ["127.0.0.1", "::1"]],
+  ["unix: false", ["127.0.0.1", "::1"]],
+  [`unix: "", hostname: "127.0.0.1"`, ["127.0.0.1"]],
+])("bun bake does not listen on every interface when app/server.ts exports %s", async (options, loopback) => {
+  using dir = tempDir("bake-command-no-unix", {
+    "app/server.ts": `export default { ${options}, fetch: (_request, server) => Response.json(server.address) };`,
+  });
+
+  // No `--port` and no `--host`: with a flag, `bun bake` does not use the `unix` of the export.
+  await using proc = spawnBake(String(dir), ["bake"], { PORT: "0" });
+  const url = await getServerUrl(proc);
+
+  // The banner is no proof: it says localhost when the server listens on every interface.
+  const { address } = await (await fetch(url)).json();
+  expect(loopback).toContain(address);
+});
+
+// Bun.serve's `unix` option takes a socket path, which this test only makes on POSIX.
+test.concurrent.skipIf(isWindows)("bun bake reads the unix socket of the export once", async () => {
+  using dir = tempDir("bake-unix-once", {});
+  const socket = join(String(dir), "s.sock");
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `
+      let reads = 0;
+      export default {
+        get unix() { reads++; return ${JSON.stringify(socket)}; },
+        fetch: () => new Response(String(reads)),
+      };
+    `,
+  );
+
+  await using proc = spawnBake(String(dir), ["bake"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/url: unix:/);
+
+  // A second read is `Bun.serve()` reading the export again, after `bun bake` chose the socket.
+  const res = await fetch("http://localhost/", { unix: socket });
+  expect(await res.text()).toBe("1");
+});
+
+// The flag comes before the socket of the export, so no socket is made, on any platform.
+test.concurrent.each(["--port=0", "--host=localhost"])(
+  "bun bake %s serves TCP when app/server.ts exports a unix socket",
+  async flag => {
+    using dir = tempDir("bake-command-unix-flag", {
+      "app/server.ts": `export default { unix: "s.sock", fetch: () => new Response("ok") };`,
+    });
+
+    await using proc = spawnBake(String(dir), ["bake", flag], { PORT: "0" });
+    const output = collectOutput(proc);
+    const [, url] = await output.waitFor(/url: (\S+)/);
+
+    expect(url).toStartWith("http://");
+    expect(await get(url, "/")).toBe("200 ok");
+  },
+);
 
 test.concurrent("bun bake runs a plugin function from bake.config.ts, with the project as its root", async () => {
   using dir = tempDir("bake-command-config-function", {

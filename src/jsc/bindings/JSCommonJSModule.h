@@ -82,6 +82,7 @@ public:
     // wrapper closes over are the graph's. Null: the global object's.
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
+    bool m_filenameIsModuleKey { false };
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
@@ -132,6 +133,7 @@ public:
     }
     void setExportsObject(JSC::JSValue exportsObject);
     JSValue filename() { return m_filename.get(); }
+    JSString* filenameForResolution(JSGlobalObject*, JSString*);
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
 

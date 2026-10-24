@@ -492,15 +492,26 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
     true
 }
 
+/// Where a selector list is in the style sheet, as far as an `:is()` around the list is concerned.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ListPlacement<'a> {
+    /// The list is inside `@scope`. There each selector of a list is relative to the scoping root, and an `:is()` argument is not.
+    pub(crate) in_scope_rule: bool,
+    /// The selector lists that the printer writes in place of `&`, innermost first.
+    pub(crate) nesting: Option<&'a StyleContext<'a>>,
+}
+
 /// Whether `:is(selectors)` matches the same elements with the same specificity as the selector list.
-pub(crate) fn can_wrap_in_is(selectors: &[parser::Selector]) -> bool {
+pub(crate) fn can_wrap_in_is(selectors: &[parser::Selector], placement: ListPlacement<'_>) -> bool {
     let Some(first) = selectors.first() else {
         return true;
     };
     // `:is()` cannot hold a pseudo-element, and it takes the specificity of its most specific argument.
-    selectors.iter().all(|selector| {
-        !selector.has_pseudo_element() && selector.specificity() == first.specificity()
-    }) && components_allow_is(selectors)
+    !placement.in_scope_rule
+        && selectors.iter().all(|selector| {
+            !selector.has_pseudo_element() && selector.specificity() == first.specificity()
+        })
+        && components_allow_is(selectors, placement.nesting)
 }
 
 /// What the specificity and flags stored at parse time do not say about a component inside `:is()`.
@@ -597,9 +608,13 @@ fn inside_is(component: &Component) -> InsideIs {
         Component::NthOf(nth) => arguments_inside_is(&nth.selectors),
         Component::Host(Some(selector)) => arguments_inside_is(core::slice::from_ref(selector)),
 
-        // `:where()` weighs nothing, whatever its arguments are.
-        Component::Where(_)
-        | Component::Host(None)
+        // `:where()` weighs nothing, so an argument of unknown weight does not count.
+        Component::Where(selectors) => match arguments_inside_is(selectors) {
+            InsideIs::Never => InsideIs::Never,
+            InsideIs::Allowed | InsideIs::IfShared => InsideIs::Allowed,
+        },
+
+        Component::Host(None)
         | Component::Combinator(_)
         | Component::DefaultNamespace(_)
         | Component::ExplicitUniversalType
@@ -633,7 +648,7 @@ fn arguments_inside_is(selectors: &[parser::Selector]) -> InsideIs {
 }
 
 // Chrome 124 and Firefox 128 do not match a shadow host that is the subject of one of several `:is()` arguments.
-fn subject_is_shadow_host(selector: &parser::Selector) -> bool {
+fn subject_is_shadow_host(selector: &parser::Selector, nesting_is_shadow_host: bool) -> bool {
     selector
         .components
         .iter()
@@ -643,14 +658,40 @@ fn subject_is_shadow_host(selector: &parser::Selector) -> bool {
             Component::NonTsPseudoClass(PseudoClass::CustomFunction { name, .. }) => {
                 bun_core::strings::eql_case_insensitive_ascii_check_length(name, b"host-context")
             }
+            Component::Nesting => nesting_is_shadow_host,
+            // The printer writes an `:is()` of one argument as that argument, so its subject is the subject here.
+            Component::Is(selectors) | Component::Where(selectors) => selectors
+                .iter()
+                .any(|selector| subject_is_shadow_host(selector, nesting_is_shadow_host)),
             _ => false,
         })
+}
+
+// `None` if a selector that the printer writes in place of `&` cannot go inside `:is()`, else whether its subject is a shadow host.
+fn nesting_inside_is(nesting: Option<&StyleContext<'_>>) -> Option<bool> {
+    let Some(context) = nesting else {
+        return Some(false);
+    };
+    let outer_is_shadow_host = nesting_inside_is(context.parent)?;
+    let selectors = context.selectors.v.slice();
+    if matches!(arguments_inside_is(selectors), InsideIs::Never) {
+        return None;
+    }
+    Some(
+        selectors
+            .iter()
+            .any(|selector| subject_is_shadow_host(selector, outer_is_shadow_host)),
+    )
 }
 
 /// Whether no selector has a `Never` component and all of them have the same `IfShared` components.
 #[cold]
 #[inline(never)]
-fn components_allow_is(selectors: &[parser::Selector]) -> bool {
+fn components_allow_is(selectors: &[parser::Selector], nesting: Option<&StyleContext<'_>>) -> bool {
+    let Some(nesting_is_shadow_host) = nesting_inside_is(nesting) else {
+        return false;
+    };
+
     fn next<'a>(
         components: &mut core::slice::Iter<'a, Component>,
     ) -> Option<(&'a Component, InsideIs)> {
@@ -675,7 +716,7 @@ fn components_allow_is(selectors: &[parser::Selector]) -> bool {
         return true;
     };
     for selector in selectors {
-        if subject_is_shadow_host(selector) || !alike(previous, selector) {
+        if subject_is_shadow_host(selector, nesting_is_shadow_host) || !alike(previous, selector) {
             return false;
         }
         previous = selector;

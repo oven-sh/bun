@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
+use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext, StyleContext};
 use crate::declaration::DeclarationBlock;
 use crate::error::MinifyErr;
 use crate::selectors::selector;
@@ -84,7 +84,7 @@ impl<R> StyleRule<R> {
     pub(crate) fn selector_list_lowering(
         &self,
         targets: &css::targets::Targets,
-        in_scope_rule: bool,
+        placement: selector::ListPlacement<'_>,
     ) -> SelectorListLowering {
         let selectors = self.selectors.v.slice();
         if selectors.len() <= 1
@@ -93,15 +93,14 @@ impl<R> StyleRule<R> {
         {
             return SelectorListLowering::AsWritten;
         }
-        // In `@scope`, each selector of a list is relative to the scoping root. An `:is()` argument is not.
-        if in_scope_rule || !targets.is_compatible(css::Feature::IsSelector) {
+        if !targets.is_compatible(css::Feature::IsSelector) {
             return SelectorListLowering::Partition;
         }
         // A selector that every target can parse stays outside `:is()`.
         let all_need_lowering = selectors
             .iter()
             .all(|one| !selector::is_compatible(core::slice::from_ref(one), targets));
-        if all_need_lowering && selector::can_wrap_in_is(selectors) {
+        if all_need_lowering && selector::can_wrap_in_is(selectors, placement) {
             SelectorListLowering::WrapInIs
         } else {
             SelectorListLowering::Partition
@@ -354,6 +353,7 @@ impl<R> StyleRule<R> {
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
         lowering: SelectorListLowering,
+        placement: selector::ListPlacement<'_>,
     ) -> Result<bool, MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -408,7 +408,7 @@ impl<R> StyleRule<R> {
         context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
-            self.minify_nested_rules(context, unused, lowering)?;
+            self.minify_nested_rules(context, unused, lowering, placement)?;
             if unused && self.rules.v.len() == 0 {
                 return Ok(true);
             }
@@ -454,6 +454,7 @@ impl<R> StyleRule<R> {
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
         lowering: SelectorListLowering,
+        placement: selector::ListPlacement<'_>,
     ) -> Result<(), MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -473,20 +474,33 @@ impl<R> StyleRule<R> {
         // nesting is compiled away the printed output still fans out per
         // selector, which is why the nesting branch bumps unconditionally.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
-        if context.targets.should_compile_same(css::Feature::Nesting)
-            || lowering == SelectorListLowering::Partition
-        {
+        let compiles_nesting = context.targets.should_compile_same(css::Feature::Nesting);
+        if compiles_nesting || lowering == SelectorListLowering::Partition {
             context.selector_expansion_multiplier = context
                 .selector_expansion_multiplier
                 .saturating_mul(self.selectors.v.len().max(1));
         }
+
+        // The printer then writes these selectors in place of `&` in the nested rules.
+        let nesting = StyleContext {
+            selectors: &self.selectors,
+            parent: placement.nesting,
+        };
+        let placement = selector::ListPlacement {
+            nesting: if compiles_nesting {
+                Some(&nesting)
+            } else {
+                placement.nesting
+            },
+            ..placement
+        };
 
         let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
         core::mem::swap::<PropertyHandlerContext<'_>>(
             &mut context.handler_context,
             &mut handler_context,
         );
-        let result = self.rules.minify(context, parent_is_unused);
+        let result = self.rules.minify(context, parent_is_unused, placement);
         core::mem::swap::<PropertyHandlerContext<'_>>(
             &mut context.handler_context,
             &mut handler_context,

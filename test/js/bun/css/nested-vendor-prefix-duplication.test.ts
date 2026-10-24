@@ -172,6 +172,14 @@ test("nesting-capable targets also bound the mixed vendor-prefix expansion", () 
   );
 });
 
+test("nesting-capable targets bound the vendor-prefix expansion of a single selector", () => {
+  // One selector with both an unprefixed and a `-webkit-` pseudo-class is
+  // printed once per prefix, and no selector list is involved. With nesting
+  // preserved, every level doubles the copies of the body.
+  const src = ".a:placeholder-shown:-webkit-autofill {\n".repeat(20) + "color: red;\n" + "}\n".repeat(20);
+  expect(() => minifyTest(src, "", { chrome: 130 << 16 })).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+});
+
 test("shallow mixed vendor-prefix nesting still minifies with both prefix variants", () => {
   // Below the limit, the rule is still emitted once per prefix variant — the
   // expansion is correct and necessary, just bounded.

@@ -123,6 +123,15 @@ test("incompatible selector lists that cannot collapse into :is() hit the limit 
   expect(() => minifyTest(src, "", MODERN_TARGETS)).toThrow(LIMIT_ERROR);
 });
 
+test("@nest selector lists are not charged for a split when nesting is preserved", () => {
+  // An `@nest` rule prints its selector list as written. With native nesting
+  // nothing multiplies, so 20 levels stay linear and no limit applies.
+  const src = ".p {\n" + "@nest & .a, & .b:user-valid {\n".repeat(20) + "color: red;\n" + "}\n".repeat(21);
+  const out = minifyTest(src, "", MODERN_TARGETS);
+  expect(out).toContain("color:red");
+  expect(out.length).toBeLessThan(10_000);
+});
+
 test("bun build reports an error instead of exploding on deeply nested multi-selector css", async () => {
   using dir = tempDir("css-nested-selector-expansion", {
     "input.css": nestedRules("co :is(.bar), .bar :is(.baz)", 17),

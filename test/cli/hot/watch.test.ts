@@ -117,4 +117,32 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
     const lines = await linesOfThreeRuns(script, { env: { BUN_INTERNAL_WATCH_STDIN: "0:0" } });
     expect(lines).toEqual([`run 1: "body\\n"`, `run 2: "body\\n"`, `run 3: "body\\n"`]);
   });
+
+  test.skipIf(isWindows)("a stdin position that cannot be restored is reported", async () => {
+    await using tmpdir_ = tempDir("watch-stdin-fixture", {
+      "input.txt": "SECRET-HEADER\nbody\n",
+      "stdin.js": `console.log("run: " + JSON.stringify(await Bun.stdin.text()));`,
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
+    });
+    const fd = openSync(join(tmpdir_, "input.txt"), "r");
+    try {
+      readSync(fd, Buffer.alloc("SECRET-HEADER\n".length));
+      // `exec` keeps the process id of the shell, so the record is the record of this run. No file has a byte -1.
+      await using proc = spawn({
+        cmd: ["sh", "-c", 'exec env BUN_INTERNAL_WATCH_STDIN=$$:-1 "$@"', "sh", bunExe(), "--watch", "stdin.js"],
+        cwd: tmpdir_,
+        env: bunEnv,
+        stdio: [fd, "pipe", "pipe"],
+      });
+      const line = (await forEachLine(proc.stdout).next()).value;
+      proc.kill("SIGKILL");
+      const stderr = await proc.stderr.text();
+      await proc.exited;
+
+      expect(stderr).toContain("--watch could not restore the position of stdin");
+      expect(line).toBe(`run: "body\\n"`);
+    } finally {
+      closeSync(fd);
+    }
+  });
 });

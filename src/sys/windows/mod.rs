@@ -1624,8 +1624,10 @@ pub fn become_watcher_manager() -> ! {
 
         // magic exit code to indicate that the child process should be re-spawned
         if exit_code == WATCHER_RELOAD_EXIT {
-            if let Some(offset) = stdin_offset {
-                let _ = bun_sys::lseek(Fd::stdin(), offset, libc::SEEK_SET);
+            if let Some(offset) = stdin_offset
+                && let Err(err) = bun_sys::lseek(Fd::stdin(), offset, libc::SEEK_SET)
+            {
+                bun_core::warn!("--watch could not restore the position of stdin: {}", err);
             }
             continue;
         } else {

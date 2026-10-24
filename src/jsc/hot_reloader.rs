@@ -310,7 +310,9 @@ fn restore_stdin_position_for_watch() {
         .filter(|(first_run, _)| bun_core::fmt::parse_decimal::<u32>(first_run) == Some(pid))
         .and_then(|(_, offset)| bun_core::fmt::parse_decimal::<i64>(offset));
     if let Some(offset) = recorded {
-        let _ = bun_sys::lseek(stdin, offset, libc::SEEK_SET);
+        if let Err(err) = bun_sys::lseek(stdin, offset, libc::SEEK_SET) {
+            bun_core::warn!("--watch could not restore the position of stdin: {}", err);
+        }
         return;
     }
     let Ok(offset) = bun_sys::lseek(stdin, 0, libc::SEEK_CUR) else {

@@ -1,14 +1,39 @@
 // Hardcoded module "node:v8"
 
-// This is a stub! None of this is actually implemented yet.
-const { hideFromStack, throwNotImplemented } = require("internal/shared");
-const { validateString, validateOneOf } = require("internal/validators");
+const { hideFromStack, throwNotImplemented, kEmptyObject } = require("internal/shared");
+const { validateString, validateOneOf, validateFunction, validateObject } = require("internal/validators");
 const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
-const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
-  "NodeV8.cpp",
-  "Bun::createNodeV8Binding",
-);
+const {
+  isStringOneByteRepresentation,
+  startGCProfiler,
+  stopGCProfiler,
+  discardGCProfiler,
+  queryObjects: queryHeapObjects,
+} = $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
+
+let queryObjectsWarningEmitted = false;
+const queryObjectsInspectOptions = { __proto__: null, depth: 0 };
+
+function queryObjects(ctor, options = kEmptyObject) {
+  validateFunction(ctor, "constructor");
+  if (options !== kEmptyObject) validateObject(options, "options");
+  const format = options.format || "count";
+  if (format !== "count" && format !== "summary") throw $ERR_INVALID_ARG_VALUE("options.format", format);
+  if (!queryObjectsWarningEmitted) {
+    queryObjectsWarningEmitted = true;
+    process.emitWarning(
+      "v8.queryObjects() is an experimental feature and might change at any time",
+      "ExperimentalWarning",
+    );
+  }
+  const objects = queryHeapObjects(ctor.prototype);
+  if (format === "count") return objects.length;
+  const { inspect } = require("internal/util/inspect");
+  const summaries = $newArrayWithSize(objects.length);
+  for (let i = 0; i < objects.length; i++) summaries[i] = inspect(objects[i], queryObjectsInspectOptions);
+  return summaries;
+}
 
 const DateNow = Date.now;
 const FunctionPrototypeCall = Function.prototype.call;
@@ -409,6 +434,7 @@ export default {
   isStringOneByteRepresentation,
   getHeapSnapshot,
   getHeapStatistics,
+  queryObjects,
   getHeapSpaceStatistics,
   getHeapCodeStatistics,
   getCppHeapStatistics,
@@ -433,6 +459,7 @@ hideFromStack(
   cachedDataVersionTag,
   getHeapSnapshot,
   getHeapStatistics,
+  queryObjects,
   getHeapSpaceStatistics,
   getHeapCodeStatistics,
   getCppHeapStatistics,

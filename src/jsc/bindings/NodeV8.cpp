@@ -6,16 +6,60 @@
 #include "NodeV8.h"
 #include "ZigGlobalObject.h"
 
+#include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/MarkedSpaceInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/StdLibExtras.h>
 
 namespace Bun {
 
 using namespace JSC;
+
+JSC_DEFINE_HOST_FUNCTION(functionQueryObjects, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue prototype = callFrame->argument(0);
+    if (!prototype.isObject())
+        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr)));
+
+    // In-flight compiler plans temporarily root values that are no longer JS-reachable.
+    vm.heap.completeAllJITPlans();
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+
+    // Root the matches until the result array owns them, without allocating JS
+    // objects or running prototype traps while the heap is being traversed.
+    MarkedArgumentBuffer matches;
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) {
+            if (!isJSCellKind(kind))
+                return IterationStatus::Continue;
+            auto* object = dynamicDowncast<JSObject>(static_cast<JSCell*>(cell));
+            if (!object || object->globalObject() != globalObject)
+                return IterationStatus::Continue;
+
+            for (JSValue current = object->getPrototypeDirect(); current.isObject(); current = asObject(current)->getPrototypeDirect()) {
+                if (current == prototype) {
+                    matches.append(object);
+                    break;
+                }
+            }
+            return IterationStatus::Continue;
+        });
+    }
+    if (matches.hasOverflowed()) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), matches)));
+}
 
 // v8.isStringOneByteRepresentation() asks whether the engine is storing the
 // string with one byte per character. JSC's JSString::is8Bit() answers exactly
@@ -98,6 +142,7 @@ JSC::JSObject* createNodeV8Binding(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "queryObjects"_s), 1, functionQueryObjects, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isStringOneByteRepresentation"_s), 1, functionIsStringOneByteRepresentation, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startGCProfiler"_s), 0, functionStartGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "stopGCProfiler"_s), 1, functionStopGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);

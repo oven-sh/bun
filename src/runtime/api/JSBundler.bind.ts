@@ -1,5 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
+export default b.module({ rustPath: "crate::api::js_bundler" });
+
 const js = { capability: "js", throws: true } as const;
 const method = { returns: b.any, ...js } as const;
 const cached = { getter: b.any, cache: true, ...js } as const;
@@ -23,3 +25,11 @@ export const BuildArtifact = b.class({
     type: { getter: b.any, cache: true, capability: "js" },
   },
 });
+
+export const build = b.fn({
+  ...method,
+  args: { config: b.any },
+  rustPath: "crate::api::js_bundler::js_bundler::build",
+});
+
+export const workerLiveCount = b.fn({ returns: b.usize });

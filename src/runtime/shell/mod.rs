@@ -17,8 +17,6 @@
 
 #[path = "shell_body.rs"]
 pub(crate) mod shell_body;
-// Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`.
-pub(crate) use shell_body as shell;
 
 // ─── submodules ──────────────────────────────────────────────────────────────
 #[path = "EnvMap.rs"]

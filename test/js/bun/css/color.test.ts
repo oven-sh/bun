@@ -194,7 +194,7 @@ test("invalid format string lists the accepted values", () => {
   }
   // Must not leak the internal Rust enum name.
   expect(message).not.toContain("OutputColorFormat");
-  expect(message).toStartWith("format must be one of ");
+  expect(message).toStartWith("outputFormat must be one of ");
   // Every accepted spelling should appear in the message, so a user can copy one.
   for (const ok of [
     "ansi",

@@ -696,6 +696,7 @@ class DispatcherBase extends Dispatcher {
       const { query, headers, body, maxRedirections, reset } = opts;
       if (query) url.search = new URLSearchParams(query).toString();
       const method = validateRequest(opts.method, body, maxRedirections, opts.signal);
+      if (!$isCallable(handler.onError)) throw new InvalidArgumentError("invalid onError method");
       run = signal => send(this, url, method, headers, body, maxRedirections, reset, signal);
     } catch (err) {
       if (!$isCallable(handler.onError)) throw err;
@@ -1087,6 +1088,11 @@ function sendWithDispatch(dispatcher, url, options, signal, redirect) {
   let body;
   const onAbort = () => abort(signal.reason);
   signal.addEventListener("abort", onAbort, { once: true });
+  const fail = err => {
+    signal.removeEventListener("abort", onAbort);
+    body?.error(err);
+    reject(err);
+  };
 
   try {
     dispatcher.dispatch(
@@ -1099,7 +1105,10 @@ function sendWithDispatch(dispatcher, url, options, signal, redirect) {
         onHeaders(status, rawHeaders, resume, statusText) {
           if (status < 200) return true;
           if (redirect === "error" && redirectStatus.includes(status)) {
-            abort(new TypeError("unexpected redirect"));
+            const err = new TypeError("unexpected redirect");
+            // A dispatcher doesn't have to report an abort back.
+            fail(err);
+            abort(err);
             return true;
           }
           const headers = new Headers();
@@ -1131,11 +1140,7 @@ function sendWithDispatch(dispatcher, url, options, signal, redirect) {
           signal.removeEventListener("abort", onAbort);
           body?.close();
         },
-        onError(err) {
-          signal.removeEventListener("abort", onAbort);
-          body?.error(err);
-          reject(err);
-        },
+        onError: fail,
       },
     );
   } catch (err) {

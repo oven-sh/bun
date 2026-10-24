@@ -54,6 +54,8 @@ Bun.serve({
 });
 ```
 
+The check compares paths, so a symbolic link inside `public` is still followed to wherever it points. Don't keep links to private files there.
+
 To serve a whole directory without writing this yourself, use a [directory route](/runtime/http/routing#directory-routes).
 
 ---

@@ -1516,6 +1516,8 @@ describe("undici dispatchers", () => {
       expect(() => pool.dispatch({ path: "/", method: "GET" })).toThrow("handler must be an object");
       // @ts-expect-error
       expect(() => pool.dispatch(null, {})).toThrow("opts must be an object.");
+      // @ts-expect-error
+      expect(() => pool.dispatch({ path: "/", method: "GET" }, {})).toThrow("invalid onError method");
     });
 
     it("reports ClientClosedError and ClientDestroyedError after close() and destroy()", async () => {
@@ -1693,6 +1695,24 @@ describe("undici dispatchers", () => {
       expect(await undiciFetch(`${origin}/redirect`, { dispatcher, redirect: "error" }).catch(e => e)).toBeInstanceOf(
         TypeError,
       );
+    });
+
+    it.each([
+      ["ignores the abort", true],
+      ["never calls onConnect()", false],
+    ])("redirect: 'error' rejects at a redirect from a dispatcher that %s", async (_, connects) => {
+      class Canned extends Dispatcher {
+        dispatch(_options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandlers) {
+          if (connects) handler.onConnect!(() => {});
+          queueMicrotask(() => {
+            handler.onHeaders!(302, [Buffer.from("location"), Buffer.from("/echo")], () => {}, "Found");
+            handler.onComplete!([]);
+          });
+          return true;
+        }
+      }
+      const failure = await undiciFetch(`${origin}/`, { dispatcher: new Canned(), redirect: "error" }).catch(e => e);
+      expect(failure).toBeInstanceOf(TypeError);
     });
 
     it("rejects with the signal's reason, before and during the request", async () => {

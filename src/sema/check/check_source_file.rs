@@ -653,9 +653,7 @@ impl<'s> Checker<'_, 's> {
             && hir.is_in_ambient_or_type_node(hir.node(name))
     }
 
-    /// True if what the walk records for the end of `checkSourceFile` is about the file being checked. A query runs
-    /// parts of the walk for another file, or for this one after its check, and those record nothing, as in
-    /// `check_node_deferred`.
+    /// Whether the walk records for the end of `checkSourceFile`. A query that runs it for another file doesn't.
     fn records_for_end_of_check(&self, file: FileId) -> bool {
         self.task.file == Some(file) && !self.is_type_checked && !self.is_checking_in_flow_loop
     }

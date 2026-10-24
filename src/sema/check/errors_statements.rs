@@ -215,8 +215,7 @@ impl Checker<'_, '_> {
     }
 
     /// Marks `start` to `end` of `file` as a range `checkSourceFile` never visits. Diagnostics that a pass reports
-    /// there are removed. The ranges are those of the file being checked: a query runs parts of the walk for another
-    /// file, and that marks nothing.
+    /// there are removed. Only the file being checked has such ranges.
     pub(super) fn never_check(&self, file: FileId, start: u32, end: u32) {
         if self.task.file == Some(file) {
             self.never_checked.borrow_mut().push((start, end));

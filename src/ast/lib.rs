@@ -3029,8 +3029,6 @@ pub mod part {
     };
 }
 
-/// `TypeScript` — namespace surface for AST type-def files (`G.rs` needs
-
 /// `flags` — bitset enums on AST nodes (`G.rs`/`B.rs` import `crate::flags`).
 pub mod flags {
     use enumset::{EnumSet, EnumSetType};

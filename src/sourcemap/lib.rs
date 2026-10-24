@@ -1,5 +1,4 @@
 #![feature(allocator_api)]
-#![warn(unused_must_use)]
 //! `bun_sourcemap` — source map parsing, encoding, and lookup.
 //!
 //! Sibling modules: `Chunk.rs`, `InternalSourceMap.rs`, `LineOffsetTable.rs`,

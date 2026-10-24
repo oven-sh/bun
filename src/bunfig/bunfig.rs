@@ -1780,13 +1780,13 @@ impl<'a> Parser<'a, '_> {
                 ExprData::EString(str) => {
                     let slice = str.string(self.bump)?;
                     match api::DotEnvBehavior::parse_str(slice) {
-                        Ok((behavior, prefix)) => {
+                        Some((behavior, prefix)) => {
                             if let Some(prefix) = prefix {
                                 self.ctx.args.serve_env_prefix = Some(Box::<[u8]>::from(prefix));
                             }
                             self.ctx.args.serve_env_behavior = behavior;
                         }
-                        Err(()) => {
+                        None => {
                             self.add_error(
                                     env.loc,
                                     b"Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character",

@@ -1604,7 +1604,7 @@ fn copy_cache_entry(
     let src_path: bun_paths::AbsPath<
         bun_paths::OSPathChar,
         { bun_paths::path_options::PathSeparators::AUTO },
-    > = 'src_path: {
+    > = {
         #[cfg(windows)]
         {
             let mut path_buf = bun_paths::w_path_buffer_pool::get();
@@ -1617,13 +1617,13 @@ fn copy_cache_entry(
             .unwrap();
             sp.append(cache_dir_subpath)?;
 
-            break 'src_path sp;
+            sp
         }
 
         // unused if not windows
         #[cfg(not(windows))]
         {
-            break 'src_path bun_paths::AbsPath::init();
+            bun_paths::AbsPath::init()
         }
     };
 

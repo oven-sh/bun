@@ -3,7 +3,6 @@
 #![allow(clippy::disallowed_methods)]
 // Tests lock std's Mutex: bun_threading depends on this crate.
 #![cfg_attr(test, allow(clippy::disallowed_types))]
-#![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers.
 
 // `Fd` struct + pure-data accessors are hoisted to `bun_core::Fd`

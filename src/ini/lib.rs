@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 #![forbid(unsafe_code)]
 
 use bun_ast::Loc;

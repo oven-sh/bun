@@ -321,12 +321,6 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     /// The number of items in this bit set
     pub(crate) const BIT_LENGTH: usize = SIZE;
 
-    /// The integer type used to represent a mask in this bit set
-    // type MaskInt = usize (inherent assoc → inline usize)
-
-    /// The integer type used to shift a mask in this bit set
-    // type ShiftInt = u32 (inherent assoc → inline u32)
-
     // bits in one mask
     const MASK_LEN: u32 = usize::BITS;
     // total number of masks
@@ -1212,12 +1206,6 @@ pub struct DynamicBitSet {
 }
 
 impl DynamicBitSet {
-    /// The integer type used to represent a mask in this bit set
-    // type MaskInt = usize (inherent assoc → inline usize)
-
-    /// The integer type used to shift a mask in this bit set
-    // type ShiftInt = u32 (inherent assoc → inline u32)
-
     /// Creates a bit set with no elements present.
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
         Ok(Self {

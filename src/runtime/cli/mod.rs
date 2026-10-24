@@ -340,6 +340,10 @@ fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
 }
 
 // ─── Cli (entry point) ───────────────────────────────────────────────────────
+#[expect(
+    clippy::module_inception,
+    reason = "a namespace carried over from the Zig port"
+)]
 pub(crate) mod cli {
     use super::*;
 

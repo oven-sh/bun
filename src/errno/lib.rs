@@ -1,4 +1,4 @@
-#![warn(unused_must_use)]
+#![forbid(unsafe_code)]
 
 // Shared by Linux/Darwin/FreeBSD: libc syscall wrappers signal failure with the
 // same-width all-ones sentinel (`-1` signed / `MAX` unsigned) and stash the

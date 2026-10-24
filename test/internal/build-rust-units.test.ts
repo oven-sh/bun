@@ -517,4 +517,20 @@ describe("buildRustGraph + unitManifest", () => {
     expect(flagged.hash).not.toBe(plain.hash);
     expect(flagged.symbolHash).toBe(plain.symbolHash);
   });
+
+  test("so do a profile's rustflags", () => {
+    const base = planWith([]);
+    const withProfileFlags = (rustflags: string[]): RustPlan => ({
+      ...base,
+      unitGraph: {
+        ...base.unitGraph,
+        units: base.unitGraph.units.map(u => ({ ...u, profile: { ...u.profile, rustflags } })),
+      },
+    });
+    const plain = buildRustGraph(base, "/build/rust-target/shim").units[0];
+    const one = buildRustGraph(withProfileFlags(["-Zallow-features=a"]), "/build/rust-target/shim").units[0];
+    const two = buildRustGraph(withProfileFlags(["-Zallow-features=a,b"]), "/build/rust-target/shim").units[0];
+    expect(new Set([plain.hash, one.hash, two.hash]).size).toBe(3);
+    expect([one.symbolHash, two.symbolHash]).toEqual([plain.symbolHash, plain.symbolHash]);
+  });
 });

@@ -8,8 +8,6 @@
 //! Using Futex, other Thread synchronization primitives can be built which
 //! efficiently wait for cross-thread events or signals.
 
-#![warn(unused_must_use)]
-
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]

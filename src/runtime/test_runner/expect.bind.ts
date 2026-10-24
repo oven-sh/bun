@@ -209,6 +209,17 @@ export const Expect = b.class({
   },
 });
 
+/** What `expect.extend()` wraps each matcher in. The callee holds the matcher. */
+export const applyCustomMatcher = b.fn({
+  export: "Bun__Expect__applyCustomMatcher",
+  rustPath: "crate::test_runner::Expect::apply_custom_matcher",
+  passThis: true,
+  passCallee: true,
+  args: { args: b.any.variadic },
+  returns: b.any,
+  ...js,
+});
+
 /** What a matcher of `expect.extend()` makes when it is called on `expect` itself. */
 export const ExpectCustomAsymmetricMatcher = b.class({
   rustPath: "crate::test_runner::ExpectCustomAsymmetricMatcher",
@@ -243,6 +254,38 @@ export const ExpectMatcherUtils = b.class({
   rustPath: "crate::test_runner::ExpectMatcherUtils",
   internalFields: ["equalityTesters", "equals", "state", "snapshotSerializers", "toSatisfy"],
 });
+
+/** Ignores `this`, so a matcher can destructure it or pass it around like in Jest. */
+const plain = (type: string, name: string, rustName: string) =>
+  ({
+    export: `Bun__${type}__${name}`,
+    rustPath: `crate::test_runner::${type}::${rustName}`,
+    returns: b.any,
+    ...js,
+  }) as const;
+const utility = (name: string, rustName: string) => plain("ExpectMatcherUtils", name, rustName);
+
+export const matcherContextEquals = b.fn({
+  ...plain("ExpectMatcherContext", "equals", "equals"),
+  args: { a: b.any, b: b.any, customTesters: b.any, strictCheck: b.bool.loose },
+  returns: b.bool,
+});
+/** What `expect.toSatisfy(predicate)` is a custom asymmetric matcher of. */
+export const toSatisfyAsCustomMatcher = b.fn({
+  ...plain("Expect", "toSatisfyAsCustomMatcher", "to_satisfy_as_custom_matcher"),
+  args: { received: b.any, predicate: b.any },
+});
+export const stringify = b.fn({ ...utility("stringify", "stringify"), args: { value: b.any } });
+export const printExpected = b.fn({ ...utility("printExpected", "print_expected"), args: { value: b.any } });
+export const printReceived = b.fn({ ...utility("printReceived", "print_received"), args: { value: b.any } });
+export const expectedColor = b.fn({ ...utility("expectedColor", "expected_color"), args: { texts: b.any.variadic } });
+export const receivedColor = b.fn({ ...utility("receivedColor", "received_color"), args: { texts: b.any.variadic } });
+export const matcherHint = b.fn({ ...utility("matcherHint", "matcher_hint"), args: { values: b.any.variadic } });
+export const printWithType = b.fn({
+  ...utility("printWithType", "print_with_type"),
+  args: { name: b.any, value: b.any, print: b.any },
+});
+export const diff = b.fn({ ...utility("diff", "diff"), args: { expected: b.any, received: b.any } });
 
 const typeAssertion = { length: 1, rustName: "type_assertion" } as const;
 const typeProperty = { getter: b.self, capability: "heap", rustName: "type_property" } as const;

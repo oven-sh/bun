@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
+    JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
     StringJsc as _, Strong, bun_string_jsc, js_promise,
 };
 use bun_options_types::context::TestEnvironment;
@@ -203,8 +203,8 @@ impl Environment {
     }
 }
 
-pub(crate) fn js_is_in_preload(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::from(global.bun_vm().is_in_preload))
+pub(crate) fn is_in_preload() -> bool {
+    VirtualMachine::get().is_in_preload
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

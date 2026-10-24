@@ -2980,6 +2980,7 @@ impl TestCommand {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
+        // `global_exit()` does not return, so nothing is dropped after it.
         drop(all_test_files);
         {
             let vm_ptr: *mut VirtualMachine = vm;

@@ -6638,16 +6638,15 @@ it("a view of part of a buffer as a tls option is read as the view", () => {
   }
 });
 
-it("Array.prototype as a tls option is none of the types one takes", () => {
+it("Array.prototype as a tls option is an empty array, as in Node", () => {
   for (const name of ["key", "cert", "ca", "crl"]) {
-    expect(() =>
-      Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: Array.prototype } as any }),
-    ).toThrow(
-      expect.objectContaining({
-        code: "ERR_INVALID_ARG_TYPE",
-        message: `TLSOptions.${name} must be of type string, ArrayBuffer, Blob, array of <string, ArrayBuffer, or Blob>, or null`,
-      }),
-    );
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+      tls: { [name]: Array.prototype } as any,
+    });
+    expect(listener.port).toBeGreaterThan(0);
   }
 });
 

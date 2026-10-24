@@ -6,7 +6,7 @@ use bun_core::Output;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
+    JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
@@ -25,7 +25,7 @@ use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome};
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
-    js_ExpectAny, js_ExpectArrayContaining, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher,
+    self as generated, js_ExpectAny, js_ExpectArrayContaining, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher,
     js_ExpectMatcherUtils, js_ExpectObjectContaining, js_ExpectStringContaining,
     js_ExpectStringMatching,
 };
@@ -1501,7 +1501,7 @@ impl Expect {
                 let matcher_fn = JSFunction::create(
                     global_this,
                     "toSatisfy",
-                    to_satisfy_shim,
+                    generated::Bun__Expect__toSatisfyAsCustomMatcher,
                     2,
                     Default::default(),
                 );
@@ -1511,13 +1511,15 @@ impl Expect {
         ExpectCustomAsymmetricMatcher::create_with(global_this, flags, args, matcher_fn)
     }
 
-    fn to_satisfy_as_custom_matcher(
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
+    pub(crate) fn to_satisfy_as_custom_matcher(
+        cx: &mut JsScope<'_>,
+        received: JsLocal<'_>,
+        predicate: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let [received, predicate] = call_frame.arguments_as_array::<2>();
+        let global_this = cx.global();
         let pass = predicate
-            .call(global_this, JSValue::UNDEFINED, &[received])?
+            .to_js()
+            .call(global_this, JSValue::UNDEFINED, &[received.to_js()])?
             .to_boolean();
         let result = JSValue::create_empty_object(global_this, 1);
         result.put(global_this, b"pass", JSValue::from(pass));
@@ -1577,19 +1579,6 @@ impl Expect {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                // `to_js_host_fn` returns an opaque closure, so emit an
-                // explicit C-ABI shim and pass its address.
-                bun_jsc::jsc_host_abi! {
-                    unsafe fn __apply_custom_matcher_shim(
-                        g: *mut bun_jsc::JSGlobalObject,
-                        f: *mut bun_jsc::CallFrame,
-                    ) -> JSValue {
-                        // SAFETY: JSC guarantees both pointers are live for the call.
-                        let (g, f) = unsafe { (&*g, &*f) };
-                        bun_jsc::to_js_host_fn_result(g, Expect::apply_custom_matcher(g, f))
-                    }
-                }
-                let host_fn_ptr: bun_jsc::JSHostFn = __apply_custom_matcher_shim;
                 // SAFETY: FFI call with valid global, &bun_core::String, host-fn ptr, and JSValue.
                 // C++ takes the function pointer **by value** (`NativeFunctionPtr`), not a
                 // pointer-to-function-pointer — `JSHostFn` already is the
@@ -1598,7 +1587,7 @@ impl Expect {
                     Bun__JSWrappingFunction__create(
                         global_this,
                         &matcher_name,
-                        host_fn_ptr,
+                        generated::Bun__Expect__applyCustomMatcher,
                         matcher_fn,
                     )
                 };
@@ -1765,30 +1754,31 @@ impl Expect {
     }
 
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
-    /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
-    pub(crate) fn apply_custom_matcher(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    /// and we can known which case it is based on if the `this` value is an instance of Expect
+    pub(crate) fn apply_custom_matcher(
+        cx: &mut JsScope<'_>,
+        this_value: JsLocal<'_>,
+        callee: JsLocal<'_>,
+        args: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
+        let _gc = cx.global().bun_vm().as_mut().auto_gc_on_drop();
+        let call = MatcherCall { this: this_value.to_js(), callee: callee.to_js(), arguments: JsLocal::to_js_slice(args) };
 
         // try to retrieve the Expect instance
-        let Some(expect) = call_frame.this().as_class_ref::<Expect>() else {
+        let Some(expect) = call.this.as_class_ref::<Expect>() else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
-            return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, Self::custom_matcher_fn(global_this, call_frame)?);
+            let global_this = cx.global();
+            let matcher_fn = Self::custom_matcher_fn(global_this, call.callee)?;
+            return ExpectCustomAsymmetricMatcher::create(global_this, call.this, call.arguments, matcher_fn);
         };
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
-        let call = MatcherCall { this: call_frame.this(), callee: call_frame.callee(), arguments: call_frame.arguments() };
-        // SAFETY: script called this host function, which has borrowed nothing through another `JsScope`.
-        unsafe {
-            JsScope::with(global_this.as_mut_ptr(), |cx| {
-                expect.run_matcher(cx, &call, |cx| expect.custom_matcher(cx.global(), call_frame))
-            })
-        }
+        expect.run_matcher(cx, &call, |cx| expect.custom_matcher(cx.global(), &call))
     }
 
-    fn custom_matcher_fn(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let func: JSValue = call_frame.callee();
+    fn custom_matcher_fn(global_this: &JSGlobalObject, func: JSValue) -> JsResult<JSValue> {
         let matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
         if !matcher_fn.js_type().is_function() {
             return Err(global_this.throw2(
@@ -1799,10 +1789,10 @@ impl Expect {
         Ok(matcher_fn)
     }
 
-    fn custom_matcher(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    fn custom_matcher(&self, global_this: &JSGlobalObject, call: &MatcherCall<'_>) -> JsResult<JSValue> {
         let expect = self;
-        let this_value: JSValue = call_frame.this();
-        let matcher_fn = Self::custom_matcher_fn(global_this, call_frame)?;
+        let this_value: JSValue = call.this;
+        let matcher_fn = Self::custom_matcher_fn(global_this, call.callee)?;
 
         // retrieve the matcher name
         let matcher_name = matcher_fn.get_name(global_this)?;
@@ -1832,7 +1822,7 @@ impl Expect {
 
         expect.increment_expect_call_counter();
 
-        let args = call_frame.arguments();
+        let args = call.arguments;
         Self::with_matcher_args(value, args.len(), |index| Ok(args[index]), |matcher_args| {
             Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, matcher_args, expect.flags.get(), expect.parent.as_ref(), false)
         })?;
@@ -2546,15 +2536,20 @@ impl ExpectCustomAsymmetricMatcher {
     /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
     /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
     /// This will not run the matcher, but just capture the args etc.
-    pub(crate) fn create(global_this: &JSGlobalObject, call_frame: &CallFrame, matcher_fn: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn create(
+        global_this: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+        matcher_fn: JSValue,
+    ) -> JsResult<JSValue> {
         // try to retrieve the ExpectStatic instance (to get the flags)
-        let flags = if let Some(expect_static) = call_frame.this().as_class_ref::<ExpectStatic>() {
+        let flags = if let Some(expect_static) = this_value.as_class_ref::<ExpectStatic>() {
             expect_static.flags
         } else {
             // if it's not an ExpectStatic instance, assume it was called from the Expect constructor, so use the default flags
             Flags::default()
         };
-        Self::create_with(global_this, flags, call_frame.arguments(), matcher_fn)
+        Self::create_with(global_this, flags, args, matcher_fn)
     }
 
     fn create_with(global_this: &JSGlobalObject, flags: Flags, args: &[JSValue], matcher_fn: JSValue) -> JsResult<JSValue> {
@@ -2751,14 +2746,21 @@ impl ExpectMatcherContext {
         let global_this = cx.global();
         let utils = ExpectMatcherUtils::singleton(global_this);
         js_ExpectMatcherUtils::equals_get_cached(utils).unwrap_or_else(|| {
-            let equals = JSFunction::create(global_this, "equals", equals_shim, 4, Default::default());
+            let equals = JSFunction::create(global_this, "equals", generated::Bun__ExpectMatcherContext__equals, 4, Default::default());
             js_ExpectMatcherUtils::equals_set_cached(utils, global_this, equals);
             equals
         })
     }
 
-    fn equals(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let [a, b, custom_testers, strict_check] = callframe.arguments_as_array::<4>();
+    pub(crate) fn equals(
+        cx: &mut JsScope<'_>,
+        a: JsLocal<'_>,
+        b: JsLocal<'_>,
+        custom_testers: JsLocal<'_>,
+        strict_check: bool,
+    ) -> JsResult<bool> {
+        let global_this = cx.global();
+        let (a, b, custom_testers) = (a.to_js(), b.to_js(), custom_testers.to_js());
         let custom_testers = if custom_testers.is_undefined() {
             JSValue::ZERO
         } else if !custom_testers.js_type().is_array() {
@@ -2771,37 +2773,13 @@ impl ExpectMatcherContext {
         let _testers = super::expect::add_equality_testers::EqualityTestersScope::enter(global_this, custom_testers)?;
         let pass = Pass::barrier();
         let _entered = pass.enter();
-        Ok(JSValue::from(if strict_check.to_boolean() {
-            a.jest_strict_deep_equals(b, global_this)?
+        if strict_check {
+            a.jest_strict_deep_equals(b, global_this)
         } else {
-            a.jest_deep_equals(b, global_this)?
-        }))
+            a.jest_deep_equals(b, global_this)
+        }
     }
 }
-
-/// A host function that ignores `this`, so a matcher can destructure it or pass it around like in Jest.
-macro_rules! plain_host_fn {
-    ($shim:ident, $function:path) => {
-        bun_jsc::jsc_host_abi! {
-            #[optimize(size)]
-            unsafe fn $shim(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue {
-                // SAFETY: JSC guarantees both pointers are live for the call.
-                let (global, frame) = unsafe { (&*global, &*frame) };
-                bun_jsc::to_js_host_fn_result(global, $function(global, frame))
-            }
-        }
-    };
-}
-plain_host_fn!(equals_shim, ExpectMatcherContext::equals);
-plain_host_fn!(to_satisfy_shim, Expect::to_satisfy_as_custom_matcher);
-plain_host_fn!(stringify_shim, ExpectMatcherUtils::stringify);
-plain_host_fn!(print_expected_shim, ExpectMatcherUtils::print_expected);
-plain_host_fn!(print_received_shim, ExpectMatcherUtils::print_received);
-plain_host_fn!(expected_color_shim, ExpectMatcherUtils::expected_color);
-plain_host_fn!(received_color_shim, ExpectMatcherUtils::received_color);
-plain_host_fn!(matcher_hint_shim, ExpectMatcherUtils::matcher_hint);
-plain_host_fn!(print_with_type_shim, ExpectMatcherUtils::print_with_type);
-plain_host_fn!(diff_shim, ExpectMatcherUtils::diff);
 
 const NO_VISUAL_DIFFERENCE: &[u8] = b"Compared values have no visual difference.";
 
@@ -2878,19 +2856,22 @@ pub(crate) struct ExpectMatcherUtils {
 impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
-        ExpectMatcherUtils::default().to_js(global_this).put_host_functions(
-            global_this,
-            &[
-                ("stringify", stringify_shim, 1),
-                ("printExpected", print_expected_shim, 1),
-                ("printReceived", print_received_shim, 1),
-                ("EXPECTED_COLOR", expected_color_shim, 1),
-                ("RECEIVED_COLOR", received_color_shim, 1),
-                ("matcherHint", matcher_hint_shim, 1),
-                ("printWithType", print_with_type_shim, 3),
-                ("diff", diff_shim, 2),
-            ],
-        )
+        let utils = ExpectMatcherUtils::default().to_js(global_this);
+        let functions: [(&str, bun_jsc::JSHostFn, u32); 8] = [
+            ("stringify", generated::Bun__ExpectMatcherUtils__stringify, 1),
+            ("printExpected", generated::Bun__ExpectMatcherUtils__printExpected, 1),
+            ("printReceived", generated::Bun__ExpectMatcherUtils__printReceived, 1),
+            ("EXPECTED_COLOR", generated::Bun__ExpectMatcherUtils__expectedColor, 1),
+            ("RECEIVED_COLOR", generated::Bun__ExpectMatcherUtils__receivedColor, 1),
+            ("matcherHint", generated::Bun__ExpectMatcherUtils__matcherHint, 1),
+            ("printWithType", generated::Bun__ExpectMatcherUtils__printWithType, 3),
+            ("diff", generated::Bun__ExpectMatcherUtils__diff, 2),
+        ];
+        for (name, function, length) in functions {
+            let function = JSFunction::create(global_this, name, function, length, Default::default());
+            utils.put(global_this, name.as_bytes(), function);
+        }
+        utils
     }
 
     pub(crate) fn singleton(global_this: &JSGlobalObject) -> JSValue {
@@ -2932,46 +2913,40 @@ impl ExpectMatcherUtils {
     }
 
     #[optimize(size)]
-    fn stringify(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Self::print_value(global_this, value, None)
+    pub(crate) fn stringify(cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
+        Self::print_value(cx.global(), value.to_js(), None)
     }
 
     #[optimize(size)]
-    fn print_expected(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Self::print_value(global_this, value, Some("<green>"))
+    pub(crate) fn print_expected(cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
+        Self::print_value(cx.global(), value.to_js(), Some("<green>"))
     }
 
     #[optimize(size)]
-    fn print_received(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
-        Self::print_value(global_this, value, Some("<red>"))
+    pub(crate) fn print_received(cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
+        Self::print_value(cx.global(), value.to_js(), Some("<red>"))
     }
 
     #[optimize(size)]
-    fn color_text(global_this: &JSGlobalObject, callframe: &CallFrame, color: HintColor) -> JsResult<JSValue> {
+    fn color_text(global_this: &JSGlobalObject, texts: &[JsLocal<'_>], color: HintColor) -> JsResult<JSValue> {
         let mut text: Vec<u8> = Vec::new();
-        for (i, argument) in callframe.arguments().iter().enumerate() {
+        for (i, argument) in texts.iter().enumerate() {
             if i > 0 {
                 text.push(b' ');
             }
-            text.extend_from_slice(argument.to_bun_string(global_this)?.to_utf8().slice());
+            text.extend_from_slice(argument.to_js().to_bun_string(global_this)?.to_utf8().slice());
         }
         let mut out: Vec<u8> = Vec::new();
         color.paint(&mut out, &text);
         bun_string_jsc::create_utf8_for_js(global_this, &out)
     }
 
-    fn expected_color(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::color_text(global_this, callframe, HintColor::Expected)
+    pub(crate) fn expected_color(cx: &mut JsScope<'_>, texts: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        Self::color_text(cx.global(), texts, HintColor::Expected)
     }
 
-    fn received_color(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::color_text(global_this, callframe, HintColor::Received)
+    pub(crate) fn received_color(cx: &mut JsScope<'_>, texts: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        Self::color_text(cx.global(), texts, HintColor::Received)
     }
 
     /// Mirrors `getType` in @jest/get-type.
@@ -3007,9 +2982,15 @@ impl ExpectMatcherUtils {
     }
 
     #[optimize(size)]
-    fn print_with_type(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let [name, value, print] = callframe.arguments_as_array::<3>();
-        let name = name.to_bun_string(global_this)?;
+    pub(crate) fn print_with_type(
+        cx: &mut JsScope<'_>,
+        name: JsLocal<'_>,
+        value: JsLocal<'_>,
+        print: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let (value, print) = (value.to_js(), print.to_js());
+        let name = name.to_js().to_bun_string(global_this)?;
         if !print.is_callable() {
             return Err(global_this.throw_type_error(format_args!("printWithType: the third argument (print) must be a function")));
         }
@@ -3024,8 +3005,9 @@ impl ExpectMatcherUtils {
 
     /// Like `diff` in jest-matcher-utils, returns `null` when a diff would add nothing to printing the two values.
     #[optimize(size)]
-    fn diff(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let [expected, received] = callframe.arguments_as_array::<2>();
+    pub(crate) fn diff(cx: &mut JsScope<'_>, expected: JsLocal<'_>, received: JsLocal<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let (expected, received) = (expected.to_js(), received.to_js());
         if (expected.is_number() && received.is_number())
             || (expected.is_big_int() && received.is_big_int())
             || (expected.is_boolean() && received.is_boolean())
@@ -3090,8 +3072,9 @@ impl ExpectMatcherUtils {
     }
 
     #[optimize(size)]
-    fn matcher_hint(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
+    pub(crate) fn matcher_hint(cx: &mut JsScope<'_>, arguments: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let arguments = JsLocal::to_js_slice(arguments);
         let argument = |i: usize| arguments.get(i).copied().filter(|value| !value.is_undefined());
         let label = |value: Option<JSValue>, default: &'static str| match value {
             Some(value) => value.to_bun_string(global_this),
@@ -3488,8 +3471,7 @@ unsafe extern "C" {
     fn Bun__JSWrappingFunction__create(
         global_this: *const JSGlobalObject,
         symbol_name: &bun_core::String,
-        // C++: `Bun::NativeFunctionPtr` — a bare `EncodedJSValue (*)(JSGlobalObject*, CallFrame*)`.
-        // Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
+        // C++: `Bun::NativeFunctionPtr`. Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
     ) -> JSValue;

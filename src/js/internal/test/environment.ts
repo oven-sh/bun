@@ -4,7 +4,7 @@ const { createRequire } = require("node:module");
 const types = require("node:util/types");
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
-const isInPreload = $newRustFunction("environment.rs", "jsIsInPreload", 0);
+const isInPreload = $bindgen("environment.bind.ts", "isInPreload");
 // This module's copy in a global that outlives the test files.
 const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
   "TestEnvironment.cpp",

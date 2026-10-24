@@ -8,10 +8,10 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_core::String as BunString;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::{
-    CallFrame, JSFunction, JSGlobalObject, JSPromise, JSValue, JsClass as _, JsResult,
-    StringJsc as _, Strong,
+    JSFunction, JSGlobalObject, JSPromise, JSValue, JsClass as _, JsResult, StringJsc as _, Strong,
 };
 
 use super::bun_test::{
@@ -19,6 +19,7 @@ use super::bun_test::{
 };
 use super::execution::ExecutionSequence;
 use super::test_context::{self, Deferred, TestContext, bound};
+use crate::generated_bindgen::test_context as generated;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum State {
@@ -112,7 +113,13 @@ impl AroundHook {
 
     /// The setup entry's callback. Its arguments are what `create()` returned, the hook, and the hook's last two arguments.
     pub(crate) fn set_up_function(global: &JSGlobalObject) -> JSValue {
-        JSFunction::create(global, "", __jsc_host_set_up, 4, Default::default())
+        JSFunction::create(
+            global,
+            "",
+            generated::Bun__AroundHook__setUp,
+            4,
+            Default::default(),
+        )
     }
 
     fn of<'a>(value: JSValue) -> Option<&'a AroundHook> {
@@ -120,8 +127,8 @@ impl AroundHook {
         AroundHook::from_js(value).map(|this| unsafe { &*this })
     }
 
-    fn of_call<'a>(global: &JSGlobalObject, frame: &'a CallFrame) -> JsResult<&'a AroundHook> {
-        Self::of(frame.this()).ok_or_else(|| {
+    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<&'a AroundHook> {
+        Self::of(this_value.to_js()).ok_or_else(|| {
             global.throw_type_error(format_args!("Expected this to be an around hook"))
         })
     }
@@ -158,7 +165,7 @@ impl AroundHook {
             this_value,
             self.around.callback_name(),
             0,
-            __jsc_host_run,
+            generated::Bun__AroundHook__run,
         )?;
         let returned = hook.call(global, JSValue::UNDEFINED, &[run, context, suite])?;
         match if returned.is_object() {
@@ -170,8 +177,20 @@ impl AroundHook {
         } {
             Some(then) => {
                 let reactions = [
-                    bound(global, this_value, "", 1, __jsc_host_on_fulfilled)?,
-                    bound(global, this_value, "", 1, __jsc_host_on_rejected)?,
+                    bound(
+                        global,
+                        this_value,
+                        "",
+                        1,
+                        generated::Bun__AroundHook__onFulfilled,
+                    )?,
+                    bound(
+                        global,
+                        this_value,
+                        "",
+                        1,
+                        generated::Bun__AroundHook__onRejected,
+                    )?,
                 ];
                 then.call(global, returned, &reactions)?;
                 Ok(())
@@ -227,10 +246,21 @@ impl AroundHook {
     }
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn set_up(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [this_value, hook, context, suite] = frame.arguments_as_array::<4>();
+pub(crate) fn set_up(
+    cx: &mut JsScope<'_>,
+    around_hook: JsLocal<'_>,
+    hook: JsLocal<'_>,
+    context: JsLocal<'_>,
+    suite: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (this_value, hook, context, suite) = (
+        around_hook.to_js(),
+        hook.to_js(),
+        context.to_js(),
+        suite.to_js(),
+    );
     let Some(this) = AroundHook::of(this_value) else {
         return Err(global.throw_type_error(format_args!(
             "Expected the first argument to be an around hook"
@@ -244,24 +274,30 @@ fn set_up(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(ready)
 }
 
-#[bun_jsc::host_fn]
-fn on_fulfilled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    AroundHook::of_call(global, frame)?.on_settled(frame.this(), global, Ok(()))?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn on_fulfilled(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<()> {
+    let global = cx.global();
+    AroundHook::of_call(global, this_value)?.on_settled(this_value.to_js(), global, Ok(()))
 }
 
-#[bun_jsc::host_fn]
-fn on_rejected(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    AroundHook::of_call(global, frame)?.on_settled(frame.this(), global, Err(frame.argument(0)))?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn on_rejected(
+    cx: &mut JsScope<'_>,
+    this_value: JsLocal<'_>,
+    reason: JsLocal<'_>,
+) -> JsResult<()> {
+    let global = cx.global();
+    AroundHook::of_call(global, this_value)?.on_settled(
+        this_value.to_js(),
+        global,
+        Err(reason.to_js()),
+    )
 }
 
 /// `runTest()` or `runSuite()`
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn run(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let this_value = frame.this();
-    let this = AroundHook::of_call(global, frame)?;
+pub(crate) fn run(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    let this = AroundHook::of_call(global, this_value)?;
+    let this_value = this_value.to_js();
     let (hook_name, callback_name) = (this.around.hook_name(), this.around.callback_name());
     let Some((buntest, sequence)) = this.setting_up() else {
         let error = if this.state.get() == State::Abandoned {
@@ -279,7 +315,13 @@ fn run(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         };
         return Ok(JSPromise::rejected_promise(global, error).to_js());
     };
-    let tear_down = bound(global, this_value, "", 0, __jsc_host_tear_down)?;
+    let tear_down = bound(
+        global,
+        this_value,
+        "",
+        0,
+        generated::Bun__AroundHook__tearDown,
+    )?;
     let async_context = capture_async_context(global);
     // SAFETY: points into `buntest.execution.sequences`, which `buntest` keeps alive.
     let (context, entry) = unsafe {
@@ -327,10 +369,10 @@ fn run(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 /// The teardown entry's callback.
-#[bun_jsc::host_fn]
-fn tear_down(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let this_value = frame.this();
-    AroundHook::of_call(global, frame)?;
+pub(crate) fn tear_down(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    AroundHook::of_call(global, this_value)?;
+    let this_value = this_value.to_js();
     if let Some(context) = js::context_get_cached(this_value) {
         let outer = js::outer_async_context_get_cached(this_value).unwrap_or_default();
         test_context::js::async_context_set_cached(context, global, outer);
@@ -342,9 +384,8 @@ fn tear_down(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 /// Returns its argument, bound to the async context it's called in.
-#[bun_jsc::host_fn]
-fn adopt_async_context(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    Ok(frame.argument(0).with_async_context_if_needed(global))
+pub(crate) fn adopt_async_context(cx: &mut JsScope<'_>, callback: JsLocal<'_>) -> JSValue {
+    callback.to_js().with_async_context_if_needed(cx.global())
 }
 
 /// Remembers the current async context, for `in_async_context()`.
@@ -352,7 +393,7 @@ fn capture_async_context(global: &JSGlobalObject) -> JSValue {
     JSFunction::create(
         global,
         "",
-        __jsc_host_adopt_async_context,
+        generated::Bun__AroundHook__adoptAsyncContext,
         1,
         Default::default(),
     )

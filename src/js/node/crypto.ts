@@ -67,7 +67,7 @@ const {
   scryptSync,
   argon2: _argon2,
   argon2Sync: _argon2Sync,
-} = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
+} = $bindgen("node_crypto_binding.bind.ts", "crypto");
 
 const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 const timingSafeEqual = $bindgen("Crypto.bind.ts", "timingSafeEqual");

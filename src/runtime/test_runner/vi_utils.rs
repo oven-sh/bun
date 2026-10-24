@@ -1,7 +1,9 @@
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use bun_options_types::context::RESETS_BEFORE_EACH_TEST;
 
 use super::jest::Jest;
+use crate::generated_bindgen::vi_utils as generated;
 
 unsafe extern "C" {
     safe fn ViUtils__putFunctions(global: &JSGlobalObject, vi: JSValue);
@@ -116,10 +118,9 @@ fn commit(global: &JSGlobalObject, config: Config) {
     }
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn set_config(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let config = frame.argument(0);
+pub(crate) fn set_config(cx: &mut JsScope<'_>, config: JsLocal<'_>) -> JsResult<()> {
+    let (global, config) = (cx.global(), config.to_js());
     if !config.is_object() {
         return Err(global.throw_invalid_argument_type_value("config", "object", config));
     }
@@ -139,18 +140,16 @@ fn set_config(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         *merged = reset.or(*merged);
     }
     commit(global, merged);
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
-#[bun_jsc::host_fn]
-fn reset_config(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    commit(global, Config::default());
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn reset_config(cx: &mut JsScope<'_>) {
+    commit(cx.global(), Config::default());
 }
 
 const FNS: &[(&str, u32, JSHostFn)] = &[
-    ("setConfig", 1, __jsc_host_set_config),
-    ("resetConfig", 0, __jsc_host_reset_config),
+    ("setConfig", 1, generated::Bun__ViUtils__setConfig),
+    ("resetConfig", 0, generated::Bun__ViUtils__resetConfig),
 ];
 
 pub(crate) fn put_fns(global: &JSGlobalObject, _jest: JSValue, vi: JSValue) {

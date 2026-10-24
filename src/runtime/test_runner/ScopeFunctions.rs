@@ -2,13 +2,17 @@ use core::fmt;
 use std::rc::Rc;
 use crate::test_runner::expect::{FormatterTestExt as _, JSValueTestExt};
 
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
+use crate::generated_bindgen::bun_test as generic_hook;
 use crate::generated_bindgen::jest::js_ScopeFunctions as js;
+use crate::generated_bindgen::scope_functions::{
+    Bun__ScopeFunctions__callAsFunction, CallbackOrOptions, DescriptionOrCallback, Retry,
+};
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, Calling, DescribeScope, Flavor};
-use crate::test_runner::bun_test::js_fns::{Signature, generic_hook};
+use crate::test_runner::bun_test::js_fns::Signature;
 use crate::test_runner::test_context;
 use crate::test_runner::test_context_fixtures::TestFixtures;
 use crate::test_runner::test_context_parameter::{ContextParameter, SharedContextParameter};
@@ -212,22 +216,22 @@ impl ScopeFunctions {
         JSValueTestExt::bind(hook, global, self.fixtures, &BunString::static_(name), 1.0, &[])
     }
     pub(crate) fn get_before_all(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "beforeAll", generic_hook::__jsc_host_before_all, generic_hook::__jsc_host_vitest_before_all)
+        self.hook(cx.global(), "beforeAll", generic_hook::Bun__BunTest__beforeAll, generic_hook::Bun__BunTest__vitestBeforeAll)
     }
     pub(crate) fn get_before_each(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "beforeEach", generic_hook::__jsc_host_before_each, generic_hook::__jsc_host_vitest_before_each)
+        self.hook(cx.global(), "beforeEach", generic_hook::Bun__BunTest__beforeEach, generic_hook::Bun__BunTest__vitestBeforeEach)
     }
     pub(crate) fn get_after_each(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "afterEach", generic_hook::__jsc_host_after_each, generic_hook::__jsc_host_vitest_after_each)
+        self.hook(cx.global(), "afterEach", generic_hook::Bun__BunTest__afterEach, generic_hook::Bun__BunTest__vitestAfterEach)
     }
     pub(crate) fn get_after_all(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "afterAll", generic_hook::__jsc_host_after_all, generic_hook::__jsc_host_vitest_after_all)
+        self.hook(cx.global(), "afterAll", generic_hook::Bun__BunTest__afterAll, generic_hook::Bun__BunTest__vitestAfterAll)
     }
     pub(crate) fn get_around_each(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "aroundEach", generic_hook::__jsc_host_around_each, generic_hook::__jsc_host_vitest_around_each)
+        self.hook(cx.global(), "aroundEach", generic_hook::Bun__BunTest__aroundEach, generic_hook::Bun__BunTest__vitestAroundEach)
     }
     pub(crate) fn get_around_all(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.hook(cx.global(), "aroundAll", generic_hook::__jsc_host_around_all, generic_hook::__jsc_host_vitest_around_all)
+        self.hook(cx.global(), "aroundAll", generic_hook::Bun__BunTest__aroundAll, generic_hook::Bun__BunTest__vitestAroundAll)
     }
     pub(crate) fn get_describe(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         if self.mode == Mode::Describe {
@@ -321,15 +325,21 @@ fn vitest_template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSV
     table_rows(global, &headings, values).map(Some)
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn call_as_function<'a>(
+    cx: &mut JsScope<'a>,
+    this_value: JsLocal<'a>,
+    first: (DescriptionOrCallback<'a>, JsLocal<'a>),
+    second: CallbackOrOptions<'a>,
+    third: CallbackOrOptions<'a>,
+) -> JsResult<()> {
     let _g = group_log::begin();
 
-    let Some(this) = frame.this().as_class_ref::<ScopeFunctions>() else {
+    let global = cx.global();
+    let Some(this) = this_value.to_js().as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
-    let line_no = jest::capture_test_line_number(frame, global);
+    let line_no = jest::capture_test_line_number(global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
     let bun_test_ptr = buntest_strong.get();
@@ -344,7 +354,9 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     let args = parse_arguments(
         global,
-        frame,
+        first,
+        second,
+        third,
         Signature::ScopeFunctions(this),
         ParseArgumentsCfg {
             callback: callback_mode,
@@ -431,7 +443,6 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     // (it is reused on later loop iterations).
                     &mut *bun_test_ptr,
                     global,
-                    frame,
                     bound,
                     formatted_label.as_deref(),
                     &args.options,
@@ -451,7 +462,6 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         this.enqueue_describe_or_test_callback(
             bun_test_ptr,
             global,
-            frame,
             args.callback,
             args.description.as_deref(),
             &args.options,
@@ -461,7 +471,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         )?;
     }
 
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 trait WriteEnd {
@@ -517,7 +527,6 @@ impl ScopeFunctions {
         &self,
         bun_test: &mut BunTest,
         global: &JSGlobalObject,
-        frame: &CallFrame,
         callback: Option<JSValue>,
         description: Option<&[u8]>,
         options: &ParseArgumentsOptions,
@@ -559,7 +568,6 @@ impl ScopeFunctions {
                     -1
                 };
                 debugger.test_reporter_agent.report_test_found(
-                    frame,
                     id,
                     &name,
                     match self.mode {
@@ -852,36 +860,26 @@ pub(crate) struct ParseArgumentsCfg {
     pub(crate) inherited: InheritedOptions,
 }
 
-fn get_description(
+/// What a test is called that is named after a class or a function.
+fn name_of_callable(
     global: &JSGlobalObject,
-    description: JSValue,
+    callable: JsLocal<'_, Callable>,
     signature: Signature,
 ) -> JsResult<Vec<u8>> {
-    if description.is_empty() {
-        return Ok(Vec::new());
-    }
+    let callable = callable.to_js();
+    if callable.is_class(global) {
+        let class_name = callable.get_class_name(global)?;
 
-    if description.is_class(global) {
-        let description_class_name = description.get_class_name(global)?;
-
-        if !description_class_name.is_empty() {
-            return Ok(description_class_name.to_owned_slice());
+        if !class_name.is_empty() {
+            return Ok(class_name.to_owned_slice());
         }
 
-        let description_name = description.get_name(global)?;
-        return Ok(description_name.to_owned_slice());
+        return Ok(callable.get_name(global)?.to_owned_slice());
     }
 
-    if description.is_function() {
-        let func_name = description.get_name(global)?;
-        if func_name.length() > 0 {
-            return Ok(func_name.to_owned_slice());
-        }
-    }
-
-    if description.is_number() || description.is_string() {
-        let slice = description.to_utf8(global)?;
-        return Ok(slice.into_vec());
+    let name = callable.get_name(global)?;
+    if name.length() > 0 {
+        return Ok(name.to_owned_slice());
     }
 
     Err(global.throw(format_args!(
@@ -890,86 +888,63 @@ fn get_description(
     )))
 }
 
+/// `first_value` is the first argument itself. Only Vitest's `test` and `describe` read it.
 #[optimize(size)]
-pub(crate) fn parse_arguments(
+pub(crate) fn parse_arguments<'a>(
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    (first, first_value): (DescriptionOrCallback<'a>, JsLocal<'a>),
+    second: CallbackOrOptions<'a>,
+    third: CallbackOrOptions<'a>,
     signature: Signature,
     cfg: ParseArgumentsCfg,
 ) -> JsResult<ParseArgumentsResult> {
-    let [a1, a2, a3] = frame.arguments_as_array::<3>();
     let is_vitest = matches!(signature, Signature::ScopeFunctions(function) if function.cfg.flavor == Flavor::Vitest);
 
-    #[derive(Copy, Clone)]
-    enum Len { Three, Two, One, Zero }
-    let len: Len = if !a3.is_undefined_or_null() {
-        Len::Three
-    } else if !a2.is_undefined_or_null() {
-        Len::Two
-    } else if !a1.is_undefined_or_null() {
-        Len::One
-    } else {
-        Len::Zero
-    };
-
-    #[derive(Copy, Clone)]
-    struct DescriptionCallbackOptions {
-        description: JSValue,
-        callback: JSValue,
-        options: JSValue,
-    }
-    impl Default for DescriptionCallbackOptions {
-        fn default() -> Self {
-            Self {
-                description: JSValue::UNDEFINED,
-                callback: JSValue::UNDEFINED,
-                options: JSValue::UNDEFINED,
-            }
-        }
+    // Vitest names a test after any value.
+    if matches!(first, DescriptionOrCallback::Other(_)) && !is_vitest {
+        return Err(if cfg.kind == FunctionKind::TestOrDescribe {
+            global.throw_invalid_arguments(format_args!(
+                "The first argument must be a named class, named function, number, or string"
+            ))
+        } else {
+            global.throw_invalid_arguments(format_args!("{} expects a function as the first argument", signature))
+        });
     }
 
-    let items: DescriptionCallbackOptions = match len {
-        // description, callback(fn), options(!fn)
-        // description, options(!fn), callback(fn)
-        Len::Three => {
-            if a2.is_function() {
-                DescriptionCallbackOptions { description: a1, callback: a2, options: a3 }
-            } else {
-                DescriptionCallbackOptions { description: a1, callback: a3, options: a2 }
-            }
+    let mut is_first_the_name = !matches!((&second, &third), (CallbackOrOptions::None, CallbackOrOptions::None));
+    let (description, callback, options) = match (first, second, third) {
+        // callback
+        // callback, options
+        (
+            DescriptionOrCallback::Function(callback),
+            options @ (CallbackOrOptions::None | CallbackOrOptions::Timeout(_) | CallbackOrOptions::Options(_)),
+            CallbackOrOptions::None,
+        ) => {
+            is_first_the_name = false;
+            (DescriptionOrCallback::None, CallbackOrOptions::Callback(callback), options)
         }
-        // callback(fn), options(!fn)
-        // description, callback(fn)
-        Len::Two => {
-            if a1.is_function() && !a2.is_function() {
-                DescriptionCallbackOptions { callback: a1, options: a2, ..Default::default() }
-            } else if is_vitest && !a2.is_function() {
-                DescriptionCallbackOptions { description: a1, options: a2, ..Default::default() }
-            } else {
-                DescriptionCallbackOptions { description: a1, callback: a2, ..Default::default() }
-            }
+        // description, options
+        (description, options @ (CallbackOrOptions::Timeout(_) | CallbackOrOptions::Options(_)), CallbackOrOptions::None)
+            if is_vitest =>
+        {
+            (description, CallbackOrOptions::None, options)
         }
         // description
-        // callback(fn)
-        Len::One => {
-            if a1.is_function() {
-                DescriptionCallbackOptions { callback: a1, ..Default::default() }
-            } else {
-                DescriptionCallbackOptions { description: a1, ..Default::default() }
-            }
-        }
-        Len::Zero => DescriptionCallbackOptions::default(),
+        // description, callback
+        // description, callback, options
+        (description, callback @ CallbackOrOptions::Callback(_), options)
+        | (description, callback, options @ CallbackOrOptions::None) => (description, callback, options),
+        // description, options, callback
+        (description, options, callback) => (description, callback, options),
     };
-    let (description, callback, options) = (items.description, items.callback, items.options);
-    let is_first_the_name = matches!(len, Len::Three) || (matches!(len, Len::Two) && (!a1.is_function() || a2.is_function()));
 
-    let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
-        None
-    } else if callback.is_function() {
-        Some(callback.with_async_context_if_needed(global))
-    } else {
-        let ordinal = if cfg.kind == FunctionKind::TestOrDescribe { "second" } else { "first" };
-        return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
+    let result_callback: Option<JSValue> = match callback {
+        CallbackOrOptions::Callback(callback) => Some(callback.to_js().with_async_context_if_needed(global)),
+        CallbackOrOptions::None if cfg.callback != CallbackMode::Require => None,
+        _ => {
+            let ordinal = if cfg.kind == FunctionKind::TestOrDescribe { "second" } else { "first" };
+            return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
+        }
     };
 
     let mut result = ParseArgumentsResult {
@@ -977,7 +952,6 @@ pub(crate) fn parse_arguments(
         callback: result_callback,
         options: ParseArgumentsOptions::default(),
     };
-    // `result` cleanup handled by Drop on early return.
 
     let mut timeout_option: Option<f64> = None;
     let mut repeats_option: Option<u32> = None;
@@ -985,75 +959,59 @@ pub(crate) fn parse_arguments(
         matches!(signature, Signature::ScopeFunctions(function) if function.cfg.self_mode == SelfMode::Fails).then_some(true);
     let mut shuffle_option: Option<bool> = None;
 
-    if options.is_number() {
-        timeout_option = Some(options.as_number());
-    } else if options.is_function() {
-        return Err(global.throw(format_args!(
-            "{}() expects options to be a number or object, not a function",
-            signature
-        )));
-    } else if options.is_object() {
-        if let Some(timeout) = options.get(global, "timeout")? {
-            if !timeout.is_number() {
-                return Err(global.throw(format_args!("{}() expects timeout to be a number", signature)));
-            }
-            timeout_option = Some(timeout.as_number());
+    match options {
+        CallbackOrOptions::None => {}
+        CallbackOrOptions::Timeout(timeout) => timeout_option = Some(timeout),
+        CallbackOrOptions::Callback(_) => {
+            return Err(global.throw(format_args!(
+                "{}() expects options to be a number or object, not a function",
+                signature
+            )));
         }
-        if let Some(mut retries) = options.get(global, "retry")? {
-            if is_vitest && retries.is_object() {
-                retries = retries.get(global, "count")?.unwrap_or_else(|| JSValue::js_number(0.0));
-            }
-            if !retries.is_number() {
-                return Err(global.throw(format_args!("{}() expects retry to be a number", signature)));
-            }
+        CallbackOrOptions::Options(options) => {
+            timeout_option = options.timeout;
             // Lossy cast: Rust `as` saturates on overflow/NaN.
-            result.options.retry = Some(retries.as_number() as u32);
-        }
-        if let Some(repeats) = options.get(global, "repeats")? {
-            if !repeats.is_number() {
-                return Err(global.throw(format_args!("{}() expects repeats to be a number", signature)));
+            result.options.retry = match options.retry {
+                None => None,
+                Some(Retry::Count(count)) => Some(count as u32),
+                Some(Retry::Options(retry)) if is_vitest => Some(retry.count.unwrap_or(0.0) as u32),
+                Some(Retry::Options(_)) => {
+                    return Err(global.throw(format_args!("{}() expects retry to be a number", signature)));
+                }
+            };
+            if let Some(repeats) = options.repeats {
+                if !is_vitest && result.options.retry.is_some() && result.options.retry.unwrap() != 0 {
+                    return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
+                }
+                repeats_option = Some(repeats as u32);
             }
-            if !is_vitest && result.options.retry.is_some() && result.options.retry.unwrap() != 0 {
-                return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
-            }
-            repeats_option = Some(repeats.as_number() as u32);
-        }
-        if is_vitest {
-            let modifiers = &mut result.options.modifiers;
-            for (name, modifier) in [
-                ("only", &mut modifiers.only),
-                ("skip", &mut modifiers.skip),
-                ("todo", &mut modifiers.todo),
-                ("fails", &mut fails_option),
-                ("shuffle", &mut shuffle_option),
-                ("concurrent", &mut modifiers.concurrent),
-            ] {
-                *modifier = options.get(global, name)?.map(JSValue::to_boolean).or(*modifier);
-            }
-            if let Some(sequential) = options.get(global, "sequential")?
-                && sequential.to_boolean()
-            {
-                modifiers.concurrent = Some(false);
+            if is_vitest {
+                result.options.modifiers = ModifierOptions {
+                    only: options.only,
+                    skip: options.skip,
+                    todo: options.todo,
+                    concurrent: if options.sequential == Some(true) { Some(false) } else { options.concurrent },
+                };
+                fails_option = options.fails.or(fails_option);
+                shuffle_option = options.shuffle;
             }
         }
-    } else if options.is_undefined_or_null() {
-        // no options
-    } else {
-        return Err(global.throw(format_args!(
-            "{}() expects a number, object, or undefined as the third argument",
-            signature
-        )));
     }
 
     result.description = if is_vitest
         && cfg.kind == FunctionKind::TestOrDescribe
-        && (is_first_the_name || !description.is_undefined_or_null())
+        && (is_first_the_name || !matches!(description, DescriptionOrCallback::None))
     {
-        Some(jest::format_vitest_name(global, description)?)
-    } else if description.is_undefined_or_null() {
-        None
+        Some(jest::format_vitest_name(global, first_value.to_js())?)
     } else {
-        Some(get_description(global, description, signature)?)
+        match description {
+            DescriptionOrCallback::None | DescriptionOrCallback::Other(_) => None,
+            DescriptionOrCallback::Function(callable) => Some(name_of_callable(global, callable, signature)?),
+            DescriptionOrCallback::Text(text) => Some(text.into_vec()),
+            DescriptionOrCallback::Number(number) => {
+                Some(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number).to_vec())
+            }
+        }
     };
 
     let timeout_option_ms: Option<u32> = timeout_option.map(|timeout| timeout as u32);
@@ -1147,10 +1105,7 @@ fn create_unbound(global: &JSGlobalObject, scope_functions: ScopeFunctions) -> J
 }
 
 fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult<JSValue> {
-    // `#[bun_jsc::host_fn]` on `call_as_function` emits the C-ABI thunk
-    // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
-    // `JSHostFn` shape, not the safe Rust signature.
-    let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
+    let call_fn = bun_jsc::JSFunction::create(global, name, Bun__ScopeFunctions__callAsFunction, 1, Default::default());
     let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     js::bound_set_cached(value, global, bound);

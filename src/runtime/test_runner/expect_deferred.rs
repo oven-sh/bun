@@ -10,11 +10,12 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::call_frame::CallerSrcLoc;
 use bun_jsc::js_promise::{Status, UnwrapMode, Unwrapped};
 use bun_jsc::{
-    AnyPromise, CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
+    AnyPromise, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
     JsClass as _, JsError, JsResult, Strong,
 };
 
 use super::{Expect, Flags, Promise};
+use crate::generated_bindgen::expect_deferred as generated;
 use crate::test_runner::bun_test::{
     BunTest, BunTestPtr, BunTestPtrWeak, Phase, RefDataValue, StepResult,
 };
@@ -602,7 +603,7 @@ impl ExpectDeferred {
         let Some(awaited) = js::awaited_get_cached(thrown) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let when_settled = private_function(global, __jsc_host_on_settled);
+        let when_settled = private_function(global, generated::Bun__ExpectDeferred__onSettled);
         if let Some(promise) = js::promise_get_cached(thrown) {
             ExpectDeferred__callWhenSettled(global, awaited, when_settled, thrown);
             return Ok(promise);
@@ -888,16 +889,15 @@ fn private_function(global: &JSGlobalObject, function: JSHostFn) -> JSValue {
     )
 }
 
-#[bun_jsc::host_fn]
-fn on_settled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    ExpectDeferred::run_again(global, frame.argument(1))?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn on_settled(cx: &mut JsScope<'_>, _value: JsLocal<'_>, deferred: JsLocal<'_>) -> JsResult<()> {
+    ExpectDeferred::run_again(cx.global(), deferred.to_js())?;
+    Ok(())
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn poll_once(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [function, check] = frame.arguments_as_array::<2>();
+pub(crate) fn poll_once(cx: &mut JsScope<'_>, callback: JsLocal<'_>, check: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (function, check) = (callback.to_js(), check.to_js());
     let value = function.call(global, JSValue::UNDEFINED, &[])?;
     match Expect::promise_to_await(global, value)? {
         Some(promise) => Ok(ExpectDeferred__then(global, promise.as_value(), check)),
@@ -905,12 +905,16 @@ fn poll_once(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn check_polled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [expect, call, value] = frame.arguments_as_array::<3>();
-    expect_js::captured_value_set_cached(expect, global, value);
-    call.call(global, JSValue::UNDEFINED, &[])
+pub(crate) fn check_polled(
+    cx: &mut JsScope<'_>,
+    expect: JsLocal<'_>,
+    call: JsLocal<'_>,
+    value: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    expect_js::captured_value_set_cached(expect.to_js(), global, value.to_js());
+    call.to_js().call(global, JSValue::UNDEFINED, &[])
 }
 
 /// Vitest rejects these too. A throw from the polled function is just retried, and a new snapshot passes on the first try.
@@ -1086,12 +1090,12 @@ impl Expect {
         };
         let attempted_call = bind(call.callee, expect, call.arguments)?;
         let check = bind(
-            private_function(global, __jsc_host_check_polled),
+            private_function(global, generated::Bun__ExpectDeferred__checkPolled),
             JSValue::UNDEFINED,
             &[expect, attempted_call],
         )?;
         let attempt = bind(
-            private_function(global, __jsc_host_poll_once),
+            private_function(global, generated::Bun__ExpectDeferred__pollOnce),
             JSValue::UNDEFINED,
             &[function, check],
         )?;

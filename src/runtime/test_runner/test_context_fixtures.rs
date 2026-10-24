@@ -4,8 +4,9 @@ use core::cell::Cell;
 
 use bun_core::String as BunString;
 use bun_core::fmt::quote;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
-    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
+    self as jsc, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
     JsClass as _, JsResult,
 };
 
@@ -13,6 +14,7 @@ use super::bun_test::{self, DescribeScope};
 use super::jest::Jest;
 use super::test_context::TestContext;
 use super::test_context_parameter::ContextParameter;
+use crate::generated_bindgen::test_context as generated;
 
 /// Ordered by lifetime, so `>` catches a fixture that depends on a shorter-lived one.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -500,7 +502,7 @@ impl TestFixtures {
                         continue;
                     }
                     Some(State::NotStarted | State::SettingUp) => {
-                        return Ok(Next::SetUp(bound(global, active_fixture, "setUp", __jsc_host_set_up)?));
+                        return Ok(Next::SetUp(bound(global, active_fixture, "setUp", generated::Bun__ActiveFixture__setUp)?));
                     }
                     Some(State::Failed) => {
                         return Err(global.throw_value(active::value_get_cached(active_fixture).unwrap_or(JSValue::UNDEFINED)));
@@ -530,7 +532,7 @@ impl TestFixtures {
                 continue;
             }
             let active_fixture = ActiveFixture::create(global, this_value, context, index, timeout);
-            return Ok(Next::SetUp(bound(global, active_fixture, "setUp", __jsc_host_set_up)?));
+            return Ok(Next::SetUp(bound(global, active_fixture, "setUp", generated::Bun__ActiveFixture__setUp)?));
         }
         Ok(Next::Ready)
     }
@@ -611,9 +613,9 @@ impl ActiveFixture {
         ActiveFixture::from_js(value).map(|this| unsafe { &*this })
     }
 
-    fn of_call<'a>(global: &JSGlobalObject, frame: &'a CallFrame) -> JsResult<(&'a ActiveFixture, &'a Definition)> {
-        match Self::of(frame.this()) {
-            Some(this) => Ok((this, Self::definition_of(frame.this(), global, this)?)),
+    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<(&'a ActiveFixture, &'a Definition)> {
+        match Self::of(this_value.to_js()) {
+            Some(this) => Ok((this, Self::definition_of(this_value.to_js(), global, this)?)),
             None => Err(global.throw_type_error(format_args!("Expected this to be a fixture"))),
         }
     }
@@ -628,7 +630,7 @@ impl ActiveFixture {
 
     #[optimize(size)]
     fn provide(&self, this_value: JSValue, global: &JSGlobalObject, definition: &Definition, value: JSValue) -> JsResult<()> {
-        let tear_down = bound(global, this_value, "tearDown", __jsc_host_tear_down)?;
+        let tear_down = bound(global, this_value, "tearDown", generated::Bun__ActiveFixture__tearDown)?;
         let context = active::context_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
         let is_deferred = match TestContext::from_js(context) {
             // SAFETY: the wrapper owns the payload, and the slot keeps the wrapper alive.
@@ -689,18 +691,18 @@ impl ActiveFixture {
         let second = match kind {
             Kind::Builder => {
                 let helpers = JSValue::create_empty_object(global, 1);
-                helpers.put(global, b"onCleanup", bound(global, this_value, "onCleanup", __jsc_host_on_cleanup)?);
+                helpers.put(global, b"onCleanup", bound(global, this_value, "onCleanup", generated::Bun__ActiveFixture__onCleanup)?);
                 helpers
             }
-            Kind::Use | Kind::Value => bound(global, this_value, "use", __jsc_host_use_fixture)?,
+            Kind::Use | Kind::Value => bound(global, this_value, "use", generated::Bun__ActiveFixture__useFixture)?,
         };
         let returned = function.call(global, JSValue::UNDEFINED, &[context, second])?;
         active::returned_set_cached(this_value, global, returned);
         match if returned.is_object() { returned.get(global, "then")?.filter(|then| then.is_callable()) } else { None } {
             Some(then) => {
                 let reactions = [
-                    bound(global, this_value, "", __jsc_host_on_fulfilled)?,
-                    bound(global, this_value, "", __jsc_host_on_rejected)?,
+                    bound(global, this_value, "", generated::Bun__ActiveFixture__onFulfilled)?,
+                    bound(global, this_value, "", generated::Bun__ActiveFixture__onRejected)?,
                 ];
                 then.call(global, returned, &reactions)?;
                 Ok(())
@@ -723,11 +725,11 @@ impl ActiveFixture {
     }
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn set_up(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let this_value = frame.this();
-    let (this, definition) = ActiveFixture::of_call(global, frame)?;
+pub(crate) fn set_up(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (this, definition) = ActiveFixture::of_call(global, this_value)?;
+    let this_value = this_value.to_js();
     // A concurrent test may have started it already.
     if this.state.get() == State::NotStarted {
         this.state.set(State::SettingUp);
@@ -739,45 +741,43 @@ fn set_up(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(active::ready_get_cached(this_value).unwrap_or(JSValue::UNDEFINED))
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn on_fulfilled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let (this, _) = ActiveFixture::of_call(global, frame)?;
-    this.on_returned(frame.this(), global, frame.argument(0))?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn on_fulfilled(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, returned: JsLocal<'_>) -> JsResult<()> {
+    let global = cx.global();
+    let (this, _) = ActiveFixture::of_call(global, this_value)?;
+    this.on_returned(this_value.to_js(), global, returned.to_js())
 }
 
 /// The teardown entry awaits the same promise, so it reports a rejection that comes after `use()`.
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn on_rejected(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let (this, _) = ActiveFixture::of_call(global, frame)?;
+pub(crate) fn on_rejected(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, reason: JsLocal<'_>) -> JsResult<()> {
+    let global = cx.global();
+    let (this, _) = ActiveFixture::of_call(global, this_value)?;
     if this.state.get() == State::SettingUp {
-        this.fail(frame.this(), global, frame.argument(0))?;
+        this.fail(this_value.to_js(), global, reason.to_js())?;
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn use_fixture(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let this_value = frame.this();
-    let (this, definition) = ActiveFixture::of_call(global, frame)?;
+pub(crate) fn use_fixture(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (this, definition) = ActiveFixture::of_call(global, this_value)?;
+    let this_value = this_value.to_js();
     if this.state.get() != State::SettingUp {
         return Err(global.throw(format_args!("use() of fixture {} was called more than once", quote(&definition.name))));
     }
     let release = JSPromise::create(global).to_js();
     active::release_set_cached(this_value, global, release);
-    this.provide(this_value, global, definition, frame.argument(0))?;
+    this.provide(this_value, global, definition, value.to_js())?;
     Ok(release)
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn on_cleanup(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let this_value = frame.this();
-    let (_, definition) = ActiveFixture::of_call(global, frame)?;
-    let cleanup = frame.argument(0);
+pub(crate) fn on_cleanup(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, cleanup: JsLocal<'_>) -> JsResult<()> {
+    let global = cx.global();
+    let (_, definition) = ActiveFixture::of_call(global, this_value)?;
+    let (this_value, cleanup) = (this_value.to_js(), cleanup.to_js());
     if !cleanup.is_callable() {
         return Err(global.throw_invalid_argument_type_value("cleanup", "function", cleanup));
     }
@@ -785,12 +785,12 @@ fn on_cleanup(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         return Err(global.throw(format_args!("onCleanup() of fixture {} was called more than once", quote(&definition.name))));
     }
     active::cleanup_set_cached(this_value, global, cleanup);
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn tear_down(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let (this, definition) = ActiveFixture::of_call(global, frame)?;
-    this.tear_down(frame.this(), global, definition.kind)
+pub(crate) fn tear_down(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (this, definition) = ActiveFixture::of_call(global, this_value)?;
+    this.tear_down(this_value.to_js(), global, definition.kind)
 }

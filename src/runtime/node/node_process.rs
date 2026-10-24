@@ -5,7 +5,7 @@ use core::ffi::c_char;
 use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_core::{self, Environment, Global};
-use bun_jsc::{CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
 // Both materialize the array on first access through `Bun__Process__createArgv`
 // / `createExecArgv` below, which return zero with the exception pending.
@@ -55,15 +55,11 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
 /// `process.stdout._handle.setBlocking(blocking)`. Like libuv's `uv_stream_set_blocking`, returns 0 or a negative errno.
-pub(crate) fn set_stdio_blocking(_: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [fd, blocking] = frame.arguments_as_array::<2>();
-    let fd = bun_sys::Fd::from_uv(fd.to_int32());
-    Ok(JSValue::js_number_from_int32(
-        match bun_sys::update_nonblocking(fd, !blocking.to_boolean()) {
-            Ok(()) => 0,
-            Err(err) => -i32::from(err.errno),
-        },
-    ))
+pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> i32 {
+    match bun_sys::update_nonblocking(bun_sys::Fd::from_uv(fd), !blocking) {
+        Ok(()) => 0,
+        Err(err) => -i32::from(err.errno),
+    }
 }
 
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -227,7 +223,7 @@ mod _impl {
 
     // The C++ caller
     // (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
-    // not a `JSHostFunctionType`. Hand-roll the shim instead of `#[bun_jsc::host_fn]`.
+    // not a `JSHostFunctionType`.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__Process__createExecArgv(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
@@ -465,8 +461,7 @@ mod _impl {
     // ───────────────────────────── cwd ─────────────────────────────
 
     // C++ (headers.h) declares
-    // `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`. Hand-roll the
-    // shim instead of `#[bun_jsc::host_fn]` (caller is not a JSHostFunction).
+    // `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`, not a `JSHostFunctionType`.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))

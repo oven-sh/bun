@@ -3,6 +3,7 @@ use core::ffi::c_void;
 
 use bun_collections::HashMap;
 use bun_core::fmt as bun_fmt;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsClass as _, JsError, JsResult, StringJsc as _, VM,
@@ -16,6 +17,7 @@ use crate::generated_bindgen::expect::{
     js_ExpectMatcherUtils, js_ExpectObjectContaining, js_ExpectStringContaining,
     js_ExpectStringMatching,
 };
+use crate::generated_bindgen::pretty_format as generated;
 use crate::webcore::BlobExt as _;
 
 /// `<tag>` colour templates used by the formatter, rewritten to ANSI (or
@@ -4652,21 +4654,6 @@ impl Formatter<'_> {
     }
 }
 
-macro_rules! serializer_host_fn {
-    ($shim:ident, $function:path) => {
-        bun_jsc::jsc_host_abi! {
-            unsafe fn $shim(global: *mut JSGlobalObject, frame: *mut jsc::CallFrame) -> JSValue {
-                // SAFETY: JSC guarantees both pointers are live for the call.
-                let (global, frame) = unsafe { (&*global, &*frame) };
-                bun_jsc::to_js_host_fn_result(global, $function(global, frame))
-            }
-        }
-    };
-}
-serializer_host_fn!(printer_shim, JestPrettyFormat::printer);
-serializer_host_fn!(print_child_shim, JestPrettyFormat::print_child);
-serializer_host_fn!(indent_shim, JestPrettyFormat::indent);
-
 impl JestPrettyFormat {
     pub(crate) fn add_snapshot_serializer(global: &JSGlobalObject, plugin: JSValue) -> JsResult<()> {
         let is_function = |name: &str| Ok::<bool, JsError>(plugin.get(global, name)?.is_some_and(|value| value.is_callable()));
@@ -4737,24 +4724,36 @@ impl JestPrettyFormat {
         Ok(Some(kept))
     }
 
-    fn printer(global: &JSGlobalObject, frame: &jsc::CallFrame) -> JsResult<JSValue> {
-        let [value, config, indentation, _depth, refs, has_called_to_json] = frame.arguments_as_array::<6>();
-        Self::print_for_serializer(global, value, config, indentation, refs, has_called_to_json.to_boolean())
+    pub(crate) fn printer(
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+        config: JsLocal<'_>,
+        indentation: JsLocal<'_>,
+        _depth: JsLocal<'_>,
+        refs: JsLocal<'_>,
+        has_called_to_json: bool,
+    ) -> JsResult<JSValue> {
+        Self::print_for_serializer(cx.global(), value.to_js(), config.to_js(), indentation.to_js(), refs.to_js(), has_called_to_json)
     }
 
     /// `call_serializer` binds `config`, `indentation` and `refs`.
-    fn print_child(global: &JSGlobalObject, frame: &jsc::CallFrame) -> JsResult<JSValue> {
-        let [config, indentation, refs, value] = frame.arguments_as_array::<4>();
-        Self::print_for_serializer(global, value, config, indentation, refs, false)
+    pub(crate) fn print_child(
+        cx: &mut JsScope<'_>,
+        config: JsLocal<'_>,
+        indentation: JsLocal<'_>,
+        refs: JsLocal<'_>,
+        value: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        Self::print_for_serializer(cx.global(), value.to_js(), config.to_js(), indentation.to_js(), refs.to_js(), false)
     }
 
     /// `call_serializer` binds `indentation`.
     #[optimize(size)]
-    fn indent(global: &JSGlobalObject, frame: &jsc::CallFrame) -> JsResult<JSValue> {
-        let [indentation, text] = frame.arguments_as_array::<2>();
-        let indentation = indentation.to_bun_string(global)?.to_owned_slice();
+    pub(crate) fn indent(cx: &mut JsScope<'_>, indentation: JsLocal<'_>, text: JsLocal<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
+        let indentation = indentation.to_js().to_bun_string(global)?.to_owned_slice();
         let mut indented = indentation.clone();
-        indent_lines(&mut indented, text.to_bun_string(global)?.to_utf8().slice(), &indentation);
+        indent_lines(&mut indented, text.to_js().to_bun_string(global)?.to_utf8().slice(), &indentation);
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &indented)
     }
 
@@ -4873,21 +4872,21 @@ impl Formatter<'_> {
 
         if let Some(serialize) = plugin.get(global, "serialize")?.filter(|serialize| serialize.is_callable()) {
             let depth = JSValue::js_number(f64::from(self.ancestors.len));
-            let printer = jsc::JSFunction::create(global, "printer", printer_shim, 6, Default::default());
+            let printer = jsc::JSFunction::create(global, "printer", generated::Bun__JestPrettyFormat__printer, 6, Default::default());
             return serialize.call(global, plugin, &[value, config, indentation, depth, refs, printer]);
         }
 
         let Some(print) = plugin.get(global, "print")?.filter(|print| print.is_callable()) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let print_child = jsc::JSFunction::create(global, "print", print_child_shim, 1, Default::default()).bind(
+        let print_child = jsc::JSFunction::create(global, "print", generated::Bun__JestPrettyFormat__printChild, 1, Default::default()).bind(
             global,
             JSValue::UNDEFINED,
             &bun_core::String::static_("print"),
             1.0,
             &[config, indentation, refs],
         )?;
-        let indent = jsc::JSFunction::create(global, "indent", indent_shim, 1, Default::default()).bind(
+        let indent = jsc::JSFunction::create(global, "indent", generated::Bun__JestPrettyFormat__indent, 1, Default::default()).bind(
             global,
             JSValue::UNDEFINED,
             &bun_core::String::static_("indent"),

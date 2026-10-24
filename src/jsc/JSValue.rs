@@ -76,8 +76,8 @@ impl JSValue {
     }
 
     /// `JSValue.fromPtrAddress` — encode an arbitrary native pointer as a JS
-    /// number (round-trips via `as_promise_ptr`). Used to smuggle a `*mut T`
-    /// context through `Promise.then` reaction arguments.
+    /// number. Used to smuggle a `*mut T` context through `Promise.then`
+    /// reaction arguments, which a reaction takes as `b.promisePtr`.
     #[inline]
     pub fn from_ptr_address(addr: usize) -> JSValue {
         // Always double-encoded via `jsDoubleNumber` (never the int32 fast
@@ -90,13 +90,6 @@ impl JSValue {
     #[inline]
     pub fn as_ptr_address(self) -> usize {
         self.as_number() as usize
-    }
-
-    /// `JSValue.asPromisePtr` — decode a `*mut T` smuggled
-    /// through [`from_ptr_address`] as the trailing `.then` reaction argument.
-    #[inline]
-    pub fn as_promise_ptr<T>(self) -> *mut T {
-        self.as_ptr_address() as *mut T
     }
 
     /// Attach `(resolve, reject)` reactions to this Promise, passing `ctx` as
@@ -462,15 +455,6 @@ impl JSValue {
     }
     pub fn js_number_from_uint64(i: u64) -> JSValue {
         if i <= i32::MAX as u64 {
-            Self::js_number_from_int32(i as i32)
-        } else {
-            Self::js_double_number(i as f64)
-        }
-    }
-    /// `JSValue.jsNumberFromInt64` — int32 fast-path,
-    /// otherwise lossy double.
-    pub fn js_number_from_int64(i: i64) -> JSValue {
-        if i <= i32::MAX as i64 && i >= i32::MIN as i64 {
             Self::js_number_from_int32(i as i32)
         } else {
             Self::js_double_number(i as f64)

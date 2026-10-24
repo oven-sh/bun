@@ -23,6 +23,12 @@ export const Listener = b.class({
   },
 });
 
+/** `options` is what `SocketConfig` takes. */
+const fromOptions = { args: { options: b.any }, capability: "js", throws: true } as const;
+/** Returns a promise of the socket. */
+export const connect = b.fn({ ...fromOptions, returns: b.any, rustPath: "crate::socket::Listener::connect" });
+export const listen = b.fn({ ...fromOptions, returns: Listener, rustPath: "crate::socket::Listener::listen" });
+
 export const addServerName = b.fn({
   args: { listener: Listener, hostname: b.string.utf8, tls: b.any },
   capability: "js",
@@ -30,7 +36,7 @@ export const addServerName = b.fn({
   rustPath: "crate::socket::Listener::add_server_name",
 });
 
-/** The `_handle` of a `tls.Server`. A cluster worker's is no `Listener`: JS wraps its connections. */
-export const ServerHandle = b.union({ listener: Listener, ignored: b.any });
-export const ListenerContext = b.union({ secureContext: SecureContext, ignored: b.any });
-export const setSecureContext = b.fn({ args: { handle: ServerHandle, context: ListenerContext } });
+/** `handle` is the `_handle` of a `tls.Server`. A cluster worker's is no `Listener`: JS wraps its connections. */
+export const setSecureContext = b.fn({
+  args: { handle: Listener.otherAsNull, context: SecureContext.otherAsNull },
+});

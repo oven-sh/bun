@@ -171,7 +171,7 @@ const native = {
   },
 };
 
-const ccFn = $newRustFunction("ffi.rs", "Bun__FFI__cc", 1);
+const ccFn = $bindgen("ffi.bind.ts", "cc");
 
 function normalizePath(path: string | URL | Bun.BunFile | undefined) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {

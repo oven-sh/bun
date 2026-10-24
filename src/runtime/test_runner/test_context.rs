@@ -4,9 +4,9 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
-    self as jsc, AbortSignal, CallFrame, CommonAbortReason, JSFunction, JSGlobalObject, JSHostFn,
+    self as jsc, AbortSignal, CommonAbortReason, JSFunction, JSGlobalObject, JSHostFn,
     JSPromise, JSValue, JsCell, JsClass as _, JsResult, Strong, StringJsc as _, bun_string_jsc,
 };
 use bun_paths::resolve_path;
@@ -23,6 +23,8 @@ use super::expect::expect_deferred::ExpectDeferred;
 use super::jest::FileColumns as _;
 use super::scope_functions::{CallbackMode, FunctionKind, ParseArgumentsCfg, parse_arguments};
 use super::test_context_parameter::ContextParameter;
+use crate::generated_bindgen::scope_functions::{CallbackOrOptions, DescriptionOrCallback};
+use crate::generated_bindgen::test_context as generated;
 
 /// Runs after an attempt's hooks, in variant order. Within a kind, the last registered runs first.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,8 +105,8 @@ impl TestContext {
         self.fixtures.with_mut(|fixtures| fixtures.retain(|&fixture| fixture != definition));
     }
 
-    fn of_call<'a>(global: &JSGlobalObject, frame: &'a CallFrame) -> JsResult<&'a TestContext> {
-        match TestContext::from_js(frame.this()) {
+    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<&'a TestContext> {
+        match TestContext::from_js(this_value.to_js()) {
             // SAFETY: the wrapper owns the payload, and the frame keeps the wrapper alive.
             Some(this) => Ok(unsafe { &*this }),
             None => Err(global.throw_type_error(format_args!("Expected this to be a test context"))),
@@ -307,45 +309,48 @@ impl TestContext {
 
     pub(crate) fn get_expect(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let (this_value, global) = (this_value.to_js(), cx.global());
-        let expect = bound(global, this_value, "expect", 1, __jsc_host_expect)?;
+        let expect = bound(global, this_value, "expect", 1, generated::Bun__TestContext__expect)?;
         let constructor = super::expect::js::get_constructor(global);
         jsc::cpp::Bun__JSValue__setPrototypeDirect(expect, constructor, global)?;
-        expect.put(global, b"assertions", bound(global, this_value, "assertions", 1, __jsc_host_assertions)?);
-        expect.put(global, b"hasAssertions", bound(global, this_value, "hasAssertions", 0, __jsc_host_has_assertions)?);
-        expect.put(global, b"getState", bound(global, this_value, "getState", 0, __jsc_host_get_state)?);
-        expect.put(global, b"setState", bound(global, this_value, "setState", 1, __jsc_host_set_state)?);
-        expect.put(global, b"soft", bound(global, this_value, "soft", 1, __jsc_host_soft)?);
-        expect.put(global, b"poll", bound(global, this_value, "poll", 1, __jsc_host_poll)?);
+        expect.put(global, b"assertions", bound(global, this_value, "assertions", 1, generated::Bun__TestContext__assertions)?);
+        expect.put(global, b"hasAssertions", bound(global, this_value, "hasAssertions", 0, generated::Bun__TestContext__hasAssertions)?);
+        expect.put(global, b"getState", bound(global, this_value, "getState", 0, generated::Bun__TestContext__getState)?);
+        expect.put(global, b"setState", bound(global, this_value, "setState", 1, generated::Bun__TestContext__setState)?);
+        expect.put(global, b"soft", bound(global, this_value, "soft", 1, generated::Bun__TestContext__soft)?);
+        expect.put(global, b"poll", bound(global, this_value, "poll", 1, generated::Bun__TestContext__poll)?);
         Ok(expect)
     }
 
     pub(crate) fn get_skip(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        bound(cx.global(), this_value.to_js(), "skip", 2, __jsc_host_skip)
+        bound(cx.global(), this_value.to_js(), "skip", 2, generated::Bun__TestContext__skip)
     }
 
     pub(crate) fn get_on_test_finished(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        bound(cx.global(), this_value.to_js(), "onTestFinished", 2, __jsc_host_on_test_finished)
+        bound(cx.global(), this_value.to_js(), "onTestFinished", 2, generated::Bun__TestContext__onTestFinished)
     }
 
     pub(crate) fn get_on_test_failed(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        bound(cx.global(), this_value.to_js(), "onTestFailed", 2, __jsc_host_on_test_failed)
+        bound(cx.global(), this_value.to_js(), "onTestFailed", 2, generated::Bun__TestContext__onTestFailed)
     }
 
     pub(crate) fn get_annotate(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        bound(cx.global(), this_value.to_js(), "annotate", 3, __jsc_host_annotate)
+        bound(cx.global(), this_value.to_js(), "annotate", 3, generated::Bun__TestContext__annotate)
     }
 
     #[optimize(size)]
-    fn defer_call(
+    fn defer_call<'a>(
         global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsLocal<'a>,
+        (first, second, third): (DescriptionOrCallback<'a>, CallbackOrOptions<'a>, CallbackOrOptions<'a>),
         when: Deferred,
         name: &'static str,
         signature: &'static [u8],
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         let args = parse_arguments(
             global,
-            frame,
+            (first, JsLocal::UNDEFINED),
+            second,
+            third,
             Signature::Str(signature),
             ParseArgumentsCfg {
                 callback: CallbackMode::Require,
@@ -353,79 +358,81 @@ impl TestContext {
                 inherited: Default::default(),
             },
         )?;
-        let this = Self::of_call(global, frame)?;
-        let Some((buntest, _sequence)) = this.running(frame.this()) else {
+        let this = Self::of_call(global, this_value)?;
+        let Some((buntest, _sequence)) = this.running(this_value.to_js()) else {
             return Err(Self::throw_finished(global, name));
         };
         if let Some(callback) = args.callback {
             this.defer(buntest.get(), when, callback, args.options.timeout);
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn expect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let state = TestContext::of_call(global, frame)?.state_data(frame.this());
-    Expect::call_in(global, frame.argument(0), frame.argument(1), state)
+pub(crate) fn expect(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, received: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    Expect::call_in(global, received.to_js(), message.to_js(), state)
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn soft(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let state = TestContext::of_call(global, frame)?.state_data(frame.this());
-    Expect::soft_in(global, frame.argument(0), frame.argument(1), state)
+pub(crate) fn soft(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, received: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    Expect::soft_in(global, received.to_js(), message.to_js(), state)
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn poll(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let state = TestContext::of_call(global, frame)?.state_data(frame.this());
-    Expect::poll_in(global, frame.argument(0), frame.argument(1), state)
+pub(crate) fn poll(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, callback: JsLocal<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    Expect::poll_in(global, callback.to_js(), options.to_js(), state)
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn assertions(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let state = TestContext::of_call(global, frame)?.state_data(frame.this());
-    Expect::assertions_in(global, frame.argument(0), state)?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn assertions(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, count: JsLocal<'_>) -> JsResult<()> {
+    let global = cx.global();
+    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    Expect::assertions_in(global, count.to_js(), state)
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn has_assertions(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let state = TestContext::of_call(global, frame)?.state_data(frame.this());
-    Expect::has_assertions_in(global, state)?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn has_assertions(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<()> {
+    let global = cx.global();
+    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    Expect::has_assertions_in(global, state)
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn get_state(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let state = TestContext::of_call(global, frame)?.state_data(frame.this());
+pub(crate) fn get_state(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
+    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
     Expect::get_state_in(global, state)
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn set_state(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let state = TestContext::of_call(global, frame)?.state_data(frame.this());
-    Expect::set_state_in(global, frame.argument(0), state)?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn set_state(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, state_to_merge: JsLocal<'_>) -> JsResult<()> {
+    let global = cx.global();
+    let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
+    Expect::set_state_in(global, state_to_merge.to_js(), state)
 }
 
 /// `skip(note?)` or `skip(condition, note?)`. As in Vitest, only a literal `false` condition doesn't skip.
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn skip(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [condition, note] = frame.arguments_as_array::<2>();
+pub(crate) fn skip(
+    cx: &mut JsScope<'_>,
+    this_value: JsLocal<'_>,
+    condition: JsLocal<'_>,
+    note: JsLocal<'_>,
+) -> JsResult<()> {
+    let (global, condition, note) = (cx.global(), condition.to_js(), note.to_js());
     if condition == JSValue::FALSE {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(());
     }
-    let this_value = frame.this();
-    let Some((_buntest, sequence)) = TestContext::of_call(global, frame)?.running(this_value) else {
+    let this = TestContext::of_call(global, this_value)?;
+    let this_value = this_value.to_js();
+    let Some((_buntest, sequence)) = this.running(this_value) else {
         return Err(TestContext::throw_finished(global, "skip"));
     };
     // SAFETY: as in `running`; nothing else borrows the sequence while a callback of it is on the stack.
@@ -441,22 +448,41 @@ fn skip(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Err(global.throw(format_args!("test is skipped; abort execution")))
 }
 
-#[bun_jsc::host_fn]
-fn on_test_finished(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    TestContext::defer_call(global, frame, Deferred::OnTestFinished, "onTestFinished", b"onTestFinished()")
+pub(crate) fn on_test_finished<'a>(
+    cx: &mut JsScope<'a>,
+    this_value: JsLocal<'a>,
+    first: DescriptionOrCallback<'a>,
+    second: CallbackOrOptions<'a>,
+    third: CallbackOrOptions<'a>,
+) -> JsResult<()> {
+    let arguments = (first, second, third);
+    TestContext::defer_call(cx.global(), this_value, arguments, Deferred::OnTestFinished, "onTestFinished", b"onTestFinished()")
 }
 
-#[bun_jsc::host_fn]
-fn on_test_failed(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    TestContext::defer_call(global, frame, Deferred::OnTestFailed, "onTestFailed", b"onTestFailed()")
+pub(crate) fn on_test_failed<'a>(
+    cx: &mut JsScope<'a>,
+    this_value: JsLocal<'a>,
+    first: DescriptionOrCallback<'a>,
+    second: CallbackOrOptions<'a>,
+    third: CallbackOrOptions<'a>,
+) -> JsResult<()> {
+    let arguments = (first, second, third);
+    TestContext::defer_call(cx.global(), this_value, arguments, Deferred::OnTestFailed, "onTestFailed", b"onTestFailed()")
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn annotate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [message, kind, attachment] = frame.arguments_as_array::<3>();
-    let this_value = frame.this();
-    if TestContext::of_call(global, frame)?.running(this_value).is_none() {
+pub(crate) fn annotate(
+    cx: &mut JsScope<'_>,
+    this_value: JsLocal<'_>,
+    message: JsLocal<'_>,
+    kind: JsLocal<'_>,
+    attachment: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (message, kind, attachment) = (message.to_js(), kind.to_js(), attachment.to_js());
+    let this = TestContext::of_call(global, this_value)?;
+    let this_value = this_value.to_js();
+    if this.running(this_value).is_none() {
         return Err(TestContext::throw_finished(global, "annotate"));
     }
     let (kind, attachment) = if kind.is_object() { (JSValue::UNDEFINED, kind) } else { (kind, attachment) };
@@ -471,9 +497,9 @@ fn annotate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 /// `TestRunner.getCurrentTest()`: the running test's `task`. In a concurrent group, only while the test's callback is on the stack.
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn get_current_test(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn get_current_test(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
     let Some(strong) = super::bun_test::clone_active_strong() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -504,7 +530,7 @@ pub(crate) fn create_test_runner(global: &JSGlobalObject) -> JSValue {
     runner.put(
         global,
         b"getCurrentTest",
-        JSFunction::create(global, "getCurrentTest", __jsc_host_get_current_test, 0, Default::default()),
+        JSFunction::create(global, "getCurrentTest", generated::Bun__TestContext__getCurrentTest, 0, Default::default()),
     );
     runner
 }
@@ -594,9 +620,8 @@ pub(crate) fn suite_task(
 }
 
 /// Rejects rather than throws, so the report shows the error's own stack and not the `throw` site's.
-#[bun_jsc::host_fn]
-fn reject_with_this(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSPromise::rejected_promise(global, frame.this()).to_js())
+pub(crate) fn reject_with_this(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JSValue {
+    JSPromise::rejected_promise(cx.global(), this_value.to_js()).to_js()
 }
 
 /// Only an extended `test`'s hooks have fixtures. Any other callback that destructures one fails when the hook runs.
@@ -638,7 +663,7 @@ pub(crate) fn suite_hook(
 }
 
 pub(crate) fn rejecting(global: &JSGlobalObject, error: JSValue) -> JsResult<JSValue> {
-    JSFunction::create(global, "", __jsc_host_reject_with_this, 0, Default::default()).bind(
+    JSFunction::create(global, "", generated::Bun__TestContext__rejectWithThis, 0, Default::default()).bind(
         global,
         error,
         &BunString::static_(""),

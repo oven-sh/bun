@@ -2,15 +2,17 @@ use core::cell::Cell;
 
 use bun_core::{String as BunString, Timespec, TimespecMockMode};
 use bun_io::KeepAlive;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    AbortHandle, CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
-    JsClass as _, JsError, JsResult, JsThread, Strong,
+    AbortHandle, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell, JsClass as _,
+    JsError, JsResult, JsThread, Strong,
 };
 
 use super::expect_core::expect_deferred::RunningEntry;
 use super::jest::Jest;
 use super::timers::fake_timers::{self, Stop};
+use crate::generated_bindgen::vi_wait as generated;
 use crate::jsc_hooks::timer_all_mut as timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
@@ -113,8 +115,13 @@ fn thrown_value(global: &JSGlobalObject, err: JsError) -> JsResult<JSValue> {
 
 impl ViWait {
     #[optimize(size)]
-    fn start(global: &JSGlobalObject, frame: &CallFrame, kind: Kind) -> JsResult<JSValue> {
-        let [callback, options] = frame.arguments_as_array::<2>();
+    fn start(
+        cx: &mut JsScope<'_>,
+        callback: JsLocal<'_>,
+        options: JsLocal<'_>,
+        kind: Kind,
+    ) -> JsResult<JSValue> {
+        let (global, callback, options) = (cx.global(), callback.to_js(), options.to_js());
         if !callback.is_callable() {
             return Err(global.throw_invalid_argument_type_value("callback", "function", callback));
         }
@@ -136,8 +143,14 @@ impl ViWait {
         };
         let interval_ms = interval_ms(global, interval)?;
         let timeout_ms = delay_ms(global, timeout, 1000)?;
-        let cx = global.js_thread_of_caller(frame);
-        Self::begin(&cx, kind, callback, interval_ms, timeout_ms, None)
+        Self::begin(
+            &cx.js_thread(),
+            kind,
+            callback,
+            interval_ms,
+            timeout_ms,
+            None,
+        )
     }
 
     pub(crate) fn poll_matcher(
@@ -323,8 +336,8 @@ impl ViWait {
             )
         };
         let reactions = [
-            bind(__jsc_host_on_fulfilled)?,
-            bind(__jsc_host_on_rejected)?,
+            bind(generated::Bun__ViWait__onFulfilled)?,
+            bind(generated::Bun__ViWait__onRejected)?,
         ];
         self.callback_pending.set(true);
         if let Err(err) = then.call(global, result, &reactions) {
@@ -358,19 +371,19 @@ impl ViWait {
 
     fn callback_settled(
         global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JSValue,
+        settled_with: JSValue,
         report: fn(&ViWait, &JSGlobalObject, JSValue, JSValue) -> JsResult<()>,
-    ) -> JsResult<JSValue> {
-        let this_value = frame.this();
+    ) -> JsResult<()> {
         let Some(this) = ViWait::from_js(this_value) else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
         // SAFETY: the wrapper owns the payload and is this call's `this`.
         let this = unsafe { &*this };
         if this.callback_pending.replace(false) {
-            report(this, global, this_value, frame.argument(0))?;
+            report(this, global, this_value, settled_with)?;
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     fn time_out(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
@@ -422,31 +435,53 @@ impl ViWait {
     }
 }
 
-#[bun_jsc::host_fn]
-fn wait_for(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    ViWait::start(global, frame, Kind::For)
+pub(crate) fn wait_for(
+    cx: &mut JsScope<'_>,
+    callback: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    ViWait::start(cx, callback, options, Kind::For)
 }
 
-#[bun_jsc::host_fn]
-fn wait_until(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    ViWait::start(global, frame, Kind::Until)
+pub(crate) fn wait_until(
+    cx: &mut JsScope<'_>,
+    callback: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    ViWait::start(cx, callback, options, Kind::Until)
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn on_fulfilled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    ViWait::callback_settled(global, frame, ViWait::on_value)
+pub(crate) fn on_fulfilled(
+    cx: &mut JsScope<'_>,
+    this_value: JsLocal<'_>,
+    value: JsLocal<'_>,
+) -> JsResult<()> {
+    ViWait::callback_settled(
+        cx.global(),
+        this_value.to_js(),
+        value.to_js(),
+        ViWait::on_value,
+    )
 }
 
-#[bun_jsc::host_fn]
 #[optimize(size)]
-fn on_rejected(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    ViWait::callback_settled(global, frame, ViWait::on_error)
+pub(crate) fn on_rejected(
+    cx: &mut JsScope<'_>,
+    this_value: JsLocal<'_>,
+    reason: JsLocal<'_>,
+) -> JsResult<()> {
+    ViWait::callback_settled(
+        cx.global(),
+        this_value.to_js(),
+        reason.to_js(),
+        ViWait::on_error,
+    )
 }
 
 const FNS: &[(&str, u32, JSHostFn)] = &[
-    ("waitFor", 1, __jsc_host_wait_for),
-    ("waitUntil", 1, __jsc_host_wait_until),
+    ("waitFor", 1, generated::Bun__ViWait__waitFor),
+    ("waitUntil", 1, generated::Bun__ViWait__waitUntil),
 ];
 
 pub(crate) fn put_fns(global: &JSGlobalObject, _jest: JSValue, vi: JSValue) {

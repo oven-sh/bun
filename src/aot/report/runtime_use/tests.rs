@@ -141,6 +141,7 @@ fn blocker_codes_do_not_follow_enumerator_names() {
             "eval",
             "external-import",
             "dynamic-import",
+            "dynamic-import",
             "runtime-code",
             "build-option",
         ]

@@ -633,7 +633,7 @@ pub(super) fn unseen_code_sentence(cause: UnseenCodeCause) -> &'static str {
         UnseenCodeCause::ImportsUncompiledCode => {
             "the program imports a module that isn't in the executable"
         }
-        UnseenCodeCause::LoadsModuleByName => {
+        UnseenCodeCause::LoadsModuleByName | UnseenCodeCause::LoadsCodeByName => {
             "the program calls import() or require() with a dynamic path"
         }
         UnseenCodeCause::RunsUnseenCode => "the program can run code that isn't in the executable",
@@ -756,7 +756,7 @@ pub(super) fn trim_blocker_code(cause: UnseenCodeCause) -> &'static str {
         UnseenCodeCause::FlowGaveUp => "limit-reached",
         UnseenCodeCause::EvaluatesText => "eval",
         UnseenCodeCause::ImportsUncompiledCode => "external-import",
-        UnseenCodeCause::LoadsModuleByName => "dynamic-import",
+        UnseenCodeCause::LoadsModuleByName | UnseenCodeCause::LoadsCodeByName => "dynamic-import",
         UnseenCodeCause::RunsUnseenCode => "runtime-code",
         UnseenCodeCause::OptionAdmitsCode => "build-option",
     }

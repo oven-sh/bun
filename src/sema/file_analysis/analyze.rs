@@ -11,6 +11,7 @@ struct FoldedFile<'s> {
     decisions: Decisions<'s>,
     errors: &'s [FoldError],
     strings_over_limit: &'s [ExprId],
+    relies_on_running_before_calls: bool,
     scan: ImportScan<'s>,
 }
 
@@ -57,6 +58,7 @@ pub(super) fn run<'s>(
         has_live_top_level_await: has_live_top_level_await(hir, &folded.decisions),
         errors: join_errors(folded.errors, folded.scan.errors, decision.error, arena),
         strings_over_limit: folded.strings_over_limit,
+        relies_on_running_before_calls: folded.relies_on_running_before_calls,
         sites_by_kind: folded.scan.sites_by_kind,
         first_call_site: folded.scan.first_call_site,
     };
@@ -75,6 +77,7 @@ fn fold_bound_file<'s>(
         decisions,
         errors,
         strings_over_limit,
+        relies_on_running_before_calls,
     } = fold_file(hir, bound, inputs, file, atoms, arena);
     let scan_inputs = ScanInputs {
         hir,
@@ -89,6 +92,7 @@ fn fold_bound_file<'s>(
         decisions,
         errors,
         strings_over_limit,
+        relies_on_running_before_calls,
         scan,
     }
 }

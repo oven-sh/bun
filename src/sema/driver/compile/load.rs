@@ -138,6 +138,7 @@ pub fn load_program<'s>(
         diagnostics,
         has_bun_types_installed,
         without_bun_types,
+        is_read_again: false,
     })
 }
 
@@ -257,6 +258,42 @@ fn find_project(
         diagnostics: without_files(request.project_origin)
             .apply_effects(configuration_diagnostics(host, &config_path, errors.iter())),
     })
+}
+
+/// For each entry point the configuration file of the program that begins at it, which is empty where there is none. Entry points
+/// with the same one can be loaded together. `None`: an entry point or a configuration file does not load, which the load reports.
+pub fn find_configuration_of_each_entry_point(
+    host: &dyn CodeHost,
+    request: &CompileRequest<'_, '_>,
+) -> Option<Vec<Vec<u8>>> {
+    let entry_paths = match request.entry_points {
+        EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
+            resolve_entry_points(host, request.code, specifiers).ok()?
+        }
+        EntryPoints::Resolved(paths) | EntryPoints::Configured(paths, _) => paths.to_vec(),
+    };
+    // Under a configuration file that only has references the entry point chooses among them.
+    let mut of_folder: FxHashMap<Vec<u8>, Option<Vec<u8>>> = FxHashMap::default();
+    let mut found = Vec::with_capacity(entry_paths.len());
+    for entry_path in &entry_paths {
+        let folder = host.directory_of(entry_path).into_owned();
+        if let Some(Some(known)) = of_folder.get(&folder) {
+            found.push(known.clone());
+            continue;
+        }
+        let project = find_project(host, request, core::slice::from_ref(entry_path)).ok()?;
+        let nearest = match request.code.tsconfig_override {
+            Some(_) => None,
+            None => config::find_config(host, &folder),
+        };
+        let is_chosen_by_folder = nearest.is_none_or(|nearest| nearest == project.config_path);
+        of_folder.insert(
+            folder,
+            is_chosen_by_folder.then(|| project.config_path.clone()),
+        );
+        found.push(project.config_path);
+    }
+    Some(found)
 }
 
 fn options_of_working_directory(host: &dyn CodeHost, code: &CodeOptions) -> Options {

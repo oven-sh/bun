@@ -109,15 +109,13 @@ describe.each([
   });
 });
 
-test("without the flag an executable built with --aot says what to do about it", async () => {
+test("without the flag an executable built with --aot loads code from the disk, and says what to do about --preload", async () => {
   using dir = tempDir("aot-strict-flag", files);
   const cwd = String(dir);
   const built = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", named("app")], cwd);
   expect(built.exitCode).toBe(0);
   const app = join(cwd, named("app"));
-  expect((await run([app], cwd)).stdout).toMatch(
-    /^require of code on the disk => Error: Cannot load '.*disk\.js': it isn't in this executable\. Pass it to bun compile as another entry point, or mark it --external\. MODULE_NOT_FOUND$/m,
-  );
+  expect((await run([app], cwd)).stdout).toMatch(/^require of code on the disk => 5$/m);
   expect(await run([app], cwd, { BUN_OPTIONS: "--preload ./before.js" })).toEqual({
     stdout: "",
     stderr:

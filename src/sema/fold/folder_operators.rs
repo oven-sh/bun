@@ -134,7 +134,23 @@ impl<'s> Folder<'_, 's> {
                 Some(is_equal) => self.decide(e, Decision::Constant(Constant::Boolean(!is_equal))),
                 None => self.fold_equality(op, left, right, false),
             },
+            BinOp::In => self.fold_membership(left, right),
             _ => self.fold_operands(op, left, right),
+        }
+    }
+
+    fn fold_membership(&self, name: ExprId, object: ExprId) -> Folded {
+        let Folded { value, effects } = self.folded(name);
+        let is_member = match value {
+            Value::Known(name) => match self.evaluator.to_constant(name) {
+                Constant::String(name) => self.has_member_in_every_run(object, name),
+                _ => false,
+            },
+            Value::Unknown => false,
+        };
+        match is_member {
+            true => Folded::new(Value::from(Constant::Boolean(true)), effects),
+            false => self.fold_operands(BinOp::In, name, object),
         }
     }
 

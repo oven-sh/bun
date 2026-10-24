@@ -12,7 +12,7 @@ mod tests;
 mod threads;
 
 pub use check::{check_and_lower, check_and_lower_noting_commits};
-pub use load::load_program;
+pub use load::{find_configuration_of_each_entry_point, load_program};
 pub use locator::{Locator, TextLocator};
 pub use log_message::log_message;
 pub use roles::{decide_roles, keep_verified_roles};
@@ -61,6 +61,7 @@ pub struct LoadedProgram<'s> {
     pub diagnostics: Vec<BuildDiagnostic>,
     pub has_bun_types_installed: bool,
     without_bun_types: Option<WithoutBunTypes>,
+    is_read_again: bool,
 }
 
 /// A program for which the declarations of Bun's own globals and modules (`@types/bun`) are not installed.
@@ -80,6 +81,12 @@ impl<'s> LoadedProgram<'s> {
 
     pub fn origin(&self, file: FileId) -> FileOrigin {
         self.origins[file.idx()]
+    }
+
+    /// True: the files are those of several programs, and behind the one that is checked and lowered next comes another.
+    pub fn set_is_read_again(&mut self, is_read_again: bool) {
+        self.is_read_again = is_read_again;
+        self.program.keep_what_is_reported(is_read_again);
     }
 
     fn program_origins(&self) -> ProgramOrigins<'_, 's> {

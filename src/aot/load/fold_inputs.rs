@@ -10,7 +10,7 @@ use bun_sema::session::Arena;
 use crate::builtins::{BuiltinId, Platforms, table};
 use crate::diagnostics::LoadMessages;
 use crate::load::data_modules::parse_json;
-use crate::load::locked_builtin_defines::locked_builtin_defines;
+use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
 use crate::statistics::{LimitId, LimitValues};
 
 pub(crate) struct ApplicationFoldRequest<'a, 's> {
@@ -119,19 +119,34 @@ fn after_constant_globals<'s>(
         },
         value: DefineValue::Constant(value),
     });
-    let locked_builtins = locked_builtin_defines(platform, arena, atoms);
-    let locked_builtins = locked_builtins.iter().filter(|locked| {
+    let mut held_in_every_run = locked_builtin_defines(platform, arena, atoms);
+    held_in_every_run.extend(runtime_identity_defines(arena, atoms));
+    // A define replaces what is written, so it says nothing about the object of the run, and neither does this list from there on.
+    held_in_every_run.retain(|held| {
         defines
             .iter()
-            .all(|define| define.path.root != locked.path.root)
+            .all(|define| !is_at_or_under(held.path, define.path) || is_same_constant(define, held))
     });
     let all: Vec<Define<'s>> = constant_globals
         .iter()
-        .chain(locked_builtins)
         .chain(defines)
+        .chain(&held_in_every_run)
         .copied()
         .collect();
     arena.alloc_slice_copy(&all)
+}
+
+fn is_at_or_under(path: DefinePath<'_>, holder: DefinePath<'_>) -> bool {
+    path.root == holder.root && path.members.starts_with(holder.members)
+}
+
+// `bun build --compile` defines `process.versions.bun` as the text that the run has there.
+fn is_same_constant(define: &Define<'_>, held: &Define<'_>) -> bool {
+    define.path == held.path
+        && matches!(
+            (define.value, held.value),
+            (DefineValue::Constant(defined), DefineValue::RuntimeConstant(held)) if defined == held
+        )
 }
 
 fn bundle_export_names<'s>(arena: &'s Arena, atoms: &Interner<'s>) -> &'s [Atom] {
@@ -190,7 +205,7 @@ mod tests {
     use bun_builtin_sources::Archive;
     use bun_sema::bind::{BindOptions, RuntimeBindOptions};
     use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
-    use bun_sema::fold::{Decision, FoldErrorKind};
+    use bun_sema::fold::{Decision, FoldErrorKind, RuntimeValueKind};
     use bun_sema::hir::{ExprId, ExprKind};
     use bun_sema::import_sites::JsxMode;
     use bun_sema::module_format::DeclaredModuleType;
@@ -469,6 +484,159 @@ mod tests {
         ] {
             assert_eq!(count_import_sites(source), 1, "{source}");
         }
+    }
+
+    #[test]
+    fn import_for_another_runtime_is_not_followed() {
+        for test in [
+            "typeof Bun === 'undefined'",
+            "typeof Bun !== 'object'",
+            "!globalThis.Bun",
+            "globalThis.Bun === undefined",
+            "!('Bun' in globalThis)",
+            "!globalThis?.Bun",
+            "globalThis.Bun == null",
+            "!(typeof Bun !== 'undefined' && 'Bun' in globalThis)",
+        ] {
+            for source in [
+                format!("if ({test}) import('./other');"),
+                format!("const isOther = {test}; if (isOther) import('./other');"),
+                format!(
+                    "const isOther = {test}; export function load() {{ if (isOther) return import('./other'); }}"
+                ),
+                format!("export const loaded = {test} ? import('./other') : null;"),
+                format!("export const loaded = ({test}) && import('./other');"),
+                format!("export const loaded = !({test}) || import('./other');"),
+            ] {
+                assert_eq!(count_import_sites(source.leak()), 0, "{test}");
+            }
+        }
+    }
+
+    #[test]
+    fn import_behind_name_that_is_not_the_global_is_followed() {
+        for source in [
+            "function f(Bun: any) { if (typeof Bun === 'undefined') import('./other'); }",
+            "function f(globalThis: any) { if (!globalThis.Bun) import('./other'); }",
+            "const Bun = undefined; if (!Bun) import('./other');",
+            "if (typeof Deno === 'undefined') import('./other');",
+            "if (typeof Bun === 'object') import('./for-bun');",
+            "if (!Bun.mine) import('./other');",
+            "if (!('mine' in Bun)) import('./other');",
+            "if (!global.Bun) import('./other');",
+        ] {
+            assert_eq!(count_import_sites(source), 1, "{source}");
+        }
+    }
+
+    const READS_BEHIND_INITIALIZER: [&str; 8] = [
+        "var isBun = typeof Bun === 'object'; if (!isBun) import('./other');",
+        "var isBun = typeof Bun === 'object', other = isBun || import('./other'); export { other };",
+        "let isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
+        "var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } export { load };",
+        "var isBun = typeof Bun === 'object'; export function load() { if (!isBun) return import('./other'); }",
+        "var isBun = typeof Bun === 'object'; const load = () => isBun || import('./other'); load();",
+        "var isBun = typeof Bun === 'object'; class Loader { load() { return isBun || import('./other'); } } new Loader().load();",
+        "function outer() { return load(); } var isBun = typeof Bun === 'object'; function load() { if (!isBun) return import('./other'); } outer();",
+    ];
+
+    #[test]
+    fn variable_initialized_once_is_its_value_behind_the_initializer() {
+        for source in READS_BEHIND_INITIALIZER {
+            assert_eq!(count_import_sites(source), 0, "{source}");
+        }
+    }
+
+    #[test]
+    fn variable_that_may_be_read_first_is_read() {
+        for source in [
+            "load(); var isBun = typeof Bun === 'object'; function load() { if (!isBun) import('./other'); }",
+            "export const early = { load }; var isBun = typeof Bun === 'object'; function load() { if (!isBun) import('./other'); }",
+            "function outer() { load(); } outer(); var isBun = typeof Bun === 'object'; function load() { if (!isBun) import('./other'); }",
+            "export default load; var isBun = typeof Bun === 'object'; function load() { if (!isBun) import('./other'); }",
+            "if (globalThis.early) { var isBun = typeof Bun === 'object'; } function load() { if (!isBun) import('./other'); } load();",
+            "var isBun = typeof Bun === 'object'; isBun = false; function load() { if (!isBun) import('./other'); } load();",
+            "var isBun = typeof Bun === 'object'; var isBun = false; function load() { if (!isBun) import('./other'); } load();",
+            "var isBun = typeof Bun === 'object'; function load() { if (!isBun) import('./other'); } eval('load()');",
+            "var isBun = typeof Bun === 'object', loaded = (function () { if (!isBun) return import('./other'); })(); export { loaded };",
+            "function load() { if (!isBun) import('./other'); } var isBun = typeof Bun === 'object'; load();",
+            "namespace early { export function load() { if (!isBun) import('./other'); } } early.load(); var isBun = typeof Bun === 'object'; namespace late { export function load() { if (!isBun) import('./other'); } }",
+        ] {
+            assert_eq!(count_import_sites(source), 1, "{source}");
+        }
+    }
+
+    #[test]
+    fn file_on_cycle_of_imports_reads_variables_in_its_functions() {
+        let sessions = create_sessions();
+        let atoms = Interner::new_in(&sessions.application);
+        let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
+        let arena = sessions.application.arena();
+        let on_cycle = fold.application.for_file_called_before_it_runs();
+        for (index, source) in (0..).zip(READS_BEHIND_INITIALIZER) {
+            let is_variable_read_in_function = index >= 3;
+            let alone = analyze(source, &fold.application, arena, &atoms);
+            assert_eq!(
+                alone.relies_on_running_before_calls, is_variable_read_in_function,
+                "{source}"
+            );
+            let analysis = analyze(source, &on_cycle, arena, &atoms);
+            assert!(!analysis.relies_on_running_before_calls, "{source}");
+            assert_eq!(
+                analysis.import_sites.len(),
+                usize::from(is_variable_read_in_function),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn store_and_delete_are_left_as_written() {
+        let sessions = create_sessions();
+        let atoms = Interner::new_in(&sessions.application);
+        let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
+        let arena = sessions.application.arena();
+        let source = "Bun = false; globalThis.Bun = false; delete globalThis.Bun;";
+        let analysis = analyze(source, &fold.application, arena, &atoms);
+        assert!(analysis.errors.is_empty());
+        for index in 0..64 {
+            let decision = analysis.decisions.decision(ExprId(index));
+            assert_eq!(decision, Decision::Unknown, "{index}");
+        }
+    }
+
+    fn last_value_at<'s>(
+        names: &[&[u8]],
+        provided: Define<'s>,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+    ) -> Option<DefineValue<'s>> {
+        let path = global_path(names, arena, atoms);
+        after_constant_globals(&[provided], Platforms::LINUX, arena, atoms)
+            .iter()
+            .rfind(|define| define.path == path)
+            .map(|define| define.value)
+    }
+
+    #[test]
+    fn define_hides_what_every_run_has_from_there_on() {
+        let session = Session::new();
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
+        let object = Some(DefineValue::RuntimeValue(RuntimeValueKind::Object));
+        let undefined = DefineValue::Constant(Constant::Undefined);
+        let below = Define {
+            path: global_path(&[b"Bun", b"version"], arena, &atoms),
+            value: undefined,
+        };
+        let at = Define {
+            path: global_path(&[b"Bun"], arena, &atoms),
+            value: undefined,
+        };
+        let through_global: &[&[u8]] = &[b"globalThis", b"Bun"];
+        assert_eq!(last_value_at(&[b"Bun"], below, arena, &atoms), object);
+        assert_eq!(last_value_at(through_global, below, arena, &atoms), object);
+        assert_eq!(last_value_at(&[b"Bun"], at, arena, &atoms), Some(undefined));
+        assert_eq!(last_value_at(through_global, at, arena, &atoms), object);
     }
 
     #[test]

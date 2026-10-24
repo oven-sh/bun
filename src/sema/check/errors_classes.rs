@@ -349,7 +349,7 @@ impl<'p> Checker<'p, '_> {
                 .map(|found| found.0)
         };
         let Some(base_prop) = base_prop else {
-            if has_override {
+            if has_override && !self.stands_below_undeclared_class(sym) {
                 let at = self.span_of_overrider(file, member);
                 match self.suggested_member(base_type, name) {
                     Some(suggestion) => {

@@ -1,5 +1,5 @@
 // The executable holds a module of Bun's own only if code names it. A specifier that is computed names none, so it brings none
-// into the build, and at run time it finds the ones that are there for another reason.
+// into the build. At run time it finds the ones that are there for another reason, compiled, and every other one too: Bun interprets that one.
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -23,6 +23,14 @@ await import(name).then(
 async function run(cmd: string[], cwd: string) {
   const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
   return { stdout, errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode };
+}
+
+// The module is found, and with BUN_JSC_crashIfInterpreterIsUsed=1 the run ends at it: it is not compiled.
+async function isFoundAndInterpreted(cmd: string[], cwd: string, module: string, found: { stdout: string }) {
+  const { stdout, exitCode } = await runCommand(cmd, cwd, bunEnv);
+  expect({ stdout, exitCode }).toEqual({ stdout: found.stdout, exitCode: 0 });
+  const stopped = await runCommand(cmd, cwd, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+  expect(stopped.stderr).toMatch(new RegExp("^crashIfInterpreterIsUsed: \\S+ " + module + " ", "m"));
 }
 
 async function build(directory: string, entry: string) {
@@ -50,13 +58,12 @@ test("a computed specifier brings no module of Bun's own into the build and find
   expect(computed.filesOfBun).toBe(named.filesOfBun);
 
   const found = { stdout: "require object\nimport object\n", errors: [], exitCode: 0 };
-  const refused = { stdout: "require MODULE_NOT_FOUND\nimport ERR_MODULE_NOT_FOUND\n", errors: [], exitCode: 0 };
   expect(await run([computed.executable, "node:path"], directory)).toEqual(found);
-  expect(await run([computed.executable, "node:zlib"], directory)).toEqual(refused);
+  await isFoundAndInterpreted([computed.executable, "node:zlib"], directory, "node:zlib", found);
   expect(await run([every.executable, "node:zlib"], directory)).toEqual(found);
 });
 
-test("the example of docs/bundler/aot-compatibility.mdx: require(name) adds no built-in module, and an import by name keeps one", async () => {
+test("the example of docs/bundler/aot-compatibility.mdx: require(name) adds no built-in module, and an import by name compiles one", async () => {
   const load = `const name = process.argv[2] ?? "node:path";\nconsole.log(Object.keys(require(name)).length > 0);\n`;
   using dir = tempDir("aot-load-by-name", {
     "load.js": `import "node:path";\n\n${load}`,
@@ -67,11 +74,7 @@ test("the example of docs/bundler/aot-compatibility.mdx: require(name) adds no b
   const kept = await build(directory, "kept.js");
   const found = { stdout: "true\n", errors: [], exitCode: 0 };
   expect(await run([executable, "node:path"], directory)).toEqual(found);
-  const refused = await run([executable, "node:dgram"], directory);
-  expect({ stdout: refused.stdout, exitCode: refused.exitCode }).toEqual({ stdout: "", exitCode: 1 });
-  expect(refused.errors[0]).toStartWith(
-    "error: Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it.",
-  );
+  await isFoundAndInterpreted([executable, "node:dgram"], directory, "node:dgram", found);
   expect(await run([kept.executable, "node:dgram"], directory)).toEqual(found);
 });
 
@@ -118,9 +121,7 @@ await import(\`node:\${name}\`).then(
     errors: [],
     exitCode: 0,
   });
-  expect(await run([prefixed.executable, "zlib"], directory)).toEqual({
-    stdout: "require MODULE_NOT_FOUND\nimport ERR_MODULE_NOT_FOUND\n",
-    errors: [],
-    exitCode: 0,
+  await isFoundAndInterpreted([prefixed.executable, "zlib"], directory, "node:zlib", {
+    stdout: "require object\nimport object\n",
   });
 });

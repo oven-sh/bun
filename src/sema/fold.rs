@@ -10,6 +10,7 @@ mod folder_commonjs;
 mod folder_names;
 mod folder_operators;
 mod inputs;
+mod run_order;
 mod string_affixes;
 
 pub use children::{TreeNode, push_children};
@@ -238,6 +239,7 @@ pub(crate) struct FoldResult<'s> {
     pub decisions: Decisions<'s>,
     pub errors: &'s [FoldError],
     pub strings_over_limit: &'s [ExprId],
+    pub relies_on_running_before_calls: bool,
 }
 
 pub(crate) fn fold_file<'s>(

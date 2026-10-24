@@ -1410,7 +1410,7 @@ interface CompileBuildOptions {
   aot?: boolean; // Compile the program to machine code ahead of time (default: false)
   aotLogTypeMismatches?: boolean; // With aot: log every value that doesn't match its declared type (default: false)
   aotExplain?: AotReport | AotReport[]; // With aot: reports to add to BuildOutput.logs, such as "guards" or "trim"
-  functionSource?: boolean; // With aot: embed function source code. false also means the executable only runs code that was compiled into it (default: true)
+  functionSource?: boolean; // With aot: embed function source code, so that fn.toString() returns it (default: true)
   inspector?: boolean; // With aot: let a debugger attach to the executable (default: false)
   obfuscate?: boolean; // With aot: strip function names and file names, and write a source map next to the executable (default: false)
   trim?:

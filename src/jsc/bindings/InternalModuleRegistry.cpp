@@ -259,7 +259,7 @@ static void throwModuleNotCompiledError(JSC::JSGlobalObject* globalObject, uint3
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     const char* name = publicModuleName(id);
-    auto message = WTF::makeString("Cannot load '"_s, WTF::String::fromUTF8(*name ? name : "(internal)"), "': it isn't in this executable. Import it by name somewhere in your program to keep it."_s, Bun::adviceToKeepFunctionSource());
+    auto message = WTF::makeString("Cannot load '"_s, WTF::String::fromUTF8(*name ? name : "(internal)"), "': it isn't in this executable. Import it by name somewhere in your program to keep it."_s);
     JSC::throwException(globalObject, scope, Bun::createError(globalObject, code, JSC::withAOTErrorNote(message)));
 }
 

@@ -38,6 +38,8 @@ pub struct FileAnalysis<'s> {
     pub has_live_top_level_await: bool,
     pub errors: &'s [FoldError],
     pub strings_over_limit: &'s [ExprId],
+    /// Something was decided because no function of the file runs before a statement of its body. Another file can call what this one exports before that only on a cycle of imports.
+    pub relies_on_running_before_calls: bool,
     sites_by_kind: &'s [u32],
     first_call_site: u32,
 }
@@ -78,6 +80,7 @@ impl FileAnalysis<'_> {
             has_live_top_level_await: false,
             errors: &[],
             strings_over_limit: &[],
+            relies_on_running_before_calls: false,
             sites_by_kind: &[],
             first_call_site: 0,
         }

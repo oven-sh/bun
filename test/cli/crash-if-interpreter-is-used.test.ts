@@ -104,14 +104,11 @@ describe.each([
   ["a blob: URL", `URL.createObjectURL(new Blob([process.env.TEXT], { type: "text/javascript" }))`],
 ])("a module made from a string at run time: %s", (_kind, url) => {
   test.skipIf(isWindows || !!unsupported).each(forms)(
-    "is refused by an error, which is no crash: %s",
+    "is text that the build never saw, which is no crash: %s",
     async (_form, isExecutable) => {
       const { stdout, stderr, exitCode, signal } = await runCompiled(importing(url), isExecutable, [], { TEXT: text });
-      expect(stderr).toMatch(
-        /^EvalError: Code generation from strings disallowed for this context|^error: Cannot load '(?:blob|data):[^']*': it isn't in this executable\./m,
-      );
       expect(stderr).not.toContain("crashIfInterpreterIsUsed: ");
-      expect({ stdout, signal, exitCode }).toEqual({ stdout: "", signal: null, exitCode: 1 });
+      expect({ stdout, signal, exitCode }).toEqual({ stdout: "6 7\n", signal: null, exitCode: 0 });
     },
     120_000,
   );
@@ -139,14 +136,11 @@ const namedAtRunTime = {
 };
 
 test.skipIf(isWindows || !!unsupported).each(forms)(
-  "a file that is loaded by a name made at run time is refused by an error, which is no crash: %s",
+  "a file that is loaded by a name made at run time is text that the build never saw, which is no crash: %s",
   async (_form, isExecutable) => {
     const { stdout, stderr, exitCode } = await runCompiled(namedAtRunTime, isExecutable, [], { LATE: "/on-disk.mjs" });
-    expect(stderr).toMatch(
-      /^error: Cannot load '[^']*on-disk\.mjs': it isn't in this executable\. Pass it to bun compile as another entry point, or mark it --external\.$/m,
-    );
     expect(stderr).not.toContain("crashIfInterpreterIsUsed: ");
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
   },
   120_000,
 );

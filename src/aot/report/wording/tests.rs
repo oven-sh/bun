@@ -339,7 +339,22 @@ fn unseen_code_sentences_are_distinct_clauses() {
     for (cause, sentence) in UnseenCodeCause::ALL.into_iter().zip(sentences) {
         assert!(is_clause(sentence), "{cause:?}");
     }
-    assert_distinct(&sentences);
+    assert_distinct(&causes_told_apart().map(unseen_code_sentence));
+}
+
+// Whether a dynamic path may find code on disk hangs on the build. What the program does is the same, and so is what its author reads.
+fn causes_told_apart() -> [UnseenCodeCause; UnseenCodeCause::ALL.len() - 1] {
+    let by_name = UnseenCodeCause::LoadsModuleByName;
+    let code_by_name = UnseenCodeCause::LoadsCodeByName;
+    assert_eq!(
+        unseen_code_sentence(code_by_name),
+        unseen_code_sentence(by_name)
+    );
+    assert_eq!(trim_blocker_code(code_by_name), trim_blocker_code(by_name));
+    let mut others = UnseenCodeCause::ALL
+        .into_iter()
+        .filter(|&cause| cause != code_by_name);
+    core::array::from_fn(|_| others.next().expect("one cause fewer"))
 }
 
 #[test]
@@ -396,7 +411,7 @@ fn codes_are_kebab_case_and_distinct() {
     assert_distinct_codes(&UnprovenCause::ALL.map(cause_code));
     assert_distinct_codes(&CheckCause::ALL.map(guard_cause_code));
     assert_distinct_codes(&DeclineKind::ALL.map(missed_optimization_code));
-    assert_distinct_codes(&UnseenCodeCause::ALL.map(trim_blocker_code));
+    assert_distinct_codes(&causes_told_apart().map(trim_blocker_code));
     let wordings = ill_typed_wordings();
     let ill_typed_codes: Vec<&str> = wordings.iter().map(|wording| wording.code).collect();
     assert_distinct_codes(&ill_typed_codes);

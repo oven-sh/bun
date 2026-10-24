@@ -1245,3 +1245,19 @@ test.each([
   },
   60_000,
 );
+
+// One more call for every event with several listeners is a sixth more in the interpreter.
+test("emit() itself calls each of several listeners", () => {
+  const emitter = new EventEmitter();
+  let stack = "";
+  emitter.on("x", () => {});
+  emitter.on("x", function second() {
+    stack = new Error().stack!;
+  });
+  emitter.emit("x");
+  const functions = stack
+    .split("\n")
+    .slice(1, 3)
+    .map(line => line.trim().split(" ")[1]);
+  expect(functions).toEqual(["second", "emit"]);
+});

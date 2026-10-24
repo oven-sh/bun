@@ -1,4 +1,5 @@
 {
+  "build": ["--aot-refuse-code-from-disk"],
   "env": {
     "NAMES": "node:path,node:dgram,node:no-such-module"
   },

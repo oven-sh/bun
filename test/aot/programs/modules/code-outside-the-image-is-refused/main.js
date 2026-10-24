@@ -1,4 +1,4 @@
-// A computed require() or import() whose name resolves to code that is not in the executable throws, and the error names the specifier and the two ways to have such code loaded: pass the file as another entry point, or mark it --external. A module of the executable under a computed name, and a data file outside it, load as in plain Bun. modules/code-outside-the-image-admitted is the same program built with --compile-inspector.
+// A computed require() or import() whose name resolves to code that is not in the executable throws in an executable that runs only what was compiled into it, and the error names the specifier and the way to have such code in it: pass the file as another entry point. A module of the executable under a computed name, and a data file outside it, load as in plain Bun. modules/code-outside-the-image-admitted is the same program built with --compile-inspector.
 const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
@@ -12,7 +12,7 @@ function written(name, text) {
 }
 function refusal(error, specifier) {
   const message = String(error.message);
-  return "refused; the message names the specifier: " + message.includes(specifier) + ", another entry point: " + message.includes("another entry point") + ", --external: " + message.includes("--external");
+  return "refused; the message names the specifier: " + message.includes(specifier) + ", another entry point: " + message.includes("another entry point");
 }
 function required(label, specifier, show) {
   try { console.log(label + ": " + show(require(specifier))); } catch (error) { console.log(label + ": " + refusal(error, specifier)); }

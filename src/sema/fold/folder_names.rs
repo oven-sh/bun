@@ -1,12 +1,13 @@
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use super::inputs::{DefineRoot, DefineValue, PathState, RuntimeValueKind};
+use super::run_order::{ReadOrder, RunOrder};
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
 use crate::bind::{
-    Binding, BindingInitializer, BindingKind, CommonJsVariable, ScopeKind, SymbolId,
+    Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, ScopeKind, SymbolId,
 };
-use crate::hir::{Chain, ExprId, ExprKind, MemberKey, NodeData, UnOp};
+use crate::hir::{Chain, ExprId, ExprKind, ImportId, MemberKey, NodeData, UnOp};
 use crate::import_sites::is_in_with_scope;
 use crate::module_format::main_module_operand;
 
@@ -27,10 +28,39 @@ impl<'s> Folder<'_, 's> {
                     None => self.fold_loader_name(e),
                 }
             }
+            Binding::Symbol(symbol) if self.is_process_import(symbol) && self.is_define_root(e) => {
+                let root = DefineRoot::Global(self.atoms.intern(b"process"));
+                // What the build was told to write in place of `process.x` is not written in place of another name: as behind `?.`, only what every run has there counts.
+                let state = self.inputs.root(root).map(|root| PathState {
+                    has_optional_link: true,
+                    has_dynamic_root: !self.has_static_lookup(e),
+                    ..root
+                });
+                self.try_decide_define(e, state).unwrap_or(Folded::UNKNOWN)
+            }
             Binding::Symbol(symbol) => self.fold_const_read(e, symbol),
             Binding::CommonJs(_) => self.fold_loader_name(e),
             Binding::Free | Binding::Arguments(_) => Folded::UNKNOWN,
         }
+    }
+
+    /// `import process from "node:process"`: the object that the global `process` holds.
+    fn is_process_import(&self, symbol: SymbolId) -> bool {
+        if self.bound.binding_kind(symbol) != BindingKind::Import {
+            return false;
+        }
+        let (hir, bound) = (self.hir, self.bound);
+        let imports = self.process_imports.get_or_init(|| {
+            let module = self.atoms.intern(b"node:process");
+            let imports = (0..).map(ImportId).zip(hir.imports.iter());
+            imports
+                .filter(|(_, import)| {
+                    import.spec == module && !import.type_only && import.default != Atom::NONE
+                })
+                .map(|(id, _)| bound.declared_symbol(Decl::ImportDefault(id)))
+                .collect()
+        });
+        imports.contains(&symbol)
     }
 
     pub(super) fn fold_member(&mut self, e: ExprId, chain: Chain) -> Folded {
@@ -89,34 +119,74 @@ impl<'s> Folder<'_, 's> {
     }
 
     pub(super) fn find_const_initializer(&self, ident: ExprId) -> Option<ExprId> {
+        self.find_only_initializer(ident, &[BindingKind::Const])
+    }
+
+    /// The initializer of a variable of one of `kinds` that nothing else stores to, where it has run when `ident` is read.
+    fn find_only_initializer(&self, ident: ExprId, kinds: &[BindingKind]) -> Option<ExprId> {
         let bound = self.bound;
         let symbol = match bound.binding(ident) {
             Binding::Symbol(symbol) => symbol,
             Binding::Free | Binding::Arguments(_) | Binding::CommonJs(_) => return None,
         };
-        let is_stable_const = bound.binding_kind(symbol) == BindingKind::Const
+        let kind = bound.binding_kind(symbol);
+        let is_initialized_once = kinds.contains(&kind)
             && bound.is_stable_binding(symbol)
             && self.has_static_lookup(ident);
-        if !is_stable_const {
+        if !is_initialized_once {
             return None;
         }
         match bound.binding_initializer(self.hir, symbol) {
-            BindingInitializer::Expression(init) if init < ident => Some(init),
+            BindingInitializer::Expression(init) if init < ident => {
+                // A read of the other two that comes first throws.
+                let is_read_behind = kind != BindingKind::Var || self.is_read_behind(ident, init);
+                is_read_behind.then_some(init)
+            }
             _ => None,
         }
     }
 
+    /// A `var` holds `undefined` until its initializer has run.
+    fn is_read_behind(&self, ident: ExprId, init: ExprId) -> bool {
+        // Most files have no such variable, and the order of their functions is not worked out.
+        let is_known = matches!(self.folded(init).value, Value::Known(_));
+        if !is_known && self.find_runtime_value_kind(init).is_none() {
+            return false;
+        }
+        let order = self
+            .run_order
+            .get_or_init(|| RunOrder::new(self.hir, self.bound));
+        match order.order_of_read(ident, init) {
+            ReadOrder::MayComeFirst => false,
+            ReadOrder::Behind => true,
+            ReadOrder::BehindUnlessCalledByImporter => {
+                let is_behind = !self.inputs.is_called_before_it_runs;
+                if is_behind {
+                    self.relies_on_running_before_calls.set(true);
+                }
+                is_behind
+            }
+        }
+    }
+
     fn fold_const_read(&mut self, ident: ExprId, symbol: SymbolId) -> Folded {
-        let Some(init) = self.find_const_initializer(ident) else {
+        let kinds = [BindingKind::Const, BindingKind::Let, BindingKind::Var];
+        let Some(init) = self.find_only_initializer(ident, &kinds) else {
             return Folded::UNKNOWN;
         };
+        let is_const = self.bound.binding_kind(symbol) == BindingKind::Const;
         match self.folded_value(init) {
-            FoldedValue::Constant(constant) if self.is_library_binding(symbol) => {
+            FoldedValue::Constant(constant) if is_const && self.is_library_binding(symbol) => {
                 self.decide(ident, Decision::Constant(constant))
             }
             _ => {
                 self.copy_condition(ident, init);
-                Folded::new(self.folded(init).value, Effects::DeadZoneCheck)
+                // A `let` or a `var` is still read where it is written: its value only decides tests.
+                let effects = match is_const {
+                    true => Effects::DeadZoneCheck,
+                    false => Effects::Unknown,
+                };
+                Folded::new(self.folded(init).value, effects)
             }
         }
     }
@@ -139,10 +209,9 @@ impl<'s> Folder<'_, 's> {
             DefineValue::Constant(constant) => self.decide(e, Decision::Constant(constant)),
             DefineValue::GlobalPath(path) => self.decide(e, Decision::GlobalPath(path)),
             DefineValue::Data(data) => self.decide(e, Decision::of_data(data)),
-            DefineValue::RuntimeValue(_) => {
-                self.conditions.insert(e, true);
-                Folded::UNKNOWN
-            }
+            DefineValue::RuntimeValue(_) => self.note_loader_value(e),
+            DefineValue::RuntimeConstant(_) if self.is_delete_operand(e) => return None,
+            DefineValue::RuntimeConstant(constant) => Folded::constant(constant),
         })
     }
 
@@ -150,8 +219,21 @@ impl<'s> Folder<'_, 's> {
         let &state = self.path_states.get(&e)?;
         match self.inputs.value_of(state)? {
             DefineValue::RuntimeValue(kind) => Some(kind),
-            DefineValue::Constant(_) | DefineValue::GlobalPath(_) | DefineValue::Data(_) => None,
+            DefineValue::Constant(_)
+            | DefineValue::GlobalPath(_)
+            | DefineValue::Data(_)
+            | DefineValue::RuntimeConstant(_) => None,
         }
+    }
+
+    /// Whether the object that `object` reads has a property called `name` in every run.
+    pub(super) fn has_member_in_every_run(&self, object: ExprId, name: Atom) -> bool {
+        let member = self.path_states.get(&object);
+        let member = member.and_then(|&state| self.inputs.child(state, name, false));
+        matches!(
+            member.and_then(|member| self.inputs.value_of(member)),
+            Some(DefineValue::RuntimeValue(_) | DefineValue::RuntimeConstant(_))
+        )
     }
 
     fn has_static_lookup(&self, ident: ExprId) -> bool {

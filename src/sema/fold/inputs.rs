@@ -22,6 +22,8 @@ pub enum DefineValue<'s> {
     Data(&'s DataValue<'s>),
     /// The path holds the same function, object or symbol in every run, and reading it runs no code.
     RuntimeValue(RuntimeValueKind),
+    /// The path holds this primitive in every run, and reading it runs no code.
+    RuntimeConstant(Constant),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -62,6 +64,7 @@ pub struct FoldInputs<'s> {
     pub(super) compiler_functions: &'s [Atom],
     pub(super) preserves_unused_imports: bool,
     pub(super) max_string_bytes: usize,
+    pub(super) is_called_before_it_runs: bool,
 }
 
 const _: fn() = || {

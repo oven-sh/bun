@@ -98,6 +98,11 @@ impl<'s> Checker<'_, 's> {
             && self.files.is_of_last_resort(module.file)
     }
 
+    // There a class of the run time is of type `any`, which does not say what its constructor takes.
+    pub(in crate::check) fn lacks_bun_types(&self) -> bool {
+        !self.files.options.declarations_of_last_resort.is_empty()
+    }
+
     pub(in crate::check) fn is_inferred_file(&self, file: FileId) -> bool {
         self.is_in_compile_build(file) && self.files.role(file) == FileRole::Inferred
     }

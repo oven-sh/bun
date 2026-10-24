@@ -257,5 +257,6 @@
   "closure/a-wrapper-made-around-a-known-function": 1000000,
   "closure/accessors-a-helper-defines-under-its-parameter": 200000,
   "closure/methods-a-loop-over-written-names-defines": 200000,
-  "closure/properties-defined-by-a-loop-over-written-names": 200000
+  "closure/properties-defined-by-a-loop-over-written-names": 200000,
+  "function/makers-made-by-one-function-each-with-its-own-prototype": 1000000
 }

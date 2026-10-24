@@ -3534,6 +3534,10 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let flags = self.files().flags(sym);
         let is_class_or_interface = flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
+        // Nothing says how many type arguments a class of the run time takes where Bun's types are not installed.
+        if !args.is_empty() && self.files().is_of_last_resort(sym.file) {
+            return self.declared_type(sym);
+        }
         let Some(most) = self.check_type_argument_count(sym, args.len(), file, Ok(node)) else {
             return TypeId::ERROR;
         };

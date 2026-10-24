@@ -6,11 +6,12 @@
 //             half a second a program. JavaScript without imports only.
 //
 // A bed answers with what the program printed or with how the build or the run failed; compare() turns the two into a verdict.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { limitsLowered } from "../harness/limits";
 import { company, memberNames } from "./company";
 import { laterProbes, probeProgram, probes } from "./engine-probes";
+import { asBunInitWritesIt, typeChecker, typingsOfBun, type Checker } from "./type-check";
 
 export interface Program {
   text: string;
@@ -41,6 +42,7 @@ export type FindingKind =
   | "build crash"
   | "build hang"
   | "build error"
+  | "build refused"
   | "validation failure"
   | "crash"
   | "hang"
@@ -55,7 +57,7 @@ export interface Failure {
   signature: string;
 }
 
-export type Verdict = { kind: "same" } | { kind: "skipped"; why: string } | Failure;
+export type Verdict = { kind: "same" } | { kind: "skipped"; why: string; /** The words of a type error that stopped the build. */ refusal?: string } | Failure;
 
 export const isFinding = (verdict: Verdict): verdict is Failure => verdict.kind !== "same" && verdict.kind !== "skipped";
 
@@ -130,6 +132,10 @@ export interface Bed {
   switches(): Promise<{ flowResults: string[]; passes: string[] }>;
   /** How many programs one call of judge() takes well. */
   readonly batch: number;
+  /** Whether a program can have a build to itself, as its entry point. */
+  readonly buildsAlone?: boolean;
+  /** From this time on a shared build that stops is not built again by halves to find out whose fault it is: every program of it gets the verdict. */
+  lastCall?: number;
   /** Runs each program plain and compiled. One program is built by itself; several may share a build. */
   judge(folder: string, programs: Program[], flags: string[]): Promise<Judged[]>;
   /** Writes the files of a build that several programs share, as judge() builds them, and answers with the commands that build and run the first one. */
@@ -165,13 +171,26 @@ function unusable(bed: Bed, plain: Run): Verdict | undefined {
 const inTheRun = "--in-the-run=";
 /** The same: so many shapes that hold the names of the programs are built beside them (company.ts). */
 const inTheCompanyOf = "--in-the-company-of=";
+/** The same: what lies in the folder beside the programs, a name of `projects`. */
+const besideTheProgram = "--beside-the-program=";
 export const staysAScript = "// stays a script\n";
-const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf);
+const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf) && !flag.startsWith(besideTheProgram);
+
+const ownOptions = { target: "esnext", module: "preserve", moduleResolution: "bundler", allowJs: true, noEmit: true, strict: true };
+/** What a folder may hold beside a program. A small script has no tsconfig.json at all and no typings installed: there the build has to know the host by itself. */
+export const projects: Record<string, { tsconfig?: { compilerOptions?: object }; hasTypings?: true }> = {
+  "the-bed's-own": { tsconfig: { compilerOptions: { ...ownOptions, types: [] } } },
+  "no-tsconfig": {},
+  "an-empty-tsconfig": { tsconfig: {} },
+  "a-lib-without-dom": { tsconfig: { compilerOptions: { ...ownOptions, lib: ["esnext"], types: [] } } },
+  "as-bun-init-leaves-it": { tsconfig: { compilerOptions: asBunInitWritesIt }, hasTypings: true },
+};
 
 export class ProductBed implements Bed {
   readonly name = "product";
   readonly binary: string;
   readonly batch = 64;
+  lastCall?: number;
   withoutFlowResults = ["--aot-disable=flow-results"];
   #switches?: { flowResults: string[]; passes: string[] };
   #limits?: { name: string; flags: string[] }[];
@@ -201,6 +220,8 @@ export class ProductBed implements Bed {
       company?: number[];
       /** So many workers run the program at once, each for itself, in place of the main thread. */
       workers?: number;
+      /** Each batch is built with one of these beside it, names of `projects`. Without them: the bed's own tsconfig.json beside a typed program. */
+      projects?: string[];
     },
   ) {
     this.binary = bun.split("/").pop()!;
@@ -212,6 +233,11 @@ export class ProductBed implements Bed {
 
   allows() {
     return true;
+  }
+
+  // Workers and company come through an entry point of the bed's own.
+  get buildsAlone() {
+    return !this.options.workers && !this.options.company?.some(size => size > 0);
   }
 
   // Several --aot-disable flags do not add up, nor do several --aot-testing flags, so the lists are merged into one flag each.
@@ -252,7 +278,9 @@ export class ProductBed implements Bed {
     const limit = this.#drawnLimit();
     const sizes = this.options.company ?? [];
     const size = sizes[Math.floor(Math.random() * sizes.length)];
-    return this.#modes(program).map(mode => ({ ...mode, flags: [...mode.flags, ...stress, ...(size ? [inTheCompanyOf + size] : []), ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
+    const beside = (this.options.projects ?? []).filter(name => !projects[name].hasTypings || typingsOfBun());
+    const project = beside.length ? [besideTheProgram + beside[Math.floor(Math.random() * beside.length)]] : [];
+    return this.#modes(program).map(mode => ({ ...mode, flags: [...mode.flags, ...stress, ...project, ...(size ? [inTheCompanyOf + size] : []), ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
   }
 
   #modes(program: Program): Mode[] {
@@ -306,11 +334,40 @@ export class ProductBed implements Bed {
     });
   }
 
-  #write(folder: string, file: string, program: Program) {
+  #written(program: Program) {
     const print = program.extension === "ts" ? "function print(text: string): void {\n  console.log(text);\n}\n" : "function print(text) {\n  console.log(text);\n}\n";
-    writeFileSync(join(folder, file), /\bprint\(/.test(program.text) && !/\b(function|const|let|var) print\b/.test(program.text) ? print + program.text : program.text);
-    if (program.extension === "ts" && !existsSync(join(folder, "tsconfig.json")))
-      writeFileSync(join(folder, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", allowJs: true, noEmit: true, strict: true, types: [] } }));
+    return /\bprint\(/.test(program.text) && !/\b(function|const|let|var) print\b/.test(program.text) ? print + program.text : program.text;
+  }
+
+  #write(folder: string, file: string, program: Program, flags: string[]) {
+    writeFileSync(join(folder, file), this.#written(program));
+    if (program.extension === "ts" && !flags.some(flag => flag.startsWith(besideTheProgram)) && !existsSync(join(folder, "tsconfig.json"))) writeFileSync(join(folder, "tsconfig.json"), JSON.stringify(projects["the-bed's-own"].tsconfig));
+  }
+
+  // The folder is that of one worker, which builds one thing at a time.
+  #layBeside(folder: string, flags: string[]) {
+    const name = flags.find(flag => flag.startsWith(besideTheProgram))?.slice(besideTheProgram.length);
+    if (name === undefined) return;
+    rmSync(join(folder, "tsconfig.json"), { force: true });
+    rmSync(join(folder, "node_modules"), { recursive: true, force: true });
+    const { tsconfig, hasTypings } = projects[name];
+    if (tsconfig) writeFileSync(join(folder, "tsconfig.json"), JSON.stringify(tsconfig));
+    if (!hasTypings) return;
+    mkdirSync(join(folder, "node_modules", "@types"), { recursive: true });
+    symlinkSync(typingsOfBun()!, join(folder, "node_modules", "@types", "bun"));
+  }
+
+  // A mutant of a typed program may not type-check, and that stops a build as it should. What TypeScript itself accepts with Bun's typings at hand, and plain Bun runs, the build has to take.
+  #checkers = new Map<string, Checker | undefined>();
+  #judged(program: Program, flags: string[], verdict: Verdict): Verdict {
+    if (verdict.kind !== "skipped" || !verdict.refusal) return verdict;
+    const name = flags.find(flag => flag.startsWith(besideTheProgram))?.slice(besideTheProgram.length) ?? "the-bed's-own";
+    const { tsconfig } = projects[name];
+    if (!this.#checkers.has(name)) this.#checkers.set(name, typeChecker({ typings: typingsOfBun(), options: tsconfig && (tsconfig.compilerOptions ?? {}) }));
+    const errors = this.#checkers.get(name)?.([this.#written(program)])[0];
+    if (!errors) return verdict;
+    if (errors.length) return { kind: "skipped", why: `${verdict.why}, as in TypeScript` };
+    return { kind: "build refused", detail: `${verdict.refusal.slice(0, 200)} | TypeScript accepts the program`, signature: normalized(verdict.refusal) };
   }
 
   #run(folder: string, cmd: string[], flags: string[]) {
@@ -329,23 +386,29 @@ export class ProductBed implements Bed {
       if (programs.length !== 1 || this.options.workers || flags.some(flag => flag.startsWith(inTheCompanyOf))) return await this.#judgeTogether(folder, programs, flags);
       const [program] = programs;
       const file = "program." + program.extension;
-      this.#write(folder, file, program);
+      this.#layBeside(folder, flags);
+      this.#write(folder, file, program, flags);
       const plain = await spawned([this.bun, "run", file], folder, this.options.runSeconds);
       const early = unusable(this, plain);
       if (early) return [{ plain, verdict: early }];
       rmSync(executable, { force: true });
       const build = await this.#build(folder, file, flags);
       const compiled: Compiled = existsSync(executable) && build.exitCode === 0 ? { build, run: await this.#run(folder, [executable], flags) } : { build };
-      return [{ plain, compiled, verdict: compare(this, program, plain, compiled) }];
+      return [{ plain, compiled, verdict: this.#judged(program, flags, compare(this, program, plain, compiled)) }];
     } finally {
       rmSync(executable, { force: true });
     }
   }
 
-  #writeModules(folder: string, programs: Program[]) {
-    // A file without `import` or `export` is a script to the checker, and two scripts share their top-level names.
-    // A program of ../programs in JavaScript stays what it is: as a module it would be strict, with another `this`. Its first line says so.
-    programs.forEach((program, index) => this.#write(folder, `p${index}.${program.extension}`, /^(import|export)\b/m.test(program.text) || program.text.startsWith(staysAScript) ? program : { ...program, text: program.text + "\nexport {};\n" }));
+  // A file without `import` or `export` is a script to the checker, and two scripts share their top-level names.
+  // A program of ../programs in JavaScript stays what it is: as a module it would be strict, with another `this`. Its first line says so.
+  #asModule(program: Program): Program {
+    return /^(import|export)\b/m.test(program.text) || program.text.startsWith(staysAScript) ? program : { ...program, text: program.text + "\nexport {};\n" };
+  }
+
+  #writeModules(folder: string, programs: Program[], flags: string[]) {
+    this.#layBeside(folder, flags);
+    programs.forEach((program, index) => this.#write(folder, `p${index}.${program.extension}`, this.#asModule(program), flags));
   }
 
   #writeEntryPoint(folder: string, programs: Program[], members: number[], flags: string[]) {
@@ -374,7 +437,7 @@ ${table}if (isMainThread) {
   }
 
   store(folder: string, programs: Program[], flags: string[]) {
-    this.#writeModules(folder, programs);
+    this.#writeModules(folder, programs, flags);
     this.#writeEntryPoint(folder, programs, programs.map((_, index) => index), flags); // prettier-ignore
     const merged = this.#merged([...this.options.baseFlags, ...flags]);
     const [inRun, inBuild] = [merged.filter(flag => flag.startsWith(inTheRun)), merged.filter(isOfTheBuild)];
@@ -388,7 +451,7 @@ ${table}if (isMainThread) {
     const results = new Array<Judged>(programs.length);
     const entry = (members: number[]) => this.#writeEntryPoint(folder, programs, members, flags);
     const all = programs.map((_, index) => index);
-    this.#writeModules(folder, programs);
+    this.#writeModules(folder, programs, flags);
     entry(all);
     const plains = (await inParallel(all, 4, index => spawned([this.bun, "run", "main.js", String(index)], folder, this.options.runSeconds))).map(run => this.#inAnyOrder(run));
     for (const index of all) {
@@ -416,10 +479,10 @@ ${table}if (isMainThread) {
         const named = /\bp(\d+)\.(?:js|ts)\b/.exec(record.split(/\n\s*\n/)[0]);
         if (named && members.includes(Number(named[1])) && !blamed.has(Number(named[1]))) blamed.set(Number(named[1]), record.split(/\n\s*\n/)[0]);
       }
-      if (members.length === 1 || blamed.size) {
+      if (members.length === 1 || blamed.size || Date.now() > (this.lastCall ?? Infinity)) {
         for (const index of blamed.size ? blamed.keys() : members) {
           const compiled = { build: blamed.size ? { ...build, stdout: "", stderr: blamed.get(index)! } : build };
-          results[index] = { plain: plains[index], compiled, verdict: compare(this, programs[index], plains[index], compiled) };
+          results[index] = { plain: plains[index], compiled, verdict: this.#judged(this.#asModule(programs[index]), flags, compare(this, programs[index], plains[index], compiled)) };
         }
         return together(members.filter(index => !results[index]));
       }
@@ -605,8 +668,8 @@ export function compare(bed: Bed, program: Program, plain: Run, compiled: Compil
     if (build.signal || /\bpanic(ked)?\b|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault/.test(said))
       return failure("build crash", `${build.signal ?? ""} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: ).*$/m.exec(said)?.[0] ?? "")}`.trim());
     // A mutant of a typed program may not type-check, and that stops a build.
-    const refusal = program.extension === "ts" && /\berror: (TS\d+)/.exec(said);
-    if (refusal) return { kind: "skipped", why: `type error ${refusal[1]}` };
+    const refusal = program.extension === "ts" && /\berror: (TS\d+).*/.exec(said);
+    if (refusal) return { kind: "skipped", why: `type error ${refusal[1]}`, refusal: refusal[0].slice("error: ".length) };
     const error = /^(front end: )?.*\berror\b.*$/im.exec(said)?.[0] ?? said.trim().split("\n")[0] ?? "";
     // testaot reports what the product calls an internal compiler error as `<Name>: <what it means>; function ..`.
     if (bed.name === "engine" && /^[A-Z][A-Za-z]+: /.test(said.trim())) return failure("internal compiler error", normalized(said.trim().split("\n")[0].replace(/; function .*$/, "")));

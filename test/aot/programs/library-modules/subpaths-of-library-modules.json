@@ -1,4 +1,5 @@
 {
+  "build": ["--aot-refuse-code-from-disk"],
   "env": {
     "NAMES": "node:fs/promises,fs/promises,node:path,node:util/types,node:readline/promises,node:dns/promises,node:stream/consumers"
   },

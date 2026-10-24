@@ -103,7 +103,7 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/napi-addon", () => {
   );
 
   test(
-    "an addon is not loaded by a require() of a computed path",
+    "an addon is loaded by a require() of a computed path",
     () =>
       slot(async () => {
         const env = { ...bunEnv, ADDON: addon };
@@ -123,8 +123,7 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/napi-addon", () => {
           exitCode: 0,
         });
         expect(said(await spawned([executable], programs, env))).toEqual({
-          stdout:
-            "MODULE_NOT_FOUND Cannot load '<addon>': it isn't in this executable. Pass it to bun compile as another entry point, or mark it --external.\n",
+          stdout: "loaded function\n",
           stderr: "",
           exitCode: 0,
         });

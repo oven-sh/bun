@@ -841,7 +841,8 @@ mod tests {
             };
             let offsets =
                 planned_offsets(&used, &ExecutableSettings::default(), &removing_unused());
-            assert_eq!(offsets.is_empty(), cause.admits_library_text(), "{cause:?}");
+            let keeps_texts = !offsets.contains(&0x100) && !offsets.contains(&0x110);
+            assert_eq!(keeps_texts, cause.admits_library_text(), "{cause:?}");
         }
     }
 

@@ -1,4 +1,6 @@
 # No step of the results crashes on a well-formed operation, and the program is valid with the results applied: the program of calls/every-operation.ir
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-results
 # RUN(APPLY): valueflow-apply
 # STATISTIC: FlowUnreachedFunctions = 0

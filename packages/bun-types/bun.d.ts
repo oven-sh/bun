@@ -3970,10 +3970,10 @@ declare module "bun" {
     /**
      * With `aot`: embed each function's source code in the executable.
      *
-     * With `false`, `fn.toString()` returns `function name() { [native code] }`, the executable is
-     * smaller, and it only runs code that was compiled into it: `--preload` in `BUN_OPTIONS` is an
-     * error at startup, and an `eval()` or `new Function()` call that the compiler didn't find at
-     * build time throws an `EvalError`. `obfuscate` implies `false`.
+     * With `false`, `fn.toString()` returns `function name() { [native code] }` and the executable
+     * is smaller. It still loads files from disk by a dynamic `import()` or `require()`.
+     * `--preload` in `BUN_OPTIONS` is an error at startup, with `inspector` too. `obfuscate`
+     * implies `false`.
      *
      * Equivalent CLI flag: `--no-compile-function-source`
      *

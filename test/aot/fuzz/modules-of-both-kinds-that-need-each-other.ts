@@ -174,9 +174,9 @@ if (import.meta.main) {
   const node = argument("node", "");
 
   type Ended = { text: string; out: string; code: number | null; signal: string | number | null; late: boolean };
-  const run = async (command: string[], cwd: string, seconds: number): Promise<Ended> => {
+  const run = async (command: string[], cwd: string, seconds: number, environment: Record<string, string> = {}): Promise<Ended> => {
     const limited = ["/bin/sh", "-c", `prlimit --pid $$ --core=1:1 2> /dev/null || ulimit -c 0; exec "$@"`, "--", ...command];
-    const child = spawn(limited, { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1" } });
+    const child = spawn(limited, { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1", ...environment } });
     let late = false;
     const timer = setTimeout(() => ((late = true), child.kill(9)), seconds * 1000);
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -205,7 +205,8 @@ if (import.meta.main) {
     mkdirSync(folder, { recursive: true });
     const { entry, files, notes } = program(seed);
     for (const [file, text] of Object.entries(files)) writeFileSync(join(folder, file), text);
-    const plain = await run([bun, "--no-install", entry], folder, 30);
+    // The reference transpiles on one thread: the texts are read in the order in which they are asked for.
+    const plain = await run([bun, "--no-install", entry], folder, 30, { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" });
     if (plain.signal) return finding("plain Bun ends by a signal", folder, seed, notes, plain.text);
     if (plain.late) return void count("plain Bun is not through in its time");
     const build = await run([bun, "build", "--compile", "--aot", "--aot-threads=1", ...flags, `./${entry}`, "--outfile", "app"], folder, 200);

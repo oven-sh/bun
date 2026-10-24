@@ -1,4 +1,4 @@
-// A package that --external names is loaded from disk under a computed name too, though no import names it, and so is a file of the package. A package that the build was not told about is code outside the executable, and is refused.
+// A package that --external names is loaded from disk under a computed name too, though no import names it, and so is a file of the package. So is a package that the build was not told about.
 function load(...parts) {
   return require(parts.join("-"));
 }

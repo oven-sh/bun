@@ -579,13 +579,25 @@ fn close_over_followed_edges(table: &ToyTable, seed: FeatureSet) -> FeatureSet {
 }
 
 fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
-    use UnseenCodeCause::{EvaluatesText, FlowGaveUp, LoadsModuleByName, RunsUnseenCode};
+    use UnseenCodeCause::{
+        EvaluatesText, FlowGaveUp, LoadsCodeByName, LoadsModuleByName, RunsUnseenCode,
+    };
 
     let program_features = Feature::all_entered_from(EnteredFrom::Program);
     let outside_language = [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
     let only_when_named = bun_trim::features_kept_only_when_named();
     match cause {
         LoadsModuleByName => FeatureSet::from_features(&[Feature::DataFileLoaders]),
+        LoadsCodeByName => {
+            let mut features = features_opened_by(EvaluatesText);
+            features.union_with(&FeatureSet::from_features(&[
+                Feature::DataFileLoaders,
+                Feature::RuntimeTranspiler,
+                Feature::Interpreter,
+                Feature::BuiltinSourceText,
+            ]));
+            features
+        }
         FlowGaveUp | EvaluatesText | RunsUnseenCode => program_features
             .iter()
             .filter(|feature| {

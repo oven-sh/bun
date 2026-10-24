@@ -560,6 +560,48 @@ try {
     expect({ stdout, exitCode }).toEqual({ stdout: "done 15999999\n", exitCode: 0 });
   }, 120_000);
 
+  // Some built-ins make their result where no collection may run: the list of a match is one. A range that such a built-in finds full is collected as soon as collections may run again.
+  test("a program that let go of a full range fills it as far again, and what it makes and drops then costs no error", async () => {
+    using folder = tempDir("aot-heap-limit", {
+      "program.ts": `const names: string[] = [];
+for (let i = 0; i < 24; i++) names.push("name" + i);
+let keep: unknown[] = [];
+const fills: [string, (turns: number, most: number) => void][] = [
+  ["cells", (turns, most) => { for (let i = 0; i < turns; i++) { keep.push({ a: i, b: i, c: i }); if (keep.length >= most) keep = []; } }],
+  ["storage outside cells", (turns, most) => { for (let i = 0; i < turns; i++) { const object: Record<string, number> = {}; for (let j = 0; j < 24; j++) object[names[j]] = i; keep.push(object); if (keep.length >= most) keep = []; } }],
+  ["lists", (turns, most) => { for (let i = 0; i < turns; i++) { const list: number[] = []; for (let j = 0; j < 12; j++) list.push(j); keep.push(list); if (keep.length >= most) keep = []; } }],
+  ["strings", (turns, most) => { for (let i = 0; i < turns; i++) { keep.push("text " + i + " and " + i * 3); if (keep.length >= most) keep = []; } }],
+  ["matches", (turns, most) => { for (let i = 0; i < turns; i++) { keep.push(/a(b)c/.exec("abc")); if (keep.length >= most) keep = []; } }],
+];
+function run(fill: (turns: number, most: number) => void, turns: number, most: number): number | string {
+  keep = [];
+  try {
+    fill(turns, most);
+    return "no error";
+  } catch (error) {
+    const kept = keep.length;
+    keep = [];
+    return error instanceof RangeError ? kept : String(error);
+  }
+}
+for (const [what, fill] of fills.slice(0, 4)) {
+  const counts = [0, 1, 2].map(() => run(fill, Infinity, Infinity) as number);
+  console.log(what, counts[0] > 10_000, counts.map(count => count >= counts[0] * 0.9).join(" "));
+}
+for (const [what, fill] of fills) console.log(what, (run(fills[0][1], Infinity, Infinity) as number) > 10_000, run(fill, 300_000, 1000));
+`,
+    });
+    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    const kinds = ["cells", "storage outside cells", "lists", "strings"];
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        kinds.map(what => `${what} true true true true\n`).join("") +
+        [...kinds, "matches"].map(what => `${what} true no error\n`).join(""),
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 240_000);
+
   // A range that stays almost full of objects in use: every collection frees only what was made since the last one, so the program would collect
   // again for every few hundred objects it makes, and hardly move. After a few such collections in a row it gets the error.
   test("a program that keeps a full range and goes on making objects is told so, and goes on once it lets go", async () => {

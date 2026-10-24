@@ -4673,5 +4673,8 @@
     "functionOfAFunction-ofAList-inTwoLoops-outOfAnObject",
     "functionOfAFunction-oneLoopInAnother-byAClosure",
     "objectWhoseMethodMakesAClosure-ofASet-byAGenerator"
+  ],
+  "objects held as a kind that never comes and read through any": [
+    "looks-bag-created-6"
   ]
 }

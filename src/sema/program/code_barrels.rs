@@ -105,6 +105,11 @@ impl BarrelRequests {
         &mut self.files[index]
     }
 
+    /// The file is parsed once more, and all of it counts as asked for.
+    pub(super) fn forget_parsed_file(&mut self, file: u32) {
+        *self.file(file) = FileRequests::Unparsed(Asked::All);
+    }
+
     // `load` queues a target of a file and answers which file it is.
     pub(super) fn add_parsed_file(
         &mut self,
@@ -116,7 +121,7 @@ impl BarrelRequests {
         let state = self.file(file);
         let FileRequests::Unparsed(asked_of_file) = std::mem::replace(state, FileRequests::Settled)
         else {
-            unreachable!("a file is parsed once");
+            unreachable!("a file is parsed once, or forgotten in between");
         };
         let mut pending: Vec<(u32, Asked)> = Vec::new();
         let Some(shape) = barrel else {

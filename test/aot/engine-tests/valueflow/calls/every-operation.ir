@@ -1,5 +1,7 @@
 # No rule of the solve crashes on a well-formed operation: the program of bodies/every-operation.ir with every function handed to a callee nobody knows. Every function is reached,
 # and each load under a computed name and each evaluation of text in the program's own code is an event
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-solve
 # CHECK: functions [[count]] reached [[count]]
 # RUN(UNSEEN): valueflow-solve unseen

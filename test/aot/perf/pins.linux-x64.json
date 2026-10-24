@@ -581,13 +581,13 @@
     "jit": 31.5
   },
   "built-in/events-beside-an-heir-that-came-late": {
-    "typed": 737,
-    "untyped": 735.3,
+    "typed": 524.5,
+    "untyped": 525.9,
     "jit": 212.5
   },
   "built-in/events-emit": {
-    "typed": 202.3,
-    "untyped": 195.3,
+    "typed": 83,
+    "untyped": 81,
     "jit": 15
   },
   "built-in/events-on-off": {
@@ -708,17 +708,13 @@
     "jit": 109.1
   },
   "built-in/stream-new-readable": {
-    "typed": 3899.9,
-    "untyped": 3658.4,
-    "jit": 1185.9,
-    "best": {
-      "typed": 3505.2,
-      "untyped": 3518.2
-    }
+    "typed": 3433.9,
+    "untyped": 3391.6,
+    "jit": 1185.9
   },
   "built-in/events-once": {
-    "typed": 888.2,
-    "untyped": 908.4,
+    "typed": 741,
+    "untyped": 741.3,
     "jit": 465.9
   },
   "built-in/process-next-tick": {
@@ -1383,8 +1379,8 @@
     "untyped": 132.8
   },
   "built-in/stream-new-duplex": {
-    "typed": 1105.9,
-    "untyped": 1116.7
+    "typed": 1073.1,
+    "untyped": 1074.1
   },
   "closure/a-function-made-around-a-written-name": {
     "typed": 21,
@@ -1410,5 +1406,10 @@
     "typed": 806.5,
     "untyped": 785.4,
     "jit": 12
+  },
+  "function/makers-made-by-one-function-each-with-its-own-prototype": {
+    "typed": 132.9,
+    "untyped": 132.8,
+    "jit": 268.4
   }
 }

@@ -219,19 +219,19 @@ extern "C" fn Bun__fetchBuiltinModule(
     } else {
         jsc::ErrCode::ERR_MODULE_NOT_FOUND
     };
-    // The helpers of the bundler are served as text.
-    if Bun__refusesCodeOutsideExecutable(global_object)
-        && specifier.to_utf8().slice() == b"bun:wrap"
-    {
+    // The helpers of the bundler are served as text, unless they are compiled with the program: then everybody gets that one module.
+    if specifier.to_utf8().slice() == b"bun:wrap" {
         if Bun__isCompiledProgramFile(specifier) {
             return false;
         }
-        *ret = ErrorableResolvedSource::err(module_not_compiled_in_error(
-            global_object,
-            code,
-            specifier,
-        ));
-        return true;
+        if Bun__refusesCodeOutsideExecutable(global_object) {
+            *ret = ErrorableResolvedSource::err(module_not_compiled_in_error(
+                global_object,
+                code,
+                specifier,
+            ));
+            return true;
+        }
     }
     if bun_removable_features::is_trimmed()
         && let Some(error) = error_if_removed(global_object, specifier.to_utf8().slice(), code)

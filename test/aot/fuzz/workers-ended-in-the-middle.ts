@@ -5,7 +5,7 @@
 //   around it  nothing, a try with a finally, a using, a catch that goes on, many frames each with a finally
 //   ended by   worker.terminate() from the main thread, process.exit() in the Worker from deep inside
 //
-// The program is its own Worker, so it stands alone in its build: run.ts --batch 1.
+// The program is its own Worker, so it stands alone in its build: sources.ts marks it and the driver gives it a build to itself.
 import type { Random } from "./random";
 
 // The body of a function that never returns. `spin` counts so that nothing can be folded away; `list`, `bytes` and `words` are there to be walked.

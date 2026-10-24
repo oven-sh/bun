@@ -43,8 +43,6 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* 
 bool compiledModulesRunInPlaceOfFiles();
 // Null in an executable.
 WTF::String firstCompiledModuleMatching(JSC::JSGlobalObject*, JSC::RegExp* filter);
-// The end of every message about code that is not in the executable: what to do in one that was built with --no-compile-function-source, and nothing in any other.
-ASCIILiteral adviceToKeepFunctionSource();
 // Empty unless `path`, which names JavaScript, TypeScript, WebAssembly or a native addon that is not compiled into the executable, may not be loaded.
 enum class NotInExecutable : bool { Code,
     HostObject };

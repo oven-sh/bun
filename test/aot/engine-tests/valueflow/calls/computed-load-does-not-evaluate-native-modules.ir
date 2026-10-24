@@ -2,6 +2,8 @@
 # A load under a name that is put together at run time evaluates nothing, and of the program's files it answers the entry points. A module of the library that is written in JavaScript is in the image only if seen code names it:
 # the one that the program requires has run and stays in the answer, and the one that nobody names stays unreached. A native module has no code to run. Its object is in the answer as an object that the analysis follows,
 # and being there is no use of it, so nothing comes into the image for it
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-solve calls
 # CHECK: f0 v4 ->
 # CHECK-NOT: f2

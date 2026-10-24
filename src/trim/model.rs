@@ -23,12 +23,13 @@ pub enum UnseenCodeCause {
     EvaluatesText,
     ImportsUncompiledCode,
     LoadsModuleByName,
+    LoadsCodeByName,
     RunsUnseenCode,
     OptionAdmitsCode,
 }
 
 impl UnseenCodeCause {
-    pub const ALL: [UnseenCodeCause; 9] = [
+    pub const ALL: [UnseenCodeCause; 10] = [
         UnseenCodeCause::ProgramNotCompiled,
         UnseenCodeCause::ReportMissing,
         UnseenCodeCause::FlowResultDisabled,
@@ -36,6 +37,7 @@ impl UnseenCodeCause {
         UnseenCodeCause::EvaluatesText,
         UnseenCodeCause::ImportsUncompiledCode,
         UnseenCodeCause::LoadsModuleByName,
+        UnseenCodeCause::LoadsCodeByName,
         UnseenCodeCause::RunsUnseenCode,
         UnseenCodeCause::OptionAdmitsCode,
     ];

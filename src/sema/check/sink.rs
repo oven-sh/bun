@@ -249,6 +249,8 @@ pub(super) struct Sink<'s> {
     by_file: ArenaVec<'s, Guarded<Vec<Reported>>>,
     /// The queries under which a task has reported (`owned_part`), each with the `Task::number` of the first task that did.
     owners: Guarded<FxHashMap<(Query, Option<FileId>), u64>>,
+    /// See `Program::keep_what_is_reported`.
+    keeps_buffers: bool,
 }
 
 impl<'s> Sink<'s> {
@@ -256,6 +258,7 @@ impl<'s> Sink<'s> {
         Sink {
             by_file: vec_from_iter_in((0..files).map(|_| Guarded::default()), arena),
             owners: Guarded::default(),
+            keeps_buffers: false,
         }
     }
 
@@ -398,7 +401,17 @@ impl super::Program<'_> {
 
     /// Takes the diagnostics the tasks have reported in `file`.
     pub(super) fn take_buffer(&self, file: FileId) -> Vec<Reported> {
-        std::mem::take(&mut *self.sink.by_file[file.idx()].lock())
+        let mut buffer = self.sink.by_file[file.idx()].lock();
+        match self.sink.keeps_buffers {
+            true => buffer.clone(),
+            false => std::mem::take(&mut *buffer),
+        }
+    }
+
+    /// A query reports when it is evaluated, which is once. True: the files are checked again later, for another of the programs
+    /// that hold them, and what the queries have reported in a file until then is reported in it again.
+    pub fn keep_what_is_reported(&mut self, keeps: bool) {
+        self.sink.keeps_buffers = keeps;
     }
 
     /// `CompareDiagnostics`

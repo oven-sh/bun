@@ -3,6 +3,7 @@ use super::evaluate::{Evaluator, Value};
 use super::feature_flags::find_feature_import;
 use super::folder_commonjs::LoaderNames;
 use super::inputs::{FoldInputs, PathState};
+use super::run_order::RunOrder;
 use super::{
     Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, NodeBits,
     literal_constant, slice_in,
@@ -58,6 +59,9 @@ pub(super) struct Folder<'a, 's> {
     pub(super) feature_symbol: SymbolId,
     pub(super) loader_names: OnceCell<LoaderNames>,
     pub(super) this_of_file: OnceCell<PositionSet>,
+    pub(super) run_order: OnceCell<RunOrder>,
+    pub(super) process_imports: OnceCell<Vec<SymbolId>>,
+    pub(super) relies_on_running_before_calls: Cell<bool>,
     pub(super) values: Vec<Value>,
     pub(super) effects: Vec<Effects>,
     pub(super) path_states: FxHashMap<ExprId, PathState>,
@@ -94,6 +98,9 @@ pub(super) fn run<'s>(
         feature_symbol: find_feature_import(hir, bound, inputs, &mut errors),
         loader_names: OnceCell::new(),
         this_of_file: OnceCell::new(),
+        run_order: OnceCell::new(),
+        process_imports: OnceCell::new(),
+        relies_on_running_before_calls: Cell::new(false),
         values: vec![Value::Unknown; hir.exprs.len()],
         effects: vec![Effects::Unknown; hir.exprs.len()],
         path_states: FxHashMap::default(),
@@ -257,6 +264,7 @@ impl<'s> Folder<'_, 's> {
             decisions,
             errors: slice_in(&errors, arena),
             strings_over_limit: slice_in(&self.strings_over_limit, arena),
+            relies_on_running_before_calls: self.relies_on_running_before_calls.get(),
         }
     }
 }

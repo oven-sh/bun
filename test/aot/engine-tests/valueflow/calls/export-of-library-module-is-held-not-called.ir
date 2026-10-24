@@ -3,6 +3,8 @@
 # It calls none of the functions that hang on it: the object that holds the exports of a module of the library is only held, however it got into those hands, and so is whatever it leads to.
 # So no function of the library is entered with operands nobody knows, and the module that only one of them requires is not evaluated: one computed load does not bring in the library.
 # A call by value of a function that nothing has entered throws an error that names the function. held-export-is-entered-once-seen-code-calls-it.ir has an export that the program calls
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK: unreached f2

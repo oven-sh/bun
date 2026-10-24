@@ -395,18 +395,12 @@ const AOT::ModuleHost compiledModuleHost = {
     &createEmptyJSONBodyError,
 };
 
-ASCIILiteral adviceToKeepFunctionSource()
-{
-    const AOT::Image* image = AOT::Image::current();
-    return image ? image->header().options.adviceToKeepFunctionSource() : ""_s;
-}
-
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
 {
     // --disallow-code-generation-from-strings=strict refuses code from the disk in an executable built without --aot too. Whoever set the flag expects its error.
     if (what == NotInExecutable::Code && isCodeGenerationFromStringsStrictByFlags())
         return createCodeGenerationFromStringsError(globalObject);
-    return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable. Pass it to bun compile as another entry point, or mark it --external."_s, adviceToKeepFunctionSource()));
+    return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point."_s));
 }
 
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode code, const String& path)
@@ -414,7 +408,7 @@ JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode
     if (!hasCompiledModules() || !AOT::refusesCodeOutsideImage(globalObject))
         return {};
     if (isCompiledModule(path))
-        return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it's compiled into this executable, and a compiled module can't be loaded a second time (for example into a Bun.ModuleGraph)."_s, adviceToKeepFunctionSource()));
+        return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it's compiled into this executable, and a compiled module can't be loaded a second time (for example into a Bun.ModuleGraph)."_s));
     return createNotInExecutableError(globalObject, code, path);
 }
 
@@ -456,7 +450,7 @@ JSValue errorIfUnseenCodeIsRefused(JSGlobalObject* globalObject, ASCIILiteral bu
     const AOT::Image* image = AOT::Image::current();
     if (!image || image->admitsUnknownJavaScript()) [[likely]]
         return {};
-    return createCodeNotCompiledError(globalObject, makeString("Cannot use "_s, builtin, ": this executable only runs code that was compiled into it."_s, adviceToKeepFunctionSource()));
+    return createCodeNotCompiledError(globalObject, makeString("Cannot use "_s, builtin, ": this executable only runs code that was compiled into it."_s));
 }
 
 bool isDebuggerAdmitted()
@@ -547,7 +541,6 @@ JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return 
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 bool compiledModulesRunInPlaceOfFiles() { return false; }
 String firstCompiledModuleMatching(JSGlobalObject*, RegExp*) { return {}; }
-ASCIILiteral adviceToKeepFunctionSource() { return ""_s; }
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable)
 {
     return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable."_s));

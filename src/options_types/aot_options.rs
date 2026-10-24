@@ -66,6 +66,8 @@ pub struct AotOptions {
     pub obfuscates: bool,
     pub forbids_text_evaluation: bool,
     pub admits_inspector: bool,
+    /// A path that is known only at run time may name a file with code that the build has not seen. Bun interprets it.
+    pub loads_code_from_disk: bool,
     pub ir_output_path: Option<Box<[u8]>>,
     pub build_report: Option<BuildReportRequest>,
     pub runs_in_place: bool,
@@ -92,6 +94,7 @@ impl Default for AotOptions {
             obfuscates: false,
             forbids_text_evaluation: false,
             admits_inspector: false,
+            loads_code_from_disk: !cfg!(bun_hardened),
             ir_output_path: None,
             build_report: None,
             runs_in_place: false,
@@ -143,6 +146,7 @@ mod tests {
             obfuscates,
             forbids_text_evaluation,
             admits_inspector,
+            loads_code_from_disk,
             ir_output_path,
             build_report,
             runs_in_place,
@@ -166,6 +170,7 @@ mod tests {
         assert!(!obfuscates);
         assert!(!forbids_text_evaluation);
         assert!(!admits_inspector);
+        assert_eq!(loads_code_from_disk, !cfg!(bun_hardened));
         assert!(ir_output_path.is_none());
         assert!(build_report.is_none());
         assert!(!runs_in_place);

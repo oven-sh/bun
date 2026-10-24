@@ -181,6 +181,21 @@ fn imports_loader(files: &Files<'_>, mut file: FileId, mut symbol: SymbolId) -> 
     false
 }
 
+// Whether some loader may be given a name that the build does not know.
+pub(crate) fn loads_by_unknown_name(application: &Files<'_>) -> bool {
+    let loads_by_unknown_name = |&file: &FileId| {
+        parsed_source(application, file).is_none_or(|source| {
+            let mut callees = source.imports_given_unknown_names.iter();
+            source.loads_by_unknown_name
+                || callees.any(|&callee| imports_loader(application, file, callee))
+        })
+    };
+    application
+        .compiled_files()
+        .iter()
+        .any(loads_by_unknown_name)
+}
+
 // A loader that is given a parameter is given what the calls pass for it. One that is given a name the build does not know may be given any text that the program writes as a value, in whichever file. In the order of the registry.
 pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
     application: &Files<'_>,
@@ -193,14 +208,7 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
     };
     let passed = sources().flat_map(|it| &it.library_modules_passed_for_parameters);
     let mut modules: Vec<RuntimeModule> = passed.copied().collect();
-    let loads_by_unknown_name = |&file: &FileId| {
-        parsed_source(application, file).is_none_or(|source| {
-            let mut callees = source.imports_given_unknown_names.iter();
-            source.loads_by_unknown_name
-                || callees.any(|&callee| imports_loader(application, file, callee))
-        })
-    };
-    if files.iter().any(loads_by_unknown_name) {
+    if loads_by_unknown_name(application) {
         let written = sources().flat_map(|it| &it.library_modules_written_as_values);
         modules.extend(written.copied());
     }

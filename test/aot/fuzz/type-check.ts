@@ -3,15 +3,45 @@
 //   bun test/aot/fuzz/type-check.ts <folder>      checks every .ts file of the folder by itself: prints the errors, and how many files are clean
 //
 // TypeScript is taken from node_modules, or from the folder that AOT_FUZZ_TYPESCRIPT names (the one that holds its package.json).
-import { readdirSync, readFileSync } from "fs";
+// Bun's typings are packages/bun-types of this repository, or the folder that AOT_FUZZ_BUN_TYPES names.
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { createRequire } from "module";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 
 /** The errors of each program. */
 export type Checker = (texts: string[]) => string[][];
 
-/** Nothing where TypeScript is not installed. */
-export function typeChecker(): Checker | undefined {
+/** The folder of Bun's typings, if they and those of Node that they rest on are there. */
+export function typingsOfBun(): string | undefined {
+  const folder = process.env.AOT_FUZZ_BUN_TYPES ?? join(import.meta.dir, "..", "..", "..", "packages", "bun-types");
+  return existsSync(join(folder, "index.d.ts")) && [join(folder, "node_modules"), join(folder, "..", "..", "node_modules")].some(modules => existsSync(join(modules, "@types", "node", "index.d.ts"))) ? folder : undefined;
+}
+
+/** The compilerOptions of the tsconfig.json that `bun init` writes. */
+export const asBunInitWritesIt = {
+  lib: ["ESNext"],
+  target: "ESNext",
+  module: "Preserve",
+  moduleDetection: "force",
+  jsx: "react-jsx",
+  allowJs: true,
+  types: ["bun"],
+  moduleResolution: "bundler",
+  allowImportingTsExtensions: true,
+  verbatimModuleSyntax: true,
+  noEmit: true,
+  strict: true,
+  skipLibCheck: true,
+  noFallthroughCasesInSwitch: true,
+  noUncheckedIndexedAccess: true,
+  noImplicitOverride: true,
+  noUnusedLocals: false,
+  noUnusedParameters: false,
+  noPropertyAccessFromIndexSignature: false,
+};
+
+/** Nothing where TypeScript is not installed. With `typings`, those are at hand as a project has them that installed them, and declaration files are not checked; `options` is compilerOptions as a tsconfig.json spells them, in place of the bed's own. */
+export function typeChecker({ typings, options: written }: { typings?: string; options?: object } = {}): Checker | undefined {
   let ts: typeof import("typescript");
   try {
     ts = createRequire(import.meta.url)(process.env.AOT_FUZZ_TYPESCRIPT ?? "typescript");
@@ -19,12 +49,17 @@ export function typeChecker(): Checker | undefined {
     return;
   }
   const options: import("typescript").CompilerOptions = {
-    target: ts.ScriptTarget.ESNext,
-    module: ts.ModuleKind.Preserve,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    noEmit: true,
-    strict: true,
-    types: [],
+    ...(written
+      ? ts.convertCompilerOptionsFromJson(written, "/").options
+      : {
+          target: ts.ScriptTarget.ESNext,
+          module: ts.ModuleKind.Preserve,
+          moduleResolution: ts.ModuleResolutionKind.Bundler,
+          noEmit: true,
+          strict: true,
+          types: [],
+        }),
+    ...(typings ? { typeRoots: [dirname(typings)], types: [basename(typings)], skipLibCheck: true } : {}),
   };
   const libraries = dirname(ts.getDefaultLibFilePath(options));
   const parsed = new Map<string, import("typescript").SourceFile | undefined>();
@@ -46,6 +81,9 @@ export function typeChecker(): Checker | undefined {
     getNewLine: () => "\n",
     fileExists: file => indexOf(file) >= 0 || ts.sys.fileExists(file),
     readFile: file => (indexOf(file) >= 0 ? texts[indexOf(file)] : ts.sys.readFile(file)),
+    directoryExists: ts.sys.directoryExists,
+    getDirectories: ts.sys.getDirectories,
+    realpath: ts.sys.realpath,
   };
   return programs => {
     texts = programs;

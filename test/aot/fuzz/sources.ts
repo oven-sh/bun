@@ -18,7 +18,7 @@
 //   held-by-one-thing-alone an object that one thing alone holds, a collection, and weak references and a finalizer that tell whether the collector saw that one thing (held-by-one-thing-alone.ts)
 //   errors-nobody-catches errors and rejections of every kind that nobody catches, one after the other, heard by the handlers of the process or by nobody, and work behind each (errors-nobody-catches.ts)
 //   shapes-that-die-and-come-again the same places in the code see objects of shapes that are made, die in a collection and are made again a little differently (shapes-that-die-and-come-again.ts)
-//   workers-ended-in-the-middle a Worker that is busy without end in compiled code is ended from outside, or ends itself from deep inside; needs --batch 1 (workers-ended-in-the-middle.ts)
+//   workers-ended-in-the-middle a Worker that is busy without end in compiled code is ended from outside, or ends itself from deep inside; each program has a build to itself (workers-ended-in-the-middle.ts)
 //   calls-with-very-many-arguments calls whose arguments are counted at run time, from none to more than any stack holds, at the top of the stack and at every level on the way up from its end (calls-with-very-many-arguments.ts)
 //   text-beside-compiled-code text that becomes code at run time reads and changes objects that compiled code made, and makes objects for compiled code (text-beside-compiled-code.ts)
 //   unsound-types a hole of TypeScript's type system that needs no cast, a type, a value that arrives, a place, a time and uses, drawn at random (unsound-types.ts)
@@ -32,6 +32,10 @@
 //   closures-read-through-array-methods closures over the variables of one turn of a loop or of an array method, read through array methods that follow one another (closures-read-through-array-methods.ts)
 //   objects-that-live-for-one-turn-of-a-loop objects, lists, instances, closures and shared variables made anew in each turn and used inside the function that makes them (objects-that-live-for-one-turn-of-a-loop.ts)
 //   read-by-the-last-holder-while-others-are-made a thing whose parts lie outside of it, read on every turn of a loop by the only one that still holds it, while the same turn makes other things (read-by-the-last-holder-while-others-are-made.ts)
+//   instances-below-built-in-classes-frozen-closed-and-redefined instances of classes below Map, Set, Array, Error and two dozen more, with declared fields, frozen, sealed, closed, redefined and given another prototype in typed code (instances-below-built-in-classes-frozen-closed-and-redefined.ts)
+//   code-the-build-never-saw-changes-what-it-is-handed the program writes a file when it runs, loads it by a path that only the run knows, and hands it what compiled code holds; each program has a build to itself (code-the-build-never-saw-changes-what-it-is-handed.ts)
+//   lists-of-numbers-through-one-map-or-filter a list of numbers goes through one map, filter, flatMap or Array.from in code that runs often, and other kinds of numbers come than the first turns showed (lists-of-numbers-through-one-map-or-filter.ts)
+//   loops-whose-tests-are-settled-on-the-first-turn a counter that starts at a written number, a test of it, and behind the test a read that something in the loop may store to (loops-whose-tests-are-settled-on-the-first-turn.ts)
 //   every-birth-and-use the programs of ../generated/births-and-uses, of which the tests run one in forty: all of them, one after the other
 //   programs-as-they-are the programs of ../programs unchanged, one after the other: for lanes that change what is built beside a program (--company) or how it is built (--lowered-limits)
 //   several-changes-behind-a-declared-type the same out of typed-object-mutations, looked at through the typed reference (several-changes-behind-a-declared-type.ts)
@@ -54,6 +58,8 @@ export interface Generated extends Program {
   alone?: string[];
   /** TypeScript's own checker has to accept it, or it does not count. */
   isForTypeScript?: true;
+  /** It is the entry point of its build, never a module of a build that several programs share. */
+  standsAlone?: true;
 }
 
 export type Source = (seed: number, bed: Bed) => Generated | undefined;
@@ -168,13 +174,16 @@ const generated =
     return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
   };
 
+// A program that starts itself again as a Worker names its own file. One that loads code which the build never saw changes what the compiler may take for granted about everything built beside it.
+const standAlone = new Set(["workers-ended-in-the-middle", "code-the-build-never-saw-changes-what-it-is-handed", "lists-of-numbers-through-one-map-or-filter", "loops-whose-tests-are-settled-on-the-first-turn"]);
+
 /** A source that writes TypeScript, for the product alone. */
 const typedForTheProduct =
   (source: string, generate: Generator): Source =>
   (seed, bed) => {
     if (bed.name !== "product") return;
     const program: Program = { text: generate(new Random(seed), true, { library: true }), extension: "ts" };
-    return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: "typed" } : undefined;
+    return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: "typed", ...(standAlone.has(source) ? { standsAlone: true as const } : {}) } : undefined;
   };
 
 /** `rejected` receives the names of the base programs that cannot be used; the caller adds those that differ unchanged. */
@@ -204,6 +213,6 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     };
   }
   for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "where-the-stack-ends", "many-of-one-thing", "changing-buffers", "many-live-values", "a-throw-at-every-call", "values-across-joins", "operators-at-the-edges", "objects-across-awaits", "every-kind-of-job", "work-on-the-way-up", "text-beside-compiled-code", "several-changes-one-behind-the-other"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
-  for (const name of ["when-the-heap-is-full", "held-by-one-thing-alone", "errors-nobody-catches", "shapes-that-die-and-come-again", "workers-ended-in-the-middle", "calls-with-very-many-arguments", "strings-still-in-pieces", "changed-while-it-is-walked", "left-half-way", "numbers-across-their-borders", "at-the-border-of-a-representation", "patterns-made-at-run-time", "lists-read-where-they-are-made", "numbers-however-they-are-kept", "objects-read-where-they-are-made", "patterns-that-go-back-for-millions-of-turns", "errors-of-values-nobody-uses", "constant-lists-changed-by-every-road", "new-objects-kept-through-built-ins", "typed-instances-changed-through-built-ins", "several-changes-behind-a-declared-type", "two-names-where-ways-meet", "objects-with-very-many-fields", "one-name-for-many-kinds-of-things", "objects-that-the-host-keeps-and-hands-back", "closures-read-through-array-methods", "objects-that-live-for-one-turn-of-a-loop", "patterns-with-subjects-made-from-them", "bodies-in-every-encoding-read-as-json", "read-by-the-last-holder-while-others-are-made"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
+  for (const name of ["when-the-heap-is-full", "held-by-one-thing-alone", "errors-nobody-catches", "shapes-that-die-and-come-again", "workers-ended-in-the-middle", "calls-with-very-many-arguments", "strings-still-in-pieces", "changed-while-it-is-walked", "left-half-way", "numbers-across-their-borders", "at-the-border-of-a-representation", "patterns-made-at-run-time", "lists-read-where-they-are-made", "numbers-however-they-are-kept", "objects-read-where-they-are-made", "patterns-that-go-back-for-millions-of-turns", "errors-of-values-nobody-uses", "constant-lists-changed-by-every-road", "new-objects-kept-through-built-ins", "typed-instances-changed-through-built-ins", "several-changes-behind-a-declared-type", "two-names-where-ways-meet", "objects-with-very-many-fields", "one-name-for-many-kinds-of-things", "objects-that-the-host-keeps-and-hands-back", "closures-read-through-array-methods", "objects-that-live-for-one-turn-of-a-loop", "patterns-with-subjects-made-from-them", "bodies-in-every-encoding-read-as-json", "read-by-the-last-holder-while-others-are-made", "instances-below-built-in-classes-frozen-closed-and-redefined", "code-the-build-never-saw-changes-what-it-is-handed", "lists-of-numbers-through-one-map-or-filter", "loops-whose-tests-are-settled-on-the-first-turn"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
   return sources;
 }

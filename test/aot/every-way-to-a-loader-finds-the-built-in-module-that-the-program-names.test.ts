@@ -1,6 +1,7 @@
 // Each program asks for node:dgram, which nothing else in it names, and brings the loader and the name together in a way of its own: a variable, a parameter, a property, a list, `call`, another file.
 // Each is compiled alone, because a module that one way keeps is there for every other, and prints what plain Bun prints.
-// A name that the program does not write (it comes out of the environment) finds no module that nothing names. The build says so at the call.
+// A name that the program does not write (it comes out of the environment) brings no module into the executable. process.getBuiltinModule() does not find the module then, and the build says so at the call.
+// require() and import() find it, and Bun interprets it. Every run has BUN_JSC_crashIfInterpreterIsUsed=1, so a module that is interpreted ends the run and is named.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
@@ -309,6 +310,29 @@ for (const [group, ways] of groups) {
   });
 }
 
+const interpreted = (compiled: { stdout: string; stderr: string; exitCode: number | null }) => ({
+  stdout: compiled.stdout,
+  interpreted: /^crashIfInterpreterIsUsed: \S+ (\S+) /m.exec(compiled.stderr)?.[1],
+  exitedInOrder: compiled.exitCode === 0,
+});
+
+describe("a name that the program does not write finds a module that nothing names, which is not compiled:", () => {
+  const fromOutside: Way[] = [
+    ["require(name)", "cjs", show(`require(process.env.NAME_OF_MODULE)`)],
+    ["import(name)", "mjs", showLater(`import(process.env.NAME_OF_MODULE)`)],
+  ];
+  test.concurrent.each(fromOutside)(
+    "%s",
+    async (_, extension, text) => {
+      const { plain, compiled, warnings } = await runBothWays(extension, text, { ...bunEnv, NAME_OF_MODULE: name });
+      expect(plain).toMatchObject({ stdout: "function\n", exitCode: 0 });
+      expect(interpreted(compiled)).toEqual({ stdout: "", interpreted: name, exitedInOrder: false });
+      expect(warnings).toBeEmpty();
+    },
+    120_000,
+  );
+});
+
 describe("a name that the program does not write finds no module that nothing names, and the build warns at", () => {
   const fromOutside: Way[] = [
     ["process.getBuiltinModule(name)", "mjs", show(`process.getBuiltinModule(process.env.NAME_OF_MODULE)`)],
@@ -317,8 +341,6 @@ describe("a name that the program does not write finds no module that nothing na
       "mjs",
       `const load = process.getBuiltinModule;\n` + show(`load(process.env.NAME_OF_MODULE)`),
     ],
-    ["require(name)", "cjs", show(`require(process.env.NAME_OF_MODULE)`)],
-    ["import(name)", "mjs", showLater(`import(process.env.NAME_OF_MODULE)`)],
   ];
   test.concurrent.each(fromOutside)(
     "%s",
@@ -381,10 +403,7 @@ describe("a text that comes to no loader keeps no module:", () => {
     "%s",
     async (_, extension, text) => {
       const { compiled } = await runBothWays(extension, text, { ...bunEnv, NAME_OF_MODULE: name });
-      expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
-        stdout: "asked\nMODULE_NOT_FOUND\n",
-        exitCode: 0,
-      });
+      expect(interpreted(compiled)).toEqual({ stdout: "asked\n", interpreted: name, exitedInOrder: false });
     },
     120_000,
   );

@@ -283,7 +283,7 @@ const CONDITIONS_OF_UNKNOWN_VALUES: &[DeadCalls] = &[
     ("a.mjs", "(x ?? false) ? a() : b();", &[], &["a", "b"]),
     (
         "a.mjs",
-        "let O = { k: 1 }; O ? a() : b();",
+        "let O = { k: 1 }; O = x; O ? a() : b();",
         &[],
         &["a", "b"],
     ),
@@ -429,7 +429,23 @@ const AFTER_EXITS: &[DeadCalls] = &[
 const CONSTANT_TESTS: &[DeadCalls] = &[
     ("a.mjs", "const A = false; if (A) a();", &["a"], &[]),
     ("a.mjs", "if (B) a(); const B = false;", &[], &["a"]),
-    ("a.mjs", "let C = false; if (C) a();", &[], &["a"]),
+    ("a.mjs", "let C = false; if (C) a();", &["a"], &[]),
+    ("a.mjs", "let C = false; C = x; if (C) a();", &[], &["a"]),
+    ("a.mjs", "var C = false; if (C) a();", &["a"], &[]),
+    ("a.mjs", "var C = false; C = x; if (C) a();", &[], &["a"]),
+    ("a.mjs", "{ var C = false; } if (C) a();", &[], &["a"]),
+    (
+        "a.mjs",
+        "var C = false; function f() { if (C) a(); } f();",
+        &["a"],
+        &[],
+    ),
+    (
+        "a.mjs",
+        "f(); var C = false; function f() { if (C) a(); }",
+        &[],
+        &["a"],
+    ),
     (
         "a.mjs",
         "const E = false; E = true; if (E) a();",
@@ -731,6 +747,18 @@ const TESTS_OF_RUNTIME_VALUES: &[DeadCalls] = &[
         &["a"],
         &["b"],
     ),
+    (
+        "a.mjs",
+        "if (!Holder?.method) a(); else b();",
+        &["a"],
+        &["b"],
+    ),
+    (
+        "a.mjs",
+        r#"if ("method" in Holder) a(); else b();"#,
+        &["b"],
+        &["a"],
+    ),
 ];
 
 const UNDECIDED_TESTS_OF_RUNTIME_VALUES: &[DeadCalls] = &[
@@ -748,7 +776,13 @@ const UNDECIDED_TESTS_OF_RUNTIME_VALUES: &[DeadCalls] = &[
     ),
     (
         "a.mjs",
-        "if (!Holder?.method) a(); else b();",
+        r#"if ("other" in Holder) a(); else b();"#,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        "a.mjs",
+        r#"if ("method" in mine.Holder) a(); else b();"#,
         &[],
         &["a", "b"],
     ),

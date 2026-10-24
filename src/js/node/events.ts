@@ -343,10 +343,8 @@ function emitUnhandledRejectionOrErr(
   }
 }
 
-// The loop over several listeners is a function of its own, so that what is left is small enough to go where it is called.
 // Handed to another function as a value, `args` is an array that the JIT makes on every call, also where that call never runs. So it is
-// read or spread. It goes to the loop as a value behind a read of `handler.length` in the call itself: of code that has never run the JIT
-// drops what follows the first read up to the next branch, and where it has run the JIT puts the loop in place.
+// read or spread. Most listeners return undefined, which is the cheapest thing to ask of `result`.
 const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...args: unknown[]) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
 
@@ -359,38 +357,68 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
   const handler = events[type];
   if (handler === undefined) return false;
   // For performance reasons Function.call(...) is used whenever possible.
-  if (typeof handler !== "function") {
-    if (handler.length) emitToEach(this, handler, handler.length, type, args);
+  var result;
+  if (typeof handler === "function") {
+    switch (args.length) {
+      case 0:
+        result = handler.$call(this);
+        break;
+      case 1:
+        result = handler.$call(this, args[0]);
+        break;
+      case 2:
+        result = handler.$call(this, args[0], args[1]);
+        break;
+      case 3:
+        result = handler.$call(this, args[0], args[1], args[2]);
+        break;
+      default:
+        result = handler.$apply(this, args);
+        break;
+    }
+    if (result !== undefined && $isObject(result) && this[kCapture]) {
+      ("unlikely");
+      addCatch(this, result, type, ...args);
+    }
     return true;
   }
-  let result;
-  switch (args.length) {
-    case 0:
-      result = handler.$call(this);
-      break;
-    case 1:
-      result = handler.$call(this, args[0]);
-      break;
-    case 2:
-      result = handler.$call(this, args[0], args[1]);
-      break;
-    case 3:
-      result = handler.$call(this, args[0], args[1], args[2]);
-      break;
-    default:
-      result = handler.$apply(this, args);
-      break;
+  // Compiled ahead of time, the loop is a function of its own, so that what is left is small enough to go where it is called.
+  // In `bun run` that is one more call for every event with several listeners, a sixth more in the interpreter.
+  if (IS_COMPILED_AHEAD_OF_TIME) {
+    emitToEach(this, handler, handler.length, type, args);
+    return true;
   }
-  if ($isObject(result) && this[kCapture]) {
-    ("unlikely");
-    addCatch(this, result, type, ...args);
+  // No defensive clone: stored arrays are never mutated in place (mutators
+  // install a copy), so this list stays stable for the whole loop even if a
+  // listener adds/removes listeners.
+  for (let i = 0, length = handler.length; i < length; i++) {
+    const listener = handler[i];
+    switch (args.length) {
+      case 0:
+        result = listener.$call(this);
+        break;
+      case 1:
+        result = listener.$call(this, args[0]);
+        break;
+      case 2:
+        result = listener.$call(this, args[0], args[1]);
+        break;
+      case 3:
+        result = listener.$call(this, args[0], args[1], args[2]);
+        break;
+      default:
+        result = listener.$apply(this, args);
+        break;
+    }
+    if (result !== undefined && $isObject(result) && this[kCapture]) {
+      ("unlikely");
+      addCatch(this, result, type, ...args);
+    }
   }
   return true;
 };
 
-// No defensive clone: stored arrays are never mutated in place (mutators
-// install a copy), so this list stays stable for the whole loop even if a
-// listener adds/removes listeners.
+// The loop of emit() once more, for an executable that was compiled ahead of time.
 function emitToEach(
   emitter: $Node.EventEmitter,
   listeners: $Node.Listener[],
@@ -418,7 +446,7 @@ function emitToEach(
         result = listener.$apply(emitter, args);
         break;
     }
-    if ($isObject(result) && emitter[kCapture]) {
+    if (result !== undefined && $isObject(result) && emitter[kCapture]) {
       ("unlikely");
       addCatch(emitter, result, type, ...args);
     }

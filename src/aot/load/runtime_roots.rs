@@ -6,7 +6,9 @@ use crate::builtins::table::{
     MODULE_LOADER_FUNCTIONS, STARTUP_FUNCTIONS, STARTUP_MODULES, runtime_function,
 };
 use crate::builtins::{Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
-use crate::load::named_loads::find_library_modules_that_unknown_names_may_stand_for;
+use crate::load::named_loads::{
+    find_library_modules_that_unknown_names_may_stand_for, loads_by_unknown_name,
+};
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::sources::parsed_source;
 
@@ -15,6 +17,7 @@ pub(crate) struct RuntimeRoots {
     pub host_loaded_modules: Vec<RuntimeModule>,
     pub imports_cluster: bool,
     pub imports_uncompiled_code: bool,
+    pub loads_by_unknown_name: bool,
 }
 
 /// What the application, the language and the start of the process ask of Bun's own code.
@@ -90,6 +93,7 @@ pub(crate) fn collect_runtime_roots(
         host_loaded_modules,
         imports_cluster,
         imports_uncompiled_code,
+        loads_by_unknown_name: loads_by_unknown_name(application),
     }
 }
 

@@ -58,11 +58,22 @@ impl<'s> AcceptedTree<'s, '_> {
     }
 }
 
+#[cfg(test)]
 pub(super) fn load_code_file<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     arena: &'s Arena,
     target: CodeTarget<'r>,
     text: Cow<'static, [u8]>,
+) -> ParsedCodeFile<'s, 'r> {
+    load_code_file_of_graph(context, arena, target, text, false)
+}
+
+pub(super) fn load_code_file_of_graph<'s, 'r>(
+    context: &CodeLoadContext<'_, 's, 'r>,
+    arena: &'s Arena,
+    target: CodeTarget<'r>,
+    text: Cow<'static, [u8]>,
+    is_called_before_it_runs: bool,
 ) -> ParsedCodeFile<'s, 'r> {
     let &CodeLoadContext {
         resolver,
@@ -97,7 +108,11 @@ pub(super) fn load_code_file<'s, 'r>(
     if tree.hir.text.is_empty() && tree.hir.source_len as usize == tree.text.len() {
         tree.hir.text = std::mem::take(&mut tree.text);
     }
-    let (bound, analyzed) = analyze(context, arena, key, settings, &mut tree);
+    let fold = match is_called_before_it_runs {
+        true => &*arena.alloc(context.inputs.fold.for_file_called_before_it_runs()),
+        false => context.inputs.fold,
+    };
+    let (bound, analyzed) = analyze(context, arena, key, settings, fold, &mut tree);
     // `transform_tree` reads the comments that turn the React Compiler off.
     if !tree.request.options.keeps_comments {
         tree.hir.comments = Default::default();
@@ -292,6 +307,7 @@ fn analyze<'s, 'r>(
     arena: &'s Arena,
     key: LoadKey<'r>,
     settings: &'r TranspileSettings,
+    fold: &FoldInputs<'s>,
     tree: &mut AcceptedTree<'s, 'r>,
 ) -> (Bound<'s>, Analyzed<'s, 'r>) {
     let &CodeLoadContext {
@@ -323,7 +339,7 @@ fn analyze<'s, 'r>(
             runtime: Some(runtime),
             ..tree.request.options.bind
         },
-        fold: context.inputs.fold,
+        fold,
         file: FileInputs {
             declared_module_type,
             import_meta_main: import_meta_main(context, key),

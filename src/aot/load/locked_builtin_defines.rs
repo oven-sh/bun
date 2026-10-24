@@ -88,6 +88,33 @@ pub(crate) fn locked_builtin_defines<'s>(
     walk.defines
 }
 
+/// `Bun` says which runtime this is. ZigGlobalObject.lut.txt: the property is read-only and cannot be deleted, so no program replaces it.
+const RUNTIME_IDENTITY: [&[&str]; 1] = [&["Bun"]];
+
+pub(crate) fn runtime_identity_defines<'s>(
+    arena: &'s Arena,
+    atoms: &Interner<'s>,
+) -> Vec<Define<'s>> {
+    let global_this = atoms.intern(b"globalThis");
+    let mut defines = Vec::with_capacity(2 * RUNTIME_IDENTITY.len());
+    for names in RUNTIME_IDENTITY {
+        let names: Vec<Atom> = names
+            .iter()
+            .map(|name| atoms.intern(name.as_bytes()))
+            .collect();
+        for (root, members) in [(names[0], &names[1..]), (global_this, &names[..])] {
+            defines.push(Define {
+                path: DefinePath {
+                    root: DefineRoot::Global(root),
+                    members: arena.alloc_slice_copy(members),
+                },
+                value: DefineValue::RuntimeValue(RuntimeValueKind::Object),
+            });
+        }
+    }
+    defines
+}
+
 #[cfg(test)]
 mod tests {
     use bun_sema::session::Session;
@@ -140,6 +167,23 @@ mod tests {
     }
 
     #[test]
+    fn runtime_identity_is_listed_from_both_roots() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let paths: Vec<Vec<&[u8]>> = runtime_identity_defines(session.arena(), &atoms)
+            .iter()
+            .map(|define| {
+                let DefineRoot::Global(root) = define.path.root else {
+                    panic!("{:?}", define.path.root);
+                };
+                let names = std::iter::once(root).chain(define.path.members.iter().copied());
+                names.map(|name| atoms.bytes(name)).collect()
+            })
+            .collect();
+        assert_eq!(paths, [vec![&b"Bun"[..]], vec![b"globalThis", b"Bun"]]);
+    }
+
+    #[test]
     fn other_paths_are_not_listed() {
         let rows: &[&[&str]] = &[
             &["Math", "random"],
@@ -152,6 +196,9 @@ mod tests {
             &["Date", "now"],
             &["console"],
             &["process"],
+            &["Bun"],
+            &["Bun", "serve"],
+            &["navigator"],
             &["Map", "prototype", "size"],
             &["Object", "mine"],
             &["Object", "prototype", "constructor", "assign"],

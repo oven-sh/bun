@@ -76,6 +76,7 @@ const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("references", Form::One),
     developer_flag!("threads", Form::One),
     developer_flag!("erase-types", Form::Flag),
+    developer_flag!("refuse-code-from-disk", Form::Flag),
     developer_flag!("out", Form::One),
     developer_flag!("symbols", Form::Flag),
     ("no-builtin-modules", "--no-builtin-modules", Form::Flag),
@@ -578,6 +579,7 @@ pub(crate) fn apply_developer_word<'a>(
             options.thread_count = Some(count.ok_or(invalid)?);
         }
         "erase-types" => options.erases_types = true,
+        "refuse-code-from-disk" => options.loads_code_from_disk = false,
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),

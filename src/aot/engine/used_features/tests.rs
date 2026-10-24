@@ -201,6 +201,10 @@ fn every_engine_cause_maps() {
             EngineCause::RunsMachineCode,
             UnseenCodeCause::RunsUnseenCode,
         ),
+        (
+            EngineCause::LoadsCodeByName,
+            UnseenCodeCause::LoadsCodeByName,
+        ),
     ];
     assert_eq!(
         table.map(|(engine_cause, _)| engine_cause),

@@ -2895,6 +2895,28 @@ impl<'p, 's> Checker<'p, 's> {
         self.members(part)
     }
 
+    // Nothing says which members such a class has.
+    pub(super) fn stands_below_undeclared_class(&mut self, class: Sym) -> bool {
+        self.lacks_bun_types() && self.has_base_type_among(class, &[TypeId::ANY])
+    }
+
+    pub(super) fn is_of_class_below_undeclared_class(&mut self, ty: TypeId) -> bool {
+        match *self.data(ty) {
+            TypeData::Ref { target: class, .. }
+            | TypeData::Anon {
+                origin: Origin::ClassStatic(class),
+                ..
+            } => self.stands_below_undeclared_class(class),
+            TypeData::Union(ref parts) => {
+                (parts.iter()).all(|&part| self.is_of_class_below_undeclared_class(part))
+            }
+            TypeData::Intersection(ref parts) => {
+                (parts.iter()).any(|&part| self.is_of_class_below_undeclared_class(part))
+            }
+            _ => false,
+        }
+    }
+
     fn has_base_type_among(&mut self, sym: Sym, types: &[TypeId]) -> bool {
         for &base in self.base_types(sym).iter() {
             let is_among = types.contains(&base)
@@ -3679,6 +3701,9 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let hir = self.hir(file);
         let constructor = self.base_constructor_type_of_class(class);
+        if for_default_constructor && constructor == TypeId::ANY && self.lacks_bun_types() {
+            return (true, vec![self.construct_signature_of_undeclared_class()]);
+        }
         let sigs = self.signatures(constructor, true);
         // `getDefaultConstructSignatures` returns before `getTypeArgumentsFromNode`.
         if for_default_constructor && sigs.is_empty() {
@@ -3694,6 +3719,26 @@ impl<'p, 's> Checker<'p, 's> {
                 for_default_constructor && hir.is_js,
             ),
         )
+    }
+
+    /// `new (...args: any[]) => any`
+    fn construct_signature_of_undeclared_class(&mut self) -> SigId {
+        let params = [SigParam {
+            name: known::args,
+            ty: self.array_of(TypeId::ANY),
+            optional: false,
+            is_required_rest: false,
+            rest: true,
+            declaration: None,
+        }];
+        self.types().intern_sig(SigData::Synth {
+            type_params: ArenaBox::empty(),
+            params: self.list(&params),
+            ret: TypeId::ANY,
+            this: None,
+            of: ArenaBox::empty(),
+            is_union: true,
+        })
     }
 
     /// `getInstantiatedConstructorsForTypeArguments` for the `extends` clause of `class`: the candidates of `super(..)`, and the

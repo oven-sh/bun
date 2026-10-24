@@ -1,4 +1,6 @@
 # The build warns once at each reached require(x) and import(x) under a computed name in the program's own code: not in a function that nothing calls, and not in a module of the library that has run
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-results
 # DIAGNOSTIC: CodeOutsideImageIsRefused 3
 # CHECK: function f1 reachability=Unreached

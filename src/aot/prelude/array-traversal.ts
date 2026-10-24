@@ -141,7 +141,7 @@ export function traverseArray(
         const isStored: boolean = $tryPutByValDirect(out!, index, value);
         if (!isStored) {
           out![index] = value;
-          position++;
+          position = (position + 1) >>> 0;
           continue entered;
         }
       } else if (endKind === endLength) continue;

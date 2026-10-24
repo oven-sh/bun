@@ -494,3 +494,47 @@ function turn(i: number): number {
 function turn(i: number): number {
   return (globalThis as any).sharedLimit + (i & 1);
 }
+//// an-object-made-two-steps-below-a-literal-is-read-and-written-through-the-members-of-the-literal
+const answers: any = {
+  get sent() { return this.res.sent; },
+  has(name: string) { return this.res.names === name; },
+  get status() { return this.res.code; },
+  set status(code: number) {
+    if (this.sent) return;
+    this.hasOwnStatus = true;
+    this.res.code = code;
+  },
+  get body() { return this.held; },
+  set body(value: string) {
+    const before = this.held;
+    this.held = value;
+    if (!this.hasOwnStatus) this.status = 200;
+    if (!this.has("b")) this.length = value.length;
+    if (before !== undefined) this.res.code = 0;
+  },
+  set length(n: number) { this.res.size = n; },
+  get length() { return this.res.size; },
+};
+class Application {
+  answers: any;
+  constructor() { this.answers = Object.create(answers); }
+  create(req: { url: string }, res: { sent: boolean; names: string; code: number; size: number }): any {
+    const made = Object.create(this.answers);
+    made.app = this;
+    made.req = req;
+    made.res = res;
+    return made;
+  }
+}
+const application = new Application();
+const suffix = process.argv.length > 9 ? "x" : "";
+function handle(answer: any): number {
+  answer.body = "Hello";
+  return answer.status + answer.length;
+}
+(globalThis as any)["handle" + suffix] = handle;
+const request = { url: "/" };
+function turn(i: number): number {
+  const res = { sent: false, names: "a", code: 404, size: i & 1 };
+  return (globalThis as any)["handle" + suffix](application.create(request, res));
+}

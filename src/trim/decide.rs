@@ -30,6 +30,14 @@ const HOLDS_GET_BUILTIN_MODULE: Feature = Feature::ProcessInformation;
 // A path that is computed at run time may name a data file on disk: JSON, TOML, text.
 const LOADS_FILES_FROM_DISK: Feature = Feature::DataFileLoaders;
 
+// It may also name a file with code, which is transpiled and interpreted. Of Bun's APIs such a file finds what the program uses, like evaluated text.
+const RUNS_FILES_FROM_DISK: [Feature; 4] = [
+    LOADS_FILES_FROM_DISK,
+    Feature::RuntimeTranspiler,
+    Feature::Interpreter,
+    Feature::BuiltinSourceText,
+];
+
 // `Bun.build` checks types, compiles ahead of time, and copies this executable's runtime into the executables it writes.
 const ENTERED_BY_BUNDLER: [Feature; 4] = [
     Feature::Check,
@@ -164,6 +172,11 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
         UnseenCodeCause::EvaluatesText => features_reachable_by_text(),
         UnseenCodeCause::ImportsUncompiledCode => program_features,
         UnseenCodeCause::LoadsModuleByName => FeatureSet::from_features(&[LOADS_FILES_FROM_DISK]),
+        UnseenCodeCause::LoadsCodeByName => {
+            let mut features = features_reachable_by_text();
+            features.union_with(&FeatureSet::from_features(&RUNS_FILES_FROM_DISK));
+            features
+        }
         UnseenCodeCause::RunsUnseenCode => {
             let mut features = features_reachable_by_text();
             features.insert(Feature::NativeAddons);
@@ -524,6 +537,24 @@ mod tests {
         assert!(!by_name.unused.contains(Feature::DataFileLoaders));
         assert!(by_name.unused.contains(Feature::RuntimeTranspiler));
         assert!(by_name.unused.contains(Feature::Interpreter));
+    }
+
+    #[test]
+    fn dynamic_import_of_code_keeps_what_transpiles_and_interprets_a_file() {
+        let used = UsedFeatures {
+            causes: vec![UnseenCode {
+                cause: UnseenCodeCause::LoadsCodeByName,
+                witness: None,
+            }],
+            ..using(&[Feature::Sql])
+        };
+        let unused = decide_request(&used, &removing_unused()).unused;
+        for feature in RUNS_FILES_FROM_DISK {
+            assert!(!unused.contains(feature), "{feature:?}");
+        }
+        assert!(!unused.contains(Feature::Sql));
+        assert!(unused.contains(Feature::Valkey));
+        assert!(unused.contains(Feature::Jit));
     }
 
     #[test]

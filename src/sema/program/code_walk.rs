@@ -1,5 +1,5 @@
 use super::code_barrels::{BarrelRequests, NOT_LOADED, erase_waiting_sites};
-use super::code_file::load_code_file;
+use super::code_file::load_code_file_of_graph;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
 use super::*;
@@ -22,6 +22,8 @@ struct WalkedFile<'s, 'r> {
     target: CodeTarget<'r>,
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
+    /// It lies on a cycle of imports, and its first analysis took for granted that it does not.
+    is_called_before_it_runs: bool,
 }
 
 impl<'r> WalkedFile<'_, 'r> {
@@ -208,6 +210,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             target,
             parsed: None,
             targets: Vec::new(),
+            is_called_before_it_runs: false,
         });
         let key = context.canonical_key(target.key);
         state.index_of.insert(key, index);
@@ -446,10 +449,12 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 if state.ready.len() == MAX_READY_TEXTS {
                     self.has_to_read.notify_all();
                 }
-                let target = state.files[index as usize].target;
+                let file = &state.files[index as usize];
+                let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
-                let parsed = Box::new(load_code_file(context, arena, target, text));
+                let parsed = load_code_file_of_graph(context, arena, target, text, is_called_early);
+                let parsed = Box::new(parsed);
                 self.add_parsed_file(&mut self.state.lock(), index, parsed);
                 let has_more = self.queue_found_files(start.plugin_reader);
                 state = self.state.lock();
@@ -474,6 +479,14 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                         has_deferred_reads,
                         start.plugin_reader,
                     );
+                    state = self.state.lock();
+                    continue;
+                }
+                if state.deferred.is_empty() && forget_files_called_before_they_run(&mut state) {
+                    drop(state);
+                    self.queue_found_files(start.plugin_reader);
+                    self.has_to_read.notify_all();
+                    self.has_changed.notify_all();
                     state = self.state.lock();
                     continue;
                 }
@@ -581,6 +594,44 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let path_of = |&index: &u32| state.files[index as usize].target.key.path;
         files.iter().map(path_of).collect()
     }
+}
+
+fn is_on_cycle(files: &[WalkedFile<'_, '_>], start: u32) -> bool {
+    let mut seen = vec![false; files.len()];
+    let mut stack = vec![start];
+    while let Some(file) = stack.pop() {
+        for &target in &files[file as usize].targets {
+            if target == start {
+                return true;
+            }
+            if target != NOT_LOADED && !std::mem::replace(&mut seen[target as usize], true) {
+                stack.push(target);
+            }
+        }
+    }
+    false
+}
+
+/// Nothing is left to read, so every cycle of imports is there. Whether a file was queued again.
+fn forget_files_called_before_they_run(state: &mut WalkState<'_, '_>) -> bool {
+    let relies_on_order = |file: &WalkedFile<'_, '_>| {
+        let analysis = file.parsed.as_ref().map(|it| &it.code.analyzed.analysis);
+        !file.is_called_before_it_runs
+            && analysis.is_some_and(|analysis| analysis.relies_on_running_before_calls)
+    };
+    let called_early: Vec<u32> = (0..state.files.len() as u32)
+        .filter(|&file| relies_on_order(&state.files[file as usize]))
+        .filter(|&file| is_on_cycle(&state.files, file))
+        .collect();
+    for &index in &called_early {
+        let file = &mut state.files[index as usize];
+        file.is_called_before_it_runs = true;
+        file.parsed = None;
+        file.targets.clear();
+        state.barrels.forget_parsed_file(index);
+        state.found.push(index);
+    }
+    !called_early.is_empty()
 }
 
 fn erase_sites_nothing_asked_for(state: &mut WalkState<'_, '_>) {

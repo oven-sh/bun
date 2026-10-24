@@ -40,6 +40,70 @@ async function run(folder: string, how: "compiled" | "plain") {
 
 const built = { errors: [], warnings: [], exitCode: 0, signal: null };
 
+// A class, the arguments for it, and what to print of the instance. `made` is the instance.
+const classesToStandBelow: [string, string, string][] = [
+  ["Map<number, string>", `[[1, "a"]]`, `made.get(1)`],
+  ["Set<number>", `[1]`, `made.has(1)`],
+  ["WeakMap<object, number>", `[[globalThis, 1]]`, `made.get(globalThis)`],
+  ["Array<number>", `3`, `made.length`],
+  ["Error", `"failed"`, `made.message`],
+  ["TypeError", `"failed"`, `made.message`],
+  ["Promise<number>", `resolve => resolve(6)`, `await made`],
+  ["RegExp", `"a+", "g"`, `made.flags`],
+  ["Date", `86400000`, `made.getTime()`],
+  ["Uint8Array", `4`, `made.length`],
+  ["ArrayBuffer", `8`, `made.byteLength`],
+  ["DataView<ArrayBuffer>", `new ArrayBuffer(8)`, `made.byteLength`],
+  ["String", `"text"`, `made.length`],
+  ["Number", `12`, `made.valueOf()`],
+  ["Boolean", `true`, `made.valueOf()`],
+  ["Event", `"e"`, `made.type`],
+  ["CustomEvent", `"e", { detail: 1 }`, `made.detail`],
+  ["MessageEvent", `"m", { data: 1 }`, `made.data`],
+  ["ErrorEvent", `"x", { message: "went wrong" }`, `made.message`],
+  ["CloseEvent", `"c", { code: 1001 }`, `made.code`],
+  ["EventTarget", ``, `typeof made.dispatchEvent`],
+  ["URL", `"http://host/path"`, `made.pathname`],
+  ["URLSearchParams", `"a=1"`, `made.get("a")`],
+  ["Headers", `{ a: "1" }`, `made.get("a")`],
+  ["Blob", `["abc"]`, `made.size`],
+  ["File", `["abc"], "f.txt"`, `made.name`],
+  ["Request", `"http://host/"`, `made.url`],
+  ["Response", `"body"`, `await made.text()`],
+  ["FormData", ``, `[...made.keys()].length`],
+  ["TextDecoder", `"utf-16le"`, `made.encoding`],
+  ["TextEncoder", ``, `made.encoding`],
+  ["ReadableStream", `{ start(controller: any) { controller.close(); } }`, `made.locked`],
+  ["WritableStream", `{}`, `made.locked`],
+  ["TransformStream", `{}`, `made.readable.locked`],
+  ["BroadcastChannel", `"c"`, `(made.close(), made.name)`],
+  ["AbortController", ``, `made.signal.aborted`],
+  ["DOMException", `"m", "n"`, `made.name`],
+  ["Buffer", `4`, `made.length`],
+];
+
+// These two reach outside the program as soon as they are made.
+const classesNotToMake: [string, string][] = [
+  ["Worker", `"./worker.ts"`],
+  ["WebSocket", `"ws://localhost/"`],
+];
+
+const nameOf = (base: string) => base.replace(/<.*/, "");
+
+const oneClassBelowEach =
+  classesToStandBelow
+    .map(
+      ([base, given, shown]) =>
+        `{\n  class Below extends ${base} {}\n  const made = new Below(${given});\n  console.log("${nameOf(base)}", made instanceof ${nameOf(base)}, ${shown});\n}\n`,
+    )
+    .join("") +
+  classesNotToMake
+    .map(
+      ([base, given]) =>
+        `{\n  class Below extends ${base} {}\n  if (process.argv.includes("--reach-outside")) new Below(${given});\n  console.log("${base}", Object.getPrototypeOf(Below) === ${base});\n}\n`,
+    )
+    .join("");
+
 // What a program may use without a declaration, and the errors of `bun check` that a build does not repeat.
 const provided: Record<
   string,
@@ -153,6 +217,213 @@ console.log(Packet.from("ab").length, Object.getPrototypeOf(Packet) === Buffer);
     checkSays: [],
     prints: "bump 1\n2 true\n",
   },
+  "arguments for a class without a constructor below each class of the language, of the web and of Node.js": {
+    files: { "main.ts": oneClassBelowEach },
+    checkSays: [],
+    prints: `Map true a
+Set true true
+WeakMap true 1
+Array true 3
+Error true failed
+TypeError true failed
+Promise true 6
+RegExp true g
+Date true 86400000
+Uint8Array true 4
+ArrayBuffer true 8
+DataView true 8
+String true 4
+Number true 12
+Boolean true true
+Event true e
+CustomEvent true 1
+MessageEvent true 1
+ErrorEvent true went wrong
+CloseEvent true 1001
+EventTarget true function
+URL true /path
+URLSearchParams true 1
+Headers true 1
+Blob true 3
+File true f.txt
+Request true http://host/
+Response true body
+FormData true 0
+TextDecoder true utf-16le
+TextEncoder true utf-8
+ReadableStream true false
+WritableStream true false
+TransformStream true false
+BroadcastChannel true c
+AbortController true false
+DOMException true n
+Buffer true 4
+Worker true
+WebSocket true
+`,
+  },
+  "arguments for a class without a constructor below a class of a module, however the module is reached": {
+    files: {
+      "main.ts": `import { EventEmitter } from "node:events";
+import Emitter from "events";
+import * as stream from "node:stream";
+import { Database } from "bun:sqlite";
+const { StringDecoder } = require("node:string_decoder");
+class Named extends EventEmitter {}
+class Default extends Emitter {}
+class Member extends stream.Readable {}
+class Typed extends EventEmitter<{ bump: [number] }> {}
+class Required extends StringDecoder {}
+class Rows extends Database {}
+console.log(
+  new Named({ captureRejections: true }).listenerCount("none"),
+  new Default({ captureRejections: true }).listenerCount("none"),
+  new Member({ objectMode: true }).readableObjectMode,
+  new Typed({ captureRejections: true }).listenerCount("bump"),
+  new Required("utf8").encoding,
+  new Rows(":memory:").query("select 1 as one").all().length,
+);
+`,
+    },
+    checkSays: [],
+    prints: "0 0 true 0 utf8 1\n",
+  },
+  "arguments that reach a class of the web through classes and functions of the program": {
+    files: {
+      "main.ts": `class Between extends Event {}
+class Lowest extends Between {}
+class Calling extends Between { constructor(type: string) { super(type + "!"); } }
+class Direct extends Event { constructor(type: string) { super(type + "?"); } }
+class WithField extends Event { count = 1; }
+class Holding<T> extends Event { held?: T; }
+abstract class Unfinished extends Event { abstract kind(): string; }
+class Finished extends Unfinished { kind() { return "finished"; } }
+const Expression = class extends Event {};
+function tagged<Base extends new (...given: any[]) => any>(base: Base) { return class extends base { tag = "tagged"; }; }
+class Mixed extends tagged(Event) {}
+const given: ConstructorParameters<typeof Between> = ["spread"];
+console.log(
+  new Event("a").type,
+  new Between("b").type,
+  new Lowest("c").type,
+  new Calling("d").type,
+  new Direct("e").type,
+  new WithField("f").type,
+  new WithField("f").count,
+  new Holding<number>("g").type,
+  new Finished("h").type,
+  new Finished("h").kind(),
+  new Expression("i").type,
+  new Mixed("j").type,
+  new Mixed("j").tag,
+  new Between(...given).type,
+  Reflect.construct(Between, ["k"]).type,
+  Reflect.construct(Event, ["l"], Lowest) instanceof Lowest,
+);
+`,
+    },
+    checkSays: [],
+    prints: "a b c d! e? f 1 g h finished i j tagged spread k true\n",
+  },
+  "arguments for a class without a constructor below a class of the web, in a JavaScript file": {
+    files: {
+      "main.ts": `import { Between } from "./between.js";\nclass Lowest extends Between {}\nconsole.log(new Between("a").type, new Lowest("b").type);\n`,
+      "between.js": `export class Between extends Event {}\nconsole.log(new Between("c").type);\n`,
+    },
+    checkSays: [],
+    prints: "c\na b\n",
+  },
+  ...Object.fromEntries(
+    [
+      ["that says nothing, so that the library for browsers is in", {}],
+      ["that is strict", { compilerOptions: { strict: true } }],
+      ["that asks for no package of types", { compilerOptions: { types: [] } }],
+      ["whose lib leaves the library for browsers out", { compilerOptions: { lib: ["esnext"] } }],
+      ["whose lib names the library for browsers", { compilerOptions: { lib: ["esnext", "dom"] } }],
+    ].map(([which, tsconfig]) => [
+      `arguments for classes without a constructor below classes of the web and of Node.js, under a tsconfig.json ${which}`,
+      {
+        files: {
+          "main.ts": `import { EventEmitter } from "node:events";\nclass Sent extends Event {}\nclass Bytes extends Buffer {}\nclass Bus extends EventEmitter {}\nconsole.log(new Sent("a").type, new Bytes(4).length, new Bus({ captureRejections: true }).listenerCount("none"));\n`,
+          "tsconfig.json": JSON.stringify(tsconfig),
+        },
+        checkSays: [],
+        prints: "a 4 0\n",
+      },
+    ]),
+  ),
+  "members of classes of the web and of Node.js, overridden and read below them, under the strictest options": {
+    files: {
+      "main.ts": `import { EventEmitter } from "node:events";
+import { Readable, Writable } from "node:stream";
+
+class Between extends Event {
+  readonly at = 1;
+  describe(): string { return this.type + this.at; }
+}
+class Lowest extends Between {
+  override describe(): string { return super.describe() + "!"; }
+  override stopPropagation(): void { super.stopPropagation(); console.log("stopped", this.bubbles); }
+  static make(type: string): Lowest { return new this(type); }
+}
+class Bus extends EventEmitter {
+  constructor(private readonly label: string) { super({ captureRejections: true }); }
+  override emit(name: string, ...rest: unknown[]): boolean { console.log(this.label, name); return super.emit(name, ...rest); }
+}
+class Numbers extends Readable {
+  #next = 0;
+  override _read(): void { this.push(this.#next < 2 ? String(this.#next++) : null); }
+}
+class Sink extends Writable {
+  readonly seen: string[] = [];
+  override _write(chunk: unknown, _encoding: string, done: () => void): void { this.seen.push(String(chunk)); done(); }
+}
+class Failure extends DOMException {
+  override get name(): string { return "Failure"; }
+}
+const lowest = Lowest.make("low");
+lowest.stopPropagation();
+console.log(lowest.describe(), lowest.type, lowest instanceof Event, lowest.at);
+const bus = new Bus("bus");
+bus.on("ping", (n: number) => console.log("ping", n));
+bus.emit("ping", 1);
+const sink = new Sink({ decodeStrings: false });
+new Numbers({ encoding: "utf8" }).pipe(sink).on("finish", () => console.log(sink.seen.join(",")));
+const failure = new Failure("went wrong", "AbortError");
+console.log(failure.name, failure.message, failure.code);
+function takes(event: Event, between: Between): string { return event.type + between.type; }
+console.log(takes(lowest, lowest));
+const constructors: (new (type: string) => Between)[] = [Between, Lowest];
+console.log(constructors.map(one => new one("made").type).join());
+`,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          lib: ["ESNext"],
+          module: "Preserve",
+          moduleResolution: "bundler",
+          verbatimModuleSyntax: true,
+          strict: true,
+          noUncheckedIndexedAccess: true,
+          noImplicitOverride: true,
+          noUnusedLocals: true,
+          noUnusedParameters: true,
+          noPropertyAccessFromIndexSignature: true,
+          exactOptionalPropertyTypes: true,
+          noImplicitReturns: true,
+        },
+      }),
+    },
+    checkSays: [],
+    prints: `stopped false
+low1! low true 1
+bus ping
+ping 1
+Failure went wrong 20
+lowlow
+made,made
+0,1
+`,
+  },
   "classes of Bun's and Node.js's modules as types": {
     files: {
       "main.ts": `import { EventEmitter } from "node:events";
@@ -166,6 +437,22 @@ console.log(bus.listenerCount("none"), rows(new Database(":memory:")), servers.l
     },
     checkSays: [],
     prints: "0 1 0\n",
+  },
+  "type arguments for classes of the web and of Node.js, where a type is written and where a class extends one": {
+    files: {
+      "main.ts": `import { EventEmitter } from "node:events";
+const stream: ReadableStream<Uint8Array> = new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
+const event: CustomEvent<number> = new CustomEvent<number>("e", { detail: 1 });
+const message: MessageEvent<string> = new MessageEvent<string>("m", { data: "d" });
+const bus: EventEmitter<{ bump: [number] }> = new EventEmitter<{ bump: [number] }>();
+const pair: TransformStream<string, number> = new TransformStream<string, number>();
+class Chunks extends ReadableStream<Uint8Array> {}
+function kind(from: ReadableStream<string> | Chunks): string { return typeof from; }
+console.log(stream.locked, event.detail, message.data, bus.listenerCount("bump"), pair.readable.locked, kind(new Chunks({})));
+`,
+    },
+    checkSays: [],
+    prints: "false 1 d 0 false object\n",
   },
   "type arguments for what has no declaration": {
     files: {
@@ -224,6 +511,31 @@ const stillErrors: [string, string, string[]][] = [
     ["TS2339"],
   ],
   ['a missing member of the string "bun"', `const name = "bun" as const;\nconsole.log(name.serve);\n`, ["TS2339"]],
+  [
+    "an argument for a class below the program's own class named Event, which takes none",
+    `class Event { type = "own"; }\nclass Below extends Event {}\nconsole.log(new Below("e").type);\nexport {};\n`,
+    ["TS2554"],
+  ],
+  [
+    "one argument too many for a class below a class that TypeScript's own libraries declare",
+    `class Below extends Map<string, number> {}\nconsole.log(new Below([], 1).size);\n`,
+    ["TS2554"],
+  ],
+  [
+    "a wrong argument for a constructor of the program's own below a class of the web",
+    `class Below extends Event { constructor(type: string) { super(type); } }\nconsole.log(new Below(1).type);\n`,
+    ["TS2345"],
+  ],
+  [
+    "a name that nothing declares among the type arguments for a class of the web",
+    `const stream: ReadableStream<Missing> | undefined = undefined;\nconsole.log(stream);\n`,
+    ["TS2304"],
+  ],
+  [
+    "a type argument for the program's own type named ReadableStream, which takes none",
+    `type ReadableStream = { own: number };\nconst stream: ReadableStream<string> | undefined = undefined;\nconsole.log(stream);\nexport {};\n`,
+    ["TS2315"],
+  ],
   [
     "a global that is no class, used as a type",
     `const memory: WebAssembly | undefined = undefined;\nconsole.log(memory);\n`,
@@ -284,6 +596,22 @@ describe.concurrent("without Bun's type declarations", () => {
           "node_modules/@types/ws/index.d.ts": `export declare class WebSocket { send(data: string): void; }\nexport declare class WebSocketServer {\n  constructor(options: { port: number });\n  on(event: "connection", listener: (socket: WebSocket) => void): this;\n  close(): void;\n}\n`,
         });
         expect(await build(String(dir))).toEqual({ errors: ["TS2554"], warnings: [], exitCode: 1, signal: null });
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a member that overrides nothing and a member read by an index signature stop the build where every class above is the program's own",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `class Event { [name: string]: unknown; known() {} }\nclass Below extends Event { override other() {} }\nconsole.log(new Below().anything);\nexport {};\n`,
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { strict: true, noPropertyAccessFromIndexSignature: true },
+          }),
+        });
+        const stopped = { errors: ["TS4111", "TS4113"], warnings: [], exitCode: 1, signal: null };
+        expect(await build(String(dir))).toEqual(stopped);
       }),
     buildTimeout,
   );

@@ -1263,6 +1263,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .module_options(file)
                 .no_property_access_from_index_signature
                 && !bound.is_in_type_query(e)
+                && !self.is_of_class_below_undeclared_class(apparent)
             {
                 let right = self.span_of_right(file, name, name_pos);
                 self.error_at(right, 4111, &[Arg::Atom(name)]);

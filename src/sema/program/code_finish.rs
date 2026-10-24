@@ -54,14 +54,13 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
                 payloads[file.idx()] = Some(payload);
             }
         }
-        CodeGraph {
-            is_compile_build: true,
+        let loaded = ProgramFiles {
             entry_points: slice_in(&entry_points, arena),
             compiled_files: slice_in(&compiled_files, arena),
             is_compiled: file_set_in(modules.len(), &compiled_files, arena),
             host_modules: sorted_set_in(host_modules, arena),
-            host_payloads: session.keep(payloads),
-        }
+        };
+        CodeGraph::new(loaded, session.keep(payloads))
     }
 
     fn remove_code_only_edges(&self, module: &mut Module<'s>, arena: &'s Arena) {
@@ -165,7 +164,7 @@ impl<'s> Files<'s> {
         if !self.code_graph.is_compile_build {
             return;
         }
-        let entry_points = self.code_graph.entry_points.iter().copied();
+        let entry_points = self.code_graph.viewed().entry_points.iter().copied();
         let all_files = (0..self.modules.len() as u32).map(FileId);
         let mut stack: Vec<(FileId, usize)> = Vec::new();
         for root in entry_points.chain(all_files) {

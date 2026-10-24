@@ -103,6 +103,18 @@
     "typed": 8,
     "untyped": 8
   },
+  "everyday-arrays/map": {
+    "typed": 423.7,
+    "untyped": 406.4
+  },
+  "everyday-arrays/map-a-field": {
+    "typed": 229.0,
+    "untyped": 225.7
+  },
+  "everyday-arrays/map-then-read-every-element": {
+    "typed": 505.5,
+    "untyped": 505.5
+  },
   "everyday-arrays/matrix-read": {
     "typed": 29,
     "untyped": 29
@@ -1235,6 +1247,10 @@
     "typed": 7,
     "untyped": 7
   },
+  "everyday-spellings/filled-list.spread-map": {
+    "typed": 737.4,
+    "untyped": 733.3
+  },
   "everyday-spellings/generic.concrete": {
     "typed": 8,
     "untyped": 8
@@ -1290,6 +1306,14 @@
   "everyday-spellings/number-of-a-text.unary-plus": {
     "typed": 88,
     "untyped": 88
+  },
+  "everyday-spellings/return-a-map.direct": {
+    "typed": 196.4,
+    "untyped": 195.8
+  },
+  "everyday-spellings/return-a-map.through-a-constant": {
+    "typed": 196.4,
+    "untyped": 196.5
   },
   "everyday-spellings/swap.pattern": {
     "typed": 10,

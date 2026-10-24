@@ -156,6 +156,9 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if !options.embeds_function_source {
         record.excluded_code |= ExcludedCode::FUNCTION_SOURCE;
     }
+    if !options.loads_code_from_disk {
+        record.excluded_code |= ExcludedCode::CODE_OUTSIDE_IMAGE;
+    }
     if options.obfuscates {
         record.output |= OutputOptions::OBFUSCATE;
     }

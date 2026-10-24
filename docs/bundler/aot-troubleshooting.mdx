@@ -57,6 +57,7 @@ hello.ts(1,1): error TS2584: Cannot find name 'console'. Do you need to change y
 - a global that Bun provides, and `require`, `module`, `exports`, `__filename` and `__dirname`
 - an import of one of Bun's modules, and an import of a file that the build loads, such as `./note.txt`
 - a member of `Bun`, of the module `"bun"` or of `import.meta`
+- in a class that extends a class Bun provides, such as `Event` or `EventEmitter`: arguments for the constructor it inherits, `override` on a member, and an inherited member read as `this.type` under `noPropertyAccessFromIndexSignature`
 - in a project without a `tsconfig.json`, a parameter or a variable that's implicitly `any`
 
 If your `tsconfig.json` has `"types": ["bun"]`, as `bun init` writes it, the build warns that the package isn't there (TS2688).
@@ -176,10 +177,10 @@ Your program imports a module from a dynamic path. On your machine the file is o
 ### Cannot load a file: it isn't in this executable
 
 ```txt
-error: Cannot load '/home/me/plugins/late.ts': it isn't in this executable. Pass it to bun compile as another entry point, or mark it --external.
+error: Cannot load '/home/me/workers/late.ts': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point.
 ```
 
-A dynamic `import()` or `require()` can only load code that's in the executable. The file exists, but it wasn't compiled. See [Code that isn't in the executable](/bundler/aot-compatibility#code-that-isnt-in-the-executable).
+A dynamic `import()` or `require()` loads a file from disk, and Bun interprets it. A program that has neither isn't built for code that wasn't compiled, so a `Worker` can't start from such a file there. See [Code that isn't in the executable](/bundler/aot-compatibility#code-that-isnt-in-the-executable).
 
 ### Something was not compiled into this executable
 
@@ -262,7 +263,7 @@ A JavaScript package isn't untyped because it's JavaScript. The compiler tracks 
 It contains the same copy of Bun, plus the machine code of your program.
 
 - [`--trim`](/bundler/aot-size) removes the Bun and Node.js APIs that your code never calls.
-- `--no-compile-function-source` removes the source code of your functions. `toString()` on a function then returns `[native code]`, and the executable [only runs code that was compiled into it](/bundler/aot-compatibility#options-that-load-code).
+- `--no-compile-function-source` removes the source code of your functions. `toString()` on a function then returns `[native code]`. The executable still loads [files from disk](/bundler/aot-compatibility#code-that-isnt-in-the-executable), and it rejects the [options that load code](/bundler/aot-compatibility#options-that-load-code), with `--compile-inspector` too.
 
 ### A trimmed executable is still large
 

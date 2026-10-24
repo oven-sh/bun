@@ -62,6 +62,7 @@ fn cause_of(cause: EngineCause) -> UnseenCodeCause {
         EngineCause::EvaluatesText => UnseenCodeCause::EvaluatesText,
         EngineCause::ImportsUncompiledModule => UnseenCodeCause::ImportsUncompiledCode,
         EngineCause::LoadsModuleByName => UnseenCodeCause::LoadsModuleByName,
+        EngineCause::LoadsCodeByName => UnseenCodeCause::LoadsCodeByName,
         EngineCause::RunsUnseenCode | EngineCause::RunsMachineCode => {
             UnseenCodeCause::RunsUnseenCode
         }

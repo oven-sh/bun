@@ -135,6 +135,7 @@ calls/a-worker-is-terminated-inside-a-loop-that-calls-nothing
 calls/bind-found-by-name
 calls/bound-calls-beyond-the-argument-registers
 calls/calls-with-lists-of-arguments-in-tail-position-keep-the-stack-level
+calls/closures-made-in-a-callback-that-call-hands-to-a-built-in
 calls/construct
 calls/construct-trace-forwarding-function
 calls/deep-tail-recursion-where-one-function-answers-any-and-the-next-declares-a-type
@@ -632,6 +633,7 @@ native-callbacks/a-bound-push-that-a-promise-calls-stores-a-fraction
 native-callbacks/a-bound-push-that-a-timer-calls-stores-a-fraction
 native-callbacks/a-bound-push-that-for-each-calls-stores-a-fraction
 native-callbacks/a-bound-unshift-that-for-each-calls-stores-a-number-outside-the-literal
+native-callbacks/a-fill-that-instanceof-calls-stores-a-fraction
 native-callbacks/a-getter-read-by-a-protocol-throws-async
 native-callbacks/built-ins-of-the-engine-on-their-slow-roads
 native-callbacks/builtins-buffer-functions-as-callbacks
@@ -660,6 +662,7 @@ objects-that-are-not-what-their-layout-says/what-object-create-made-or-an-instan
 objects-that-are-not-what-their-layout-says/what-object-create-made-or-an-instance-of-another-class-has-a-string-field-read
 objects/a-field-kept-in-several-forms-is-asked-for-in-objects-that-nobody-followed
 objects/a-member-named-tojson-that-only-some-objects-get
+objects/a-member-of-what-object-create-made-is-read-twice-over-where-a-class-is-declared
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-filled-on-demand-and-returned
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned-through-two-functions
@@ -670,7 +673,9 @@ objects/dictionaries-are-built-anew-from-the-same-names-between-collections
 objects/every-way-an-allocation-site-meets-its-record
 objects/extra-property-reads-avoid-runtime
 objects/fields-created-by-name-beside-extra-properties-keep-the-order-of-keys
+objects/functions-that-make-makers-of-objects-below-their-own-prototype
 objects/literals-with-computed-index-keys
+objects/makers-of-makers-that-other-modules-call
 objects/object-constructed-or-called-without-arguments-makes-what-an-empty-literal-makes
 objects/objects-given-names-by-key-are-as-if-each-name-were-written-out
 objects/objects-with-many-names-across-collections

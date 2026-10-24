@@ -78,14 +78,18 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
                     note_commit(file, product);
                 }
             },
-            frees_tree: &|file| read_by_every_task.binary_search(&file).is_err(),
+            frees_tree: &|file| {
+                !loaded.is_read_again && read_by_every_task.binary_search(&file).is_err()
+            },
             first_round: LOWERING_ROUNDS,
             left_out_bodies: request.left_out_bodies,
         },
     });
-    for &file in &read_by_every_task {
-        // SAFETY: every task has ended, and nothing reads a tree after them.
-        unsafe { files.free_tree(file) };
+    if !loaded.is_read_again {
+        for &file in &read_by_every_task {
+            // SAFETY: every task has ended, and nothing reads a tree after them.
+            unsafe { files.free_tree(file) };
+        }
     }
     let mut lowered: Vec<(FileId, T)> = files_to_lower
         .iter()

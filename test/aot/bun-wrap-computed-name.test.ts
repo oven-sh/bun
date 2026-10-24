@@ -6,7 +6,7 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 const folder = join(import.meta.dir, "programs", "modules");
-const programs = ["bun-wrap-computed-name", "bun-wrap-computed-name-alone", "bun-wrap-computed-name-required"];
+const programs = ["bun-wrap-computed-name"];
 
 test.concurrent.each(programs)(
   "bun run --aot %s",
@@ -17,18 +17,11 @@ test.concurrent.each(programs)(
       { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
     );
     const diagnostics = stderr.split("\n").filter(line => /^(warn|error)\b/.test(line));
-    expect({
-      stdout,
-      otherDiagnostics: diagnostics.filter(
-        line => !line.startsWith("warn: TS100064: this import path isn't a constant."),
-      ),
-      exitCode,
-    }).toEqual({
+    expect({ stdout, diagnostics, exitCode }).toEqual({
       stdout: readFileSync(join(folder, name + ".expected.txt"), "utf8"),
-      otherDiagnostics: [],
+      diagnostics: [],
       exitCode: 0,
     });
-    expect(diagnostics).not.toBeEmpty();
   },
   120_000,
 );

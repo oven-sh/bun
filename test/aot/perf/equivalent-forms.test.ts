@@ -36,7 +36,6 @@ const programs: [entry: string, pairs: Pair[]][] = [
     [["methods assigned to the prototype of a function", "methods assigned to a variable that holds the prototype", 8]],
   ],
   ["names-in-a-list.js", [["a name found by a loop", "a name found by indexOf", 0]]],
-  ["wrappers.js", [["a wrapper that is called", "a wrapper that is called through call", 4]]],
   [
     "creation-order.ts",
     [

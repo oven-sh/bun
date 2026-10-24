@@ -5,7 +5,7 @@
 import { afterAll, expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 import { compileCommand, withProgramOutput } from "./harness/flags";
 import { built, spawned, withoutDebugInformation } from "./run-programs";
 import { describe, test } from "./supported";
@@ -90,8 +90,10 @@ describe("compile/aot/entry points begin programs of their own", () => {
   const carrier = withoutDebugInformation();
 
   function write(folder: string, files: Record<string, string>) {
-    mkdirSync(join(folder, "lib"), { recursive: true });
-    for (const [name, text] of Object.entries(files)) writeFileSync(join(folder, name), text);
+    for (const [name, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(folder, name)), { recursive: true });
+      writeFileSync(join(folder, name), text);
+    }
     return folder;
   }
   const files = {
@@ -209,6 +211,94 @@ describe("compile/aot/entry points begin programs of their own", () => {
         signal: null,
       });
     }
+  }, 600_000);
+
+  // The files of all programs are read and checked once. Each program is still what it is when it is built alone.
+  const expectEachAsAlone = async (folder: string, entryPoints: string[]) => {
+    await build(folder, entryPoints, "together");
+    for (const [index, entryPoint] of entryPoints.entries()) {
+      await build(folder, [entryPoint], "alone");
+      expect({
+        entryPoint,
+        isAsAlone: areEqual(programOf(folder, "together", index), programOf(folder, "alone", 0)),
+      }).toEqual({ entryPoint, isAsAlone: true });
+    }
+  };
+  const startsWorkers = (...names: string[]) =>
+    names.map(name => `new Worker(${JSON.stringify(name)}).onmessage = event => console.log(event.data);\n`).join("");
+
+  test("a package whose types do not check loses them in every program that holds it", async () => {
+    const manifest = (name: string) => JSON.stringify({ name, version: "1.0.0", type: "module", main: "./index.ts" });
+    const uses = `import { Pair, wrong } from "walked";\nimport { Box, depth, grow } from "symbol";\nimport { Span, middle } from "returned";\n`;
+    const values = `[new Pair(1, 2).sum(), wrong(new Pair(3, 4)), grow(new Box(1, 2)).area(), depth, middle(new Span(1, 5))].join(" ")`;
+    const folder = write(join(root, "packages"), {
+      "node_modules/walked/package.json": manifest("walked"),
+      "node_modules/walked/index.ts": `export class Pair {\n  constructor(public a: number, public b: number) {}\n  sum(): number {\n    return this.a + this.b;\n  }\n}\nexport function wrong(pair: Pair): number {\n  const text: string = pair.a;\n  return (text as any) + 1;\n}\n`,
+      "node_modules/symbol/package.json": manifest("symbol"),
+      "node_modules/symbol/index.ts": `export class Box {\n  constructor(public width: number, public height: number) {}\n  area(): number {\n    return this.width * this.height;\n  }\n}\nconst first = new Box(2, 3);\nexport const depth = first.depth;\nexport function grow(box: Box): Box {\n  return new Box(box.width + 1, box.height + 1);\n}\n`,
+      "node_modules/returned/package.json": manifest("returned"),
+      "node_modules/returned/index.ts": `export class Span {\n  constructor(public from: number, public to: number) {}\n}\nexport function middle(span: Span) {\n  return span.center + (span.from + span.to) / 2;\n}\n`,
+      "main.ts": `${uses}${startsWorkers("./worker.ts", "./other.ts")}console.log(${values});\n`,
+      "worker.ts": `${uses}postMessage(${values});\n`,
+      "other.ts": `import { Span, middle } from "returned";\npostMessage(middle(new Span(10, 50)));\n`,
+    });
+    await expectEachAsAlone(folder, ["./main.ts", "./worker.ts", "./other.ts"]);
+  }, 600_000);
+
+  test("each is configured by the tsconfig.json that its entry point finds", async () => {
+    const options = { target: "esnext", module: "esnext", moduleResolution: "bundler" };
+    const folder = write(join(root, "configured"), {
+      "app/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, strict: true } }),
+      "app/main.ts": `class Holder {\n  first: number | undefined;\n  second = 2;\n}\n${startsWorkers("./work/worker.ts")}console.log(Object.keys(new Holder()).join());\n`,
+      "work/tsconfig.json": JSON.stringify({
+        compilerOptions: { ...options, strict: false, useDefineForClassFields: false },
+      }),
+      "work/worker.ts": `class Holder {\n  first: number;\n  second = 2;\n}\nfunction length(text: string) {\n  return text === null ? -1 : text.length;\n}\npostMessage(Object.keys(new Holder()).join() + " " + length(null));\n`,
+    });
+    await expectEachAsAlone(folder, ["./app/main.ts", "./work/worker.ts"]);
+  }, 600_000);
+
+  test("what one program declares for every file is nothing to the others", async () => {
+    const folder = write(join(root, "declared"), {
+      "shared.ts": shared,
+      "globals.ts": `declare global {\n  interface Number {\n    twice(): number;\n  }\n  var counted: number;\n}\nexport const name = "globals";\n`,
+      "main.ts": `import { name } from "./globals.ts";\nimport { Point } from "./shared.ts";\n${startsWorkers("./worker.ts", "./second.ts")}console.log(name, typeof globalThis.counted, new Point(3, 4).length());\n`,
+      "worker.ts": `import { Point } from "./shared.ts";\npostMessage(new Point(6, 8).length());\n`,
+      "second.ts": `import { Point } from "./shared.ts";\npostMessage(new Point(9, 12).length());\n`,
+    });
+    await expectEachAsAlone(folder, ["./main.ts", "./worker.ts", "./second.ts"]);
+  }, 600_000);
+
+  test("the order in which another program imports the files is nothing to a program", async () => {
+    const folder = write(join(root, "ordered"), {
+      "a.ts": `export class First {\n  constructor(public value: number) {}\n  twice(): number {\n    return this.value * 2;\n  }\n}\n`,
+      "b.ts": `export class Second {\n  constructor(public value: number) {}\n  half(): number {\n    return this.value / 2;\n  }\n}\n`,
+      "main.ts": `import { Second } from "./b.ts";\nimport { First } from "./a.ts";\n${startsWorkers("./worker.ts")}console.log(new First(2).twice(), new Second(2).half());\n`,
+      "worker.ts": `import { First } from "./a.ts";\nimport { Second } from "./b.ts";\npostMessage(new First(4).twice() + new Second(4).half());\n`,
+    });
+    await expectEachAsAlone(folder, ["./main.ts", "./worker.ts"]);
+  }, 600_000);
+
+  // A file is compiled once for each program that holds it.
+  test("entry points that share most of their files are one program", async () => {
+    const functions = Array.from(
+      { length: 6000 },
+      (_, i) => `export function add${i}(value: number): number {\n  return value + ${i};\n}\n`,
+    );
+    const uses = `import * as large from "./large.ts";\n`;
+    const folder = write(join(root, "shared-files"), {
+      "large.ts": functions.join(""),
+      "main.ts": `${uses}${startsWorkers("./worker.ts")}console.log(large.add1(1));\n`,
+      "worker.ts": `${uses}postMessage(large.add2(2));\n`,
+    });
+    const executable = await build(folder, ["./main.ts", "./worker.ts"], "shared-files");
+    expect(existsSync(join(folder, "shared-files.ir.1"))).toBe(false);
+    const ran = await spawned([executable], root, bunEnv);
+    expect({ stdout: ran.stdout, stderr: ran.stderr, signal: ran.signal }).toEqual({
+      stdout: "2\n4\n",
+      stderr: "",
+      signal: null,
+    });
   }, 600_000);
 
   // Pages and plugins are further entry points by the hundred, and all of them are loaded into the one global.

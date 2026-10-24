@@ -55,18 +55,16 @@ describe("crashIfInterpreterIsUsed", () => {
   test.each([
     ["with", withOption],
     ["without", bunEnv],
-  ])("%s the option a file on disk outside the build is not loaded", async (_, env) => {
+  ])("%s the option a file on disk outside the build runs", async (_, env) => {
     const { stdout, stderr, exitCode } = await runProcess([program, outsideFile], String(outsideDir), env);
     expect(stderr).not.toContain("crashIfInterpreterIsUsed");
-    expect(stderr).toContain(`Cannot load '${outsideFile}': it isn't in this executable`);
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "outside\nfinished\n", exitCode: 0 });
   });
 
-  test("a data: module whose text the build never saw is not loaded", async () => {
+  test("a data: module whose text the build never saw runs", async () => {
     const { stdout, stderr, exitCode } = await runProcess([program, dataModule], String(outsideDir), withOption);
     expect(stderr).not.toContain("crashIfInterpreterIsUsed");
-    expect(stderr).toContain(`Cannot load '${dataModule}': it isn't in this executable`);
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "data module\nfinished\n", exitCode: 0 });
   });
 
   test("eval and the Function constructor run", async () => {
@@ -97,10 +95,9 @@ describe("crashIfInterpreterIsUsed", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "1,1,2,2 4,5\nfinished\n", exitCode: 0 });
   });
 
-  test("without the option a data: module whose text the build never saw is not loaded", async () => {
-    const { stdout, stderr, exitCode } = await runProcess([program, dataModule], String(outsideDir), bunEnv);
-    expect(stderr).toContain(`Cannot load '${dataModule}': it isn't in this executable`);
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  test("without the option a data: module whose text the build never saw runs", async () => {
+    const { stdout, exitCode } = await runProcess([program, dataModule], String(outsideDir), bunEnv);
+    expect({ stdout, exitCode }).toEqual({ stdout: "data module\nfinished\n", exitCode: 0 });
   });
 
   test("without the option eval and the Function constructor run", async () => {

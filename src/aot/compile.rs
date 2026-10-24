@@ -62,7 +62,7 @@ use bun_sys::{Fd, File};
 use bun_trim::Feature;
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -153,7 +153,24 @@ pub(crate) struct Build<'a> {
     /// What `report_rejected_versions` returned.
     full_types_refused_at_load: BTreeSet<Vec<u8>>,
     pub(crate) place: ProgramPlace,
-    is_one_program: bool,
+    /// Of a build that loads the files of several programs together.
+    pub(crate) programs: Option<ProgramsOfOneLoad<'a>>,
+    /// Entry points that were not compiled, because their programs are not what they are by themselves when they are loaded with
+    /// the others. Those of one list can be loaded together.
+    pub(crate) left_entry_points: Vec<Vec<usize>>,
+    /// No failure: none of the programs that were loaded together can be compiled out of that load.
+    pub(crate) has_left_all_entry_points: bool,
+    pub(crate) is_one_program: bool,
+}
+
+#[derive(Copy, Clone)]
+pub(crate) struct ProgramsOfOneLoad<'a> {
+    /// The position of the entry point of each among those of the build.
+    pub indexes: &'a [usize],
+    /// The options of each: it is the only entry point.
+    pub options: &'a [Options<'a>],
+    /// The build has no other entry points.
+    pub are_all_of_the_build: bool,
 }
 
 pub(crate) struct LoadedProject<'b, 's> {
@@ -441,8 +458,7 @@ fn options_with_entry_points<'a>(options: &Options<'a>, entry_points: &[usize]) 
 }
 
 // By what the names in the files are bound to. A file that gets to the constructor in a roundabout way is not seen here, and then the build has one program, which is right too.
-fn mentions_worker_constructor(loaded: &LoadedBuild<'_, '_>) -> bool {
-    let files = loaded.project(ProjectId::Application).loaded.files();
+pub(crate) fn mentions_worker_constructor(files: &Files<'_>) -> bool {
     let constructor = table::find_name(b"Worker").and_then(table::global);
     let module = table::module_by_specifier(b"node:worker_threads");
     let mut imported = files.host_modules().iter();
@@ -512,20 +528,48 @@ fn compile_program_at_each_entry_point(
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Option<Result<Compilation, BuildFailed>> {
-    let mut programs = Vec::with_capacity(options.entry_points.len());
-    for index in 0..options.entry_points.len() {
+    let count = options.entry_points.len();
+    let mut programs: Vec<Option<Compilation>> = (0..count).map(|_| None).collect();
+    // The files of all programs are read, bound and checked once, and each program is what its entry point leads to among them.
+    let mut loads: VecDeque<Vec<usize>> = VecDeque::from([(0..count).collect::<Vec<usize>>()]);
+    while let Some(indexes) = loads.pop_front() {
         let said_before = log.msgs.len();
-        let entry_point = options_with_entry_points(options, &[index]);
-        let place = ProgramPlace::OneOfSeveral(index);
-        let compiled = compile_program(&entry_point, place, provider, log);
+        let together = options_with_entry_points(options, &indexes);
+        let each: Vec<Options<'_>> = (indexes.iter())
+            .map(|&index| options_with_entry_points(options, &[index]))
+            .collect();
+        let of_one_load = ProgramsOfOneLoad {
+            indexes: &indexes,
+            options: &each,
+            are_all_of_the_build: indexes.len() == count,
+        };
+        let compiled = compile_programs(&together, Some(of_one_load), provider, log);
         forget_repeated_messages(log, said_before);
-        match compiled {
+        let compiled = match compiled {
             Err(failure) if failure.is_one_program => return None,
             Err(failure) => return Some(Err(failure)),
-            Ok(program) if loads_modules_by_name(&program.engine) => return None,
-            Ok(program) => programs.push(program),
+            Ok(compiled) => compiled,
+        };
+        for (place, program) in compiled.programs {
+            match place {
+                ProgramPlace::Only => return Some(Ok(program)),
+                ProgramPlace::OneOfSeveral(_) if loads_modules_by_name(&program.engine) => {
+                    return None;
+                }
+                ProgramPlace::OneOfSeveral(index) => programs[index] = Some(program),
+            }
+        }
+        for left in compiled.left_entry_points {
+            // A load of the same entry points would leave the same ones.
+            match left.len() < indexes.len() {
+                true => loads.push_back(left),
+                false => loads.extend(left.into_iter().map(|index| vec![index])),
+            }
         }
     }
+    let programs: Vec<Compilation> = (programs.into_iter())
+        .map(|program| program.expect("an entry point is compiled or left for another load"))
+        .collect();
     // The host loads node:worker_threads into the global of a Worker of that module.
     let starts_node_workers = programs
         .iter()
@@ -613,6 +657,25 @@ fn compile_program(
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
+    debug_assert!(place == ProgramPlace::Only);
+    let mut compiled = compile_programs(options, None, provider, log)?;
+    Ok(compiled.programs.pop().expect("a build has a program").1)
+}
+
+struct CompiledPrograms {
+    /// In the order of their entry points.
+    programs: Vec<(ProgramPlace, Compilation)>,
+    /// `Build::left_entry_points`
+    left_entry_points: Vec<Vec<usize>>,
+}
+
+// `options` has the entry points of all programs that are loaded together.
+fn compile_programs<'a>(
+    options: &'a Options<'a>,
+    programs: Option<ProgramsOfOneLoad<'a>>,
+    provider: &'a dyn SourceProvider,
+    log: &mut Log,
+) -> Result<CompiledPrograms, BuildFailed> {
     let _hands_out_last_freed_memory = HandsOutLastFreedMemory::begin();
     let _keeps_free_blocks_below_the_peak = KeepsFreeBlocksBelowThePeak::begin();
     let request = EngineRequest {
@@ -641,16 +704,14 @@ fn compile_program(
     };
     let caches = ThreadCaches::default();
     let mut build = Build::new(options, provider, &caches, engine_options.limit_values());
-    build.place = place;
+    build.programs = programs;
     let body_placement = match options.aot.ir_output_path {
         Some(_) => BodyPlacement::InProgramBytes,
         None => BodyPlacement::External,
     };
-    let emitted = build
-        .run_through_emit(body_placement)
-        .and_then(|(bytes, output)| build.write_program_file(&bytes).map(|()| (bytes, output)));
-    let (bytes, mut output) = match emitted {
-        Ok(emitted) => emitted,
+    let mut outputs = match build.run_front_end_for_each_program() {
+        Ok(outputs) => outputs,
+        Err(_) if build.has_left_all_entry_points => Vec::new(),
         Err(stage) => {
             let is_one_program = build.is_one_program;
             let mut failure = build.finish::<()>(Err(stage), log).unwrap_err();
@@ -658,30 +719,56 @@ fn compile_program(
             return Err(failure);
         }
     };
-    if options.aot.checks_only && !output.validates_by_type {
-        engine_options.check_only();
-    }
-    let engine = build.run_engine(bytes, &engine_options, &output);
-    if let Some(modules) = &mut output.modules {
-        modules.count_code(engine.functions(), &output.names);
+    outputs.sort_by_key(|(place, _)| match *place {
+        ProgramPlace::Only => 0,
+        ProgramPlace::OneOfSeveral(index) => index,
+    });
+    let mut compiled = Vec::with_capacity(outputs.len());
+    for (place, output) in outputs {
+        build.place = place;
+        let emitted = build
+            .emit(output, body_placement)
+            .and_then(|(bytes, output)| build.write_program_file(&bytes).map(|()| (bytes, output)));
+        let (bytes, mut output) = match emitted {
+            Ok(emitted) => emitted,
+            Err(stage) => return Err(build.finish::<()>(Err(stage), log).unwrap_err()),
+        };
+        if options.aot.checks_only && !output.validates_by_type {
+            engine_options.check_only();
+        }
+        let engine = build.run_engine(bytes, &engine_options, &output);
+        if let Some(modules) = &mut output.modules {
+            modules.count_code(engine.functions(), &output.names);
+        }
+        compiled.push((place, engine, output));
     }
     let has_errors = build.diagnostics.has_errors();
     let is_internal_error = build.diagnostics.has_internal_errors();
     let refused_entry_points = build.find_refused_entry_points();
+    let left_entry_points = core::mem::take(&mut build.left_entry_points);
     let statistics = build.finish_writing_messages(log);
-    let (_, summary) = output.into_parts(statistics.clone());
-    let compilation = Compilation {
-        engine,
-        summary,
-        further_programs: Vec::new(),
-    };
+    let mut programs: Vec<(ProgramPlace, Compilation)> = compiled
+        .into_iter()
+        .map(|(place, engine, output)| {
+            let (_, summary) = output.into_parts(statistics.clone());
+            let compilation = Compilation {
+                engine,
+                summary,
+                further_programs: Vec::new(),
+            };
+            (place, compilation)
+        })
+        .collect();
     match has_errors {
-        false => Ok(compilation),
+        false => Ok(CompiledPrograms {
+            programs,
+            left_entry_points,
+        }),
         true => Err(BuildFailed {
             stage: Stage::Any,
             is_internal_error,
             statistics,
-            compilation: Some(Box::new(compilation)),
+            compilation: programs.pop().map(|(_, compilation)| Box::new(compilation)),
             refused_entry_points,
             is_one_program: false,
         }),
@@ -737,8 +824,23 @@ impl<'a> Build<'a> {
             checked_elsewhere: Vec::new(),
             full_types_refused_at_load: BTreeSet::new(),
             place: ProgramPlace::Only,
+            programs: None,
+            left_entry_points: Vec::new(),
+            has_left_all_entry_points: false,
             is_one_program: false,
         }
+    }
+
+    /// The stages behind the load look at one program at a time. `position`: among those that were loaded together.
+    pub(crate) fn begin_program(&mut self, position: usize) {
+        let Some(programs) = self.programs else {
+            return;
+        };
+        self.options = &programs.options[position];
+        self.place = ProgramPlace::OneOfSeveral(programs.indexes[position]);
+        self.unreached_runtime_files.clear();
+        self.circular_runtime_files.clear();
+        self.checked_elsewhere.clear();
     }
 
     pub(crate) fn keep_import_graph(&mut self, files: &Files<'_>) {
@@ -755,18 +857,23 @@ impl<'a> Build<'a> {
     }
 
     fn run_front_end(&mut self) -> Result<FrontEndOutput, Stage> {
+        let mut outputs = self.run_front_end_for_each_program()?;
+        Ok(outputs.pop().expect("a build has a program").1)
+    }
+
+    /// Each with the place of its program.
+    fn run_front_end_for_each_program(
+        &mut self,
+    ) -> Result<Vec<(ProgramPlace, FrontEndOutput)>, Stage> {
         let mut linked_at = None;
+        let mut outputs = Vec::new();
         let output = self.with_loaded_projects_before_assets(|build, loaded| {
+            let application = loaded.project(ProjectId::Application).loaded.files();
             let starts_workers =
-                build.place != ProgramPlace::Only && mentions_worker_constructor(&loaded);
-            if build.place == ProgramPlace::OneOfSeveral(0) && !starts_workers {
-                build.is_one_program = true;
-                return Err(Stage::Load);
-            }
+                build.place != ProgramPlace::Only && mentions_worker_constructor(application);
             let bound = build.bind_modules(&loaded)?;
             build.stop_if_errors(Stage::BindModules)?;
             // What the engine finds out about such names comes a whole program later.
-            let application = loaded.project(ProjectId::Application).loaded.files();
             if build.place != ProgramPlace::Only
                 && loads_modules_by_computed_names(application, &bound.projects.application.graph)
             {
@@ -787,13 +894,16 @@ impl<'a> Build<'a> {
                 build.is_one_program = true;
                 return Err(Stage::LinkAndEmit);
             }
-            output
+            // A load that has to be done again begins with the first program again.
+            outputs.retain(|(place, _)| *place != build.place);
+            outputs.push((build.place, output?));
+            Ok(())
         });
         drop_thread_caches(self.caches);
         if let Some(linked_at) = linked_at {
             self.count_time(StatisticId::ReleaseLoadedProjectsNanoseconds, linked_at);
         }
-        output
+        output.map(|()| outputs)
     }
 
     pub(crate) fn retire_sessions(&mut self, sessions: PerProject<Session>) {
@@ -818,7 +928,15 @@ impl<'a> Build<'a> {
         &mut self,
         body_placement: BodyPlacement,
     ) -> Result<(ProgramBytes, FrontEndOutput), Stage> {
-        let mut output = self.run_front_end()?;
+        let output = self.run_front_end()?;
+        self.emit(output, body_placement)
+    }
+
+    fn emit(
+        &mut self,
+        mut output: FrontEndOutput,
+        body_placement: BodyPlacement,
+    ) -> Result<(ProgramBytes, FrontEndOutput), Stage> {
         let mut program = core::mem::take(&mut output.program);
         let body_remap = core::mem::take(&mut output.body_remap);
         let in_parallel = self.parallel_runner();

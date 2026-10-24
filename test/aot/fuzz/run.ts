@@ -24,6 +24,8 @@
 //   --lowered-limits      each batch is built with one limit of the compiler or of its run time at 0, 1 or 2 (--aot-limit), drawn anew for every batch: a small program then runs what only a large one meets
 //   --company 0,17,65,300 each batch is built beside a module of so many unrelated shapes that hold the names its programs use (company.ts), the number drawn anew for every batch;
 //                         it stands among the flags of a finding as --in-the-company-of=<n>
+//   --beside-the-program no-tsconfig,the-bed's-own,an-empty-tsconfig,a-lib-without-dom,as-bun-init-leaves-it   what lies in the folder of a build, drawn anew for every batch (beds.ts `projects`); it stands among the flags
+//                         of a finding as --beside-the-program=<name>. Give --work a folder with no tsconfig.json and no node_modules anywhere above it. Without this option: the bed's own tsconfig.json beside a typed program
 //   --workers <n>         n workers run each program at once, each for itself, in place of the main thread; lines are compared in any order
 //   --as-a-user           the compiler's verifiers stay off, as in a user's build: what they would refuse is built and run
 //   --environment "A=1 B=2"      set for every process ("A=" takes A out); --run-environment the same for the run of the executable alone (the collector's options, say)
@@ -35,6 +37,9 @@
 //   --reduce-seconds <n>  the time one reduction may take (default 600 on the product bed, a third of it on the engine bed)
 //   --count-only          lists every failure in failures.tsv and counts it in groups.tsv: nothing is confirmed, reduced or stored
 //   --no-attribution      does not look for the pass or the flow result without which a finding goes away, which takes a dozen builds or more
+//
+// A typed program whose build stops at a type error is asked of TypeScript itself, with Bun's typings at hand (type-check.ts): what TypeScript refuses too is counted as skipped ("type error TSn, as in TypeScript"), what it accepts is a finding
+// of the kind "build refused".
 //
 // In --out: status.txt (one line, rewritten every 20 s), groups.tsv (for the sources that name what a program is about: programs, runs and failures of each group), failures.tsv (every failure, known and repeated ones too), findings.tsv (one line per distinct finding) and findings/<name>/ with
 // reduced.*, original.*, plain.txt, compiled.txt and finding.json (seed, source, bed, mode, flags, binary, what is guilty).
@@ -63,7 +68,7 @@ const beds: { bed: Bed; jobs: number }[] = [];
 const productJobs = Number(option("jobs") ?? Math.max(1, availableParallelism() >> 2));
 const engineJobs = Number(option("engine-jobs") ?? 0);
 if (replay ? option("bed") !== "engine" : productJobs > 0)
-  beds.push({ jobs: productJobs, bed: new ProductBed(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), validate: has("validate"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("collector-stress")?.split(",").map(Number), isFenced: has("fenced"), failPredictions: option("fail-predictions")?.split(",").map(Number), lowersLimits: has("lowered-limits"), company: option("company")?.split(",").map(Number) }) }); // prettier-ignore
+  beds.push({ jobs: productJobs, bed: new ProductBed(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), validate: has("validate"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("collector-stress")?.split(",").map(Number), isFenced: has("fenced"), failPredictions: option("fail-predictions")?.split(",").map(Number), lowersLimits: has("lowered-limits"), company: option("company")?.split(",").map(Number), projects: option("beside-the-program")?.split(",") }) }); // prettier-ignore
 if (option("engine") && (replay ? option("bed") === "engine" : engineJobs > 0))
   beds.push({ jobs: engineJobs, bed: new EngineBed(option("engine")!, { baseFlags: words(option("engine-flags")), validate: has("validate"), buildSeconds: 60, runSeconds: 10 }) });
 

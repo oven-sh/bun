@@ -3665,7 +3665,7 @@ describe("stdin redirect from a Response", () => {
       expect(await $`cat < ${await response.blob()}`.text()).toBe(payload);
     });
 
-    const bodies: Array<[string, () => BodyInit]> = [
+    const bodies: Array<[string, () => Bun.BodyInit]> = [
       [
         "a stream that errors",
         () =>
@@ -3692,7 +3692,7 @@ describe("stdin redirect from a Response", () => {
         () =>
           (async function* () {
             yield payload;
-          })() as unknown as BodyInit,
+          })() as unknown as Bun.BodyInit,
       ],
     ];
     test.concurrent.each(bodies)("%s", async (_name, body) => {
@@ -3833,7 +3833,7 @@ describe("stdin redirect from a Response", () => {
     // `new Response(s3file)` is a redirect to the object and has no body. An array keeps the S3File as the body.
     test.concurrent.each(commands)("%s", async (_name, run) => {
       await using s3 = serveS3();
-      const response = new Response([s3.file()] as unknown as BodyInit);
+      const response = new Response([s3.file()] as unknown as Bun.BodyInit);
       expect(await rejection(run(response))).toStartWith(unsupportedS3);
       // The shell sent no request and left the body unread, so the fix that the message names still works.
       expect({ requests: s3.requests, bodyUsed: response.bodyUsed }).toEqual({ requests: [], bodyUsed: false });
@@ -3858,7 +3858,7 @@ describe("stdin redirect from a Response", () => {
   test("a file-backed body still reaches a spawned command", async () => {
     using dir = tempDir("shell-response-redirect", { "body.txt": payload });
     const file = () => Bun.file(join(String(dir), "body.txt"));
-    for (const response of [new Response(file()), new Response([file()] as unknown as BodyInit)]) {
+    for (const response of [new Response(file()), new Response([file()] as unknown as Bun.BodyInit)]) {
       const output = await $`${BUN} -e ${readStdin} < ${response}`.quiet();
       expect({ stdout: output.stdout.toString(), exitCode: output.exitCode }).toEqual({
         stdout: payload,

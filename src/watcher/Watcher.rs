@@ -783,9 +783,11 @@ impl Watcher {
         Ok(FdOwnership::Watcher)
     }
 
+    /// Not `node_modules` or a directory inside it, and not outside the root directory.
     #[inline]
     fn is_eligible_directory(&self, dir: &[u8]) -> bool {
-        strings::contains(dir, self.top_level_dir()) && !strings::contains(dir, b"node_modules")
+        !bun_paths::strings::dir_is_or_is_inside_node_modules(dir)
+            && strings::contains(dir, self.top_level_dir())
     }
 
     #[inline]
@@ -968,12 +970,7 @@ impl Watcher {
     }
 
     pub(crate) fn on_maybe_watch_directory(&mut self, file_path: &[u8], dir_fd: Fd) {
-        // We don't want to watch:
-        // - Directories outside the root directory
-        // - Directories inside node_modules
-        if !strings::contains(file_path, b"node_modules")
-            && strings::contains(file_path, self.top_level_dir())
-        {
+        if self.is_eligible_directory(file_path) {
             let _ = self.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
         }
     }

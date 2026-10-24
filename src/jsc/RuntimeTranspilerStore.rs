@@ -902,10 +902,7 @@ impl TranspilerJob {
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
         else {
             if is_watcher_enabled && input_file_fd.is_valid() {
-                if !is_node_override
-                    && bun_paths::is_absolute(path.text)
-                    && !strings::contains(path.text, b"node_modules")
-                {
+                if !is_node_override && bun_paths::is_absolute(path.text) {
                     if let Some(iw) = import_watcher {
                         // SAFETY: BACKREF — process-lifetime watcher; no other
                         // `&ImportWatcher` is live here, and `add_file` is
@@ -929,10 +926,7 @@ impl TranspilerJob {
         };
 
         if is_watcher_enabled && input_file_fd.is_valid() {
-            if !is_node_override
-                && bun_paths::is_absolute(path.text)
-                && !strings::contains(path.text, b"node_modules")
-            {
+            if !is_node_override && bun_paths::is_absolute(path.text) {
                 if let Some(iw) = import_watcher {
                     // SAFETY: BACKREF — process-lifetime watcher; no other
                     // `&ImportWatcher` is live here, and `add_file` is

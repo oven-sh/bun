@@ -435,6 +435,43 @@ pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
     strings::index_of(path, crate::NODE_MODULES_NEEDLE).is_some()
 }
 
+/// Is the file `path` inside a directory named `node_modules`? A file of that name is not.
+#[inline]
+pub fn path_is_inside_node_modules(path: &[u8]) -> bool {
+    has_node_modules_component(path, false, crate::Platform::AUTO)
+}
+
+/// Is `dir` named `node_modules`, or inside such a directory? A trailing separator is optional.
+#[inline]
+pub fn dir_is_or_is_inside_node_modules(dir: &[u8]) -> bool {
+    has_node_modules_component(dir, true, crate::Platform::AUTO)
+}
+
+/// `last_component_counts` lets the end of `path` close a component, as a separator does.
+#[inline]
+fn has_node_modules_component(
+    path: &[u8],
+    last_component_counts: bool,
+    platform: crate::Platform,
+) -> bool {
+    const NAME: &[u8] = b"node_modules";
+    let mut from = 0;
+    while let Some(found) = strings::index_of(&path[from..], NAME) {
+        let start = from + found;
+        let end = start + NAME.len();
+        let opens = start == 0 || platform.is_separator(path[start - 1]);
+        let closes = match path.get(end) {
+            Some(&next) => platform.is_separator(next),
+            None => last_component_counts,
+        };
+        if opens && closes {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
 pub use crate::is_sep_any as char_is_any_slash;
 
 #[inline(always)]
@@ -711,5 +748,76 @@ mod tests {
         assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
+    }
+
+    #[test]
+    fn node_modules_is_matched_as_a_path_component() {
+        use crate::Platform::{Posix, Windows};
+        // (platform, path, as the path of a file, as the path of a directory)
+        let rows: &[(crate::Platform, &[u8], bool, bool)] = &[
+            (Posix, b"/p/node_modules/pkg/index.js", true, true),
+            (Posix, b"/p/node_modules/foo.js", true, true),
+            (
+                Posix,
+                b"/p/node_modules/.bun/pkg@1.0.0/node_modules/pkg/a.js",
+                true,
+                true,
+            ),
+            (Posix, b"node_modules/pkg/index.js", true, true),
+            (Posix, b"/p/node_modules", false, true),
+            (Posix, b"/p/node_modules/", true, true),
+            (Posix, b"/p/src/node_modules", false, true),
+            (Posix, b"/p/node_modules-cleaner/src/util.js", false, false),
+            (Posix, b"/p/node_modules-cleaner/", false, false),
+            (Posix, b"/p/src/list-node_modules.js", false, false),
+            (Posix, b"/p/src/node_modules_helpers/util.js", false, false),
+            (Posix, b"/p/my-node_modules/a.js", false, false),
+            (Posix, b"/p/my-node_modules", false, false),
+            (Posix, b"/p/node_modules.nosync/pkg/a.js", false, false),
+            (Posix, b"node_modules-cleaner/a.js", false, false),
+            (
+                Posix,
+                b"/p/node_modules-cleaner/node_modules/pkg/a.js",
+                true,
+                true,
+            ),
+            (
+                Posix,
+                b"/p/node_modules-cleaner/my-node_modules/node_modules",
+                false,
+                true,
+            ),
+            (Posix, b"/p/src/a.js", false, false),
+            (Posix, b"", false, false),
+            // A backslash is a byte of a file name there.
+            (Posix, b"/p/a\\node_modules\\b.js", false, false),
+            (Windows, b"C:\\p\\node_modules\\pkg\\a.js", true, true),
+            (Windows, b"C:/p/node_modules/pkg/a.js", true, true),
+            (Windows, b"C:\\p/node_modules\\pkg/a.js", true, true),
+            (Windows, b"C:\\p\\node_modules", false, true),
+            (Windows, b"C:\\p\\node_modules\\", true, true),
+            (
+                Windows,
+                b"C:\\p\\node_modules-cleaner\\src\\util.js",
+                false,
+                false,
+            ),
+            (Windows, b"C:\\p\\my-node_modules\\a.js", false, false),
+        ];
+        for &(platform, path, as_file, as_dir) in rows {
+            let got = (
+                has_node_modules_component(path, false, platform),
+                has_node_modules_component(path, true, platform),
+            );
+            assert_eq!(
+                got,
+                (as_file, as_dir),
+                "{platform:?} {}",
+                bstr::BStr::new(path)
+            );
+        }
+        assert!(path_is_inside_node_modules(b"/p/node_modules/pkg/index.js"));
+        assert!(!path_is_inside_node_modules(b"/p/node_modules"));
+        assert!(dir_is_or_is_inside_node_modules(b"/p/node_modules"));
     }
 }

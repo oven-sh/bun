@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
@@ -17,7 +17,11 @@ import { basename, join } from "node:path";
 let watchee: Subprocess;
 
 function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
-  const reader = proc.stdout.getReader();
+  return streamWaiter(proc.stdout);
+}
+
+function streamWaiter(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
   const decoder = new TextDecoder();
   let output = "";
   return {
@@ -621,14 +625,18 @@ for (const [mode, args] of [
       using dir = tempDir("watch-node-modules-fds", {
         "main.ts": `import { x } from "dep";
 import { y } from "dep2";
-console.log("ready", x, y);
+import { z } from "single.js";
+console.log("ready", x, y, z);
 setInterval(() => {}, 1e6);
 `,
         "main.test.ts": `import { test } from "bun:test";
 import { x } from "dep";
 import { y } from "dep2";
-test("ready", () => console.log("ready", x, y));
+import { z } from "single.js";
+test("ready", () => console.log("ready", x, y, z));
 `,
+        // A module that is a file of node_modules itself, in no package.
+        "node_modules/single.js": "export const z = 3;",
         "node_modules/dep/package.json": JSON.stringify({
           name: "dep",
           type: "module",
@@ -656,7 +664,7 @@ test("ready", () => console.log("ready", x, y));
         stdin: "ignore",
       });
       const waiter = stdoutWaiter(watchee);
-      await waiter.waitFor("ready 1 2");
+      await waiter.waitFor("ready 1 2 3");
 
       const held = openPaths(watchee.pid);
       waiter.release();
@@ -668,6 +676,268 @@ test("ready", () => console.log("ready", x, y));
     },
   );
 }
+
+// The watcher must hold nothing under a real node_modules: not a package
+// file, not its directory, and not node_modules itself. It gets that last
+// path with no separator after the name when the first read of the directory
+// is a lookup that fails. The trace names each watched path that saw an event.
+it("--hot sees no event under node_modules", async () => {
+  using dir = tempDir("watch-node-modules-trace", {
+    project: {
+      "main.js": `try {
+  require("./node_modules/not-installed.js");
+} catch {}
+console.log("run", require("dep"), require("./sentinel.js"));
+setInterval(() => {}, 1e6);
+`,
+      "sentinel.js": "module.exports = 1;",
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js" }),
+      "node_modules/dep/index.js": `module.exports = "dep";`,
+    },
+  });
+  const cwd = join(String(dir), "project");
+  // Outside the project: on Windows the watch on the root reports every file below it.
+  const trace = join(String(dir), "trace.jsonl");
+
+  const proc = (watchee = spawn({
+    cwd,
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  }));
+  const out = stdoutWaiter(proc);
+  await out.waitFor("run dep 1");
+
+  await Bun.write(join(cwd, "node_modules", "dep", "index.js"), `module.exports = "dep";`);
+  await Bun.write(join(cwd, "node_modules", "added.js"), "");
+  await Bun.write(join(cwd, "sentinel.js"), "module.exports = 2;");
+  await out.waitFor("run dep 2");
+  out.release();
+  proc.kill("SIGKILL");
+  await proc.exited;
+
+  const seen = readFileSync(trace, "utf8")
+    .split("\n")
+    .filter(line => line.length > 0)
+    .flatMap(line => Object.keys(JSON.parse(line).files));
+  expect({
+    sentinel: seen.some(path => basename(path) === "sentinel.js"),
+    underNodeModules: seen.filter(path => path.split(/[\\/]/).includes("node_modules")),
+  }).toEqual({ sentinel: true, underNodeModules: [] });
+});
+
+// A project file is not a package file because its path holds the letters
+// "node_modules". The watcher asked for the bare letters, so it never watched
+// a project in a folder named `node_modules-cleaner`, a file named
+// `list-node_modules.js` or a directory named `node_modules_helpers`.
+describe("a path that only holds the letters node_modules", () => {
+  // These cases are not concurrent. With six debug builds started together a
+  // case took up to 3.6 s, too near the default timeout. `afterEach` ends a
+  // watchee that a timed-out case left behind.
+  function spawnWatchee(cwd: string, args: readonly string[]) {
+    const proc = (watchee = spawn({
+      cwd,
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    }));
+    return {
+      pid: proc.pid,
+      ...stdoutWaiter(proc),
+      async [Symbol.asyncDispose]() {
+        proc.kill("SIGKILL");
+        await proc.exited;
+      },
+    };
+  }
+
+  const project = "node_modules-cleaner";
+  const keepAlive = "setInterval(() => {}, 1e6);\n";
+
+  // A save by rename puts a new file at the path. The watcher learns of it
+  // from the watch on the directory.
+  const saveByRename = (file: string, content: string) => async (cwd: string) => {
+    await Bun.write(join(cwd, file + ".tmp"), content);
+    renameSync(join(cwd, file + ".tmp"), join(cwd, file));
+  };
+
+  // Starts `bun ...args` in `folder`, waits for `first` on stdout, runs
+  // `edit`, then waits for `second`. A reload that never comes ends the test
+  // by its timeout.
+  async function reloadAfterEdit(
+    folder: string,
+    files: Record<string, string>,
+    args: readonly string[],
+    [first, second]: readonly [string, string],
+    edit: (cwd: string) => Promise<unknown>,
+  ) {
+    using dir = tempDir("watch-letters", { [folder]: files });
+    const cwd = join(String(dir), folder);
+    await using run = spawnWatchee(cwd, args);
+    await run.waitFor(first);
+    await edit(cwd);
+    await run.waitFor(second);
+  }
+
+  const layouts = [
+    ["the project folder", project, "src/util.js"],
+    ["the file name", "cleaner", "src/list-node_modules.js"],
+    ["a directory name", "cleaner", "src/node_modules_helpers/util.js"],
+  ] as const;
+  const kinds = {
+    import: {
+      load: (dep: string) => `import { v } from "./${dep}";\n`,
+      testApi: `import { test } from "bun:test";\n`,
+      source: (v: number) => `export const v = ${v};\n`,
+    },
+    require: {
+      load: (dep: string) => `const { v } = require("./${dep}");\n`,
+      testApi: `const { test } = require("bun:test");\n`,
+      source: (v: number) => `module.exports = { v: ${v} };\n`,
+    },
+  };
+
+  for (const [mode, args] of [
+    ["--watch", ["--watch", "--no-clear-screen", "main.js"]],
+    ["--hot", ["--hot", "--no-clear-screen", "main.js"]],
+    ["test --watch", ["test", "--watch", "main.test.js"]],
+  ] as const) {
+    describe(mode, () => {
+      for (const [where, folder, dep] of layouts) {
+        for (const [kind, { load, testApi, source }] of Object.entries(kinds)) {
+          it(`reloads a module loaded by ${kind}, letters in ${where}`, async () => {
+            await reloadAfterEdit(
+              folder,
+              {
+                "main.js": `${load(dep)}console.log("run", v);\n${keepAlive}`,
+                "main.test.js": `${testApi}${load(dep)}test("run", () => console.log("run", v));\n`,
+                [dep]: source(1),
+              },
+              args,
+              ["run 1", "run 2"],
+              cwd => Bun.write(join(cwd, dep), source(2)),
+            );
+          });
+        }
+      }
+    });
+  }
+
+  describe(`in a folder named ${project}`, () => {
+    for (const flag of ["--watch", "--hot"]) {
+      const args = [flag, "--no-clear-screen", "main.js"];
+
+      it(`${flag} reloads a file that the file loader imports`, async () => {
+        await reloadAfterEdit(
+          project,
+          {
+            "main.js": `import asset from "./src/data.bin";\nconsole.log("run", (await Bun.file(asset).text()).trim());\n${keepAlive}`,
+            "src/data.bin": "1\n",
+          },
+          args,
+          ["run 1", "run 2"],
+          cwd => Bun.write(join(cwd, "src/data.bin"), "2\n"),
+        );
+      });
+
+      it.skipIf(isWindows)(`${flag} reloads an import after a save by rename`, async () => {
+        const source = (v: number) => `export const v = ${v};\n`;
+        await reloadAfterEdit(
+          project,
+          {
+            "main.js": `import { v } from "./src/util.js";\nconsole.log("run", v);\n${keepAlive}`,
+            "src/util.js": source(1),
+          },
+          args,
+          ["run 1", "run 2"],
+          saveByRename("src/util.js", source(2)),
+        );
+      });
+
+      it(`${flag} reloads a module that did not parse at first`, async () => {
+        await reloadAfterEdit(
+          project,
+          {
+            "main.js": `let v;\ntry {\n  ({ v } = await import("./src/util.js"));\n} catch {\n  v = "broken";\n}\nconsole.log("run", v);\n${keepAlive}`,
+            "src/util.js": "export const v = ;\n",
+          },
+          args,
+          ["run broken", "run 2"],
+          cwd => Bun.write(join(cwd, "src/util.js"), "export const v = 2;\n"),
+        );
+      });
+    }
+
+    it("test --watch runs again after an edit to the test file", async () => {
+      const source = (v: number) => `import { test } from "bun:test";\ntest("run", () => console.log("run", ${v}));\n`;
+      await reloadAfterEdit(
+        project,
+        { "main.test.js": source(1) },
+        ["test", "--watch", "main.test.js"],
+        ["run 1", "run 2"],
+        cwd => Bun.write(join(cwd, "main.test.js"), source(2)),
+      );
+    });
+
+    // The test for the letters refused the watch on the directory to every
+    // user of the watcher.
+    it.skipIf(isWindows)("build --watch rebuilds after a save by rename", async () => {
+      const source = (v: number) => `console.log("build ${v}");\n`;
+      await reloadAfterEdit(
+        project,
+        { "main.js": source(1) },
+        ["build", "--watch", "--no-clear-screen", "main.js"],
+        ["build 1", "build 2"],
+        saveByRename("main.js", source(2)),
+      );
+    });
+
+    // On Linux the reload that follows the rename fails at once. Only the
+    // watch on the directory sees the file come back.
+    it.skipIf(!isLinux)("--hot reloads an entry file that was renamed away and written again", async () => {
+      const source = (v: number) => `console.log("run ${v}");\n${keepAlive}`;
+      using dir = tempDir("watch-letters", { [project]: { "main.js": source(1) } });
+      const cwd = join(String(dir), project);
+      const proc = (watchee = spawn({
+        cwd,
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      }));
+      const out = stdoutWaiter(proc);
+      const err = streamWaiter(proc.stderr);
+      await out.waitFor("run 1");
+      renameSync(join(cwd, "main.js"), join(cwd, "main.js.bak"));
+      await err.waitFor("main.js");
+      await Bun.write(join(cwd, "main.js"), source(2));
+      await out.waitFor("run 2");
+    });
+
+    // The resolver asks the watcher to watch a directory in which a lookup
+    // failed. The watcher holds a descriptor for each directory it watches.
+    it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+      "--watch watches a directory in which a lookup failed",
+      async () => {
+        using dir = tempDir("watch-letters", {
+          [project]: {
+            "main.js": `try {\n  require("./empty/late.js");\n} catch {}\nconsole.log("run 1");\n${keepAlive}`,
+            "empty": {},
+          },
+        });
+        const cwd = join(realpathSync(String(dir)), project);
+        await using run = spawnWatchee(cwd, ["--watch", "--no-clear-screen", "main.js"]);
+        await run.waitFor("run 1");
+        expect(openPaths(run.pid)).toContain(join(cwd, "empty"));
+      },
+    );
+  });
+});
 
 // A --watch reload is an execve of the same binary. Linux marks every fd
 // close-on-exec with close_range() first, macOS has no such sweep, so an fd

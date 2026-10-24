@@ -3413,8 +3413,9 @@ fn transpile_source_code_of_any_provenance(
                 if !unsafe { &*jsc_vm }.is_watcher_enabled() {
                     break 'auto_watch;
                 }
+                // `add_file` declines package files too. Asking first saves the open below.
                 if !bun_paths::is_absolute(path.text)
-                    || bun_core::strings::contains(path.text, b"node_modules")
+                    || bun_paths::strings::path_is_inside_node_modules(path.text)
                 {
                     break 'auto_watch;
                 }
@@ -3503,9 +3504,7 @@ fn transpile_source_code_of_any_provenance(
     }
 }
 
-/// Register the just-opened file
-/// with the dev-server watcher (if enabled, absolute, and not in
-/// `node_modules`). Factored out of the two call sites.
+/// Offers the file that was just opened to the `--watch`/`--hot` watcher.
 #[inline]
 fn maybe_watch_file(
     jsc_vm: *mut VirtualMachine,
@@ -3523,10 +3522,7 @@ fn maybe_watch_file(
     if !input_file_fd.is_valid() {
         return;
     }
-    if is_node_override
-        || !bun_paths::is_absolute(path.text)
-        || bun_core::strings::contains(path.text, b"node_modules")
-    {
+    if is_node_override || !bun_paths::is_absolute(path.text) {
         return;
     }
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when

@@ -54,6 +54,7 @@ impl ImportWatcher {
             .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
     }
 
+    /// No `node_modules` rule here: each caller decides.
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {
@@ -62,6 +63,7 @@ impl ImportWatcher {
         }
     }
 
+    /// Declines a file inside `node_modules`: the caller keeps `fd`.
     #[inline]
     pub fn add_file<const COPY_FILE_PATH: bool>(
         &mut self,
@@ -75,6 +77,9 @@ impl ImportWatcher {
     ) -> bun_sys::Result<bun_watcher::FdOwnership> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
+                if strings::path_is_inside_node_modules(file_path) {
+                    return Ok(bun_watcher::FdOwnership::Caller);
+                }
                 watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
             }
             ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),

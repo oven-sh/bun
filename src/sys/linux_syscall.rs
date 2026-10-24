@@ -523,18 +523,11 @@ pub(crate) fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
 #[inline]
 #[cfg(target_os = "android")]
 pub(crate) fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
-    if pid <= 0 {
-        return Err(libc::EINVAL);
-    }
-    // libc 0.2.x doesn't expose `SYS_pidfd_open` for Android either, so use
-    // the kernel constant. `pidfd_open` has the same number on every arch.
-    const SYS_PIDFD_OPEN: libc::c_long = 434;
-    // SAFETY: raw `pidfd_open(2)`; kernel validates pid/flags.
-    let rc = unsafe { libc::syscall(SYS_PIDFD_OPEN, pid, flags) };
-    if rc < 0 {
-        return Err(errno());
-    }
-    Ok(Fd::from_native(rc as i32))
+    let _ = (pid, flags);
+    // Android seccomp filter kills unprivileged processes with SIGSYS
+    // on pidfd_open instead of returning an errno. Bun already has
+    // fallback waiter-thread / signalfd handling, so return ENOSYS directly.
+    Err(libc::ENOSYS)
 }
 
 /// `getdents64(2)` into a caller-provided byte buffer — libc-convention return

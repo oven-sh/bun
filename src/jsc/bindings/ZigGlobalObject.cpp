@@ -3001,7 +3001,7 @@ JSC_DEFINE_CUSTOM_GETTER(getStructsSurface, (JSGlobalObject * lexicalGlobalObjec
         Identifier identifier = Identifier::fromString(vm, name);
         JSValue value = surface->getDirect(vm, identifier);
         RELEASE_ASSERT(value);
-        target->putDirect(vm, identifier, value, PropertyAttribute::DontEnum);
+        target->putDirect(vm, identifier, value, static_cast<unsigned>(PropertyAttribute::DontEnum));
     };
     if (installAtomics) {
         put(atomics, "Mutex"_s);
